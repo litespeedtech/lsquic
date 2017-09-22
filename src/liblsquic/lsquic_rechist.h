@@ -1,0 +1,69 @@
+/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/*
+ * lsquic_rechist.h -- History of received packets.
+ *
+ * The purpose of received packet history is to generate ACK frames.
+ */
+
+#ifndef LSQUIC_RECHIST_H
+#define LSQUIC_RECHIST_H 1
+
+#include "lsquic_packints.h"
+
+struct lsquic_rechist {
+    struct packints                 rh_pints;
+    lsquic_packno_t                 rh_cutoff;
+    lsquic_time_t                   rh_largest_acked_received;
+    lsquic_cid_t                    rh_cid;        /* Used for logging */
+    /* Chromium limits the number of tracked packets (see
+     * kMaxTrackedPackets).  We could do this, too.
+     */
+    unsigned                        rh_n_packets;
+    enum {
+        RH_CUTOFF_SET   = (1 << 0),
+    }                               rh_flags;
+};
+
+typedef struct lsquic_rechist lsquic_rechist_t;
+
+void
+lsquic_rechist_init (struct lsquic_rechist *, lsquic_cid_t);
+
+void
+lsquic_rechist_cleanup (struct lsquic_rechist *);
+
+enum received_st {
+    REC_ST_OK,
+    REC_ST_DUP,
+    REC_ST_ERR,
+};
+
+enum received_st
+lsquic_rechist_received (lsquic_rechist_t *, lsquic_packno_t,
+                         lsquic_time_t now);
+
+void
+lsquic_rechist_stop_wait (lsquic_rechist_t *, lsquic_packno_t);
+
+/* Returns number of bytes written on success, -1 on failure */
+int
+lsquic_rechist_make_ackframe (lsquic_rechist_t *,
+                          void *outbuf, size_t outbuf_sz, int *has_missing,
+                          lsquic_time_t now);
+
+const struct lsquic_packno_range *
+lsquic_rechist_first (lsquic_rechist_t *);
+
+const struct lsquic_packno_range *
+lsquic_rechist_next (lsquic_rechist_t *);
+
+lsquic_packno_t
+lsquic_rechist_largest_packno (const lsquic_rechist_t *);
+
+lsquic_packno_t
+lsquic_rechist_cutoff (const lsquic_rechist_t *);
+
+lsquic_time_t
+lsquic_rechist_largest_recv (const lsquic_rechist_t *);
+
+#endif

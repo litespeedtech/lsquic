@@ -1,0 +1,442 @@
+/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+#include <assert.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/queue.h>
+#include <unistd.h>
+
+#include <event2/event.h>
+
+#include <lsquic.h>
+
+#include "../src/liblsquic/lsquic_hash.h"
+#include "../src/liblsquic/lsquic_logger.h"
+
+#include "test_cert.h"
+#include "test_common.h"
+#include "prog.h"
+
+static int prog_stopped;
+
+static void
+prog_set_onetimer (struct prog *prog, unsigned usec);
+
+static const struct lsquic_packout_mem_if pmi = {
+    .pmi_allocate = pba_allocate,
+    .pmi_release  = pba_release,
+};
+
+
+void
+prog_init (struct prog *prog, unsigned flags,
+           struct sport_head *sports,
+           const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    /* prog-specific initialization: */
+    memset(prog, 0, sizeof(*prog));
+    prog->prog_engine_flags = flags;
+    prog->prog_sports       = sports;
+    lsquic_engine_init_settings(&prog->prog_settings, flags);
+
+    prog->prog_api.ea_settings      = &prog->prog_settings;
+    prog->prog_api.ea_stream_if     = stream_if;
+    prog->prog_api.ea_stream_if_ctx = stream_if_ctx;
+    prog->prog_api.ea_packets_out   = sport_packets_out;
+    prog->prog_api.ea_packets_out_ctx
+                                    = prog;
+    prog->prog_api.ea_pmi           = &pmi;
+    prog->prog_api.ea_pmi_ctx       = &prog->prog_pba;
+
+    /* Non prog-specific initialization: */
+    lsquic_global_init(flags & LSENG_SERVER ? LSQUIC_GLOBAL_SERVER :
+                                                    LSQUIC_GLOBAL_CLIENT);
+    lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
+    lsquic_logger_lopt("=notice");
+}
+
+
+static int
+prog_add_sport (struct prog *prog, const char *arg)
+{
+    struct service_port *sport;
+    sport = sport_new(arg, prog);
+    if (!sport)
+        return -1;
+    /* Default settings: */
+    sport->sp_flags = prog->prog_dummy_sport.sp_flags;
+    sport->sp_sndbuf = prog->prog_dummy_sport.sp_sndbuf;
+    sport->sp_rcvbuf = prog->prog_dummy_sport.sp_rcvbuf;
+    TAILQ_INSERT_TAIL(prog->prog_sports, sport, next_sport);
+    return 0;
+}
+
+
+void
+prog_print_common_options (const struct prog *prog, FILE *out)
+{
+    fprintf(out,
+"   -s SVCPORT  Service port.  Takes on the form of IPv4:port or\n"
+"                 IPv6:port.  For example:\n"
+"                   127.0.0.1:12345\n"
+"                   ::1:12345\n"
+"                 If no -s option is given, 0.0.0.0:12345 address\n"
+"                 is used.\n"
+"   -i USEC     Library will `tick' every USEC microseconds.  The default\n"
+"                 is %u\n"
+"   -D          Set `do not fragment' flag on outgoing UDP packets\n"
+"   -z BYTES    Maximum size of outgoing UDP packets.  The default is 1370\n"
+"                 bytes for IPv4 socket and 1350 bytes for IPv6 socket\n"
+"   -L LEVEL    Log level for all modules.  Possible values are `debug',\n"
+"                 `info', `notice', `warn', `error', `alert', `emerg',\n"
+"                 and `crit'.\n"
+"   -l LEVELS   Log levels for modules, e.g.\n"
+"                 -l event=info,engine=debug\n"
+"               Can be specified more than once.\n"
+"   -m MAX      Maximum number of outgoing packet buffers that can be\n"
+"                 assigned at any one time.  By default, there is no max.\n"
+"   -y style    Timestamp style used in log messages.  The following styles\n"
+"                 are supported:\n"
+"                   0   No timestamp\n"
+"                   1   Millisecond time (this is the default).\n"
+"                         Example: 11:04:05.196\n"
+"                   2   Full date and millisecond time.\n"
+"                         Example: 2017-03-21 13:43:46.671\n"
+"                   3   Chrome-like timestamp: date/time.microseconds.\n"
+"                         Example: 1223/104613.946956\n"
+"                   4   Microsecond time.\n"
+"                         Example: 11:04:05.196308\n"
+"   -S opt=val  Socket options.  Supported options:\n"
+"                   sndbuf=12345    # Sets SO_SNDBUF\n"
+"                   rcvbuf=12345    # Sets SO_RCVBUF\n"
+        , PROG_DEFAULT_PERIOD_USEC
+    );
+
+
+    {
+        if (prog->prog_engine_flags & LSENG_HTTP)
+            fprintf(out,
+"   -H host     Value of `host' HTTP header.  Defaults to `localhost'.  This\n"
+"                 is also used as SNI.\n"
+            );
+        else
+            fprintf(out,
+"   -H host     Value of SNI in CHLO.\n"
+            );
+    }
+
+
+    fprintf(out,
+"   -h          Print this help screen and exit\n"
+    );
+}
+
+
+int
+prog_set_opt (struct prog *prog, int opt, const char *arg)
+{
+    switch (opt)
+    {
+    case 'i':
+        prog->prog_period_usec = atoi(arg);
+        return 0;
+    case 'D':
+        {
+            struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
+            if (!sport)
+                sport = &prog->prog_dummy_sport;
+            sport->sp_flags |= SPORT_DONT_FRAGMENT;
+        }
+        return 0;
+    case 'm':
+        prog->prog_packout_max = atoi(arg);
+        return 0;
+    case 'z':
+        prog->prog_max_packet_size = atoi(arg);
+        return 0;
+    case 'H':
+        if (prog->prog_engine_flags & LSENG_SERVER)
+            return -1;
+        prog->prog_hostname = arg;
+        return 0;
+    case 'y':
+        lsquic_log_to_fstream(stderr, atoi(arg));
+        return 0;
+    case 'L':
+        return lsquic_set_log_level(arg);
+    case 'l':
+        return lsquic_logger_lopt(arg);
+    case 'o':
+        return set_engine_option(&prog->prog_settings,
+                                            &prog->prog_version_cleared, arg);
+    case 's':
+        if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
+                                            !TAILQ_EMPTY(prog->prog_sports))
+            return -1;
+        return prog_add_sport(prog, arg);
+    case 'S':
+        {
+            struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
+            if (!sport)
+                sport = &prog->prog_dummy_sport;
+            char *const name = strdup(optarg);
+            char *val = strchr(name, '=');
+            if (!val)
+            {
+                free(name);
+                return -1;
+            }
+            *val = '\0';
+            ++val;
+            if (0 == strcasecmp(name, "sndbuf"))
+            {
+                sport->sp_flags |= SPORT_SET_SNDBUF;
+                sport->sp_sndbuf = atoi(val);
+                free(name);
+                return 0;
+            }
+            else if (0 == strcasecmp(name, "rcvbuf"))
+            {
+                sport->sp_flags |= SPORT_SET_RCVBUF;
+                sport->sp_rcvbuf = atoi(val);
+                free(name);
+                return 0;
+            }
+            else
+            {
+                free(name);
+                return -1;
+            }
+        }
+    default:
+        return 1;
+    }
+}
+
+
+struct event_base *
+prog_eb (struct prog *prog)
+{
+    return prog->prog_eb;
+}
+
+
+int
+prog_connect (struct prog *prog)
+{
+    struct service_port *sport;
+
+    sport = TAILQ_FIRST(prog->prog_sports);
+    if (0 != lsquic_engine_connect(prog->prog_engine,
+                    (struct sockaddr *) &sport->sas, sport,
+                    prog->prog_hostname ? prog->prog_hostname : sport->host,
+                    prog->prog_max_packet_size))
+        return -1;
+
+    return 0;
+}
+
+
+static int
+prog_init_client (struct prog *prog)
+{
+    struct service_port *sport;
+
+    sport = TAILQ_FIRST(prog->prog_sports);
+    if (0 != sport_init_client(sport, prog->prog_engine, prog->prog_eb))
+        return -1;
+
+    return 0;
+}
+
+
+static int
+prog_init_server (struct prog *prog)
+{
+    struct service_port *sport;
+
+    TAILQ_FOREACH(sport, prog->prog_sports, next_sport)
+        if (0 != sport_init_server(sport, prog->prog_engine, prog->prog_eb))
+            return -1;
+
+    return 0;
+}
+
+
+static void
+drop_onetimer (struct prog *prog)
+{
+    if (prog->prog_onetimer)
+    {
+        event_del(prog->prog_onetimer);
+        event_free(prog->prog_onetimer);
+        prog->prog_onetimer = NULL;
+    }
+}
+
+
+void
+prog_maybe_set_onetimer (struct prog *prog)
+{
+    int diff;
+
+    if (lsquic_engine_earliest_adv_tick(prog->prog_engine, &diff))
+    {
+        if (diff > 0)
+            prog_set_onetimer(prog, (unsigned) diff);
+    }
+    else
+        drop_onetimer(prog);
+}
+
+
+static void
+prog_timer_handler (int fd, short what, void *arg)
+{
+    struct prog *const prog = arg;
+    lsquic_engine_proc_all(prog->prog_engine);
+    prog_maybe_set_onetimer(prog);
+}
+
+
+static void
+prog_onetimer_handler (int fd, short what, void *arg)
+{
+    struct prog *const prog = arg;
+    lsquic_engine_process_conns_to_tick(prog->prog_engine);
+    prog_maybe_set_onetimer(prog);
+}
+
+
+static void
+prog_set_onetimer (struct prog *prog, unsigned usec)
+{
+    struct timeval timeout;
+
+    drop_onetimer(prog);
+    if (usec < 4000)
+        usec = 4000;
+    timeout.tv_sec  = 0;
+    timeout.tv_usec = usec;
+    prog->prog_onetimer = event_new(prog->prog_eb, -1, EV_TIMEOUT,
+                                        prog_onetimer_handler, prog);
+    event_add(prog->prog_onetimer, &timeout);
+}
+
+
+static void
+prog_usr1_handler (int fd, short what, void *arg)
+{
+    LSQ_NOTICE("Got SIGUSR1, stopping engine");
+    prog_stop(arg);
+}
+
+
+int
+prog_run (struct prog *prog)
+{
+    struct timeval timeout;
+    timeout.tv_sec  = 0;
+    timeout.tv_usec = prog->prog_period_usec;
+    prog->prog_timer = event_new(prog->prog_eb, -1, EV_PERSIST,
+                                        prog_timer_handler, prog);
+    event_add(prog->prog_timer, &timeout);
+    prog->prog_usr1 = evsignal_new(prog->prog_eb, SIGUSR1,
+                                                    prog_usr1_handler, prog);
+    evsignal_add(prog->prog_usr1, NULL);
+
+
+    event_base_loop(prog->prog_eb, 0);
+
+    return 0;
+}
+
+
+void
+prog_cleanup (struct prog *prog)
+{
+    lsquic_engine_destroy(prog->prog_engine);
+    event_base_free(prog->prog_eb);
+    pba_cleanup(&prog->prog_pba);
+    lsquic_global_cleanup();
+}
+
+
+void
+prog_stop (struct prog *prog)
+{
+    struct service_port *sport;
+
+    prog_stopped = 1;
+
+    while ((sport = TAILQ_FIRST(prog->prog_sports)))
+    {
+        TAILQ_REMOVE(prog->prog_sports, sport, next_sport);
+        sport_destroy(sport);
+    }
+
+    drop_onetimer(prog);
+    event_del(prog->prog_timer);
+    event_free(prog->prog_timer);
+    prog->prog_timer = NULL;
+    event_del(prog->prog_usr1);
+    event_free(prog->prog_usr1);
+    prog->prog_usr1 = NULL;
+}
+
+
+int
+prog_prep (struct prog *prog)
+{
+    int s;
+    char err_buf[100];
+
+    if (0 == prog->prog_period_usec)
+        prog->prog_period_usec = PROG_DEFAULT_PERIOD_USEC;
+    if (prog->prog_settings.es_proc_time_thresh == LSQUIC_DF_PROC_TIME_THRESH)
+        prog->prog_settings.es_proc_time_thresh = prog->prog_period_usec;
+
+    if (0 != lsquic_engine_check_settings(prog->prog_api.ea_settings,
+                        prog->prog_engine_flags, err_buf, sizeof(err_buf)))
+    {
+        LSQ_ERROR("Error in settings: %s", err_buf);
+        return -1;
+    }
+
+    pba_init(&prog->prog_pba, prog->prog_packout_max);
+
+    if (TAILQ_EMPTY(prog->prog_sports))
+    {
+        s = prog_add_sport(prog, "0.0.0.0:12345");
+        if (0 != s)
+            return -1;
+    }
+
+
+    prog->prog_eb = event_base_new();
+    prog->prog_engine = lsquic_engine_new(prog->prog_engine_flags,
+                                                            &prog->prog_api);
+    if (!prog->prog_engine)
+        return -1;
+
+    if (prog->prog_engine_flags & LSENG_SERVER)
+        s = prog_init_server(prog);
+    else
+        s = prog_init_client(prog);
+
+    if (s != 0)
+        return -1;
+
+    return 0;
+}
+
+
+int
+prog_is_stopped (void)
+{
+    return prog_stopped != 0;
+}
+
+

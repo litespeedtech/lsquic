@@ -1,0 +1,544 @@
+/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+#include <assert.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
+#include <sys/queue.h>
+
+#include "lsquic.h"
+#include "lsquic_hpack_enc.h"
+#include "lsquic_mm.h"
+#include "lsquic_frame_common.h"
+#include "lsquic_frame_writer.h"
+
+
+static struct {
+    size_t          sz;
+    size_t          max;
+    unsigned char   buf[0x1000];
+} output;
+
+
+#define reset_output(max_) do {         \
+    output.sz = 0;                      \
+    if (max_)                           \
+        output.max = max_;              \
+    else                                \
+        output.max = sizeof(output.buf);\
+} while (0)
+
+
+static ssize_t
+output_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+{
+    if (output.max - output.sz < sz)
+    {
+        errno = ENOBUFS;
+        return -1;
+    }
+
+    memcpy(output.buf + output.sz, buf, sz);
+    output.sz += sz;
+
+    return sz;
+}
+
+
+static int
+output_flush (struct lsquic_stream *stream)
+{
+    return 0;
+}
+
+
+static size_t
+output_navail (const struct lsquic_stream *stream)
+{
+    return output.max - output.sz;
+}
+
+
+#define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
+
+
+static void
+test_max_frame_size (void)
+{
+    struct lsquic_henc henc;
+    struct lsquic_mm mm;
+    struct lsquic_frame_writer *fw;
+    unsigned max_size;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+
+    for (max_size = 1; max_size < 6 /* one settings frame */; ++max_size)
+    {
+        fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc,
+                            output_write, output_navail, output_flush, 0);
+        assert(!fw);
+    }
+
+    fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc,
+                        output_write, output_navail, output_flush, 0);
+    assert(fw);
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+static void
+test_one_header (void)
+{
+    struct lsquic_henc henc;
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+                                         output_navail, output_flush, 0);
+    reset_output(0);
+
+    struct lsquic_http_header header_arr[] =
+    {
+        { .name = IOV(":status"), .value = IOV("302") },
+    };
+
+    struct lsquic_http_headers headers = {
+        .count = 1,
+        .headers = header_arr,
+    };
+
+    s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 100);
+    assert(0 == s);
+
+    struct http_frame_header fh;
+    struct http_prio_frame prio_frame;
+
+    assert(4 + sizeof(struct http_frame_header) + sizeof(struct http_prio_frame) == output.sz);
+
+    memcpy(&fh, output.buf, sizeof(fh));
+    assert(4 + sizeof(struct http_prio_frame) == hfh_get_length(&fh));
+    assert(HTTP_FRAME_HEADERS == fh.hfh_type);
+    assert((HFHF_END_HEADERS|HFHF_PRIORITY) == fh.hfh_flags);
+    assert(fh.hfh_stream_id[0] == 0);
+    assert(fh.hfh_stream_id[1] == 0);
+    assert(fh.hfh_stream_id[2] == 0x30);
+    assert(fh.hfh_stream_id[3] == 0x39);
+
+    memcpy(&prio_frame, output.buf + sizeof(struct http_frame_header),
+                                            sizeof(struct http_prio_frame));
+
+    assert(prio_frame.hpf_stream_id[0] == 0);
+    assert(prio_frame.hpf_stream_id[1] == 0);
+    assert(prio_frame.hpf_stream_id[2] == 0);
+    assert(prio_frame.hpf_stream_id[3] == 0);
+    assert(prio_frame.hpf_weight       == 100 - 1);
+
+    assert(0 == memcmp(output.buf + sizeof(struct http_frame_header) +
+                    sizeof(struct http_prio_frame), "\x48\x82\x64\x02", 4));
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+static void
+test_continuations (void)
+{
+    struct lsquic_frame_writer *fw;
+    struct lsquic_henc henc;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, &henc, output_write, output_navail,
+                                                        output_flush, 0);
+    reset_output(0);
+
+/*
+perl tools/henc.pl :status 302 x-some-header some-value | hexdump -C
+00000000  48 82 64 02 40 8a f2 b2  0f 49 56 9c a3 90 b6 7f  |H.d.@....IV.....|
+00000010  87 41 e9 2a dd c7 45 a5                           |.A.*..E.|
+*/
+
+    struct lsquic_http_header header_arr[] =
+    {
+        { .name = IOV(":status"), .value = IOV("302") },
+        {. name = IOV("x-some-header"), .value = IOV("some-value") },
+    };
+
+    struct lsquic_http_headers headers = {
+        .count = 2,
+        .headers = header_arr,
+    };
+
+    s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 100);
+    assert(0 == s);
+
+    /* Expected payload is 5 bytes of http_prio_frame and 24 bytes of
+     * compressed headers, split into 4 15-byte chunks (9-byte header
+	 * 6-byte payload) and 1 14-byte chunk (9-byte header and 5-byte
+     * payload).
+     */
+    unsigned char expected_buf[] = {
+        /* Length: */       0x00, 0x00, 0x06,               /* 1 */
+        /* Type: */         HTTP_FRAME_HEADERS,
+        /* Flags: */        HFHF_PRIORITY,
+        /* Stream Id: */    0x00, 0x00, 0x30, 0x39,
+        /* Payload (priority info): */
+                            0x00, 0x00, 0x00, 0x00, 100 - 1,
+        /* Payload (headers): */
+                            0x48,
+        /* Length: */       0x00, 0x00, 0x06,               /* 2 */
+        /* Type: */         HTTP_FRAME_CONTINUATION,
+        /* Flags: */        0x00,
+        /* Stream Id: */    0x00, 0x00, 0x30, 0x39,
+        /* Payload (headers): */
+                            0x82, 0x64, 0x02, 0x40, 0x8A, 0xF2,
+        /* Length: */       0x00, 0x00, 0x06,               /* 3 */
+        /* Type: */         HTTP_FRAME_CONTINUATION,
+        /* Flags: */        0x00,
+        /* Stream Id: */    0x00, 0x00, 0x30, 0x39,
+        /* Payload (headers): */
+                            0xb2, 0x0f, 0x49, 0x56, 0x9c, 0xa3,
+        /* Length: */       0x00, 0x00, 0x06,               /* 4 */
+        /* Type: */         HTTP_FRAME_CONTINUATION,
+        /* Flags: */        0x00,
+        /* Stream Id: */    0x00, 0x00, 0x30, 0x39,
+        /* Payload (headers): */
+                            0x90, 0xb6, 0x7f, 0x87, 0x41, 0xe9,
+        /* Length: */       0x00, 0x00, 0x05,               /* 5 */
+        /* Type: */         HTTP_FRAME_CONTINUATION,
+        /* Flags: */        HFHF_END_HEADERS,
+        /* Stream Id: */    0x00, 0x00, 0x30, 0x39,
+        /* Payload (headers): */
+                            0x2a, 0xdd, 0xc7, 0x45, 0xa5,
+    };
+
+    assert(sizeof(expected_buf) == output.sz);
+
+    assert(0 == memcmp(output.buf +  0, expected_buf +  0, 15));
+    assert(0 == memcmp(output.buf + 15, expected_buf + 15, 15));
+    assert(0 == memcmp(output.buf + 30, expected_buf + 30, 15));
+    assert(0 == memcmp(output.buf + 45, expected_buf + 45, 15));
+    assert(0 == memcmp(output.buf + 60, expected_buf + 60, 14));
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+static void
+test_settings_short (void)
+{
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 7, NULL, output_write, output_navail,
+                                                        output_flush, 0);
+
+    {
+        reset_output(0);
+        struct lsquic_http2_setting settings[] = { { 1, 2, }, { 3, 4, } };
+        s = lsquic_frame_writer_write_settings(fw, settings, 2);
+        assert(0 == s);
+        const unsigned char exp_buf[] = {
+            /* Length: */       0x00, 0x00, 0x06,
+            /* Type: */         HTTP_FRAME_SETTINGS,
+            /* Flags: */        0x00,
+            /* Stream Id: */    0x00, 0x00, 0x00, 0x00,
+            /* Payload: */      0x00, 0x01, 0x00, 0x00, 0x00, 0x02,
+            /* Length: */       0x00, 0x00, 0x06,
+            /* Type: */         HTTP_FRAME_SETTINGS,
+            /* Flags: */        0x00,
+            /* Stream Id: */    0x00, 0x00, 0x00, 0x00,
+            /* Payload: */      0x00, 0x03, 0x00, 0x00, 0x00, 0x04,
+        };
+        assert(output.sz == sizeof(exp_buf));
+        assert(0 == memcmp(output.buf, exp_buf, sizeof(exp_buf)));
+    }
+
+    {
+        reset_output(0);
+        struct lsquic_http2_setting settings[] = { { 1, 2, }, { 3, 4, } };
+        s = lsquic_frame_writer_write_settings(fw, settings, 0);
+        assert(-1 == s);
+        assert(EINVAL == errno);
+    }
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+static void
+test_settings_normal (void)
+{
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0, NULL, output_write, output_navail,
+                                                        output_flush, 0);
+
+    {
+        reset_output(0);
+        struct lsquic_http2_setting settings[] = { { 1, 2, }, { 3, 4, } };
+        s = lsquic_frame_writer_write_settings(fw, settings, 2);
+        assert(0 == s);
+        const unsigned char exp_buf[] = {
+            /* Length: */       0x00, 0x00, 0x0C,
+            /* Type: */         HTTP_FRAME_SETTINGS,
+            /* Flags: */        0x00,
+            /* Stream Id: */    0x00, 0x00, 0x00, 0x00,
+            /* Payload: */      0x00, 0x01, 0x00, 0x00, 0x00, 0x02,
+            /* Payload: */      0x00, 0x03, 0x00, 0x00, 0x00, 0x04,
+        };
+        assert(output.sz == sizeof(exp_buf));
+        assert(0 == memcmp(output.buf, exp_buf, sizeof(exp_buf)));
+    }
+
+    {
+        reset_output(0);
+        struct lsquic_http2_setting settings[] = { { 1, 2, }, { 3, 4, } };
+        s = lsquic_frame_writer_write_settings(fw, settings, 0);
+        assert(-1 == s);
+        assert(EINVAL == errno);
+    }
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+/* Gotta override these so that LSQUIC_LOG_CONN_ID in lsquic_frame_writer.c
+ * works.
+ */
+lsquic_cid_t
+lsquic_conn_id (const lsquic_conn_t *lconn)
+{
+    return 0;
+}
+
+
+lsquic_conn_t *
+lsquic_stream_conn (const lsquic_stream_t *stream)
+{
+    return NULL;
+}
+
+
+static void
+test_priority (void)
+{
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, NULL, output_write, output_navail,
+                                                        output_flush, 0);
+
+    s = lsquic_frame_writer_write_priority(fw, 3, 0, 1UL << 31, 256);
+    assert(s < 0);  /* Invalid dependency stream ID */
+
+    s = lsquic_frame_writer_write_priority(fw, 3, 0, 1, 0);
+    assert(s < 0);  /* Invalid priority stream ID */
+
+    s = lsquic_frame_writer_write_priority(fw, 3, 0, 1, 257);
+    assert(s < 0);  /* Invalid priority stream ID */
+
+    {
+        reset_output(0);
+        s = lsquic_frame_writer_write_priority(fw, 3, 0, 1, 256);
+        assert(0 == s);
+        const unsigned char exp_buf[] = {
+            /* Length: */       0x00, 0x00, 5,
+            /* Type: */         HTTP_FRAME_PRIORITY,
+            /* Flags: */        0x00,
+            /* Stream Id: */    0x00, 0x00, 0x00, 0x03,
+            /* Dep stream Id: */0x00, 0x00, 0x00, 0x01,
+            /* Weight: */       0xFF,
+        };
+        assert(output.sz == sizeof(exp_buf));
+        assert(0 == memcmp(output.buf, exp_buf, sizeof(exp_buf)));
+    }
+
+    {
+        reset_output(0);
+        s = lsquic_frame_writer_write_priority(fw, 20, 1, 100, 256);
+        assert(0 == s);
+        const unsigned char exp_buf[] = {
+            /* Length: */       0x00, 0x00, 5,
+            /* Type: */         HTTP_FRAME_PRIORITY,
+            /* Flags: */        0x00,
+            /* Stream Id: */    0x00, 0x00, 0x00, 0x14,
+            /* Dep stream Id: */0x80, 0x00, 0x00, 0x64,
+            /* Weight: */       0xFF,
+        };
+        assert(output.sz == sizeof(exp_buf));
+        assert(0 == memcmp(output.buf, exp_buf, sizeof(exp_buf)));
+    }
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+
+static void
+test_errors (void)
+{
+    struct lsquic_frame_writer *fw;
+    struct lsquic_mm mm;
+    struct lsquic_henc henc;
+    int s;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+                                            output_navail, output_flush, 1);
+    reset_output(0);
+
+    {
+        struct lsquic_http_header header_arr[] =
+        {
+            { .name = IOV(":status"), .value = IOV("200") },
+            { .name = IOV("Content-type"), .value = IOV("text/html") },
+        };
+        struct lsquic_http_headers headers = {
+            .count = 2,
+            .headers = header_arr,
+        };
+        s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 80);
+        assert(-1 == s);
+        assert(EINVAL == errno);
+    }
+
+    {
+        struct lsquic_http_header header_arr[] =
+        {
+            { .name = IOV(":status"), .value = IOV("200") },
+            { .name = IOV("content-type"), .value = IOV("text/html") },
+        };
+        struct lsquic_http_headers headers = {
+            .count = 2,
+            .headers = header_arr,
+        };
+        lsquic_frame_writer_max_header_list_size(fw, 40);
+        s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 80);
+        assert(-1 == s);
+        assert(EMSGSIZE == errno);
+    }
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+static void
+test_push_promise (void)
+{
+    struct lsquic_henc henc;
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+                                         output_navail, output_flush, 1);
+    reset_output(0);
+
+/*
+perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :scheme https x-some-header some-value| hexdump -C
+00000000  82 85 41 8c f1 e3 c2 e5  f2 3a 6b a0 ab 90 f4 ff  |..A......:k.....|
+00000010  87 40 8a f2 b2 0f 49 56  9c a3 90 b6 7f 87 41 e9  |.@....IV......A.|
+00000020  2a dd c7 45 a5                                    |*..E.|
+*/
+
+	const unsigned char exp_headers[] = {
+        0x82, 0x85, 0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a,
+        0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff, 0x87, 0x40, 0x8a, 0xf2,
+        0xb2, 0x0f, 0x49, 0x56, 0x9c, 0xa3, 0x90, 0xb6, 0x7f, 0x87,
+        0x41, 0xe9, 0x2a, 0xdd, 0xc7, 0x45, 0xa5,
+	};
+
+    struct iovec path = IOV("/index.html");
+    struct iovec host = IOV("www.example.com");
+
+    struct lsquic_http_header header_arr[] =
+    {
+        { .name = IOV("x-some-header"), .value = IOV("some-value") },
+    };
+
+    struct lsquic_http_headers headers = {
+        .count = 1,
+        .headers = header_arr,
+    };
+
+    s = lsquic_frame_writer_write_promise(fw, 12345, 0xEEEE, &path, &host,
+                                                                    &headers);
+    assert(0 == s);
+
+    struct http_frame_header fh;
+    struct http_push_promise_frame push_frame;
+
+    assert(sizeof(exp_headers) + sizeof(struct http_frame_header) +
+                    sizeof(struct http_push_promise_frame) == output.sz);
+
+    memcpy(&fh, output.buf, sizeof(fh));
+    assert(sizeof(exp_headers) + sizeof(struct http_push_promise_frame) == hfh_get_length(&fh));
+    assert(HTTP_FRAME_PUSH_PROMISE == fh.hfh_type);
+    assert(HFHF_END_HEADERS == fh.hfh_flags);
+    assert(fh.hfh_stream_id[0] == 0);
+    assert(fh.hfh_stream_id[1] == 0);
+    assert(fh.hfh_stream_id[2] == 0x30);
+    assert(fh.hfh_stream_id[3] == 0x39);
+
+    memcpy(&push_frame, output.buf + sizeof(struct http_frame_header),
+                                    sizeof(struct http_push_promise_frame));
+
+    assert(push_frame.hppf_promised_id[0] == 0);
+    assert(push_frame.hppf_promised_id[1] == 0);
+    assert(push_frame.hppf_promised_id[2] == 0xEE);
+    assert(push_frame.hppf_promised_id[3] == 0xEE);
+
+    assert(0 == memcmp(output.buf + sizeof(struct http_frame_header) +
+            sizeof(struct http_push_promise_frame), exp_headers,
+                                                sizeof(exp_headers)));
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+}
+
+
+
+int
+main (void)
+{
+    test_one_header();
+    test_continuations();
+    test_settings_normal();
+    test_settings_short();
+    test_priority();
+    test_push_promise();
+    test_errors();
+    test_max_frame_size();
+    return 0;
+}

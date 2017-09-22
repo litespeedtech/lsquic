@@ -1,0 +1,183 @@
+/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+#ifndef LSQUIC_SEND_CTL_H
+#define LSQUIC_SEND_CTL_H 1
+
+#include <sys/queue.h>
+
+#include "lsquic_types.h"
+
+#ifndef LSQUIC_SEND_STATS
+#   define LSQUIC_SEND_STATS 1
+#endif
+
+TAILQ_HEAD(lsquic_packets_tailq, lsquic_packet_out);
+
+struct lsquic_packet_out;
+struct ack_info;
+struct lsquic_alarmset;
+struct lsquic_engine_public;
+struct lsquic_conn_public;
+struct ver_neg;
+
+typedef struct lsquic_send_ctl {
+    struct lsquic_packets_tailq     sc_scheduled_packets,
+                                    sc_unacked_packets,
+                                    sc_lost_packets;
+    struct lsquic_engine_public    *sc_enpub;
+    struct lsquic_alarmset         *sc_alset;
+    const struct ver_neg           *sc_ver_neg;
+    struct lsquic_conn_public      *sc_conn_pub;
+    struct lsquic_cubic             sc_cubic;
+    struct pacer                    sc_pacer;
+    lsquic_senhist_t                sc_senhist;
+    lsquic_packno_t                 sc_cur_packno;
+    lsquic_packno_t                 sc_largest_sent_at_cutback;
+    lsquic_packno_t                 sc_max_rtt_packno;
+    lsquic_packno_t                 sc_largest_acked_packno;
+    lsquic_time_t                   sc_largest_acked_sent_time;
+    /* sc_largest_ack2ed is the packet number sent by peer that we acked and
+     * we know that our ACK was received by peer.  This is used to determine
+     * the receive history cutoff point for the purposes of generating ACK
+     * frames in the absense of STOP_WAITING frames.  Used when NSTP option
+     * is set.  (The "ack2ed" is odd enough to not be confused with anything
+     * else and it is not insanely long.)
+     */
+    lsquic_packno_t                 sc_largest_ack2ed;
+    lsquic_time_t                   sc_loss_to;
+    unsigned                        sc_n_consec_rtos;
+    unsigned                        sc_next_limit;
+    unsigned                        sc_n_in_flight;    /* Number of packets in flight */
+    unsigned                        sc_n_scheduled;
+    unsigned                        sc_n_stop_waiting;
+    unsigned short                  sc_pack_size;
+    enum {
+        SC_TCID0        = (1 << 0),
+        SC_LOST_ACK     = (1 << 1),
+        SC_NSTP         = (1 << 2),
+        SC_PACE         = (1 << 3),
+        SC_SCHED_TICK   = (1 << 4),
+    }                               sc_flags:8;
+    unsigned char                   sc_n_hsk;
+    unsigned char                   sc_n_tlp;
+#if LSQUIC_SEND_STATS
+    struct {
+        unsigned            n_total_sent,
+                            n_resent,
+                            n_delayed;
+    }                               sc_stats;
+#endif
+} lsquic_send_ctl_t;
+
+void
+lsquic_send_ctl_init (lsquic_send_ctl_t *, struct lsquic_alarmset *,
+          struct lsquic_engine_public *, const struct ver_neg *,
+          struct lsquic_conn_public *, unsigned short max_packet_size);
+
+int
+lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *, struct lsquic_packet_out *);
+
+int
+lsquic_send_ctl_got_ack (lsquic_send_ctl_t *, const struct ack_info *,
+                                                            lsquic_time_t);
+
+lsquic_packno_t
+lsquic_send_ctl_smallest_unacked (lsquic_send_ctl_t *ctl);
+
+int
+lsquic_send_ctl_have_unacked_stream_frames (const lsquic_send_ctl_t *);
+
+void
+lsquic_send_ctl_cleanup (lsquic_send_ctl_t *);
+
+int
+lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl);
+
+void
+lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *, lsquic_packet_out_t *);
+
+void
+lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *, lsquic_packet_out_t *);
+
+lsquic_packet_out_t *
+lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *);
+
+void
+lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
+
+#define lsquic_send_ctl_n_in_flight(ctl) (+(ctl)->sc_n_in_flight)
+
+#define lsquic_send_ctl_n_scheduled(ctl) (+(ctl)->sc_n_scheduled)
+
+#define lsquic_send_ctl_largest_ack2ed(ctl) (+(ctl)->sc_largest_ack2ed)
+
+#ifdef NDEBUG
+#   define lsquic_send_ctl_sanity_check(ctl)
+#else
+void
+lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl);
+#endif
+
+int
+lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *);
+
+int
+lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *);
+
+#define lsquic_send_ctl_last_scheduled(ctl) \
+            TAILQ_LAST(&(ctl)->sc_scheduled_packets, lsquic_packets_tailq)
+
+lsquic_packet_out_t *
+lsquic_send_ctl_new_packet_out (lsquic_send_ctl_t *, unsigned);
+
+lsquic_packet_out_t *
+lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *,
+                                      unsigned need_at_least, int *is_err);
+
+unsigned
+lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *);
+
+#define lsquic_send_ctl_lost_ack(ctl) ((ctl)->sc_flags & SC_LOST_ACK)
+
+#define lsquic_send_ctl_scheduled_ack(ctl) do {                     \
+    (ctl)->sc_flags &= ~SC_LOST_ACK;                                \
+} while (0)
+
+void
+lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *, int);
+
+#define lsquic_send_ctl_turn_nstp_on(ctl) ((ctl)->sc_flags |= SC_NSTP)
+
+void
+lsquic_send_ctl_reset_stream (lsquic_send_ctl_t *, uint32_t);
+
+int
+lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);
+
+/* Same return value as for squeezing, but without actual squeezing. */
+int
+lsquic_send_ctl_have_delayed_packets (const lsquic_send_ctl_t *ctl);
+
+void
+lsquic_send_ctl_reset_packnos (lsquic_send_ctl_t *);
+
+void
+lsquic_send_ctl_ack_to_front (lsquic_send_ctl_t *);
+
+#define lsquic_send_ctl_n_stop_waiting(ctl) (+(ctl)->sc_n_stop_waiting)
+
+#define lsquic_send_ctl_n_stop_waiting_reset(ctl) do {      \
+    (ctl)->sc_n_stop_waiting = 0;                           \
+} while (0)
+
+void
+lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
+
+#define lsquic_send_ctl_tick(ctl, now) do {                 \
+    if ((ctl)->sc_flags & SC_PACE)                          \
+    {                                                       \
+        (ctl)->sc_flags |= SC_SCHED_TICK;                   \
+        pacer_tick(&(ctl)->sc_pacer, now);                  \
+    }                                                       \
+} while (0)
+
+#endif

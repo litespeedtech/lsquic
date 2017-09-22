@@ -1,0 +1,134 @@
+# Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE.
+LSQUIC Examples
+===============
+
+test/http_client.c demonstrates how to use HTTP features of QUIC.
+
+Usage Examples
+--------------
+
+Fetch Google's home page:
+
+    ./http_client -H www.google.com -s 74.125.22.106:443 -p /
+
+In the example above, -H specifies the domain; it is also used as the value
+of SNI paramater in the handshake.
+
+POST a file to calculate its CRC32 checksum:
+
+    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+                        -p /cgi-bin/crc32.cgi -P file-256M -M POST
+
+    HTTP/1.1 200 OK
+    content-type: text/plain
+    date: Fri, 09 Jun 2017 08:40:45 GMT
+    server: LiteSpeed
+    alt-svc: quic=":443"; v="35,37"
+
+    CRC32: 2A0E7DBB
+
+This is a good way to check that the payload gets to the other side
+correctly.  The CGI script is:
+
+    #!/usr/bin/perl
+    use String::CRC32;
+    printf "Content-type: text/plain\r\n\r\nCRC32: %X\n", crc32(*STDIN)
+
+On the command line, I do
+
+    alias crc32="perl -MString::CRC32 -e'printf qq(%X\n), crc32(<>)'"
+
+To submit several requests concurrently, one can use -n and -r options:
+
+    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+                -p /cgi-bin/crc32.cgi -P file-256M -M POST -n 3 -r 10
+
+This will open three parallel connections which will make ten POST
+requests together.
+
+To perform load testing, it is good to mix sending and receiving data:
+
+    for i in {1..100}; do
+        ./http_client $COMMON_OPTS -p /cgi-bin/crc32.cgi -P file-256M \
+                                                    -M POST >out-post.$i &
+        ./http_client $COMMON_OPTS -p /docs/file-256M >out-get.$i        &
+        sleep 1
+    done
+
+If you don't want to create a hundred 256-megabyte out-get.* files, use -K
+flag to discard output.
+
+Control QUIC Settings via -o Flag
+---------------------------------
+
+Most of the settings in struct lsquic_engine_settings can be controlled
+via -o flag.  With exception of es_versions, which is a bit mask, other
+es_* options can be mapped to corresponding -o value via s/^es_//:
+
+    es_cfcw             =>  -o cwcf=12345
+    es_max_streams_in   =>  -o max_streams_in=123
+
+And so on.
+
+The code to set options via -o flag lives in set_engine_option().  It is good
+to update this function at the same time as member fields are added to struct
+lsquic_engine_settings.
+
+Control LSQUIC Behavior via Environment Variables
+-------------------------------------------------
+
+LSQUIC_CUBIC_SHIFT_EPOCH
+
+    This environment variable determines whether cubic epoch is shifted
+    when sender is application-limited.
+
+    This is a leftover from the time when application-limited behavior was
+    implemented and is only available in debug builds.  By default, the
+    epoch is shifted.
+
+LSQUIC_PACER_INTERTICK
+
+    Number of microsecods to use as constant intertick time in lieu of the
+    pacer's dynamic intertick time approximation.
+
+    Only available in debug builds.
+
+Control Network-Related Stuff
+-----------------------------
+
+   -D          Set `do not fragment' flag on outgoing UDP packets.
+
+   -z BYTES    Maximum size of outgoing UDP packets.  The default is 1370
+               bytes for IPv4 socket and 1350 bytes for IPv6 socket.
+
+   -S opt=val  Socket options.  Supported options:
+                   sndbuf=12345    # Sets SO_SNDBUF
+                   rcvbuf=12345    # Sets SO_RCVBUF
+
+More Compilation Options
+------------------------
+
+-DFULL_CONN_STATS=1
+
+    Track some statistics about full connection -- packets in, sent, delayed,
+    stream payload per packet size ratio, and some others -- and print them
+    at NOTICE level when connection is destroyed.
+
+    This is useful when performing network testing and especially analyzing
+    the effects of changing send buffer size (see -S sndbuf= in the previous
+    section).
+
+-DLSQUIC_PACKINTS_SANITY_CHECK=1
+
+    Turn on sanity checking for packet interval code.  The packet interval
+    code, shared by both send and receive history modules, contained a bug
+    which prompted me to add a checking function.
+
+-DLSQUIC_SEND_STATS=0
+
+    Turn off statistics collection performed by the send controller: number
+    of packets sent, resent, and delayed.
+
+-DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_WARN
+
+    If you want to go even faster: compile out some log levels entirely.
