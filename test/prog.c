@@ -15,6 +15,7 @@
 #include "../src/liblsquic/lsquic_hash.h"
 #include "../src/liblsquic/lsquic_logger.h"
 
+#include "test_config.h"
 #include "test_cert.h"
 #include "test_common.h"
 #include "prog.h"
@@ -86,7 +87,9 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 is used.\n"
 "   -i USEC     Library will `tick' every USEC microseconds.  The default\n"
 "                 is %u\n"
+#if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
+#endif
 "   -z BYTES    Maximum size of outgoing UDP packets.  The default is 1370\n"
 "                 bytes for IPv4 socket and 1350 bytes for IPv6 socket\n"
 "   -L LEVEL    Log level for all modules.  Possible values are `debug',\n"
@@ -142,6 +145,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'i':
         prog->prog_period_usec = atoi(arg);
         return 0;
+#if LSQUIC_DONTFRAG_SUPPORTED
     case 'D':
         {
             struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
@@ -150,6 +154,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
             sport->sp_flags |= SPORT_DONT_FRAGMENT;
         }
         return 0;
+#endif
     case 'm':
         prog->prog_packout_max = atoi(arg);
         return 0;

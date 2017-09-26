@@ -191,7 +191,7 @@ static const struct packno_bits_test pb_tests[] = {
     {   .pbt_lineno         = __LINE__,
         .pbt_packno         = 2,
         .pbt_least_unacked  = 1,
-        .pbt_n_in_flight    = 3181457256,
+        .pbt_n_in_flight    = 3181457256ULL,
         .pbt_packno_bits    = PACKNO_LEN_6,
     },
 

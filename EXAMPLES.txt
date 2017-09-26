@@ -11,6 +11,10 @@ Fetch Google's home page:
 
     ./http_client -H www.google.com -s 74.125.22.106:443 -p /
 
+    or even
+
+    ./http_client -H www.google.co.uk -s 2a00:1450:4009:80c::2003:443 -p /
+
 In the example above, -H specifies the domain; it is also used as the value
 of SNI paramater in the handshake.
 

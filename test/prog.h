@@ -42,7 +42,13 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #   define SENDMMSG_FLAG ""
 #endif
 
-#define PROG_OPTS "i:Dm:c:y:L:l:o:H:s:S:z:" SENDMMSG_FLAG
+#if LSQUIC_DONTFRAG_SUPPORTED
+#   define IP_DONTFRAG_FLAG "D"
+#else
+#   define IP_DONTFRAG_FLAG ""
+#endif
+
+#define PROG_OPTS "i:m:c:y:L:l:o:H:s:S:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
 
 /* Returns:
  *  0   Applied

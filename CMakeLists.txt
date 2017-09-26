@@ -28,7 +28,7 @@ MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
 
-IF(CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9)
+IF(CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9.3)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-missing-field-initializers")
 ENDIF()
 IF(DEVEL_MODE EQUAL 1)
@@ -58,12 +58,15 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
 
+IF(NOT DEFINED BORINGSSL_INCLUDE)
+    include_directories( /usr/local/lib )
+ENDIF()
+IF(NOT DEFINED BORINGSSL_LIB)
+    link_directories( /usr/local/include )
+ENDIF()
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include )
-include_directories( ${BORINGSSL_INCLUDE} )
-
-link_directories( ${BORINGSSL_LIB} )
 
 IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     # Find libevent on FreeBSD:
@@ -73,7 +76,7 @@ ENDIF()
 
 add_executable(http_client test/http_client.c test/prog.c test/test_common.c test/test_cert.c)
 
-target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a libdecrepit.a ${FIULIB} z m)
+target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
 
 add_subdirectory(src)
 

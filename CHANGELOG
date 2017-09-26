@@ -1,0 +1,9 @@
+2017-09-26
+
+    - Add support for Mac OS
+    - Add support for Raspberry Pi
+    - Fix BoringSSL compilation: include <openssl/hmac.h> explicitly
+
+2017-09-22
+
+    - Initial release

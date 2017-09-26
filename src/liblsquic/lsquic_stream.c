@@ -498,13 +498,13 @@ lsquic_stream_write_avail (const lsquic_stream_t *stream)
         conn_avail = lsquic_conn_cap_avail(&stream->conn_pub->conn_cap);
         if (conn_avail < stream_avail)
         {
-            LSQ_DEBUG("stream %u write buffer is limited by connection: %jd",
-                stream->id, conn_avail);
+            LSQ_DEBUG("stream %u write buffer is limited by connection: "
+                "%"PRIu64, stream->id, conn_avail);
             return conn_avail;
         }
     }
 
-    LSQ_DEBUG("stream %u write buffer is limited by stream: %jd",
+    LSQ_DEBUG("stream %u write buffer is limited by stream: %"PRIu64,
         stream->id, stream_avail);
     return stream_avail;
 }

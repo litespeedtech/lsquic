@@ -8,6 +8,7 @@
 #include <openssl/x509.h>
 #include <openssl/rand.h>
 #include <openssl/curve25519.h>
+#include <openssl/hmac.h>
 
 #include <zlib.h>
 

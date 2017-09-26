@@ -1907,12 +1907,6 @@ process_stream_ready_to_send (struct full_conn *conn, lsquic_stream_t *stream,
     {
         if (LSQUIC_STREAM_HANDSHAKE == stream->id)
         {
-#if LSQUIC_STREAM_HANDSHAKE
-            /* Full connection implies that the server has completed the
-             * handshake:
-             */
-            assert(0 == (conn->fc_flags & FC_SERVER));
-#endif
             /* Handshake messages are sent in brand-new packets.  If handshake
              * is not complete, the packet is zero-padded.
              */

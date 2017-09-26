@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(__APPLE__)
+#   define __APPLE_USE_RFC_3542 1
+#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/queue.h>
@@ -447,8 +450,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         return -1;
     }
 
-#if __linux__
-#if !defined(IP_RECVORIGDSTADDR)
+#if (__linux__ && !defined(IP_RECVORIGDSTADDR)) || __APPLE__
     /* Need to set IP_PKTINFO for sending */
     if (AF_INET == sa_local->sa_family)
     {
@@ -462,7 +464,6 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
             return -1;
         }
     }
-#endif
 #elif IP_RECVDSTADDR != IP_SENDSRCADDR
     /* On FreeBSD, IP_RECVDSTADDR is the same as IP_SENDSRCADDR, but I do not
      * know about other BSD systems.
@@ -505,6 +506,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
     }
 #endif
 
+#if LSQUIC_DONTFRAG_SUPPORTED
     if (sport->sp_flags & SPORT_DONT_FRAGMENT)
     {
         if (AF_INET == sa_local->sa_family)
@@ -526,6 +528,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
             }
         }
     }
+#endif
 
     if (sport->sp_flags & SPORT_SET_SNDBUF)
     {
@@ -592,7 +595,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
                    struct event_base *eb)
 {
     const struct sockaddr *sa_peer = (struct sockaddr *) &sport->sas;
-    int sockfd, saved_errno, flags, on, s;
+    int sockfd, saved_errno, flags, s;
     socklen_t socklen;
     union {
         struct sockaddr_in  sin;
@@ -646,10 +649,12 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
         return -1;
     }
 
+#if LSQUIC_DONTFRAG_SUPPORTED
     if (sport->sp_flags & SPORT_DONT_FRAGMENT)
     {
         if (AF_INET == sa_local->sa_family)
         {
+        int on;
 #if __linux__
             on = IP_PMTUDISC_DO;
             s = setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &on,
@@ -667,6 +672,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
             }
         }
     }
+#endif
 
     if (sport->sp_flags & SPORT_SET_SNDBUF)
     {
@@ -733,7 +739,7 @@ setup_control_msg (struct msghdr *msg, const struct lsquic_out_spec *spec,
     struct cmsghdr *cmsg;
     struct sockaddr_in *local_sa;
     struct sockaddr_in6 *local_sa6;
-#if __linux__
+#if __linux__ || __APPLE__
     struct in_pktinfo info;
 #endif
     struct in6_pktinfo info6;
@@ -745,7 +751,7 @@ setup_control_msg (struct msghdr *msg, const struct lsquic_out_spec *spec,
     if (AF_INET == spec->dest_sa->sa_family)
     {
         local_sa = (struct sockaddr_in *) spec->local_sa;
-#if __linux__
+#if __linux__ || __APPLE__
         memset(&info, 0, sizeof(info));
         info.ipi_spec_dst = local_sa->sin_addr;
         cmsg->cmsg_level    = IPPROTO_IP;
