@@ -1,3 +1,7 @@
+2017-09-27
+
+    - Fix CMakeLists.txt: BoringSSL include and lib was mixed up
+
 2017-09-26
 
     - Add support for Mac OS

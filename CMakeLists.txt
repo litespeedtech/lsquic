@@ -59,11 +59,14 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
 
 IF(NOT DEFINED BORINGSSL_INCLUDE)
-    include_directories( /usr/local/lib )
+    SET(BORINGSSL_INCLUDE /usr/local/include)
 ENDIF()
 IF(NOT DEFINED BORINGSSL_LIB)
-    link_directories( /usr/local/include )
+    SET(BORINGSSL_LIB /usr/local/lib)
 ENDIF()
+
+include_directories( ${BORINGSSL_INCLUDE} )
+link_directories( ${BORINGSSL_LIB} )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include )
