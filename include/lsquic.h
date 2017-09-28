@@ -67,9 +67,9 @@ enum lsquic_version
     LSQVER_039,
 
     /**
-     * Q040.  RST_STREAM, ACK and STREAM frames match IETF format.
+     * Q041.  RST_STREAM, ACK and STREAM frames match IETF format.
      */
-    LSQVER_040,
+    LSQVER_041,
 
     N_LSQVER
 };
@@ -79,9 +79,9 @@ enum lsquic_version
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << LSQVER_035) | (1 << LSQVER_037) | \
-                    (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_040))
+                    (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_041))
 
-#define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_040))
+#define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_041))
 
 /**
  * @struct lsquic_stream_if

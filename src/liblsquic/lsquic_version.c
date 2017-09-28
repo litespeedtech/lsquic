@@ -12,7 +12,7 @@ static const unsigned char version_tags[N_LSQVER][4] =
     [LSQVER_037] = { 'Q', '0', '3', '7', },
     [LSQVER_038] = { 'Q', '0', '3', '8', },
     [LSQVER_039] = { 'Q', '0', '3', '9', },
-    [LSQVER_040] = { 'Q', '0', '4', '0', },
+    [LSQVER_041] = { 'Q', '0', '4', '1', },
 };
 
 
@@ -61,7 +61,7 @@ const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_037] = "Q037",
     [LSQVER_038] = "Q038",
     [LSQVER_039] = "Q039",
-    [LSQVER_040] = "Q040",
+    [LSQVER_041] = "Q041",
 };
 
 

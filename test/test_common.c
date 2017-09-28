@@ -916,9 +916,9 @@ set_engine_option (struct lsquic_engine_settings *settings,
                 settings->es_versions |= 1 << LSQVER_039;
                 return 0;
             }
-            if (0 == strcmp(val, "Q040"))
+            if (0 == strcmp(val, "Q041"))
             {
-                settings->es_versions |= 1 << LSQVER_040;
+                settings->es_versions |= 1 << LSQVER_041;
                 return 0;
             }
         }

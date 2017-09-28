@@ -101,12 +101,6 @@ gquic_ietf_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 
     stream_frame->data_frame.df_fin = !!(type & 0x20);
 
-    if (data_len)
-    {
-        READ_UINT(stream_frame->data_frame.df_size, 16, p, data_len);
-        p += data_len;
-    }
-
     READ_UINT(stream_frame->stream_id, 32, p, stream_id_len);
     p += stream_id_len;
 
@@ -115,6 +109,8 @@ gquic_ietf_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 
     if (data_len)
     {
+        READ_UINT(stream_frame->data_frame.df_size, 16, p, data_len);
+        p += data_len;
         CHECK_SPACE(stream_frame->data_frame.df_size, p, pend);
         stream_frame->data_frame.df_data = p;
         p += stream_frame->data_frame.df_size;
@@ -198,8 +194,6 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
         CHECK_SPACE(1 + olen + slen + dlen +
             + 1 /* We need to write at least 1 byte */, buf, buf + buf_len);
 
-        p += dlen;  /* Save room for data length */
-
 #if __BYTE_ORDER == __LITTLE_ENDIAN
         stream_id = bswap_32(stream_id);
 #endif
@@ -213,7 +207,7 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
         p += olen;
 
         /* Read as much as we can */
-        nr = gsf_read(stream, p, n_avail, &fin);
+        nr = gsf_read(stream, p + dlen, n_avail, &fin);
         assert(nr != 0);
 
         if (dlen)
@@ -222,17 +216,15 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
 #if __BYTE_ORDER == __LITTLE_ENDIAN
             nr_copy = bswap_16(nr_copy);
 #endif
-            memcpy(p - slen - olen - 2, &nr_copy, 2);
+            memcpy(p, &nr_copy, 2);
         }
 
-        p += nr;
+        p += dlen + nr;
     }
     else
     {
         dlen = 2;
         CHECK_SPACE(1 + slen + olen + 2, buf, buf + buf_len);
-        memset(p, 0, 2);
-        p += 2;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
         stream_id = bswap_32(stream_id);
 #endif
@@ -243,6 +235,8 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
 #endif
         memcpy(p, (unsigned char *) &offset + 8 - olen, olen);
         p += olen;
+        memset(p, 0, 2);
+        p += 2;
     }
 
     /* Convert slen to bit representation: 0 - 3: */
@@ -279,7 +273,7 @@ gquic_ietf_parse_ack_high (const unsigned char *buf, size_t buf_len)
     type = buf[0];
     largest_obs_len = twobit_to_1248((type >> 2) & 3);
     n_blocks_len = !!(type & 0x10);
-    assert(parse_frame_type_gquic_Q040(type) == QUIC_FRAME_ACK);
+    assert(parse_frame_type_gquic_Q041(type) == QUIC_FRAME_ACK);
     assert(buf_len >= 1 + n_blocks_len + 1 + largest_obs_len);
     READ_UINT(packno, 64, buf + 1 + n_blocks_len + 1, largest_obs_len);
     return packno;
@@ -540,7 +534,7 @@ gquic_ietf_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 }
 
 
-const struct parse_funcs lsquic_parse_funcs_gquic_Q040 =
+const struct parse_funcs lsquic_parse_funcs_gquic_Q041 =
 {
     .pf_gen_ver_nego_pkt              =  gquic_be_gen_ver_nego_pkt,
     .pf_gen_reg_pkt_header            =  gquic_be_gen_reg_pkt_header,
@@ -570,5 +564,5 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q040 =
     .pf_write_float_time16            =  gquic_be_write_float_time16,
     .pf_read_float_time16             =  gquic_be_read_float_time16,
 #endif
-    .pf_parse_frame_type              =  parse_frame_type_gquic_Q040,
+    .pf_parse_frame_type              =  parse_frame_type_gquic_Q041,
 };

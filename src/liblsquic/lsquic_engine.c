@@ -20,11 +20,6 @@
 #include <unistd.h>
 #include <netdb.h>
 
-#ifndef NDEBUG
-#include <sys/types.h>
-#include <regex.h>      /* For code that loses packets */
-#endif
-
 
 
 #include "lsquic.h"
