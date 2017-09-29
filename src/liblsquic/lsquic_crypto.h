@@ -25,7 +25,7 @@ struct lsquic_str;
 #endif
 
 
-void crypto_init();
+void crypto_init(void);
 
 /* XXX: why have a wrapper around RAND_bytes? */
 void rand_bytes(void *data, int len);

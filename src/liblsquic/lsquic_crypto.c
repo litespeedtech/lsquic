@@ -664,14 +664,14 @@ int verify_prof0(const uint8_t *chlo_data, size_t chlo_data_len,
 }
 
 
-void crypto_init(void *seed, int seed_len)
+void crypto_init(void)
 {
     if (crypto_inited)
         return ;
     
     //SSL_library_init();
     CRYPTO_library_init();
-    RAND_seed(seed, seed_len);
+    /* XXX Should we seed? If yes, wherewith? */ // RAND_seed(seed, seed_len);
     
 #if defined( __x86_64 )||defined( __x86_64__ )
     make_uint128(&s_prime, 16777216, 315);

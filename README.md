@@ -47,7 +47,7 @@ cd boringssl
 2. Check out stable branch:
 
 ```
-git co chromium-stable
+git checkout chromium-stable
 ```
 
 3. Compile the library
@@ -71,8 +71,8 @@ To install these in `/usr/local/lib`, you should do the following:
 ```
 BORINGSSL_SOURCE=$PWD
 cd /usr/local/lib
-sudo cp $BORINGSSL_SOURCE/ssl/libssl.a
-sudo cp $BORINGSSL_SOURCE/crypto/libcrypto.a
+sudo cp $BORINGSSL_SOURCE/ssl/libssl.a .
+sudo cp $BORINGSSL_SOURCE/crypto/libcrypto.a .
 ```
 
 If you do not want to install the library (or do not have root), you
@@ -92,13 +92,23 @@ Building LSQUIC Client Library
 LSQUIC's `http_client` and the tests link BoringSSL libraries statically.
 Following previous section, you can build LSQUIC as follows:
 
+1. Get the source code
+
+```
+git clone https://github.com/litespeedtech/lsquic-client.git
+cd lsquic-client
+```
+
+2. Compile the library
+
+
 ```
 cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include \
                                 -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs .
 make
 ```
 
-Run tests:
+3. Run tests
 
 ```
 make test
