@@ -114,6 +114,18 @@ make
 make test
 ```
 
+Building with Docker
+---------
+The library and http_client example can be built with Docker.
+```
+docker build -t lsquic-client .
+```
+
+Then you can use the http_client example from the command line.
+```
+docker run -it --rm lsquic-client http_client -H www.google.com -s 74.125.22.106:443 -p /
+```
+
 Platforms
 ---------
 
