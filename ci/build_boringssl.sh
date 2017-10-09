@@ -10,6 +10,7 @@ cd build
 cmake ..
 make -j$(nproc)
 BORINGSSL_SOURCE=$PWD
+echo $BORINGSSL_SOURCE
 mkdir -p $HOME/tmp/boringssl-libs
 cd $HOME/tmp/boringssl-libs
 ln -s $BORINGSSL_SOURCE/ssl/libssl.a

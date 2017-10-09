@@ -25,8 +25,8 @@ before_script:
   # First build external lib
   - ./ci/build_boringssl.sh
   # configure lsquic
-  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs .
-script:
+  - echo $BORINGSSL_SOURCE  
+  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs . script:
   # Now build lsquic-client
   - make
   - make test
