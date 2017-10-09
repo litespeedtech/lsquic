@@ -1,0 +1,31 @@
+language: cpp
+compiler:
+  - clang
+  - gcc
+sudo: false
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    - llvm-toolchain-precise-3.8
+    - george-edison55-precise-backports
+    packages:
+    - g++-5
+    - clang-3.8
+    - libev-dev
+    - cmake
+    - cmake-data
+before_install:
+  - $CC --version
+  - if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; else export CXX="clang++-3.8" CC="clang-3.8"; fi
+  - $CC --version
+  - cmake --version
+before_script:
+  # First build external lib
+  - ./ci/build_boringssl.sh
+  # configure lsquic
+  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs .
+script:
+  # Now build lsquic-client
+  - make
+  - make test
