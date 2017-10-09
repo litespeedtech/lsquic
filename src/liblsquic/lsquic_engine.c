@@ -41,6 +41,7 @@
 #include "lsquic_full_conn.h"
 #include "lsquic_util.h"
 #include "lsquic_qtags.h"
+#include "lsquic_str.h"
 #include "lsquic_handshake.h"
 #include "lsquic_mm.h"
 #include "lsquic_conn_hash.h"
@@ -1072,7 +1073,7 @@ really_encrypt_packet (const lsquic_conn_t *conn,
         return -1;
 
     is_hello_packet = !!(packet_out->po_flags & PO_HELLO);
-    enc = lsquic_enc(conn->cn_enc_session, conn->cn_version, 0,
+    enc = conn->cn_esf->esf_encrypt(conn->cn_enc_session, conn->cn_version, 0,
                 packet_out->po_packno, header_buf, header_sz,
                 packet_out->po_data, packet_out->po_data_sz,
                 buf, bufsz, &packet_sz, is_hello_packet);

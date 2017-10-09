@@ -13,6 +13,9 @@ extern "C" {
 lsquic_time_t
 lsquic_time_now (void);
 
+void
+lsquic_init_timers (void);
+
 /* Returns 1 if `buf' contains only zero bytes, 0 otherwise.
  */
 int

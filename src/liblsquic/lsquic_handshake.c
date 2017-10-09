@@ -18,6 +18,7 @@
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_crypto.h"
+#include "lsquic_str.h"
 #include "lsquic_handshake.h"
 #include "lsquic_parse.h"
 #include "lsquic_crt_compress.h"
@@ -25,9 +26,9 @@
 #include "lsquic_version.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
-#include "lsquic_str.h"
 #include "lsquic_hash.h"
 #include "lsquic_buf.h"
+#include "lsquic_qtags.h"
 
 #include "fiu-local.h"
 
@@ -37,6 +38,114 @@
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HANDSHAKE
 #include "lsquic_logger.h"
+
+enum handshake_state
+{
+    HSK_CHLO_REJ = 0,
+    HSK_SHLO,
+    HSK_COMPLETED,
+    N_HSK_STATES
+};
+
+#if LSQUIC_KEEP_ENC_SESS_HISTORY
+typedef unsigned char eshist_idx_t;
+
+enum enc_sess_history_event
+{
+    ESHE_EMPTY              =  '\0',
+    ESHE_SET_SNI            =  'I',
+    ESHE_SET_SNO            =  'O',
+    ESHE_SET_STK            =  'K',
+    ESHE_SET_SCID           =  'D',
+    ESHE_SET_PROF           =  'P',
+};
+#endif
+
+
+typedef struct hs_ctx_st
+{
+    enum {
+        HSET_TCID     =   (1 << 0),     /* tcid is set */
+        HSET_SMHL     =   (1 << 1),     /* smhl is set */
+        HSET_SCID     =   (1 << 2),
+    }           set;
+    enum {
+        HOPT_NSTP     =   (1 << 0),     /* NSTP option present in COPT */
+        HOPT_SREJ     =   (1 << 1),     /* SREJ option present in COPT */
+    }           opts;
+    uint32_t    pdmd;
+    uint32_t    aead;
+    uint32_t    kexs;
+    
+    uint32_t    mids;
+    uint32_t    scls;
+    uint32_t    cfcw;
+    uint32_t    sfcw;
+    uint32_t    srbf;
+    uint32_t    icsl;
+    
+    uint32_t    irtt;
+    uint64_t    rcid;
+    uint32_t    tcid;
+    uint32_t    smhl;
+    uint64_t    ctim;  /* any usage? */
+    uint64_t    sttl;
+    unsigned char scid[SCID_LENGTH];
+    //unsigned char chlo_hash[32]; //SHA256 HASH of CHLO
+    unsigned char nonc[DNONC_LENGTH]; /* 4 tm, 8 orbit ---> REJ, 20 rand */
+    unsigned char  pubs[32];
+    
+    uint32_t    rrej;
+    struct lsquic_str ccs;
+    struct lsquic_str sni;   /* 0 rtt */
+    struct lsquic_str ccrt;
+    struct lsquic_str stk;
+    struct lsquic_str sno;
+    struct lsquic_str prof;
+    
+    struct lsquic_str csct;
+    struct lsquic_str crt; /* compressed certs buffer */
+} hs_ctx_t;
+
+
+struct lsquic_enc_session
+{
+    enum handshake_state hsk_state;
+    
+    uint8_t have_key; /* 0, no 1, I, 2, D, 3, F */
+    uint8_t peer_have_final_key;
+    uint8_t server_start_use_final_key; 
+
+    lsquic_cid_t cid;
+    unsigned char priv_key[32];
+    EVP_AEAD_CTX *enc_ctx_i;
+    EVP_AEAD_CTX *dec_ctx_i;
+    
+    /* Have to save the initial key for diversification need */
+    unsigned char enc_key_i[aes128_key_len];
+    unsigned char dec_key_i[aes128_key_len];
+    unsigned char enc_key_nonce_i[aes128_iv_len];
+    unsigned char dec_key_nonce_i[aes128_iv_len];
+
+    EVP_AEAD_CTX *enc_ctx_f;
+    EVP_AEAD_CTX *dec_ctx_f;
+    unsigned char enc_key_nonce_f[aes128_iv_len];
+    unsigned char dec_key_nonce_f[aes128_iv_len];
+
+    hs_ctx_t hs_ctx;
+    lsquic_session_cache_info_t *info;
+    SSL_CTX *  ssl_ctx;
+    const struct lsquic_engine_public *enpub;
+    struct lsquic_str * cert_ptr; /* pointer to the leaf cert of the server, not real copy */
+    struct lsquic_str   chlo; /* real copy of CHLO message */
+    struct lsquic_str   sstk;
+    struct lsquic_str   ssno;
+
+#if LSQUIC_KEEP_ENC_SESS_HISTORY
+    eshist_idx_t        es_hist_idx;
+    unsigned char       es_hist_buf[1 << ESHIST_BITS];
+#endif
+};
 
 
 /***
@@ -49,6 +158,15 @@ static struct lsquic_hash *s_cached_client_certs;
  */
 static struct lsquic_hash *s_cached_client_session_infos;
 
+/* save to hash table */
+static lsquic_session_cache_info_t *retrieve_session_info_entry(const char *key);
+static void remove_expire_session_info_entry();
+static void remove_session_info_entry(struct lsquic_str *key);
+
+static void free_info (lsquic_session_cache_info_t *);
+
+static void c_free_cert_hash_item (cert_hash_item_t *item);
+static void c_free_cert_hash_item(cert_hash_item_t *item);
 
 
 static int get_tag_val_u32 (unsigned char *v, int len, uint32_t *val);
@@ -74,8 +192,8 @@ eshist_append (lsquic_enc_session_t *enc_session,
 #   define ESHIST_APPEND(sess, event) do { } while (0)
 #endif
 
-int
-handshake_init(int flags)
+static int
+lsquic_handshake_init(int flags)
 {
     crypto_init();
     return init_hs_hash_tables(flags);
@@ -114,8 +232,8 @@ cleanup_hs_hash_tables (void)
 }
 
 
-void
-handshake_cleanup (void)
+static void
+lsquic_handshake_cleanup (void)
 {
     cleanup_hs_hash_tables();
     lsquic_crt_cleanup();
@@ -141,7 +259,8 @@ static int init_hs_hash_tables(int flags)
 
 
 /* client */
-cert_hash_item_t* c_find_certs(lsquic_str_t *domain)
+cert_hash_item_t *
+c_find_certs (const lsquic_str_t *domain)
 {
     struct lsquic_hash_elem *el;
 
@@ -159,7 +278,8 @@ cert_hash_item_t* c_find_certs(lsquic_str_t *domain)
 
 /* client */
 /* certs is an array of lsquic_str_t * */
-cert_hash_item_t *make_cert_hash_item(lsquic_str_t *domain, lsquic_str_t **certs, int count)
+static cert_hash_item_t *
+make_cert_hash_item (lsquic_str_t *domain, lsquic_str_t **certs, int count)
 {
     int i;
     uint64_t hash;
@@ -180,7 +300,8 @@ cert_hash_item_t *make_cert_hash_item(lsquic_str_t *domain, lsquic_str_t **certs
 
 
 /* client */
-void c_free_cert_hash_item(cert_hash_item_t *item)
+void
+c_free_cert_hash_item (cert_hash_item_t *item)
 {
     int i;
     if (item)
@@ -196,7 +317,8 @@ void c_free_cert_hash_item(cert_hash_item_t *item)
 
 
 /* client */
-int c_insert_certs(cert_hash_item_t *item)
+static int
+c_insert_certs (cert_hash_item_t *item)
 {
     if (lsquic_hash_insert(s_cached_client_certs,
             lsquic_str_cstr(item->domain),
@@ -223,7 +345,8 @@ static int save_session_info_entry(lsquic_str_t *key, lsquic_session_cache_info_
 
 
 /* If entry updated and need to remove cached entry */
-void remove_session_info_entry(lsquic_str_t *key)
+static void
+remove_session_info_entry (lsquic_str_t *key)
 {
     lsquic_session_cache_info_t *entry;
     struct lsquic_hash_elem *el;
@@ -239,7 +362,7 @@ void remove_session_info_entry(lsquic_str_t *key)
 
 
 /* client */
-lsquic_session_cache_info_t *
+static lsquic_session_cache_info_t *
 retrieve_session_info_entry (const char *key)
 {
     lsquic_session_cache_info_t *entry;
@@ -262,7 +385,11 @@ retrieve_session_info_entry (const char *key)
 
 
 /* call it in timer() */
-void remove_expire_session_info_entry()
+#if __GNUC__
+__attribute__((unused))
+#endif
+static void
+remove_expire_session_info_entry (void)
 {
     time_t tm = time(NULL);
     struct lsquic_hash_elem *el;
@@ -280,8 +407,9 @@ void remove_expire_session_info_entry()
 }
 
 
-lsquic_enc_session_t *new_enc_session_c(const char *domain, lsquic_cid_t cid,
-                                        const struct lsquic_engine_public *enpub)
+static lsquic_enc_session_t *
+lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
+                                    const struct lsquic_engine_public *enpub)
 {
     lsquic_session_cache_info_t *info;
     lsquic_enc_session_t *enc_session;
@@ -318,7 +446,8 @@ lsquic_enc_session_t *new_enc_session_c(const char *domain, lsquic_cid_t cid,
 }
 
 
-void free_enc_session(lsquic_enc_session_t *enc_session)
+static void
+lsquic_enc_session_destroy (lsquic_enc_session_t *enc_session)
 {
     if (!enc_session)
         return ;
@@ -360,7 +489,8 @@ void free_enc_session(lsquic_enc_session_t *enc_session)
 }
 
 
-void free_info(lsquic_session_cache_info_t *info)
+static void
+free_info (lsquic_session_cache_info_t *info)
 {
     lsquic_str_d(&info->sstk);
     lsquic_str_d(&info->scfg);
@@ -376,7 +506,8 @@ static int get_hs_state(lsquic_enc_session_t *enc_session)
 
 
 /* make sure have more room for encrypt */
-int is_hs_done(lsquic_enc_session_t *enc_session)
+static int
+lsquic_enc_session_is_hsk_done (lsquic_enc_session_t *enc_session)
 {
     return (get_hs_state(enc_session) == HSK_COMPLETED);
 }
@@ -672,7 +803,8 @@ generate_cid_buf (void *buf, size_t bufsz)
 }
 
 
-lsquic_cid_t generate_cid(void)
+static lsquic_cid_t
+lsquic_generate_cid (void)
 {
     lsquic_cid_t cid;
     generate_cid_buf(&cid, sizeof(cid));
@@ -783,9 +915,9 @@ struct message_writer
 #define MSG_LEN_VAL(len) (+(len))
 
 
-int
-gen_chlo (lsquic_enc_session_t *enc_session, enum lsquic_version version,
-             uint8_t *buf, size_t *len)
+static int
+lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
+                        enum lsquic_version version, uint8_t *buf, size_t *len)
 {
     int ret, include_pad;
     const lsquic_str_t *const ccs = get_common_certs_hash();
@@ -944,7 +1076,7 @@ gen_chlo (lsquic_enc_session_t *enc_session, enum lsquic_version version,
     else
         ret = 0;
 
-    LSQ_DEBUG("gen_chlo called, return %d, buf_len %zd.", ret, *len);
+    LSQ_DEBUG("lsquic_enc_session_gen_chlo called, return %d, buf_len %zd.", ret, *len);
     return ret;
 }
 
@@ -1000,7 +1132,8 @@ void setup_aead_ctx(EVP_AEAD_CTX **ctx, unsigned char key[], int key_len,
 }
 
 
-int determine_diversification_key(lsquic_enc_session_t *enc_session,
+static int
+determine_diversification_key (lsquic_enc_session_t *enc_session,
                   uint8_t *diversification_nonce
                   )
 {
@@ -1177,8 +1310,9 @@ he2str (enum handshake_error he)
  *      DATA_NOT_ENOUGH(-2) for not enough data,
  *      DATA_FORMAT_ERROR(-1) all other errors
  */
-int handle_chlo_reply(lsquic_enc_session_t *enc_session, const uint8_t *data,
-                      int len)
+static int
+lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
+                                                const uint8_t *data, int len)
 {
     uint32_t head_tag;
     int ret;
@@ -1278,7 +1412,7 @@ int handle_chlo_reply(lsquic_enc_session_t *enc_session, const uint8_t *data,
     }
 
   end:
-    LSQ_DEBUG("handle_chlo_reply called, buf in %d, return %d.", len, ret);
+    LSQ_DEBUG("lsquic_enc_session_handle_chlo_reply called, buf in %d, return %d.", len, ret);
     EV_LOG_CONN_EVENT(enc_session->cid, "%s returning %s", __func__,
                                                                 he2str(ret));
     return ret;
@@ -1413,28 +1547,20 @@ decrypt_packet (lsquic_enc_session_t *enc_session, uint8_t path_id,
 }
 
 
-#ifndef NDEBUG
-/* In debug builds, we need to be able to override this function for testing */
-__attribute__((weak))
-int
+static int
 lsquic_enc_session_have_key_gt_one (const lsquic_enc_session_t *enc_session)
 {
     return enc_session && enc_session->have_key > 1;
 }
 
 
-#endif
-
-
-#ifndef NDEBUG
-/* Use weak linkage so that tests can override this function */
-    __attribute__((weak))
-#endif
 /* The size of `buf' is *header_len plus data_len.  The two parts of the
  * buffer correspond to the header and the payload of incoming QUIC packet.
  */
 /* 0 for OK, otherwise nonezero */
-int lsquic_dec(lsquic_enc_session_t *enc_session, enum lsquic_version version,
+static int
+lsquic_enc_session_decrypt (lsquic_enc_session_t *enc_session,
+               enum lsquic_version version,
                uint8_t path_id, uint64_t pack_num,
                unsigned char *buf, size_t *header_len, size_t data_len,
                unsigned char *diversification_nonce,
@@ -1456,7 +1582,9 @@ int lsquic_dec(lsquic_enc_session_t *enc_session, enum lsquic_version version,
 }
 
 
-int lsquic_enc(lsquic_enc_session_t *enc_session, enum lsquic_version version,
+static int
+lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
+               enum lsquic_version version,
                uint8_t path_id, uint64_t pack_num,
                const unsigned char *header, size_t header_len,
                const unsigned char *data, size_t data_len,
@@ -1507,7 +1635,7 @@ int lsquic_enc(lsquic_enc_session_t *enc_session, enum lsquic_version version,
             ((IS_SERVER(enc_session)) &&
              enc_session->server_start_use_final_key == 0))
         {
-            LSQ_DEBUG("lsquic_enc using 'I' key...");
+            LSQ_DEBUG("lsquic_enc_session_encrypt using 'I' key...");
             key = enc_session->enc_ctx_i;
             memcpy(nonce, enc_session->enc_key_nonce_i, 4);
             if (is_shlo && enc_session->have_key == 3)
@@ -1517,7 +1645,7 @@ int lsquic_enc(lsquic_enc_session_t *enc_session, enum lsquic_version version,
         }
         else
         {
-            LSQ_DEBUG("lsquic_enc using 'F' key...");
+            LSQ_DEBUG("lsquic_enc_session_encrypt using 'F' key...");
             key = enc_session->enc_ctx_f;
             memcpy(nonce, enc_session->enc_key_nonce_f, 4);
         }
@@ -1536,8 +1664,9 @@ int lsquic_enc(lsquic_enc_session_t *enc_session, enum lsquic_version version,
 }
 
 
-int
-get_peer_option (const lsquic_enc_session_t *enc_session, uint32_t tag)
+static int
+lsquic_enc_session_get_peer_option (const lsquic_enc_session_t *enc_session,
+                                                                uint32_t tag)
 {
     switch (tag)
     {
@@ -1555,9 +1684,9 @@ get_peer_option (const lsquic_enc_session_t *enc_session, uint32_t tag)
 /* Query a several parameters sent by the peer that are required by
  * connection.
  */
-int
-get_peer_setting (const lsquic_enc_session_t *enc_session, uint32_t tag,
-                  uint32_t *val)
+static int
+lsquic_enc_session_get_peer_setting (const lsquic_enc_session_t *enc_session,
+                                        uint32_t tag, uint32_t *val)
 {
     switch (tag)
     {
@@ -1616,7 +1745,7 @@ get_peer_setting (const lsquic_enc_session_t *enc_session, uint32_t tag,
 
 
 #if LSQUIC_KEEP_ENC_SESS_HISTORY
-void
+static void
 lsquic_get_enc_hist (const lsquic_enc_session_t *enc_session,
                                         char buf[(1 << ESHIST_BITS) + 1])
 {
@@ -1635,3 +1764,25 @@ lsquic_get_enc_hist (const lsquic_enc_session_t *enc_session,
 #endif
 
 
+
+#ifdef NDEBUG
+const
+#endif
+struct enc_session_funcs lsquic_enc_session_gquic_1 =
+{
+    .esf_global_init    = lsquic_handshake_init,
+    .esf_global_cleanup = lsquic_handshake_cleanup,
+#if LSQUIC_KEEP_ENC_SESS_HISTORY
+    .esf_get_hist       = lsquic_get_enc_hist,
+#endif
+    .esf_destroy = lsquic_enc_session_destroy,
+    .esf_is_hsk_done = lsquic_enc_session_is_hsk_done,
+    .esf_encrypt = lsquic_enc_session_encrypt,
+    .esf_decrypt = lsquic_enc_session_decrypt,
+    .esf_get_peer_setting = lsquic_enc_session_get_peer_setting,
+    .esf_get_peer_option = lsquic_enc_session_get_peer_option,
+    .esf_create_client = lsquic_enc_session_create_client,
+    .esf_generate_cid = lsquic_generate_cid,
+    .esf_gen_chlo = lsquic_enc_session_gen_chlo,
+    .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
+};

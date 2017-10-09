@@ -8,17 +8,49 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+
+#if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
+#include <mach/mach_time.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_util.h"
 
 
+#if defined(__APPLE__)
+static mach_timebase_info_data_t timebase;
+#endif
+
+void
+lsquic_init_timers (void)
+{
+#if defined(__APPLE__)
+    mach_timebase_info(&timebase);
+#endif
+}
+
+
 lsquic_time_t
 lsquic_time_now (void)
 {
+#if defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0
+    struct timespec ts;
+    (void) clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (lsquic_time_t) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+#elif defined(__APPLE__)
+    lsquic_time_t t = mach_absolute_time();
+    t *= timebase.numer;
+    t /= timebase.denom;
+    t /= 1000;
+    return t;
+#else
+#   warn Monotonically increasing clock is not available on this platform
     struct timeval tv;
     (void) gettimeofday(&tv, NULL);
     return (lsquic_time_t) tv.tv_sec * 1000000 + tv.tv_usec;
+#endif
 }
 
 

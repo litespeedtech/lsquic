@@ -88,6 +88,8 @@ struct lsquic_conn
 {
     void                        *cn_peer_ctx;
     struct lsquic_enc_session   *cn_enc_session;
+    const struct enc_session_funcs
+                                *cn_esf;
     lsquic_cid_t                 cn_cid;
     STAILQ_ENTRY(lsquic_conn)    cn_next_closed_conn;
     TAILQ_ENTRY(lsquic_conn)     cn_next_all,

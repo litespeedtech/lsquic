@@ -34,6 +34,8 @@
 #include "lsquic_set.h"
 #include "lsquic_malo.h"
 #include "lsquic_chsk_stream.h"
+#include "lsquic_str.h"
+#include "lsquic_qtags.h"
 #include "lsquic_handshake.h"
 #include "lsquic_headers_stream.h"
 #include "lsquic_frame_common.h"
@@ -325,7 +327,8 @@ send_smhl (const struct full_conn *conn)
     uint32_t smhl;
     return conn->fc_conn.cn_enc_session
         && (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-        && 0 == get_peer_setting(conn->fc_conn.cn_enc_session, QTAG_SMHL, &smhl)
+        && 0 == conn->fc_conn.cn_esf->esf_get_peer_setting(
+                            conn->fc_conn.cn_enc_session, QTAG_SMHL, &smhl)
         && 1 == smhl;
 }
 
@@ -387,8 +390,8 @@ apply_peer_settings (struct full_conn *conn)
 #endif
 
         for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
-            if (0 != get_peer_setting(conn->fc_conn.cn_enc_session,
-                                                    tags[n].tag, tags[n].val))
+            if (0 != conn->fc_conn.cn_esf->esf_get_peer_setting(
+                        conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
             {
                 LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
                 return -1;
@@ -521,15 +524,20 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
                       const char *hostname, unsigned short max_packet_size)
 {
     struct full_conn *conn;
+    enum lsquic_version version;
     lsquic_cid_t cid;
+    const struct enc_session_funcs *esf;
 
-    cid = generate_cid();
+    version = highest_bit_set(enpub->enp_settings.es_versions);
+    esf = select_esf_by_ver(version);
+    cid = esf->esf_generate_cid();
     conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
                                                             max_packet_size);
     if (!conn)
         return NULL;
-    conn->fc_conn.cn_enc_session = new_enc_session_c(hostname, cid,
-                                                        conn->fc_enpub);
+    conn->fc_conn.cn_esf = esf;
+    conn->fc_conn.cn_enc_session =
+        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -547,7 +555,6 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    /* TODO the client does not know how to perform version negotiation */
     init_ver_neg(conn, conn->fc_settings->es_versions);
     conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
     if (conn->fc_settings->es_handshake_to)
@@ -628,7 +635,7 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
     lsquic_send_ctl_cleanup(&conn->fc_send_ctl);
     lsquic_rechist_cleanup(&conn->fc_rechist);
     if (conn->fc_conn.cn_enc_session)
-        free_enc_session(conn->fc_conn.cn_enc_session);
+        conn->fc_conn.cn_esf->esf_destroy(conn->fc_conn.cn_enc_session);
     lsquic_malo_destroy(conn->fc_pub.packet_out_malo);
 #if FULL_CONN_STATS
     LSQ_NOTICE("received %u packets, of which %u were not decryptable, %u were "

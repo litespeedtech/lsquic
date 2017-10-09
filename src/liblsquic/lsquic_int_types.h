@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-typedef uint64_t lsquic_time_t;     /* Microseconds since the epoch */
+typedef uint64_t lsquic_time_t;     /* Microseconds since some time */
 typedef uint64_t lsquic_packno_t;
 typedef uint32_t lsquic_ver_tag_t;  /* Opaque 4-byte value */
 

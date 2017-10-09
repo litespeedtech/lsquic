@@ -3,20 +3,24 @@
  * Global state
  */
 
+#include "lsquic_int_types.h"
 #include "lsquic_types.h"
 #include "lsquic.h"
+#include "lsquic_str.h"
 #include "lsquic_handshake.h"
+#include "lsquic_util.h"
 
 
 int
 lsquic_global_init (int flags)
 {
-    return handshake_init(flags);
+    lsquic_init_timers();
+    return lsquic_enc_session_gquic_1.esf_global_init(flags);
 }
 
 
 void
 lsquic_global_cleanup (void)
 {
-    handshake_cleanup();
+    lsquic_enc_session_gquic_1.esf_global_cleanup();
 }

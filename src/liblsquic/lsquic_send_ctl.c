@@ -235,8 +235,6 @@ calculate_packet_rto (lsquic_send_ctl_t *ctl)
         exp = MAX_RTO_BACKOFFS;
 
     delay = delay * (1 << exp);
-    if (delay > MAX_RTO_DELAY)
-        delay = MAX_RTO_DELAY;
 
     return delay;
 }
@@ -305,6 +303,9 @@ set_retx_alarm (lsquic_send_ctl_t *ctl)
         delay = calculate_packet_rto(ctl);
         break;
     }
+
+    if (delay > MAX_RTO_DELAY)
+        delay = MAX_RTO_DELAY;
 
     LSQ_DEBUG("set retx alarm to %"PRIu64", which is %"PRIu64
         " usec from now, mode %s", now + delay, delay, retx2str[rm]);

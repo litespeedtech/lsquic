@@ -8,6 +8,7 @@
 #include "lsquic_conn.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_in.h"
+#include "lsquic_str.h"
 #include "lsquic_handshake.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
@@ -119,7 +120,8 @@ lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
 
     header_len = packet_in->pi_header_sz;
     data_len   = packet_in->pi_data_sz - packet_in->pi_header_sz;
-    if (0 == lsquic_dec(lconn->cn_enc_session, lconn->cn_version, 0,
+    if (0 == lconn->cn_esf->esf_decrypt(lconn->cn_enc_session,
+                        lconn->cn_version, 0,
                         packet_in->pi_packno, packet_in->pi_data,
                         &header_len, data_len,
                         lsquic_packet_in_nonce(packet_in),

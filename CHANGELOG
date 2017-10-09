@@ -1,3 +1,9 @@
+2017-10-09
+
+    - Hide handshake implementation behind a set of function pointers
+    - Use monotonically increasing clock
+    - Make sure that retx delay is not larger than the max of 60 seconds
+
 2017-09-29
 
     - A few fixes to code and README
