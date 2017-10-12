@@ -151,6 +151,47 @@ test_one_header (void)
 
 
 static void
+test_oversize_header (void)
+{
+    struct lsquic_henc henc;
+    struct lsquic_frame_writer *fw;
+    int s;
+    struct lsquic_mm mm;
+    const size_t big_len = 100 * 1000;
+    char *value;
+
+    lsquic_henc_init(&henc);
+    lsquic_mm_init(&mm);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+                                         output_navail, output_flush, 0);
+    reset_output(0);
+
+    value = malloc(big_len);
+    memset(value, 'A', big_len);
+
+    struct lsquic_http_header header_arr[] =
+    {
+        { .name = IOV(":status"), .value = IOV("302") },
+        { .name = IOV("some-header"),
+          .value = { .iov_base = value, .iov_len = big_len, } },
+    };
+
+    struct lsquic_http_headers headers = {
+        .count = sizeof(header_arr) / sizeof(header_arr[0]),
+        .headers = header_arr,
+    };
+
+    s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 100);
+    assert(-1 == s);
+
+    lsquic_frame_writer_destroy(fw);
+    lsquic_henc_cleanup(&henc);
+    lsquic_mm_cleanup(&mm);
+    free(value);
+}
+
+
+static void
 test_continuations (void)
 {
     struct lsquic_frame_writer *fw;
@@ -533,6 +574,7 @@ int
 main (void)
 {
     test_one_header();
+    test_oversize_header();
     test_continuations();
     test_settings_normal();
     test_settings_short();

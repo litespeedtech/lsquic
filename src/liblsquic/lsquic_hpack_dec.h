@@ -6,6 +6,8 @@
 #ifndef LSQUIC_HPACK_DEC_H
 #define LSQUIC_HPACK_DEC_H
 
+#include "lsquic_hpack_types.h"
+
 struct lsquic_hdec
 {
     unsigned           hpd_max_capacity;       /* Maximum set by caller */
@@ -34,7 +36,8 @@ lsquic_hdec_cleanup (struct lsquic_hdec *);
 int
 lsquic_hdec_decode (struct lsquic_hdec *dec,
     const unsigned char **src, const unsigned char *src_end,
-    char *dst, char *const dst_end, uint16_t *name_len, uint16_t *val_len);
+    char *dst, char *const dst_end, hpack_strlen_t *name_len,
+    hpack_strlen_t *val_len);
 
 void
 lsquic_hdec_set_max_capacity (struct lsquic_hdec *, unsigned);
@@ -46,7 +49,8 @@ lsquic_hdec_dec_int (const unsigned char **src, const unsigned char *src_end,
 
 int
 lsquic_hdec_push_entry (struct lsquic_hdec *dec, const char *name,
-                        uint16_t name_len, const char *val, uint16_t val_len);
+                        hpack_strlen_t name_len, const char *val,
+                        hpack_strlen_t val_len);
 #endif
 
 #endif

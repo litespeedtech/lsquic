@@ -49,6 +49,8 @@ struct frame_buf
 #define frab_left_to_write(f) ((unsigned short) sizeof((f)->frab_buf) - (f)->frab_size)
 #define frab_write_to(f) ((f)->frab_buf + (f)->frab_size)
 
+#define MAX_HEADERS_SIZE (64 * 1024)
+
 /* Make sure that frab_buf is at least five bytes long, otherwise a frame
  * won't fit into two adjacent frabs.
  */
@@ -393,6 +395,19 @@ calc_headers_size (const struct lsquic_http_headers *headers)
 
 
 static int
+have_oversize_strings (const struct lsquic_http_headers *headers)
+{
+    int i, have;
+    for (i = 0, have = 0; i < headers->count; ++i)
+    {
+        have |= headers->headers[i].name.iov_len  > HPACK_MAX_STRLEN;
+        have |= headers->headers[i].value.iov_len > HPACK_MAX_STRLEN;
+    }
+    return have;
+}
+
+
+static int
 check_headers_size (const struct lsquic_frame_writer *fw,
                     const struct lsquic_http_headers *headers,
                     const struct lsquic_http_headers *extra_headers)
@@ -435,25 +450,29 @@ check_headers_case (const struct lsquic_frame_writer *fw,
 static int
 write_headers (struct lsquic_frame_writer *fw,
                const struct lsquic_http_headers *headers,
-               struct header_framer_ctx *hfc, unsigned char *buf4k)
+               struct header_framer_ctx *hfc, unsigned char *buf,
+               const unsigned buf_sz)
 {
     unsigned char *end;
     int i, s;
 
     for (i = 0; i < headers->count; ++i)
     {
-        end = lsquic_henc_encode(fw->fw_henc, buf4k, buf4k + 0x1000,
+        end = lsquic_henc_encode(fw->fw_henc, buf, buf + buf_sz,
             headers->headers[i].name.iov_base, headers->headers[i].name.iov_len,
             headers->headers[i].value.iov_base, headers->headers[i].value.iov_len, 0);
-        if (!(end > buf4k))
+        if (end > buf)
+        {
+            s = hfc_write(hfc, buf, end - buf);
+            if (s < 0)
+                return s;
+        }
+        else
         {
             LSQ_WARN("error encoding header");
             errno = EBADMSG;
             return -1;
         }
-        s = hfc_write(hfc, buf4k, end - buf4k);
-        if (s < 0)
-            return s;
     }
 
     return 0;
@@ -481,6 +500,9 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
     if (0 != check_headers_case(fw, headers))
         return -1;
 
+    if (have_oversize_strings(headers))
+        return -1;
+
     if (eos)
         flags = HFHF_END_STREAM;
     else
@@ -501,11 +523,11 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
             return s;
     }
 
-    buf = lsquic_mm_get_4k(fw->fw_mm);
+    buf = malloc(MAX_HEADERS_SIZE);
     if (!buf)
         return -1;
-    s = write_headers(fw, headers, &hfc, buf);
-    lsquic_mm_put_4k(fw->fw_mm, buf);
+    s = write_headers(fw, headers, &hfc, buf, MAX_HEADERS_SIZE);
+    free(buf);
     if (0 == s)
     {
         EV_LOG_GENERATED_HTTP_HEADERS(LSQUIC_LOG_CONN_ID, stream_id,
@@ -556,6 +578,12 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     if (extra_headers && 0 != check_headers_case(fw, extra_headers))
         return -1;
 
+    if (have_oversize_strings(&mpas))
+        return -1;
+
+    if (extra_headers && have_oversize_strings(extra_headers))
+        return -1;
+
     hfc_init(&hfc, fw, fw->fw_max_frame_sz, HTTP_FRAME_PUSH_PROMISE,
                                                             stream_id, 0);
 
@@ -565,21 +593,21 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     if (s < 0)
         return s;
 
-    buf = lsquic_mm_get_4k(fw->fw_mm);
+    buf = malloc(MAX_HEADERS_SIZE);
     if (!buf)
         return -1;
 
-    s = write_headers(fw, &mpas, &hfc, buf);
+    s = write_headers(fw, &mpas, &hfc, buf, MAX_HEADERS_SIZE);
     if (s != 0)
     {
-        lsquic_mm_put_4k(fw->fw_mm, buf);
+        free(buf);
         return -1;
     }
 
     if (extra_headers)
-        s = write_headers(fw, extra_headers, &hfc, buf);
+        s = write_headers(fw, extra_headers, &hfc, buf, MAX_HEADERS_SIZE);
 
-    lsquic_mm_put_4k(fw->fw_mm, buf);
+    free(buf);
 
     if (0 == s)
     {
@@ -640,6 +668,7 @@ write_settings (struct lsquic_frame_writer *fw,
 
     return 0;
 }
+
 
 int
 lsquic_frame_writer_write_settings (struct lsquic_frame_writer *fw,
@@ -711,3 +740,5 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
 
     return lsquic_frame_writer_flush(fw);
 }
+
+

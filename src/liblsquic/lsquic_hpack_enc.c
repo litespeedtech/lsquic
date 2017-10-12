@@ -29,8 +29,8 @@ struct enc_table_entry
     unsigned                        ete_id;
     unsigned                        ete_nameval_hash;
     unsigned                        ete_name_hash;
-    uint16_t                        ete_name_len;
-    uint16_t                        ete_val_len;
+    hpack_strlen_t                  ete_name_len;
+    hpack_strlen_t                  ete_val_len;
     char                            ete_buf[0];
 };
 
@@ -93,8 +93,8 @@ lsquic_henc_cleanup (struct lsquic_henc *enc)
 static
 #endif
        unsigned
-lsquic_henc_get_stx_tab_id (const char *name, uint16_t name_len,
-                        const char *val, uint16_t val_len, int *val_matched)
+lsquic_henc_get_stx_tab_id (const char *name, hpack_strlen_t name_len,
+                    const char *val, hpack_strlen_t val_len, int *val_matched)
 {
     if (name_len < 3)
         return 0;
@@ -428,7 +428,7 @@ henc_calc_table_id (const struct lsquic_henc *enc,
 
 static unsigned
 henc_find_table_id (struct lsquic_henc *enc, const char *name,
-        uint16_t name_len, const char *value, uint16_t value_len,
+        hpack_strlen_t name_len, const char *value, hpack_strlen_t value_len,
         int *val_matched)
 {
     struct enc_table_entry *entry;
@@ -561,7 +561,7 @@ static
 #endif
        int
 lsquic_henc_enc_str (unsigned char *const dst, size_t dst_len,
-                                const unsigned char *str, uint16_t str_len)
+                            const unsigned char *str, hpack_strlen_t str_len)
 {
     unsigned char size_buf[4];
     unsigned char *p;
@@ -710,7 +710,8 @@ static
 #endif
        int
 lsquic_henc_push_entry (struct lsquic_henc *enc, const char *name,
-                    uint16_t name_len, const char *value, uint16_t value_len)
+                        hpack_strlen_t name_len, const char *value,
+                        hpack_strlen_t value_len)
 {
     unsigned name_hash, nameval_hash, buckno;
     struct enc_table_entry *entry;
@@ -757,8 +758,8 @@ lsquic_henc_push_entry (struct lsquic_henc *enc, const char *name,
 
 unsigned char *
 lsquic_henc_encode (struct lsquic_henc *enc, unsigned char *dst,
-        unsigned char *dst_end, const char *name, uint16_t name_len,
-        const char *value, uint16_t value_len, int indexed_type)
+        unsigned char *dst_end, const char *name, hpack_strlen_t name_len,
+        const char *value, hpack_strlen_t value_len, int indexed_type)
 {
     //indexed_type: 0, Add, 1,: without, 2: never
     static const char indexed_prefix_number[] = {0x40, 0x00, 0x10};

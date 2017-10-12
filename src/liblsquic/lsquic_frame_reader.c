@@ -514,7 +514,7 @@ struct header_writer_ctx
     }                            hwc_flags;
     enum pseudo_header           pseh_mask;
     char                        *pseh_bufs[N_PSEH];
-    uint16_t                     name_len,
+    hpack_strlen_t               name_len,
                                  val_len;
 };
 

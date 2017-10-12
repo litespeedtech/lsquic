@@ -204,7 +204,6 @@ permute_and_run (uint64_t run_id,
     }
 }
 
-
 static void
 test_write_file (const char *filename)
 {
@@ -592,7 +591,7 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
 
 
 /* Server: we read data and close the read side before reading FIN, which
- * results in stream being reset.
+ * DOES NOT result in stream being reset.
  */
 static void
 test_rem_data_loc_close (struct test_objs *tobjs)
@@ -610,40 +609,30 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     n = lsquic_stream_read(stream, buf, 60);
     assert(60 == n);
 
-    s = lsquic_stream_shutdown(stream, 0);  /* This causes a reset */
+    s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
-    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_CALL_ONCLOSE);
-
-    n = lsquic_stream_write(stream, buf, 100);
-    assert(n == -1);    /* Cannot write to reset stream */
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(!((stream->stream_flags & (STREAM_SERVICE_FLAGS))
+                                            == STREAM_CALL_ONCLOSE));
 
     n = lsquic_stream_read(stream, buf, 60);
-    assert(n == -1);    /* Cannot read from reset stream */
+    assert(n == -1);    /* Cannot read from closed stream */
 
+    /* Close write side */
     s = lsquic_stream_shutdown(stream, 1);
-    assert(-1 == s);
+    assert(0 == s);
 
-    /* Reset is scheduled to be sent out: */
+    /* STREAM frame is scheduled to be sent out: */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
     assert((stream->stream_flags & (STREAM_SENDING_FLAGS))
-                                            == STREAM_SEND_RST);
-
-    lsquic_stream_call_on_close(stream);
-    assert(!(stream->stream_flags & (STREAM_SERVICE_FLAGS)));
-
-    /* reset frame has been sent */
-    lsquic_stream_rst_frame_sent(stream);
-    assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
-    assert(!(stream->stream_flags & (STREAM_SENDING_FLAGS)));
+                                            == STREAM_SEND_DATA);
 
     s = lsquic_stream_rst_in(stream, 100, 1);
     assert(0 == s);
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_FREE_STREAM);
+                                            == STREAM_CALL_ONCLOSE);
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -651,6 +640,7 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     assert(100 == tobjs->conn_pub.cfcw.cf_max_recv_off);
     assert(100 == tobjs->conn_pub.cfcw.cf_read_off);
 }
+
 
 
 /* Client: we send some data and FIN, but remote end sends some data and
@@ -946,6 +936,7 @@ test_unlimited_stream_flush_data (struct test_objs *tobjs)
     lsquic_stream_destroy(stream);
     assert(0x4000 == lsquic_conn_cap_avail(cap));   /* Still unchanged */
 }
+
 
 
 /* Write a little data to the stream, packetize the data, then reset the
@@ -1947,8 +1938,5 @@ main (int argc, char **argv)
 
     test_flushing();
 
-
     return 0;
 }
-
-

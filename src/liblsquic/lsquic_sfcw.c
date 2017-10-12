@@ -49,18 +49,27 @@ sfcw_maybe_increase_max_window (struct lsquic_sfcw *fc)
     if (new_max_window > fc->sf_conn_pub->enpub->enp_settings.es_max_sfcw)
         new_max_window = fc->sf_conn_pub->enpub->enp_settings.es_max_sfcw;
 
-    /* Do not increase past the connection's maximum window size.  The
-     * connection's window will be increased separately, if possible.
-     *
-     * The reference implementation has the logic backwards:  Imagine
-     * several concurrent streams that are not being read from fast
-     * enough by the user code.  Each of them uses only a fraction
-     * of bandwidth.  Does it mean that the connection window must
-     * increase?  No.
-     */
-    max_conn_window = lsquic_cfcw_get_max_recv_window(fc->sf_cfcw);
-    if (new_max_window > max_conn_window)
-        new_max_window = max_conn_window;
+    if (fc->sf_cfcw)
+    {
+        /* Do not increase past the connection's maximum window size.  The
+         * connection's window will be increased separately, if possible.
+         *
+         * The reference implementation has the logic backwards:  Imagine
+         * several concurrent streams that are not being read from fast
+         * enough by the user code.  Each of them uses only a fraction
+         * of bandwidth.  Does it mean that the connection window must
+         * increase?  No.
+         */
+        max_conn_window = lsquic_cfcw_get_max_recv_window(fc->sf_cfcw);
+        if (new_max_window > max_conn_window)
+            new_max_window = max_conn_window;
+    }
+    else
+    {
+        /* This means that this stream is not affected by connection flow
+         * controller.  No need to adjust under connection window.
+         */
+    }
 
     if (new_max_window > fc->sf_max_recv_win)
     {

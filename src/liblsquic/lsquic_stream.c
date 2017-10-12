@@ -197,7 +197,6 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
                                                         stream->sm_hist_buf);
 }
 
-
 #   define SM_HISTORY_APPEND(stream, event) sm_history_append(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream) do {                           \
         if (stream->sm_hist_idx & SM_HIST_IDX_MASK)                         \
@@ -577,8 +576,6 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         max_off = frame->data_frame.df_offset + frame->data_frame.df_size;
         if (0 != lsquic_stream_update_sfcw(stream, max_off))
             return -1;
-        if ((stream->stream_flags & STREAM_U_READ_DONE))
-            lsquic_stream_reset_ext(stream, 1, 0);
         if (frame->data_frame.df_fin)
         {
             SM_HISTORY_APPEND(stream, SHE_FIN_IN);
@@ -902,24 +899,12 @@ lsquic_stream_tosend_fin (const lsquic_stream_t *stream)
 }
 
 
-static int
-readable_data_frame_remains (lsquic_stream_t *stream)
-{
-        return !stream->data_in->di_if->di_empty(stream->data_in);
-}
-
-
 static void
 stream_shutdown_read (lsquic_stream_t *stream)
 {
     if (!(stream->stream_flags & STREAM_U_READ_DONE))
     {
         SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
-        if (stream->uh || readable_data_frame_remains(stream))
-        {
-            LSQ_INFO("read shut down, but there is still data to be read");
-            lsquic_stream_reset_ext(stream, 1, 1);
-        }
         stream->stream_flags |= STREAM_U_READ_DONE;
         stream_wantread(stream, 0);
         maybe_finish_stream(stream);
@@ -1314,7 +1299,6 @@ maybe_mark_as_blocked (lsquic_stream_t *stream)
     }
 }
 
-
 void
 lsquic_stream_dispatch_rw_events (lsquic_stream_t *stream)
 {
@@ -1383,7 +1367,6 @@ sbt_write (struct stream_buf_tosend *sbt, const void *buf, size_t len)
     sbt->u.buf.sbt_sz += ntowrite;
     return ntowrite;
 }
-
 
 static size_t
 sbt_read_buf (struct stream_buf_tosend *sbt, void *buf, size_t len)
@@ -2403,5 +2386,3 @@ lsquic_stream_refuse_push (lsquic_stream_t *stream)
     else
         return -1;
 }
-
-

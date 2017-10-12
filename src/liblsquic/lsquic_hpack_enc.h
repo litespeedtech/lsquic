@@ -6,6 +6,8 @@
 #ifndef LSQUIC_HPACK_ENC_H
 #define LSQUIC_HPACK_ENC_H 1
 
+#include "lsquic_hpack_types.h"
+
 struct enc_table_entry;
 
 #ifndef NDEBUG
@@ -72,24 +74,24 @@ lsquic_henc_cleanup (struct lsquic_henc *);
  */
 unsigned char *
 lsquic_henc_encode (struct lsquic_henc *henc, unsigned char *dst,
-    unsigned char *dst_end, const char *name, uint16_t name_len,
-    const char *value, uint16_t value_len, int indexed_type);
+    unsigned char *dst_end, const char *name, hpack_strlen_t name_len,
+    const char *value, hpack_strlen_t value_len, int indexed_type);
 
 void
 lsquic_henc_set_max_capacity (struct lsquic_henc *, unsigned);
 
 #ifndef NDEBUG
 unsigned
-lsquic_henc_get_stx_tab_id (const char *name, uint16_t name_len,
-                        const char *val, uint16_t val_len, int *val_matched);
+lsquic_henc_get_stx_tab_id (const char *name, hpack_strlen_t name_len,
+                    const char *val, hpack_strlen_t val_len, int *val_matched);
 
 int
 lsquic_henc_push_entry (struct lsquic_henc *enc, const char *name,
-                    uint16_t name_len, const char *value, uint16_t value_len);
+        hpack_strlen_t name_len, const char *value, hpack_strlen_t value_len);
 
 int
 lsquic_henc_enc_str (unsigned char *const dst, size_t dst_len,
-                                const unsigned char *str, uint16_t str_len);
+                            const unsigned char *str, hpack_strlen_t str_len);
 
 void
 lsquic_henc_iter_reset (struct lsquic_henc *enc);

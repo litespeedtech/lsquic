@@ -2,6 +2,8 @@
 #ifndef LSQUIC_HPACK_COMMON_H
 #define LSQUIC_HPACK_COMMON_H
 
+#include "lsquic_hpack_types.h"
+
 #define HPACK_STATIC_TABLE_SIZE   61
 #define INITIAL_DYNAMIC_TABLE_SIZE  4096
 
@@ -21,9 +23,9 @@
     typedef struct hpack_hdr_tbl_s
     {
         const char *name;
-        uint16_t name_len;
+        hpack_strlen_t name_len;
         const char *val;
-        uint16_t val_len;
+        hpack_strlen_t val_len;
     } hpack_hdr_tbl_t;
 
 /**

@@ -1,3 +1,10 @@
+2017-10-12
+
+    - Do not send RST_STREAM when stream is closed for reading
+    - Raise maximum header size from 4K to 64K
+    - Check header name and value lengths against maximum imposed by HPACK
+    - Fix NULL dereference in stream flow controller
+
 2017-10-09
 
     - Hide handshake implementation behind a set of function pointers
