@@ -23,7 +23,7 @@ before_install:
   - cmake --version
 before_script:
   # First build external lib
-  - git clone --depth 1 https://boringssl.googlesource.com/boringssl
+  - git clone https://boringssl.googlesource.com/boringssl
   - cd boringssl
   - git checkout chromium-stable
   - cmake .
