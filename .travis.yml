@@ -33,6 +33,7 @@ before_script:
   - cd $HOME/tmp/boringssl-libs
   - ln -s $BORINGSSL_SOURCE/ssl/libssl.a
   - ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
+  - cd ..
   #- ./ci/build_boringssl.sh
   # configure lsquic
   - echo $BORINGSSL_SOURCE
