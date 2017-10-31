@@ -131,6 +131,7 @@ struct lsquic_stream_ctx {
         HEADERS_SENT    = (1 << 0),
     }                    sh_flags;
     unsigned             count;
+    struct lsquic_reader reader;
 };
 
 
@@ -161,6 +162,16 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         st_h->client_ctx->hcc_cur_pe = TAILQ_FIRST(
                                             &st_h->client_ctx->hcc_path_elems);
     st_h->path = st_h->client_ctx->hcc_cur_pe->path;
+    if (st_h->client_ctx->payload)
+    {
+        st_h->reader.lsqr_read = test_reader_read;
+        st_h->reader.lsqr_size = test_reader_size;
+        st_h->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->client_ctx->payload);
+        if (!st_h->reader.lsqr_ctx)
+            exit(1);
+    }
+    else
+        st_h->reader.lsqr_ctx = NULL;
     LSQ_INFO("created new stream, path: %s", st_h->path);
     lsquic_stream_wantwrite(stream, 1);
 
@@ -232,19 +243,33 @@ send_headers (lsquic_stream_ctx_t *st_h)
 static void
 http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    ssize_t nw;
+
     if (st_h->sh_flags & HEADERS_SENT)
     {
-        if (st_h->client_ctx->payload)
+        if (st_h->client_ctx->payload && test_reader_size(st_h->reader.lsqr_ctx) > 0)
         {
-            if (0 != lsquic_stream_write_file(stream, st_h->client_ctx->payload))
+            nw = lsquic_stream_writef(stream, &st_h->reader);
+            if (nw < 0)
             {
-                LSQ_ERROR("cannot queue file %s for writing: %s",
-                    st_h->client_ctx->payload, strerror(errno));
+                LSQ_ERROR("write error: %s", strerror(errno));
                 exit(1);
             }
+            if (test_reader_size(st_h->reader.lsqr_ctx) > 0)
+            {
+                lsquic_stream_wantwrite(stream, 1);
+            }
+            else
+            {
+                lsquic_stream_shutdown(stream, 1);
+                lsquic_stream_wantread(stream, 1);
+            }
         }
-        lsquic_stream_shutdown(stream, 1);
-        lsquic_stream_wantread(stream, 1);
+        else
+        {
+            lsquic_stream_shutdown(stream, 1);
+            lsquic_stream_wantread(stream, 1);
+        }
     }
     else
     {
@@ -327,6 +352,8 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     }
     else
         lsquic_conn_make_stream(conn);
+    if (st_h->reader.lsqr_ctx)
+        destroy_lsquic_reader_ctx(st_h->reader.lsqr_ctx);
     free(st_h);
 }
 

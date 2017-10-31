@@ -117,4 +117,7 @@ lsquic_frame_reader_read (struct lsquic_frame_reader *);
 void
 lsquic_frame_reader_destroy (struct lsquic_frame_reader *);
 
+size_t
+lsquic_frame_reader_mem_used (const struct lsquic_frame_reader *);
+
 #endif

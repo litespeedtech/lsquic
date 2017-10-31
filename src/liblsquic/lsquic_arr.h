@@ -61,4 +61,7 @@ struct lsquic_arr
 int
 lsquic_arr_push (struct lsquic_arr *, uintptr_t);
 
+size_t
+lsquic_arr_mem_used (const struct lsquic_arr *);
+
 #endif

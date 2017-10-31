@@ -16,7 +16,6 @@
 #include "../src/liblsquic/lsquic_logger.h"
 
 #include "test_config.h"
-#include "test_cert.h"
 #include "test_common.h"
 #include "prog.h"
 

@@ -75,4 +75,7 @@ lsquic_mm_get_16k (struct lsquic_mm *);
 void
 lsquic_mm_put_16k (struct lsquic_mm *, void *);
 
+size_t
+lsquic_mm_mem_used (const struct lsquic_mm *mm);
+
 #endif

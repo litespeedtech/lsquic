@@ -24,10 +24,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <stddef.h>
 
 #include "lsquic.h"
@@ -61,42 +57,7 @@
 #define LSQUIC_LOG_STREAM_ID stream->id
 #include "lsquic_logger.h"
 
-enum sbt_type {
-    SBT_BUF,
-    SBT_FILE,
-};
-
-struct stream_buf_tosend
-{
-    TAILQ_ENTRY(stream_buf_tosend)  next_sbt;
-    enum sbt_type                   sbt_type;
-    /* On 64-bit platform, here is a four-byte hole */
-    union {
-        struct {
-            size_t                  sbt_sz;
-            size_t                  sbt_off;
-            unsigned char           sbt_data[
-                0x1000 - sizeof(enum sbt_type) - sizeof(long) + 4 - sizeof(size_t) * 2
-                                - sizeof(TAILQ_ENTRY(stream_buf_tosend))
-            ];
-        }                           buf;
-        struct {
-            struct lsquic_stream   *sbt_stream;
-            off_t                   sbt_sz;
-            off_t                   sbt_off;
-            int                     sbt_fd;
-            signed char             sbt_last;
-        }                           file;
-    }                               u;
-};
-
-typedef char _sbt_is_4K[(sizeof(struct stream_buf_tosend) == 0x1000) - 1];
-
-static size_t
-sum_sbts (const lsquic_stream_t *stream);
-
-static void
-drop_sbts (lsquic_stream_t *stream);
+#define SM_BUF_SIZE QUIC_MAX_PACKET_SZ
 
 static void
 drop_frames_in (lsquic_stream_t *stream);
@@ -104,35 +65,26 @@ drop_frames_in (lsquic_stream_t *stream);
 static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
 
-static void
-stream_file_on_write (lsquic_stream_t *, struct lsquic_stream_ctx *);
-
-static void
-stream_flush_on_write (lsquic_stream_t *, struct lsquic_stream_ctx *);
-
 static int
 stream_wantread (lsquic_stream_t *stream, int is_want);
 
 static int
 stream_wantwrite (lsquic_stream_t *stream, int is_want);
 
-static void
-stop_reading_from_file (lsquic_stream_t *stream);
-
 static int
 stream_readable (const lsquic_stream_t *stream);
 
+static ssize_t
+stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t);
+
+static ssize_t
+save_to_buffer (lsquic_stream_t *, struct lsquic_reader *, size_t len);
+
 static int
-stream_writeable (const lsquic_stream_t *stream);
+stream_flush (lsquic_stream_t *stream);
 
-static size_t
-stream_flush_internal (lsquic_stream_t *stream, size_t size);
-
-static void
-incr_tosend_sz (lsquic_stream_t *stream, uint64_t incr);
-
-static void
-maybe_put_on_sending_streams (lsquic_stream_t *stream);
+static int
+stream_flush_nocheck (lsquic_stream_t *stream);
 
 
 #if LSQUIC_KEEP_STREAM_HISTORY
@@ -210,13 +162,19 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
 #endif
 
 
+static int
+stream_inside_callback (const lsquic_stream_t *stream)
+{
+    return stream->conn_pub->enpub->enp_flags & ENPUB_PROC;
+}
+
+
 /* Here, "readable" means that the user is able to read from the stream. */
 static void
 maybe_conn_to_pendrw_if_readable (lsquic_stream_t *stream,
                                                         enum rw_reason reason)
 {
-    if (!(stream->conn_pub->enpub->enp_flags & ENPUB_PROC) &&
-                                                stream_readable(stream))
+    if (!stream_inside_callback(stream) && stream_readable(stream))
     {
         lsquic_engine_add_conn_to_pend_rw(stream->conn_pub->enpub,
                                             stream->conn_pub->lconn, reason);
@@ -231,7 +189,7 @@ static void
 maybe_conn_to_pendrw_if_writeable (lsquic_stream_t *stream,
                                                         enum rw_reason reason)
 {
-    if (!(stream->conn_pub->enpub->enp_flags & ENPUB_PROC) &&
+    if (!stream_inside_callback(stream) &&
             lsquic_send_ctl_can_send(stream->conn_pub->send_ctl) &&
           ! lsquic_send_ctl_have_delayed_packets(stream->conn_pub->send_ctl))
     {
@@ -244,37 +202,10 @@ maybe_conn_to_pendrw_if_writeable (lsquic_stream_t *stream,
 static int
 stream_stalled (const lsquic_stream_t *stream)
 {
-    return 0 == (stream->stream_flags & STREAM_RW_EVENT_FLAGS) &&
+    return 0 == (stream->stream_flags & (STREAM_WANT_WRITE|STREAM_WANT_READ)) &&
            ((STREAM_U_READ_DONE|STREAM_U_WRITE_DONE) & stream->stream_flags)
                                     != (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE);
 }
-
-
-static void
-use_user_on_write (lsquic_stream_t *stream)
-{
-    LSQ_DEBUG("stream %u: use user-supplied on-write callback", stream->id);
-    stream->on_write_cb  = stream->stream_if->on_write;
-}
-
-
-static void
-use_internal_on_write_file (lsquic_stream_t *stream)
-{
-    LSQ_DEBUG("use internal on-write callback (file)");
-    stream->on_write_cb  = stream_file_on_write;
-}
-
-
-static void
-use_internal_on_write_flush (lsquic_stream_t *stream)
-{
-    LSQ_DEBUG("use internal on-write callback (flush)");
-    stream->on_write_cb  = stream_flush_on_write;
-}
-
-
-#define writing_file(stream) ((stream)->file_fd >= 0)
 
 
 /* TODO: The logic to figure out whether the stream is connection limited
@@ -297,8 +228,8 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
 
     stream->stream_if = stream_if;
     stream->id        = id;
-    stream->file_fd   = -1;
     stream->conn_pub  = conn_pub;
+    stream->sm_onnew_arg = stream_if_ctx;
     if (!initial_window)
         initial_window = 16 * 1024;
     if (LSQUIC_STREAM_HANDSHAKE == id ||
@@ -316,7 +247,6 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
     if (!initial_send_off)
         initial_send_off = 16 * 1024;
     stream->max_send_off = initial_send_off;
-    TAILQ_INIT(&stream->bufs_tosend);
     if (ctor_flags & SCF_USE_DI_HASH)
         stream->data_in = data_in_hash_new(conn_pub, id, 0);
     else
@@ -326,16 +256,15 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
     if (ctor_flags & SCF_DI_AUTOSWITCH)
         stream->stream_flags |= STREAM_AUTOSWITCH;
     if (ctor_flags & SCF_CALL_ON_NEW)
-        lsquic_stream_call_on_new(stream, stream_if_ctx);
+        lsquic_stream_call_on_new(stream);
     if (ctor_flags & SCF_DISP_RW_ONCE)
         stream->stream_flags |= STREAM_RW_ONCE;
-    use_user_on_write(stream);
     return stream;
 }
 
 
 void
-lsquic_stream_call_on_new (lsquic_stream_t *stream, void *stream_if_ctx)
+lsquic_stream_call_on_new (lsquic_stream_t *stream)
 {
     assert(!(stream->stream_flags & STREAM_ONNEW_DONE));
     if (!(stream->stream_flags & STREAM_ONNEW_DONE))
@@ -343,33 +272,55 @@ lsquic_stream_call_on_new (lsquic_stream_t *stream, void *stream_if_ctx)
         LSQ_DEBUG("calling on_new_stream");
         SM_HISTORY_APPEND(stream, SHE_ONNEW);
         stream->stream_flags |= STREAM_ONNEW_DONE;
-        stream->st_ctx = stream->stream_if->on_new_stream(stream_if_ctx, stream);
+        stream->st_ctx = stream->stream_if->on_new_stream(stream->sm_onnew_arg,
+                                                          stream);
     }
+}
+
+
+static void
+decr_conn_cap (struct lsquic_stream *stream, size_t incr)
+{
+    if (stream->stream_flags & STREAM_CONN_LIMITED)
+    {
+        assert(stream->conn_pub->conn_cap.cc_sent >= incr);
+        stream->conn_pub->conn_cap.cc_sent -= incr;
+    }
+}
+
+
+static void
+drop_buffered_data (struct lsquic_stream *stream)
+{
+    decr_conn_cap(stream, stream->sm_n_buffered);
+    stream->sm_n_buffered = 0;
 }
 
 
 void
 lsquic_stream_destroy (lsquic_stream_t *stream)
 {
+    stream->stream_flags |= STREAM_U_WRITE_DONE|STREAM_U_READ_DONE;
     if ((stream->stream_flags & (STREAM_ONNEW_DONE|STREAM_ONCLOSE_DONE)) ==
                                                             STREAM_ONNEW_DONE)
     {
         stream->stream_flags |= STREAM_ONCLOSE_DONE;
         stream->stream_if->on_close(stream, stream->st_ctx);
     }
-    if (stream->file_fd >= 0)
-        (void) close(stream->file_fd);
     if (stream->stream_flags & STREAM_SENDING_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
-    if (stream->stream_flags & STREAM_RW_EVENT_FLAGS)
-        TAILQ_REMOVE(&stream->conn_pub->rw_streams, stream, next_rw_stream);
+    if (stream->stream_flags & STREAM_WANT_READ)
+        TAILQ_REMOVE(&stream->conn_pub->read_streams, stream, next_read_stream);
+    if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
+        TAILQ_REMOVE(&stream->conn_pub->write_streams, stream, next_write_stream);
     if (stream->stream_flags & STREAM_SERVICE_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->service_streams, stream, next_service_stream);
+    drop_buffered_data(stream);
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
-    drop_sbts(stream);
     free(stream->push_req);
     free(stream->uh);
+    free(stream->sm_buf);
     LSQ_DEBUG("destroyed stream %u", stream->id);
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);
@@ -387,7 +338,7 @@ stream_is_finished (const lsquic_stream_t *stream)
            /* This checks that no packets that reference this stream will
             * become outstanding:
             */
-        && 0 == (stream->stream_flags & (STREAM_SEND_DATA|STREAM_SEND_RST))
+        && 0 == (stream->stream_flags & STREAM_SEND_RST)
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
           || (((stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
                 || lsquic_stream_is_pushed(stream))
@@ -474,55 +425,21 @@ stream_readable (const lsquic_stream_t *stream)
 }
 
 
-size_t
-lsquic_stream_write_avail (const lsquic_stream_t *stream)
+static size_t
+stream_write_avail (const struct lsquic_stream *stream)
 {
     uint64_t stream_avail, conn_avail;
-    size_t unflushed_sum;
 
-    assert(stream->tosend_off + stream->tosend_sz <= stream->max_send_off);
     stream_avail = stream->max_send_off - stream->tosend_off
-                                                - stream->tosend_sz;
-    if (0 == stream->tosend_sz)
-    {
-        unflushed_sum = sum_sbts(stream);
-        if (unflushed_sum > stream_avail)
-            stream_avail = 0;
-        else
-            stream_avail -= unflushed_sum;
-    }
-
+                                                - stream->sm_n_buffered;
     if (stream->stream_flags & STREAM_CONN_LIMITED)
     {
         conn_avail = lsquic_conn_cap_avail(&stream->conn_pub->conn_cap);
         if (conn_avail < stream_avail)
-        {
-            LSQ_DEBUG("stream %u write buffer is limited by connection: "
-                "%"PRIu64, stream->id, conn_avail);
             return conn_avail;
-        }
     }
 
-    LSQ_DEBUG("stream %u write buffer is limited by stream: %"PRIu64,
-        stream->id, stream_avail);
     return stream_avail;
-}
-
-
-static int
-stream_writeable (const lsquic_stream_t *stream)
-{
-    /* A stream is writeable if one of the following is true: */
-    return
-        /* - The stream is reset, by either side.  In this case,
-         *   lsquic_stream_write() will return -1 (we want the user to be
-         *   able to collect the error).
-         */
-            (stream->stream_flags & STREAM_RST_FLAGS)
-        /* - There is room to write to the stream.
-         */
-        ||  lsquic_stream_write_avail(stream) > 0
-    ;
 }
 
 
@@ -625,6 +542,19 @@ drop_frames_in (lsquic_stream_t *stream)
 }
 
 
+static void
+maybe_elide_stream_frames (struct lsquic_stream *stream)
+{
+    if (!(stream->stream_flags & STREAM_FRAMES_ELIDED))
+    {
+        if (stream->n_unacked)
+            lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
+                                                stream->id);
+        stream->stream_flags |= STREAM_FRAMES_ELIDED;
+    }
+}
+
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
                       uint32_t error_code)
@@ -673,6 +603,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
+    maybe_elide_stream_frames(stream);
 
     if (!(stream->stream_flags &
                         (STREAM_SEND_RST|STREAM_RST_SENT|STREAM_FIN_SENT)))
@@ -882,23 +813,6 @@ lsquic_stream_read (lsquic_stream_t *stream, void *buf, size_t len)
 }
 
 
-#ifndef NDEBUG
-/* Use weak linkage so that tests can override this function */
-int
-lsquic_stream_tosend_fin (const lsquic_stream_t *stream)
-    __attribute__((weak))
-    ;
-#endif
-int
-lsquic_stream_tosend_fin (const lsquic_stream_t *stream)
-{
-    return (stream->stream_flags & STREAM_U_WRITE_DONE)
-        && !writing_file(stream)
-        && 0 == stream->tosend_sz
-        && 0 == sum_sbts(stream);
-}
-
-
 static void
 stream_shutdown_read (lsquic_stream_t *stream)
 {
@@ -915,37 +829,36 @@ stream_shutdown_read (lsquic_stream_t *stream)
 static void
 stream_shutdown_write (lsquic_stream_t *stream)
 {
-    int flushed_all, data_send_ok;
-
     if (stream->stream_flags & STREAM_U_WRITE_DONE)
         return;
 
     SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_WRITE);
     stream->stream_flags |= STREAM_U_WRITE_DONE;
+    stream_wantwrite(stream, 0);
 
-    data_send_ok = !(stream->stream_flags &
-                    (STREAM_FIN_SENT|STREAM_SEND_RST|STREAM_RST_SENT));
-    if (!data_send_ok)
+    /* Don't bother to check whether there is anything else to write if
+     * the flags indicate that nothing else should be written.
+     */
+    if (!(stream->stream_flags &
+                    (STREAM_FIN_SENT|STREAM_SEND_RST|STREAM_RST_SENT)))
     {
-        stream_wantwrite(stream, 0);
-        return;
-    }
-
-    lsquic_stream_flush(stream);
-    flushed_all = stream->tosend_sz == sum_sbts(stream);
-    if (flushed_all)
-        stream_wantwrite(stream, 0);
-    else
-    {
-        stream_wantwrite(stream, 1);
-        use_internal_on_write_flush(stream);
-    }
-
-    if (flushed_all || stream->tosend_sz > 0)
-    {
-        if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
-            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream, next_send_stream);
-        stream->stream_flags |= STREAM_SEND_DATA;
+        if (stream->sm_n_buffered == 0)
+        {
+            if (0 == lsquic_send_ctl_turn_on_fin(stream->conn_pub->send_ctl,
+                                                 stream))
+            {
+                LSQ_DEBUG("turned on FIN flag in the yet-unsent STREAM frame");
+                stream->stream_flags |= STREAM_FIN_SENT;
+            }
+            else
+            {
+                LSQ_DEBUG("have to create a separate STREAM frame with FIN "
+                          "flag in it");
+                (void) stream_flush_nocheck(stream);
+            }
+        }
+        else
+            (void) stream_flush_nocheck(stream);
     }
 }
 
@@ -1013,9 +926,6 @@ fake_reset_unused_stream (lsquic_stream_t *stream)
                                                 next_send_stream);
     stream->stream_flags &= ~STREAM_SENDING_FLAGS;
 
-    if (writing_file(stream))
-        stop_reading_from_file(stream);
-
     LSQ_DEBUG("fake-reset stream %u%s",
                     stream->id, stream_stalled(stream) ? " (stalled)" : "");
     maybe_finish_stream(stream);
@@ -1058,39 +968,76 @@ lsquic_stream_read_offset (const lsquic_stream_t *stream)
 
 
 static int
-stream_want_read_or_write (lsquic_stream_t *stream, int is_want, int flag)
+stream_wantread (lsquic_stream_t *stream, int is_want)
 {
-    const int old_val = !!(stream->stream_flags & flag);
-    if (old_val != is_want)
+    const int old_val = !!(stream->stream_flags & STREAM_WANT_READ);
+    const int new_val = !!is_want;
+    if (old_val != new_val)
     {
-        if (is_want)
+        if (new_val)
         {
-            if (!(stream->stream_flags & STREAM_RW_EVENT_FLAGS))
-                TAILQ_INSERT_TAIL(&stream->conn_pub->rw_streams, stream, next_rw_stream);
-            stream->stream_flags |= flag;
+            if (!old_val)
+                TAILQ_INSERT_TAIL(&stream->conn_pub->read_streams, stream,
+                                                            next_read_stream);
+            stream->stream_flags |= STREAM_WANT_READ;
         }
         else
         {
-            stream->stream_flags &= ~flag;
-            if (!(stream->stream_flags & STREAM_RW_EVENT_FLAGS))
-                TAILQ_REMOVE(&stream->conn_pub->rw_streams, stream, next_rw_stream);
+            stream->stream_flags &= ~STREAM_WANT_READ;
+            if (old_val)
+                TAILQ_REMOVE(&stream->conn_pub->read_streams, stream,
+                                                            next_read_stream);
         }
     }
     return old_val;
 }
 
 
-static int
-stream_wantread (lsquic_stream_t *stream, int is_want)
+static void
+maybe_put_onto_write_q (lsquic_stream_t *stream, enum stream_flags flag)
 {
-    return stream_want_read_or_write(stream, is_want, STREAM_WANT_READ);
+    assert(STREAM_WRITE_Q_FLAGS & flag);
+    if (!(stream->stream_flags & STREAM_WRITE_Q_FLAGS))
+        TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
+                                                        next_write_stream);
+    stream->stream_flags |= flag;
+}
+
+
+static void
+maybe_remove_from_write_q (lsquic_stream_t *stream, enum stream_flags flag)
+{
+    assert(STREAM_WRITE_Q_FLAGS & flag);
+    if (stream->stream_flags & flag)
+    {
+        stream->stream_flags &= ~flag;
+        if (!(stream->stream_flags & STREAM_WRITE_Q_FLAGS))
+            TAILQ_REMOVE(&stream->conn_pub->write_streams, stream,
+                                                        next_write_stream);
+    }
+}
+
+
+static int
+stream_wantwrite (lsquic_stream_t *stream, int is_want)
+{
+    const int old_val = !!(stream->stream_flags & STREAM_WANT_WRITE);
+    const int new_val = !!is_want;
+    if (old_val != new_val)
+    {
+        if (new_val)
+            maybe_put_onto_write_q(stream, STREAM_WANT_WRITE);
+        else
+            maybe_remove_from_write_q(stream, STREAM_WANT_WRITE);
+    }
+    return old_val;
 }
 
 
 int
 lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
 {
-    if (0 == (stream->stream_flags & STREAM_U_READ_DONE))
+    if (!(stream->stream_flags & STREAM_U_READ_DONE))
     {
         if (is_want)
             maybe_conn_to_pendrw_if_readable(stream, RW_REASON_WANTREAD);
@@ -1104,27 +1051,11 @@ lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
 }
 
 
-static int
-stream_wantwrite (lsquic_stream_t *stream, int is_want)
-{
-    if (writing_file(stream))
-    {
-        int old_val = stream->stream_flags & STREAM_SAVED_WANTWR;
-        stream->stream_flags |= old_val & (0 - !!is_want);
-        return !!old_val;
-    }
-    else
-        return stream_want_read_or_write(stream, is_want, STREAM_WANT_WRITE);
-}
-
-
 int
 lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 {
     if (0 == (stream->stream_flags & STREAM_U_WRITE_DONE))
-    {
         return stream_wantwrite(stream, is_want);
-    }
     else
     {
         errno = EBADF;
@@ -1133,49 +1064,18 @@ lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 }
 
 
-static void
-stream_flush_on_write (lsquic_stream_t *stream,
-                                    struct lsquic_stream_ctx *stream_ctx)
-{
-    size_t sum, n_flushed;
-
-    assert(stream->stream_flags & STREAM_U_WRITE_DONE);
-
-    sum = sum_sbts(stream) - stream->tosend_sz;
-    if (sum == 0)
-    {   /* This can occur if the stream has been written to and closed by
-         * the user, but a RST_STREAM comes in that drops all data.
-         */
-        LSQ_DEBUG("%s: no more data to send", __func__);
-        stream_wantwrite(stream, 0);
-        return;
-    }
-
-    n_flushed = stream_flush_internal(stream, sum);
-    if (n_flushed == sum)
-    {
-        LSQ_DEBUG("Flushed all remaining data (%zd bytes)", n_flushed);
-        stream_wantwrite(stream, 0);
-    }
-    else
-        LSQ_DEBUG("Flushed %zd out of %zd remaining data", n_flushed, sum);
-}
-
-
 #define USER_PROGRESS_FLAGS (STREAM_WANT_READ|STREAM_WANT_WRITE|            \
-                    STREAM_U_WRITE_DONE|STREAM_U_READ_DONE|STREAM_SEND_RST)
+    STREAM_WANT_FLUSH|STREAM_U_WRITE_DONE|STREAM_U_READ_DONE|STREAM_SEND_RST)
 
 
 static void
-stream_dispatch_rw_events_loop (lsquic_stream_t *stream, int *processed)
+stream_dispatch_read_events_loop (lsquic_stream_t *stream)
 {
     unsigned no_progress_count, no_progress_limit;
     enum stream_flags flags;
     uint64_t size;
-    size_t sbt_size;
 
     no_progress_limit = stream->conn_pub->enpub->enp_settings.es_progress_check;
-    *processed = 0;
 
     no_progress_count = 0;
     while ((stream->stream_flags & STREAM_WANT_READ) && stream_readable(stream))
@@ -1184,7 +1084,6 @@ stream_dispatch_rw_events_loop (lsquic_stream_t *stream, int *processed)
         size  = stream->read_offset;
 
         stream->stream_if->on_read(stream, stream->st_ctx);
-        *processed = 1;
 
         if (no_progress_limit && size == stream->read_offset &&
                         flags == (stream->stream_flags & USER_PROGRESS_FLAGS))
@@ -1202,22 +1101,29 @@ stream_dispatch_rw_events_loop (lsquic_stream_t *stream, int *processed)
         else
             no_progress_count = 0;
     }
+}
+
+
+static void
+stream_dispatch_write_events_loop (lsquic_stream_t *stream)
+{
+    unsigned no_progress_count, no_progress_limit;
+    enum stream_flags flags;
+
+    no_progress_limit = stream->conn_pub->enpub->enp_settings.es_progress_check;
 
     no_progress_count = 0;
-    while ((stream->stream_flags & STREAM_WANT_WRITE) && stream_writeable(stream))
+    stream->stream_flags |= STREAM_LAST_WRITE_OK;
+    while ((stream->stream_flags & (STREAM_WANT_WRITE|STREAM_LAST_WRITE_OK))
+                                == (STREAM_WANT_WRITE|STREAM_LAST_WRITE_OK)
+           && stream_write_avail(stream))
     {
         flags = stream->stream_flags & USER_PROGRESS_FLAGS;
-        size  = stream->tosend_sz;
-        if (0 == size)
-            sbt_size = sum_sbts(stream);
 
-        stream->on_write_cb(stream, stream->st_ctx);
-        *processed = 1;
+        stream->stream_if->on_write(stream, stream->st_ctx);
 
         if (no_progress_limit &&
-            flags == (stream->stream_flags & USER_PROGRESS_FLAGS) &&
-            (0 == size ? sbt_size == sum_sbts(stream) :
-                                                size == stream->tosend_sz))
+            flags == (stream->stream_flags & USER_PROGRESS_FLAGS))
         {
             ++no_progress_count;
             if (no_progress_count >= no_progress_limit)
@@ -1236,20 +1142,11 @@ stream_dispatch_rw_events_loop (lsquic_stream_t *stream, int *processed)
 
 
 static void
-stream_dispatch_rw_events_once (lsquic_stream_t *stream, int *processed)
+stream_dispatch_read_events_once (lsquic_stream_t *stream)
 {
-    *processed = 0;
-
     if ((stream->stream_flags & STREAM_WANT_READ) && stream_readable(stream))
     {
         stream->stream_if->on_read(stream, stream->st_ctx);
-        *processed = 1;
-    }
-
-    if ((stream->stream_flags & STREAM_WANT_WRITE) && stream_writeable(stream))
-    {
-        stream->on_write_cb(stream, stream->st_ctx);
-        *processed = 1;
     }
 }
 
@@ -1257,371 +1154,169 @@ stream_dispatch_rw_events_once (lsquic_stream_t *stream, int *processed)
 static void
 maybe_mark_as_blocked (lsquic_stream_t *stream)
 {
-    uint64_t off, stream_data_sz;
+    struct lsquic_conn_cap *cc;
 
-    if (stream->tosend_sz)
-        stream_data_sz = stream->tosend_sz;
-    else
-        stream_data_sz = sum_sbts(stream);
-
-    off = stream->tosend_off + stream_data_sz;
-    if (off >= stream->max_send_off)
+    if (stream->max_send_off == stream->tosend_off + stream->sm_n_buffered)
     {
-        assert(off == stream->max_send_off);
         if (stream->blocked_off < stream->max_send_off)
         {
-            stream->blocked_off = stream->max_send_off;
+            stream->blocked_off = stream->max_send_off + stream->sm_n_buffered;
             if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
                 TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                             next_send_stream);
             stream->stream_flags |= STREAM_SEND_BLOCKED;
             LSQ_DEBUG("marked stream-blocked at stream offset "
                                             "%"PRIu64, stream->blocked_off);
-            return;
         }
+        else
+            LSQ_DEBUG("stream is blocked, but BLOCKED frame for offset %"PRIu64
+                " has been, or is about to be, sent", stream->blocked_off);
     }
 
-    if (stream->stream_flags & STREAM_CONN_LIMITED)
+    if ((stream->stream_flags & STREAM_CONN_LIMITED)
+        && (cc = &stream->conn_pub->conn_cap,
+                stream->sm_n_buffered == lsquic_conn_cap_avail(cc)))
     {
-        struct lsquic_conn_cap *const cc = &stream->conn_pub->conn_cap;
-        off = cc->cc_sent + cc->cc_tosend;
-        if (off >= cc->cc_max)
+        if (cc->cc_blocked < cc->cc_max)
         {
-            assert(off == cc->cc_max);
-            if (cc->cc_blocked < cc->cc_max)
-            {
-                cc->cc_blocked = cc->cc_max;
-                stream->conn_pub->lconn->cn_flags |= LSCONN_SEND_BLOCKED;
-                LSQ_DEBUG("marked connection-blocked at connection offset "
-                                                        "%"PRIu64, cc->cc_max);
-            }
+            cc->cc_blocked = cc->cc_max;
+            stream->conn_pub->lconn->cn_flags |= LSCONN_SEND_BLOCKED;
+            LSQ_DEBUG("marked connection-blocked at connection offset "
+                                                    "%"PRIu64, cc->cc_max);
         }
+        else
+            LSQ_DEBUG("stream has already been marked connection-blocked "
+                "at offset %"PRIu64, cc->cc_blocked);
     }
 }
+
 
 void
-lsquic_stream_dispatch_rw_events (lsquic_stream_t *stream)
+lsquic_stream_dispatch_read_events (lsquic_stream_t *stream)
 {
-    int processed;
-    uint64_t tosend_off;
-
-    assert(stream->stream_flags & STREAM_RW_EVENT_FLAGS);
-    tosend_off = stream->tosend_off;
+    assert(stream->stream_flags & STREAM_WANT_READ);
 
     if (stream->stream_flags & STREAM_RW_ONCE)
-        stream_dispatch_rw_events_once(stream, &processed);
+        stream_dispatch_read_events_once(stream);
     else
-        stream_dispatch_rw_events_loop(stream, &processed);
+        stream_dispatch_read_events_loop(stream);
+}
 
-    /* User wants to write, but no progress has been made: either stream
-     * or connection is blocked.
-     */
-    if ((stream->stream_flags & STREAM_WANT_WRITE) &&
+
+void
+lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
+{
+    int progress;
+    uint64_t tosend_off;
+    unsigned short n_buffered;
+    enum stream_flags flags;
+
+    assert(stream->stream_flags & STREAM_WRITE_Q_FLAGS);
+    flags = stream->stream_flags & STREAM_WRITE_Q_FLAGS;
+    tosend_off = stream->tosend_off;
+    n_buffered = stream->sm_n_buffered;
+
+    if (stream->stream_flags & STREAM_WANT_FLUSH)
+        (void) stream_flush(stream);
+
+    if (stream->stream_flags & STREAM_RW_ONCE)
+    {
+        if ((stream->stream_flags & STREAM_WANT_WRITE)
+            && stream_write_avail(stream))
+        {
+            stream->stream_if->on_write(stream, stream->st_ctx);
+        }
+    }
+    else
+        stream_dispatch_write_events_loop(stream);
+
+    /* Progress means either flags or offsets changed: */
+    progress = !((stream->stream_flags & STREAM_WRITE_Q_FLAGS) == flags &&
                         stream->tosend_off == tosend_off &&
-                            (stream->tosend_sz == 0 && sum_sbts(stream) == 0))
-        maybe_mark_as_blocked(stream);
+                            stream->sm_n_buffered == n_buffered);
 
-    if (stream->stream_flags & STREAM_RW_EVENT_FLAGS)
+    if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
     {
-        if (processed)
+        if (progress)
         {   /* Move the stream to the end of the list to ensure fairness. */
-            TAILQ_REMOVE(&stream->conn_pub->rw_streams, stream, next_rw_stream);
-            TAILQ_INSERT_TAIL(&stream->conn_pub->rw_streams, stream, next_rw_stream);
+            TAILQ_REMOVE(&stream->conn_pub->write_streams, stream,
+                                                            next_write_stream);
+            TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
+                                                            next_write_stream);
         }
     }
-    else if (((STREAM_U_READ_DONE|STREAM_U_WRITE_DONE) & stream->stream_flags)
-                                    != (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE))
-        LSQ_DEBUG("stream %u stalled", stream->id);
-}
-
-
-static struct stream_buf_tosend *
-get_sbt_buf (lsquic_stream_t *stream)
-{
-    struct stream_buf_tosend *sbt;
-
-    sbt = TAILQ_LAST(&stream->bufs_tosend, sbts_tailq);
-    if (!(sbt && SBT_BUF == sbt->sbt_type && (sizeof(sbt->u.buf.sbt_data) - sbt->u.buf.sbt_sz) > 0))
-    {
-        sbt = lsquic_mm_get_4k(stream->conn_pub->mm);
-        if (!sbt)
-            return NULL;
-        sbt->sbt_type = SBT_BUF;
-        sbt->u.buf.sbt_sz  = 0;
-        sbt->u.buf.sbt_off = 0;
-        TAILQ_INSERT_TAIL(&stream->bufs_tosend, sbt, next_sbt);
-    }
-
-    return sbt;
 }
 
 
 static size_t
-sbt_write (struct stream_buf_tosend *sbt, const void *buf, size_t len)
+inner_reader_empty_size (void *ctx)
 {
-    assert(SBT_BUF == sbt->sbt_type);
-    size_t ntowrite = sizeof(sbt->u.buf.sbt_data) - sbt->u.buf.sbt_sz;
-    if (len < ntowrite)
-        ntowrite = len;
-    memcpy(sbt->u.buf.sbt_data + sbt->u.buf.sbt_sz, buf, ntowrite);
-    sbt->u.buf.sbt_sz += ntowrite;
-    return ntowrite;
-}
-
-static size_t
-sbt_read_buf (struct stream_buf_tosend *sbt, void *buf, size_t len)
-{
-    size_t navail = sbt->u.buf.sbt_sz - sbt->u.buf.sbt_off;
-    if (len > navail)
-        len = navail;
-    memcpy(buf, sbt->u.buf.sbt_data + sbt->u.buf.sbt_off, len);
-    sbt->u.buf.sbt_off += len;
-    return len;
-}
-
-
-static void
-incr_tosend_sz (lsquic_stream_t *stream, uint64_t incr)
-{
-    stream->tosend_sz                    += incr;
-    if (stream->stream_flags & STREAM_CONN_LIMITED)
-    {
-        assert(stream->conn_pub->conn_cap.cc_tosend +
-                stream->conn_pub->conn_cap.cc_sent + incr <=
-                    stream->conn_pub->conn_cap.cc_max);
-        stream->conn_pub->conn_cap.cc_tosend += incr;
-    }
-}
-
-
-static void
-decr_tosend_sz (lsquic_stream_t *stream, uint64_t decr)
-{
-    assert(decr <= stream->tosend_sz);
-    stream->tosend_sz                    -= decr;
-    if (stream->stream_flags & STREAM_CONN_LIMITED)
-    {
-        assert(decr <= stream->conn_pub->conn_cap.cc_tosend);
-        stream->conn_pub->conn_cap.cc_tosend -= decr;
-    }
-}
-
-
-static void
-sbt_truncated_file (struct stream_buf_tosend *sbt)
-{
-    off_t delta = sbt->u.file.sbt_sz - sbt->u.file.sbt_off;
-    decr_tosend_sz(sbt->u.file.sbt_stream, delta);
-    sbt->u.file.sbt_sz = sbt->u.file.sbt_off;
-    sbt->u.file.sbt_last = 1;
-}
-
-
-static void
-stop_reading_from_file (lsquic_stream_t *stream)
-{
-    assert(stream->file_fd >= 0);
-    if (stream->stream_flags & STREAM_CLOSE_FILE)
-        (void) close(stream->file_fd);
-    stream->file_fd = -1;
-    stream_wantwrite(stream, !!(stream->stream_flags & STREAM_SAVED_WANTWR));
-    use_user_on_write(stream);
+    return 0;
 }
 
 
 static size_t
-sbt_read_file (struct stream_buf_tosend *sbt, void *pbuf, size_t len)
+inner_reader_empty_read (void *ctx, void *buf, size_t count)
 {
-    const lsquic_stream_t *const stream = sbt->u.file.sbt_stream;
-    size_t navail;
-    ssize_t nread;
-    unsigned char *buf = pbuf;
-
-    navail = sbt->u.file.sbt_sz - sbt->u.file.sbt_off;
-    if (len > navail)
-        len = navail;
-
-    assert(len > 0);
-
-    *buf++ = sbt->u.file.sbt_stream->file_byte;
-    sbt->u.file.sbt_off += 1;
-    len -= 1;
-
-    while (len > 0)
-    {
-        nread = read(sbt->u.file.sbt_fd, buf, len);
-        if (-1 == nread)
-        {
-            LSQ_WARN("error reading: %s", strerror(errno));
-            LSQ_WARN("could only send %jd bytes instead of intended %jd",
-                (intmax_t) sbt->u.file.sbt_off,
-                (intmax_t) sbt->u.file.sbt_sz);
-            sbt_truncated_file(sbt);
-            break;
-        }
-        else if (0 == nread)
-        {
-            LSQ_WARN("could only send %jd bytes instead of intended %jd",
-                (intmax_t) sbt->u.file.sbt_off,
-                (intmax_t) sbt->u.file.sbt_sz);
-            sbt_truncated_file(sbt);
-            break;
-        }
-        buf += nread;
-        len -= nread;
-        sbt->u.file.sbt_off += nread;
-    }
-
-    len = buf - (unsigned char *) pbuf;
-
-    if (sbt->u.file.sbt_off < sbt->u.file.sbt_sz || !sbt->u.file.sbt_last)
-    {
-        nread = read(sbt->u.file.sbt_fd, &sbt->u.file.sbt_stream->file_byte, 1);
-        if (-1 == nread)
-        {
-            LSQ_WARN("error reading: %s", strerror(errno));
-            LSQ_WARN("could only send %jd bytes instead of intended %jd",
-                (intmax_t) sbt->u.file.sbt_off,
-                (intmax_t) sbt->u.file.sbt_sz);
-            sbt_truncated_file(sbt);
-        }
-        else if (0 == nread)
-        {
-            LSQ_WARN("could only send %jd bytes instead of intended %jd",
-                (intmax_t) sbt->u.file.sbt_off,
-                (intmax_t) sbt->u.file.sbt_sz);
-            sbt_truncated_file(sbt);
-        }
-    }
-
-    if (sbt->u.file.sbt_last && sbt->u.file.sbt_off == sbt->u.file.sbt_sz)
-        stop_reading_from_file(sbt->u.file.sbt_stream);
-
-    return len;
-}
-
-
-static size_t
-sbt_read (struct stream_buf_tosend *sbt, void *buf, size_t len)
-{
-    switch (sbt->sbt_type)
-    {
-    case SBT_BUF:
-        return sbt_read_buf(sbt, buf, len);
-    default:
-        assert(SBT_FILE == sbt->sbt_type);
-        return sbt_read_file(sbt, buf, len);
-    }
+    return 0;
 }
 
 
 static int
-sbt_done (const struct stream_buf_tosend *sbt)
+stream_flush (lsquic_stream_t *stream)
 {
-    switch (sbt->sbt_type)
+    struct lsquic_reader empty_reader;
+    ssize_t nw;
+
+    assert(stream->stream_flags & STREAM_WANT_FLUSH);
+    assert(stream->sm_n_buffered > 0 ||
+        /* Flushing is also used to packetize standalone FIN: */
+        ((stream->stream_flags & (STREAM_U_WRITE_DONE|STREAM_FIN_SENT))
+                                                    == STREAM_U_WRITE_DONE));
+
+    empty_reader.lsqr_size = inner_reader_empty_size;
+    empty_reader.lsqr_read = inner_reader_empty_read;
+    empty_reader.lsqr_ctx  = NULL;  /* pro forma */
+    nw = stream_write_to_packets(stream, &empty_reader, 0);
+
+    if (nw >= 0)
     {
-    case SBT_BUF:
-        return sbt->u.buf.sbt_off == sbt->u.buf.sbt_sz;
-    default:
-        assert(SBT_FILE == sbt->sbt_type);
-        return sbt->u.file.sbt_off == sbt->u.file.sbt_sz;
+        assert(nw == 0);    /* Empty reader: must have read zero bytes */
+        return 0;
     }
+    else
+        return -1;
 }
 
 
-static void
-sbt_destroy (lsquic_stream_t *stream, struct stream_buf_tosend *sbt)
+static int
+stream_flush_nocheck (lsquic_stream_t *stream)
 {
-    switch (sbt->sbt_type)
-    {
-    case SBT_BUF:
-        lsquic_mm_put_4k(stream->conn_pub->mm, sbt);
-        break;
-    default:
-        assert(SBT_FILE == sbt->sbt_type);
-        free(sbt);
-    }
+    stream->sm_flush_to = stream->tosend_off + stream->sm_n_buffered;
+    maybe_put_onto_write_q(stream, STREAM_WANT_FLUSH);
+    LSQ_DEBUG("will flush up to offset %"PRIu64, stream->sm_flush_to);
+
+    return stream_flush(stream);
 }
 
 
-static size_t
-sbt_size (const struct stream_buf_tosend *sbt)
-{
-    switch (sbt->sbt_type)
-    {
-    case SBT_BUF:
-        return sbt->u.buf.sbt_sz - sbt->u.buf.sbt_off;
-    default:
-        return sbt->u.file.sbt_sz - sbt->u.file.sbt_off;
-    }
-}
-
-
-static size_t
-sum_sbts (const lsquic_stream_t *stream)
-{
-    size_t sum;
-    struct stream_buf_tosend *sbt;
-
-    sum = 0;
-    TAILQ_FOREACH(sbt, &stream->bufs_tosend, next_sbt)
-        sum += sbt_size(sbt);
-
-    return sum;
-}
-
-
-static void
-maybe_put_on_sending_streams (lsquic_stream_t *stream)
-{
-    if (lsquic_stream_tosend_sz(stream))
-    {
-        if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
-            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream, next_send_stream);
-        stream->stream_flags |= STREAM_SEND_DATA;
-    }
-}
-
-
-static size_t
-stream_flush_internal (lsquic_stream_t *stream, size_t size)
-{
-    uint64_t conn_avail;
-
-    assert(0 == stream->tosend_sz ||
-            (stream->stream_flags & STREAM_U_WRITE_DONE));
-    if (stream->stream_flags & STREAM_CONN_LIMITED)
-    {
-        conn_avail = lsquic_conn_cap_avail(&stream->conn_pub->conn_cap);
-        if (size > conn_avail)
-        {
-            LSQ_DEBUG("connection-limited: flushing only %"PRIu64
-                " out of %zd bytes", conn_avail, size);
-            size = conn_avail;
-        }
-    }
-    LSQ_DEBUG("flushed %zd bytes of stream %u", size, stream->id);
-    SM_HISTORY_APPEND(stream, SHE_FLUSH);
-    incr_tosend_sz(stream, size);
-    maybe_put_on_sending_streams(stream);
-    return size;
-}
-
-
-/* When stream->tosend_sz is zero and we have anything in SBT list, this
- * means that we have unflushed data.
- */
 int
 lsquic_stream_flush (lsquic_stream_t *stream)
 {
-    size_t sum;
-    if (0 == stream->tosend_sz && !TAILQ_EMPTY(&stream->bufs_tosend))
+    if (stream->stream_flags & STREAM_U_WRITE_DONE)
     {
-        sum = sum_sbts(stream);
-        if (stream_flush_internal(stream, sum) > 0)
-            maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_FLUSH);
+        LSQ_DEBUG("cannot flush closed stream");
+        errno = EBADF;
+        return -1;
     }
-    return 0;
+
+    if (0 == stream->sm_n_buffered)
+    {
+        LSQ_DEBUG("flushing 0 bytes: noop");
+        return 0;
+    }
+
+    return stream_flush_nocheck(stream);
 }
 
 
@@ -1632,149 +1327,22 @@ static size_t
 flush_threshold (const lsquic_stream_t *stream)
 {
     enum packet_out_flags flags;
+    enum lsquic_packno_bits bits;
     unsigned packet_header_sz, stream_header_sz;
     size_t threshold;
 
-    /* We are guessing the number of bytes that will be used to encode
-     * packet number, because we do not have this information at this
-     * point in time.
-     */
-    flags = PACKNO_LEN_2 << POBIT_SHIFT;
-    if (stream->conn_pub->lconn->cn_flags & LSCONN_TCID0)
+    bits = lsquic_send_ctl_packno_bits(stream->conn_pub->send_ctl);
+    flags = bits << POBIT_SHIFT;
+    if (!(stream->conn_pub->lconn->cn_flags & LSCONN_TCID0))
         flags |= PO_CONN_ID;
 
     packet_header_sz = lsquic_po_header_length(flags);
     stream_header_sz = stream->conn_pub->lconn->cn_pf
             ->pf_calc_stream_frame_header_sz(stream->id, stream->tosend_off);
 
-    threshold = stream->conn_pub->lconn->cn_pack_size - packet_header_sz
-                                                         - stream_header_sz;
+    threshold = stream->conn_pub->lconn->cn_pack_size - QUIC_PACKET_HASH_SZ
+              - packet_header_sz - stream_header_sz;
     return threshold;
-}
-
-
-static size_t
-flush_or_check_flags (lsquic_stream_t *stream, size_t sz)
-{
-    size_t sum;
-    if (0 == stream->tosend_sz)
-    {
-        sum = sum_sbts(stream);
-        if (sum >= flush_threshold(stream))
-            return stream_flush_internal(stream, sum);
-        else
-            return 0;
-    }
-    else
-    {
-        incr_tosend_sz(stream, sz);
-        maybe_put_on_sending_streams(stream);
-        return sz;
-    }
-}
-
-
-static void
-stream_file_on_write (lsquic_stream_t *stream, struct lsquic_stream_ctx *st_ctx)
-{
-    struct stream_buf_tosend *sbt;
-    ssize_t nr;
-    size_t size, left;
-    int last;
-
-    if (stream->stream_flags & STREAM_RST_FLAGS)
-    {
-        LSQ_INFO("stream was reset: stopping sending the file at offset %jd",
-                                                (intmax_t) stream->file_off);
-        stop_reading_from_file(stream);
-        return;
-    }
-
-    /* Write as much as we can */
-    size = lsquic_stream_write_avail(stream);
-    left = stream->file_size - stream->file_off;
-    if (left < size)
-        size = left;
-
-    if (0 == stream->file_off)
-    {
-        /* Try to read in 1 byte to check for truncation.  Having a byte in
-         * store guarantees that we can generate a frame even if the file is
-         * truncated later.  This function only does it once, when the first
-         * SBT is queued.  Subsequent SBT use the byte read in by previous
-         * SBT in sbt_read_file().
-         */
-        nr = read(stream->file_fd, &stream->file_byte, 1);
-        if (nr != 1)
-        {
-            if (nr < 0)
-                LSQ_WARN("cannot read from file: %s", strerror(errno));
-            LSQ_INFO("stopping sending the file at offset %jd",
-                                                (intmax_t) stream->file_off);
-            stop_reading_from_file(stream);
-            return;
-        }
-    }
-
-    last = stream->file_off + (off_t) size == stream->file_size;
-
-    sbt = malloc(offsetof(struct stream_buf_tosend, u.file.sbt_last) +
-                    sizeof(((struct stream_buf_tosend *)0)->u.file.sbt_last));
-    if (!sbt)
-    {
-        LSQ_WARN("malloc failed: %s", strerror(errno));
-        LSQ_INFO("stopping sending the file at offset %jd",
-                                                (intmax_t) stream->file_off);
-        stop_reading_from_file(stream);
-        return;
-    }
-
-    sbt->sbt_type          = SBT_FILE;
-    sbt->u.file.sbt_stream = stream;
-    sbt->u.file.sbt_fd     = stream->file_fd;
-    sbt->u.file.sbt_sz     = size;
-    sbt->u.file.sbt_off    = 0;
-    sbt->u.file.sbt_last   = last;
-    TAILQ_INSERT_TAIL(&stream->bufs_tosend, sbt, next_sbt);
-
-    LSQ_DEBUG("inserted %zd-byte sbt at offset %jd, last: %d", size,
-                                        (intmax_t) stream->file_off, last);
-
-    stream->file_off += size;
-
-    incr_tosend_sz(stream, size);
-    maybe_put_on_sending_streams(stream);
-
-    if (last)
-        stream_want_read_or_write(stream, 0, STREAM_WANT_WRITE);
-}
-
-
-static void
-stream_sendfile (lsquic_stream_t *stream, int fd, off_t off, size_t size,
-                 int close)
-{
-    int want_write;
-
-    /* STREAM_WANT_WRITE is not guaranteed to be set: the user may have
-     * already unset it.
-     */
-    want_write = !!(stream->stream_flags & STREAM_WANT_WRITE);
-    stream_wantwrite(stream, 1);
-
-    stream->file_fd   = fd;
-    stream->file_off  = off;
-    stream->file_size = size;
-
-    stream_wantwrite(stream, want_write);
-
-    if (close)
-        stream->stream_flags |= STREAM_CLOSE_FILE;
-    else
-        stream->stream_flags &= ~STREAM_CLOSE_FILE;
-
-    use_internal_on_write_file(stream);
-    stream->on_write_cb(stream, stream->st_ctx);
 }
 
 
@@ -1802,102 +1370,376 @@ stream_sendfile (lsquic_stream_t *stream, int fd, off_t off, size_t size,
 } while (0)
 
 
-int
-lsquic_stream_write_file (lsquic_stream_t *stream, const char *filename)
+struct frame_gen_ctx
 {
-    int fd, saved_errno;
-    struct stat st;
+    lsquic_stream_t      *fgc_stream;
+    struct lsquic_reader *fgc_reader;
+    /* We keep our own count of how many bytes were read from reader because
+     * some readers are external.  The external caller does not have to rely
+     * on our count, but it can.
+     */
+    size_t                fgc_nread_from_reader;
+};
 
-    COMMON_WRITE_CHECKS();
 
-    fd = open(filename, O_RDONLY);
-    if (fd < 0)
-    {
-        LSQ_WARN("could not open `%s' for reading: %s", filename, strerror(errno));
-        return -1;
-    }
+static size_t
+frame_gen_size (void *ctx)
+{
+    struct frame_gen_ctx *fg_ctx = ctx;
+    size_t available, remaining;
 
-    if (fstat(fd, &st) < 0)
-    {
-        LSQ_WARN("fstat64(%s) failed: %s", filename, strerror(errno));
-        saved_errno = errno;
-        (void) close(fd);
-        errno = saved_errno;
-        return -1;
-    }
+    /* Make sure we are not writing past available size: */
+    remaining = fg_ctx->fgc_reader->lsqr_size(fg_ctx->fgc_reader->lsqr_ctx);
+    available = stream_write_avail(fg_ctx->fgc_stream);
+    if (available < remaining)
+        remaining = available;
 
-    if (0 == st.st_size)
-    {
-        LSQ_INFO("Writing zero-sized file `%s' is a no-op", filename);
-        (void) close(fd);
-        return 0;
-    }
-
-    LSQ_DEBUG("Inserted `%s' into SBT queue; size: %jd", filename,
-                                                    (intmax_t) st.st_size);
-
-    SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
-    stream_sendfile(stream, fd, 0, st.st_size, 1);
-    maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_WRITEFILE);
-    return 0;
+    return remaining + fg_ctx->fgc_stream->sm_n_buffered;
 }
 
 
-int
-lsquic_stream_sendfile (lsquic_stream_t *stream, int fd, off_t off,
-                        size_t size)
+static int
+frame_gen_fin (void *ctx)
 {
-    COMMON_WRITE_CHECKS();
-    if ((off_t) -1 == lseek(fd, off, SEEK_SET))
+    struct frame_gen_ctx *fg_ctx = ctx;
+    return fg_ctx->fgc_stream->stream_flags & STREAM_U_WRITE_DONE
+        && 0 == fg_ctx->fgc_stream->sm_n_buffered
+        /* Do not use frame_gen_size() as it may chop the real size: */
+        && 0 == fg_ctx->fgc_reader->lsqr_size(fg_ctx->fgc_reader->lsqr_ctx);
+}
+
+
+static void
+incr_conn_cap (struct lsquic_stream *stream, size_t incr)
+{
+    if (stream->stream_flags & STREAM_CONN_LIMITED)
     {
-        LSQ_INFO("lseek failed: %s", strerror(errno));
-        return -1;
+        stream->conn_pub->conn_cap.cc_sent += incr;
+        assert(stream->conn_pub->conn_cap.cc_sent
+                                    <= stream->conn_pub->conn_cap.cc_max);
     }
-    SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
-    stream_sendfile(stream, fd, off, size, 0);
-    maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_SENDFILE);
-    return 0;
+}
+
+
+static size_t
+frame_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
+{
+    struct frame_gen_ctx *fg_ctx = ctx;
+    unsigned char *p = begin_buf;
+    unsigned char *const end = p + len;
+    lsquic_stream_t *const stream = fg_ctx->fgc_stream;
+    size_t n_written, available, n_to_write;
+
+    if (stream->sm_n_buffered > 0)
+    {
+        if (len <= stream->sm_n_buffered)
+        {
+            memcpy(p, stream->sm_buf, len);
+            memmove(stream->sm_buf, stream->sm_buf + len,
+                                                stream->sm_n_buffered - len);
+            stream->sm_n_buffered -= len;
+            stream->tosend_off += len;
+            *fin = frame_gen_fin(fg_ctx);
+            return len;
+        }
+        memcpy(p, stream->sm_buf, stream->sm_n_buffered);
+        p += stream->sm_n_buffered;
+        stream->sm_n_buffered = 0;
+    }
+
+    available = stream_write_avail(fg_ctx->fgc_stream);
+    n_to_write = end - p;
+    if (n_to_write > available)
+        n_to_write = available;
+    n_written = fg_ctx->fgc_reader->lsqr_read(fg_ctx->fgc_reader->lsqr_ctx, p,
+                                              n_to_write);
+    p += n_written;
+    fg_ctx->fgc_nread_from_reader += n_written;
+    *fin = frame_gen_fin(fg_ctx);
+    stream->tosend_off += p - (const unsigned char *) begin_buf;
+    incr_conn_cap(stream, n_written);
+    return p - (const unsigned char *) begin_buf;
+}
+
+
+static void
+check_flush_threshold (lsquic_stream_t *stream)
+{
+    if ((stream->stream_flags & STREAM_WANT_FLUSH) &&
+                            stream->tosend_off >= stream->sm_flush_to)
+    {
+        LSQ_DEBUG("flushed to or past required offset %"PRIu64,
+                                                    stream->sm_flush_to);
+        maybe_remove_from_write_q(stream, STREAM_WANT_FLUSH);
+    }
+}
+
+
+static struct lsquic_packet_out *
+get_brand_new_packet (struct lsquic_send_ctl *ctl, unsigned need_at_least,
+                      const struct lsquic_stream *stream)
+{
+    return lsquic_send_ctl_new_packet_out(ctl, need_at_least);
+}
+
+
+static struct lsquic_packet_out * (* const get_packet[])(
+    struct lsquic_send_ctl *, unsigned, const struct lsquic_stream *) =
+{
+    lsquic_send_ctl_get_packet_for_stream,
+    get_brand_new_packet,
+};
+
+
+static enum { SWTP_OK, SWTP_STOP, SWTP_ERROR }
+stream_write_to_packet (struct frame_gen_ctx *fg_ctx)
+{
+    lsquic_stream_t *const stream = fg_ctx->fgc_stream;
+    const struct parse_funcs *const pf = stream->conn_pub->lconn->cn_pf;
+    struct lsquic_send_ctl *const send_ctl = stream->conn_pub->send_ctl;
+    unsigned stream_header_sz, need_at_least, off;
+    lsquic_packet_out_t *packet_out;
+    int len, s, hsk;
+
+    stream_header_sz = pf->pf_calc_stream_frame_header_sz(stream->id,
+                                                        stream->tosend_off);
+    need_at_least = stream_header_sz + (frame_gen_size(fg_ctx) > 0);
+    hsk = LSQUIC_STREAM_HANDSHAKE == stream->id;
+    packet_out = get_packet[hsk](send_ctl, need_at_least, stream);
+    if (!packet_out)
+        return SWTP_STOP;
+
+    off = packet_out->po_data_sz;
+    len = pf->pf_gen_stream_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out), stream->id,
+                stream->tosend_off,
+                frame_gen_fin, frame_gen_size, frame_gen_read, fg_ctx);
+    if (len < 0)
+    {
+        LSQ_ERROR("could not generate stream frame");
+        return SWTP_ERROR;
+    }
+
+    EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
+                            packet_out->po_data + packet_out->po_data_sz, len);
+    packet_out->po_data_sz += len;
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
+    s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
+                                     stream, QUIC_FRAME_STREAM, off, len);
+    if (s != 0)
+    {
+        LSQ_ERROR("adding stream to packet failed: %s", strerror(errno));
+        return SWTP_ERROR;
+    }
+
+    check_flush_threshold(stream);
+
+    /* XXX: I don't like it that this is here */
+    if (hsk && !(packet_out->po_flags & PO_HELLO))
+    {
+        lsquic_packet_out_zero_pad(packet_out);
+        packet_out->po_flags |= PO_HELLO;
+        lsquic_send_ctl_scheduled_one(send_ctl, packet_out);
+    }
+
+    return SWTP_OK;
+}
+
+
+static void
+abort_connection (struct lsquic_stream *stream)
+{
+    if (0 == (stream->stream_flags & STREAM_SERVICE_FLAGS))
+        TAILQ_INSERT_TAIL(&stream->conn_pub->service_streams, stream,
+                                                next_service_stream);
+    stream->stream_flags |= STREAM_ABORT_CONN;
+    LSQ_WARN("connection will be aborted");
+}
+
+
+static ssize_t
+stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
+                         size_t thresh)
+{
+    size_t size;
+    ssize_t nw;
+    struct frame_gen_ctx fg_ctx = {
+        .fgc_stream = stream,
+        .fgc_reader = reader,
+        .fgc_nread_from_reader = 0,
+    };
+
+    while ((size = frame_gen_size(&fg_ctx), thresh ? size >= thresh : size > 0)
+           || frame_gen_fin(&fg_ctx))
+    {
+        switch (stream_write_to_packet(&fg_ctx))
+        {
+        case SWTP_OK:
+            if (frame_gen_fin(&fg_ctx))
+            {
+                stream->stream_flags |= STREAM_FIN_SENT;
+                goto end;
+            }
+            else
+                break;
+        case SWTP_STOP:
+            stream->stream_flags &= ~STREAM_LAST_WRITE_OK;
+            goto end;
+        default:
+            abort_connection(stream);
+            stream->stream_flags &= ~STREAM_LAST_WRITE_OK;
+            return -1;
+        }
+    }
+
+    if (thresh)
+    {
+        assert(size < thresh);
+        assert(size >= stream->sm_n_buffered);
+        size -= stream->sm_n_buffered;
+        if (size > 0)
+        {
+            nw = save_to_buffer(stream, reader, size);
+            if (nw < 0)
+                return -1;
+            fg_ctx.fgc_nread_from_reader += nw; /* Make this cleaner? */
+        }
+    }
+    else
+    {
+        /* We count flushed data towards both stream and connection limits,
+         * so we should have been able to packetize all of it:
+         */
+        assert(0 == stream->sm_n_buffered);
+        assert(size == 0);
+    }
+
+    maybe_mark_as_blocked(stream);
+
+  end:
+    return fg_ctx.fgc_nread_from_reader;
+}
+
+
+/* Perform an implicit flush when we hit connection limit while buffering
+ * data.  This is to prevent a (theoretical) stall:
+ *
+ * Imagine a number of streams, all of which buffered some data.  The buffered
+ * data is up to connection cap, which means no further writes are possible.
+ * None of them flushes, which means that data is not sent and connection
+ * WINDOW_UPDATE frame never arrives from peer.  Stall.
+ */
+static void
+maybe_flush_stream (struct lsquic_stream *stream)
+{
+    if (stream->sm_n_buffered > 0
+          && (stream->stream_flags & STREAM_CONN_LIMITED)
+            && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap) == 0)
+        stream_flush_nocheck(stream);
+}
+
+
+static ssize_t
+save_to_buffer (lsquic_stream_t *stream, struct lsquic_reader *reader,
+                                                                size_t len)
+{
+    size_t avail, n_written;
+
+    assert(stream->sm_n_buffered + len <= SM_BUF_SIZE);
+
+    if (!stream->sm_buf)
+    {
+        stream->sm_buf = malloc(SM_BUF_SIZE);
+        if (!stream->sm_buf)
+            return -1;
+    }
+
+    avail = stream_write_avail(stream);
+    if (avail < len)
+        len = avail;
+
+    n_written = reader->lsqr_read(reader->lsqr_ctx,
+                        stream->sm_buf + stream->sm_n_buffered, len);
+    stream->sm_n_buffered += n_written;
+    incr_conn_cap(stream, n_written);
+    LSQ_DEBUG("buffered %zd bytes; %hu bytes are now in buffer",
+              n_written, stream->sm_n_buffered);
+    maybe_flush_stream(stream);
+    return n_written;
+}
+
+
+static ssize_t
+stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader)
+{
+    size_t thresh, len;
+
+    thresh = flush_threshold(stream);
+    len = reader->lsqr_size(reader->lsqr_ctx);
+    if (stream->sm_n_buffered + len <= SM_BUF_SIZE &&
+                                    stream->sm_n_buffered + len < thresh)
+        return save_to_buffer(stream, reader, len);
+    else
+        return stream_write_to_packets(stream, reader, thresh);
 }
 
 
 ssize_t
 lsquic_stream_write (lsquic_stream_t *stream, const void *buf, size_t len)
 {
-    struct stream_buf_tosend *sbt;
-    size_t nw, stream_avail, n_flushed;
-    const unsigned char *p = buf;
+    struct iovec iov = { .iov_base = (void *) buf, .iov_len = len, };
+    return lsquic_stream_writev(stream, &iov, 1);
+}
 
-    COMMON_WRITE_CHECKS();
-    SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
 
-    stream_avail = lsquic_stream_write_avail(stream);
-    if (stream_avail < len)
+struct inner_reader_iovec {
+    const struct iovec       *iov;
+    const struct iovec *const end;
+    unsigned                  cur_iovec_off;
+};
+
+
+static size_t
+inner_reader_iovec_read (void *ctx, void *buf, size_t count)
+{
+    struct inner_reader_iovec *const iro = ctx;
+    unsigned char *p = buf;
+    unsigned char *const end = p + count;
+    unsigned n_tocopy;
+
+    while (iro->iov < iro->end && p < end)
     {
-        LSQ_DEBUG("cap length from %zd to %zd bytes", len, stream_avail);
-        len = stream_avail;
-    }
-
-    while (len > 0)
-    {
-        sbt = get_sbt_buf(stream);
-        if (!sbt)
+        n_tocopy = iro->iov->iov_len - iro->cur_iovec_off;
+        if (n_tocopy > (unsigned) (end - p))
+            n_tocopy = end - p;
+        memcpy(p, (unsigned char *) iro->iov->iov_base + iro->cur_iovec_off,
+                                                                    n_tocopy);
+        p += n_tocopy;
+        iro->cur_iovec_off += n_tocopy;
+        if (iro->iov->iov_len == iro->cur_iovec_off)
         {
-            LSQ_WARN("could not allocate SBT buffer: %s", strerror(errno));
-            break;
+            ++iro->iov;
+            iro->cur_iovec_off = 0;
         }
-        nw = sbt_write(sbt, p, len);
-        len -= nw;
-        p += nw;
     }
 
-    const size_t n_written = p - (unsigned char *) buf;
-    LSQ_DEBUG("wrote %"PRIiPTR" bytes to stream %u", n_written, stream->id);
+    return p + count - end;
+}
 
-    n_flushed = flush_or_check_flags(stream, n_written);
-    if (n_flushed)
-        maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_USER_WRITE);
 
-    return n_written;
+static size_t
+inner_reader_iovec_size (void *ctx)
+{
+    struct inner_reader_iovec *const iro = ctx;
+    const struct iovec *iov;
+    size_t size;
+
+    size = 0;
+    for (iov = iro->iov; iov < iro->end; ++iov)
+        size += iov->iov_len;
+
+    return size - iro->cur_iovec_off;
 }
 
 
@@ -1905,51 +1747,30 @@ ssize_t
 lsquic_stream_writev (lsquic_stream_t *stream, const struct iovec *iov,
                                                                     int iovcnt)
 {
-    int i;
-    const unsigned char *p;
-    struct stream_buf_tosend *sbt;
-    size_t nw, stream_avail, len, n_flushed;
-    ssize_t nw_total;
-
     COMMON_WRITE_CHECKS();
     SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
 
-    nw_total = 0;
-    stream_avail = lsquic_stream_write_avail(stream);
+    struct inner_reader_iovec iro = {
+        .iov = iov,
+        .end = iov + iovcnt,
+        .cur_iovec_off = 0,
+    };
+    struct lsquic_reader reader = {
+        .lsqr_read = inner_reader_iovec_read,
+        .lsqr_size = inner_reader_iovec_size,
+        .lsqr_ctx  = &iro,
+    };
 
-    for (i = 0; i < iovcnt && stream_avail > 0; ++i)
-    {
-        len = iov[i].iov_len;
-        p   = iov[i].iov_base;
-        if (len > stream_avail)
-        {
-            LSQ_DEBUG("cap length from %zd to %zd bytes", nw_total + len,
-                                                    nw_total + stream_avail);
-            len = stream_avail;
-        }
-        nw_total += len;
-        stream_avail -= len;
-        while (len > 0)
-        {
-            sbt = get_sbt_buf(stream);
-            if (!sbt)
-            {
-                LSQ_WARN("could not allocate SBT buffer: %s", strerror(errno));
-                break;
-            }
-            nw = sbt_write(sbt, p, len);
-            len -= nw;
-            p += nw;
-        }
-    }
+    return stream_write(stream, &reader);
+}
 
-    LSQ_DEBUG("wrote %zd bytes to stream", nw_total);
 
-    n_flushed = flush_or_check_flags(stream, nw_total);
-    if (n_flushed)
-        maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_USER_WRITEV);
-
-    return nw_total;
+ssize_t
+lsquic_stream_writef (lsquic_stream_t *stream, struct lsquic_reader *reader)
+{
+    COMMON_WRITE_CHECKS();
+    SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
+    return stream_write(stream, reader);
 }
 
 
@@ -1993,17 +1814,6 @@ lsquic_stream_window_update (lsquic_stream_t *stream, uint64_t offset)
         LSQ_DEBUG("stream %u: update max send offset from 0x%"PRIX64" to "
             "0x%"PRIX64, stream->id, stream->max_send_off, offset);
         stream->max_send_off = offset;
-        if (lsquic_stream_tosend_sz(stream))
-        {
-            if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
-            {
-                LSQ_DEBUG("stream %u unblocked, schedule sending again",
-                    stream->id);
-                TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
-                                                            next_send_stream);
-            }
-            stream->stream_flags |= STREAM_SEND_DATA;
-        }
     }
     else
         LSQ_DEBUG("stream %u: new offset 0x%"PRIX64" is not larger than old "
@@ -2039,137 +1849,6 @@ lsquic_stream_set_max_send_off (lsquic_stream_t *stream, unsigned offset)
 }
 
 
-#ifndef NDEBUG
-/* Use weak linkage so that tests can override this function */
-size_t
-lsquic_stream_tosend_sz (const lsquic_stream_t *stream)
-    __attribute__((weak))
-    ;
-#endif
-size_t
-lsquic_stream_tosend_sz (const lsquic_stream_t *stream)
-{
-    assert(stream->tosend_off + stream->tosend_sz <= stream->max_send_off);
-    return stream->tosend_sz;
-}
-
-
-#ifndef NDEBUG
-/* Use weak linkage so that tests can override this function */
-size_t
-lsquic_stream_tosend_read (lsquic_stream_t *stream, void *buf, size_t len,
-                           int *reached_fin)
-    __attribute__((weak))
-    ;
-#endif
-size_t
-lsquic_stream_tosend_read (lsquic_stream_t *stream, void *buf, size_t len,
-                           int *reached_fin)
-{
-    assert(stream->tosend_sz > 0);
-    assert(stream->stream_flags & STREAM_SEND_DATA);
-    const size_t tosend_sz = lsquic_stream_tosend_sz(stream);
-    if (tosend_sz < len)
-        len = tosend_sz;
-    struct stream_buf_tosend *sbt;
-    unsigned char *p = buf;
-    unsigned char *const end = p + len;
-    while (p < end && (sbt = TAILQ_FIRST(&stream->bufs_tosend)))
-    {
-        size_t nread = sbt_read(sbt, p, len);
-        p += nread;
-        len -= nread;
-        if (sbt_done(sbt))
-        {
-            TAILQ_REMOVE(&stream->bufs_tosend, sbt, next_sbt);
-            sbt_destroy(stream, sbt);
-            LSQ_DEBUG("destroyed SBT");
-        }
-        else
-            break;
-    }
-    const size_t n_read = p - (unsigned char *) buf;
-    decr_tosend_sz(stream, n_read);
-    stream->tosend_off += n_read;
-    if (stream->stream_flags & STREAM_CONN_LIMITED)
-    {
-        stream->conn_pub->conn_cap.cc_sent += n_read;
-        assert(stream->conn_pub->conn_cap.cc_sent <=
-                                        stream->conn_pub->conn_cap.cc_max);
-    }
-    *reached_fin = lsquic_stream_tosend_fin(stream);
-    return n_read;
-}
-
-
-void
-lsquic_stream_stream_frame_sent (lsquic_stream_t *stream)
-{
-    assert(stream->stream_flags & STREAM_SEND_DATA);
-    SM_HISTORY_APPEND(stream, SHE_FRAME_OUT);
-    if (0 == lsquic_stream_tosend_sz(stream))
-    {
-        /* Mark the stream as having no sendable data independent of reason
-         * why there is no data to send.
-         */
-        if (0 == stream->tosend_sz)
-        {
-            LSQ_DEBUG("all stream %u data has been scheduled for sending, "
-                "now at offset 0x%"PRIX64, stream->id, stream->tosend_off);
-            stream->stream_flags &= ~STREAM_SEND_DATA;
-            if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
-                TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream,
-                                                        next_send_stream);
-
-            if ((stream->stream_flags & STREAM_U_WRITE_DONE) && !writing_file(stream))
-            {
-                stream->stream_flags |= STREAM_FIN_SENT;
-                maybe_finish_stream(stream);
-            }
-        }
-        else
-        {
-            LSQ_DEBUG("stream %u blocked from sending", stream->id);
-            if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
-                TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
-                                                        next_send_stream);
-            stream->stream_flags &= ~STREAM_SEND_DATA;
-            stream->stream_flags |= STREAM_SEND_BLOCKED;
-        }
-    }
-}
-
-
-#ifndef NDEBUG
-/* Use weak linkage so that tests can override this function */
-uint64_t
-lsquic_stream_tosend_offset (const lsquic_stream_t *stream)
-    __attribute__((weak))
-    ;
-#endif
-uint64_t
-lsquic_stream_tosend_offset (const lsquic_stream_t *stream)
-{
-    return stream->tosend_off;
-}
-
-
-static void
-drop_sbts (lsquic_stream_t *stream)
-{
-    struct stream_buf_tosend *sbt;
-
-    while ((sbt = TAILQ_FIRST(&stream->bufs_tosend)))
-    {
-        TAILQ_REMOVE(&stream->bufs_tosend, sbt, next_sbt);
-        sbt_destroy(stream, sbt);
-    }
-
-    decr_tosend_sz(stream, stream->tosend_sz);
-    stream->tosend_sz = 0;
-}
-
-
 void
 lsquic_stream_reset (lsquic_stream_t *stream, uint32_t error_code)
 {
@@ -2198,7 +1877,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint32_t error_code,
     stream->stream_flags &= ~STREAM_SENDING_FLAGS;
     stream->stream_flags |= STREAM_SEND_RST;
 
-    drop_sbts(stream);
+    maybe_elide_stream_frames(stream);
     maybe_schedule_call_on_close(stream);
 
     if (do_close)
@@ -2242,6 +1921,11 @@ lsquic_stream_close (lsquic_stream_t *stream)
 }
 
 
+#ifndef NDEBUG
+#if __GNUC__
+__attribute__((weak))
+#endif
+#endif
 void
 lsquic_stream_acked (lsquic_stream_t *stream)
 {
@@ -2336,6 +2020,7 @@ lsquic_stream_set_priority_internal (lsquic_stream_t *stream, unsigned priority)
     if (priority < 1 || priority > 256)
         return -1;
     stream->sm_priority = 256 - priority;
+    lsquic_send_ctl_invalidate_bpt_cache(stream->conn_pub->send_ctl);
     LSQ_DEBUG("set priority to %u", priority);
     SM_HISTORY_APPEND(stream, SHE_SET_PRIO);
     return 0;
@@ -2385,4 +2070,26 @@ lsquic_stream_refuse_push (lsquic_stream_t *stream)
     }
     else
         return -1;
+}
+
+
+size_t
+lsquic_stream_mem_used (const struct lsquic_stream *stream)
+{
+    size_t size;
+
+    size = sizeof(stream);
+    if (stream->sm_buf)
+        size += SM_BUF_SIZE;
+    if (stream->data_in)
+        size += stream->data_in->di_if->di_mem_used(stream->data_in);
+
+    return size;
+}
+
+
+lsquic_cid_t
+lsquic_stream_cid (const struct lsquic_stream *stream)
+{
+    return LSQUIC_LOG_CONN_ID;
 }

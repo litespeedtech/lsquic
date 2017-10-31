@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 
@@ -43,11 +44,9 @@ add_stream_to_spi (struct stream_prio_iter *iter, lsquic_stream_t *stream)
 
 
 void
-lsquic_spi_init_ext (struct stream_prio_iter *iter, struct lsquic_stream *first,
-                     struct lsquic_stream *last, uintptr_t next_ptr_offset,
-                     enum stream_flags onlist_mask,
-                     int (*filter)(void *, struct lsquic_stream *),
-                     void *filter_ctx, lsquic_cid_t cid, const char *name)
+lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
+        struct lsquic_stream *last, uintptr_t next_ptr_offset,
+        enum stream_flags onlist_mask, lsquic_cid_t cid, const char *name)
 {
     struct lsquic_stream *stream;
     unsigned count;
@@ -59,7 +58,6 @@ lsquic_spi_init_ext (struct stream_prio_iter *iter, struct lsquic_stream *first,
     iter->spi_set[2]        = 0;
     iter->spi_set[3]        = 0;
     iter->spi_onlist_mask   = onlist_mask;
-    iter->spi_flags         = 0;
     iter->spi_cur_prio      = 0;
     iter->spi_prev_stream   = NULL;
     iter->spi_next_stream   = NULL;
@@ -67,27 +65,15 @@ lsquic_spi_init_ext (struct stream_prio_iter *iter, struct lsquic_stream *first,
     stream = first;
     count = 0;
 
-    if (filter)
-        while (1)
-        {
-            if (filter(filter_ctx, stream))
-            {
-                add_stream_to_spi(iter, stream);
-                ++count;
-            }
-            if (stream == last)
-                break;
-            stream = NEXT_STREAM(stream, next_ptr_offset);
-        }
-    else
-        while (1)
-        {
-            add_stream_to_spi(iter, stream);
-            ++count;
-            if (stream == last)
-                break;
-            stream = NEXT_STREAM(stream, next_ptr_offset);
-        }
+    while (1)
+    {
+        add_stream_to_spi(iter, stream);
+        ++count;
+        if (stream == last)
+            break;
+        stream = NEXT_STREAM(stream, next_ptr_offset);
+    }
+
     if (count > 2)
         SPI_DEBUG("initialized; # elems: %u; sets: [ %016"PRIX64", %016"PRIX64
             ", %016"PRIX64", %016"PRIX64" ]", count, iter->spi_set[0],
@@ -264,26 +250,6 @@ lsquic_spi_next (struct stream_prio_iter *iter)
         return stream;
     }
 
-    if (iter->spi_flags & SPI_EXHAUST_PRIO)
-    {
-        stream = TAILQ_FIRST(&iter->spi_streams[ iter->spi_cur_prio ]);
-        if (stream)
-        {
-            iter->spi_prev_stream = stream;
-            iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
-            if (stream->id != 1 && stream->id != 3)
-                SPI_DEBUG("%s: return stream %u, priority %u", __func__,
-                                            stream->id, iter->spi_cur_prio);
-            return stream;
-        }
-        else
-        {
-            SPI_DEBUG("%s: priority %u empty, call first again", __func__,
-                iter->spi_cur_prio);
-            return lsquic_spi_first(iter);
-        }
-    }
-
     if (0 != find_and_set_next_priority(iter))
     {
         //SPI_DEBUG("%s: return NULL", __func__);
@@ -295,17 +261,64 @@ lsquic_spi_next (struct stream_prio_iter *iter)
     iter->spi_prev_stream = stream;
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
 
-    if (stream->id != 1 && stream->id != 3)
+    if (!lsquic_stream_is_critical(stream))
         SPI_DEBUG("%s: return stream %u, priority %u", __func__, stream->id,
                                                         iter->spi_cur_prio);
     return stream;
 }
 
 
-void
-lsquic_spi_exhaust_on (struct stream_prio_iter *iter)
+static int
+have_non_critical_streams (const struct stream_prio_iter *iter)
 {
-    SPI_DEBUG("%s: exhaust %d -> 1", __func__,
-                                !!(iter->spi_flags & SPI_EXHAUST_PRIO));
-    iter->spi_flags |= SPI_EXHAUST_PRIO;
+    const struct lsquic_stream *stream;
+    TAILQ_FOREACH(stream, &iter->spi_streams[ iter->spi_cur_prio ],
+                                                        next_prio_stream)
+        if (!lsquic_stream_is_critical(stream))
+            return 1;
+    return 0;
+}
+
+
+static void
+spi_drop_high_or_non_high (struct stream_prio_iter *iter, int drop_high)
+{
+    uint64_t new_set[ sizeof(iter->spi_set) / sizeof(iter->spi_set[0]) ];
+    unsigned bit, set, n;
+
+    memset(new_set, 0, sizeof(new_set));
+
+    find_and_set_lowest_priority(iter);
+    set = iter->spi_cur_prio >> 6;
+    bit = iter->spi_cur_prio & 0x3F;
+    new_set[set] |= 1ULL << bit;
+
+    if (!have_non_critical_streams(iter))
+    {
+        ++iter->spi_cur_prio;
+        find_and_set_lowest_priority(iter);
+        set = iter->spi_cur_prio >> 6;
+        bit = iter->spi_cur_prio & 0x3F;
+        new_set[set] |= 1ULL << bit;
+    }
+
+    for (n = 0; n < sizeof(new_set) / sizeof(new_set[0]); ++n)
+        if (drop_high)
+            iter->spi_set[n] &= ~new_set[n];
+        else
+            iter->spi_set[n] = new_set[n];
+}
+
+
+void
+lsquic_spi_drop_high (struct stream_prio_iter *iter)
+{
+    spi_drop_high_or_non_high(iter, 1);
+}
+
+
+void
+lsquic_spi_drop_non_high (struct stream_prio_iter *iter)
+{
+    spi_drop_high_or_non_high(iter, 0);
 }

@@ -18,13 +18,11 @@ struct lsquic_http_headers;
 struct lsquic_http2_setting;
 
 typedef ssize_t (*fw_write_f)(struct lsquic_stream *, const void *, size_t);
-typedef size_t  (*fw_wavail_f)(const struct lsquic_stream *stream);
-typedef int     (*fw_flush_f)(struct lsquic_stream *);
 
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *, struct lsquic_stream *,
                          unsigned max_frame_sz, struct lsquic_henc *,
-                         fw_write_f, fw_wavail_f, fw_flush_f, int is_server);
+                         fw_write_f, int is_server);
 
 void
 lsquic_frame_writer_destroy (struct lsquic_frame_writer *);
@@ -59,5 +57,8 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *,
 void
 lsquic_frame_writer_max_header_list_size (struct lsquic_frame_writer *,
                                           uint32_t max_size);
+
+size_t
+lsquic_frame_writer_mem_used (const struct lsquic_frame_writer *);
 
 #endif

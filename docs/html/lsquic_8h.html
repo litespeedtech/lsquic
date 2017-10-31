@@ -123,6 +123,8 @@ Data Structures</h2></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__engine__api.html">lsquic_engine_api</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__reader.html">lsquic_reader</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__http__header.html">lsquic_http_header</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__http__headers.html">lsquic_http_headers</a></td></tr>
@@ -302,19 +304,14 @@ ssize_t&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_stream_read
 <tr class="memitem:a96da64e3694d9b79038ec7ada318bb4f"><td class="memItemLeft" align="right" valign="top"><a class="anchor" id="a96da64e3694d9b79038ec7ada318bb4f"></a>
 int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_stream_wantwrite</b> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, int is_want)</td></tr>
 <tr class="separator:a96da64e3694d9b79038ec7ada318bb4f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a97229544d7aaf6c5dcd5e071613f9c8f"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#a97229544d7aaf6c5dcd5e071613f9c8f">lsquic_stream_write_avail</a> (const <a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s)</td></tr>
-<tr class="separator:a97229544d7aaf6c5dcd5e071613f9c8f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1071b7be4f2f28c5fedf957aa6309f9a"><td class="memItemLeft" align="right" valign="top">ssize_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#a1071b7be4f2f28c5fedf957aa6309f9a">lsquic_stream_write</a> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, const void *buf, size_t len)</td></tr>
 <tr class="separator:a1071b7be4f2f28c5fedf957aa6309f9a"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:af5b85bb360eb8316fd663d7c5bc149c9"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#af5b85bb360eb8316fd663d7c5bc149c9">lsquic_stream_write_file</a> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, const char *filename)</td></tr>
-<tr class="separator:af5b85bb360eb8316fd663d7c5bc149c9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a715b914c55b5e534cf75713353eb1589"><td class="memItemLeft" align="right" valign="top"><a class="anchor" id="a715b914c55b5e534cf75713353eb1589"></a>
 ssize_t&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_stream_writev</b> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, const struct iovec *vec, int count)</td></tr>
 <tr class="separator:a715b914c55b5e534cf75713353eb1589"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a1700c950ace4e560d225b474a5e44d58"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#a1700c950ace4e560d225b474a5e44d58">lsquic_stream_sendfile</a> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, int fdSrc, off_t off, size_t size)</td></tr>
-<tr class="separator:a1700c950ace4e560d225b474a5e44d58"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abcf25d8301c4a2796ea13e6e306a33a9"><td class="memItemLeft" align="right" valign="top"><a class="anchor" id="abcf25d8301c4a2796ea13e6e306a33a9"></a>
-int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_stream_flush</b> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s)</td></tr>
+<tr class="memitem:a49f11caabdf3638d3a3217ebdd21c3af"><td class="memItemLeft" align="right" valign="top">ssize_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#a49f11caabdf3638d3a3217ebdd21c3af">lsquic_stream_writef</a> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *, struct <a class="el" href="structlsquic__reader.html">lsquic_reader</a> *)</td></tr>
+<tr class="separator:a49f11caabdf3638d3a3217ebdd21c3af"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abcf25d8301c4a2796ea13e6e306a33a9"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="lsquic_8h.html#abcf25d8301c4a2796ea13e6e306a33a9">lsquic_stream_flush</a> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s)</td></tr>
 <tr class="separator:abcf25d8301c4a2796ea13e6e306a33a9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae523cf75e48b86f5c4510b429b332acb"><td class="memItemLeft" align="right" valign="top"><a class="anchor" id="ae523cf75e48b86f5c4510b429b332acb"></a>
 int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_stream_send_headers</b> (<a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *s, const <a class="el" href="lsquic__types_8h.html#a91f399fbcccaf01b47ca209c5c170ba2">lsquic_http_headers_t</a> *h, int eos)</td></tr>
@@ -1401,6 +1398,30 @@ int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_conn_get_sockad
 
 </div>
 </div>
+<a class="anchor" id="abcf25d8301c4a2796ea13e6e306a33a9"></a>
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int lsquic_stream_flush </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *&#160;</td>
+          <td class="paramname"><em>s</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Flush any buffered data. This triggers packetizing even a single byte into a separate frame. Flushing a closed stream is an error.</p>
+<dl class="retval"><dt>Return values</dt><dd>
+  <table class="retval">
+    <tr><td class="paramname">0</td><td>Success </td></tr>
+    <tr><td class="paramname">-1</td><td>Failure </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
 <a class="anchor" id="a26335cffe38e49a6e87d94967371150d"></a>
 <div class="memitem">
 <div class="memproto">
@@ -1542,45 +1563,6 @@ int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_conn_get_sockad
 
 </div>
 </div>
-<a class="anchor" id="a1700c950ace4e560d225b474a5e44d58"></a>
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int lsquic_stream_sendfile </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *&#160;</td>
-          <td class="paramname"><em>s</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>fdSrc</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">off_t&#160;</td>
-          <td class="paramname"><em>off</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">size_t&#160;</td>
-          <td class="paramname"><em>size</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<p>Returns 0 if `fdSrc' was queued for writing, -1 on error. This function queues at most `size' bytes to be written. If the file shrinks, fewer bytes are written. </p>
-
-</div>
-</div>
 <a class="anchor" id="aa5e0ddfd53a44561248a286caacbd114"></a>
 <div class="memitem">
 <div class="memproto">
@@ -1671,42 +1653,25 @@ int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_conn_get_sockad
         </tr>
       </table>
 </div><div class="memdoc">
-<p>Write `len' bytes to the stream. Returns number of bytes written, which may be smaller that `len'. Use <a class="el" href="lsquic_8h.html#a97229544d7aaf6c5dcd5e071613f9c8f">lsquic_stream_write_avail()</a> to find out maximum size of `len'. </p>
+<p>Write `len' bytes to the stream. Returns number of bytes written, which may be smaller that `len'. </p>
 
 </div>
 </div>
-<a class="anchor" id="a97229544d7aaf6c5dcd5e071613f9c8f"></a>
+<a class="anchor" id="a49f11caabdf3638d3a3217ebdd21c3af"></a>
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">size_t lsquic_stream_write_avail </td>
-          <td>(</td>
-          <td class="paramtype">const <a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *&#160;</td>
-          <td class="paramname"><em>s</em></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<p>Return maximum number of bytes <a class="el" href="lsquic_8h.html#a1071b7be4f2f28c5fedf957aa6309f9a">lsquic_stream_write()</a> will write. This call is useful if you don't want to perform your own buffering. </p>
-
-</div>
-</div>
-<a class="anchor" id="af5b85bb360eb8316fd663d7c5bc149c9"></a>
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int lsquic_stream_write_file </td>
+          <td class="memname">ssize_t lsquic_stream_writef </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="lsquic__types_8h.html#ad286bcdd799bb3733f1d6568e25c57c6">lsquic_stream_t</a> *&#160;</td>
-          <td class="paramname"><em>s</em>, </td>
+          <td class="paramname">, </td>
         </tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>filename</em>&#160;</td>
+          <td class="paramtype">struct <a class="el" href="structlsquic__reader.html">lsquic_reader</a> *&#160;</td>
+          <td class="paramname">&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -1715,7 +1680,13 @@ int&#160;</td><td class="memItemRight" valign="bottom"><b>lsquic_conn_get_sockad
         </tr>
       </table>
 </div><div class="memdoc">
-<p>Returns 0 if `filename' was queued for writing, -1 on error. This function queues the size of the file as it was when the function was called. The stream will write at most this number of bytes to the peer. If the file grows, appended data is not used. </p>
+<p>Write to stream using <a class="el" href="structlsquic__reader.html">lsquic_reader</a>. This is the most generic of the write functions &ndash; <a class="el" href="lsquic_8h.html#a1071b7be4f2f28c5fedf957aa6309f9a">lsquic_stream_write()</a> and lsquic_stream_writev() utilize the same mechanism.</p>
+<dl class="retval"><dt>Return values</dt><dd>
+  <table class="retval">
+    <tr><td class="paramname">Number</td><td>of bytes written or -1 on error. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

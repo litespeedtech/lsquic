@@ -13,6 +13,7 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -1084,6 +1085,81 @@ pba_cleanup (struct packout_buf_allocator *pba)
     }
 
     LSQ_INFO("pba deinitialized, freed %u packout bufs", n);
+}
+
+
+struct reader_ctx
+{
+    size_t  file_size;
+    size_t  nread;
+    int     fd;
+};
+
+
+size_t
+test_reader_size (void *void_ctx)
+{
+    struct reader_ctx *const ctx = void_ctx;
+    return ctx->file_size - ctx->nread;
+}
+
+
+size_t
+test_reader_read (void *void_ctx, void *buf, size_t count)
+{
+    struct reader_ctx *const ctx = void_ctx;
+    ssize_t nread;
+
+    if (count > test_reader_size(ctx))
+        count = test_reader_size(ctx);
+
+    nread = read(ctx->fd, buf, count);
+    if (nread >= 0)
+    {
+        ctx->nread += nread;
+        return nread;
+    }
+    else
+    {
+        LSQ_WARN("%s: error reading from file: %s", __func__, strerror(errno));
+        ctx->nread = ctx->file_size = 0;
+        return 0;
+    }
+}
+
+
+struct reader_ctx *
+create_lsquic_reader_ctx (const char *filename)
+{
+    int fd;
+    struct stat st;
+
+    fd = open(filename, O_RDONLY);
+    if (fd < 0)
+    {
+        LSQ_ERROR("cannot open %s for reading: %s", filename, strerror(errno));
+        return NULL;
+    }
+
+    if (0 != fstat(fd, &st))
+    {
+        LSQ_ERROR("cannot fstat(%s) failed: %s", filename, strerror(errno));
+        (void) close(fd);
+        return NULL;
+    }
+    struct reader_ctx *ctx = malloc(sizeof(*ctx));
+    ctx->file_size = st.st_size;
+    ctx->nread = 0;
+    ctx->fd = fd;
+    return ctx;
+}
+
+
+void
+destroy_lsquic_reader_ctx (struct reader_ctx *ctx)
+{
+    (void) close(ctx->fd);
+    free(ctx);
 }
 
 

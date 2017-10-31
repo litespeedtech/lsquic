@@ -287,3 +287,17 @@ find_free_slot (uint64_t slots)
     return n;
 #endif
 }
+
+
+size_t
+lsquic_malo_mem_used (const struct malo *malo)
+{
+    const struct malo_page *page;
+    size_t size;
+
+    size = 0;
+    SLIST_FOREACH(page, &malo->all_pages, next_page)
+        size += sizeof(*page);
+
+    return size;
+}

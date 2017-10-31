@@ -209,7 +209,6 @@ lsquic_mm_get_packet_out (struct lsquic_mm *mm, struct malo *malo,
     }
 
     memset(packet_out, 0, sizeof(*packet_out));
-    STAILQ_INIT(&packet_out->po_srec_arrs);
     packet_out->po_n_alloc = size;
     packet_out->po_data = (unsigned char *) pob;
 
@@ -288,6 +287,40 @@ lsquic_mm_put_packet_in (struct lsquic_mm *mm,
     if (packet_in->pi_flags & PI_OWN_DATA)
         lsquic_mm_put_1370(mm, packet_in->pi_data);
     TAILQ_INSERT_HEAD(&mm->free_packets_in, packet_in, pi_next);
+}
+
+
+size_t
+lsquic_mm_mem_used (const struct lsquic_mm *mm)
+{
+    const struct packet_out_buf *pob;
+    const struct payload_buf *pb;
+    const struct four_k_page *fkp;
+    const struct sixteen_k_page *skp;
+    unsigned i;
+    size_t size;
+
+    size = sizeof(*mm);
+    size += sizeof(*mm->acki);
+    size += lsquic_malo_mem_used(mm->malo.stream_frame);
+    size += lsquic_malo_mem_used(mm->malo.stream_rec_arr);
+    size += lsquic_malo_mem_used(mm->malo.packet_in);
+    size += lsquic_malo_mem_used(mm->malo.packet_out);
+
+    for (i = 0; i < MM_N_OUT_BUCKETS; ++i)
+        SLIST_FOREACH(pob, &mm->packet_out_bufs[i], next_pob)
+            size += packet_out_sizes[i];
+
+    SLIST_FOREACH(pb, &mm->payload_bufs, next_pb)
+        size += 1370;
+
+    SLIST_FOREACH(fkp, &mm->four_k_pages, next_fkp)
+        size += 0x1000;
+
+    SLIST_FOREACH(skp, &mm->sixteen_k_pages, next_skp)
+        size += 0x4000;
+
+    return size;
 }
 
 

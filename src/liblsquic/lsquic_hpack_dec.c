@@ -417,3 +417,24 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
 
     return 1;
 }
+
+
+size_t
+lsquic_hdec_mem_used (const struct lsquic_hdec *dec)
+{
+    const struct dec_table_entry *entry;
+    size_t size;
+    unsigned i;
+
+    size = sizeof(*dec);
+    for (i = 0; i < lsquic_arr_count(&dec->hpd_dyn_table); ++i)
+    {
+        entry = (void *) lsquic_arr_get(&dec->hpd_dyn_table, i);
+        size += sizeof(*entry) + entry->dte_val_len + entry->dte_name_len;
+    }
+
+    size -= sizeof(dec->hpd_dyn_table);
+    size += lsquic_arr_mem_used(&dec->hpd_dyn_table);
+
+    return size;
+}

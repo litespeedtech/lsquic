@@ -34,12 +34,8 @@ add_executable(test_stream test_stream.c)
 target_link_libraries(test_stream lsquic pthread libssl.a libcrypto.a z m ${FIULIB})
 add_test(stream test_stream)
 add_test(stream_hash test_stream -h)
-add_test(stream_write_file test_stream -w Makefile)
-add_test(stream_hash_write_file test_stream -h -w Makefile)
 add_test(stream_A test_stream -A)
 add_test(stream_hash_A test_stream -A -h)
-add_test(stream_write_file_A test_stream -A -w Makefile)
-add_test(stream_hash_write_file_A test_stream -A -h -w Makefile)
 
 add_executable(test_spi test_spi.c)
 target_link_libraries(test_spi lsquic pthread libssl.a libcrypto.a z m ${FIULIB})
@@ -126,7 +122,7 @@ target_link_libraries(test_ackgen_gquic_ietf lsquic pthread libssl.a libcrypto.a
 add_test(ackgen_gquic_ietf test_ackgen_gquic_ietf)
 
 add_executable(test_sfcw test_sfcw.c)
-target_link_libraries(test_sfcw lsquic m ${FIULIB})
+target_link_libraries(test_sfcw lsquic pthread libssl.a libcrypto.a z m ${FIULIB})
 add_test(sfcw test_sfcw)
 
 add_executable(test_alarmset test_alarmset.c)

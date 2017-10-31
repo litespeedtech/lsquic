@@ -136,3 +136,17 @@ lsquic_packints_next (struct packints *pints)
     else
         return NULL;
 }
+
+
+size_t
+lsquic_packints_mem_used (const struct packints *packints)
+{
+    const struct packet_interval *pi;
+    unsigned count;
+
+    count = 0;
+    TAILQ_FOREACH(pi, &packints->pk_intervals, next_pi)
+        ++count;
+
+    return count * sizeof(*pi);
+}

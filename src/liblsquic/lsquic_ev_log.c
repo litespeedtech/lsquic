@@ -203,16 +203,17 @@ lsquic_ev_log_http_headers_in (lsquic_cid_t cid, int is_server,
 
 
 void
-lsquic_ev_log_generated_stream_frame (lsquic_cid_t cid,
-        const struct parse_funcs *pf, const unsigned char *buf, size_t bufsz)
+lsquic_ev_log_action_stream_frame (lsquic_cid_t cid,
+    const struct parse_funcs *pf, const unsigned char *buf, size_t bufsz,
+    const char *what)
 {
     struct stream_frame frame;
     int len;
 
     len = pf->pf_parse_stream_frame(buf, bufsz, &frame);
     if (len > 0)
-        LCID("generated STREAM frame: stream %"PRIu32", offset: %"PRIu64
-            ", size: %"PRIu16", fin: %d", frame.stream_id,
+        LCID("%s STREAM frame: stream %"PRIu32", offset: %"PRIu64
+            ", size: %"PRIu16", fin: %d", what, frame.stream_id,
             frame.data_frame.df_offset, frame.data_frame.df_size,
             frame.data_frame.df_fin);
     else

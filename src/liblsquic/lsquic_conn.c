@@ -110,6 +110,7 @@ lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
                             lsquic_packet_in_t *packet_in)
 {
     size_t header_len, data_len;
+    enum enc_level enc_level;
     size_t out_len = 0;
     unsigned char *copy = lsquic_mm_get_1370(&enpub->enp_mm);
     if (!copy)
@@ -120,31 +121,31 @@ lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
 
     header_len = packet_in->pi_header_sz;
     data_len   = packet_in->pi_data_sz - packet_in->pi_header_sz;
-    if (0 == lconn->cn_esf->esf_decrypt(lconn->cn_enc_session,
+    enc_level = lconn->cn_esf->esf_decrypt(lconn->cn_enc_session,
                         lconn->cn_version, 0,
                         packet_in->pi_packno, packet_in->pi_data,
                         &header_len, data_len,
                         lsquic_packet_in_nonce(packet_in),
-                        copy, 1370, &out_len))
-    {
-        assert(header_len + out_len <= 1370);
-        if (packet_in->pi_flags & PI_OWN_DATA)
-            lsquic_mm_put_1370(&enpub->enp_mm, packet_in->pi_data);
-        packet_in->pi_data = copy;
-        packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED;
-        packet_in->pi_header_sz = header_len;
-        packet_in->pi_data_sz   = out_len + header_len;
-        EV_LOG_CONN_EVENT(lconn->cn_cid, "decrypted packet %"PRIu64,
-                                                    packet_in->pi_packno);
-        return 0;
-    }
-    else
+                        copy, 1370, &out_len);
+    if ((enum enc_level) -1 == enc_level)
     {
         lsquic_mm_put_1370(&enpub->enp_mm, copy);
         EV_LOG_CONN_EVENT(lconn->cn_cid, "could not decrypt packet %"PRIu64,
                                                         packet_in->pi_packno);
         return -1;
     }
+
+    assert(header_len + out_len <= 1370);
+    if (packet_in->pi_flags & PI_OWN_DATA)
+        lsquic_mm_put_1370(&enpub->enp_mm, packet_in->pi_data);
+    packet_in->pi_data = copy;
+    packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED
+                        | (enc_level << PIBIT_ENC_LEV_SHIFT);
+    packet_in->pi_header_sz = header_len;
+    packet_in->pi_data_sz   = out_len + header_len;
+    EV_LOG_CONN_EVENT(lconn->cn_cid, "decrypted packet %"PRIu64,
+                                                    packet_in->pi_packno);
+    return 0;
 }
 
 

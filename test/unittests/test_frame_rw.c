@@ -98,20 +98,6 @@ stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
 }
 
 
-static int
-stream_flush (struct lsquic_stream *stream)
-{
-    return 0;
-}
-
-
-static size_t
-stream_navail (const struct lsquic_stream *stream)
-{
-    return UINT_MAX;
-}
-
-
 static ssize_t
 read_from_stream (struct lsquic_stream *stream, void *buf, size_t sz)
 {
@@ -209,7 +195,7 @@ test_rw (unsigned max_frame_sz)
     stream->sm_max_sz = 1;
 
     fw = lsquic_frame_writer_new(&mm, stream, max_frame_sz, &henc,
-                                 stream_write, stream_navail, stream_flush, 0);
+                                 stream_write, 0);
 
     struct lsquic_http_headers headers = {
         .count   = N_HEADERS,

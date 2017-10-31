@@ -1,3 +1,74 @@
+2017-10-31
+
+    - [API Change] Sendfile-like functionality is gone.  The stream no
+      longer opens files and deals with file descriptors.  (Among other
+      things, this makes the code more portable.)  Three writing functions
+      are provided:
+
+        lsquic_stream_write
+        lsquic_stream_writev
+        lsquic_stream_writef    (NEW)
+
+      lsquic_stream_writef() is given an abstract reader that has function
+      pointers for size() and read() functions which the user can implement.
+      This is the most flexible way.  lsquic_stream_write() and
+      lsquic_stream_writev() are now both implemented as wrappers around
+      lsquic_stream_writef().
+
+    - [OPTIMIZATION] When writing to stream, be it within or without the
+      on_write() callback, place data directly into packet buffer,
+      bypassing auxiliary data structures.  This reduces amount of memory
+      required, for the amount of data that can be written is limited
+      by the congestion window.
+
+      To support writes outside the on_write() callback, we keep N
+      outgoing packet buffers per connection which can be written to
+      by any stream.  One half of these are reserved for the highest
+      priority stream(s), the other half for all other streams.  This way,
+      low-priority streams cannot write instead of high-priority streams
+      and, on the other hand, low-priority streams get a chance to send
+      their packets out.
+
+      The algorithm is as follows:
+
+      - When user writes to stream outside of the callback:
+        - If this is the highest priority stream, place it onto the
+          reserved N/2 queue or fail.
+            (The actual size of this queue is dynamic -- MAX(N/2, CWND) --
+             rather than N/2, allowing high-priority streams to write as
+             much as can be sent.)
+        - If the stream is not the highest priority, try to place the
+          data onto the reserved N/2 queue or fail.
+      - When tick occurs *and* more packets can be scheduled:
+        - Transfer packets from the high N/2 queue to the scheduled
+          queue.
+        - If more scheduling is allowed:
+          - Call on_write callbacks for highest-priority streams,
+            placing resulting packets directly onto the scheduled queue.
+        - If more scheduling is allowed:
+          - Transfer packets from the low N/2 queue to the scheduled
+            queue.
+        - If more scheduling is allowed:
+          - Call on_write callbacks for non-highest-priority streams,
+            placing resulting packets directly onto the scheduled queue
+
+      The number N is currently 20, but it could be varied based on
+      resource usage.
+
+    - If stream is created due to incoming headers, make headers readable
+      from on_new.
+
+    - Outgoing packets are no longer marked non-writeable to prevent placing
+      more than one STREAM frame from the same stream into a single packet.
+      This property is maintained via code flow and an explicit check.
+      Packets for stream data are allocated using a special function.
+
+    - STREAM frame elision is cheaper, as we only perform it if a reset
+      stream has outgoing packets referencing it.
+
+    - lsquic_packet_out_t is smaller, as stream_rec elements are now
+      inside a union.
+
 2017-10-12
 
     - Do not send RST_STREAM when stream is closed for reading

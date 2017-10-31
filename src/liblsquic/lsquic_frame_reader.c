@@ -1326,3 +1326,14 @@ lsquic_frame_reader_read (struct lsquic_frame_reader *fr)
     else
         return read_payload(fr);
 }
+
+
+size_t
+lsquic_frame_reader_mem_used (const struct lsquic_frame_reader *fr)
+{
+    size_t size;
+    size = sizeof(*fr);
+    if (fr->fr_header_block)
+        size += fr->fr_header_block_sz;
+    return size;
+}

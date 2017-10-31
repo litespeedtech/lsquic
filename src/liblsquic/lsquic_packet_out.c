@@ -21,55 +21,95 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
 #include "lsquic_logger.h"
+#include "lsquic_ev_log.h"
 
 typedef char _stream_rec_arr_is_at_most_64bytes[
                                 (sizeof(struct stream_rec_arr) <= 64) - 1];
+
+static struct stream_rec *
+srec_one_posi_first (struct packet_out_srec_iter *posi,
+                     struct lsquic_packet_out *packet_out)
+{
+    if (packet_out->po_srecs.one.sr_frame_types)
+        return &packet_out->po_srecs.one;
+    else
+        return NULL;
+}
+
+
+struct stream_rec *
+srec_one_posi_next (struct packet_out_srec_iter *posi)
+{
+    return NULL;
+}
+
+
+struct stream_rec *
+srec_arr_posi_next (struct packet_out_srec_iter *posi)
+{
+    while (posi->cur_srec_arr)
+    {
+        for (; posi->srec_idx < sizeof(posi->cur_srec_arr->srecs) / sizeof(posi->cur_srec_arr->srecs[0]);
+                ++posi->srec_idx)
+        {
+            if (posi->cur_srec_arr->srecs[ posi->srec_idx ].sr_frame_types)
+                return &posi->cur_srec_arr->srecs[ posi->srec_idx++ ];
+        }
+        posi->cur_srec_arr = TAILQ_NEXT(posi->cur_srec_arr, next_stream_rec_arr);
+        posi->srec_idx = 0;
+    }
+    return NULL;
+}
+
+
+static struct stream_rec *
+srec_arr_posi_first (struct packet_out_srec_iter *posi,
+                     struct lsquic_packet_out *packet_out)
+{
+    posi->packet_out = packet_out;
+    posi->cur_srec_arr = TAILQ_FIRST(&packet_out->po_srecs.arr);
+    posi->srec_idx = 0;
+    return srec_arr_posi_next(posi);
+}
+
+
+static struct stream_rec * (* const posi_firsts[])
+    (struct packet_out_srec_iter *, struct lsquic_packet_out *) =
+{
+    srec_one_posi_first,
+    srec_arr_posi_first,
+};
+
+
+static struct stream_rec * (* const posi_nexts[])
+    (struct packet_out_srec_iter *posi) =
+{
+    srec_one_posi_next,
+    srec_arr_posi_next,
+};
 
 
 struct stream_rec *
 posi_first (struct packet_out_srec_iter *posi,
             lsquic_packet_out_t *packet_out)
 {
-    posi->packet_out = packet_out;
-    posi->past_srec = 0;
-    return posi_next(posi);
+    posi->impl_idx = !!(packet_out->po_flags & PO_SREC_ARR);
+    return posi_firsts[posi->impl_idx](posi, packet_out);
 }
 
 
 struct stream_rec *
 posi_next (struct packet_out_srec_iter *posi)
 {
-    if (posi->past_srec)
-    {
-        while (posi->cur_srec_arr)
-        {
-            for (; posi->srec_idx < sizeof(posi->cur_srec_arr->srecs) / sizeof(posi->cur_srec_arr->srecs[0]);
-                    ++posi->srec_idx)
-            {
-                if (posi->cur_srec_arr->srecs[ posi->srec_idx ].sr_frame_types)
-                    return &posi->cur_srec_arr->srecs[ posi->srec_idx++ ];
-            }
-            posi->cur_srec_arr = STAILQ_NEXT(posi->cur_srec_arr, next_stream_rec_arr);
-            posi->srec_idx = 0;
-        }
-        return NULL;
-    }
-    else
-    {
-        ++posi->past_srec;
-        posi->cur_srec_arr = STAILQ_FIRST(&posi->packet_out->po_srec_arrs);
-        posi->srec_idx = 0;
-        if (posi->packet_out->po_srec.sr_frame_types)
-            return &posi->packet_out->po_srec;
-        return posi_next(posi);
-    }
+    return posi_nexts[posi->impl_idx](posi);
 }
 
 
 /* Assumption: there can only be one STREAM and only one RST_STREAM frame
  * for a particular stream per packet.  The latter is true because a stream
- * will only send out one of them.  The former is true due the way packets
- * are filled: stream will write out STREAM frame as large as it can.
+ * will only send out one RST_STREAM frame.  The former is true because we
+ * make sure only to place one STREAM frame from a particular stream into a
+ * packet.
  *
  * Assumption: frames are added to the packet_out in order of their placement
  * in packet_out->po_data.  There is an assertion in this function that guards
@@ -80,11 +120,13 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               struct lsquic_mm *mm,
                               struct lsquic_stream *new_stream,
                               enum QUIC_FRAME_TYPE frame_type,
-                              unsigned short off)
+                              unsigned short off, unsigned short len)
 {
     struct packet_out_srec_iter posi;
     struct stream_rec_arr *srec_arr;
     struct stream_rec *srec;
+    int last_taken;
+    unsigned i;
 
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
         if (srec->sr_stream == new_stream)
@@ -95,6 +137,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                 assert(!(srec->sr_frame_types & (1 << QUIC_FRAME_STREAM)));
                 srec->sr_frame_types |= (1 << QUIC_FRAME_STREAM);
                 srec->sr_off         = off;
+                srec->sr_len         = len;
                 break;
             default:
                 assert(QUIC_FRAME_RST_STREAM == frame_type);
@@ -109,25 +152,45 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
 
     ++new_stream->n_unacked;
 
-    if (!srec_taken(&packet_out->po_srec))
+    if (!(packet_out->po_flags & PO_SREC_ARR))
     {
-        packet_out->po_srec.sr_frame_types = (1 << frame_type);
-        packet_out->po_srec.sr_stream      = new_stream;
-        packet_out->po_srec.sr_off         = off;
-        return 0;                           /* Insert in first slot */
+        if (!srec_taken(&packet_out->po_srecs.one))
+        {
+            packet_out->po_srecs.one.sr_frame_types = (1 << frame_type);
+            packet_out->po_srecs.one.sr_stream      = new_stream;
+            packet_out->po_srecs.one.sr_off         = off;
+            packet_out->po_srecs.one.sr_len         = len;
+            return 0;                           /* Insert in first slot */
+        }
+        srec_arr = lsquic_malo_get(mm->malo.stream_rec_arr);
+        if (!srec_arr)
+            return -1;
+        memset(srec_arr, 0, sizeof(*srec_arr));
+        srec_arr->srecs[0] = packet_out->po_srecs.one;
+        TAILQ_INIT(&packet_out->po_srecs.arr);
+        TAILQ_INSERT_TAIL(&packet_out->po_srecs.arr, srec_arr,
+                           next_stream_rec_arr);
+        packet_out->po_flags |= PO_SREC_ARR;
+        i = 1;
+        goto set_elem;
     }
 
-    STAILQ_FOREACH(srec_arr, &packet_out->po_srec_arrs, next_stream_rec_arr)
+    /* New records go at the very end: */
+    srec_arr = TAILQ_LAST(&packet_out->po_srecs.arr, stream_rec_arr_tailq);
+    last_taken = -1;
+    for (i = 0; i < sizeof(srec_arr->srecs) / sizeof(srec_arr->srecs[0]); ++i)
+        if (srec_taken(&srec_arr->srecs[i]))
+            last_taken = i;
+
+    i = last_taken + 1;
+    if (i < sizeof(srec_arr->srecs) / sizeof(srec_arr->srecs[0]))
     {
-        unsigned i;
-        for (i = 0; i < sizeof(srec_arr->srecs) / sizeof(srec_arr->srecs[0]); ++i)
-            if (!srec_taken(&srec_arr->srecs[i]))
-            {
-                srec_arr->srecs[i].sr_frame_types = (1 << frame_type);
-                srec_arr->srecs[i].sr_stream      = new_stream;
-                srec_arr->srecs[i].sr_off         = off;
-                return 0;                   /* Insert in existing srec */
-            }
+  set_elem:
+        srec_arr->srecs[i].sr_frame_types = (1 << frame_type);
+        srec_arr->srecs[i].sr_stream      = new_stream;
+        srec_arr->srecs[i].sr_off         = off;
+        srec_arr->srecs[i].sr_len         = len;
+        return 0;                   /* Insert in existing srec */
     }
 
     srec_arr = lsquic_malo_get(mm->malo.stream_rec_arr);
@@ -138,7 +201,8 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
     srec_arr->srecs[0].sr_frame_types = (1 << frame_type);
     srec_arr->srecs[0].sr_stream      = new_stream;
     srec_arr->srecs[0].sr_off         = off;
-    STAILQ_INSERT_TAIL(&packet_out->po_srec_arrs, srec_arr, next_stream_rec_arr);
+    srec_arr->srecs[0].sr_len         = len;
+    TAILQ_INSERT_TAIL(&packet_out->po_srecs.arr, srec_arr, next_stream_rec_arr);
     return 0;                               /* Insert in new srec */
 }
 
@@ -172,7 +236,7 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
     if (!packet_out)
         return NULL;
 
-    packet_out->po_flags = PO_WRITEABLE | flags;
+    packet_out->po_flags = flags;
     if (ver_tag)
         packet_out->po_ver_tag = *ver_tag;
     if (nonce)
@@ -197,11 +261,15 @@ void
 lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
                            struct lsquic_engine_public *enpub)
 {
-    struct stream_rec_arr *srec_arr;
-    while ((srec_arr = STAILQ_FIRST(&packet_out->po_srec_arrs)))
+    if (packet_out->po_flags & PO_SREC_ARR)
     {
-        STAILQ_REMOVE_HEAD(&packet_out->po_srec_arrs, next_stream_rec_arr);
-        lsquic_malo_put(srec_arr);
+        struct stream_rec_arr *srec_arr, *next;
+        for (srec_arr = TAILQ_FIRST(&packet_out->po_srecs.arr);
+                                             srec_arr; srec_arr = next)
+        {
+            next = TAILQ_NEXT(srec_arr, next_stream_rec_arr);
+            lsquic_malo_put(srec_arr);
+        }
     }
     if (packet_out->po_flags & PO_ENCRYPTED)
         enpub->enp_pmi->pmi_release(enpub->enp_pmi_ctx,
@@ -217,12 +285,10 @@ lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
  */
 void
 lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
-                                             const struct parse_funcs *pf,
                                              uint32_t stream_id)
 {
     struct packet_out_srec_iter posi;
     struct stream_rec *srec;
-    struct stream_frame frame;
     unsigned short adj = 0;
     int n_stream_frames = 0, n_elided = 0;
     int victim;
@@ -251,24 +317,12 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
             {
                 ++n_elided;
 
-                const int len =
-                    pf->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
-                                packet_out->po_data_sz - srec->sr_off, &frame);
-                if (len < 0)
-                {   /* This is pretty severe: we should be able to parse our own
-                     * frames.  Should this abort the connection?
-                     */
-                    LSQ_ERROR("can't parse our own stream frame");
-                    return;
-                }
-                assert(frame.stream_id == srec->sr_stream->id);
-
                 /* Move the data and adjust sizes */
-                adj += len;
+                adj += srec->sr_len;
                 memmove(packet_out->po_data + srec->sr_off,
-                        packet_out->po_data + srec->sr_off + len,
-                        packet_out->po_data_sz - srec->sr_off - len);
-                packet_out->po_data_sz -= len;
+                        packet_out->po_data + srec->sr_off + srec->sr_len,
+                        packet_out->po_data_sz - srec->sr_off - srec->sr_len);
+                packet_out->po_data_sz -= srec->sr_len;
 
                 /* See what we can do with the stream */
                 srec->sr_frame_types &= ~(1 << QUIC_FRAME_STREAM);
@@ -300,4 +354,420 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
         if (srec->sr_frame_types & (1 << QUIC_FRAME_STREAM))
             srec->sr_off -= delta;
+}
+
+
+int
+lsquic_packet_out_has_frame (struct lsquic_packet_out *packet_out,
+                                const struct lsquic_stream *stream,
+                                    enum QUIC_FRAME_TYPE frame_type)
+{
+    struct packet_out_srec_iter posi;
+    struct stream_rec *srec;
+
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        if (srec->sr_stream == stream &&
+                                    srec->sr_frame_types & (1 << frame_type))
+            return 1;
+
+    return 0;
+}
+
+
+int
+lsquic_packet_out_has_hsk_frames (struct lsquic_packet_out *packet_out)
+{
+    struct packet_out_srec_iter posi;
+    struct stream_rec *srec;
+
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        if ((srec->sr_frame_types & (1 << QUIC_FRAME_STREAM))
+            && LSQUIC_STREAM_HANDSHAKE == srec->sr_stream->id)
+        {
+            return 1;
+        }
+
+    return 0;
+}
+
+
+void
+lsquic_packet_out_ack_streams (lsquic_packet_out_t *packet_out)
+{
+    struct packet_out_srec_iter posi;
+    struct stream_rec *srec;
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        lsquic_stream_acked(srec->sr_stream);
+}
+
+
+static int
+split_off_last_frames (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
+    lsquic_packet_out_t *new_packet_out, struct stream_rec **srecs,
+    unsigned n_srecs)
+{
+    unsigned n;
+
+    for (n = 0; n < n_srecs; ++n)
+    {
+        struct stream_rec *const srec = srecs[n];
+        memcpy(new_packet_out->po_data + new_packet_out->po_data_sz,
+               packet_out->po_data + srec->sr_off, srec->sr_len);
+        if (0 != lsquic_packet_out_add_stream(new_packet_out, mm,
+                            srec->sr_stream, QUIC_FRAME_STREAM,
+                            new_packet_out->po_data_sz, srec->sr_len))
+            return -1;
+        srec->sr_frame_types &= ~(1 << QUIC_FRAME_STREAM);
+        assert(srec->sr_stream->n_unacked > 1);
+        --srec->sr_stream->n_unacked;
+        new_packet_out->po_data_sz += srec->sr_len;
+    }
+
+    packet_out->po_data_sz = srecs[0]->sr_off;
+
+    return 0;
+}
+
+
+static int
+move_largest_frame (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
+    lsquic_packet_out_t *new_packet_out, struct stream_rec **srecs,
+    unsigned n_srecs, unsigned max_idx)
+{
+    unsigned n;
+    struct stream_rec *const max_srec = srecs[max_idx];
+
+    memcpy(new_packet_out->po_data + new_packet_out->po_data_sz,
+           packet_out->po_data + max_srec->sr_off, max_srec->sr_len);
+    memmove(packet_out->po_data + max_srec->sr_off,
+            packet_out->po_data + max_srec->sr_off + max_srec->sr_len,
+            packet_out->po_data_sz - max_srec->sr_off - max_srec->sr_len);
+    if (0 != lsquic_packet_out_add_stream(new_packet_out, mm,
+                        max_srec->sr_stream, QUIC_FRAME_STREAM,
+                        new_packet_out->po_data_sz, max_srec->sr_len))
+        return -1;
+
+    max_srec->sr_frame_types &= ~(1 << QUIC_FRAME_STREAM);
+    assert(max_srec->sr_stream->n_unacked > 1);
+    --max_srec->sr_stream->n_unacked;
+    new_packet_out->po_data_sz += max_srec->sr_len;
+    packet_out->po_data_sz -= max_srec->sr_len;
+
+    for (n = max_idx + 1; n < n_srecs; ++n)
+        srecs[n]->sr_off -= max_srec->sr_len;
+
+    return 0;
+}
+
+
+struct split_reader_ctx
+{
+    unsigned        off;
+    unsigned        len;
+    signed char     fin;
+    unsigned char   buf[QUIC_MAX_PAYLOAD_SZ / 2 + 1];
+};
+
+
+static int
+split_reader_fin (void *ctx)
+{
+    struct split_reader_ctx *const reader_ctx = ctx;
+    return reader_ctx->off == reader_ctx->len && reader_ctx->fin;
+}
+
+
+static size_t
+split_reader_size (void *ctx)
+{
+    struct split_reader_ctx *const reader_ctx = ctx;
+    return reader_ctx->len - reader_ctx->off;
+}
+
+
+static size_t
+split_reader_read (void *ctx, void *buf, size_t len, int *fin)
+{
+    struct split_reader_ctx *const reader_ctx = ctx;
+    if (len > reader_ctx->len - reader_ctx->off)
+        len = reader_ctx->len - reader_ctx->off;
+    memcpy(buf, reader_ctx->buf, len);
+    reader_ctx->off += len;
+    *fin = split_reader_fin(reader_ctx);
+    return len;
+}
+
+
+static int
+split_largest_frame (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
+    lsquic_packet_out_t *new_packet_out, const struct parse_funcs *pf,
+    struct stream_rec **srecs, unsigned n_srecs, unsigned max_idx)
+{
+    struct stream_rec *const max_srec = srecs[max_idx];
+    struct stream_frame frame;
+    int len;
+    unsigned n;
+    struct split_reader_ctx reader_ctx;
+
+    len = pf->pf_parse_stream_frame(packet_out->po_data + max_srec->sr_off,
+                                    max_srec->sr_len, &frame);
+    if (len < 0)
+    {
+        LSQ_ERROR("could not parse own frame");
+        return -1;
+    }
+
+    assert(frame.data_frame.df_size / 2 <= sizeof(reader_ctx.buf));
+    if (frame.data_frame.df_size / 2 > sizeof(reader_ctx.buf))
+        return -1;
+
+    memcpy(reader_ctx.buf,
+           frame.data_frame.df_data + frame.data_frame.df_size / 2,
+           frame.data_frame.df_size - frame.data_frame.df_size / 2);
+    reader_ctx.off = 0;
+    reader_ctx.len = frame.data_frame.df_size - frame.data_frame.df_size / 2;
+    reader_ctx.fin = frame.data_frame.df_fin;
+
+    len = pf->pf_gen_stream_frame(
+                new_packet_out->po_data + new_packet_out->po_data_sz,
+                lsquic_packet_out_avail(new_packet_out), frame.stream_id,
+                frame.data_frame.df_offset + frame.data_frame.df_size / 2,
+                split_reader_fin, split_reader_size, split_reader_read,
+                &reader_ctx);
+    if (len < 0)
+    {
+        LSQ_ERROR("could not generate new frame 1");
+        return -1;
+    }
+    if (0 != lsquic_packet_out_add_stream(new_packet_out, mm,
+                        max_srec->sr_stream, QUIC_FRAME_STREAM,
+                        new_packet_out->po_data_sz, len))
+        return -1;
+    new_packet_out->po_data_sz += len;
+
+    memcpy(reader_ctx.buf, frame.data_frame.df_data,
+           frame.data_frame.df_size / 2);
+    reader_ctx.off = 0;
+    reader_ctx.len = frame.data_frame.df_size / 2;
+    reader_ctx.fin = 0;
+    len = pf->pf_gen_stream_frame(
+                packet_out->po_data + max_srec->sr_off, max_srec->sr_len,
+                frame.stream_id, frame.data_frame.df_offset,
+                split_reader_fin, split_reader_size, split_reader_read,
+                &reader_ctx);
+    if (len < 0)
+    {
+        LSQ_ERROR("could not generate new frame 2");
+        return -1;
+    }
+
+    const unsigned short adj = max_srec->sr_len - (unsigned short) len;
+    max_srec->sr_len = len;
+    for (n = max_idx + 1; n < n_srecs; ++n)
+        srecs[n]->sr_off -= adj;
+    packet_out->po_data_sz -= adj;
+
+    return 0;
+}
+
+
+#ifndef NDEBUG
+static void
+verify_srecs (lsquic_packet_out_t *packet_out)
+{
+    struct packet_out_srec_iter posi;
+    const struct stream_rec *srec;
+    unsigned off;
+
+    srec = posi_first(&posi, packet_out);
+    assert(srec);
+
+    off = 0;
+    for ( ; srec; srec = posi_next(&posi))
+    {
+        assert(srec->sr_off == off);
+        assert(srec->sr_frame_types & (1 << QUIC_FRAME_STREAM));
+        off += srec->sr_len;
+    }
+
+    assert(packet_out->po_data_sz == off);
+}
+#endif
+
+
+int
+lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
+        lsquic_packet_out_t *packet_out, lsquic_packet_out_t *new_packet_out,
+        const struct parse_funcs *pf, unsigned excess_bytes)
+{
+    struct packet_out_srec_iter posi;
+    struct stream_rec *local_arr[4];
+    struct stream_rec **new_srecs, **srecs = local_arr;
+    struct stream_rec *srec;
+    unsigned n_srecs_alloced = sizeof(local_arr) / sizeof(local_arr[0]);
+    unsigned n_srecs, max_idx, n, nbytes;
+#ifndef NDEBUG
+    unsigned short frame_sum = 0;
+#endif
+    int rv;
+
+    assert(packet_out->po_frame_types == (1 << QUIC_FRAME_STREAM));
+
+    n_srecs = 0;
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    {
+        assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+        if (n_srecs >= n_srecs_alloced)
+        {
+            n_srecs_alloced *= 2;
+            if (srecs == local_arr)
+            {
+                srecs = malloc(sizeof(srecs[0]) * n_srecs_alloced);
+                if (!srecs)
+                    goto err;
+                memcpy(srecs, local_arr, sizeof(local_arr));
+            }
+            else
+            {
+                new_srecs = realloc(srecs, sizeof(srecs[0]) * n_srecs_alloced);
+                if (!new_srecs)
+                    goto err;
+                srecs = new_srecs;
+            }
+        }
+
+#ifndef NDEBUG
+        frame_sum += srec->sr_len;
+#endif
+        if (n_srecs == 0 || srecs[max_idx]->sr_len < srec->sr_len)
+            max_idx = n_srecs;
+
+        srecs[n_srecs++] = srec;
+    }
+
+    assert(frame_sum == packet_out->po_data_sz);
+
+    if (n_srecs == 1)
+        goto common_case;
+
+    if (n_srecs < 1)
+        goto err;
+
+    /* Case 1: see if we can remove one or more trailing frames to make
+     * packet smaller.
+     */
+    nbytes = 0;
+    for (n = n_srecs - 1; n > max_idx && nbytes < excess_bytes; --n)
+        nbytes += srecs[n]->sr_len;
+    if (nbytes >= excess_bytes)
+    {
+        rv = split_off_last_frames(mm, packet_out, new_packet_out,
+                                   srecs + n + 1, n_srecs - n - 1);
+        goto end;
+    }
+
+    /* Case 2: see if we can move the largest frame to new packet. */
+    nbytes = 0;
+    for (n = 0; n < n_srecs; ++n)
+        if (n != max_idx)
+            nbytes += srecs[n]->sr_len;
+    if (nbytes >= excess_bytes)
+    {
+        rv = move_largest_frame(mm, packet_out, new_packet_out, srecs,
+                                n_srecs, max_idx);
+        goto end;
+    }
+
+  common_case:
+    /* Case 3: we have to split the largest frame (which could be the
+     * the only frame) in two.
+     */
+    rv = split_largest_frame(mm, packet_out, new_packet_out, pf, srecs,
+                             n_srecs, max_idx);
+
+  end:
+    if (srecs != local_arr)
+        free(srecs);
+#ifndef NDEBUG
+    if (0 == rv)
+    {
+        verify_srecs(packet_out);
+        verify_srecs(new_packet_out);
+    }
+#endif
+    return rv;
+
+  err:
+    rv = -1;
+    goto end;
+}
+
+
+void
+lsquic_packet_out_zero_pad (lsquic_packet_out_t *packet_out)
+{
+    if (packet_out->po_n_alloc > packet_out->po_data_sz)
+    {
+        memset(packet_out->po_data + packet_out->po_data_sz, 0,
+                            packet_out->po_n_alloc - packet_out->po_data_sz);
+        packet_out->po_data_sz = packet_out->po_n_alloc;
+        packet_out->po_frame_types |= 1 << QUIC_FRAME_PADDING;
+    }
+}
+
+
+size_t
+lsquic_packet_out_mem_used (const struct lsquic_packet_out *packet_out)
+{
+    const struct stream_rec_arr *srec_arr;
+    size_t size;
+
+    size = 0;   /* The struct is allocated using malo */
+    if (packet_out->po_enc_data)
+        size += packet_out->po_enc_data_sz;
+    if (packet_out->po_data)
+        size += packet_out->po_n_alloc;
+    if (packet_out->po_nonce)
+        size += 32;
+
+    if (packet_out->po_flags & PO_SREC_ARR)
+        TAILQ_FOREACH(srec_arr, &packet_out->po_srecs.arr, next_stream_rec_arr)
+            size += sizeof(*srec_arr);
+
+    return size;
+}
+
+
+int
+lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
+                               const struct parse_funcs *pf,
+                               const struct lsquic_stream *stream)
+{
+    struct packet_out_srec_iter posi;
+    const struct stream_rec *srec;
+    struct stream_frame stream_frame;
+    uint64_t last_offset;
+    int len;
+
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        if ((srec->sr_frame_types & (1 << QUIC_FRAME_STREAM))
+            && srec->sr_stream == stream)
+        {
+            len = pf->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
+                                            srec->sr_len, &stream_frame);
+            assert(len >= 0);
+            if (len < 0)
+                return -1;
+            last_offset = stream_frame.data_frame.df_offset
+                        + stream_frame.data_frame.df_size;
+            if (last_offset == stream->tosend_off)
+            {
+                pf->pf_turn_on_fin(packet_out->po_data + srec->sr_off);
+                EV_LOG_UPDATED_STREAM_FRAME(lsquic_stream_cid(stream),
+                    pf, packet_out->po_data + srec->sr_off, srec->sr_len);
+                return 0;
+            }
+        }
+
+    return -1;
 }

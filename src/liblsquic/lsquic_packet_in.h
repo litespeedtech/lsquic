@@ -59,6 +59,9 @@ typedef struct lsquic_packet_in
         PI_DECRYPTED    = (1 << 0),
         PI_OWN_DATA     = (1 << 1),                /* We own pi_data */
         PI_CONN_ID      = (1 << 2),                /* pi_conn_id is set */
+#define PIBIT_ENC_LEV_SHIFT 5
+        PI_ENC_LEV_BIT_0= (1 << 5),                /* Encodes encryption level */
+        PI_ENC_LEV_BIT_1= (1 << 6),                /*  (see enum enc_level). */
     }                               pi_flags:8;
     /* If PI_OWN_DATA flag is not set, `pi_data' points to user-supplied
      * packet data, which is NOT TO BE MODIFIED.
@@ -81,6 +84,9 @@ typedef struct lsquic_packet_in
 #define lsquic_packet_in_nonce(p) \
                     ((p)->pi_nonce ? (p)->pi_data + (p)->pi_nonce : NULL)
 
+#define lsquic_packet_in_enc_level(p) \
+    (((p)->pi_flags >> PIBIT_ENC_LEV_SHIFT) & 0x3)
+
 /* The version iterator is used on a version negotiation packet only.
  * The iterator functions return 1 when next version is returned and
  * 0 when there are no more versions.
@@ -97,5 +103,8 @@ packet_in_ver_first (const lsquic_packet_in_t *packet_in, struct ver_iter *,
 
 int
 packet_in_ver_next (struct ver_iter *, lsquic_ver_tag_t *ver_tag);
+
+size_t
+lsquic_packet_in_mem_used (const struct lsquic_packet_in *);
 
 #endif

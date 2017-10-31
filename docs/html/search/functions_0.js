@@ -30,16 +30,15 @@ var searchData=
   ['lsquic_5fset_5flog_5flevel',['lsquic_set_log_level',['../lsquic_8h.html#a337f6adcc4ec9328e0f293d6128ee376',1,'lsquic.h']]],
   ['lsquic_5fstr2ver',['lsquic_str2ver',['../lsquic_8h.html#a8fef45d333b115d996080bb254077d8d',1,'lsquic.h']]],
   ['lsquic_5fstream_5fconn',['lsquic_stream_conn',['../lsquic_8h.html#a177184b3d7178dda5a3e95e539230b2b',1,'lsquic.h']]],
+  ['lsquic_5fstream_5fflush',['lsquic_stream_flush',['../lsquic_8h.html#abcf25d8301c4a2796ea13e6e306a33a9',1,'lsquic.h']]],
   ['lsquic_5fstream_5fget_5fctx',['lsquic_stream_get_ctx',['../lsquic_8h.html#a26335cffe38e49a6e87d94967371150d',1,'lsquic.h']]],
   ['lsquic_5fstream_5fid',['lsquic_stream_id',['../lsquic_8h.html#a534523d663336969494d6a3721a63640',1,'lsquic.h']]],
   ['lsquic_5fstream_5fis_5fpushed',['lsquic_stream_is_pushed',['../lsquic_8h.html#a199b551bc87bb77814ab4ce58abcdff9',1,'lsquic.h']]],
   ['lsquic_5fstream_5fpriority',['lsquic_stream_priority',['../lsquic_8h.html#aa45f5d45b56f5a0d7f881dbccebc5fd8',1,'lsquic.h']]],
   ['lsquic_5fstream_5fpush_5finfo',['lsquic_stream_push_info',['../lsquic_8h.html#ae0b8525f7dac119f6122af564d0e17fd',1,'lsquic.h']]],
   ['lsquic_5fstream_5frefuse_5fpush',['lsquic_stream_refuse_push',['../lsquic_8h.html#ada61e01ced7a7db11e5c503409c565be',1,'lsquic.h']]],
-  ['lsquic_5fstream_5fsendfile',['lsquic_stream_sendfile',['../lsquic_8h.html#a1700c950ace4e560d225b474a5e44d58',1,'lsquic.h']]],
   ['lsquic_5fstream_5fset_5fpriority',['lsquic_stream_set_priority',['../lsquic_8h.html#aa5e0ddfd53a44561248a286caacbd114',1,'lsquic.h']]],
   ['lsquic_5fstream_5fshutdown',['lsquic_stream_shutdown',['../lsquic_8h.html#a7fee61cc609a4b274a4de2b41db6a9e4',1,'lsquic.h']]],
   ['lsquic_5fstream_5fwrite',['lsquic_stream_write',['../lsquic_8h.html#a1071b7be4f2f28c5fedf957aa6309f9a',1,'lsquic.h']]],
-  ['lsquic_5fstream_5fwrite_5favail',['lsquic_stream_write_avail',['../lsquic_8h.html#a97229544d7aaf6c5dcd5e071613f9c8f',1,'lsquic.h']]],
-  ['lsquic_5fstream_5fwrite_5ffile',['lsquic_stream_write_file',['../lsquic_8h.html#af5b85bb360eb8316fd663d7c5bc149c9',1,'lsquic.h']]]
+  ['lsquic_5fstream_5fwritef',['lsquic_stream_writef',['../lsquic_8h.html#a49f11caabdf3638d3a3217ebdd21c3af',1,'lsquic.h']]]
 ];

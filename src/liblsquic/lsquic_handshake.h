@@ -25,6 +25,14 @@ enum handshake_error            /* TODO: rename this enum */
     HS_2RTT = 2,
 };
 
+enum enc_level
+{
+    ENC_LEV_UNSET,
+    ENC_LEV_CLEAR,
+    ENC_LEV_INIT,
+    ENC_LEV_FORW,
+};
+
 /* client side need to store 0rtt info per STK */
 typedef struct lsquic_session_cache_info_st
 {
@@ -85,8 +93,13 @@ struct enc_session_funcs
                unsigned char *buf_out, size_t max_out_len, size_t *out_len,
                int is_hello);
 
-    /* Decrypt buffer */
-    int (*esf_decrypt)(lsquic_enc_session_t *enc_session, enum lsquic_version,
+    /** Decrypt buffer
+     *
+     * If decryption is successful, decryption level is returned.  Otherwise,
+     * the return value is -1.
+     */
+    enum enc_level (*esf_decrypt)(lsquic_enc_session_t *enc_session,
+                   enum lsquic_version,
                    uint8_t path_id, uint64_t pack_num,
                    unsigned char *buf, size_t *header_len, size_t data_len,
                    unsigned char *diversification_nonce,
@@ -116,6 +129,9 @@ struct enc_session_funcs
     int
     (*esf_handle_chlo_reply) (lsquic_enc_session_t *,
                                                 const uint8_t *data, int len);
+
+    size_t
+    (*esf_mem_used)(lsquic_enc_session_t *);
 };
 
 extern

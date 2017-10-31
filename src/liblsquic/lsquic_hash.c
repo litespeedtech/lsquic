@@ -226,3 +226,12 @@ lsquic_hash_count (struct lsquic_hash *hash)
 {
     return hash->qh_count;
 }
+
+
+size_t
+lsquic_hash_mem_used (const struct lsquic_hash *hash)
+{
+    return sizeof(*hash)
+         + N_BUCKETS(hash->qh_nbits) * sizeof(hash->qh_buckets[0])
+         + lsquic_malo_mem_used(hash->qh_malo_els);
+}

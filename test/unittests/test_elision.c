@@ -105,13 +105,13 @@ elide_single_stream_frame (void)
     packet_out->po_data_sz += len;
     packet_out->po_frame_types |= (1 << QUIC_FRAME_STREAM);
     lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
-                                                QUIC_FRAME_STREAM, off);
+                                                QUIC_FRAME_STREAM, off, len);
     assert(1 == streams[0].n_unacked);
     assert(posi_first(&posi, packet_out));
 
     streams[0].stream_flags |= STREAM_RST_SENT;
 
-    lsquic_packet_out_elide_reset_stream_frames(packet_out, pf, 0);
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
     assert(0 == streams[0].n_unacked);
     assert(0 == packet_out->po_frame_types);
     assert(!posi_first(&posi, packet_out));
@@ -205,7 +205,7 @@ elide_three_stream_frames (int chop_regen)
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[0]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
-                                    QUIC_FRAME_STREAM, packet_out->po_data_sz);
+                                    QUIC_FRAME_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         /* STREAM B */
         setup_stream_contents(123, "BBBBBBBBBB");
@@ -218,7 +218,7 @@ elide_three_stream_frames (int chop_regen)
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[1]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1],
-                                    QUIC_FRAME_STREAM, packet_out->po_data_sz);
+                                    QUIC_FRAME_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         /* STREAM C */
         setup_stream_contents(123, "CCCCCCCCCC");
@@ -231,13 +231,13 @@ elide_three_stream_frames (int chop_regen)
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[2]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[2],
-                                    QUIC_FRAME_STREAM, packet_out->po_data_sz);
+                                    QUIC_FRAME_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         /* Reset A */
         len = pf->pf_gen_rst_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out), 'A', 133, 0);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
-                                                QUIC_FRAME_RST_STREAM, 0);
+                                     QUIC_FRAME_RST_STREAM, 0, 0);
         packet_out->po_data_sz += len;
         /* STREAM D */
         setup_stream_contents(123, "DDDDDDDDDD");
@@ -250,7 +250,7 @@ elide_three_stream_frames (int chop_regen)
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[3]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[3],
-                                    QUIC_FRAME_STREAM, packet_out->po_data_sz);
+                                QUIC_FRAME_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         /* STREAM E */
         setup_stream_contents(123, "EEEEEEEEEE");
@@ -263,7 +263,7 @@ elide_three_stream_frames (int chop_regen)
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[4]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[4],
-                                    QUIC_FRAME_STREAM, packet_out->po_data_sz);
+                                QUIC_FRAME_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         packet_out->po_frame_types = (1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM);
     }
@@ -275,7 +275,7 @@ elide_three_stream_frames (int chop_regen)
 
     if (chop_regen)
         lsquic_packet_out_chop_regen(packet_out);
-    lsquic_packet_out_elide_reset_stream_frames(packet_out, pf, 0);
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
 
     assert(ref_out->po_data_sz == packet_out->po_data_sz + (chop_regen ? 5 : 0));
     assert(ref_out->po_regen_sz == packet_out->po_regen_sz + (chop_regen ? 5 : 0));

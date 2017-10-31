@@ -64,8 +64,6 @@ struct lsquic_frame_writer
 {
     struct lsquic_stream       *fw_stream;
     fw_write_f                  fw_write;
-    fw_wavail_f                 fw_wavail;
-    fw_flush_f                  fw_flush;
     struct lsquic_mm           *fw_mm;
     struct lsquic_henc         *fw_henc;
     struct frame_buf_head       fw_frabs;
@@ -89,7 +87,7 @@ struct lsquic_frame_writer
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
      unsigned max_frame_sz, struct lsquic_henc *henc, fw_write_f write,
-     fw_wavail_f wavail, fw_flush_f flush, int is_server)
+     int is_server)
 {
     struct lsquic_frame_writer *fw;
 
@@ -120,8 +118,6 @@ lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
     fw->fw_henc         = henc;
     fw->fw_stream       = stream;
     fw->fw_write        = write;
-    fw->fw_wavail       = wavail;
-    fw->fw_flush        = flush;
     fw->fw_max_frame_sz = max_frame_sz;
     fw->fw_max_header_list_sz = 0;
     if (is_server)
@@ -206,19 +202,15 @@ lsquic_frame_writer_have_leftovers (const struct lsquic_frame_writer *fw)
 int
 lsquic_frame_writer_flush (struct lsquic_frame_writer *fw)
 {
-    size_t navail = fw->fw_wavail(fw->fw_stream);
     struct frame_buf *frab;
 
-    while (navail > 0 && (frab = TAILQ_FIRST(&fw->fw_frabs)))
+    while ((frab = TAILQ_FIRST(&fw->fw_frabs)))
     {
         size_t ntowrite = frab_left_to_read(frab);
-        if (navail < ntowrite)
-            ntowrite = navail;
         ssize_t nw = fw->fw_write(fw->fw_stream,
                             frab->frab_buf + frab->frab_off, ntowrite);
         if (nw > 0)
         {
-            navail -= nw;
             frab->frab_off += nw;
             if (frab->frab_off == frab->frab_size)
             {
@@ -226,11 +218,11 @@ lsquic_frame_writer_flush (struct lsquic_frame_writer *fw)
                 fw_put_frab(fw, frab);
             }
         }
+        else if (nw == 0)
+            break;
         else
             return -1;
     }
-
-    (void) fw->fw_flush(fw->fw_stream);
 
     return 0;
 }
@@ -739,6 +731,20 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
         htonl(stream_id), weight, !!exclusive);
 
     return lsquic_frame_writer_flush(fw);
+}
+
+
+size_t
+lsquic_frame_writer_mem_used (const struct lsquic_frame_writer *fw)
+{
+    const struct frame_buf *frab;
+    size_t size;
+
+    size = sizeof(*fw);
+    TAILQ_FOREACH(frab, &fw->fw_frabs, frab_next)
+        size += sizeof(*frab);
+
+    return size;
 }
 
 

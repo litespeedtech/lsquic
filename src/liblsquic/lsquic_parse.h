@@ -153,6 +153,8 @@ struct parse_funcs
 #endif
     size_t
     (*pf_calc_stream_frame_header_sz) (uint32_t stream_id, uint64_t offset);
+    void
+    (*pf_turn_on_fin) (unsigned char *);
 };
 
 extern const struct parse_funcs lsquic_parse_funcs_gquic_le;
@@ -207,5 +209,8 @@ calc_stream_frame_header_sz_gquic (uint32_t stream_id, uint64_t offset);
 
 char *
 acki2str (const struct ack_info *acki, size_t *sz);
+
+void
+lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *);
 
 #endif

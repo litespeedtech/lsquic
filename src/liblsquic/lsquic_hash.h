@@ -40,4 +40,6 @@ lsquic_hash_next (struct lsquic_hash *);
 unsigned
 lsquic_hash_count (struct lsquic_hash *);
 
+size_t
+lsquic_hash_mem_used (const struct lsquic_hash *);
 #endif

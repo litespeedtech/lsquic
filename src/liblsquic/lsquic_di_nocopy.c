@@ -416,11 +416,30 @@ nocopy_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 }
 
 
+/* This function overestimates amount of memory because some packets are
+ * referenced by more than one stream.  In the usual case, however, I
+ * expect the error not to be large.
+ */
+static size_t
+nocopy_di_mem_used (struct data_in *data_in)
+{
+    struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
+    const stream_frame_t *frame;
+    size_t size;
+
+    size = sizeof(*data_in);
+    TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
+        size += lsquic_packet_in_mem_used(frame->packet_in);
+
+    return size;
+}
+
 static const struct data_in_iface di_if_nocopy = {
     .di_destroy      = nocopy_di_destroy,
     .di_empty        = nocopy_di_empty,
     .di_frame_done   = nocopy_di_frame_done,
     .di_get_frame    = nocopy_di_get_frame,
     .di_insert_frame = nocopy_di_insert_frame,
+    .di_mem_used     = nocopy_di_mem_used,
     .di_switch_impl  = nocopy_di_switch_impl,
 };

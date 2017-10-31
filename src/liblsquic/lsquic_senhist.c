@@ -148,3 +148,12 @@ lsquic_senhist_tostr (lsquic_senhist_t *hist, char *buf, size_t bufsz)
     if (bufsz > 0)
         buf[off] = '\0';
 }
+
+
+size_t
+lsquic_senhist_mem_used (const struct lsquic_senhist *hist)
+{
+    return sizeof(*hist)
+         - sizeof(hist->sh_pints)
+         + lsquic_packints_mem_used(&hist->sh_pints);
+}

@@ -49,4 +49,7 @@ lsquic_senhist_largest (lsquic_senhist_t *hist);
 void
 lsquic_senhist_tostr (lsquic_senhist_t *hist, char *buf, size_t bufsz);
 
+size_t
+lsquic_senhist_mem_used (const struct lsquic_senhist *);
+
 #endif

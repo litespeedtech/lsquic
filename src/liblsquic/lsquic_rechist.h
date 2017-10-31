@@ -66,4 +66,7 @@ lsquic_rechist_cutoff (const lsquic_rechist_t *);
 lsquic_time_t
 lsquic_rechist_largest_recv (const lsquic_rechist_t *);
 
+size_t
+lsquic_rechist_mem_used (const struct lsquic_rechist *);
+
 #endif

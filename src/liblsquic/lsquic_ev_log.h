@@ -156,12 +156,17 @@ lsquic_ev_log_http_headers_in (lsquic_cid_t, int is_server,
 } while (0)
 
 void
-lsquic_ev_log_generated_stream_frame (lsquic_cid_t, const struct parse_funcs *pf,
-                                      const unsigned char *, size_t len);
+lsquic_ev_log_action_stream_frame (lsquic_cid_t, const struct parse_funcs *pf,
+                       const unsigned char *, size_t len, const char *action);
 
 #define EV_LOG_GENERATED_STREAM_FRAME(args...) do {                         \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
-        lsquic_ev_log_generated_stream_frame(args);                         \
+        lsquic_ev_log_action_stream_frame(args, "generated");               \
+} while (0)
+
+#define EV_LOG_UPDATED_STREAM_FRAME(args...) do {                           \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_action_stream_frame(args, "updated");                 \
 } while (0)
 
 void

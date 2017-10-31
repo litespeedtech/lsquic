@@ -23,27 +23,19 @@ struct lsquic_conn_cap {
     uint64_t cc_max;            /* Maximum cumulative number of bytes allowed
                                  * to be sent on this connection.
                                  */
-    uint64_t cc_tosend;         /* Number of bytes scheduled to be sent
-                                 * accross all streams.
-                                 */
     uint64_t cc_blocked;        /* Last blocked offset used */
 };
 
 
 #define lsquic_conn_cap_init(cc, max) do {                          \
     (cc)->cc_sent = 0;                                              \
-    (cc)->cc_tosend = 0;                                            \
     (cc)->cc_max = max;                                             \
 } while (0)
 
 
 #define lsquic_conn_cap_avail(cap) (                                \
-    ((cap)->cc_sent + (cap)->cc_tosend <= (cap)->cc_max)            \
-    ?                                                               \
-        ((cap)->cc_max - (cap)->cc_sent - (cap)->cc_tosend)         \
-    :                                                               \
-        0                                                           \
-)
+    (assert((cap)->cc_max >= (cap)->cc_sent)),                      \
+        (cap)->cc_max - (cap)->cc_sent)
 
 
 void

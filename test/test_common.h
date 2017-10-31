@@ -18,6 +18,7 @@ struct event;
 struct packets_in;
 struct lsquic_conn;
 struct prog;
+struct reader_ctx;
 
 enum sport_flags
 {
@@ -92,5 +93,17 @@ pba_release (void *packout_buf_allocator, void *obj);
 
 void
 pba_cleanup (struct packout_buf_allocator *);
+
+size_t
+test_reader_size (void *void_ctx);
+
+size_t
+test_reader_read (void *void_ctx, void *buf, size_t count);
+
+struct reader_ctx *
+create_lsquic_reader_ctx (const char *filename);
+
+void
+destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 
 #endif

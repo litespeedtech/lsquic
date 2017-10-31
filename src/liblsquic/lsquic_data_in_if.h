@@ -47,6 +47,9 @@ struct data_in_iface
      */
     struct data_in *
     (*di_switch_impl) (struct data_in *, uint64_t read_offset);
+
+    size_t
+    (*di_mem_used) (struct data_in *);
 };
 
 

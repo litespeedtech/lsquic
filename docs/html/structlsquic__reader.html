@@ -4,7 +4,7 @@
 <meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
 <meta http-equiv="X-UA-Compatible" content="IE=9"/>
 <meta name="generator" content="Doxygen 1.8.11"/>
-<title>LiteSpeed QUIC Library: Data Structure Index</title>
+<title>LiteSpeed QUIC Library: lsquic_reader Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -61,11 +61,10 @@ var searchBox = new SearchBox("searchBox", "search",false,'Search');
   <div id="navrow2" class="tabs2">
     <ul class="tablist">
       <li><a href="annotated.html"><span>Data&#160;Structures</span></a></li>
-      <li class="current"><a href="classes.html"><span>Data&#160;Structure&#160;Index</span></a></li>
+      <li><a href="classes.html"><span>Data&#160;Structure&#160;Index</span></a></li>
       <li><a href="functions.html"><span>Data&#160;Fields</span></a></li>
     </ul>
   </div>
-</div><!-- top -->
 <!-- window showing the filter options -->
 <div id="MSearchSelectWindow"
      onmouseover="return searchBox.OnSearchSelectShow()"
@@ -80,20 +79,59 @@ var searchBox = new SearchBox("searchBox", "search",false,'Search');
 </iframe>
 </div>
 
+</div><!-- top -->
 <div class="header">
+  <div class="summary">
+<a href="#pub-attribs">Data Fields</a>  </div>
   <div class="headertitle">
-<div class="title">Data Structure Index</div>  </div>
+<div class="title">lsquic_reader Struct Reference</div>  </div>
 </div><!--header-->
 <div class="contents">
-<div class="qindex"><a class="qindex" href="#letter_L">L</a></div>
-<table class="classindex">
-<tr><td rowspan="2" valign="bottom"><a name="letter_l"></a><table border="0" cellspacing="0" cellpadding="0"><tr><td><div class="ah">&#160;&#160;l&#160;&#160;</div></td></tr></table>
-</td><td valign="top"><a class="el" href="structlsquic__engine__settings.html">lsquic_engine_settings</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__logger__if.html">lsquic_logger_if</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__reader.html">lsquic_reader</a>&#160;&#160;&#160;</td></tr>
-<tr><td valign="top"><a class="el" href="structlsquic__http__header.html">lsquic_http_header</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__out__spec.html">lsquic_out_spec</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__stream__if.html">lsquic_stream_if</a>&#160;&#160;&#160;</td></tr>
-<tr><td valign="top"><a class="el" href="structlsquic__engine__api.html">lsquic_engine_api</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__http__headers.html">lsquic_http_headers</a>&#160;&#160;&#160;</td><td valign="top"><a class="el" href="structlsquic__packout__mem__if.html">lsquic_packout_mem_if</a>&#160;&#160;&#160;</td><td></td></tr>
-<tr><td></td><td></td><td></td><td></td></tr>
+
+<p><code>#include &lt;<a class="el" href="lsquic_8h_source.html">lsquic.h</a>&gt;</code></p>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 class="groupheader"><a name="pub-attribs"></a>
+Data Fields</h2></td></tr>
+<tr class="memitem:ae6a68ebf2a1fb77160b0bac599d42790"><td class="memItemLeft" align="right" valign="top">size_t(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__reader.html#ae6a68ebf2a1fb77160b0bac599d42790">lsqr_read</a> )(void *lsqr_ctx, void *buf, size_t count)</td></tr>
+<tr class="separator:ae6a68ebf2a1fb77160b0bac599d42790"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aaf6c91ecaf35ca6faa39dde9ea401f17"><td class="memItemLeft" align="right" valign="top">size_t(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structlsquic__reader.html#aaf6c91ecaf35ca6faa39dde9ea401f17">lsqr_size</a> )(void *lsqr_ctx)</td></tr>
+<tr class="separator:aaf6c91ecaf35ca6faa39dde9ea401f17"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8720320475c026e839eb86b535b213ff"><td class="memItemLeft" align="right" valign="top"><a class="anchor" id="a8720320475c026e839eb86b535b213ff"></a>
+void *&#160;</td><td class="memItemRight" valign="bottom"><b>lsqr_ctx</b></td></tr>
+<tr class="separator:a8720320475c026e839eb86b535b213ff"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<div class="qindex"><a class="qindex" href="#letter_L">L</a></div>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Used as argument to <a class="el" href="lsquic_8h.html#a49f11caabdf3638d3a3217ebdd21c3af">lsquic_stream_writef()</a> </p>
+</div><h2 class="groupheader">Field Documentation</h2>
+<a class="anchor" id="ae6a68ebf2a1fb77160b0bac599d42790"></a>
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">size_t(* lsquic_reader::lsqr_read) (void *lsqr_ctx, void *buf, size_t count)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Not a ssize_t because the read function is not supposed to return an error. If an error occurs in the read function (for example, when reading from a file fails), it is supposed to deal with the error itself. </p>
+
+</div>
+</div>
+<a class="anchor" id="aaf6c91ecaf35ca6faa39dde9ea401f17"></a>
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">size_t(* lsquic_reader::lsqr_size) (void *lsqr_ctx)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+<p>Return number of bytes remaining in the reader. </p>
+
+</div>
+</div>
+<hr/>The documentation for this struct was generated from the following file:<ul>
+<li>include/<a class="el" href="lsquic_8h_source.html">lsquic.h</a></li>
+</ul>
 </div><!-- contents -->
 <!-- start footer part -->
 <hr class="footer"/><address class="footer"><small>

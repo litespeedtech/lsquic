@@ -165,9 +165,11 @@ static void remove_session_info_entry(struct lsquic_str *key);
 
 static void free_info (lsquic_session_cache_info_t *);
 
-static void c_free_cert_hash_item (cert_hash_item_t *item);
-static void c_free_cert_hash_item(cert_hash_item_t *item);
 
+/* client */
+static cert_hash_item_t *make_cert_hash_item(struct lsquic_str *domain, struct lsquic_str **certs, int count);
+static int c_insert_certs(cert_hash_item_t *item);
+static void c_free_cert_hash_item (cert_hash_item_t *item);
 
 static int get_tag_val_u32 (unsigned char *v, int len, uint32_t *val);
 static int init_hs_hash_tables(int flags);
@@ -1472,7 +1474,7 @@ verify_packet_hash (const lsquic_enc_session_t *enc_session,
 }
 
 
-static int
+static enum enc_level
 decrypt_packet (lsquic_enc_session_t *enc_session, uint8_t path_id,
                 uint64_t pack_num, unsigned char *buf, size_t *header_len,
                 size_t data_len, unsigned char *buf_out, size_t max_out_len,
@@ -1484,22 +1486,25 @@ decrypt_packet (lsquic_enc_session_t *enc_session, uint8_t path_id,
     uint64_t path_id_packet_number;
     EVP_AEAD_CTX *key = NULL;
     int try_times = 0;
+    enum enc_level enc_level;
 
     path_id_packet_number = combine_path_id_pack_num(path_id, pack_num);
     memcpy(buf_out, buf, *header_len);
-    while(try_times < 2)
+    do
     {
         if (enc_session->have_key == 3 && try_times == 0)
         {
             key = enc_session->dec_ctx_f;
             memcpy(nonce, enc_session->dec_key_nonce_f, 4);
             LSQ_DEBUG("decrypt_packet using 'F' key...");
+            enc_level = ENC_LEV_FORW;
         }
         else
         {
             key = enc_session->dec_ctx_i;
             memcpy(nonce, enc_session->dec_key_nonce_i, 4);
             LSQ_DEBUG("decrypt_packet using 'I' key...");
+            enc_level = ENC_LEV_INIT;
         }
         memcpy(nonce + 4, &path_id_packet_number,
                sizeof(path_id_packet_number));
@@ -1529,21 +1534,10 @@ decrypt_packet (lsquic_enc_session_t *enc_session, uint8_t path_id,
             break;
         }
     }
-
-//     if (ret)
-//     {
-//        *out_len = data_len;
-//        memcpy(buf_out, buf, *header_len);
-//        key = "\x45\xCA\x99\x4A\x40\xBC\xE3\x3B\x32\x16\x59\x51\x98\x36\xD4\x21";
-//        ret = aes_aead_dec(key,
-//                           buf, 0,
-//                           lsquic_str_cstr(enc_session->sstk), 12,
-//                           buf + *header_len, data_len,
-//                           buf_out + *header_len, out_len);
-//     }
+    while (try_times < 2);
 
     LSQ_DEBUG("***decrypt_packet %s.", (ret == 0 ? "succeed" : "failed"));
-    return ret;
+    return ret == 0 ? enc_level : (enum enc_level) -1;
 }
 
 
@@ -1557,8 +1551,7 @@ lsquic_enc_session_have_key_gt_one (const lsquic_enc_session_t *enc_session)
 /* The size of `buf' is *header_len plus data_len.  The two parts of the
  * buffer correspond to the header and the payload of incoming QUIC packet.
  */
-/* 0 for OK, otherwise nonezero */
-static int
+static enum enc_level
 lsquic_enc_session_decrypt (lsquic_enc_session_t *enc_session,
                enum lsquic_version version,
                uint8_t path_id, uint64_t pack_num,
@@ -1576,9 +1569,11 @@ lsquic_enc_session_decrypt (lsquic_enc_session_t *enc_session,
     if (lsquic_enc_session_have_key_gt_one(enc_session))
         return decrypt_packet(enc_session, path_id, pack_num, buf,
                         header_len, data_len, buf_out, max_out_len, out_len);
+    else if (0 == verify_packet_hash(enc_session, version, buf, header_len,
+                                     data_len, buf_out, max_out_len, out_len))
+        return ENC_LEV_CLEAR;
     else
-        return verify_packet_hash(enc_session, version, buf, header_len,
-                                    data_len, buf_out, max_out_len, out_len);
+        return -1;
 }
 
 
@@ -1765,6 +1760,41 @@ lsquic_get_enc_hist (const lsquic_enc_session_t *enc_session,
 
 
 
+
+static size_t
+lsquic_enc_session_mem_used (struct lsquic_enc_session *enc_session)
+{
+    size_t size;
+
+    size = sizeof(*enc_session);
+
+    size += lsquic_str_len(&enc_session->chlo);
+    size += lsquic_str_len(&enc_session->sstk);
+    size += lsquic_str_len(&enc_session->ssno);
+
+    size += lsquic_str_len(&enc_session->hs_ctx.ccs);
+    size += lsquic_str_len(&enc_session->hs_ctx.sni);
+    size += lsquic_str_len(&enc_session->hs_ctx.ccrt);
+    size += lsquic_str_len(&enc_session->hs_ctx.stk);
+    size += lsquic_str_len(&enc_session->hs_ctx.sno);
+    size += lsquic_str_len(&enc_session->hs_ctx.prof);
+    size += lsquic_str_len(&enc_session->hs_ctx.csct);
+    size += lsquic_str_len(&enc_session->hs_ctx.crt);
+
+    if (enc_session->info)
+    {
+        size += sizeof(*enc_session->info);
+        size += lsquic_str_len(&enc_session->info->sstk);
+        size += lsquic_str_len(&enc_session->info->scfg);
+        size += lsquic_str_len(&enc_session->info->sni_key);
+    }
+
+    /* TODO: calculate memory taken up by SSL stuff */
+
+    return size;
+}
+
+
 #ifdef NDEBUG
 const
 #endif
@@ -1785,4 +1815,5 @@ struct enc_session_funcs lsquic_enc_session_gquic_1 =
     .esf_generate_cid = lsquic_generate_cid,
     .esf_gen_chlo = lsquic_enc_session_gen_chlo,
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
+    .esf_mem_used = lsquic_enc_session_mem_used,
 };

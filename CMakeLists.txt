@@ -81,7 +81,11 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     link_directories( /usr/local/lib )
 ENDIF()
 
-add_executable(http_client test/http_client.c test/prog.c test/test_common.c test/test_cert.c)
+add_executable(http_client
+    test/http_client.c
+    test/prog.c
+    test/test_common.c
+)
 
 target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
 

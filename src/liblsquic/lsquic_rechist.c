@@ -149,3 +149,12 @@ lsquic_rechist_next (lsquic_rechist_t *rechist)
 {
     return lsquic_packints_next(&rechist->rh_pints);
 }
+
+
+size_t
+lsquic_rechist_mem_used (const struct lsquic_rechist *rechist)
+{
+    return sizeof(*rechist)
+         - sizeof(rechist->rh_pints)
+         + lsquic_packints_mem_used(&rechist->rh_pints);
+}

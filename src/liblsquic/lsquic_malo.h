@@ -35,4 +35,7 @@ lsquic_malo_first (struct malo *);
 void *
 lsquic_malo_next (struct malo *);
 
+size_t
+lsquic_malo_mem_used (const struct malo *);
+
 #endif

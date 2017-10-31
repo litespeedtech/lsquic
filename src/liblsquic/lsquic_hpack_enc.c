@@ -854,3 +854,20 @@ lsquic_henc_iter_next (struct lsquic_henc *enc,
     return 0;
 }
 #endif
+
+
+size_t
+lsquic_henc_mem_used (const struct lsquic_henc *enc)
+{
+    const struct enc_table_entry *entry;
+    size_t size;
+
+    size = sizeof(*enc);
+
+    STAILQ_FOREACH(entry, &enc->hpe_all_entries, ete_next_all)
+        size += sizeof(*entry) + entry->ete_name_len + entry->ete_val_len;
+
+    size += N_BUCKETS(enc->hpe_nbits) * sizeof(enc->hpe_buckets[0]);
+
+    return size;
+}

@@ -875,4 +875,5 @@ const struct parse_funcs lsquic_parse_funcs_gquic_le =
     .pf_read_float_time16             =  gquic_le_read_float_time16,
 #endif
     .pf_parse_frame_type              =  parse_frame_type_gquic_Q035_thru_Q039,
+    .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q039,
 };

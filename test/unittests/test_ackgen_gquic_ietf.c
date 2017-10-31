@@ -335,6 +335,7 @@ test_8byte_packnos (void)
 int
 main (void)
 {
+    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
     lsquic_log_to_fstream(stderr, 0);
     lsq_log_levels[LSQLM_PARSE]   = LSQ_LOG_DEBUG;
 

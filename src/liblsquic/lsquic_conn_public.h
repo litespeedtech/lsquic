@@ -13,14 +13,16 @@
 struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_mm;
-struct lsquic_stream;
+struct lsquic_hash;
 struct headers_stream;
 struct lsquic_send_ctl;
 
 struct lsquic_conn_public {
-    struct lsquic_streams_tailq     sending_streams,
-                                    rw_streams,
+    struct lsquic_streams_tailq     sending_streams,    /* Send RST_STREAM, BLOCKED, and WUF frames */
+                                    read_streams,
+                                    write_streams,      /* Send STREAM frames */
                                     service_streams;
+    struct lsquic_hash             *all_streams;
     struct lsquic_cfcw              cfcw;
     struct lsquic_conn_cap          conn_cap;
     struct lsquic_rtt_stats         rtt_stats;

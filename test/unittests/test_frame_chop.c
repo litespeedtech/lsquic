@@ -82,20 +82,6 @@ stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
 }
 
 
-static int
-stream_flush (struct lsquic_stream *stream)
-{
-    return 0;
-}
-
-
-static size_t
-stream_navail (const struct lsquic_stream *stream)
-{
-    return stream->sm_max_write;
-}
-
-
 #define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
 
 
@@ -112,8 +98,7 @@ test_chop (unsigned max_write_sz)
     lsquic_henc_init(&henc);
     stream = stream_new(max_write_sz);
 
-    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc,
-                                 stream_write, stream_navail, stream_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write, 0);
 
     struct lsquic_http_header header_arr[] =
     {

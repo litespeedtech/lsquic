@@ -19,10 +19,20 @@ struct lsquic_engine_public;
 struct lsquic_conn_public;
 struct ver_neg;
 
+enum buf_packet_type { BPT_HIGHEST_PRIO, BPT_OTHER_PRIO, };
+
+#define MAX_BPQ_COUNT 10
+struct buf_packet_q
+{
+    struct lsquic_packets_tailq     bpq_packets;
+    unsigned                        bpq_count;
+};
+
 typedef struct lsquic_send_ctl {
     struct lsquic_packets_tailq     sc_scheduled_packets,
                                     sc_unacked_packets,
                                     sc_lost_packets;
+    struct buf_packet_q             sc_buffered_packets[BPT_OTHER_PRIO + 1];
     struct lsquic_engine_public    *sc_enpub;
     struct lsquic_alarmset         *sc_alset;
     const struct ver_neg           *sc_ver_neg;
@@ -44,6 +54,11 @@ typedef struct lsquic_send_ctl {
      */
     lsquic_packno_t                 sc_largest_ack2ed;
     lsquic_time_t                   sc_loss_to;
+    struct
+    {
+        uint32_t                stream_id;
+        enum buf_packet_type    packet_type;
+    }                               sc_cached_bpt;
     unsigned                        sc_n_consec_rtos;
     unsigned                        sc_next_limit;
     unsigned                        sc_n_in_flight;    /* Number of packets in flight */
@@ -56,6 +71,7 @@ typedef struct lsquic_send_ctl {
         SC_NSTP         = (1 << 2),
         SC_PACE         = (1 << 3),
         SC_SCHED_TICK   = (1 << 4),
+        SC_BUFFER_STREAM= (1 << 5),
     }                               sc_flags:8;
     unsigned char                   sc_n_hsk;
     unsigned char                   sc_n_tlp;
@@ -93,12 +109,12 @@ int
 lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl);
 
 void
-lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *, lsquic_packet_out_t *);
+lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *, struct lsquic_packet_out *);
 
 void
-lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *, lsquic_packet_out_t *);
+lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *, struct lsquic_packet_out *);
 
-lsquic_packet_out_t *
+struct lsquic_packet_out *
 lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *);
 
 void
@@ -126,12 +142,16 @@ lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *);
 #define lsquic_send_ctl_last_scheduled(ctl) \
             TAILQ_LAST(&(ctl)->sc_scheduled_packets, lsquic_packets_tailq)
 
-lsquic_packet_out_t *
+struct lsquic_packet_out *
 lsquic_send_ctl_new_packet_out (lsquic_send_ctl_t *, unsigned);
 
-lsquic_packet_out_t *
+struct lsquic_packet_out *
 lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *,
                                       unsigned need_at_least, int *is_err);
+
+struct lsquic_packet_out *
+lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *,
+                        unsigned need_at_least, const struct lsquic_stream *);
 
 unsigned
 lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *);
@@ -148,7 +168,7 @@ lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *, int);
 #define lsquic_send_ctl_turn_nstp_on(ctl) ((ctl)->sc_flags |= SC_NSTP)
 
 void
-lsquic_send_ctl_reset_stream (lsquic_send_ctl_t *, uint32_t);
+lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, uint32_t);
 
 int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);
@@ -179,5 +199,42 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
         pacer_tick(&(ctl)->sc_pacer, now);                  \
     }                                                       \
 } while (0)
+
+enum lsquic_packno_bits
+lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *);
+
+int
+lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
+
+#define lsquic_send_ctl_invalidate_bpt_cache(ctl) do {      \
+    (ctl)->sc_cached_bpt.stream_id = 0;                     \
+} while (0)
+
+#ifndef NDEBUG
+enum lsquic_packno_bits
+lsquic_send_ctl_guess_packno_bits (struct lsquic_send_ctl *);
+
+int
+lsquic_send_ctl_schedule_stream_packets_immediately (struct lsquic_send_ctl *);
+
+enum buf_packet_type
+lsquic_send_ctl_determine_bpt (struct lsquic_send_ctl *,
+                                            const struct lsquic_stream *);
+
+enum lsquic_packno_bits
+lsquic_send_ctl_calc_packno_bits (struct lsquic_send_ctl *);
+#endif
+
+size_t
+lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *);
+
+#define lsquic_send_ctl_set_buffer_stream_packets(ctl, b) do {  \
+    (ctl)->sc_flags &= ~SC_BUFFER_STREAM;                       \
+    (ctl)->sc_flags |= -!!(b) & SC_BUFFER_STREAM;               \
+} while (0)
+
+int
+lsquic_send_ctl_turn_on_fin (struct lsquic_send_ctl *,
+                             const struct lsquic_stream *);
 
 #endif

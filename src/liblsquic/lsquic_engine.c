@@ -878,10 +878,12 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
     conn = new_full_conn_client(engine, hostname, max_packet_size);
     if (!conn)
         return -1;
+    ENGINE_IN(engine);
     lsquic_conn_record_peer_sa(conn, peer_sa);
     conn->cn_peer_ctx = conn_ctx;
     engine->iter_state.one.conn = conn;
     process_connections(engine, conn_iter_next_one);
+    ENGINE_OUT(engine);
     return 0;
 }
 

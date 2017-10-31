@@ -33,3 +33,17 @@ packet_in_ver_next (struct ver_iter *vi, lsquic_ver_tag_t *ver_tag)
         return 0;
     }
 }
+
+
+size_t
+lsquic_packet_in_mem_used (const struct lsquic_packet_in *packet_in)
+{
+    size_t size;
+
+    size = sizeof(*packet_in);
+
+    if (packet_in->pi_flags & PI_OWN_DATA)
+        size += packet_in->pi_data_sz;
+
+    return size;
+}

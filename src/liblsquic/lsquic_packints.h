@@ -44,4 +44,7 @@ lsquic_packints_sanity_check (const struct packints *);
 #   define lsquic_packints_sanity_check(pints)
 #endif
 
+size_t
+lsquic_packints_mem_used (const struct packints *);
+
 #endif

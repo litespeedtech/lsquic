@@ -591,36 +591,51 @@ ssize_t lsquic_stream_readv(lsquic_stream_t *s, const struct iovec *,
 int lsquic_stream_wantwrite(lsquic_stream_t *s, int is_want);
 
 /**
- * Return maximum number of bytes lsquic_stream_write() will write.  This
- * call is useful if you don't want to perform your own buffering.
- */
-size_t lsquic_stream_write_avail (const lsquic_stream_t *s);
-
-/**
  * Write `len' bytes to the stream.  Returns number of bytes written, which
- * may be smaller that `len'.  Use lsquic_stream_write_avail() to find out
- * maximum size of `len'.
+ * may be smaller that `len'.
  */
 ssize_t lsquic_stream_write(lsquic_stream_t *s, const void *buf, size_t len);
-
-/**
- * Returns 0 if `filename' was queued for writing, -1 on error.  This
- * function queues the size of the file as it was when the function was
- * called.  The stream will write at most this number of bytes to the
- * peer.  If the file grows, appended data is not used.
- */
-int lsquic_stream_write_file(lsquic_stream_t *s, const char *filename);
 
 ssize_t lsquic_stream_writev(lsquic_stream_t *s, const struct iovec *vec, int count);
 
 /**
- * Returns 0 if `fdSrc' was queued for writing, -1 on error.  This
- * function queues at most `size' bytes to be written.  If the file shrinks,
- * fewer bytes are written.
+ * Used as argument to @ref lsquic_stream_writef()
  */
-int lsquic_stream_sendfile(lsquic_stream_t *s, int fdSrc, off_t off, size_t size);
+struct lsquic_reader
+{
+    /**
+     * Not a ssize_t because the read function is not supposed to return
+     * an error.  If an error occurs in the read function (for example, when
+     * reading from a file fails), it is supposed to deal with the error
+     * itself.
+     */
+    size_t (*lsqr_read) (void *lsqr_ctx, void *buf, size_t count);
+    /**
+     * Return number of bytes remaining in the reader.
+     */
+    size_t (*lsqr_size) (void *lsqr_ctx);
+    void    *lsqr_ctx;
+};
 
-int lsquic_stream_flush(lsquic_stream_t *s);
+/**
+ * Write to stream using @ref lsquic_reader.  This is the most generic of
+ * the write functions -- @ref lsquic_stream_write() and
+ * @ref lsquic_stream_writev() utilize the same mechanism.
+ *
+ * @retval Number of bytes written or -1 on error.
+ */
+ssize_t
+lsquic_stream_writef (lsquic_stream_t *, struct lsquic_reader *);
+
+/**
+ * Flush any buffered data.  This triggers packetizing even a single byte
+ * into a separate frame.  Flushing a closed stream is an error.
+ *
+ * @retval  0   Success
+ * @retval -1   Failure
+ */
+int
+lsquic_stream_flush (lsquic_stream_t *s);
 
 /**
  * @typedef lsquic_http_header_t

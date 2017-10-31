@@ -79,6 +79,14 @@ gquic_ietf_parse_stream_frame_header_sz (unsigned char type)
 }
 
 
+static void
+gquic_ietf_turn_on_fin (unsigned char *stream_header)
+{
+    /* 11FSSOOD */
+    *stream_header |= 0x20;
+}
+
+
 int
 gquic_ietf_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
                        stream_frame_t *stream_frame)
@@ -565,4 +573,5 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q041 =
     .pf_read_float_time16             =  gquic_be_read_float_time16,
 #endif
     .pf_parse_frame_type              =  parse_frame_type_gquic_Q041,
+    .pf_turn_on_fin                   =  gquic_ietf_turn_on_fin,
 };

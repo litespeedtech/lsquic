@@ -40,13 +40,13 @@ main (void)
     lsquic_mm_init(&enpub.enp_mm);
     packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, QUIC_MAX_PAYLOAD_SZ);
 
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0], QUIC_FRAME_STREAM,  7);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1], QUIC_FRAME_STREAM,  8);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[2], QUIC_FRAME_STREAM,  9);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1], QUIC_FRAME_RST_STREAM, 10);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[3], QUIC_FRAME_STREAM,  11);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[4], QUIC_FRAME_STREAM,  12);
-    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[5], QUIC_FRAME_STREAM,  13);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0], QUIC_FRAME_STREAM,  7, 1);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1], QUIC_FRAME_STREAM,  8, 1);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[2], QUIC_FRAME_STREAM,  9, 1);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1], QUIC_FRAME_RST_STREAM, 10, 0);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[3], QUIC_FRAME_STREAM,  11, 1);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[4], QUIC_FRAME_STREAM,  12, 1);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[5], QUIC_FRAME_STREAM,  13, 1);
 
     srec = posi_first(&posi, packet_out);
     assert(srec->sr_stream == &streams[0]);

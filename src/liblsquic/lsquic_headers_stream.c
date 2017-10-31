@@ -94,8 +94,8 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         return NULL;
     }
     hs->hs_fw = lsquic_frame_writer_new(hs->hs_mm, stream, 0, &hs->hs_henc,
-                                lsquic_stream_write, lsquic_stream_write_avail,
-                                lsquic_stream_flush, (hs->hs_flags & HS_IS_SERVER));
+                                lsquic_stream_write,
+                                (hs->hs_flags & HS_IS_SERVER));
     if (!hs->hs_fw)
     {
         LSQ_WARN("could not create frame writer: %s", strerror(errno));
@@ -127,6 +127,7 @@ headers_on_write (lsquic_stream_t *stream, struct lsquic_stream_ctx *ctx)
     int s = lsquic_frame_writer_flush(hs->hs_fw);
     if (0 == s)
     {
+        LSQ_DEBUG("flushed");
         lsquic_stream_wantwrite(stream,
             lsquic_frame_writer_have_leftovers(hs->hs_fw));
     }
@@ -376,6 +377,33 @@ lsquic_headers_stream_push_promise (struct headers_stream *hs,
     else
         LSQ_INFO("Error writing push promise: %s", strerror(errno));
     return s;
+}
+
+
+size_t
+lsquic_headers_stream_mem_used (const struct headers_stream *hs)
+{
+    size_t size;
+
+    size = sizeof(*hs);
+    size += lsquic_frame_reader_mem_used(hs->hs_fr);
+    size += lsquic_frame_writer_mem_used(hs->hs_fw);
+    size -= sizeof(hs->hs_hdec);
+    size += lsquic_hdec_mem_used(&hs->hs_hdec);
+    if (hs->hs_flags & HS_HENC_INITED)
+    {
+        size -= sizeof(hs->hs_henc);
+        size += lsquic_henc_mem_used(&hs->hs_henc);
+    }
+
+    return size;
+}
+
+
+struct lsquic_stream *
+lsquic_headers_stream_get_stream (const struct headers_stream *hs)
+{
+    return hs->hs_stream;
 }
 
 

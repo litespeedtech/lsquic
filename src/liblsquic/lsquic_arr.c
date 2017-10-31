@@ -44,3 +44,10 @@ lsquic_arr_push (struct lsquic_arr *arr, uintptr_t val)
     ++arr->nelem;
     return 0;
 }
+
+
+size_t
+lsquic_arr_mem_used (const struct lsquic_arr *arr)
+{
+    return sizeof(*arr) + arr->nalloc * sizeof(arr->els[0]);
+}

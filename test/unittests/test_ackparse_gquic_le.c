@@ -443,6 +443,7 @@ test_ack_truncation (void)
 int
 main (void)
 {
+    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
     test1();
     test2();
     test3();

@@ -66,6 +66,12 @@ int
 lsquic_headers_stream_send_settings (struct headers_stream *hs,
                         const struct lsquic_http2_setting *, unsigned count);
 
+struct lsquic_stream *
+lsquic_headers_stream_get_stream (const struct headers_stream *);
+
+size_t
+lsquic_headers_stream_mem_used (const struct headers_stream *);
+
 extern const struct lsquic_stream_if *const lsquic_headers_stream_if;
 
 #endif

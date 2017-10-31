@@ -172,6 +172,8 @@ main (void)
     unsigned i;
     const struct lsquic_packno_range *range;
 
+    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
+
     lsquic_log_to_fstream(stderr, 0);
     lsq_log_levels[LSQLM_PARSE]   = LSQ_LOG_DEBUG;
     lsq_log_levels[LSQLM_RECHIST] = LSQ_LOG_DEBUG;

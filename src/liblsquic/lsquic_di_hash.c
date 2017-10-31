@@ -607,11 +607,32 @@ hash_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 }
 
 
+static size_t
+hash_di_mem_used (struct data_in *data_in)
+{
+    struct hash_data_in *const hdi = HDI_PTR(data_in);
+    const struct data_block *block;
+    size_t size;
+    unsigned n;
+
+    size = sizeof(*data_in);
+
+    for (n = 0; n < N_BUCKETS(hdi->hdi_nbits); ++n)
+        TAILQ_FOREACH(block, &hdi->hdi_buckets[n], db_next)
+            size += sizeof(*block);
+
+    size += N_BUCKETS(hdi->hdi_nbits) * sizeof(hdi->hdi_buckets[0]);
+
+    return size;
+}
+
+
 static const struct data_in_iface di_if_hash = {
     .di_destroy      = hash_di_destroy,
     .di_empty        = hash_di_empty,
     .di_frame_done   = hash_di_frame_done,
     .di_get_frame    = hash_di_get_frame,
     .di_insert_frame = hash_di_insert_frame,
+    .di_mem_used     = hash_di_mem_used,
     .di_switch_impl  = hash_di_switch_impl,
 };

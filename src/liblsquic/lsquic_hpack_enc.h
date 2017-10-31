@@ -80,6 +80,9 @@ lsquic_henc_encode (struct lsquic_henc *henc, unsigned char *dst,
 void
 lsquic_henc_set_max_capacity (struct lsquic_henc *, unsigned);
 
+size_t
+lsquic_henc_mem_used (const struct lsquic_henc *);
+
 #ifndef NDEBUG
 unsigned
 lsquic_henc_get_stx_tab_id (const char *name, hpack_strlen_t name_len,

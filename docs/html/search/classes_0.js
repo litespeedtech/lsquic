@@ -7,5 +7,6 @@ var searchData=
   ['lsquic_5flogger_5fif',['lsquic_logger_if',['../structlsquic__logger__if.html',1,'']]],
   ['lsquic_5fout_5fspec',['lsquic_out_spec',['../structlsquic__out__spec.html',1,'']]],
   ['lsquic_5fpackout_5fmem_5fif',['lsquic_packout_mem_if',['../structlsquic__packout__mem__if.html',1,'']]],
+  ['lsquic_5freader',['lsquic_reader',['../structlsquic__reader.html',1,'']]],
   ['lsquic_5fstream_5fif',['lsquic_stream_if',['../structlsquic__stream__if.html',1,'']]]
 ];

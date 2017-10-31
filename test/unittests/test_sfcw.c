@@ -19,6 +19,7 @@
 int
 main (void)
 {
+    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
     const unsigned INIT_WINDOW_SIZE = 16 * 1024;
     struct lsquic_sfcw fc;
     struct lsquic_conn lconn;

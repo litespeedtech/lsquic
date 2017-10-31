@@ -674,6 +674,14 @@ parse_stream_frame_header_sz_gquic (unsigned char type)
 }
 
 
+void
+lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *stream_header)
+{
+    /* 1fdoooss */
+    *stream_header |= 0x40;
+}
+
+
 size_t
 calc_stream_frame_header_sz_gquic (uint32_t stream_id, uint64_t offset)
 {

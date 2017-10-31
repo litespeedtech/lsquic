@@ -46,20 +46,6 @@ output_write (struct lsquic_stream *stream, const void *buf, size_t sz)
 }
 
 
-static int
-output_flush (struct lsquic_stream *stream)
-{
-    return 0;
-}
-
-
-static size_t
-output_navail (const struct lsquic_stream *stream)
-{
-    return output.max - output.sz;
-}
-
-
 #define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
 
 
@@ -77,12 +63,11 @@ test_max_frame_size (void)
     for (max_size = 1; max_size < 6 /* one settings frame */; ++max_size)
     {
         fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc,
-                            output_write, output_navail, output_flush, 0);
+                                     output_write, 0);
         assert(!fw);
     }
 
-    fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc,
-                        output_write, output_navail, output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc, output_write, 0);
     assert(fw);
 
     lsquic_frame_writer_destroy(fw);
@@ -101,8 +86,7 @@ test_one_header (void)
 
     lsquic_henc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
-                                         output_navail, output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 0);
     reset_output(0);
 
     struct lsquic_http_header header_arr[] =
@@ -162,8 +146,7 @@ test_oversize_header (void)
 
     lsquic_henc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
-                                         output_navail, output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 0);
     reset_output(0);
 
     value = malloc(big_len);
@@ -201,8 +184,7 @@ test_continuations (void)
 
     lsquic_henc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 6, &henc, output_write, output_navail,
-                                                        output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, &henc, output_write, 0);
     reset_output(0);
 
 /*
@@ -287,8 +269,7 @@ test_settings_short (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 7, NULL, output_write, output_navail,
-                                                        output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 7, NULL, output_write, 0);
 
     {
         reset_output(0);
@@ -332,8 +313,7 @@ test_settings_normal (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0, NULL, output_write, output_navail,
-                                                        output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0, NULL, output_write, 0);
 
     {
         reset_output(0);
@@ -390,8 +370,7 @@ test_priority (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 6, NULL, output_write, output_navail,
-                                                        output_flush, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, NULL, output_write, 0);
 
     s = lsquic_frame_writer_write_priority(fw, 3, 0, 1UL << 31, 256);
     assert(s < 0);  /* Invalid dependency stream ID */
@@ -450,8 +429,7 @@ test_errors (void)
 
     lsquic_henc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
-                                            output_navail, output_flush, 1);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 1);
     reset_output(0);
 
     {
@@ -501,8 +479,7 @@ test_push_promise (void)
 
     lsquic_henc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
-                                         output_navail, output_flush, 1);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 1);
     reset_output(0);
 
 /*
