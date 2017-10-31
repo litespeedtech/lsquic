@@ -1,5 +1,9 @@
 2017-10-31
 
+    - Add APIs.txt -- describes LSQUIC APIs
+
+2017-10-31
+
     - [API Change] Sendfile-like functionality is gone.  The stream no
       longer opens files and deals with file descriptors.  (Among other
       things, this makes the code more portable.)  Three writing functions

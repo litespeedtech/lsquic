@@ -1,0 +1,246 @@
+# Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE.
+LSQUIC APIs
+===========
+
+LSQUIC exposes the following object types to the user:
+
+    - Engine Settings   (struct lsquic_engine_settings)
+    - Stream Interface  (struct lsquic_stream_if) 
+    - Engine API        (struct lsquic_engine_api)
+    - Engine
+    - Connection
+    - Stream
+
+The first three -- engine settings, engine APIs, and stream interface --
+are used to instantiate the engine.  After engine is instantiated, the
+user code need only concern itself with engine, connections, and streams.
+
+
+Engine Settings
+---------------
+
+Engine settings is the struct lsquic_engine_settings.  It contains various
+QUIC settings and LSQUIC parameters.  The usual way to use it is to initialize
+it to default values using lsquic_engine_init_settings(), modify any values
+if necessary, and pass it as parameter to lsquic_engine_new().
+
+QUIC settings are specified by the following members:
+
+    lsquic_engine_settings      QUIC
+    member                      parameter
+    ----------------------      ---------
+    es_cfcw                     CFCW
+    es_sfcw                     SFCW
+    es_max_streams_in           MIDS
+    es_ua                       UAID
+    es_versions                 VER
+    es_idle_conn_to             ICSL
+    es_silent_close             SCLS
+    es_support_srej             COPT/SREJ
+    es_support_nstp             COPT/NSTP
+    es_support_tcid0            TCID
+
+The following parameters affect run-time behavior:
+
+    es_rw_once                  Important: affects event dispatch
+    es_handshake_to
+    es_support_push
+    es_pace_packets
+
+Other noteworthy settings:
+
+    es_max_header_list_size
+    es_progress_check
+
+To be sure your settings are good (in other words, passing this struct won't
+trip up the engine constructor), use lsquic_engine_check_settings().
+
+
+Stream Interface
+----------------
+
+The stream interface, lsquic_stream_if, specifies callbacks LSQUIC engine
+will call for connections and streams.
+
+The following callbacks should be specified for connection:
+
+    on_new_conn             This is called when connection is created.
+
+    on_goaway_received      This function is called when we receive GOAWAY
+                            frame from peer.  This callback is optional.
+
+    on_conn_closed          Connection is closed: all streams have been
+                            destroyed.
+
+The streams have four callbacks:
+
+    on_new_stream           Stream has been created.
+
+    on_read                 Stream can be read from (see Events).
+
+    on_write                Stream can be written to (see Events).
+
+    on_close                Stream has been closed.
+
+For both connections and streams, the "on new" callback return value can
+be use to specify user-supplied data.  This data pointer is optional and
+can be NULL.  It can also refer to the same data for the connection and
+its streams.  "on close" callbacks should be used to free user-supplied
+data.
+
+
+Engine API
+----------
+
+The engine API, struct lsquic_engine_api, is a combination structure to
+make calling lsquic_engine_new() manageable.  It holds references to
+struct lsquic_engine_settings and struct lsquic_stream_if, as well as:
+
+    - Interface for sending outgoing packets, ea_packets_out
+    - Interface for allocating memory for outgoing packet buffers
+      (optional).
+
+ea_packets_out is a pointer to a function of type lsquic_packets_out_f.
+The engine calls this function when it is appropriate to send out packets
+for one or more connections, which it gives to the function in a batch.
+This batch is an array of struct lsquic_out_spec.
+
+
+Engine
+------
+
+The engine is instantiated using lsquic_engine_new().  The first parameter
+is a list flags and the second parameter is the reference to the engine
+api.  The engine settings are specified, they are copied; changing
+the setting after the engine has been created will not affect engine's
+behavior.  If the settings are not specified, the engine will use default
+settings created by lsquic_engine_init_settings().
+
+Once the engine is instantiated, there are four main ways to use it to
+drive QUIC connections:
+
+    1. Create a connection using lsquic_engine_connect().
+    2. Feed it incoming packets using lsquic_engine_packet_in() function.
+    3. Process connections using one of the connection queue functions
+       (see Connection Queues).
+    4. Accept outgoing packets for sending (and send them!) using
+       ea_packets_out callback.
+
+
+Connection Queues
+-----------------
+
+Each connection lives in one or more queues.  These are:
+
+    - "All" queue.  This is not really a queue, but rather a hash where
+      connections can be looked up by ID.  It is possible for a connection
+      to exist *outside* of this queue: this happens when the connection is
+      closed, but still has packets to send.  In this case, the connection
+      is present in
+    - Outgoing queue.  This queue contains connections which have packets
+      to send.  The connection in this queue are ordered by priority: the
+      connection that has gone longest without sending is first.
+    - Incoming queue.  This queue contains connections that have incoming
+      packets.
+    - Pending RW Events queue.  (See Connection Read-Write Events).
+    - Advisory Tick Time queue.  This queue is used when packet pacing is
+      turned on (see es_pace_packets option).
+
+Each of these queues can be processed by a specialized function.  They are,
+respectively:
+
+    - lsquic_engine_proc_all()
+    - lsquic_engine_send_unsent_packets()
+    - lsquic_engine_process_conns_with_incoming()
+    - lsquic_engine_process_conns_with_pend_rw()
+    - lsquic_engine_process_conns_to_tick()
+
+Processing, or "ticking," a connection removes it from Incoming, Pending
+RW Events, and Advisory Tick Time queues.  The connection gets placed
+onto these queues as necessary.
+
+A simple approach is to
+    - Read packets from socket, give it to the engine using
+      lsquic_engine_packet_in(), and call
+      lsquic_engine_process_conns_with_incoming(); and
+    - Call lsquic_engine_proc_all() every few dozen milliseconds.
+
+
+Connection
+----------
+
+A connection is created using lsquic_engine_connect().  When on_new_conn()
+is called, the client code should call lsquic_conn_make_stream() one or
+more times.  One new stream will be created for each one of those calls.
+
+Several auxiliary functions are available:
+
+    - lsquic_conn_id()
+    - lsquic_conn_going_away()
+    - lsquic_conn_get_peer_ctx()
+    - lsquic_conn_get_stream_by_id()
+    - lsquic_conn_get_ctx()
+
+
+Stream
+------
+
+LSQUIC stream hides QUIC and HTTP/2 framing complexities from the user.
+What it presents is a way to send HTTP headers and, optionally, body to
+peer.  On read side, the user gets what looks like HTTP/1.1 stream.
+
+Expected usage for client is to express the desire to write to stream
+using lsquic_stream_wantwrite() call.  Once on_write() is called:
+
+    1. Write headers using lsquic_stream_send_headers()
+    2. Optionally write payload body using of of lsquic_stream_write(),
+       lsquic_stream_writev(), or lsquic_stream_writef().
+
+That done, shutdown write side using lsquic_stream_shutdown(), unregister
+for write events and register for read events using lsquic_stream_wantread().
+
+Read and parse HTTP/1.1 stream from on_read() callback until end-of-stream
+or an error is encountered.
+
+Then unregister the read event and shutdown the read side.  The stream will
+be closed after that at some point and on_close() callback will be called,
+at which point resources can be freed.  (Internally, the stream object is
+not destroyed until either all the packets carrying its data are ACKed or
+the connection is destroyed).
+
+on_read() and on_write() callbacks are dispatched differently based on the
+value of es_rw_once:
+
+If es_rw_once is false, then the callbacks are dispatched in a loop until
+the user unregisters the event or the stream becomes unreadable (or
+unwriteable).
+
+If es_rw_once is true, on_read() and on_write() are called once "per tick".
+It is the up to the user to read and write enough data.
+
+
+Events
+------
+
+Stream events are persistent: once call lsquic_stream_wantwrite() or
+lsquic_stream_wantread(), the event stays active until turned off.
+
+Note that when an error is encountered (such as a stream reset), the
+stream becomes readable and writeable: this allows user code to collect
+the error.
+
+
+Versions
+--------
+
+QUIC version are listed in enum lsquic_version.  To specify a list of
+versions, they are usually placed in a bitmask, e.g. es_versions.
+
+
+Connection Read-Write Events
+----------------------------
+
+TODO.
+
+(Do not worry about it if you are not writing to streams outside
+of on_write() callback.)

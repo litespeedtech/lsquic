@@ -864,7 +864,7 @@ lsquic_conn_ctx_t *
 lsquic_conn_get_ctx (const lsquic_conn_t *c);
 
 /**
- * Get peer context associated with the connection. should be UdpListener *.
+ * Get peer context associated with the connection.
  */
 void *lsquic_conn_get_peer_ctx( const lsquic_conn_t *lconn);
 
@@ -884,8 +884,8 @@ int
 lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff);
 
 /**
- * Return number of connections whose advisory tick time is before $now
- * plus `from_now' delta.  `from_now' can be negative.
+ * Return number of connections whose advisory tick time is before current
+ * time plus `from_now' microseconds from now.  `from_now' can be negative.
  */
 unsigned
 lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now);
