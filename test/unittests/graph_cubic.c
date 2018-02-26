@@ -88,7 +88,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_ack(&cubic, MS(unit * i), MS(rtt_ms), app_limited);
+                lsquic_cubic_ack(&cubic, MS(unit * i), MS(rtt_ms), app_limited, 1370);
                 REC(EV_ACK);
             }
             break;

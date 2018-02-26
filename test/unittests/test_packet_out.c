@@ -37,6 +37,7 @@ main (void)
     struct stream_rec *srec;
 
     memset(&enpub, 0, sizeof(enpub));
+    memset(&streams, 0, sizeof(streams));
     lsquic_mm_init(&enpub.enp_mm);
     packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, QUIC_MAX_PAYLOAD_SZ);
 

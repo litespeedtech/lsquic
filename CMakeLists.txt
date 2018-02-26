@@ -91,13 +91,7 @@ target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FI
 
 add_subdirectory(src)
 
-IF(DEVEL_MODE EQUAL 1)
-    # Our test framework relies on assertions, only compile if assertions are
-    # enabled.
-    #
-    add_subdirectory(test)
-    enable_testing()
-ENDIF()
+add_subdirectory(test)
 
 
 ADD_CUSTOM_TARGET(docs doxygen dox.cfg)

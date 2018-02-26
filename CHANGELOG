@@ -1,3 +1,43 @@
+2018-02-26
+    - [API Change] lsquic_engine_connect() returns pointer to the connection
+      object.
+    - [API Change] Add lsquic_conn_get_engine() to get engine object from
+      connection object.
+    - [API Change] Add lsquic_conn_status() to query connection status.
+    - [API Change] Add add lsquic_conn_set_ctx().
+    - [API Change] Add new timestamp format, e.g. 2017-03-21 13:43:46.671345
+    - [OPTIMIZATION] Process handshake STREAM frames as soon as packet
+      arrives.
+    - [OPTIMIZATION] Do not compile expensive send controller sanity check
+      by default.
+    - [OPTIMIZATION] Add fast path to gquic_be_gen_reg_pkt_header.
+    - [OPTIMIZATION] Only make squeeze function call if necessary.
+    - [OPTIMIZATION] Speed up Q039 ACK frame parsing.
+    - [OPTIMIZATION] Fit most used elements of packet_out into first 64 bytes.
+    - [OPTIMIZATION] Keep track of scheduled bytes instead of calculating.
+    - [OPTIMIZATION] Prefetch next unacked packet when processing ACK.
+    - [OPTIMIZATION] Leverage fact that ACK ranges and unacked list are.
+      ordered.
+    - [OPTIMIZATION] Reduce function pointer use for STREAM frame generation
+    - Fix: reset incoming streams that arrive after we send GOAWAY.
+    - Fix: delay client on_new_conn() call until connection is fully set up.
+    - Fixes to buffered packets logic: splitting, STREAM frame elision.
+    - Fix: do not dispatch on_write callback if no packets are available.
+    - Fix WINDOW_UPDATE send and resend logic.
+    - Fix STREAM frame extension code.
+    - Fix: Drop unflushed data when stream is reset.
+    - Switch to tracking CWND using bytes rather than packets.
+    - Fix TCP friendly adjustment in cubic.
+    - Fix: do not generate invalid STOP_WAITING frames during high packet
+      loss.
+    - Pacer fixes.
+
+2017-12-18
+
+    - Fix: better follow cubic curve after idle period
+    - Fix: add missing parts to outgoing packet splitting code
+    - Fix: compilation using gcc 4.8.4
+
 2017-10-31
 
     - Add APIs.txt -- describes LSQUIC APIs

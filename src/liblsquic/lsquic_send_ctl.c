@@ -78,6 +78,9 @@ set_retx_alarm (lsquic_send_ctl_t *ctl);
 static void
 send_ctl_detect_losses (lsquic_send_ctl_t *ctl, lsquic_time_t time);
 
+static unsigned
+send_ctl_retx_bytes_out (const struct lsquic_send_ctl *ctl);
+
 
 #ifdef NDEBUG
 static
@@ -275,7 +278,7 @@ calculate_tlp_delay (lsquic_send_ctl_t *ctl)
     lsquic_time_t srtt, delay;
 
     srtt = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
-    if (ctl->sc_n_in_flight > 1)
+    if (ctl->sc_n_in_flight_all > 1)
     {
         delay = 10000;  /* 10 ms is the minimum tail loss probe delay */
         if (delay < 2 * srtt)
@@ -313,9 +316,14 @@ set_retx_alarm (lsquic_send_ctl_t *ctl)
      *      handshake_count++;
      */
         delay = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
-        delay += delay / 2;
-        if (10000 > delay)
-            delay = 10000;
+        if (delay)
+        {
+            delay += delay / 2;
+            if (10000 > delay)
+                delay = 10000;
+        }
+        else
+            delay = 150000;
         delay <<= ctl->sc_n_hsk;
         ++ctl->sc_n_hsk;
         break;
@@ -363,13 +371,13 @@ send_ctl_transfer_time (void *ctx)
     lsquic_send_ctl_t *const ctl = ctx;
     uint64_t bandwidth, pacing_rate;
     lsquic_time_t srtt, tx_time;
-    unsigned cwnd;
+    unsigned long cwnd;
 
     srtt = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
     if (srtt == 0)
         srtt = 50000;
     cwnd = lsquic_cubic_get_cwnd(&ctl->sc_cubic);
-    bandwidth = (uint64_t) cwnd * (uint64_t) ctl->sc_pack_size * 1000000 / srtt;
+    bandwidth = cwnd * 1000000 / srtt;
     if (send_ctl_in_slow_start(ctl))
         pacing_rate = bandwidth * 2;
     else if (send_ctl_in_recovery(ctl))
@@ -378,31 +386,113 @@ send_ctl_transfer_time (void *ctx)
         pacing_rate = bandwidth + bandwidth / 4;
 
     tx_time = (uint64_t) ctl->sc_pack_size * 1000000 / pacing_rate;
-    LSQ_DEBUG("srtt: %"PRIu64"; ss: %d; rec: %d; cwnd: %u; bandwidth: "
+    LSQ_DEBUG("srtt: %"PRIu64"; ss: %d; rec: %d; cwnd: %lu; bandwidth: "
         "%"PRIu64"; tx_time: %"PRIu64, srtt, send_ctl_in_slow_start(ctl),
         send_ctl_in_recovery(ctl), cwnd, bandwidth, tx_time);
     return tx_time;
 }
 
 
+static void
+send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
+                         struct lsquic_packet_out *packet_out)
+{
+    TAILQ_INSERT_TAIL(&ctl->sc_unacked_packets, packet_out, po_next);
+    ctl->sc_bytes_unacked_all += lsquic_packet_out_total_sz(packet_out);
+    ctl->sc_n_in_flight_all  += 1;
+    if (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
+    {
+        ctl->sc_bytes_unacked_retx += lsquic_packet_out_total_sz(packet_out);
+        ++ctl->sc_n_in_flight_retx;
+    }
+}
+
+
+static void
+send_ctl_unacked_remove (struct lsquic_send_ctl *ctl,
+                         struct lsquic_packet_out *packet_out)
+{
+    unsigned packet_sz;
+
+    TAILQ_REMOVE(&ctl->sc_unacked_packets, packet_out, po_next);
+    packet_sz = lsquic_packet_out_total_sz(packet_out);
+    assert(ctl->sc_bytes_unacked_all >= packet_sz);
+    ctl->sc_bytes_unacked_all -= packet_sz;
+    ctl->sc_n_in_flight_all  -= 1;
+    if (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
+    {
+        ctl->sc_bytes_unacked_retx -= packet_sz;
+        --ctl->sc_n_in_flight_retx;
+    }
+}
+
+
+static void
+send_ctl_sched_Xpend_common (struct lsquic_send_ctl *ctl,
+                      struct lsquic_packet_out *packet_out)
+{
+    packet_out->po_flags |= PO_SCHED;
+    ++ctl->sc_n_scheduled;
+    ctl->sc_bytes_scheduled += lsquic_packet_out_total_sz(packet_out);
+    lsquic_send_ctl_sanity_check(ctl);
+}
+
+
+static void
+send_ctl_sched_append (struct lsquic_send_ctl *ctl,
+                       struct lsquic_packet_out *packet_out)
+{
+    TAILQ_INSERT_TAIL(&ctl->sc_scheduled_packets, packet_out, po_next);
+    send_ctl_sched_Xpend_common(ctl, packet_out);
+}
+
+
+static void
+send_ctl_sched_prepend (struct lsquic_send_ctl *ctl,
+                       struct lsquic_packet_out *packet_out)
+{
+    TAILQ_INSERT_HEAD(&ctl->sc_scheduled_packets, packet_out, po_next);
+    send_ctl_sched_Xpend_common(ctl, packet_out);
+}
+
+
+static void
+send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
+                       struct lsquic_packet_out *packet_out)
+{
+    TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
+    packet_out->po_flags &= ~PO_SCHED;
+    assert(ctl->sc_n_scheduled);
+    --ctl->sc_n_scheduled;
+    ctl->sc_bytes_scheduled -= lsquic_packet_out_total_sz(packet_out);
+    lsquic_send_ctl_sanity_check(ctl);
+}
+
+
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
-                             struct lsquic_packet_out *packet_out)
+                             struct lsquic_packet_out *packet_out, int account)
 {
     char frames[lsquic_frame_types_str_sz];
     LSQ_DEBUG("packet %"PRIu64" has been sent (frame types: %s)",
         packet_out->po_packno, lsquic_frame_types_to_str(frames,
             sizeof(frames), packet_out->po_frame_types));
+    if (account)
+        ctl->sc_bytes_out -= lsquic_packet_out_total_sz(packet_out);
     if (0 == lsquic_senhist_add(&ctl->sc_senhist, packet_out->po_packno))
     {
-        TAILQ_INSERT_TAIL(&ctl->sc_unacked_packets, packet_out, po_next);
-        if ((packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK) &&
-                    !lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX))
-            set_retx_alarm(ctl);
+        send_ctl_unacked_append(ctl, packet_out);
+        if (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
+        {
+            if (!lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX))
+                set_retx_alarm(ctl);
+            if (ctl->sc_n_in_flight_retx == 1)
+                ctl->sc_flags |= SC_WAS_QUIET;
+        }
+        /* TODO: Do we really want to use those for RTT info? Revisit this. */
         /* Hold on to packets that are not retransmittable because we need them
          * to sample RTT information.  They are released when ACK is received.
          */
-        ++ctl->sc_n_in_flight;
 #if LSQUIC_SEND_STATS
         ++ctl->sc_stats.n_total_sent;
 #endif
@@ -410,28 +500,6 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     }
     else
         return -1;
-}
-
-
-static int
-in_acked_range (const ack_info_t *acki, lsquic_packno_t packno)
-{
-    int i, low, high;
-
-    low = 0, high = (int) acki->n_ranges - 1;
-    do
-    {
-        i = low + (high - low) / 2;
-        if (acki->ranges[i].low <= packno && acki->ranges[i].high >= packno)
-            return 1;
-        else if (acki->ranges[i].high < packno)
-            high = i - 1;
-        else
-            low = i + 1;
-    }
-    while (low <= high);
-
-    return 0;
 }
 
 
@@ -459,9 +527,8 @@ static int
 send_ctl_handle_lost_packet (lsquic_send_ctl_t *ctl,
                                             lsquic_packet_out_t *packet_out)
 {
-    assert(ctl->sc_n_in_flight);
-    --ctl->sc_n_in_flight;
-    TAILQ_REMOVE(&ctl->sc_unacked_packets, packet_out, po_next);
+    assert(ctl->sc_n_in_flight_all);
+    send_ctl_unacked_remove(ctl, packet_out);
     if (packet_out->po_flags & PO_ENCRYPTED) {
         ctl->sc_enpub->enp_pmi->pmi_release(ctl->sc_enpub->enp_pmi_ctx,
                                                 packet_out->po_enc_data);
@@ -512,7 +579,6 @@ send_ctl_detect_losses (lsquic_send_ctl_t *ctl, lsquic_time_t time)
 
     largest_retx_packno = largest_retx_packet_number(ctl);
     largest_lost_packno = 0;
-    assert(largest_retx_packno);    /* Otherwise, why detect losses? */
     ctl->sc_loss_to = 0;
 
     for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets);
@@ -531,8 +597,9 @@ send_ctl_detect_losses (lsquic_send_ctl_t *ctl, lsquic_time_t time)
             continue;
         }
 
-        if ((packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK) &&
-                        largest_retx_packno <= ctl->sc_largest_acked_packno)
+        if (largest_retx_packno
+            && (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
+            && largest_retx_packno <= ctl->sc_largest_acked_packno)
         {
             LSQ_DEBUG("loss by early retransmit detected, packet %"PRIu64,
                                                     packet_out->po_packno);
@@ -550,7 +617,9 @@ send_ctl_detect_losses (lsquic_send_ctl_t *ctl, lsquic_time_t time)
         {
             LSQ_DEBUG("loss by sent time detected: packet %"PRIu64,
                                                     packet_out->po_packno);
-            largest_lost_packno = packet_out->po_packno;
+            if (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
+                largest_lost_packno = packet_out->po_packno;
+            else { /* don't count it as a loss */; }
             (void) send_ctl_handle_lost_packet(ctl, packet_out);
             continue;
         }
@@ -561,6 +630,8 @@ send_ctl_detect_losses (lsquic_send_ctl_t *ctl, lsquic_time_t time)
         LSQ_DEBUG("detected new loss: packet %"PRIu64"; new lsac: "
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
         lsquic_cubic_loss(&ctl->sc_cubic);
+        if (ctl->sc_flags & SC_PACE)
+            pacer_loss_event(&ctl->sc_pacer);
         ctl->sc_largest_sent_at_cutback =
                                 lsquic_senhist_largest(&ctl->sc_senhist);
     }
@@ -581,6 +652,10 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
 {
     struct lsquic_packets_tailq acked_acks =
                                     TAILQ_HEAD_INITIALIZER(acked_acks);
+#if !LSQUIC_CAN_REORDER
+    const struct lsquic_packno_range *range =
+                                    &acki->ranges[ acki->n_ranges - 1 ];
+#endif
     lsquic_packet_out_t *packet_out, *next;
     lsquic_time_t now = lsquic_time_now();
     lsquic_packno_t high;
@@ -601,6 +676,13 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             return -1;
         }
 
+    if (ctl->sc_flags & SC_WAS_QUIET)
+    {
+        ctl->sc_flags &= ~SC_WAS_QUIET;
+        LSQ_DEBUG("ACK comes after a period of quiescence");
+        lsquic_cubic_was_quiet(&ctl->sc_cubic, now);
+    }
+
     /* Peer is acking packets that have been acked already.  Schedule ACK
      * and STOP_WAITING frame to chop the range if we get two of these in
      * a row.
@@ -610,16 +692,31 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     else
         ctl->sc_n_stop_waiting = 0;
 
-    app_limited = ctl->sc_n_in_flight + 3 /* This is the "maximum
-               burst" parameter */ < lsquic_cubic_get_cwnd(&ctl->sc_cubic);
+    app_limited = send_ctl_retx_bytes_out(ctl) + 3 * ctl->sc_pack_size /* This
+        is the "maximum burst" parameter */
+        < lsquic_cubic_get_cwnd(&ctl->sc_cubic);
 
     for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets);
-            packet_out && packet_out->po_packno <= largest_acked(acki);
+            packet_out
+#if !LSQUIC_CAN_REORDER
+                       && packet_out->po_packno <= largest_acked(acki)
+#endif
+                                                                      ;
                 packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
+#if LSQUIC_CAN_REORDER
         if (!in_acked_range(acki, packet_out->po_packno))
             continue;
+#else
+        /* This is faster than binary search in the normal case when the number
+         * of ranges is not much larger than the number of unacked packets.
+         */
+        while (range->high < packet_out->po_packno)
+            --range;
+        if (range->low > packet_out->po_packno)
+            continue;
+#endif
         ctl->sc_largest_acked_packno    = packet_out->po_packno;
         ctl->sc_largest_acked_sent_time = packet_out->po_sent;
         if (packet_out->po_packno == largest_acked(acki))
@@ -628,18 +725,20 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             ++rtt_updated;
         }
         lsquic_cubic_ack(&ctl->sc_cubic, now, now - packet_out->po_sent,
-                                                            app_limited);
+                         app_limited, lsquic_packet_out_total_sz(packet_out));
         LSQ_DEBUG("Got ACK for packet %"PRIu64", remove from unacked queue",
             packet_out->po_packno);
-        TAILQ_REMOVE(&ctl->sc_unacked_packets, packet_out, po_next);
+        assert(ctl->sc_n_in_flight_all);
+        send_ctl_unacked_remove(ctl, packet_out);
         lsquic_packet_out_ack_streams(packet_out);
+#if __GNUC__
+        __builtin_prefetch(next);
+#endif
         if ((ctl->sc_flags & SC_NSTP) &&
                     (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK)))
             TAILQ_INSERT_TAIL(&acked_acks, packet_out, po_next);
         else
             lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
-        assert(ctl->sc_n_in_flight);
-        --ctl->sc_n_in_flight;
     }
 
     if (rtt_updated)
@@ -649,20 +748,12 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         ctl->sc_n_tlp = 0;
     }
 
+    send_ctl_detect_losses(ctl, ack_recv_time);
     if (send_ctl_first_unacked_retx_packet(ctl))
-    {
-        send_ctl_detect_losses(ctl, ack_recv_time);
-        if (send_ctl_first_unacked_retx_packet(ctl))
-            set_retx_alarm(ctl);
-        else
-        {
-            LSQ_DEBUG("All retransmittable packets lost: clear alarm");
-            lsquic_alarmset_unset(ctl->sc_alset, AL_RETX);
-        }
-    }
+        set_retx_alarm(ctl);
     else
     {
-        LSQ_DEBUG("No unacked retransmittable packets: clear retx alarm");
+        LSQ_DEBUG("No retransmittable packets: clear alarm");
         lsquic_alarmset_unset(ctl->sc_alset, AL_RETX);
     }
     lsquic_send_ctl_sanity_check(ctl);
@@ -686,6 +777,9 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         while ((packet_out = next));
     }
 
+    if (ctl->sc_n_in_flight_retx == 0)
+        ctl->sc_flags |= SC_WAS_QUIET;
+
     return 0;
 }
 
@@ -695,19 +789,6 @@ lsquic_send_ctl_smallest_unacked (lsquic_send_ctl_t *ctl)
 {
     const lsquic_packet_out_t *packet_out;
 
-#ifndef NDEBUG
-    if ((ctl->sc_senhist.sh_flags & SH_REORDER) &&
-                            !TAILQ_EMPTY(&ctl->sc_unacked_packets))
-    {
-        lsquic_packno_t smallest_unacked = UINT64_MAX;
-        TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets, po_next)
-            if (packet_out->po_packno < smallest_unacked)
-                smallest_unacked = packet_out->po_packno;
-        assert(smallest_unacked < UINT64_MAX);
-        return smallest_unacked;
-    }
-    else
-#endif
     /* Packets are always sent out in order (unless we are reordering them
      * on purpose).  Thus, the first packet on the unacked packets list has
      * the smallest packet number of all packets on that list.
@@ -751,28 +832,49 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     lsquic_senhist_cleanup(&ctl->sc_senhist);
     while ((packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets)))
     {
-        TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
+        send_ctl_sched_remove(ctl, packet_out);
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
-        --ctl->sc_n_scheduled;
     }
     assert(0 == ctl->sc_n_scheduled);
+    assert(0 == ctl->sc_bytes_scheduled);
     while ((packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets)))
     {
         TAILQ_REMOVE(&ctl->sc_unacked_packets, packet_out, po_next);
+        ctl->sc_bytes_unacked_all -= lsquic_packet_out_total_sz(packet_out);
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
-        --ctl->sc_n_in_flight;
+        --ctl->sc_n_in_flight_all;
     }
-    assert(0 == ctl->sc_n_in_flight);
+    assert(0 == ctl->sc_n_in_flight_all);
+    assert(0 == ctl->sc_bytes_unacked_all);
     while ((packet_out = TAILQ_FIRST(&ctl->sc_lost_packets)))
     {
         TAILQ_REMOVE(&ctl->sc_lost_packets, packet_out, po_next);
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
     }
+    pacer_cleanup(&ctl->sc_pacer);
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
         ctl->sc_stats.n_total_sent, ctl->sc_stats.n_resent,
         ctl->sc_stats.n_delayed);
 #endif
+}
+
+
+static unsigned
+send_ctl_retx_bytes_out (const struct lsquic_send_ctl *ctl)
+{
+    return ctl->sc_bytes_scheduled
+         + ctl->sc_bytes_unacked_retx
+         + ctl->sc_bytes_out;
+}
+
+
+int
+lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
+{
+    return (ctl->sc_flags & SC_PACE)
+        && !pacer_can_schedule(&ctl->sc_pacer,
+                               ctl->sc_n_scheduled + ctl->sc_n_in_flight_all);
 }
 
 
@@ -782,12 +884,16 @@ __attribute__((weak))
 int
 lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
 {
-    const unsigned n_out = ctl->sc_n_scheduled + ctl->sc_n_in_flight;
+    const unsigned n_out = send_ctl_retx_bytes_out(ctl);
+    LSQ_DEBUG("%s: n_out: %u (unacked_retx: %u, out: %u); cwnd: %lu", __func__,
+        n_out, ctl->sc_bytes_unacked_retx, ctl->sc_bytes_out,
+        lsquic_cubic_get_cwnd(&ctl->sc_cubic));
     if (ctl->sc_flags & SC_PACE)
     {
         if (n_out >= lsquic_cubic_get_cwnd(&ctl->sc_cubic))
             return 0;
-        if (pacer_can_schedule(&ctl->sc_pacer, n_out))
+        if (pacer_can_schedule(&ctl->sc_pacer,
+                               ctl->sc_n_scheduled + ctl->sc_n_in_flight_all))
             return 1;
         if (ctl->sc_flags & SC_SCHED_TICK)
         {
@@ -853,12 +959,12 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl)
 }
 
 
-#ifndef NDEBUG
+#if LSQUIC_EXTRA_CHECKS
 void
 lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
 {
     const struct lsquic_packet_out *packet_out;
-    unsigned count;
+    unsigned count, sched_bytes;
 
     assert(!send_ctl_first_unacked_retx_packet(ctl) ||
                     lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX));
@@ -871,7 +977,17 @@ lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
     count = 0;
     TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets, po_next)
         ++count;
-    assert(count == ctl->sc_n_in_flight);
+    assert(count == ctl->sc_n_in_flight_all);
+
+    count = 0, sched_bytes = 0;
+    TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+    {
+        assert(packet_out->po_flags & PO_SCHED);
+        sched_bytes += lsquic_packet_out_total_sz(packet_out);
+        ++count;
+    }
+    assert(count == ctl->sc_n_scheduled);
+    assert(sched_bytes == ctl->sc_bytes_scheduled);
 }
 
 
@@ -889,8 +1005,13 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
         assert((last->po_flags & PO_REPACKNO) ||
                 last->po_packno < packet_out->po_packno);
 #endif
-    TAILQ_INSERT_TAIL(&ctl->sc_scheduled_packets, packet_out, po_next);
-    ++ctl->sc_n_scheduled;
+    if (ctl->sc_flags & SC_PACE)
+    {
+        unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
+        pacer_packet_scheduled(&ctl->sc_pacer, n_out,
+            send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
+    }
+    send_ctl_sched_append(ctl, packet_out);
 }
 
 
@@ -918,8 +1039,8 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
         packet_out->po_flags &= ~PO_REPACKNO;
     }
 
-    TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
-    --ctl->sc_n_scheduled;
+    send_ctl_sched_remove(ctl, packet_out);
+    ctl->sc_bytes_out += lsquic_packet_out_total_sz(packet_out);
     return packet_out;
 }
 
@@ -928,8 +1049,8 @@ void
 lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
                                             lsquic_packet_out_t *packet_out)
 {
-    TAILQ_INSERT_HEAD(&ctl->sc_scheduled_packets, packet_out, po_next);
-    ++ctl->sc_n_scheduled;
+    send_ctl_sched_prepend(ctl, packet_out);
+    ctl->sc_bytes_out -= lsquic_packet_out_total_sz(packet_out);
     LSQ_DEBUG("packet %"PRIu64" has been delayed", packet_out->po_packno);
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_delayed;
@@ -1013,12 +1134,12 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
                                       unsigned need_at_least, int *is_err)
 {
     lsquic_packet_out_t *packet_out;
-    unsigned n_out;
 
     assert(need_at_least > 0);
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl);
     if (packet_out
+        && !(packet_out->po_flags & PO_STREAM_END)
         && lsquic_packet_out_avail(packet_out) >= need_at_least)
     {
         return packet_out;
@@ -1032,15 +1153,7 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
 
     packet_out = lsquic_send_ctl_new_packet_out(ctl, need_at_least);
     if (packet_out)
-    {
-        if (ctl->sc_flags & SC_PACE)
-        {
-            n_out = ctl->sc_n_in_flight + ctl->sc_n_scheduled;
-            pacer_packet_scheduled(&ctl->sc_pacer, n_out,
-                send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
-        }
         lsquic_send_ctl_scheduled_one(ctl, packet_out);
-    }
     else
         *is_err = 1;
     return packet_out;
@@ -1052,12 +1165,12 @@ send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
                       unsigned need_at_least, const lsquic_stream_t *stream)
 {
     lsquic_packet_out_t *packet_out;
-    unsigned n_out;
 
     assert(need_at_least > 0);
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl);
     if (packet_out
+        && !(packet_out->po_flags & PO_STREAM_END)
         && lsquic_packet_out_avail(packet_out) >= need_at_least
         && !lsquic_packet_out_has_frame(packet_out, stream, QUIC_FRAME_STREAM))
     {
@@ -1071,12 +1184,6 @@ send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
     if (!packet_out)
         return NULL;
 
-    if (ctl->sc_flags & SC_PACE)
-    {
-        n_out = ctl->sc_n_in_flight + ctl->sc_n_scheduled;
-        pacer_packet_scheduled(&ctl->sc_pacer, n_out,
-            send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
-    }
     lsquic_send_ctl_scheduled_one(ctl, packet_out);
     return packet_out;
 }
@@ -1106,31 +1213,15 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     }
 
     assert(packet_out->po_regen_sz < packet_out->po_data_sz);
-    /* TODO: in Q038 and later, we can simply replace the ACK with NUL bytes
-     * representing PADDING frame instead of doing memmove and adjusting
-     * offsets.
-     */
     if (packet_out->po_regen_sz)
+    {
+        assert(!(packet_out->po_flags & PO_SCHED));
         lsquic_packet_out_chop_regen(packet_out);
+    }
     LSQ_DEBUG("Packet %"PRIu64" repackaged for resending as packet %"PRIu64,
                                                             oldno, packno);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "packet %"PRIu64" repackaged for "
         "resending as packet %"PRIu64, oldno, packno);
-}
-
-
-/* A droppable hello packet is a packet that contains a part of hello message
- * after handshake has been completed.
- */
-static int
-droppable_hello_packet (const lsquic_send_ctl_t *ctl,
-                                    const lsquic_packet_out_t *packet_out)
-{
-    return 0    /* TODO: we cannot not resend HELLO packets if we are server.
-                 * For now, do not discard any HELLO packets.
-                 */
-        && (packet_out->po_flags & PO_HELLO)
-        && (ctl->sc_conn_pub->lconn->cn_flags & LSCONN_HANDSHAKE_DONE);
 }
 
 
@@ -1143,8 +1234,7 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *ctl)
     while (lsquic_send_ctl_can_send(ctl) &&
                                 (packet_out = send_ctl_next_lost(ctl)))
     {
-        if ((packet_out->po_regen_sz < packet_out->po_data_sz)
-                            && !droppable_hello_packet(ctl, packet_out))
+        if (packet_out->po_regen_sz < packet_out->po_data_sz)
         {
             ++n;
             update_for_resending(ctl, packet_out);
@@ -1193,7 +1283,7 @@ void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
 {
     struct lsquic_packet_out *packet_out, *next;
-    unsigned n;
+    unsigned n, adj;
 
     for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
                                                             packet_out = next)
@@ -1203,15 +1293,15 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
         if ((packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM))
                                                                    )
         {
-            lsquic_packet_out_elide_reset_stream_frames(packet_out, stream_id);
+            adj = lsquic_packet_out_elide_reset_stream_frames(packet_out,
+                                                              stream_id);
+            ctl->sc_bytes_scheduled -= adj;
             if (0 == packet_out->po_frame_types)
             {
                 LSQ_DEBUG("cancel packet %"PRIu64" after eliding frames for "
                     "stream %"PRIu32, packet_out->po_packno, stream_id);
-                TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
+                send_ctl_sched_remove(ctl, packet_out);
                 lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
-                assert(ctl->sc_n_scheduled);
-                --ctl->sc_n_scheduled;
             }
         }
     }
@@ -1225,10 +1315,11 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
             if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM)))
                 continue;
             next = TAILQ_NEXT(packet_out, po_next);
+            lsquic_packet_out_elide_reset_stream_frames(packet_out, stream_id);
             if (0 == packet_out->po_frame_types)
             {
-                LSQ_DEBUG("cancel packet %"PRIu64" after eliding frames for "
-                    "stream %"PRIu32, packet_out->po_packno, stream_id);
+                LSQ_DEBUG("cancel buffered packet in queue #%u after eliding "
+                    "frames for stream %"PRIu32, n, stream_id);
                 TAILQ_REMOVE(&ctl->sc_buffered_packets[n].bpq_packets,
                              packet_out, po_next);
                 --ctl->sc_buffered_packets[n].bpq_count;
@@ -1322,8 +1413,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
                                                             packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
-        if (packet_out->po_regen_sz < packet_out->po_data_sz
-                            && !droppable_hello_packet(ctl, packet_out))
+        if (packet_out->po_regen_sz < packet_out->po_data_sz)
         {
             if (packet_out->po_flags & PO_ENCRYPTED)
             {
@@ -1341,9 +1431,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
                 LOG_PACKET_Q(&ctl->sc_scheduled_packets,
                                         "unacked packets before squeezing");
 #endif
-            TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
-            assert(ctl->sc_n_scheduled);
-            --ctl->sc_n_scheduled;
+            send_ctl_sched_remove(ctl, packet_out);
             LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
                 packet_out->po_packno);
             lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
@@ -1394,9 +1482,8 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *ctl)
     const unsigned n = ctl->sc_n_scheduled;
     while ((packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets)))
     {
-        TAILQ_REMOVE(&ctl->sc_scheduled_packets, packet_out, po_next);
+        send_ctl_sched_remove(ctl, packet_out);
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
-        --ctl->sc_n_scheduled;
     }
     assert(0 == ctl->sc_n_scheduled);
     LSQ_DEBUG("dropped %u scheduled packet%s", n, n != 0 ? "s" : "");
@@ -1457,10 +1544,10 @@ send_ctl_max_bpq_count (const lsquic_send_ctl_t *ctl,
         return MAX_BPQ_COUNT;
     case BPT_HIGHEST_PRIO:
     default: /* clang does not complain about absence of `default'... */
-        count = ctl->sc_n_scheduled + ctl->sc_n_in_flight;
-        if (count < lsquic_cubic_get_cwnd(&ctl->sc_cubic))
+        count = ctl->sc_n_scheduled + ctl->sc_n_in_flight_retx;
+        if (count < lsquic_cubic_get_cwnd(&ctl->sc_cubic) / ctl->sc_pack_size)
         {
-            count -= lsquic_cubic_get_cwnd(&ctl->sc_cubic);
+            count -= lsquic_cubic_get_cwnd(&ctl->sc_cubic) / ctl->sc_pack_size;
             if (count > MAX_BPQ_COUNT)
                 return count;
         }
@@ -1481,6 +1568,7 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
 
     packet_out = TAILQ_LAST(&packet_q->bpq_packets, lsquic_packets_tailq);
     if (packet_out
+        && !(packet_out->po_flags & PO_STREAM_END)
         && lsquic_packet_out_avail(packet_out) >= need_at_least
         && !lsquic_packet_out_has_frame(packet_out, stream, QUIC_FRAME_STREAM))
     {
@@ -1532,7 +1620,7 @@ lsquic_send_ctl_calc_packno_bits (lsquic_send_ctl_t *ctl)
     unsigned n_in_flight;
 
     smallest_unacked = lsquic_send_ctl_smallest_unacked(ctl);
-    n_in_flight = lsquic_cubic_get_cwnd(&ctl->sc_cubic);
+    n_in_flight = lsquic_cubic_get_cwnd(&ctl->sc_cubic) / ctl->sc_pack_size;
     return calc_packno_bits(ctl->sc_cur_packno + 1, smallest_unacked,
                                                             n_in_flight);
 }
@@ -1567,6 +1655,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
     if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm, packet_out,
                   new_packet_out, ctl->sc_conn_pub->lconn->cn_pf, excess_bytes))
     {
+        lsquic_packet_out_set_packno_bits(packet_out, bits);
         TAILQ_INSERT_AFTER(&packet_q->bpq_packets, packet_out, new_packet_out,
                            po_next);
         ++packet_q->bpq_count;

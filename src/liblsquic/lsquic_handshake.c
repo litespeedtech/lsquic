@@ -68,6 +68,7 @@ typedef struct hs_ctx_st
         HSET_TCID     =   (1 << 0),     /* tcid is set */
         HSET_SMHL     =   (1 << 1),     /* smhl is set */
         HSET_SCID     =   (1 << 2),
+        HSET_IRTT     =   (1 << 3),
     }           set;
     enum {
         HOPT_NSTP     =   (1 << 0),     /* NSTP option present in COPT */
@@ -302,7 +303,7 @@ make_cert_hash_item (lsquic_str_t *domain, lsquic_str_t **certs, int count)
 
 
 /* client */
-void
+static void
 c_free_cert_hash_item (cert_hash_item_t *item)
 {
     int i;
@@ -572,7 +573,9 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_IRTT:
-        hs_ctx->irtt = get_tag_value_i32(val, len);
+        if (0 != get_tag_val_u32(val, len, &hs_ctx->irtt))
+            return -1;
+        hs_ctx->set |= HSET_IRTT;
         break;
 
     case QTAG_COPT:
@@ -1697,6 +1700,14 @@ lsquic_enc_session_get_peer_setting (const lsquic_enc_session_t *enc_session,
         if (enc_session->hs_ctx.set & HSET_SMHL)
         {
             *val = enc_session->hs_ctx.smhl;
+            return 0;
+        }
+        else
+            return -1;
+    case QTAG_IRTT:
+        if (enc_session->hs_ctx.set & HSET_IRTT)
+        {
+            *val = enc_session->hs_ctx.irtt;
             return 0;
         }
         else

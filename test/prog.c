@@ -110,6 +110,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                         Example: 1223/104613.946956\n"
 "                   4   Microsecond time.\n"
 "                         Example: 11:04:05.196308\n"
+"                   5   Full date and microsecond time.\n"
+"                         Example: 2017-03-21 13:43:46.671345\n"
 "   -S opt=val  Socket options.  Supported options:\n"
 "                   sndbuf=12345    # Sets SO_SNDBUF\n"
 "                   rcvbuf=12345    # Sets SO_RCVBUF\n"
@@ -233,8 +235,8 @@ prog_connect (struct prog *prog)
     struct service_port *sport;
 
     sport = TAILQ_FIRST(prog->prog_sports);
-    if (0 != lsquic_engine_connect(prog->prog_engine,
-                    (struct sockaddr *) &sport->sas, sport,
+    if (NULL == lsquic_engine_connect(prog->prog_engine,
+                    (struct sockaddr *) &sport->sas, sport, NULL,
                     prog->prog_hostname ? prog->prog_hostname : sport->host,
                     prog->prog_max_packet_size))
         return -1;
@@ -382,12 +384,18 @@ prog_stop (struct prog *prog)
     }
 
     drop_onetimer(prog);
-    event_del(prog->prog_timer);
-    event_free(prog->prog_timer);
-    prog->prog_timer = NULL;
-    event_del(prog->prog_usr1);
-    event_free(prog->prog_usr1);
-    prog->prog_usr1 = NULL;
+    if (prog->prog_timer)
+    {
+        event_del(prog->prog_timer);
+        event_free(prog->prog_timer);
+        prog->prog_timer = NULL;
+    }
+    if (prog->prog_usr1)
+    {
+        event_del(prog->prog_usr1);
+        event_free(prog->prog_usr1);
+        prog->prog_usr1 = NULL;
+    }
 }
 
 

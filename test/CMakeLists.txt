@@ -18,6 +18,10 @@ CHECK_SYMBOL_EXISTS(
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/test_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/test_config.h)
 
 
-add_subdirectory(unittests)
-
-enable_testing()
+IF(DEVEL_MODE EQUAL 1)
+    # Our test framework relies on assertions, only compile if assertions are
+    # enabled.
+    #
+    add_subdirectory(unittests)
+    enable_testing()
+ENDIF()

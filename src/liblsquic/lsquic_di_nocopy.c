@@ -53,6 +53,7 @@
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_packet_common.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"

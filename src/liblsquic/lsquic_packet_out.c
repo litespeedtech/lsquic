@@ -128,6 +128,8 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
     int last_taken;
     unsigned i;
 
+    assert(!(new_stream->stream_flags & STREAM_FINISHED));
+
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
         if (srec->sr_stream == new_stream)
         {
@@ -150,8 +152,6 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
         else if (srec->sr_frame_types & (1 << QUIC_FRAME_STREAM) & (1 << frame_type))
             assert(srec->sr_off < off);     /* Check that STREAM frames are added in order */
 
-    ++new_stream->n_unacked;
-
     if (!(packet_out->po_flags & PO_SREC_ARR))
     {
         if (!srec_taken(&packet_out->po_srecs.one))
@@ -160,6 +160,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
             packet_out->po_srecs.one.sr_stream      = new_stream;
             packet_out->po_srecs.one.sr_off         = off;
             packet_out->po_srecs.one.sr_len         = len;
+            ++new_stream->n_unacked;
             return 0;                           /* Insert in first slot */
         }
         srec_arr = lsquic_malo_get(mm->malo.stream_rec_arr);
@@ -190,6 +191,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
         srec_arr->srecs[i].sr_stream      = new_stream;
         srec_arr->srecs[i].sr_off         = off;
         srec_arr->srecs[i].sr_len         = len;
+        ++new_stream->n_unacked;
         return 0;                   /* Insert in existing srec */
     }
 
@@ -203,6 +205,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
     srec_arr->srecs[0].sr_off         = off;
     srec_arr->srecs[0].sr_len         = len;
     TAILQ_INSERT_TAIL(&packet_out->po_srecs.arr, srec_arr, next_stream_rec_arr);
+    ++new_stream->n_unacked;
     return 0;                               /* Insert in new srec */
 }
 
@@ -283,7 +286,7 @@ lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
 /* If `stream_id' is zero, stream frames from all reset streams are elided.
  * Otherwise, elision is limited to the specified stream.
  */
-void
+unsigned
 lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
                                              uint32_t stream_id)
 {
@@ -335,6 +338,8 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
     assert(n_stream_frames);
     if (n_elided == n_stream_frames)
         packet_out->po_frame_types &= ~(1 << QUIC_FRAME_STREAM);
+
+    return adj;
 }
 
 
@@ -532,8 +537,8 @@ split_largest_frame (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
                 new_packet_out->po_data + new_packet_out->po_data_sz,
                 lsquic_packet_out_avail(new_packet_out), frame.stream_id,
                 frame.data_frame.df_offset + frame.data_frame.df_size / 2,
-                split_reader_fin, split_reader_size, split_reader_read,
-                &reader_ctx);
+                split_reader_fin(&reader_ctx), split_reader_size(&reader_ctx),
+                split_reader_read, &reader_ctx);
     if (len < 0)
     {
         LSQ_ERROR("could not generate new frame 1");
@@ -544,6 +549,11 @@ split_largest_frame (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
                         new_packet_out->po_data_sz, len))
         return -1;
     new_packet_out->po_data_sz += len;
+    if (0 == lsquic_packet_out_avail(new_packet_out))
+    {
+        assert(0);  /* We really should not fill here, but JIC */
+        new_packet_out->po_flags |= PO_STREAM_END;
+    }
 
     memcpy(reader_ctx.buf, frame.data_frame.df_data,
            frame.data_frame.df_size / 2);
@@ -553,8 +563,8 @@ split_largest_frame (struct lsquic_mm *mm, lsquic_packet_out_t *packet_out,
     len = pf->pf_gen_stream_frame(
                 packet_out->po_data + max_srec->sr_off, max_srec->sr_len,
                 frame.stream_id, frame.data_frame.df_offset,
-                split_reader_fin, split_reader_size, split_reader_read,
-                &reader_ctx);
+                split_reader_fin(&reader_ctx), split_reader_size(&reader_ctx),
+                split_reader_read, &reader_ctx);
     if (len < 0)
     {
         LSQ_ERROR("could not generate new frame 2");
@@ -611,11 +621,15 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
 #endif
     int rv;
 
+    /* We only split buffered packets; buffered packets contain only STREAM
+     * frames:
+     */
     assert(packet_out->po_frame_types == (1 << QUIC_FRAME_STREAM));
 
     n_srecs = 0;
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
     {
+        /* We only expect references to STREAM frames (buffered packets): */
         assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
         if (n_srecs >= n_srecs_alloced)
         {
@@ -688,13 +702,14 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
   end:
     if (srecs != local_arr)
         free(srecs);
-#ifndef NDEBUG
     if (0 == rv)
     {
+        new_packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
+#ifndef NDEBUG
         verify_srecs(packet_out);
         verify_srecs(new_packet_out);
-    }
 #endif
+    }
     return rv;
 
   err:

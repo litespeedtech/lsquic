@@ -95,6 +95,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
             lsquic_mm_put_16k(c_hsk->mm, c_hsk->buf_in);
             c_hsk->buf_in = NULL;
             lsquic_stream_wantread(stream, 0);
+            c_hsk->lconn->cn_if->ci_handshake_failed(c_hsk->lconn);
             lsquic_conn_close(c_hsk->lconn);
         }
         break;
@@ -104,8 +105,8 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         lsquic_stream_wantread(stream, 0);
         if (c_hsk->lconn->cn_esf->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
         {
-            LSQ_DEBUG("handshake is complete, inform connection");
-            c_hsk->lconn->cn_if->ci_handshake_done(c_hsk->lconn);
+            LSQ_DEBUG("handshake is successful, inform connection");
+            c_hsk->lconn->cn_if->ci_handshake_ok(c_hsk->lconn);
         }
         else
         {
@@ -118,6 +119,10 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         LSQ_WARN("lsquic_enc_session_handle_chlo_reply returned unknown value %d", s);
     case DATA_FORMAT_ERROR:
         LSQ_INFO("lsquic_enc_session_handle_chlo_reply returned an error");
+        c_hsk->buf_in = NULL;
+        lsquic_stream_wantread(stream, 0);
+        c_hsk->lconn->cn_if->ci_handshake_failed(c_hsk->lconn);
+        lsquic_conn_close(c_hsk->lconn);
         break;
     }
 }

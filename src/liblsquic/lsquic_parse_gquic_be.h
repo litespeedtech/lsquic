@@ -61,7 +61,7 @@ gquic_be_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_
 
 int
 gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,
-                  uint64_t offset, gsf_fin_f gsf_fin, gsf_size_f gsf_size,
+                  uint64_t offset, int fin, size_t size,
                   gsf_read_f gsf_read, void *stream);
 
 int

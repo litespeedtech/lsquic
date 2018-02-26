@@ -14,6 +14,6 @@ full_conn_client_new (struct lsquic_engine_public *,
                const char *hostname, unsigned short max_packet_size);
 
 void
-full_conn_close_internal (lsquic_conn_t *, int is_user);
+full_conn_client_call_on_new (struct lsquic_conn *);
 
 #endif

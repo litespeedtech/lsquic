@@ -39,7 +39,7 @@ enum lsquic_conn_flags {
     LSCONN_ATTQ           = (1 <<19),
 };
 
-#define TICK_BIT_PROGRESS 3
+#define TICK_BIT_PROGRESS 2
 
 /* A connection may have things to send and be closed at the same time.
  */
@@ -72,7 +72,10 @@ struct conn_iface
     (*ci_packet_not_sent) (struct lsquic_conn *, struct lsquic_packet_out *);
 
     void
-    (*ci_handshake_done) (struct lsquic_conn *);
+    (*ci_handshake_ok) (struct lsquic_conn *);
+
+    void
+    (*ci_handshake_failed) (struct lsquic_conn *);
 
     int
     (*ci_user_wants_read) (struct lsquic_conn *);

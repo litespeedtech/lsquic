@@ -39,7 +39,7 @@ struct stream_rec {
     struct lsquic_stream    *sr_stream;
     unsigned short           sr_off,
                              sr_len;
-    short                    sr_frame_types;
+    enum quic_ft_bit         sr_frame_types:16;
 };
 
 #define srec_taken(srec) ((srec)->sr_frame_types)
@@ -65,6 +65,36 @@ typedef struct lsquic_packet_out
     lsquic_time_t      po_sent;       /* Time sent */
     lsquic_packno_t    po_packno;
 
+    enum packet_out_flags {
+        PO_HELLO    = (1 << 1),         /* Packet contains SHLO or CHLO data */
+        PO_ENCRYPTED= (1 << 3),         /* po_enc_data has encrypted data */
+        PO_SREC_ARR = (1 << 4),
+#define POBIT_SHIFT 5
+        PO_BITS_0   = (1 << 5),         /* PO_BITS_0 and PO_BITS_1 encode the */
+        PO_BITS_1   = (1 << 6),         /*   packet number length.  See macros below. */
+        PO_NONCE    = (1 << 7),         /* Use value in `po_nonce' to generate header */
+        PO_VERSION  = (1 << 8),         /* Use value in `po_ver_tag' to generate header */
+        PO_CONN_ID  = (1 << 9),         /* Include connection ID in public header */
+        PO_REPACKNO = (1 <<10),         /* Regenerate packet number */
+        PO_NOENCRYPT= (1 <<11),         /* Do not encrypt data in po_data */
+        PO_VERNEG   = (1 <<12),         /* Version negotiation packet. */
+        PO_STREAM_END
+                    = (1 <<13),         /* STREAM frame reaches the end of the packet: no
+                                         * further writes are allowed.
+                                         */
+        PO_SCHED    = (1 <<14),         /* On scheduled queue */
+    }                  po_flags:16;
+    enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
+    unsigned short     po_data_sz;      /* Number of usable bytes in data */
+    unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
+    unsigned short     po_regen_sz;     /* Number of bytes at the beginning
+                                         * of data containing bytes that are
+                                         * not to be retransmitted, e.g. ACK
+                                         * frames.
+                                         */
+    unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
+    unsigned char     *po_data;
+
     /* A lot of packets contain data belonging to only one stream.  Thus,
      * `one' is used first.  If this is not enough, any number of
      * stream_rec_arr structures can be allocated to handle more stream
@@ -81,31 +111,7 @@ typedef struct lsquic_packet_out
     unsigned char     *po_enc_data;
 
     lsquic_ver_tag_t   po_ver_tag;      /* Set if PO_VERSION is set */
-    short              po_frame_types;  /* Bitmask of QUIC_FRAME_* */
-    unsigned short     po_data_sz;      /* Number of usable bytes in data */
-    unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
-    unsigned short     po_regen_sz;     /* Number of bytes at the beginning
-                                         * of data containing bytes that are
-                                         * not to be retransmitted, e.g. ACK
-                                         * frames.
-                                         */
-    unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
-    enum packet_out_flags {
-        PO_HELLO    = (1 << 1),         /* Packet contains SHLO or CHLO data */
-        PO_ENCRYPTED= (1 << 3),         /* po_enc_data has encrypted data */
-        PO_SREC_ARR = (1 << 4),
-#define POBIT_SHIFT 5
-        PO_BITS_0   = (1 << 5),         /* PO_BITS_0 and PO_BITS_1 encode the */
-        PO_BITS_1   = (1 << 6),         /*   packet number length.  See macros below. */
-        PO_NONCE    = (1 << 7),         /* Use value in `po_nonce' to generate header */
-        PO_VERSION  = (1 << 8),         /* Use value in `po_ver_tag' to generate header */
-        PO_CONN_ID  = (1 << 9),         /* Include connection ID in public header */
-        PO_REPACKNO = (1 <<10),         /* Regenerate packet number */
-        PO_NOENCRYPT= (1 <<11),         /* Do not encrypt data in po_data */
-        PO_VERNEG   = (1 <<12),         /* Version negotiation packet. */
-    }                  po_flags:16;
     unsigned char     *po_nonce;        /* Use to generate header if PO_NONCE is set */
-    unsigned char     *po_data;
 } lsquic_packet_out_t;
 
 /* The size of lsquic_packet_out_t could be further reduced:
@@ -119,7 +125,11 @@ typedef struct lsquic_packet_out
 
 #define lsquic_packet_out_packno_bits(p) (((p)->po_flags >> POBIT_SHIFT) & 0x3)
 
-/* XXX This will need to be made into a method for Q041 */
+#define lsquic_packet_out_set_packno_bits(p, b) do {                    \
+    (p)->po_flags &= ~(0x3 << POBIT_SHIFT);                             \
+    (p)->po_flags |= ((b) & 0x3) << POBIT_SHIFT;                        \
+} while (0)
+
 #define lsquic_po_header_length(po_flags) (                                 \
     1                                                   /* Type */          \
   + (!!((po_flags) & PO_CONN_ID) << 3)                  /* Connection ID */ \
@@ -127,6 +137,10 @@ typedef struct lsquic_packet_out
   + (!!((po_flags) & PO_NONCE)   << 5)                  /* Nonce */         \
   + packno_bits2len(((po_flags) >> POBIT_SHIFT) & 0x3)  /* Packet number */ \
 )
+
+#define lsquic_packet_out_total_sz(p) \
+    ((p)->po_data_sz + lsquic_po_header_length((p)->po_flags) \
+        + QUIC_PACKET_HASH_SZ)
 
 #define lsquic_packet_out_verneg(p) \
     (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG)) == (PO_NOENCRYPT|PO_VERNEG))
@@ -163,7 +177,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               enum QUIC_FRAME_TYPE,
                               unsigned short off, unsigned short len);
 
-void
+unsigned
 lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *, uint32_t);
 
 int

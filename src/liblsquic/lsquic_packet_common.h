@@ -36,10 +36,24 @@ enum QUIC_FRAME_TYPE
     N_QUIC_FRAMES
 };
 
+enum quic_ft_bit {
+    QUIC_FTBIT_INVALID          = 1 << QUIC_FRAME_INVALID,
+    QUIC_FTBIT_STREAM           = 1 << QUIC_FRAME_STREAM,
+    QUIC_FTBIT_ACK              = 1 << QUIC_FRAME_ACK,
+    QUIC_FTBIT_PADDING          = 1 << QUIC_FRAME_PADDING,
+    QUIC_FTBIT_RST_STREAM       = 1 << QUIC_FRAME_RST_STREAM,
+    QUIC_FTBIT_CONNECTION_CLOSE = 1 << QUIC_FRAME_CONNECTION_CLOSE,
+    QUIC_FTBIT_GOAWAY           = 1 << QUIC_FRAME_GOAWAY,
+    QUIC_FTBIT_WINDOW_UPDATE    = 1 << QUIC_FRAME_WINDOW_UPDATE,
+    QUIC_FTBIT_BLOCKED          = 1 << QUIC_FRAME_BLOCKED,
+    QUIC_FTBIT_STOP_WAITING     = 1 << QUIC_FRAME_STOP_WAITING,
+    QUIC_FTBIT_PING             = 1 << QUIC_FRAME_PING,
+};
+
 extern const size_t lsquic_frame_types_str_sz;
 
 const char *
-lsquic_frame_types_to_str (char *buf, size_t bufsz, short frame_types);
+lsquic_frame_types_to_str (char *buf, size_t bufsz, enum quic_ft_bit);
 
 #define QFRAME_REGEN_MASK ((1 << QUIC_FRAME_ACK)                \
                          | (1 << QUIC_FRAME_STOP_WAITING))

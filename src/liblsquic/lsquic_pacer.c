@@ -42,11 +42,24 @@ pacer_init (struct pacer *pacer, lsquic_cid_t cid, unsigned max_intertick)
 
 
 void
+pacer_cleanup (struct pacer *pacer)
+{
+#ifndef NDEBUG
+    LSQ_NOTICE("scheduled calls: %u", pacer->pa_stats.n_scheduled);
+#endif
+}
+
+
+void
 pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
                             int in_recovery, tx_time_f tx_time, void *tx_ctx)
 {
     lsquic_time_t delay, sched_time;
     int app_limited, making_up;
+
+#ifndef NDEBUG
+    ++pacer->pa_stats.n_scheduled;
+#endif
 
     if (n_in_flight == 0 && !in_recovery)
     {
@@ -100,12 +113,7 @@ pacer_loss_event (struct pacer *pacer)
 static unsigned
 clock_granularity (const struct pacer *pacer)
 {
-#ifndef NDEBUG
-    if (pacer->pa_flags & PA_CONSTANT_INTERTICK)
-        return pacer->pa_max_intertick;
-#endif
-
-    return pacer->pa_intertick_var;
+    return pacer->pa_intertick_avg;
 }
 
 

@@ -98,8 +98,8 @@ elide_single_stream_frame (void)
     len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
             lsquic_packet_out_avail(packet_out),
             streams[0].id, lsquic_stream_tosend_offset(&streams[0]),
-            (gsf_fin_f) lsquic_stream_tosend_fin,
-            (gsf_size_f) lsquic_stream_tosend_sz,
+            lsquic_stream_tosend_fin(&streams[0]),
+            lsquic_stream_tosend_sz(&streams[0]),
             (gsf_read_f) lsquic_stream_tosend_read,
             &streams[0]);
     packet_out->po_data_sz += len;
@@ -163,8 +163,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(ref_out->po_data + ref_out->po_data_sz,
                 lsquic_packet_out_avail(ref_out),
                 streams[0].id, lsquic_stream_tosend_offset(&streams[0]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[0]),
+                lsquic_stream_tosend_sz(&streams[0]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[0]);
         b_off = ref_out->po_data_sz;
@@ -178,8 +178,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(ref_out->po_data + ref_out->po_data_sz,
                 lsquic_packet_out_avail(ref_out),
                 streams[0].id, lsquic_stream_tosend_offset(&streams[0]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[0]),
+                lsquic_stream_tosend_sz(&streams[0]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[0]);
         d_off = ref_out->po_data_sz;
@@ -200,8 +200,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out),
                 streams[0].id, lsquic_stream_tosend_offset(&streams[0]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[0]),
+                lsquic_stream_tosend_sz(&streams[0]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[0]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
@@ -213,8 +213,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out),
                 streams[1].id, lsquic_stream_tosend_offset(&streams[1]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[1]),
+                lsquic_stream_tosend_sz(&streams[1]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[1]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1],
@@ -226,8 +226,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out),
                 streams[2].id, lsquic_stream_tosend_offset(&streams[2]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[2]),
+                lsquic_stream_tosend_sz(&streams[2]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[2]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[2],
@@ -245,8 +245,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out),
                 streams[3].id, lsquic_stream_tosend_offset(&streams[3]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[3]),
+                lsquic_stream_tosend_sz(&streams[3]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[3]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[3],
@@ -258,8 +258,8 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out),
                 streams[4].id, lsquic_stream_tosend_offset(&streams[4]),
-                (gsf_fin_f) lsquic_stream_tosend_fin,
-                (gsf_size_f) lsquic_stream_tosend_sz,
+                lsquic_stream_tosend_fin(&streams[4]),
+                lsquic_stream_tosend_sz(&streams[4]),
                 (gsf_read_f) lsquic_stream_tosend_read,
                 &streams[4]);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[4],

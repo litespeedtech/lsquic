@@ -28,6 +28,11 @@ struct pacer
         PA_CONSTANT_INTERTICK   = (1 << 1), /* Use fake intertick time for testing */
 #endif
     }               pa_flags:8;
+#ifndef NDEBUG
+    struct {
+        unsigned        n_scheduled;
+    }               pa_stats;
+#endif
 };
 
 
@@ -35,6 +40,9 @@ typedef lsquic_time_t (*tx_time_f)(void *ctx);
 
 void
 pacer_init (struct pacer *, lsquic_cid_t, unsigned max_intertick);
+
+void
+pacer_cleanup (struct pacer *);
 
 void
 pacer_tick (struct pacer *, lsquic_time_t);

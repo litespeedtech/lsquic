@@ -231,5 +231,9 @@ add_executable(test_buf test_buf.c)
 target_link_libraries(test_buf lsquic pthread libssl.a libcrypto.a m ${FIULIB})
 add_test(buf test_buf)
 
+add_executable(test_cubic test_cubic.c)
+target_link_libraries(test_cubic lsquic pthread libssl.a libcrypto.a m ${FIULIB})
+add_test(cubic test_cubic)
+
 add_executable(test_dec test_dec.c)
 target_link_libraries(test_dec libssl.a libcrypto.a z m pthread ${FIULIB})

@@ -128,40 +128,55 @@ gquic_be_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_
 
     packnum_len = packno_bits2len(bits);
 
-    header_len = 1 + (!!conn_id << 3) + (!!ver << 2) + ((!!nonce) << 5)
-               + packnum_len;
-    if (header_len > bufsz)
+    if (!(conn_id || ver || nonce))
     {
-        errno = ENOBUFS;
-        return -1;
+        header_len = 1 + packnum_len;
+        if (header_len > bufsz)
+        {
+            errno = ENOBUFS;
+            return -1;
+        }
+        p = buf;
+        *p = bits << 4;
+        ++p;
+    }
+    else
+    {
+        header_len = 1 + (!!conn_id << 3) + (!!ver << 2) + ((!!nonce) << 5)
+                   + packnum_len;
+        if (header_len > bufsz)
+        {
+            errno = ENOBUFS;
+            return -1;
+        }
+
+        p =  buf;
+
+        *p = (!!conn_id << 3)
+           | (bits << 4)
+           | ((!!nonce) << 2)
+           | !!ver;
+        ++p;
+
+        if (conn_id)
+        {
+            memcpy(p, conn_id , sizeof(*conn_id));
+            p += sizeof(*conn_id);
+        }
+
+        if (ver)
+        {
+            memcpy(p, ver, 4);
+            p += 4;
+        }
+
+        if (nonce)
+        {
+            memcpy(p, nonce , 32);
+            p += 32;
+        }
     }
 
-    p =  buf;
-
-    *p = (!!conn_id << 3)
-       | (bits << 4)
-       | ((!!nonce) << 2)
-       | !!ver;
-    ++p;
-
-    if (conn_id)
-    {
-        memcpy(p, conn_id , sizeof(*conn_id));
-        p += sizeof(*conn_id);
-    }
-
-    if (ver)
-    {
-        memcpy(p, ver, 4);
-        p += 4;
-    }
-    
-    if (nonce)
-    {
-        memcpy(p, nonce , 32);
-        p += 32;
-    }
-    
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     packno = bswap_64(packno);
 #endif
@@ -176,13 +191,12 @@ gquic_be_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_
 
 int
 gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,
-                  uint64_t offset, gsf_fin_f gsf_fin, gsf_size_f gsf_size,
+                  uint64_t offset, int fin, size_t size,
                   gsf_read_f gsf_read, void *stream)
 {
     /* 1fdoooss */
     unsigned slen, olen, dlen;
     unsigned char *p = buf + 1;
-    int fin;
 
     /* ss: Stream ID length: 1, 2, 3, or 4 bytes */
     slen = (stream_id > 0x0000FF)
@@ -199,13 +213,11 @@ gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_i
          + (offset >= (1ULL << 16))
          + ((offset > 0) << 1);
 
-    fin = gsf_fin(stream);
     if (!fin)
     {
-        unsigned size, n_avail;
+        unsigned n_avail;
         uint16_t nr;
 
-        size = gsf_size(stream);
         n_avail = buf_len - (p + slen + olen - buf);
 
         /* If we cannot fill remaining buffer, we need to include data
@@ -371,11 +383,51 @@ gquic_be_parse_ack_high (const unsigned char *buf, size_t buf_len)
 }
 
 
-/* Return parsed (used) buffer length.
- * If parsing failed, negative value is returned.
- */
-int
-gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *ack)
+static int
+parse_ack_frame_without_blocks (const unsigned char *buf, size_t buf_len,
+                                ack_info_t *ack)
+{
+    /* 01nullmm */
+    lsquic_packno_t tmp_packno;
+    const unsigned char type = buf[0];
+    const unsigned char *p = buf + 1;
+    const unsigned char *const pend = buf + buf_len;
+
+    const int ack_block_len   = twobit_to_1246(type & 3);        /* mm */
+    const int largest_obs_len = twobit_to_1246((type >> 2) & 3); /* ll */
+
+    CHECK_SPACE(largest_obs_len + 2 + ack_block_len + 1, p, pend);
+
+    READ_UINT(ack->ranges[0].high, 64, p, largest_obs_len);
+    p += largest_obs_len;
+
+    ack->lack_delta = gquic_be_read_float_time16(p);
+    p += 2;
+
+    READ_UINT(tmp_packno, 64, p, ack_block_len);
+    ack->ranges[0].low = ack->ranges[0].high - tmp_packno + 1;
+    p += ack_block_len;
+
+    ack->n_ranges = 1;
+
+    ack->n_timestamps = *p;
+    ++p;
+
+    if (ack->n_timestamps)
+    {
+        unsigned timestamps_size = 5 + 3 * (ack->n_timestamps - 1);
+        CHECK_SPACE(timestamps_size, p, pend);
+        p += timestamps_size;
+    }
+
+    assert(p <= pend);
+
+    return p - (unsigned char *) buf;
+}
+
+
+static int
+parse_ack_frame_with_blocks (const unsigned char *buf, size_t buf_len, ack_info_t *ack)
 {
     /* 01nullmm */
     lsquic_packno_t tmp_packno;
@@ -388,54 +440,42 @@ gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *
     const int ack_block_len   = twobit_to_1246(type & 3);        /* mm */
     const int largest_obs_len = twobit_to_1246((type >> 2) & 3); /* ll */
 
-    CHECK_SPACE(largest_obs_len, p , pend);
+    CHECK_SPACE(largest_obs_len + 2 + 1 + ack_block_len, p, pend);
 
     READ_UINT(ack->ranges[0].high, 64, p, largest_obs_len);
     p += largest_obs_len;
 
-    CHECK_SPACE(2, p , pend);
     ack->lack_delta = gquic_be_read_float_time16(p);
     p += 2;
 
     unsigned n_blocks;
-    if (type & 0x20)
-    {
-        CHECK_SPACE(1, p , pend);
-        n_blocks = *p;
-        ++p;
-    }
-    else
-        n_blocks = 0;
+    CHECK_SPACE(1, p , pend);
+    n_blocks = *p;
+    ++p;
 
-    CHECK_SPACE(ack_block_len, p , pend);
     READ_UINT(tmp_packno, 64, p, ack_block_len);
     ack->ranges[0].low = ack->ranges[0].high - tmp_packno + 1;
     p += ack_block_len;
 
-    if (n_blocks)
+    CHECK_SPACE((ack_block_len + 1) * n_blocks + /* timestamp count: */ 1,
+                p , pend);
+    unsigned i, n, gap;
+    for (i = 0, n = 1, gap = 0; i < n_blocks; ++i)
     {
-        CHECK_SPACE((ack_block_len + 1) * n_blocks, p , pend);
-        unsigned i, n, gap;
-        for (i = 0, n = 1, gap = 0; i < n_blocks; ++i)
+        uint64_t length;
+        gap += *p;
+        READ_UINT(length, 64, p + 1, ack_block_len);
+        p += 1 + ack_block_len;
+        if (length)
         {
-            uint64_t length;
-            gap += *p;
-            READ_UINT(length, 64, p + 1, ack_block_len);
-            p += 1 + ack_block_len;
-            if (length)
-            {
-                ack->ranges[n].high = ack->ranges[n - 1].low - gap - 1;
-                ack->ranges[n].low  = ack->ranges[n].high - length + 1;
-                ++n;
-                gap = 0;
-            }
+            ack->ranges[n].high = ack->ranges[n - 1].low - gap - 1;
+            ack->ranges[n].low  = ack->ranges[n].high - length + 1;
+            ++n;
+            gap = 0;
         }
-        ack->n_ranges = n;
     }
-    else
-        ack->n_ranges = 1;
+    ack->n_ranges = n;
 
-    CHECK_SPACE(1, p , pend);
     ack->n_timestamps = *p;
     ++p;
 
@@ -466,6 +506,19 @@ gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *
     assert(p <= pend);
 
     return p - (unsigned char *) buf;
+}
+
+
+/* Return parsed (used) buffer length.
+ * If parsing failed, negative value is returned.
+ */
+int
+gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *ack)
+{
+    if (!(buf[0] & 0x20))
+        return parse_ack_frame_without_blocks(buf, buf_len, ack);
+    else
+        return parse_ack_frame_with_blocks(buf, buf_len, ack);
 }
 
 

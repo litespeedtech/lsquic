@@ -17,9 +17,7 @@ typedef struct ack_info
     unsigned    n_ranges;       /* This is at least 1 */
                                 /* Largest acked is ack_info.ranges[0].high */
     lsquic_time_t   lack_delta;
-    struct {
-        lsquic_packno_t high, low;
-    }           ranges[256];
+    struct lsquic_packno_range ranges[256];
 #if LSQUIC_PARSE_ACK_TIMESTAMPS
     struct {
         /* Currently we just read these timestamps in (assuming it is
@@ -47,8 +45,6 @@ typedef lsquic_time_t
     (*gaf_rechist_largest_recv_f)   (void *rechist);
 
 /* gsf_: generate stream frame */
-typedef int    (*gsf_fin_f)  (void *stream);
-typedef size_t (*gsf_size_f) (void *stream);
 typedef size_t (*gsf_read_f) (void *stream, void *buf, size_t len, int *fin);
 
 struct packin_parse_state {
@@ -81,7 +77,7 @@ struct parse_funcs
     int
     (*pf_gen_stream_frame) (unsigned char *buf, size_t bufsz,
                             uint32_t stream_id, uint64_t offset,
-                            gsf_fin_f, gsf_size_f, gsf_read_f, void *stream);
+                            int fin, size_t size, gsf_read_f, void *stream);
     unsigned
     (*pf_parse_stream_frame_header_sz) (unsigned char type);
     int

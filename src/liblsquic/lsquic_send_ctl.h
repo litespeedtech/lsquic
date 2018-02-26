@@ -59,10 +59,15 @@ typedef struct lsquic_send_ctl {
         uint32_t                stream_id;
         enum buf_packet_type    packet_type;
     }                               sc_cached_bpt;
+    unsigned                        sc_bytes_out;
+    unsigned                        sc_bytes_unacked_all;
+    unsigned                        sc_bytes_unacked_retx;
     unsigned                        sc_n_consec_rtos;
     unsigned                        sc_next_limit;
-    unsigned                        sc_n_in_flight;    /* Number of packets in flight */
+    unsigned                        sc_n_in_flight_all;
+    unsigned                        sc_n_in_flight_retx;
     unsigned                        sc_n_scheduled;
+    unsigned                        sc_bytes_scheduled;
     unsigned                        sc_n_stop_waiting;
     unsigned short                  sc_pack_size;
     enum {
@@ -72,6 +77,7 @@ typedef struct lsquic_send_ctl {
         SC_PACE         = (1 << 3),
         SC_SCHED_TICK   = (1 << 4),
         SC_BUFFER_STREAM= (1 << 5),
+        SC_WAS_QUIET    = (1 << 6),
     }                               sc_flags:8;
     unsigned char                   sc_n_hsk;
     unsigned char                   sc_n_tlp;
@@ -90,7 +96,8 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *, struct lsquic_alarmset *,
           struct lsquic_conn_public *, unsigned short max_packet_size);
 
 int
-lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *, struct lsquic_packet_out *);
+lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *, struct lsquic_packet_out *,
+                             int);
 
 int
 lsquic_send_ctl_got_ack (lsquic_send_ctl_t *, const struct ack_info *,
@@ -126,11 +133,11 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
 
 #define lsquic_send_ctl_largest_ack2ed(ctl) (+(ctl)->sc_largest_ack2ed)
 
-#ifdef NDEBUG
-#   define lsquic_send_ctl_sanity_check(ctl)
-#else
+#if LSQUIC_EXTRA_CHECKS
 void
 lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl);
+#else
+#   define lsquic_send_ctl_sanity_check(ctl)
 #endif
 
 int
@@ -172,6 +179,10 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, uint32_t);
 
 int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);
+
+#define lsquic_send_ctl_maybe_squeeze_sched(ctl) (                  \
+    (ctl)->sc_n_scheduled && lsquic_send_ctl_squeeze_sched(ctl)     \
+)
 
 /* Same return value as for squeezing, but without actual squeezing. */
 int
@@ -236,5 +247,15 @@ lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *);
 int
 lsquic_send_ctl_turn_on_fin (struct lsquic_send_ctl *,
                              const struct lsquic_stream *);
+
+int
+lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
+
+#define lsquic_send_ctl_incr_pack_sz(ctl, packet, delta) do {   \
+    (packet)->po_data_sz += delta;                              \
+    if ((packet)->po_flags & PO_SCHED)                          \
+        (ctl)->sc_bytes_scheduled += delta;                     \
+    lsquic_send_ctl_sanity_check(ctl);                          \
+} while (0)
 
 #endif

@@ -48,7 +48,7 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #   define IP_DONTFRAG_FLAG ""
 #endif
 
-#define PROG_OPTS "i:m:c:y:L:l:o:H:s:S:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
+#define PROG_OPTS "i:m:c:y:L:l:o:H:s:S:Y:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
 
 /* Returns:
  *  0   Applied

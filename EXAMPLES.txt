@@ -81,19 +81,16 @@ lsquic_engine_settings.
 Control LSQUIC Behavior via Environment Variables
 -------------------------------------------------
 
-LSQUIC_CUBIC_SHIFT_EPOCH
-
-    This environment variable determines whether cubic epoch is shifted
-    when sender is application-limited.
-
-    This is a leftover from the time when application-limited behavior was
-    implemented and is only available in debug builds.  By default, the
-    epoch is shifted.
-
 LSQUIC_PACER_INTERTICK
 
     Number of microsecods to use as constant intertick time in lieu of the
     pacer's dynamic intertick time approximation.
+
+    Only available in debug builds.
+
+LSQUIC_CUBIC_SAMPLING_RATE
+
+    Number of microseconds between times CWND is logged at info level.
 
     Only available in debug builds.
 
@@ -136,3 +133,8 @@ More Compilation Options
 -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_WARN
 
     If you want to go even faster: compile out some log levels entirely.
+
+-DLSQUIC_EXTRA_CHECKS=1
+
+    Add relatively expensive run-time sanity checks
+

@@ -164,13 +164,12 @@ gquic_ietf_calc_stream_frame_header_sz (uint32_t stream_id, uint64_t offset)
 
 int
 gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,
-                  uint64_t offset, gsf_fin_f gsf_fin, gsf_size_f gsf_size,
+                  uint64_t offset, int fin, size_t size,
                   gsf_read_f gsf_read, void *stream)
 {
     /* 11FSSOOD */
     unsigned slen, olen, dlen;
     unsigned char *p = buf + 1;
-    int fin;
 
     /* SS: Stream ID length: 1, 2, 3, or 4 bytes */
     slen = (stream_id > 0x0000FF)
@@ -184,13 +183,11 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
          + ((offset > 1)             << 1)
          ;
 
-    fin = gsf_fin(stream);
     if (!fin)
     {
-        unsigned size, n_avail;
+        unsigned n_avail;
         uint16_t nr;
 
-        size = gsf_size(stream);
         n_avail = buf_len - (p + slen + olen - buf);
 
         /* If we cannot fill remaining buffer, we need to include data

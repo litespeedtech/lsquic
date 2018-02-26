@@ -61,6 +61,8 @@ struct http_client_ctx {
 
     enum {
         HCC_DISCARD_RESPONSE    = (1 << 0),
+        HCC_SEEN_FIN            = (1 << 1),
+        HCC_ABORT_ON_INCOMPLETE = (1 << 2),
     }                            hcc_flags;
     struct prog                 *prog;
 };
@@ -110,7 +112,16 @@ static void
 http_client_on_conn_closed (lsquic_conn_t *conn)
 {
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
-    LSQ_INFO("Connection closed");
+    enum LSQUIC_CONN_STATUS status;
+    char errmsg[80];
+
+    status = lsquic_conn_status(conn, errmsg, sizeof(errmsg));
+    LSQ_INFO("Connection closed.  Status: %d.  Message: %s", status,
+        errmsg[0] ? errmsg : "<not set>");
+#ifndef NDEBUG
+    if (conn_h->client_ctx->hcc_flags & HCC_ABORT_ON_INCOMPLETE)
+        assert(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN);
+#endif
     TAILQ_REMOVE(&conn_h->client_ctx->conn_ctxs, conn_h, next_ch);
     --conn_h->client_ctx->hcc_n_open_conns;
     create_connections(conn_h->client_ctx);
@@ -282,10 +293,9 @@ http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    const struct http_client_ctx *const client_ctx = st_h->client_ctx;
+    struct http_client_ctx *const client_ctx = st_h->client_ctx;
     ssize_t nread;
     unsigned old_prio, new_prio;
-    int s;
     unsigned char buf[0x200];
     unsigned nreads = 0;
 
@@ -300,7 +310,10 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             {
                 old_prio = lsquic_stream_priority(stream);
                 new_prio = random() & 0xFF;
-                s = lsquic_stream_set_priority(stream, new_prio);
+#ifndef NDEBUG
+                const int s =
+#endif
+                lsquic_stream_set_priority(stream, new_prio);
                 assert(s == 0);
                 LSQ_NOTICE("changed stream %u priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
@@ -308,6 +321,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         }
         else if (0 == nread)
         {
+            client_ctx->hcc_flags |= HCC_SEEN_FIN;
             lsquic_stream_shutdown(stream, 0);
             break;
         }
@@ -389,6 +403,7 @@ usage (const char *prog)
 "                 content-type: application/octet-stream and\n"
 "                 content-length\n"
 "   -K          Discard server response\n"
+"   -I          Abort on incomplete reponse from server\n"
             , prog);
 }
 
@@ -420,6 +435,9 @@ main (int argc, char **argv)
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS "r:R:Ku:EP:M:n:H:p:h")))
     {
         switch (opt) {
+        case 'I':
+            client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;
+            break;
         case 'K':
             client_ctx.hcc_flags |= HCC_DISCARD_RESPONSE;
             break;

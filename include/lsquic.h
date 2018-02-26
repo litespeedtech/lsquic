@@ -476,10 +476,10 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
  * If `max_packet_size' is set to zero, it is inferred based on `peer_sa':
  * 1350 for IPv6 and 1370 for IPv4.
  */
-int
+lsquic_conn_t *
 lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *peer_sa,
-                       void *peer_ctx, const char *hostname,
-                       unsigned short max_packet_size);
+                       void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
+                       const char *hostname, unsigned short max_packet_size);
 
 /**
  * Pass incoming packet to the QUIC engine.  This function can be called
@@ -734,6 +734,10 @@ lsquic_conn_get_stream_by_id (lsquic_conn_t *c, uint32_t stream_id);
 lsquic_cid_t
 lsquic_conn_id (const lsquic_conn_t *c);
 
+/** Get pointer to the engine */
+lsquic_engine_t *
+lsquic_conn_get_engine (lsquic_conn_t *c);
+
 int lsquic_conn_get_sockaddr(const lsquic_conn_t *c,
                 const struct sockaddr **local, const struct sockaddr **peer);
 
@@ -776,6 +780,12 @@ enum lsquic_logger_timestamp_style {
      * microseconds.  Example: 13:43:46.671123
      */
     LLTS_HHMMSSUS,
+
+    /**
+     * Date and time using microsecond resolution,
+     * e.g: 2017-03-21 13:43:46.671123
+     */
+    LLTS_YYYYMMDD_HHMMSSUS,
 
     N_LLTS
 };
@@ -864,6 +874,11 @@ lsquic_conn_ctx_t *
 lsquic_conn_get_ctx (const lsquic_conn_t *c);
 
 /**
+ * Set user-supplied context associated with the connection.
+ */
+void lsquic_conn_set_ctx (lsquic_conn_t *c, lsquic_conn_ctx_t *h);
+
+/**
  * Get peer context associated with the connection.
  */
 void *lsquic_conn_get_peer_ctx( const lsquic_conn_t *lconn);
@@ -889,6 +904,25 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff);
  */
 unsigned
 lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now);
+
+enum LSQUIC_CONN_STATUS
+{
+    LSCONN_ST_HSK_IN_PROGRESS,
+    LSCONN_ST_CONNECTED,
+    LSCONN_ST_HSK_FAILURE,
+    LSCONN_ST_GOING_AWAY,
+    LSCONN_ST_TIMED_OUT,
+    /* If es_honor_prst is not set, the connection will never get public
+     * reset packets and this flag will not be set.
+     */
+    LSCONN_ST_RESET,
+    LSCONN_ST_USER_ABORTED,
+    LSCONN_ST_ERROR,
+    LSCONN_ST_CLOSED,
+};
+
+enum LSQUIC_CONN_STATUS
+lsquic_conn_status (lsquic_conn_t *, char *errbuf, size_t bufsz);
 
 #ifdef __cplusplus
 }

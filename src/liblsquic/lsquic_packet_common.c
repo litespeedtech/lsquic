@@ -45,7 +45,8 @@ const size_t lsquic_frame_types_str_sz =
 
 
 const char *
-lsquic_frame_types_to_str (char *buf, size_t bufsz, short frame_types)
+lsquic_frame_types_to_str (char *buf, size_t bufsz,
+                                           enum quic_ft_bit frame_types)
 {
     char *p;
     int i, w;

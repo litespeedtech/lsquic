@@ -86,6 +86,9 @@ stream_flush (lsquic_stream_t *stream);
 static int
 stream_flush_nocheck (lsquic_stream_t *stream);
 
+static void
+maybe_remove_from_write_q (lsquic_stream_t *stream, enum stream_flags flag);
+
 
 #if LSQUIC_KEEP_STREAM_HISTORY
 /* These values are printable ASCII characters for ease of printing the
@@ -251,7 +254,7 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
         stream->data_in = data_in_hash_new(conn_pub, id, 0);
     else
         stream->data_in = data_in_nocopy_new(conn_pub, id);
-    LSQ_DEBUG("created stream %u", id);
+    LSQ_DEBUG("created stream %u @%p", id, stream);
     SM_HISTORY_APPEND(stream, SHE_CREATED);
     if (ctor_flags & SCF_DI_AUTOSWITCH)
         stream->stream_flags |= STREAM_AUTOSWITCH;
@@ -294,6 +297,8 @@ drop_buffered_data (struct lsquic_stream *stream)
 {
     decr_conn_cap(stream, stream->sm_n_buffered);
     stream->sm_n_buffered = 0;
+    if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
+        maybe_remove_from_write_q(stream, STREAM_WRITE_Q_FLAGS);
 }
 
 
@@ -321,7 +326,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     free(stream->push_req);
     free(stream->uh);
     free(stream->sm_buf);
-    LSQ_DEBUG("destroyed stream %u", stream->id);
+    LSQ_DEBUG("destroyed stream %u @%p", stream->id, stream);
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);
 }
@@ -340,8 +345,7 @@ stream_is_finished (const lsquic_stream_t *stream)
             */
         && 0 == (stream->stream_flags & STREAM_SEND_RST)
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
-          || (((stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
-                || lsquic_stream_is_pushed(stream))
+          || ((stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
            && (stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))));
 }
 
@@ -603,6 +607,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
+    drop_buffered_data(stream);
     maybe_elide_stream_frames(stream);
 
     if (!(stream->stream_flags &
@@ -1492,7 +1497,7 @@ static struct lsquic_packet_out * (* const get_packet[])(
 
 
 static enum { SWTP_OK, SWTP_STOP, SWTP_ERROR }
-stream_write_to_packet (struct frame_gen_ctx *fg_ctx)
+stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
 {
     lsquic_stream_t *const stream = fg_ctx->fgc_stream;
     const struct parse_funcs *const pf = stream->conn_pub->lconn->cn_pf;
@@ -1503,7 +1508,7 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx)
 
     stream_header_sz = pf->pf_calc_stream_frame_header_sz(stream->id,
                                                         stream->tosend_off);
-    need_at_least = stream_header_sz + (frame_gen_size(fg_ctx) > 0);
+    need_at_least = stream_header_sz + (size > 0);
     hsk = LSQUIC_STREAM_HANDSHAKE == stream->id;
     packet_out = get_packet[hsk](send_ctl, need_at_least, stream);
     if (!packet_out)
@@ -1514,7 +1519,7 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx)
                 packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out), stream->id,
                 stream->tosend_off,
-                frame_gen_fin, frame_gen_size, frame_gen_read, fg_ctx);
+                frame_gen_fin(fg_ctx), size, frame_gen_read, fg_ctx);
     if (len < 0)
     {
         LSQ_ERROR("could not generate stream frame");
@@ -1523,8 +1528,10 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx)
 
     EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
-    packet_out->po_data_sz += len;
+    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
+    if (0 == lsquic_packet_out_avail(packet_out))
+        packet_out->po_flags |= PO_STREAM_END;
     s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
                                      stream, QUIC_FRAME_STREAM, off, len);
     if (s != 0)
@@ -1573,7 +1580,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
     while ((size = frame_gen_size(&fg_ctx), thresh ? size >= thresh : size > 0)
            || frame_gen_fin(&fg_ctx))
     {
-        switch (stream_write_to_packet(&fg_ctx))
+        switch (stream_write_to_packet(&fg_ctx, size))
         {
         case SWTP_OK:
             if (frame_gen_fin(&fg_ctx))
@@ -1877,6 +1884,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint32_t error_code,
     stream->stream_flags &= ~STREAM_SENDING_FLAGS;
     stream->stream_flags |= STREAM_SEND_RST;
 
+    drop_buffered_data(stream);
     maybe_elide_stream_frames(stream);
     maybe_schedule_call_on_close(stream);
 

@@ -796,21 +796,24 @@ run_test (int i)
         for (min = 0; min < test->min_sz; ++min)
         {
             reset_ctx(test);
-            len = test->pf->pf_gen_stream_frame(out, min, test->stream_id, test_ctx.test->offset,
-                            stream_tosend_fin, stream_tosend_size, stream_tosend_read, &test_ctx);
+            len = test->pf->pf_gen_stream_frame(out, min, test->stream_id,
+                        test_ctx.test->offset, stream_tosend_fin(&test_ctx),
+                        stream_tosend_size(&test_ctx), stream_tosend_read, &test_ctx);
             assert(-1 == len);
         }
 
         /* Test that it succeeds now: */
         reset_ctx(test);
-        len = test->pf->pf_gen_stream_frame(out, min, test->stream_id, test_ctx.test->offset,
-                        stream_tosend_fin, stream_tosend_size, stream_tosend_read, &test_ctx);
+        len = test->pf->pf_gen_stream_frame(out, min, test->stream_id,
+                        test_ctx.test->offset, stream_tosend_fin(&test_ctx),
+                        stream_tosend_size(&test_ctx), stream_tosend_read, &test_ctx);
         assert(len == (int) min);
     }
 
     reset_ctx(test);
-    len = test->pf->pf_gen_stream_frame(out, test->avail, test->stream_id, test_ctx.test->offset,
-                    stream_tosend_fin, stream_tosend_size, stream_tosend_read, &test_ctx);
+    len = test->pf->pf_gen_stream_frame(out, test->avail, test->stream_id,
+                    test_ctx.test->offset, stream_tosend_fin(&test_ctx),
+                    stream_tosend_size(&test_ctx), stream_tosend_read, &test_ctx);
 
     if (test->len > 0) {
         /* Check parser operation */

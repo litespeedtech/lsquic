@@ -49,6 +49,7 @@
 #include "lsquic_eng_hist.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_version.h"
+#include "lsquic_hash.h"
 #include "lsquic_attq.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
@@ -132,6 +133,8 @@ struct out_heap
     unsigned                 oh_nalloc,
                              oh_nelem;
 };
+
+
 
 
 struct lsquic_engine
@@ -467,9 +470,11 @@ shrink_batch_size (struct lsquic_engine *engine)
 }
 
 
-/* Wrapper to make sure LSCONN_NEVER_PEND_RW gets set */
+/* Wrapper to make sure important things occur before the connection is
+ * really destroyed.
+ */
 static void
-destroy_conn (lsquic_conn_t *conn)
+destroy_conn (struct lsquic_engine *engine, lsquic_conn_t *conn)
 {
     conn->cn_flags |= LSCONN_NEVER_PEND_RW;
     conn->cn_if->ci_destroy(conn);
@@ -491,7 +496,7 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
     {
         LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
             conn->cn_cid);
-        destroy_conn(conn);
+        destroy_conn(engine, conn);
         return NULL;
     }
     assert(!(conn->cn_flags &
@@ -849,17 +854,17 @@ conn_iter_next_one (lsquic_engine_t *engine)
 }
 
 
-int
+lsquic_conn_t *
 lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
-                       void *conn_ctx, const char *hostname,
-                       unsigned short max_packet_size)
+                       void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
+                       const char *hostname, unsigned short max_packet_size)
 {
     lsquic_conn_t *conn;
 
     if (engine->flags & ENG_SERVER)
     {
         LSQ_ERROR("`%s' must only be called in client mode", __func__);
-        return -1;
+        return NULL;
     }
 
     if (0 == max_packet_size)
@@ -877,14 +882,16 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
 
     conn = new_full_conn_client(engine, hostname, max_packet_size);
     if (!conn)
-        return -1;
+        return NULL;
     ENGINE_IN(engine);
     lsquic_conn_record_peer_sa(conn, peer_sa);
-    conn->cn_peer_ctx = conn_ctx;
+    conn->cn_peer_ctx = peer_ctx;
+    lsquic_conn_set_ctx(conn, conn_ctx);
     engine->iter_state.one.conn = conn;
+    full_conn_client_call_on_new(conn);
     process_connections(engine, conn_iter_next_one);
     ENGINE_OUT(engine);
-    return 0;
+    return conn;
 }
 
 
@@ -938,7 +945,7 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
     {
             eng_hist_inc(&engine->history, 0, sl_del_full_conns);
-        destroy_conn(conn);
+        destroy_conn(engine, conn);
         return NULL;
     }
     else
@@ -1034,13 +1041,24 @@ lsquic_engine_proc_all (lsquic_engine_t *engine)
 void
 lsquic_engine_process_conns_to_tick (lsquic_engine_t *engine)
 {
-    lsquic_time_t prev_min, cutoff;
+    lsquic_time_t prev_min, now;
 
-    LSQ_DEBUG("process connections in attq");
+    now = lsquic_time_now();
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    {
+        const lsquic_time_t *expected_time;
+        int64_t diff;
+        expected_time = attq_next_time(engine->attq);
+        if (expected_time)
+            diff = *expected_time - now;
+        else
+            diff = -1;
+        LSQ_DEBUG("process connections in attq; time diff: %"PRIi64, diff);
+    }
+
     ENGINE_IN(engine);
-    cutoff = lsquic_time_now();
-    prev_min = attq_set_min(engine->attq, cutoff);  /* Prevent infinite loop */
-    engine->iter_state.attq.cutoff = cutoff;
+    prev_min = attq_set_min(engine->attq, now);  /* Prevent infinite loop */
+    engine->iter_state.attq.cutoff = now;
     process_connections(engine, conn_iter_next_attq);
     attq_set_min(engine->attq, prev_min);           /* Restore previos value */
     ENGINE_OUT(engine);

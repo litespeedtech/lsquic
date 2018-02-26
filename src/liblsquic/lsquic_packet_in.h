@@ -48,7 +48,7 @@ typedef struct lsquic_packet_in
      * list.
      */
     unsigned short                  pi_refcnt;
-    short                           pi_frame_types;
+    enum quic_ft_bit                pi_frame_types:16;
     unsigned short                  pi_hsk_stream; /* Offset to handshake stream
                                                     * frame, only valid if
                                                     * PI_HSK_STREAM is set.

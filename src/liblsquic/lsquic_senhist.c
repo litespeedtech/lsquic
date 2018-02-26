@@ -17,16 +17,6 @@ void
 lsquic_senhist_init (lsquic_senhist_t *hist)
 {
     lsquic_packints_init(&hist->sh_pints);
-#ifndef NDEBUG
-    {
-        const char *env;
-        env = getenv("LSQUIC_REORDER_SENT");
-        if (env && atoi(env))
-            hist->sh_flags = SH_REORDER;
-        else
-            hist->sh_flags = 0;
-    }
-#endif
 }
 
 
@@ -75,32 +65,9 @@ senhist_add_fast (lsquic_senhist_t *hist, lsquic_packno_t packno)
 }
 
 
-#ifndef NDEBUG
-static int
-senhist_add_slow (lsquic_senhist_t *hist, lsquic_packno_t packno)
-{
-    switch (lsquic_packints_add(&hist->sh_pints, packno))
-    {
-    case PACKINTS_OK:
-        return 0;
-    case PACKINTS_DUP:  /* We should not generate duplicate packet numbers! */
-    default:
-        assert(0);
-    case PACKINTS_ERR:
-        return -1;
-    }
-}
-#endif
-
-
 int
 lsquic_senhist_add (lsquic_senhist_t *hist, lsquic_packno_t packno)
 {
-#ifndef NDEBUG
-    if (hist->sh_flags & SH_REORDER)
-        return senhist_add_slow(hist, packno);
-    else
-#endif
         return senhist_add_fast(hist, packno);
 }
 
@@ -157,3 +124,5 @@ lsquic_senhist_mem_used (const struct lsquic_senhist *hist)
          - sizeof(hist->sh_pints)
          + lsquic_packints_mem_used(&hist->sh_pints);
 }
+
+

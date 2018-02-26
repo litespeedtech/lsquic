@@ -126,7 +126,11 @@ print_timestamp (void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
     localtime_r(&tv.tv_sec, &tm);
-    if (g_llts == LLTS_YYYYMMDD_HHMMSSMS)
+    if (g_llts == LLTS_YYYYMMDD_HHMMSSUS)
+        lsquic_printf("%04d-%02d-%02d %02d:%02d:%02d.%06d ",
+            tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+            tm.tm_hour, tm.tm_min, tm.tm_sec, (int) (tv.tv_usec));
+    else if (g_llts == LLTS_YYYYMMDD_HHMMSSMS)
         lsquic_printf("%04d-%02d-%02d %02d:%02d:%02d.%03d ",
             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
             tm.tm_hour, tm.tm_min, tm.tm_sec, (int) (tv.tv_usec / 1000));

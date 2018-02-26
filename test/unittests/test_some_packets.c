@@ -14,6 +14,7 @@
 #include "lsquic_parse.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
+#include "lsquic_packet_common.h"
 #include "lsquic_packet_in.h"
 
 struct lsquic_stream_if;
@@ -77,8 +78,8 @@ static int make_complex_packet(unsigned char *pkt_buf, int max_buf_len)
     
     buf_len = pf->pf_gen_stream_frame(p, pend - p,
         stream->id, lsquic_stream_tosend_offset(stream),
-        (gsf_fin_f) lsquic_stream_tosend_fin,
-        (gsf_size_f) lsquic_stream_tosend_sz,
+        lsquic_stream_tosend_fin(stream),
+        lsquic_stream_tosend_sz(stream),
         (gsf_read_f) lsquic_stream_tosend_read,
         stream);
     p += buf_len;
@@ -99,8 +100,8 @@ void test_stream_frame()
     uint8_t buf[1500];
     int buf_len = pf->pf_gen_stream_frame(buf, 1500,
         stream->id, lsquic_stream_tosend_offset(stream),
-        (gsf_fin_f) lsquic_stream_tosend_fin,
-        (gsf_size_f) lsquic_stream_tosend_sz,
+        lsquic_stream_tosend_fin(stream),
+        lsquic_stream_tosend_sz(stream),
         (gsf_read_f) lsquic_stream_tosend_read,
         stream);
     stream_frame_t stream_frame2;

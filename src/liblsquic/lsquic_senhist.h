@@ -20,11 +20,6 @@ typedef struct lsquic_senhist {
      *  b) the peer sends an invalid ACK.
      */
     struct packints             sh_pints;
-#ifndef NDEBUG
-    enum {
-        SH_REORDER  = (1 << 0),
-    }                           sh_flags;
-#endif
 } lsquic_senhist_t;
 
 void
