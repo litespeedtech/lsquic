@@ -33,7 +33,7 @@ main (int argc, char **argv)
 {
     struct malo *malo;
     struct conn_hash conn_hash;
-    unsigned n, hash, nelems;
+    unsigned n, nelems;
     struct lsquic_conn *lconn, *find_lsconn;
     int s;
 
@@ -53,9 +53,9 @@ main (int argc, char **argv)
     {
         lconn = get_new_lsquic_conn(malo);
         lconn->cn_if = (void *) (uintptr_t) n;              /* This will be used for verification later the test */
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid, &hash);
+        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
         assert(!find_lsconn);
-        s = conn_hash_add(&conn_hash, lconn, hash);
+        s = conn_hash_add(&conn_hash, lconn);
         assert(0 == s);
     }
 
@@ -63,9 +63,9 @@ main (int argc, char **argv)
 
     {
         lconn = get_new_lsquic_conn(malo);
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid, &hash);
+        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
         assert(!find_lsconn);
-        s = conn_hash_add(&conn_hash, lconn, hash);
+        s = conn_hash_add(&conn_hash, lconn);
         assert(-1 == s);
         lsquic_malo_put(lconn);
     }
@@ -76,10 +76,10 @@ main (int argc, char **argv)
     for (lconn = lsquic_malo_first(malo); lconn;
              lconn = lsquic_malo_next(malo))
     {
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid, &hash);
+        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
         assert(find_lsconn == lconn);
         conn_hash_remove(&conn_hash, lconn);
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid, &hash);
+        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
         assert(!find_lsconn);
     }
 

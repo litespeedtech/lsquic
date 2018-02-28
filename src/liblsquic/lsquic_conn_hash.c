@@ -50,7 +50,7 @@ conn_hash_cleanup (struct conn_hash *conn_hash)
 
 
 struct lsquic_conn *
-conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t cid, unsigned *hashp)
+conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t cid)
 {
     const unsigned hash = XXH32(&cid, sizeof(cid), (uintptr_t) conn_hash);
     const unsigned buckno = conn_hash_bucket_no(conn_hash, hash);
@@ -58,8 +58,6 @@ conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t cid, unsigned *hashp)
     TAILQ_FOREACH(lconn, &conn_hash->ch_buckets[buckno], cn_next_hash)
         if (lconn->cn_cid == cid)
             return lconn;
-    if (hashp)
-        *hashp = hash;
     return NULL;
 }
 
@@ -103,11 +101,10 @@ double_conn_hash_buckets (struct conn_hash *conn_hash)
 
 
 int
-conn_hash_add (struct conn_hash *conn_hash, struct lsquic_conn *lconn,
-               unsigned hash)
+conn_hash_add (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
 {
-    assert(hash == XXH32(&lconn->cn_cid, sizeof(lconn->cn_cid),
-                                                    (uintptr_t) conn_hash));
+    const unsigned hash = XXH32(&lconn->cn_cid, sizeof(lconn->cn_cid),
+                                                        (uintptr_t) conn_hash);
     if (conn_hash->ch_count >= conn_hash->ch_max_count)
         return -1;
     if (conn_hash->ch_count >=
@@ -123,16 +120,6 @@ conn_hash_add (struct conn_hash *conn_hash, struct lsquic_conn *lconn,
     TAILQ_INSERT_TAIL(&conn_hash->ch_buckets[buckno], lconn, cn_next_hash);
     ++conn_hash->ch_count;
     return 0;
-}
-
-
-int
-conn_hash_add_new (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
-{
-    unsigned hash_val;
-    hash_val = XXH32(&lconn->cn_cid, sizeof(lconn->cn_cid),
-                                                    (uintptr_t) conn_hash);
-    return conn_hash_add(conn_hash, lconn, hash_val);
 }
 
 

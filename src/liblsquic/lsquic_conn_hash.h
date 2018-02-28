@@ -38,19 +38,12 @@ conn_hash_init (struct conn_hash *, unsigned max_count);
 void
 conn_hash_cleanup (struct conn_hash *);
 
-/* If entry is not found, `hash' is set.  Use it as argument to conn_hash_add.
- * `hash' may be NULL.
- */
 struct lsquic_conn *
-conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t cid, unsigned *hash);
+conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t);
 
 /* Returns -1 if limit has been reached or if malloc fails */
 int
-conn_hash_add (struct conn_hash *, struct lsquic_conn *, unsigned hash);
-
-/* Returns -1 if limit has been reached or if malloc fails */
-int
-conn_hash_add_new (struct conn_hash *, struct lsquic_conn *);
+conn_hash_add (struct conn_hash *, struct lsquic_conn *);
 
 void
 conn_hash_remove (struct conn_hash *, struct lsquic_conn *);

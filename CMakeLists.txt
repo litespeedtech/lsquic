@@ -93,5 +93,12 @@ add_subdirectory(src)
 
 add_subdirectory(test)
 
+IF(DEVEL_MODE EQUAL 1)
+    # Our test framework relies on assertions, only compile if assertions are
+    # enabled.
+    #
+    enable_testing()
+ENDIF()
+
 
 ADD_CUSTOM_TARGET(docs doxygen dox.cfg)

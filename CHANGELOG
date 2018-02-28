@@ -1,3 +1,7 @@
+2018-02-28
+    - Fix unit test regression: enable them correctly in cmake.
+    - Simplify connection has interface
+
 2018-02-26
     - [API Change] lsquic_engine_connect() returns pointer to the connection
       object.

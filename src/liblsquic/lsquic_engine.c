@@ -492,7 +492,7 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
                     engine->stream_if_ctx, flags, hostname, max_packet_size);
     if (!conn)
         return NULL;
-    if (0 != conn_hash_add_new(&engine->full_conns, conn))
+    if (0 != conn_hash_add(&engine->full_conns, conn))
     {
         LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
             conn->cn_cid);
@@ -529,7 +529,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         return NULL;
     }
 
-    conn = conn_hash_find(&engine->full_conns, packet_in->pi_conn_id, NULL);
+    conn = conn_hash_find(&engine->full_conns, packet_in->pi_conn_id);
     if (conn)
     {
         conn->cn_pf->pf_parse_packet_in_finish(packet_in, ppstate);

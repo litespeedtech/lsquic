@@ -75,7 +75,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 35, 37, 38, 39, and 40.
+ * We currently support versions 35, 37, 38, 39, and 41.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << LSQVER_035) | (1 << LSQVER_037) | \
