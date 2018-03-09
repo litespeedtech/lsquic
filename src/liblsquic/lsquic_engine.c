@@ -1118,6 +1118,7 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 {
     ssize_t enc_sz;
     size_t bufsz;
+    unsigned sent_sz;
     unsigned char *buf;
 
     bufsz = lsquic_po_header_length(packet_out->po_flags) +
@@ -1130,7 +1131,10 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
         return ENCPA_NOMEM;
     }
 
+    {
         enc_sz = really_encrypt_packet(conn, packet_out, buf, bufsz);
+        sent_sz = enc_sz;
+    }
 
     if (enc_sz < 0)
     {
@@ -1140,7 +1144,8 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 
     packet_out->po_enc_data    = buf;
     packet_out->po_enc_data_sz = enc_sz;
-    packet_out->po_flags |= PO_ENCRYPTED;
+    packet_out->po_sent_sz     = sent_sz;
+    packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ;
 
     return ENCPA_OK;
 }

@@ -52,6 +52,10 @@ IF(LSQUIC_PROFILE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -g -pg")
 ENDIF()
 
+IF(LSQUIC_COVERAGE EQUAL 1)
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fprofile-arcs -ftest-coverage")
+ENDIF()
+
 IF(MY_CMAKE_FLAGS MATCHES "fsanitize=address")
     MESSAGE(STATUS "AddressSanitizer is ON")
 ELSE()

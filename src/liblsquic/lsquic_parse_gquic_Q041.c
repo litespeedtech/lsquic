@@ -263,28 +263,6 @@ gquic_ietf_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream
 }
 
 
-/* This is a special function: it is used to extract the largest observed
- * packet number from ACK frame that we ourselves generated.  This allows
- * us to skip some checks.
- */
-lsquic_packno_t
-gquic_ietf_parse_ack_high (const unsigned char *buf, size_t buf_len)
-{
-    unsigned char type;
-    unsigned largest_obs_len;
-    unsigned n_blocks_len;
-    lsquic_packno_t packno;
-
-    type = buf[0];
-    largest_obs_len = twobit_to_1248((type >> 2) & 3);
-    n_blocks_len = !!(type & 0x10);
-    assert(parse_frame_type_gquic_Q041(type) == QUIC_FRAME_ACK);
-    assert(buf_len >= 1 + n_blocks_len + 1 + largest_obs_len);
-    READ_UINT(packno, 64, buf + 1 + n_blocks_len + 1, largest_obs_len);
-    return packno;
-}
-
-
 int
 gquic_ietf_parse_ack_frame (const unsigned char *buf, size_t buf_len,
                                                             ack_info_t *ack)
@@ -379,7 +357,8 @@ int
 gquic_ietf_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         gaf_rechist_first_f rechist_first, gaf_rechist_next_f rechist_next,
         gaf_rechist_largest_recv_f rechist_largest_recv,
-        void *rechist, lsquic_time_t now, int *has_missing)
+        void *rechist, lsquic_time_t now, int *has_missing,
+        lsquic_packno_t *largest_received)
 {
     lsquic_packno_t tmp_packno;
     const struct lsquic_packno_range *const first = rechist_first(rechist);
@@ -533,6 +512,7 @@ gquic_ietf_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         p += ack_block_len;
     }
 
+    *largest_received = maxno;
     return p - (unsigned char *) outbuf;
 
 #undef CHECKOUT
@@ -549,7 +529,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q041 =
     .pf_parse_stream_frame_header_sz  =  gquic_ietf_parse_stream_frame_header_sz,
     .pf_parse_stream_frame            =  gquic_ietf_parse_stream_frame,
     .pf_parse_ack_frame               =  gquic_ietf_parse_ack_frame,
-    .pf_parse_ack_high                =  gquic_ietf_parse_ack_high,
     .pf_gen_ack_frame                 =  gquic_ietf_gen_ack_frame,
     .pf_gen_stop_waiting_frame        =  gquic_be_gen_stop_waiting_frame,
     .pf_parse_stop_waiting_frame      =  gquic_be_parse_stop_waiting_frame,

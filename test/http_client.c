@@ -118,10 +118,11 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
     status = lsquic_conn_status(conn, errmsg, sizeof(errmsg));
     LSQ_INFO("Connection closed.  Status: %d.  Message: %s", status,
         errmsg[0] ? errmsg : "<not set>");
-#ifndef NDEBUG
     if (conn_h->client_ctx->hcc_flags & HCC_ABORT_ON_INCOMPLETE)
-        assert(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN);
-#endif
+    {
+        if (!(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN))
+            abort();
+    }
     TAILQ_REMOVE(&conn_h->client_ctx->conn_ctxs, conn_h, next_ch);
     --conn_h->client_ctx->hcc_n_open_conns;
     create_connections(conn_h->client_ctx);
@@ -432,7 +433,7 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "r:R:Ku:EP:M:n:H:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "r:R:IKu:EP:M:n:H:p:h")))
     {
         switch (opt) {
         case 'I':

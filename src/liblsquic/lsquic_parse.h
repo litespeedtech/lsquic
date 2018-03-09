@@ -31,6 +31,13 @@ typedef struct ack_info
 #endif
 } ack_info_t;
 
+struct short_ack_info
+{
+    unsigned                    sai_n_timestamps;
+    lsquic_time_t               sai_lack_delta;
+    struct lsquic_packno_range  sai_range;
+};
+
 #define largest_acked(acki) (+(acki)->ranges[0].high)
 
 #define smallest_acked(acki) (+(acki)->ranges[(acki)->n_ranges - 1].low)
@@ -86,13 +93,11 @@ struct parse_funcs
     int
     (*pf_parse_ack_frame) (const unsigned char *buf, size_t buf_len,
                                                     ack_info_t *ack_info);
-    lsquic_packno_t
-    (*pf_parse_ack_high) (const unsigned char *buf, size_t buf_len);
     int
     (*pf_gen_ack_frame) (unsigned char *outbuf, size_t outbuf_sz,
                 gaf_rechist_first_f, gaf_rechist_next_f,
                 gaf_rechist_largest_recv_f, void *rechist, lsquic_time_t now,
-                int *has_missing);
+                int *has_missing, lsquic_packno_t *largest_received);
     int
     (*pf_gen_stop_waiting_frame) (unsigned char *buf, size_t buf_len,
                     lsquic_packno_t cur_packno, enum lsquic_packno_bits,
