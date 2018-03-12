@@ -10,6 +10,9 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"

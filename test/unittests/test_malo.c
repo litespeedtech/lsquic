@@ -3,7 +3,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include <getopt.h>
+#endif
 
 #include "lsquic_malo.h"
 

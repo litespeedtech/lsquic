@@ -8,7 +8,11 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <limits.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include <getopt.h>
+#endif
 
 #include "lsquic.h"
 
@@ -183,7 +187,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
     unsigned char *const begin, size_t bufsz, uint64_t first_offset, int *p_fin,
     int fullcheck)
 {
-    const struct parse_funcs *const pf = send_ctl->sc_conn_pub->lconn->cn_pf;
+    const struct parse_funcs *const pf_local = send_ctl->sc_conn_pub->lconn->cn_pf;
     unsigned char *p = begin;
     unsigned char *const end = p + bufsz;
     const struct stream_rec *srec;
@@ -216,7 +220,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
                                             srec->sr_stream->id == stream_id)
             {
                 assert(!fin);
-                len = pf->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
+                len = pf_local->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
                     packet_out->po_data_sz - srec->sr_off, &frame);
                 assert(len > 0);
                 assert(frame.stream_id == srec->sr_stream->id);
@@ -1421,8 +1425,8 @@ test_writing_to_stream_schedule_stream_packets_immediately (void)
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
-    const struct test_ctx *const test_ctx = tobjs.stream_if_ctx;
-    assert(("on_new_stream called correctly", stream == test_ctx->stream));
+    const struct test_ctx *const test_ctx_local  = tobjs.stream_if_ctx;
+    assert(("on_new_stream called correctly", stream == test_ctx_local->stream));
     assert(LSQUIC_STREAM_DEFAULT_PRIO == lsquic_stream_priority(stream));
 
     assert(lconn == lsquic_stream_conn(stream));
@@ -1489,8 +1493,8 @@ test_writing_to_stream_outside_callback (void)
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
-    const struct test_ctx *const test_ctx = tobjs.stream_if_ctx;
-    assert(("on_new_stream called correctly", stream == test_ctx->stream));
+    const struct test_ctx *const test_ctx_local = tobjs.stream_if_ctx;
+    assert(("on_new_stream called correctly", stream == test_ctx_local->stream));
     assert(LSQUIC_STREAM_DEFAULT_PRIO == lsquic_stream_priority(stream));
 
     assert(lconn == lsquic_stream_conn(stream));
@@ -2357,7 +2361,7 @@ static void
 init_buf (void *buf, size_t sz)
 {
     unsigned char *p = buf;
-    unsigned char *const end = buf + sz;
+    unsigned char *const end = (unsigned char*)buf + sz;
     size_t n;
 
     while (p < end)

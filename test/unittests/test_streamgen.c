@@ -4,14 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 
+#include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
-#include "lsquic.h"
 
 struct test {
     int             lineno;
@@ -747,18 +749,18 @@ static struct test_ctx {
 static int
 stream_tosend_fin (void *stream)
 {
-    struct test_ctx *test_ctx = stream;
-    return test_ctx->test->fin[ test_ctx->next_fin++ ];
+    struct test_ctx *test_ctx2 = stream;
+    return test_ctx2->test->fin[ test_ctx2->next_fin++ ];
 }
 
 
 static size_t
 stream_tosend_read (void *stream, void *buf, size_t len, int *reached_fin)
 {
-    struct test_ctx *test_ctx = stream;
-    if (test_ctx->test->data_sz < len)
-        len = test_ctx->test->data_sz;
-    memcpy(buf, test_ctx->test->data, len);
+    struct test_ctx *test_ctx2 = stream;
+    if (test_ctx2->test->data_sz < len)
+        len = test_ctx2->test->data_sz;
+    memcpy(buf, test_ctx2->test->data, len);
     *reached_fin = stream_tosend_fin(stream);
     return len;
 }
@@ -767,8 +769,8 @@ stream_tosend_read (void *stream, void *buf, size_t len, int *reached_fin)
 static size_t
 stream_tosend_size (void *stream)
 {
-    struct test_ctx *test_ctx = stream;
-    return test_ctx->test->data_sz;
+    struct test_ctx *test_ctx2 = stream;
+    return test_ctx2->test->data_sz;
 }
 
 

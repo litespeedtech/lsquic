@@ -10,7 +10,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/types.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_alarmset.h"
@@ -766,11 +770,13 @@ gquic_le_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     p += largest_acked_len;
 
     CHECKOUT(2);
-    lsquic_time_t diff = now - rechist_largest_recv(rechist);
-    gquic_le_write_float_time16(diff, p);
-    LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, diff,
-                                                            *(uint16_t*)p);
-    p += 2;
+    {
+        lsquic_time_t diff = now - rechist_largest_recv(rechist);
+        gquic_le_write_float_time16(diff, p);
+        LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, diff,
+            *(uint16_t*)p);
+        p += 2;
+    }
 
     if (n_ranges > 1)
     {

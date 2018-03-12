@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#include <vc_compat.h>
 
 #include "lsquic_types.h"
 #include "lsquic_frame_common.h"
@@ -28,7 +29,6 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_id(lsquic_stream_conn(hs->hs_stream))
 #include "lsquic_logger.h"
 
-static const struct frame_reader_callbacks frame_callbacks;
 
 struct headers_stream
 {
@@ -48,6 +48,7 @@ struct headers_stream
             HS_HENC_INITED  = (1 << 1),
     }                                   hs_flags;
 };
+static lsquic_stream_ctx_t * headers_on_new_stream(void *stream_if_ctx, lsquic_stream_t *stream);
 
 
 int
@@ -69,42 +70,6 @@ lsquic_headers_stream_send_settings (struct headers_stream *hs,
     }
 }
 
-
-static lsquic_stream_ctx_t *
-headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
-{
-    struct headers_stream *hs = stream_if_ctx;
-    lsquic_hdec_init(&hs->hs_hdec);
-    if (0 != lsquic_henc_init(&hs->hs_henc))
-    {
-        LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
-        return NULL;
-    }
-    hs->hs_flags |= HS_HENC_INITED;
-    hs->hs_stream = stream;
-    LSQ_DEBUG("stream created");
-    hs->hs_fr = lsquic_frame_reader_new((hs->hs_flags & HS_IS_SERVER) ? FRF_SERVER : 0,
-                                MAX_HEADERS_SIZE, hs->hs_mm,
-                                stream, lsquic_stream_read, &hs->hs_hdec,
-                                &frame_callbacks, hs);
-    if (!hs->hs_fr)
-    {
-        LSQ_WARN("could not create frame reader: %s", strerror(errno));
-        hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
-        return NULL;
-    }
-    hs->hs_fw = lsquic_frame_writer_new(hs->hs_mm, stream, 0, &hs->hs_henc,
-                                lsquic_stream_write,
-                                (hs->hs_flags & HS_IS_SERVER));
-    if (!hs->hs_fw)
-    {
-        LSQ_WARN("could not create frame writer: %s", strerror(errno));
-        hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
-        return NULL;
-    }
-    lsquic_stream_wantread(stream, 1);
-    return (lsquic_stream_ctx_t *) hs;
-}
 
 
 static void
@@ -414,3 +379,39 @@ static const struct frame_reader_callbacks frame_callbacks = {
     .frc_on_settings     = headers_on_settings,
     .frc_on_priority     = headers_on_priority,
 };
+static lsquic_stream_ctx_t *
+headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
+{
+    struct headers_stream *hs = stream_if_ctx;
+    lsquic_hdec_init(&hs->hs_hdec);
+    if (0 != lsquic_henc_init(&hs->hs_henc))
+    {
+        LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
+        return NULL;
+    }
+    hs->hs_flags |= HS_HENC_INITED;
+    hs->hs_stream = stream;
+    LSQ_DEBUG("stream created");
+    hs->hs_fr = lsquic_frame_reader_new((hs->hs_flags & HS_IS_SERVER) ? FRF_SERVER : 0,
+                                MAX_HEADERS_SIZE, hs->hs_mm,
+                                stream, lsquic_stream_read, &hs->hs_hdec,
+                                &frame_callbacks, hs);
+    if (!hs->hs_fr)
+    {
+        LSQ_WARN("could not create frame reader: %s", strerror(errno));
+        hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
+        return NULL;
+    }
+    hs->hs_fw = lsquic_frame_writer_new(hs->hs_mm, stream, 0, &hs->hs_henc,
+                                lsquic_stream_write,
+                                (hs->hs_flags & HS_IS_SERVER));
+    if (!hs->hs_fw)
+    {
+        LSQ_WARN("could not create frame writer: %s", strerror(errno));
+        hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
+        return NULL;
+    }
+    lsquic_stream_wantread(stream, 1);
+    return (lsquic_stream_ctx_t *) hs;
+}
+

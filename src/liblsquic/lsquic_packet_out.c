@@ -24,7 +24,7 @@
 #include "lsquic_ev_log.h"
 
 typedef char _stream_rec_arr_is_at_most_64bytes[
-                                (sizeof(struct stream_rec_arr) <= 64) - 1];
+                                (sizeof(struct stream_rec_arr) <= 64)? 1: - 1];
 
 static struct stream_rec *
 srec_one_posi_first (struct packet_out_srec_iter *posi,
@@ -615,7 +615,7 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
     struct stream_rec **new_srecs, **srecs = local_arr;
     struct stream_rec *srec;
     unsigned n_srecs_alloced = sizeof(local_arr) / sizeof(local_arr[0]);
-    unsigned n_srecs, max_idx, n, nbytes;
+    unsigned n_srecs, max_idx = 0, n, nbytes;
 #ifndef NDEBUG
     unsigned short frame_sum = 0;
 #endif

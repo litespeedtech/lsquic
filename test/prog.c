@@ -1,12 +1,19 @@
 /* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
+#ifndef WIN32
 #include <netinet/in.h>
 #include <signal.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include <getopt.h>
+#pragma warning(disable:4028)
+#endif// WIN32
 
 #include <event2/event.h>
 
@@ -349,9 +356,11 @@ prog_run (struct prog *prog)
     prog->prog_timer = event_new(prog->prog_eb, -1, EV_PERSIST,
                                         prog_timer_handler, prog);
     event_add(prog->prog_timer, &timeout);
+#ifndef WIN32
     prog->prog_usr1 = evsignal_new(prog->prog_eb, SIGUSR1,
                                                     prog_usr1_handler, prog);
     evsignal_add(prog->prog_usr1, NULL);
+#endif
 
 
     event_base_loop(prog->prog_eb, 0);

@@ -8,7 +8,12 @@
 #include <inttypes.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/queue.h>
+#ifndef WIN32
 #include <sys/types.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_packet_common.h"

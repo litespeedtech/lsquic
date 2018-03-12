@@ -7,7 +7,9 @@
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifndef WIN32
 #include <unistd.h>
+#endif
 #include <fcntl.h>
 
 #include <openssl/md5.h>

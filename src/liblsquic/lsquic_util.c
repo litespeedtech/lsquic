@@ -7,9 +7,13 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/time.h>
 #include <time.h>
+#ifndef WIN32
+#include <sys/time.h>
 #include <unistd.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
 #include <mach/mach_time.h>
@@ -22,12 +26,18 @@
 #if defined(__APPLE__)
 static mach_timebase_info_data_t timebase;
 #endif
+#if defined(WIN32)
+static LARGE_INTEGER perf_frequency;
+#endif
 
 void
 lsquic_init_timers (void)
 {
 #if defined(__APPLE__)
     mach_timebase_info(&timebase);
+#endif
+#if defined(WIN32)
+    QueryPerformanceFrequency(&perf_frequency);
 #endif
 }
 
@@ -44,6 +54,14 @@ lsquic_time_now (void)
     t *= timebase.numer;
     t /= timebase.denom;
     t /= 1000;
+    return t;
+#elif defined(WIN32)
+    LARGE_INTEGER counter;
+    lsquic_time_t t;
+    QueryPerformanceCounter(&counter);
+    t = counter.QuadPart;
+    t *= 1000000;
+    t /= perf_frequency.QuadPart;
     return t;
 #else
 #   warn Monotonically increasing clock is not available on this platform
@@ -96,7 +114,7 @@ char *get_bin_str(const void *s, size_t len, size_t max_display_len)
 
     pOutput = &str[0] + sprintf(str, "(%zd/%zd)=0x", len, lenOrg);
 
-    for(p = s, pEnd = s + len; p < pEnd; ++p)
+    for(p = s, pEnd = (unsigned char*)s + len; p < pEnd; ++p)
     {
         sprintf(pOutput, "%02X", *p);
         pOutput += 2;

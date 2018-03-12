@@ -50,7 +50,40 @@ enum quic_ft_bit {
     QUIC_FTBIT_PING             = 1 << QUIC_FRAME_PING,
 };
 
-extern const size_t lsquic_frame_types_str_sz;
+static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
+    [QUIC_FRAME_INVALID]           =  "QUIC_FRAME_INVALID",
+    [QUIC_FRAME_STREAM]            =  "QUIC_FRAME_STREAM",
+    [QUIC_FRAME_ACK]               =  "QUIC_FRAME_ACK",
+    [QUIC_FRAME_PADDING]           =  "QUIC_FRAME_PADDING",
+    [QUIC_FRAME_RST_STREAM]        =  "QUIC_FRAME_RST_STREAM",
+    [QUIC_FRAME_CONNECTION_CLOSE]  =  "QUIC_FRAME_CONNECTION_CLOSE",
+    [QUIC_FRAME_GOAWAY]            =  "QUIC_FRAME_GOAWAY",
+    [QUIC_FRAME_WINDOW_UPDATE]     =  "QUIC_FRAME_WINDOW_UPDATE",
+    [QUIC_FRAME_BLOCKED]           =  "QUIC_FRAME_BLOCKED",
+    [QUIC_FRAME_STOP_WAITING]      =  "QUIC_FRAME_STOP_WAITING",
+    [QUIC_FRAME_PING]              =  "QUIC_FRAME_PING",
+};
+
+
+#define SLEN(x) (sizeof(#x) - sizeof("QUIC_FRAME_"))
+
+
+    /* We don't need to include INVALID frame in this list because it is
+     * never a part of any frame list bitmask (e.g. po_frame_types).
+     */
+#define lsquic_frame_types_str_sz  \
+    SLEN(QUIC_FRAME_STREAM)           + 1 + \
+    SLEN(QUIC_FRAME_ACK)              + 1 + \
+    SLEN(QUIC_FRAME_PADDING)          + 1 + \
+    SLEN(QUIC_FRAME_RST_STREAM)       + 1 + \
+    SLEN(QUIC_FRAME_CONNECTION_CLOSE) + 1 + \
+    SLEN(QUIC_FRAME_GOAWAY)           + 1 + \
+    SLEN(QUIC_FRAME_WINDOW_UPDATE)    + 1 + \
+    SLEN(QUIC_FRAME_BLOCKED)          + 1 + \
+    SLEN(QUIC_FRAME_STOP_WAITING)     + 1 + \
+    SLEN(QUIC_FRAME_PING)             + 1
+
+
 
 const char *
 lsquic_frame_types_to_str (char *buf, size_t bufsz, enum quic_ft_bit);

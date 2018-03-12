@@ -6,6 +6,11 @@
 #include <zlib.h>
 
 #include <openssl/ssl.h>
+#ifndef WIN32
+#else
+#include <stdlib.h>
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_crypto.h"
@@ -440,7 +445,7 @@ int decompress_certs(const unsigned char *in, const unsigned char *in_end,
 {
     int ret;
     size_t i;
-    uint8_t* uncompressed_data, *uncompressed_data_buf;
+    uint8_t* uncompressed_data = NULL, *uncompressed_data_buf = NULL;
     lsquic_str_t *dict;
     uint32_t uncompressed_size;
     size_t count = *out_certs_count;

@@ -10,6 +10,9 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <sys/types.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -21,7 +24,7 @@
 #define LSQUIC_LOG_CONN_ID iter->spi_cid
 #include "lsquic_logger.h"
 
-#define SPI_DEBUG(fmt, a...) LSQ_DEBUG("%s: " fmt, iter->spi_name, a)
+#define SPI_DEBUG(fmt, ...) LSQ_DEBUG("%s: " fmt, iter->spi_name, __VA_ARGS__)
 
 #define NEXT_STREAM(stream, off) \
     (* (struct lsquic_stream **) ((unsigned char *) (stream) + (off)))

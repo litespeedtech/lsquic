@@ -11,14 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/time.h>
 #include <time.h>
+#ifndef WIN32
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <netdb.h>
+#endif
 
 
 
@@ -164,9 +166,11 @@ struct lsquic_engine
     union {
         struct {
             /* This iterator does not have any state: it uses `conns_in' */
+            int ignore;
         }           conn_in;
         struct {
             /* This iterator does not have any state: it uses `conns_pend_rw' */
+            int ignore;
         }           rw_pend;
         struct {
             /* Iterator state to process connections in Advisory Tick Time
@@ -176,6 +180,7 @@ struct lsquic_engine
         }           attq;
         struct {
             /* Iterator state to process all connections */
+            int ignore;
         }           all;
         struct {
             lsquic_conn_t  *conn;

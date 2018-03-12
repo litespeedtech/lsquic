@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vc_compat.h>
 
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"

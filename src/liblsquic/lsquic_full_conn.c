@@ -6,13 +6,15 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <netinet/in.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
+#include <netinet/in.h>
 #include <sys/socket.h>
-#include <sys/queue.h>
 #include <sys/time.h>
+#endif
+#include <sys/queue.h>
 
 #include "lsquic_types.h"
 #include "lsquic.h"
@@ -208,22 +210,22 @@ struct full_conn
 
 #define MAX_ERRMSG 256
 
-#define SET_ERRMSG(conn, errmsg...) do {                                    \
+#define SET_ERRMSG(conn, ...) do {                                    \
     if (!(conn)->fc_errmsg)                                                 \
         (conn)->fc_errmsg = malloc(MAX_ERRMSG);                             \
     if ((conn)->fc_errmsg)                                                  \
-        snprintf((conn)->fc_errmsg, MAX_ERRMSG, errmsg);                    \
+        snprintf((conn)->fc_errmsg, MAX_ERRMSG, __VA_ARGS__);                    \
 } while (0)
 
-#define ABORT_WITH_FLAG(conn, flag, errmsg...) do {                         \
-    SET_ERRMSG(conn, errmsg);                                               \
+#define ABORT_WITH_FLAG(conn, flag, ...) do {                         \
+    SET_ERRMSG(conn, __VA_ARGS__);                                               \
     (conn)->fc_flags |= flag;                                               \
-    LSQ_ERROR("Abort connection: " errmsg);                                  \
+    LSQ_ERROR("Abort connection: " __VA_ARGS__);                                  \
 } while (0)
 
-#define ABORT_ERROR(errmsg...) ABORT_WITH_FLAG(conn, FC_ERROR, errmsg)
+#define ABORT_ERROR(...) ABORT_WITH_FLAG(conn, FC_ERROR, __VA_ARGS__)
 
-#define ABORT_TIMEOUT(errmsg...) ABORT_WITH_FLAG(conn, FC_TIMED_OUT, errmsg)
+#define ABORT_TIMEOUT(...) ABORT_WITH_FLAG(conn, FC_TIMED_OUT, __VA_ARGS__)
 
 static void
 idle_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
@@ -249,7 +251,6 @@ write_is_possible (struct full_conn *);
 static int
 dispatch_stream_read_events (struct full_conn *, struct lsquic_stream *);
 
-static const struct headers_stream_callbacks headers_callbacks;
 
 #if KEEP_CLOSED_STREAM_HISTORY
 
@@ -512,174 +513,9 @@ apply_peer_settings (struct full_conn *conn)
 }
 
 
-static const struct conn_iface full_conn_iface;
-
-static struct full_conn *
-new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
-                 const struct lsquic_stream_if *stream_if,
-                 void *stream_if_ctx, unsigned flags,
-                 unsigned short max_packet_size)
-{
-    struct full_conn *conn;
-    lsquic_stream_t *headers_stream;
-    int saved_errno;
-
-    assert(0 == (flags & ~(FC_SERVER|FC_HTTP)));
-
-    conn = calloc(1, sizeof(*conn));
-    if (!conn)
-        return NULL;
-    headers_stream = NULL;
-    conn->fc_conn.cn_cid = cid;
-    conn->fc_conn.cn_pack_size = max_packet_size;
-    conn->fc_flags = flags;
-    conn->fc_enpub = enpub;
-    conn->fc_pub.enpub = enpub;
-    conn->fc_pub.mm = &enpub->enp_mm;
-    conn->fc_pub.lconn = &conn->fc_conn;
-    conn->fc_pub.send_ctl = &conn->fc_send_ctl;
-    conn->fc_pub.packet_out_malo =
-                        lsquic_malo_create(sizeof(struct lsquic_packet_out));
-    conn->fc_stream_ifs[STREAM_IF_STD].stream_if     = stream_if;
-    conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx = stream_if_ctx;
-    conn->fc_settings = &enpub->enp_settings;
-    /* Calculate maximum number of incoming streams using the same mechanism
-     * and parameters as found in Chrome:
-     */
-    conn->fc_cfg.max_streams_in =
-        (unsigned) ((float) enpub->enp_settings.es_max_streams_in * 1.1f);
-    if (conn->fc_cfg.max_streams_in <
-                                enpub->enp_settings.es_max_streams_in + 10)
-        conn->fc_cfg.max_streams_in =
-                                enpub->enp_settings.es_max_streams_in + 10;
-    /* `max_streams_out' gets reset when handshake is complete and we
-     * learn of peer settings.  100 seems like a sane default value
-     * because it is what other implementations use.  In server mode,
-     * we do not open any streams until the handshake is complete; in
-     * client mode, we are limited to 98 outgoing requests alongside
-     * handshake and headers streams.
-     */
-    conn->fc_cfg.max_streams_out = 100;
-    TAILQ_INIT(&conn->fc_pub.sending_streams);
-    TAILQ_INIT(&conn->fc_pub.read_streams);
-    TAILQ_INIT(&conn->fc_pub.write_streams);
-    TAILQ_INIT(&conn->fc_pub.service_streams);
-    STAILQ_INIT(&conn->fc_stream_ids_to_reset);
-    lsquic_conn_cap_init(&conn->fc_pub.conn_cap, LSQUIC_MIN_FCW);
-    lsquic_alarmset_init(&conn->fc_alset, cid);
-    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_IDLE, idle_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_ACK, ack_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_PING, ping_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
-    lsquic_set32_init(&conn->fc_closed_stream_ids[0]);
-    lsquic_set32_init(&conn->fc_closed_stream_ids[1]);
-    lsquic_cfcw_init(&conn->fc_pub.cfcw, &conn->fc_pub, conn->fc_settings->es_cfcw);
-    lsquic_send_ctl_init(&conn->fc_send_ctl, &conn->fc_alset, conn->fc_enpub,
-                 &conn->fc_ver_neg, &conn->fc_pub, conn->fc_conn.cn_pack_size);
-
-    conn->fc_pub.all_streams = lsquic_hash_create();
-    if (!conn->fc_pub.all_streams)
-        goto cleanup_on_error;
-    lsquic_rechist_init(&conn->fc_rechist, cid);
-    if (conn->fc_flags & FC_HTTP)
-    {
-        conn->fc_pub.hs = lsquic_headers_stream_new(
-            !!(conn->fc_flags & FC_SERVER), conn->fc_pub.mm, conn->fc_settings,
-                                                     &headers_callbacks, conn);
-        if (!conn->fc_pub.hs)
-            goto cleanup_on_error;
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = lsquic_headers_stream_if;
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = conn->fc_pub.hs;
-        headers_stream = new_stream(conn, LSQUIC_STREAM_HEADERS,
-                                    SCF_CALL_ON_NEW);
-        if (!headers_stream)
-            goto cleanup_on_error;
-    }
-    else
-    {
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = stream_if;
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = stream_if_ctx;
-    }
-    if (conn->fc_settings->es_support_push)
-        conn->fc_flags |= FC_SUPPORT_PUSH;
-    conn->fc_conn.cn_if = &full_conn_iface;
-    return conn;
-
-  cleanup_on_error:
-    saved_errno = errno;
-
-    if (conn->fc_pub.all_streams)
-        lsquic_hash_destroy(conn->fc_pub.all_streams);
-    lsquic_rechist_cleanup(&conn->fc_rechist);
-    if (conn->fc_flags & FC_HTTP)
-    {
-        if (conn->fc_pub.hs)
-            lsquic_headers_stream_destroy(conn->fc_pub.hs);
-        if (headers_stream)
-            lsquic_stream_destroy(headers_stream);
-    }
-    memset(conn, 0, sizeof(*conn));
-    free(conn);
-
-    errno = saved_errno;
-    return NULL;
-}
 
 
-struct lsquic_conn *
-full_conn_client_new (struct lsquic_engine_public *enpub,
-                      const struct lsquic_stream_if *stream_if,
-                      void *stream_if_ctx, unsigned flags,
-                      const char *hostname, unsigned short max_packet_size)
-{
-    struct full_conn *conn;
-    enum lsquic_version version;
-    lsquic_cid_t cid;
-    const struct enc_session_funcs *esf;
 
-    version = highest_bit_set(enpub->enp_settings.es_versions);
-    esf = select_esf_by_ver(version);
-    cid = esf->esf_generate_cid();
-    conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
-                                                            max_packet_size);
-    if (!conn)
-        return NULL;
-    conn->fc_conn.cn_esf = esf;
-    conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub);
-    if (!conn->fc_conn.cn_enc_session)
-    {
-        LSQ_WARN("could not create enc session: %s", strerror(errno));
-        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
-        return NULL;
-    }
-
-    if (conn->fc_flags & FC_HTTP)
-        conn->fc_last_stream_id = LSQUIC_STREAM_HEADERS;   /* Client goes 5, 7, 9.... */
-    else
-        conn->fc_last_stream_id = LSQUIC_STREAM_HANDSHAKE;
-    conn->fc_hsk_ctx.client.lconn   = &conn->fc_conn;
-    conn->fc_hsk_ctx.client.mm      = &enpub->enp_mm;
-    conn->fc_hsk_ctx.client.ver_neg = &conn->fc_ver_neg;
-    conn->fc_stream_ifs[STREAM_IF_HSK]
-                .stream_if     = &lsquic_client_hsk_stream_if;
-    conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    init_ver_neg(conn, conn->fc_settings->es_versions);
-    conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
-    if (conn->fc_settings->es_handshake_to)
-        lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
-                    lsquic_time_now() + conn->fc_settings->es_handshake_to);
-    if (!new_stream(conn, LSQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW))
-    {
-        LSQ_WARN("could not create handshake stream: %s", strerror(errno));
-        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
-        return NULL;
-    }
-    conn->fc_flags |= FC_CREATED_OK;
-    LSQ_INFO("Created new client connection");
-    EV_LOG_CONN_EVENT(cid, "created full connection");
-    return &conn->fc_conn;
-}
 
 
 void
@@ -982,7 +818,7 @@ lsquic_conn_get_engine (lsquic_conn_t *lconn)
 }
 
 
-static unsigned
+static ssize_t
 count_zero_bytes (const unsigned char *p, size_t len)
 {
     const unsigned char *const end = p + len;
@@ -997,11 +833,11 @@ process_padding_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                        const unsigned char *p, size_t len)
 {
     if (conn->fc_conn.cn_version >= LSQVER_038)
-        return count_zero_bytes(p, len);
+        return (unsigned)count_zero_bytes(p, len);
     if (lsquic_is_zero(p, len))
     {
         EV_LOG_PADDING_FRAME_IN(LSQUIC_LOG_CONN_ID, len);
-        return len;
+        return (unsigned )len;
     }
     else
         return 0;
@@ -3154,3 +2990,167 @@ static const struct conn_iface full_conn_iface = {
     .ci_tick                 =  full_conn_ci_tick,
     .ci_user_wants_read      =  full_conn_ci_user_wants_read,
 };
+static struct full_conn *
+new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
+                 const struct lsquic_stream_if *stream_if,
+                 void *stream_if_ctx, unsigned flags,
+                 unsigned short max_packet_size)
+{
+    struct full_conn *conn;
+    lsquic_stream_t *headers_stream;
+    int saved_errno;
+
+    assert(0 == (flags & ~(FC_SERVER|FC_HTTP)));
+
+    conn = calloc(1, sizeof(*conn));
+    if (!conn)
+        return NULL;
+    headers_stream = NULL;
+    conn->fc_conn.cn_cid = cid;
+    conn->fc_conn.cn_pack_size = max_packet_size;
+    conn->fc_flags = flags;
+    conn->fc_enpub = enpub;
+    conn->fc_pub.enpub = enpub;
+    conn->fc_pub.mm = &enpub->enp_mm;
+    conn->fc_pub.lconn = &conn->fc_conn;
+    conn->fc_pub.send_ctl = &conn->fc_send_ctl;
+    conn->fc_pub.packet_out_malo =
+                        lsquic_malo_create(sizeof(struct lsquic_packet_out));
+    conn->fc_stream_ifs[STREAM_IF_STD].stream_if     = stream_if;
+    conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx = stream_if_ctx;
+    conn->fc_settings = &enpub->enp_settings;
+    /* Calculate maximum number of incoming streams using the same mechanism
+     * and parameters as found in Chrome:
+     */
+    conn->fc_cfg.max_streams_in =
+        (unsigned) ((float) enpub->enp_settings.es_max_streams_in * 1.1f);
+    if (conn->fc_cfg.max_streams_in <
+                                enpub->enp_settings.es_max_streams_in + 10)
+        conn->fc_cfg.max_streams_in =
+                                enpub->enp_settings.es_max_streams_in + 10;
+    /* `max_streams_out' gets reset when handshake is complete and we
+     * learn of peer settings.  100 seems like a sane default value
+     * because it is what other implementations use.  In server mode,
+     * we do not open any streams until the handshake is complete; in
+     * client mode, we are limited to 98 outgoing requests alongside
+     * handshake and headers streams.
+     */
+    conn->fc_cfg.max_streams_out = 100;
+    TAILQ_INIT(&conn->fc_pub.sending_streams);
+    TAILQ_INIT(&conn->fc_pub.read_streams);
+    TAILQ_INIT(&conn->fc_pub.write_streams);
+    TAILQ_INIT(&conn->fc_pub.service_streams);
+    STAILQ_INIT(&conn->fc_stream_ids_to_reset);
+    lsquic_conn_cap_init(&conn->fc_pub.conn_cap, LSQUIC_MIN_FCW);
+    lsquic_alarmset_init(&conn->fc_alset, cid);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_IDLE, idle_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_ACK, ack_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_PING, ping_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
+    lsquic_set32_init(&conn->fc_closed_stream_ids[0]);
+    lsquic_set32_init(&conn->fc_closed_stream_ids[1]);
+    lsquic_cfcw_init(&conn->fc_pub.cfcw, &conn->fc_pub, conn->fc_settings->es_cfcw);
+    lsquic_send_ctl_init(&conn->fc_send_ctl, &conn->fc_alset, conn->fc_enpub,
+                 &conn->fc_ver_neg, &conn->fc_pub, conn->fc_conn.cn_pack_size);
+
+    conn->fc_pub.all_streams = lsquic_hash_create();
+    if (!conn->fc_pub.all_streams)
+        goto cleanup_on_error;
+    lsquic_rechist_init(&conn->fc_rechist, cid);
+    if (conn->fc_flags & FC_HTTP)
+    {
+        conn->fc_pub.hs = lsquic_headers_stream_new(
+            !!(conn->fc_flags & FC_SERVER), conn->fc_pub.mm, conn->fc_settings,
+                                                     &headers_callbacks, conn);
+        if (!conn->fc_pub.hs)
+            goto cleanup_on_error;
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = lsquic_headers_stream_if;
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = conn->fc_pub.hs;
+        headers_stream = new_stream(conn, LSQUIC_STREAM_HEADERS,
+                                    SCF_CALL_ON_NEW);
+        if (!headers_stream)
+            goto cleanup_on_error;
+    }
+    else
+    {
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = stream_if;
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = stream_if_ctx;
+    }
+    if (conn->fc_settings->es_support_push)
+        conn->fc_flags |= FC_SUPPORT_PUSH;
+    conn->fc_conn.cn_if = &full_conn_iface;
+    return conn;
+
+  cleanup_on_error:
+    saved_errno = errno;
+
+    if (conn->fc_pub.all_streams)
+        lsquic_hash_destroy(conn->fc_pub.all_streams);
+    lsquic_rechist_cleanup(&conn->fc_rechist);
+    if (conn->fc_flags & FC_HTTP)
+    {
+        if (conn->fc_pub.hs)
+            lsquic_headers_stream_destroy(conn->fc_pub.hs);
+        if (headers_stream)
+            lsquic_stream_destroy(headers_stream);
+    }
+    memset(conn, 0, sizeof(*conn));
+    free(conn);
+
+    errno = saved_errno;
+    return NULL;
+}
+struct lsquic_conn *
+full_conn_client_new (struct lsquic_engine_public *enpub,
+                      const struct lsquic_stream_if *stream_if,
+                      void *stream_if_ctx, unsigned flags,
+                      const char *hostname, unsigned short max_packet_size)
+{
+    struct full_conn *conn;
+    enum lsquic_version version;
+    lsquic_cid_t cid;
+    const struct enc_session_funcs *esf;
+
+    version = highest_bit_set(enpub->enp_settings.es_versions);
+    esf = select_esf_by_ver(version);
+    cid = esf->esf_generate_cid();
+    conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
+                                                            max_packet_size);
+    if (!conn)
+        return NULL;
+    conn->fc_conn.cn_esf = esf;
+    conn->fc_conn.cn_enc_session =
+        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub);
+    if (!conn->fc_conn.cn_enc_session)
+    {
+        LSQ_WARN("could not create enc session: %s", strerror(errno));
+        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
+        return NULL;
+    }
+
+    if (conn->fc_flags & FC_HTTP)
+        conn->fc_last_stream_id = LSQUIC_STREAM_HEADERS;   /* Client goes 5, 7, 9.... */
+    else
+        conn->fc_last_stream_id = LSQUIC_STREAM_HANDSHAKE;
+    conn->fc_hsk_ctx.client.lconn   = &conn->fc_conn;
+    conn->fc_hsk_ctx.client.mm      = &enpub->enp_mm;
+    conn->fc_hsk_ctx.client.ver_neg = &conn->fc_ver_neg;
+    conn->fc_stream_ifs[STREAM_IF_HSK]
+                .stream_if     = &lsquic_client_hsk_stream_if;
+    conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
+    init_ver_neg(conn, conn->fc_settings->es_versions);
+    conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
+    if (conn->fc_settings->es_handshake_to)
+        lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
+                    lsquic_time_now() + conn->fc_settings->es_handshake_to);
+    if (!new_stream(conn, LSQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW))
+    {
+        LSQ_WARN("could not create handshake stream: %s", strerror(errno));
+        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
+        return NULL;
+    }
+    conn->fc_flags |= FC_CREATED_OK;
+    LSQ_INFO("Created new client connection");
+    EV_LOG_CONN_EVENT(cid, "created full connection");
+    return &conn->fc_conn;
+}

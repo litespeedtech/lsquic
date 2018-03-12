@@ -5,7 +5,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_rtt.h"

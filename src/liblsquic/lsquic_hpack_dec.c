@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_arr.h"
 #include "lsquic_hpack_common.h"

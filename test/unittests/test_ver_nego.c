@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
