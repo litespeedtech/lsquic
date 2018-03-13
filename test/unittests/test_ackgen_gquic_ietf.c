@@ -24,6 +24,7 @@ test1 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock */
 {
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
+    lsquic_packno_t largest = 0;
 
     lsquic_rechist_init(&rechist, 0);
 
@@ -46,14 +47,13 @@ test1 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock */
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now + 0x7FF8000, &has_missing);
+        &rechist, now + 0x7FF8000, &has_missing, &largest);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has no missing packets", has_missing == 0));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(outbuf, sizeof(outbuf));
-    assert(0x1234 == ack_high);
+    assert(largest == 0x1234);
 
     lsquic_rechist_cleanup(&rechist);
 }
@@ -104,18 +104,18 @@ test2 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock, minus
     unsigned char outbuf[0x100];
 
     int has_missing = -1;
+    lsquic_packno_t largest = 0;
     int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing);
+        &rechist, now, &has_missing, &largest);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has missing packets", has_missing > 0));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(outbuf, sizeof(outbuf));
-    assert(0x1234 == ack_high);
+    assert(largest == 0x1234);
 
     lsquic_rechist_cleanup(&rechist);
 }
@@ -150,18 +150,18 @@ test3 (void)
     unsigned char outbuf[0x100];
 
     int has_missing = -1;
+    lsquic_packno_t largest = 0;
     int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing);
+        &rechist, now, &has_missing, &largest);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has missing packets", has_missing > 0));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(outbuf, sizeof(outbuf));
-    assert(3 == ack_high);
+    assert(largest == 0x03);
 
     lsquic_rechist_cleanup(&rechist);
 }
@@ -189,18 +189,18 @@ test4 (void)
         };
         unsigned char outbuf[0x100];
         int has_missing = -1;
+        lsquic_packno_t largest = 0;
         int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
             (gaf_rechist_first_f)        lsquic_rechist_first,
             (gaf_rechist_next_f)         lsquic_rechist_next,
             (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-            &rechist, now, &has_missing);
+            &rechist, now, &has_missing, &largest);
         assert(("ACK frame generation successful", w > 0));
         assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
         assert(("ACK frame contents are as expected",
             0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
         assert(("ACK frame has no missing packets", has_missing == 0));
-        lsquic_packno_t ack_high = pf->pf_parse_ack_high(outbuf, sizeof(outbuf));
-        assert(1 == ack_high);
+        assert(largest == 1);
     }
 
     for (i = 3; i <= 5; ++i)
@@ -220,18 +220,18 @@ test4 (void)
         };
         unsigned char outbuf[0x100];
         int has_missing = -1;
+        lsquic_packno_t largest = 0;
         int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
             (gaf_rechist_first_f)        lsquic_rechist_first,
             (gaf_rechist_next_f)         lsquic_rechist_next,
             (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-            &rechist, now, &has_missing);
+            &rechist, now, &has_missing, &largest);
         assert(("ACK frame generation successful", w > 0));
         assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
         assert(("ACK frame contents are as expected",
             0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
         assert(("ACK frame has missing packets", has_missing > 0));
-        lsquic_packno_t ack_high = pf->pf_parse_ack_high(outbuf, sizeof(outbuf));
-        assert(5 == ack_high);
+        assert(largest == 5);
     }
 
     lsquic_rechist_cleanup(&rechist);
@@ -270,16 +270,18 @@ test_4byte_packnos (void)
     unsigned char outbuf[0x100];
 
     int has_missing = -1;
+    lsquic_packno_t largest = 0;
     int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing);
+        &rechist, now, &has_missing, &largest);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has missing packets", has_missing > 0));
+    assert(largest == 0x23456789);
 
     lsquic_rechist_cleanup(&rechist);
 }
@@ -317,16 +319,18 @@ test_8byte_packnos (void)
     unsigned char outbuf[0x100];
 
     int has_missing = -1;
+    lsquic_packno_t largest = 0;
     int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing);
+        &rechist, now, &has_missing, &largest);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has missing packets", has_missing > 0));
+    assert(largest == 0xABCD23456789ULL);
 
     lsquic_rechist_cleanup(&rechist);
 }

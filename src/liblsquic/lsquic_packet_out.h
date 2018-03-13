@@ -83,10 +83,12 @@ typedef struct lsquic_packet_out
                                          * further writes are allowed.
                                          */
         PO_SCHED    = (1 <<14),         /* On scheduled queue */
+        PO_SENT_SZ  = (1 <<15),
     }                  po_flags:16;
     enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
+    unsigned short     po_sent_sz;      /* If PO_SENT_SZ is set, real size of sent buffer. */
     unsigned short     po_regen_sz;     /* Number of bytes at the beginning
                                          * of data containing bytes that are
                                          * not to be retransmitted, e.g. ACK
@@ -94,6 +96,9 @@ typedef struct lsquic_packet_out
                                          */
     unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
     unsigned char     *po_data;
+    lsquic_packno_t    po_ack2ed;       /* If packet has ACK frame, value of
+                                         * largest acked in it.
+                                         */
 
     /* A lot of packets contain data belonging to only one stream.  Thus,
      * `one' is used first.  If this is not enough, any number of
@@ -141,6 +146,23 @@ typedef struct lsquic_packet_out
 #define lsquic_packet_out_total_sz(p) \
     ((p)->po_data_sz + lsquic_po_header_length((p)->po_flags) \
         + QUIC_PACKET_HASH_SZ)
+
+#if __GNUC__
+#if LSQUIC_EXTRA_CHECKS
+#define lsquic_packet_out_sent_sz(p) (                                      \
+        __builtin_expect(((p)->po_flags & PO_SENT_SZ), 1) ?                 \
+        (assert((p)->po_sent_sz == lsquic_packet_out_total_sz(p)),          \
+            (p)->po_sent_sz) : lsquic_packet_out_total_sz(p))
+#   else
+#define lsquic_packet_out_sent_sz(p) (                                      \
+        __builtin_expect(((p)->po_flags & PO_SENT_SZ), 1) ?                 \
+        (p)->po_sent_sz : lsquic_packet_out_total_sz(p))
+#endif
+#else
+#   define lsquic_packet_out_sent_sz(p) (                                   \
+        (p)->po_flags & PO_SENT_SZ ?                                        \
+        (p)->po_sent_sz : lsquic_packet_out_total_sz(p))
+#endif
 
 #define lsquic_packet_out_verneg(p) \
     (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG)) == (PO_NOENCRYPT|PO_VERNEG))

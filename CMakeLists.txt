@@ -57,6 +57,10 @@ IF(LSQUIC_PROFILE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -g -pg")
 ENDIF()
 
+IF(LSQUIC_COVERAGE EQUAL 1)
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fprofile-arcs -ftest-coverage")
+ENDIF()
+
 IF(MY_CMAKE_FLAGS MATCHES "fsanitize=address")
     MESSAGE(STATUS "AddressSanitizer is ON")
 ELSE()
@@ -80,16 +84,8 @@ ENDIF()
 SET (BORINGSSL_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/include)
 SET (VCPKG_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/include )
 
-IF(CMAKE_BUILD_TYPE MATCHES "Debug")
-SET (BORINGSSL_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/ssl ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/x64/debug)
-SET (VCPKG_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/lib)
-SET (ZLIB_NAME "zlibd")
-ELSE()
-SET (BORINGSSL_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/ssl ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/x64)
-SET (VCPKG_LIB ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/debug/lib)
-SET (ZLIB_NAME zlibd)
-ENDIF()
-
+SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
+set (BORINGSSL_BASE_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/x64)
 
 ENDIF() #MSVC
 
@@ -106,7 +102,7 @@ ENDIF()
 
 
 include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE} )
-link_directories( ${BORINGSSL_LIB} ${VCPKG_LIB} )
+link_directories( ${BORINGSSL_LIB}  )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include )
@@ -124,6 +120,8 @@ add_executable(http_client
     test/test_common.c
 )
 target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
+
+#MSVC
 ELSE()
 add_executable(http_client
     test/http_client.c
@@ -133,7 +131,19 @@ add_executable(http_client
     wincompat/getopt1.c
 )
 
-target_link_libraries(http_client lsquic event ssl crypto ${FIULIB} ${ZLIB_NAME} ws2_32)
+target_link_libraries(http_client 
+		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
+		debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib
+		debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib
+		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib 
+		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/crypto.lib
+		ws2_32
+		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
+		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
+		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib 
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto.lib
+		${FIULIB} )
 
 ENDIF()
 

@@ -1,6 +1,50 @@
-2018-02-28
-    - Fix unit test regression: enable them correctly in cmake.
-    - Simplify connection has interface
+2018-03-09
+
+    - [OPTIMIZATION] Merge series of ACKs if possible
+
+      Parsed single-range ACK frames (that is the majority of frames) are
+      saved in the connection and their processing is deferred until the
+      connection is ticked.  If several ACKs come in a series between
+      adjacent ticks, we check whether the latest ACK is a strict superset
+      of the saved ACK.  If it is, the older ACK is not processed.
+
+      If ACK frames can be merged, they are merged and only one of them is
+      either processed or saved.
+
+    - [OPTIMIZATION] Speed up ACK verification by simplifying send history.
+
+      Never generate a gap in the sent packet number sequence.  This reduces
+      the send history to a single number instead of potentially a series of
+      packet ranges and thereby speeds up ACK verification.
+
+      By default, detecting a gap in the send history is not fatal: only a
+      single warning is generated per connection.  The connection can continue
+      to operate even if the ACK verification code is not able to detect some
+      inconsistencies.
+
+    - [OPTIMIZATION] Rearrange the lsquic_send_ctl struct
+
+      The first part of struct lsquic_send_ctl now consists of members that
+      are used in lsquic_send_ctl_got_ack() (in the absense of packet loss,
+      which is the normal case).  To speed up reads and writes, we no longer
+      try to save space by using 8- and 16-bit integers.  Use regular integer
+      width for everything.
+
+    - [OPTIMIZATION] Cache size of sent packet.
+
+    - [OPTIMIZATION] Keep track of the largest ACKed in packet_out
+
+      Instead of parsing our own ACK frames when packet has been acked,
+      use the value saved in the packet_out structure when the ACK frame
+      was generated.
+
+    - [OPTIMIZATION] Take RTT sampling conditional out of ACK loop
+
+    - [OPTIMIZATION] ACK processing: only call clock_gettime() if needed
+
+    - [OPTIMIZATION] Several code-level optimizations to ACK processing.
+
+    - Fix: http_client: fix -I flag; switch assert() to abort()
 
 2018-02-26
     - [API Change] lsquic_engine_connect() returns pointer to the connection

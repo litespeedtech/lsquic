@@ -3,52 +3,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "lsquic_int_types.h"
 #include "lsquic_senhist.h"
+#include "lsquic_logger.h"
 
 
 int
 main (void)
 {
-    struct lsquic_senhist hist;
+    struct lsquic_senhist hist = { 0 };
     lsquic_packno_t packno;
-    int s;
 
     lsquic_senhist_init(&hist);
 
+    assert(0 == lsquic_senhist_largest(&hist));
+
     for (packno = 1; packno < 100; ++packno)
         lsquic_senhist_add(&hist, packno);
 
-    for (packno = 1; packno < 100; ++packno)
-    {
-        s = lsquic_senhist_sent_range(&hist, packno, packno);
-        assert(s);
-    }
-
-    /* Note break in the sequence at 100 */
-    for (packno = 101; packno < 200; ++packno)
-        lsquic_senhist_add(&hist, packno);
-
-    for (packno = 1; packno < 100; ++packno)
-    {
-        s = lsquic_senhist_sent_range(&hist, packno, packno);
-        assert(s);
-    }
-    s = lsquic_senhist_sent_range(&hist, 100, 100);
-    assert(0 == s);
-    for (packno = 101; packno < 200; ++packno)
-    {
-        s = lsquic_senhist_sent_range(&hist, packno, packno);
-        assert(s);
-    }
-
-    s = lsquic_senhist_sent_range(&hist, 1, 99);
-    assert(s);
-    s = lsquic_senhist_sent_range(&hist, 101, 199);
-    assert(s);
-    s = lsquic_senhist_sent_range(&hist, 1, 199);
-    assert(0 == s);
+    assert(99 == lsquic_senhist_largest(&hist));
 
     lsquic_senhist_cleanup(&hist);
 

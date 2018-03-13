@@ -2,49 +2,61 @@
 /*
  * lsquic_senhist.h -- History sent packets.
  *
- * We only keep track of packet numbers in order to verify ACKs.
+ * We need to keep track of packet numbers in order to verify ACKs.  To
+ * speed up processing, we make sure that there is never a gap in the
+ * packet number sequence we generate.
  */
 
 #ifndef LSQUIC_SENHIST_H
 #define LSQUIC_SENHIST_H 1
 
-#include "lsquic_packints.h"
+#ifndef LSQUIC_SENHIST_FATAL
+#   define LSQUIC_SENHIST_FATAL 0
+#endif
 
 typedef struct lsquic_senhist {
-    /* These ranges are ordered from high to low.  While searching this
-     * structure is O(n), I expect that in practice, a very long search
-     * could only happen once before the connection is terminated,
-     * because:
-     *  a) either the packet number far away is real, but it was so long
-     *     ago that it would have timed out by now (RTO); or
-     *  b) the peer sends an invalid ACK.
-     */
-    struct packints             sh_pints;
+    lsquic_packno_t             sh_last_sent;
+#if !LSQUIC_SENHIST_FATAL
+    enum {
+        SH_WARNED   = 1 << 0,   /* Warn once */
+    }                           sh_flags;
+#endif
 } lsquic_senhist_t;
 
-void
-lsquic_senhist_init (lsquic_senhist_t *);
+#define lsquic_senhist_init(hist) do {                                  \
+    (hist)->sh_last_sent = 0;                                           \
+} while (0)
 
-void
-lsquic_senhist_cleanup (lsquic_senhist_t *);
+#define lsquic_senhist_cleanup(hist)
 
-int
-lsquic_senhist_add (lsquic_senhist_t *, lsquic_packno_t);
-
-/* Returns true if history contains all packets numbers in this range.
- */
-int
-lsquic_senhist_sent_range (lsquic_senhist_t *, lsquic_packno_t low,
-                                               lsquic_packno_t high);
+#if LSQUIC_SENHIST_FATAL
+#define lsquic_senhist_add(hist, packno) do {                           \
+    assert((hist)->sh_last_sent == packno - 1);                         \
+    (hist)->sh_last_sent = packno;                                      \
+} while (0)
+#else
+#define lsquic_senhist_add(hist, packno) do {                           \
+    if ((hist)->sh_last_sent == packno - 1)                             \
+        (hist)->sh_last_sent = packno;                                  \
+    else                                                                \
+    {                                                                   \
+        if (!((hist)->sh_flags & SH_WARNED))                            \
+        {                                                               \
+            LSQ_WARN("send history gap %"PRIu64" - %"PRIu64,            \
+                (hist)->sh_last_sent, packno);                          \
+            (hist)->sh_flags |= SH_WARNED;                              \
+        }                                                               \
+        (hist)->sh_last_sent = packno;                                  \
+    }                                                                   \
+} while (0)
+#endif
 
 /* Returns 0 if no packets have been sent yet */
-lsquic_packno_t
-lsquic_senhist_largest (lsquic_senhist_t *hist);
+#define lsquic_senhist_largest(hist) (+(hist)->sh_last_sent)
 
 void
 lsquic_senhist_tostr (lsquic_senhist_t *hist, char *buf, size_t bufsz);
 
-size_t
-lsquic_senhist_mem_used (const struct lsquic_senhist *);
+#define lsquic_senhist_mem_used(hist) (sizeof(*(hist)))
 
 #endif

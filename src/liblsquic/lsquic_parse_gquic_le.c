@@ -337,24 +337,6 @@ gquic_le_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 }
 
 
-/* This is a special function: it is used to extract the largest observed
- * packet number from ACK frame that we ourselves generated.  This allows
- * us to skip some checks.
- */
-static lsquic_packno_t
-gquic_le_parse_ack_high (const unsigned char *buf, size_t buf_len)
-{
-    unsigned char type;
-    unsigned largest_obs_len;
-
-    type = buf[0];
-    largest_obs_len = flag_to_pkt_num_len(type >> 2);
-    assert(parse_frame_type_gquic_Q035_thru_Q039(type) == QUIC_FRAME_ACK);
-    assert(buf_len >= 1 + largest_obs_len);
-    return get_vary_len_int64(buf + 1, largest_obs_len);
-}
-
-
 /* Return parsed (used) buffer length.
  * If parsing failed, negative value is returned.
  */
@@ -705,7 +687,8 @@ static int
 gquic_le_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         gaf_rechist_first_f rechist_first, gaf_rechist_next_f rechist_next,
         gaf_rechist_largest_recv_f rechist_largest_recv,
-        void *rechist, lsquic_time_t now, int *has_missing)
+        void *rechist, lsquic_time_t now, int *has_missing,
+        lsquic_packno_t *largest_received)
 {
     const struct lsquic_packno_range *const first = rechist_first(rechist);
     if (!first)
@@ -841,6 +824,7 @@ gquic_le_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     *p = 0;
     ++p;
 
+    *largest_received = maxno;
     return p - (unsigned char *) outbuf;
 
 #undef CHECKOUT
@@ -857,7 +841,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_le =
     .pf_parse_stream_frame_header_sz  =  parse_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  gquic_le_parse_stream_frame,
     .pf_parse_ack_frame               =  gquic_le_parse_ack_frame,
-    .pf_parse_ack_high                =  gquic_le_parse_ack_high,
     .pf_gen_ack_frame                 =  gquic_le_gen_ack_frame,
     .pf_gen_stop_waiting_frame        =  gquic_le_gen_stop_waiting_frame,
     .pf_parse_stop_waiting_frame      =  gquic_le_parse_stop_waiting_frame,

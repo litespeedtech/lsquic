@@ -139,6 +139,6 @@ int
 gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         gaf_rechist_first_f rechist_first, gaf_rechist_next_f rechist_next,
         gaf_rechist_largest_recv_f rechist_largest_recv,
-        void *rechist, lsquic_time_t now, int *has_missing);
+        void *rechist, lsquic_time_t now, int *has_missing, lsquic_packno_t *);
 
 #endif

@@ -28,23 +28,51 @@ struct buf_packet_q
     unsigned                        bpq_count;
 };
 
+enum send_ctl_flags {
+    SC_TCID0        = (1 << 0),
+    SC_LOST_ACK     = (1 << 1),
+    SC_NSTP         = (1 << 2),
+    SC_PACE         = (1 << 3),
+    SC_SCHED_TICK   = (1 << 4),
+    SC_BUFFER_STREAM= (1 << 5),
+    SC_WAS_QUIET    = (1 << 6),
+};
+
 typedef struct lsquic_send_ctl {
+    /* The first section consists of struct members which are used in the
+     * time-critical lsquic_send_ctl_got_ack() in the approximate order
+     * of usage.
+     */
+    lsquic_senhist_t                sc_senhist;
+    enum send_ctl_flags             sc_flags;
+    unsigned                        sc_n_stop_waiting;
+    struct lsquic_packets_tailq     sc_unacked_packets;
+    lsquic_packno_t                 sc_largest_acked_packno;
+    lsquic_time_t                   sc_largest_acked_sent_time;
+    unsigned                        sc_bytes_out;
+    unsigned                        sc_bytes_unacked_retx;
+    unsigned                        sc_bytes_scheduled;
+    unsigned                        sc_pack_size;
+    struct lsquic_cubic             sc_cubic;
+    struct lsquic_engine_public    *sc_enpub;
+    unsigned                        sc_bytes_unacked_all;
+    unsigned                        sc_n_in_flight_all;
+    unsigned                        sc_n_in_flight_retx;
+    unsigned                        sc_n_consec_rtos;
+    unsigned                        sc_n_hsk;
+    unsigned                        sc_n_tlp;
+    struct lsquic_alarmset         *sc_alset;
+
+    /* Second section: everything else. */
     struct lsquic_packets_tailq     sc_scheduled_packets,
-                                    sc_unacked_packets,
                                     sc_lost_packets;
     struct buf_packet_q             sc_buffered_packets[BPT_OTHER_PRIO + 1];
-    struct lsquic_engine_public    *sc_enpub;
-    struct lsquic_alarmset         *sc_alset;
     const struct ver_neg           *sc_ver_neg;
     struct lsquic_conn_public      *sc_conn_pub;
-    struct lsquic_cubic             sc_cubic;
     struct pacer                    sc_pacer;
-    lsquic_senhist_t                sc_senhist;
     lsquic_packno_t                 sc_cur_packno;
     lsquic_packno_t                 sc_largest_sent_at_cutback;
     lsquic_packno_t                 sc_max_rtt_packno;
-    lsquic_packno_t                 sc_largest_acked_packno;
-    lsquic_time_t                   sc_largest_acked_sent_time;
     /* sc_largest_ack2ed is the packet number sent by peer that we acked and
      * we know that our ACK was received by peer.  This is used to determine
      * the receive history cutoff point for the purposes of generating ACK
@@ -59,28 +87,8 @@ typedef struct lsquic_send_ctl {
         uint32_t                stream_id;
         enum buf_packet_type    packet_type;
     }                               sc_cached_bpt;
-    unsigned                        sc_bytes_out;
-    unsigned                        sc_bytes_unacked_all;
-    unsigned                        sc_bytes_unacked_retx;
-    unsigned                        sc_n_consec_rtos;
     unsigned                        sc_next_limit;
-    unsigned                        sc_n_in_flight_all;
-    unsigned                        sc_n_in_flight_retx;
     unsigned                        sc_n_scheduled;
-    unsigned                        sc_bytes_scheduled;
-    unsigned                        sc_n_stop_waiting;
-    unsigned short                  sc_pack_size;
-    enum {
-        SC_TCID0        = (1 << 0),
-        SC_LOST_ACK     = (1 << 1),
-        SC_NSTP         = (1 << 2),
-        SC_PACE         = (1 << 3),
-        SC_SCHED_TICK   = (1 << 4),
-        SC_BUFFER_STREAM= (1 << 5),
-        SC_WAS_QUIET    = (1 << 6),
-    }                               sc_flags:8;
-    unsigned char                   sc_n_hsk;
-    unsigned char                   sc_n_tlp;
 #if LSQUIC_SEND_STATS
     struct {
         unsigned            n_total_sent,

@@ -367,26 +367,6 @@ gquic_be_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 }
 
 
-/* This is a special function: it is used to extract the largest observed
- * packet number from ACK frame that we ourselves generated.  This allows
- * us to skip some checks.
- */
-lsquic_packno_t
-gquic_be_parse_ack_high (const unsigned char *buf, size_t buf_len)
-{
-    unsigned char type;
-    unsigned largest_obs_len;
-    lsquic_packno_t packno;
-
-    type = buf[0];
-    largest_obs_len = twobit_to_1246((type >> 2) & 3);
-    assert(parse_frame_type_gquic_Q035_thru_Q039(type) == QUIC_FRAME_ACK);
-    assert(buf_len >= 1 + largest_obs_len);
-    READ_UINT(packno, 64, buf + 1, largest_obs_len);
-    return packno;
-}
-
-
 static int
 parse_ack_frame_without_blocks (const unsigned char *buf, size_t buf_len,
                                 ack_info_t *ack)
@@ -813,7 +793,8 @@ int
 gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         gaf_rechist_first_f rechist_first, gaf_rechist_next_f rechist_next,
         gaf_rechist_largest_recv_f rechist_largest_recv,
-        void *rechist, lsquic_time_t now, int *has_missing)
+        void *rechist, lsquic_time_t now, int *has_missing,
+        lsquic_packno_t *largest_received)
 {
     lsquic_packno_t tmp_packno;
     const struct lsquic_packno_range *const first = rechist_first(rechist);
@@ -966,6 +947,7 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     *p = 0;
     ++p;
 
+    *largest_received = maxno;
     return p - (unsigned char *) outbuf;
 
 #undef CHECKOUT
@@ -982,7 +964,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q039 =
     .pf_parse_stream_frame_header_sz  =  parse_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  gquic_be_parse_stream_frame,
     .pf_parse_ack_frame               =  gquic_be_parse_ack_frame,
-    .pf_parse_ack_high                =  gquic_be_parse_ack_high,
     .pf_gen_ack_frame                 =  gquic_be_gen_ack_frame,
     .pf_gen_stop_waiting_frame        =  gquic_be_gen_stop_waiting_frame,
     .pf_parse_stop_waiting_frame      =  gquic_be_parse_stop_waiting_frame,

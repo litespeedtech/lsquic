@@ -50,8 +50,6 @@ test1 (void)
     assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 0x1234", n == 0x1234));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(ack_buf, sizeof(ack_buf));
-    assert(0x1234 == ack_high);
 
     {
         size_t sz;
@@ -113,8 +111,6 @@ test2 (void)
     assert(("Number of timestamps is 2", acki.n_timestamps == 2));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 4254", n == 4254));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(ack_buf, sizeof(ack_buf));
-    assert(0x1234 == ack_high);
 
     for (n = 0; n < 4; ++n)
         assert(("Range checks out", ranges[n].high == acki.ranges[n].high
@@ -166,8 +162,6 @@ test3 (void)
     assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 4", n == 4));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(ack_buf, sizeof(ack_buf));
-    assert(6 == ack_high);
 
     for (n = 0; n < 2; ++n)
         assert(("Range checks out", ranges[n].high == acki.ranges[n].high
@@ -218,8 +212,6 @@ test4 (void)
     assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 2", n == 2));
-    lsquic_packno_t ack_high = pf->pf_parse_ack_high(ack_buf, sizeof(ack_buf));
-    assert(3 == ack_high);
 
     for (n = 0; n < 2; ++n)
         assert(("Range checks out", ranges[n].high == acki.ranges[n].high
@@ -361,11 +353,12 @@ test_max_ack (void)
 
     memset(buf, 0xAA, sizeof(buf));
 
+    lsquic_packno_t largest = 0;
     sz[0] = pf->pf_gen_ack_frame(buf, sizeof(buf),
         (gaf_rechist_first_f)        lsquic_rechist_first,
         (gaf_rechist_next_f)         lsquic_rechist_next,
         (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing);
+        &rechist, now, &has_missing, &largest);
     assert(sz[0] > 0);
     assert(sz[0] <= (int) sizeof(buf));
     assert(has_missing);
@@ -414,11 +407,12 @@ test_ack_truncation (void)
     for (bufsz = 200; bufsz < 210; ++bufsz)
     {
         memset(buf, 0xAA, sizeof(buf));
+        lsquic_packno_t largest = 0;
         sz[0] = pf->pf_gen_ack_frame(buf, bufsz,
             (gaf_rechist_first_f)        lsquic_rechist_first,
             (gaf_rechist_next_f)         lsquic_rechist_next,
             (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-            &rechist, now, &has_missing);
+            &rechist, now, &has_missing, &largest);
         assert(sz[0] > 0);
         assert(sz[0] <= (int) bufsz);
         assert(has_missing);
