@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
@@ -133,10 +136,10 @@ lsquic_cubic_was_quiet (struct lsquic_cubic *cubic, lsquic_time_t now)
 
 
 void
-lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now,
+lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now_time,
                   lsquic_time_t rtt, int app_limited, unsigned n_bytes)
 {
-    LSQ_DEBUG("%s(cubic, %"PRIu64", %"PRIu64", %d, %u)", __func__, now, rtt,
+    LSQ_DEBUG("%s(cubic, %"PRIu64", %"PRIu64", %d, %u)", __func__, now_time, rtt,
                                                         app_limited, n_bytes);
     if (0 == cubic->cu_min_delay || rtt < cubic->cu_min_delay)
     {
@@ -151,7 +154,7 @@ lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now,
     }
     else if (!app_limited)
     {
-        cubic_update(cubic, now, n_bytes);
+        cubic_update(cubic, now_time, n_bytes);
         LSQ_DEBUG("ACK: cwnd: %lu", cubic->cu_cwnd);
     }
 

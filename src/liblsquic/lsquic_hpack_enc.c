@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_hpack_common.h"
 #include "lsquic_hpack_enc.h"

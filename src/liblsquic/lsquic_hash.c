@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_malo.h"
 #include "lsquic_hash.h"

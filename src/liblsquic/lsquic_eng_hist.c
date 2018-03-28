@@ -1,5 +1,9 @@
 /* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <time.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#define localtime_r(a,b) localtime_s(b,a)
+#endif
 
 #include "lsquic_eng_hist.h"
 

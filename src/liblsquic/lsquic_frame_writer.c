@@ -8,7 +8,9 @@
  * the whole frame.
  */
 
+#ifndef WIN32
 #include <arpa/inet.h>
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -54,7 +56,7 @@ struct frame_buf
 /* Make sure that frab_buf is at least five bytes long, otherwise a frame
  * won't fit into two adjacent frabs.
  */
-typedef char three_byte_frab_buf[(sizeof(((struct frame_buf *)0)->frab_buf) >= 5) - 1];
+typedef char three_byte_frab_buf[(sizeof(((struct frame_buf *)0)->frab_buf) >= 5) ?1 : - 1];
 
 
 TAILQ_HEAD(frame_buf_head, frame_buf);

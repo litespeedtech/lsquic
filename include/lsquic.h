@@ -10,9 +10,13 @@
 
 #include <stdarg.h>
 #include <lsquic_types.h>
+#ifndef WIN32
 #include <sys/uio.h>
 #include <sys/types.h>
 #include <time.h>
+#else
+#include <vc_compat.h>
+#endif
 
 struct iovec;
 struct sockaddr;

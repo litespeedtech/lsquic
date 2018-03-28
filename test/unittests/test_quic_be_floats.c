@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -86,6 +88,7 @@ static const struct float_test to_float_tests[] = {
 static void
 run_to_float_tests (void)
 {
+#ifndef NDEBUG
     const struct float_test *test;
     const struct float_test *const test_end =
         &to_float_tests[ sizeof(to_float_tests) / sizeof(to_float_tests[0]) ];
@@ -96,6 +99,7 @@ run_to_float_tests (void)
         assert(("Convertion to QUIC float format is successful",
                                 0 == memcmp(out, test->float_time, 2)));
     }
+#endif //NDEBUG
 }
 
 
@@ -147,6 +151,7 @@ static const struct float_test from_float_tests[] = {
 static void
 run_from_float_tests (void)
 {
+#ifndef NDEBUG
     const struct float_test *test;
     const struct float_test *const test_end =
         &from_float_tests[ sizeof(from_float_tests) / sizeof(from_float_tests[0]) ];
@@ -156,6 +161,7 @@ run_from_float_tests (void)
         assert(("Convertion to QUIC float format is successful",
                                                 result == test->long_time));
     }
+#endif // NDEBUG
 }
 
 

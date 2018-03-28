@@ -9,7 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 #include <time.h>
 
 #define LSQUIC_LOGGER_MODULE LSQLM_LOGGER /* Quis custodiet ipsos custodes? */
@@ -122,6 +124,7 @@ lsquic_printf (const char *fmt, ...)
 static void
 print_timestamp (void)
 {
+#ifndef WIN32
     struct tm tm;
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -143,6 +146,27 @@ print_timestamp (void)
     else if (g_llts == LLTS_CHROMELIKE)
         lsquic_printf("%02d%02d/%02d%02d%02d.%06d ", tm.tm_mon + 1,
             tm.tm_mday,tm.tm_hour, tm.tm_min, tm.tm_sec, (int) tv.tv_usec);
+#else
+    SYSTEMTIME tm = { 0 };
+    GetSystemTime(&tm);
+    if (g_llts == LLTS_YYYYMMDD_HHMMSSUS)
+        lsquic_printf("%04d-%02d-%02d %02d:%02d:%02d.%06d ",
+            tm.wYear + 1900, tm.wMonth + 1, tm.wDay,
+            tm.wHour, tm.wMinute, tm.wSecond, tm.wMilliseconds*1000 );
+    else if (g_llts == LLTS_YYYYMMDD_HHMMSSMS)
+        lsquic_printf("%04d-%02d-%02d %02d:%02d:%02d.%03d ",
+            tm.wYear + 1900, tm.wMonth + 1, tm.wDay,
+            tm.wHour, tm.wMinute, tm.wSecond, tm.wMilliseconds*1000 );
+    else if (g_llts == LLTS_HHMMSSMS)
+        lsquic_printf("%02d:%02d:%02d.%03d ", tm.wHour, tm.wMinute,
+                                    tm.wSecond, tm.wMilliseconds );
+    else if (g_llts == LLTS_HHMMSSUS)
+        lsquic_printf("%02d:%02d:%02d.%03d ", tm.wHour, tm.wMinute,
+                                    tm.wSecond, tm.wMilliseconds*1000 );
+    else if (g_llts == LLTS_CHROMELIKE)
+        lsquic_printf("%02d%02d/%02d%02d%02d.%06d ", tm.wMonth + 1,
+            tm.wDay,tm.wHour, tm.wMinute, tm.wSecond, (int) tm.wMilliseconds*1000);
+#endif
 }
 
 

@@ -11,6 +11,9 @@
 #include <openssl/hmac.h>
 
 #include <zlib.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_crypto.h"
@@ -211,7 +214,7 @@ uint128 fnv1a_128(const uint8_t * data, int len)
 
 void fnv1a_128_s(const uint8_t * data, int len, uint8_t  *md)
 {
-    return fnv1a_128_2_s(data, len, NULL, 0, md);
+    fnv1a_128_2_s(data, len, NULL, 0, md);
 }
 
 
@@ -281,6 +284,7 @@ void lshkdf_extract(const unsigned char *ikm, int ikm_len, const unsigned char *
 }
 
 
+#define SHA256LEN   32
 int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_len,
                 uint16_t c_key_len, uint8_t *c_key,
                 uint16_t s_key_len, uint8_t *s_key,
@@ -288,7 +292,6 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
                 uint16_t s_key_iv_len, uint8_t *s_key_iv,
                 uint16_t sub_key_len, uint8_t *sub_key)
 {
-    const int SHA256LEN = 32;
     int L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len + sub_key_len;
     int N = (L + SHA256LEN - 1) / SHA256LEN;
     unsigned char *p_org;

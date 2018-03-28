@@ -6,6 +6,9 @@
 #include <stdlib.h>     /* getenv */
 #endif
 #include <string.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"

@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 #include "lsquic_buf.h"
 
 

@@ -7,6 +7,10 @@
 
 #include "lsquic_crypto.h"
 
+#ifdef WIN32
+#pragma warning(disable:4295 4245) //4295: array is too small to include a terminating null character, 4245:initializing': conversion from 'int' to 'unsigned char', signed/unsigned mismatch
+#endif
+
 struct export_key_test
 {
     /* Line number for easy verification: */
@@ -63,7 +67,7 @@ static const struct export_key_test tests[] = {
     {
         .ekt_lineno         = __LINE__,
         .ekt_ikm            = "secret",
-		.ekt_ikm_sz         = 6,
+        .ekt_ikm_sz         = 6,
         BUF_PAIR(salt,
             "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
             "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
@@ -436,13 +440,13 @@ run_ekt_test (const struct export_key_test *test)
     assert(test->ekt_server_iv_sz < sizeof(server_iv));
     assert(test->ekt_client_iv_sz < sizeof(client_iv));
 
-    s = export_key_material(test->ekt_ikm,              test->ekt_ikm_sz,
-                            test->ekt_salt,             test->ekt_salt_sz,
-                            test->ekt_context,          test->ekt_context_sz,
-                            test->ekt_client_key_sz,    client_key,
-                            test->ekt_server_key_sz,    server_key,
-                            test->ekt_client_iv_sz,     client_iv,
-                            test->ekt_server_iv_sz,     server_iv,
+    s = export_key_material(test->ekt_ikm,              (uint16_t)test->ekt_ikm_sz,
+                            test->ekt_salt,             (uint16_t)test->ekt_salt_sz,
+                            test->ekt_context,          (uint16_t)test->ekt_context_sz,
+                            (uint16_t)test->ekt_client_key_sz,    client_key,
+                            (uint16_t)test->ekt_server_key_sz,    server_key,
+                            (uint16_t)test->ekt_client_iv_sz,     client_iv,
+                            (uint16_t)test->ekt_server_iv_sz,     server_iv,
                             sub_key);
 
     assert(0 == s);     /* This function always returns zero */

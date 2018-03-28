@@ -13,7 +13,7 @@
 int
 main (void)
 {
-    struct lsquic_senhist hist;
+    struct lsquic_senhist hist = { 0 };
     lsquic_packno_t packno;
 
     lsquic_senhist_init(&hist);

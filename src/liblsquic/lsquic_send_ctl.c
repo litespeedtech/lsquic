@@ -299,7 +299,7 @@ static void
 set_retx_alarm (lsquic_send_ctl_t *ctl)
 {
     enum retx_mode rm;
-    lsquic_time_t delay, now;
+    lsquic_time_t delay = 0, now;
 
     assert(!TAILQ_EMPTY(&ctl->sc_unacked_packets));
 
@@ -891,7 +891,9 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 
 
 #ifndef NDEBUG
+#if __GNUC__
 __attribute__((weak))
+#endif
 #endif
 int
 lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
@@ -924,7 +926,7 @@ static void
 send_ctl_expire (lsquic_send_ctl_t *ctl, enum expire_filter filter)
 {
     lsquic_packet_out_t *packet_out, *next;
-    int n_resubmitted;
+    int n_resubmitted =0;
     static const char *const filter_type2str[] = {
         [EXFI_ALL] = "all",
         [EXFI_HSK] = "handshake",
@@ -1299,7 +1301,7 @@ lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *ctl, int tcid0)
 void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
 {
-    struct lsquic_packet_out *packet_out, *next;
+    struct lsquic_packet_out *packet_out, *next = NULL;
     struct lsquic_packet_out *pre_dropped;
     unsigned n, adj;
 
@@ -1374,7 +1376,9 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
  * packets.
  */
 #ifndef NDEBUG
+#if __GNUC__
 __attribute__((weak))
+#endif
 #endif
 int
 lsquic_send_ctl_have_delayed_packets (const lsquic_send_ctl_t *ctl)

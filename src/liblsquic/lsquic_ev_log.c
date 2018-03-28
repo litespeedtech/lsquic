@@ -1,9 +1,14 @@
 /* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+#ifndef WIN32
 #include <arpa/inet.h>
+#else
+#include <vc_compat.h>
+#endif
 #include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -25,7 +30,7 @@
 /* Messages that do not include connection ID go above this point */
 
 #define LSQUIC_LOG_CONN_ID cid
-#define LCID(a...) LSQ_LOG2(LSQ_LOG_DEBUG, a)   /* LCID: log with CID */
+#define LCID(...) LSQ_LOG2(LSQ_LOG_DEBUG, __VA_ARGS__)   /* LCID: log with CID */
 
 /* Messages that are to include connection ID go below this point */
 /*  ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||  */

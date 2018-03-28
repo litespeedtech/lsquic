@@ -10,7 +10,7 @@ void test_HKDF()
 {
     unsigned char prk[32];
     unsigned char okm[100];
-    int L;
+    uint16_t L;
     /*test case 1 */
     lshkdf_extract((const unsigned char *) "\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b",
                  22,

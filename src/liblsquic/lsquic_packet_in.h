@@ -6,7 +6,6 @@
 #ifndef LSQUIC_PACKET_IN_H
 #define LSQUIC_PACKET_IN_H 1
 
-#include <sys/queue.h>
 
 struct lsquic_packet_in;
 

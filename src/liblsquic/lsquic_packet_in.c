@@ -2,6 +2,10 @@
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/queue.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"

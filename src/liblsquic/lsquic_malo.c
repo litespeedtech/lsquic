@@ -48,6 +48,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "fiu-local.h"
 #include "lsquic_malo.h"
@@ -75,7 +78,7 @@ struct malo_page {
 };
 
 typedef char malo_header_fits_in_one_slot
-    [0 - (sizeof(struct malo_page) > (1 << MALO_MAX_NBITS))];
+    [(sizeof(struct malo_page) > (1 << MALO_MAX_NBITS)) ? -1 : 1];
 
 struct malo {
     struct malo_page        page_header;
@@ -187,10 +190,18 @@ lsquic_malo_destroy (struct malo *malo)
     while (page != &malo->page_header)
     {
         next = SLIST_NEXT(page, next_page);
+#ifndef WIN32
         free(page);
+#else
+        _aligned_free(page);
+#endif
         page = next;
     }
+#ifndef WIN32
     free(page);
+#else
+        _aligned_free(page);
+#endif
 }
 
 

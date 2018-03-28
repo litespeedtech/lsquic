@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/time.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -253,7 +255,7 @@ test_restore (enum lsquic_packno_bits bits)
     unsigned len, n;
     enum { OP_PLUS, OP_MINUS, N_OPS } op;
     uint64_t epoch, epoch_delta;
-    lsquic_packno_t orig_packno, cur_packno, restored_packno;
+    lsquic_packno_t orig_packno= 0, cur_packno, restored_packno;
 
     len = packno_bits2len(bits);
     epoch_delta = 1ULL << (len << 3);

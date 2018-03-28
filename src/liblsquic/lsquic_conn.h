@@ -7,8 +7,12 @@
 #define LSQUIC_CONN_H
 
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/socket.h>
 #include <netinet/in.h>
+#else
+#include <ws2ipdef.h>
+#endif
 
 struct lsquic_conn;
 struct lsquic_enc_session;

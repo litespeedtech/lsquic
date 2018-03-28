@@ -5,7 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <unistd.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"

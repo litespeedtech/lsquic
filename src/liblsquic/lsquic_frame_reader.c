@@ -3,7 +3,9 @@
  * lsquic_frame_reader.c -- Read HTTP frames from stream
  */
 
+#ifndef WIN32
 #include <arpa/inet.h>
+#endif
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -698,11 +700,12 @@ code_str_to_reason (const char *code_str, int code_len)
     };
 
     long code;
-    char code_buf[ code_len + 1 ];
+    char * code_buf = malloc(code_len + 1 );
 
     strncpy(code_buf, code_str, code_len);
     code_buf[code_len] = '\0';
     code = strtol(code_buf, NULL, 10) - 100;
+    free(code_buf);
     if (code > 0 && code < (long) (sizeof(http_reason_phrases) /
                                         sizeof(http_reason_phrases[0])))
         return http_reason_phrases[code];

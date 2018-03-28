@@ -9,24 +9,17 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_data_in_if.h"
 
 
-static const struct data_in_iface di_if_error;
 
 
-static const struct data_in error_data_in = {
-    .di_if    = &di_if_error,
-    .di_flags = 0,
-};
 
 
-struct data_in *
-data_in_error_new (struct lsquic_conn_public *conn_pub)
-{
-    return (struct data_in *) &error_data_in;
-}
 
 
 static void
@@ -87,3 +80,12 @@ static const struct data_in_iface di_if_error = {
     .di_mem_used     = error_di_mem_used,
     .di_switch_impl  = error_di_switch_impl,
 };
+static const struct data_in error_data_in = {
+    .di_if    = &di_if_error,
+    .di_flags = 0,
+};
+struct data_in *
+data_in_error_new (struct lsquic_conn_public *conn_pub)
+{
+    return (struct data_in *) &error_data_in;
+}

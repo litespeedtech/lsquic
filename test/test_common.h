@@ -32,7 +32,11 @@ enum sport_flags
 
 struct service_port {
     TAILQ_ENTRY(service_port)  next_sport;
+#ifndef WIN32
     int                        fd;
+#else
+    SOCKET                        fd;
+#endif
 #if __linux__
     uint32_t                   n_dropped;
     int                        drop_init;

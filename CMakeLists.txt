@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 2.8)
 
 project(lsquic)
 
+IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 # We prefer clang
 IF(NOT ("${CMAKE_C_COMPILER}" MATCHES "ccc-analyzer" OR
         "${CMAKE_C_COMPILER}" MATCHES "gcc"          OR
@@ -12,6 +13,8 @@ IF(NOT ("${CMAKE_C_COMPILER}" MATCHES "ccc-analyzer" OR
     IF(CLANG)
         SET(CMAKE_C_COMPILER "${CLANG}")
     ENDIF()
+ENDIF()
+
 ENDIF()
 
 # By default, we compile in development mode.  To compile production code,
@@ -24,6 +27,8 @@ ENDIF()
 
 
 MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
+
+IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
@@ -62,6 +67,28 @@ ELSE()
     MESSAGE(STATUS "AddressSanitizer is OFF")
 ENDIF()
 
+#MSVC
+ELSE()
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
+IF(DEVEL_MODE EQUAL 1)
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od ")
+    #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
+    #SET (FIULIB "fiu")
+ELSE()
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -OX")
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DNDEBUG")
+    # Comment out the following line to compile out debug messages:
+    #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
+ENDIF()
+
+SET (BORINGSSL_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/include)
+SET (VCPKG_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/include )
+
+SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
+set (BORINGSSL_BASE_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/x64)
+
+ENDIF() #MSVC
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
@@ -73,8 +100,9 @@ IF(NOT DEFINED BORINGSSL_LIB)
     SET(BORINGSSL_LIB /usr/local/lib)
 ENDIF()
 
-include_directories( ${BORINGSSL_INCLUDE} )
-link_directories( ${BORINGSSL_LIB} )
+
+include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE} )
+link_directories( ${BORINGSSL_LIB}  )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include )
@@ -85,13 +113,41 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     link_directories( /usr/local/lib )
 ENDIF()
 
+IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 add_executable(http_client
     test/http_client.c
     test/prog.c
     test/test_common.c
 )
-
 target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
+
+#MSVC
+ELSE()
+add_executable(http_client
+    test/http_client.c
+    test/prog.c
+    wincompat/test_common_win.c
+    wincompat/getopt.c
+    wincompat/getopt1.c
+)
+
+target_link_libraries(http_client 
+		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
+		debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib
+		debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib
+		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib 
+		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/crypto.lib
+		ws2_32
+		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
+		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
+		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib 
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto.lib
+		${FIULIB} )
+
+ENDIF()
+
+
 
 add_subdirectory(src)
 

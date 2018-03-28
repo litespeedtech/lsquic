@@ -7,9 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#else
+#include <getopt.h>
+#endif
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -60,7 +64,9 @@ main (int argc, char **argv)
     struct rec *recs = NULL;
     unsigned max_cwnd, width;
     char *line;
+#ifndef WIN32
     struct winsize winsize;
+#endif
     enum cubic_flags flags;
 
     lsquic_cubic_init(&cubic, 0);
@@ -116,6 +122,7 @@ main (int argc, char **argv)
         }
     }
 
+#ifndef WIN32
     if (isatty(STDIN_FILENO))
     {
         if (0 == ioctl(STDIN_FILENO, TIOCGWINSZ, &winsize))
@@ -127,6 +134,7 @@ main (int argc, char **argv)
         }
     }
     else
+#endif
         width = 80;
 
     width -= 5 /* cwnd */ + 1 /* space */ + 1 /* event type */ + 

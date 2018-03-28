@@ -1702,7 +1702,7 @@ lsquic_stream_write (lsquic_stream_t *stream, const void *buf, size_t len)
 
 struct inner_reader_iovec {
     const struct iovec       *iov;
-    const struct iovec *const end;
+    const struct iovec *end;
     unsigned                  cur_iovec_off;
 };
 

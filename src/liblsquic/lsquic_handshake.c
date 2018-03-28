@@ -5,7 +5,9 @@
 #include <time.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <sys/socket.h>
+#endif
 
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
@@ -933,7 +935,7 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     unsigned char pub_key[32];
     size_t ua_len;
     uint32_t opts[1];  /* Only NSTP is supported for now */
-    unsigned n_opts, msg_len, n_tags, pad_size;
+    unsigned n_opts, msg_len, n_tags, pad_size = 0;
     struct message_writer mw;
 
     /* Before we do anything else, sanity check: */

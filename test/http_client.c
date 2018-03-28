@@ -3,16 +3,29 @@
  * http_client.c -- A simple HTTP/QUIC client
  */
 
+#ifndef WIN32
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#else
+#include <Windows.h>
+#include <WinSock2.h>
+#include <io.h>
+#include <stdlib.h>
+#include <getopt.h>
+#define STDOUT_FILENO 1
+#define random rand
+#pragma warning(disable:4996) //POSIX name deprecated
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/queue.h>
+#ifndef WIN32
+#include <unistd.h>
 #include <sys/types.h>
+#endif
 #include <sys/stat.h>
 #include <fcntl.h>
 
@@ -299,6 +312,9 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     unsigned old_prio, new_prio;
     unsigned char buf[0x200];
     unsigned nreads = 0;
+#ifdef WIN32
+	srand(GetTickCount());
+#endif
 
     do
     {
@@ -430,6 +446,10 @@ main (int argc, char **argv)
     client_ctx.hcc_reqs_per_conn = 1;
     client_ctx.hcc_total_n_reqs = 1;
     client_ctx.prog = &prog;
+#ifdef WIN32
+    WSADATA wsd;
+    WSAStartup(MAKEWORD(2, 2), &wsd);
+#endif
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
