@@ -102,7 +102,7 @@ lsquic_rechist_stop_wait (lsquic_rechist_t *rechist, lsquic_packno_t cutoff)
             }
             else
             {
-                rechist->rh_n_packets -= cutoff - pi->range.low;
+                rechist->rh_n_packets -= (unsigned)(cutoff - pi->range.low);
                 pi->range.low = cutoff;
             }
         }
