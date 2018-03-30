@@ -61,6 +61,7 @@ typedef char db_block_is_4K[(sizeof(struct data_block) == 0x1000) ?1:- 1];
 TAILQ_HEAD(dblock_head, data_block);
 
 
+static const struct data_in_iface *di_if_hash_ptr;
 
 
 struct hash_data_in
@@ -108,6 +109,43 @@ my_log2 /* silly name to suppress compiler warning */ (unsigned sz)
 }
 
 
+struct data_in *
+data_in_hash_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id,
+                  uint64_t byteage)
+{
+    struct hash_data_in *hdi;
+    unsigned n;
+
+    hdi = malloc(sizeof(*hdi));
+    if (!hdi)
+        return NULL;
+
+    hdi->hdi_data_in.di_if    = di_if_hash_ptr;
+    hdi->hdi_data_in.di_flags = 0;
+    hdi->hdi_conn_pub         = conn_pub;
+    hdi->hdi_stream_id        = stream_id;
+    hdi->hdi_fin_off          = 0;
+    hdi->hdi_flags            = 0;
+    hdi->hdi_last_block       = NULL;
+    if (byteage >= DB_DATA_SIZE /* __builtin_clz is undefined if
+                                   argument is 0 */)
+        hdi->hdi_nbits        = my_log2(byteage / DB_DATA_SIZE) + 2;
+    else
+        hdi->hdi_nbits        = 3;
+    hdi->hdi_count            = 0;
+    hdi->hdi_buckets          = malloc(sizeof(hdi->hdi_buckets[0]) *
+                                                    N_BUCKETS(hdi->hdi_nbits));
+    if (!hdi->hdi_buckets)
+    {
+        free(hdi);
+        return NULL;
+    }
+
+    for (n = 0; n < N_BUCKETS(hdi->hdi_nbits); ++n)
+        TAILQ_INIT(&hdi->hdi_buckets[n]);
+
+    return &hdi->hdi_data_in;
+}
 
 
 static void
@@ -599,40 +637,5 @@ static const struct data_in_iface di_if_hash = {
     .di_mem_used     = hash_di_mem_used,
     .di_switch_impl  = hash_di_switch_impl,
 };
-struct data_in *
-data_in_hash_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id,
-                  uint64_t byteage)
-{
-    struct hash_data_in *hdi;
-    unsigned n;
 
-    hdi = malloc(sizeof(*hdi));
-    if (!hdi)
-        return NULL;
-
-    hdi->hdi_data_in.di_if    = &di_if_hash;
-    hdi->hdi_data_in.di_flags = 0;
-    hdi->hdi_conn_pub         = conn_pub;
-    hdi->hdi_stream_id        = stream_id;
-    hdi->hdi_fin_off          = 0;
-    hdi->hdi_flags            = 0;
-    hdi->hdi_last_block       = NULL;
-    if (byteage >= DB_DATA_SIZE /* __builtin_clz is undefined if
-                                   argument is 0 */)
-        hdi->hdi_nbits        = my_log2(byteage / DB_DATA_SIZE) + 2;
-    else
-        hdi->hdi_nbits        = 3;
-    hdi->hdi_count            = 0;
-    hdi->hdi_buckets          = malloc(sizeof(hdi->hdi_buckets[0]) *
-                                                    N_BUCKETS(hdi->hdi_nbits));
-    if (!hdi->hdi_buckets)
-    {
-        free(hdi);
-        return NULL;
-    }
-
-    for (n = 0; n < N_BUCKETS(hdi->hdi_nbits); ++n)
-        TAILQ_INIT(&hdi->hdi_buckets[n]);
-
-    return &hdi->hdi_data_in;
-}
+static const struct data_in_iface *di_if_hash_ptr = &di_if_hash;

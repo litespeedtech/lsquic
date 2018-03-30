@@ -935,7 +935,7 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     unsigned char pub_key[32];
     size_t ua_len;
     uint32_t opts[1];  /* Only NSTP is supported for now */
-    unsigned n_opts, msg_len, n_tags, pad_size = 0;
+    unsigned n_opts, msg_len, n_tags, pad_size;
     struct message_writer mw;
 
     /* Before we do anything else, sanity check: */
@@ -1014,6 +1014,10 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
             pad_size = 0;
         MSG_LEN_ADD(msg_len, pad_size);     ++n_tags;           /* PAD  */
     }
+#ifdef WIN32
+    else
+        pad_size = 0;
+#endif
 
     /* Check that we have enough room in the output buffer: */
     if (MSG_LEN_VAL(msg_len) > *len)

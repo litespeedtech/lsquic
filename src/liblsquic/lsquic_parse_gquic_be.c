@@ -796,6 +796,7 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         void *rechist, lsquic_time_t now, int *has_missing,
         lsquic_packno_t *largest_received)
 {
+    lsquic_time_t time_diff;
     lsquic_packno_t tmp_packno;
     const struct lsquic_packno_range *const first = rechist_first(rechist);
     if (!first)
@@ -865,13 +866,11 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     p += largest_acked_len;
 
     CHECKOUT(2);
-    {
-        lsquic_time_t diff = now - rechist_largest_recv(rechist);
-        gquic_be_write_float_time16(diff, p);
-        LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, diff,
-            *(uint16_t*)p);
-        p += 2;
-    }
+    time_diff = now - rechist_largest_recv(rechist);
+    gquic_be_write_float_time16(time_diff, p);
+    LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, time_diff,
+        *(uint16_t*)p);
+    p += 2;
 
     if (n_ranges > 1)
     {

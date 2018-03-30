@@ -65,23 +65,23 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
 };
 
 
-#define SLEN(x) (sizeof(#x) - sizeof("QUIC_FRAME_"))
+#define QUIC_FRAME_SLEN(x) (sizeof(#x) - sizeof("QUIC_FRAME_"))
 
 
     /* We don't need to include INVALID frame in this list because it is
      * never a part of any frame list bitmask (e.g. po_frame_types).
      */
 #define lsquic_frame_types_str_sz  \
-    SLEN(QUIC_FRAME_STREAM)           + 1 + \
-    SLEN(QUIC_FRAME_ACK)              + 1 + \
-    SLEN(QUIC_FRAME_PADDING)          + 1 + \
-    SLEN(QUIC_FRAME_RST_STREAM)       + 1 + \
-    SLEN(QUIC_FRAME_CONNECTION_CLOSE) + 1 + \
-    SLEN(QUIC_FRAME_GOAWAY)           + 1 + \
-    SLEN(QUIC_FRAME_WINDOW_UPDATE)    + 1 + \
-    SLEN(QUIC_FRAME_BLOCKED)          + 1 + \
-    SLEN(QUIC_FRAME_STOP_WAITING)     + 1 + \
-    SLEN(QUIC_FRAME_PING)             + 1
+    QUIC_FRAME_SLEN(QUIC_FRAME_STREAM)           + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_ACK)              + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_PADDING)          + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_RST_STREAM)       + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_CONNECTION_CLOSE) + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_GOAWAY)           + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_WINDOW_UPDATE)    + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_BLOCKED)          + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_STOP_WAITING)     + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_PING)             + 1
 
 
 

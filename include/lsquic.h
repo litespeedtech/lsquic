@@ -14,6 +14,7 @@
 #include <sys/uio.h>
 #include <sys/types.h>
 #include <time.h>
+#include <sys/queue.h>
 #else
 #include <vc_compat.h>
 #endif

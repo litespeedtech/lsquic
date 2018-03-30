@@ -255,8 +255,11 @@ test_restore (enum lsquic_packno_bits bits)
     unsigned len, n;
     enum { OP_PLUS, OP_MINUS, N_OPS } op;
     uint64_t epoch, epoch_delta;
-    lsquic_packno_t orig_packno= 0, cur_packno, restored_packno;
+    lsquic_packno_t orig_packno, cur_packno, restored_packno;
 
+#ifdef WIN32
+    orig_packno = 0;
+#endif
     len = packno_bits2len(bits);
     epoch_delta = 1ULL << (len << 3);
     epoch = epoch_delta * 11 /* Just some number */;

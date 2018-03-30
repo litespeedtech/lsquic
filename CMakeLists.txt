@@ -28,6 +28,7 @@ ENDIF()
 
 MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
 
+
 IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
@@ -113,6 +114,7 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     link_directories( /usr/local/lib )
 ENDIF()
 
+
 IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 add_executable(http_client
     test/http_client.c
@@ -131,23 +133,23 @@ add_executable(http_client
     wincompat/getopt1.c
 )
 
-target_link_libraries(http_client 
+target_link_libraries(http_client
 		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
 		debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib
 		debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib
-		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib 
+		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib
 		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/crypto.lib
 		ws2_32
 		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
 		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
 		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
-		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib 
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib
 		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto.lib
 		${FIULIB} )
 
 ENDIF()
 
-
+target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
 
 add_subdirectory(src)
 

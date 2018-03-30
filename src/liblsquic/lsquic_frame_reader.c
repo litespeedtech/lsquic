@@ -648,8 +648,10 @@ add_pseudo_header_to_uh (const struct lsquic_frame_reader *fr,
 }
 
 
+#define HTTP_CODE_LEN 3
+
 static const char *
-code_str_to_reason (const char *code_str, int code_len)
+code_str_to_reason (const char code_str[HTTP_CODE_LEN])
 {
     /* RFC 7231, Section 6: */
     static const char *const http_reason_phrases[] =
@@ -700,12 +702,11 @@ code_str_to_reason (const char *code_str, int code_len)
     };
 
     long code;
-    char * code_buf = malloc(code_len + 1 );
+    char code_buf[HTTP_CODE_LEN + 1];
 
-    strncpy(code_buf, code_str, code_len);
-    code_buf[code_len] = '\0';
+    memcpy(code_buf, code_str, HTTP_CODE_LEN);
+    code_buf[HTTP_CODE_LEN] = '\0';
     code = strtol(code_buf, NULL, 10) - 100;
-    free(code_buf);
     if (code > 0 && code < (long) (sizeof(http_reason_phrases) /
                                         sizeof(http_reason_phrases[0])))
         return http_reason_phrases[code];
@@ -742,7 +743,7 @@ convert_response_pseudo_headers (const struct lsquic_frame_reader *fr,
 
     HWC_UH_WRITE(hwc, "HTTP/1.1 ", 9);
     HWC_UH_WRITE(hwc, code_str, code_len);
-    if (3 == code_len && (reason = code_str_to_reason(code_str, code_len)))
+    if (HTTP_CODE_LEN == code_len && (reason = code_str_to_reason(code_str)))
     {
         HWC_UH_WRITE(hwc, " ", 1);
         HWC_UH_WRITE(hwc, reason, strlen(reason));
