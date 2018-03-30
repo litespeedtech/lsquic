@@ -143,6 +143,7 @@ struct parse_funcs
                 uint16_t *reason_length, const char **reason);
     int
     (*pf_gen_ping_frame) (unsigned char *buf, int buf_len);
+#ifndef NDEBUG    
     /* These float reading and writing functions assume `mem' has at least
      * 2 bytes.
      */
@@ -150,6 +151,7 @@ struct parse_funcs
     (*pf_write_float_time16) (lsquic_time_t time_us, void *mem);
     uint64_t
     (*pf_read_float_time16) (const void *mem);
+#endif    
     size_t
     (*pf_calc_stream_frame_header_sz) (uint32_t stream_id, uint64_t offset);
     void

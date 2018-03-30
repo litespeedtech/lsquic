@@ -65,7 +65,10 @@ lsquic_hdec_cleanup (struct lsquic_hdec *dec)
 
 
 //https://tools.ietf.org/html/draft-ietf-httpbis-header-compression-12#section-5.1
-int
+#ifdef NDEBUG
+static
+#endif
+       int
 lsquic_hdec_dec_int (const unsigned char **src, const unsigned char *src_end,
                                         uint8_t prefix_bits, uint32_t *value)
 {
@@ -185,7 +188,10 @@ hdec_huff_decode (const unsigned char *src, int src_len,
 
 
 //reutrn the length in the dst, also update the src
-static int
+#ifdef NDEBUG
+static
+#endif
+       int
 hdec_dec_str (unsigned char *dst, size_t dst_len, const unsigned char **src,
         const unsigned char *src_end)
 {
@@ -244,7 +250,10 @@ hdec_get_table_entry (struct lsquic_hdec *dec, uint32_t index)
 }
 
 
-int
+#ifdef NDEBUG
+static
+#endif
+       int
 lsquic_hdec_push_entry (struct lsquic_hdec *dec, const char *name,
                         uint16_t name_len, const char *val, uint16_t val_len)
 {
