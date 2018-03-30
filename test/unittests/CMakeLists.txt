@@ -3,11 +3,11 @@ include_directories( BEFORE ../../ssl/include )
 include_directories( ../../include )
 include_directories( ../../src/liblsquic )
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
-
 enable_testing()
 
 IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
+
 
 add_executable(test_rechist test_rechist.c)
 target_link_libraries(test_rechist lsquic pthread libssl.a libcrypto.a z m ${FIULIB})

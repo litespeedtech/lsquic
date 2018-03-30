@@ -10,7 +10,6 @@
 
 struct enc_table_entry;
 
-#ifndef NDEBUG
 struct enc_dyn_table_entry
 {
     const char *name,       /* Not NUL-terminated */
@@ -19,7 +18,6 @@ struct enc_dyn_table_entry
                 value_len;
     unsigned    entry_id;
 };
-#endif
 
 STAILQ_HEAD(enc_head, enc_table_entry);
 struct double_enc_head;
@@ -44,10 +42,8 @@ struct lsquic_henc
     struct enc_head     hpe_all_entries;
     struct double_enc_head
                        *hpe_buckets;
-#ifndef NDEBUG
     const struct enc_table_entry
                        *hpe_iter;
-#endif
 };
 
 
@@ -83,7 +79,6 @@ lsquic_henc_set_max_capacity (struct lsquic_henc *, unsigned);
 size_t
 lsquic_henc_mem_used (const struct lsquic_henc *);
 
-#ifndef NDEBUG
 unsigned
 lsquic_henc_get_stx_tab_id (const char *name, hpack_strlen_t name_len,
                     const char *val, hpack_strlen_t val_len, int *val_matched);
@@ -102,6 +97,5 @@ lsquic_henc_iter_reset (struct lsquic_henc *enc);
 /* Returns 0 if entry is found */
 int
 lsquic_henc_iter_next (struct lsquic_henc *enc, struct enc_dyn_table_entry *);
-#endif
 
 #endif

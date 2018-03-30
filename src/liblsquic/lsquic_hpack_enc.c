@@ -92,10 +92,7 @@ lsquic_henc_cleanup (struct lsquic_henc *enc)
 
 
 //not find return 0, otherwise return the index
-#ifdef NDEBUG
-static
-#endif
-       unsigned
+unsigned
 lsquic_henc_get_stx_tab_id (const char *name, hpack_strlen_t name_len,
                     const char *val, hpack_strlen_t val_len, int *val_matched)
 {
@@ -559,10 +556,7 @@ henc_huffman_enc (const unsigned char *src, const unsigned char *const src_end,
 }
 
 
-#ifdef NDEBUG
-static
-#endif
-       int
+int
 lsquic_henc_enc_str (unsigned char *const dst, size_t dst_len,
                             const unsigned char *str, hpack_strlen_t str_len)
 {
@@ -708,10 +702,7 @@ henc_grow_tables (struct lsquic_henc *enc)
     return 0;
 }
 
-#ifdef NDEBUG
-static
-#endif
-       int
+int
 lsquic_henc_push_entry (struct lsquic_henc *enc, const char *name,
                         hpack_strlen_t name_len, const char *value,
                         hpack_strlen_t value_len)
@@ -829,12 +820,12 @@ lsquic_henc_set_max_capacity (struct lsquic_henc *enc, unsigned max_capacity)
 }
 
 
-#ifndef NDEBUG
 void
 lsquic_henc_iter_reset (struct lsquic_henc *enc)
 {
     enc->hpe_iter = STAILQ_FIRST(&enc->hpe_all_entries);
 }
+
 
 /* Returns 0 if entry is found */
 int
@@ -856,7 +847,6 @@ lsquic_henc_iter_next (struct lsquic_henc *enc,
     retval->entry_id = henc_calc_table_id(enc, entry);
     return 0;
 }
-#endif
 
 
 size_t

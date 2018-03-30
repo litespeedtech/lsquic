@@ -122,10 +122,11 @@ lsquic_printf (const char *fmt, ...)
 
 
 #ifdef WIN32
+#define DELTA_EPOCH_IN_MICROSECS  11644473600000000Ui64
 struct timezone
 {
-    int tz_minuteswest;         /* minutes W of Greenwich */
-    int tz_dsttime;             /* type of dst correction */
+    time_t tz_minuteswest;         /* minutes W of Greenwich */
+    time_t tz_dsttime;             /* type of dst correction */
 };
 
 static int
@@ -174,7 +175,14 @@ print_timestamp (void)
     struct tm tm;
     struct timeval tv;
     gettimeofday(&tv, NULL);
+#ifdef WIN32
+    {
+        time_t t = tv.tv_sec;
+        localtime_s(&tm, &t); // Could be a macro, but then a type mismatch.
+    }
+#else    
     localtime_r(&tv.tv_sec, &tm);
+#endif    
     if (g_llts == LLTS_YYYYMMDD_HHMMSSUS)
         lsquic_printf("%04d-%02d-%02d %02d:%02d:%02d.%06d ",
             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,

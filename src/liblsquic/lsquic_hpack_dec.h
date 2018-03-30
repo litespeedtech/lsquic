@@ -45,7 +45,6 @@ lsquic_hdec_set_max_capacity (struct lsquic_hdec *, unsigned);
 size_t
 lsquic_hdec_mem_used (const struct lsquic_hdec *);
 
-#ifndef NDEBUG
 int
 lsquic_hdec_dec_int (const unsigned char **src, const unsigned char *src_end,
                                         uint8_t prefix_bits, uint32_t *value);
@@ -54,6 +53,5 @@ int
 lsquic_hdec_push_entry (struct lsquic_hdec *dec, const char *name,
                         hpack_strlen_t name_len, const char *val,
                         hpack_strlen_t val_len);
-#endif
 
 #endif

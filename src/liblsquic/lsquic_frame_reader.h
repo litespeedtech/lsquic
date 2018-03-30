@@ -8,6 +8,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 struct lsquic_hdec;
 struct lsquic_mm;

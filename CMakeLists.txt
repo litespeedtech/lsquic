@@ -121,7 +121,7 @@ add_executable(http_client
     test/prog.c
     test/test_common.c
 )
-target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
+#target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
 
 #MSVC
 ELSE()
