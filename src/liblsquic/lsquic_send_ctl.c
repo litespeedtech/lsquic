@@ -1362,9 +1362,8 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
         for (packet_out = TAILQ_FIRST(&ctl->sc_buffered_packets[n].bpq_packets);
                                                 packet_out; packet_out = next)
         {
-            if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM)))
-                continue;
             next = TAILQ_NEXT(packet_out, po_next);
+            assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
             lsquic_packet_out_elide_reset_stream_frames(packet_out, stream_id);
             if (0 == packet_out->po_frame_types)
             {

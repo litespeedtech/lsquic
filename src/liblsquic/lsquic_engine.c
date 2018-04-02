@@ -63,6 +63,13 @@
 #define MIN_OUT_BATCH_SIZE 256
 #define INITIAL_OUT_BATCH_SIZE 512
 
+struct out_batch
+{
+    lsquic_conn_t           *conns  [MAX_OUT_BATCH_SIZE];
+    lsquic_packet_out_t     *packets[MAX_OUT_BATCH_SIZE];
+    struct lsquic_out_spec   outs   [MAX_OUT_BATCH_SIZE];
+};
+
 typedef struct lsquic_conn * (*conn_iter_f)(struct lsquic_engine *);
 
 static void
@@ -196,6 +203,7 @@ struct lsquic_engine
      */
     lsquic_time_t                      last_sent;
     lsquic_time_t                      deadline;
+    struct out_batch                   out_batch;
 };
 
 
@@ -1156,14 +1164,6 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 }
 
 
-struct out_batch
-{
-    lsquic_conn_t           *conns  [MAX_OUT_BATCH_SIZE];
-    lsquic_packet_out_t     *packets[MAX_OUT_BATCH_SIZE];
-    struct lsquic_out_spec   outs   [MAX_OUT_BATCH_SIZE];
-};
-
-
 STAILQ_HEAD(closed_conns, lsquic_conn);
 
 
@@ -1363,7 +1363,7 @@ send_packets_out (struct lsquic_engine *engine,
     unsigned n, w, n_sent, n_batches_sent;
     lsquic_packet_out_t *packet_out;
     lsquic_conn_t *conn;
-    struct out_batch batch;
+    struct out_batch *const batch = &engine->out_batch;
     struct conns_out_iter conns_iter;
     int shrink, deadline_exceeded;
 
@@ -1415,24 +1415,24 @@ send_packets_out (struct lsquic_engine *engine,
         assert(conn->cn_flags & LSCONN_HAS_PEER_SA);
         if (packet_out->po_flags & PO_ENCRYPTED)
         {
-            batch.outs[n].buf     = packet_out->po_enc_data;
-            batch.outs[n].sz      = packet_out->po_enc_data_sz;
+            batch->outs[n].buf     = packet_out->po_enc_data;
+            batch->outs[n].sz      = packet_out->po_enc_data_sz;
         }
         else
         {
-            batch.outs[n].buf     = packet_out->po_data;
-            batch.outs[n].sz      = packet_out->po_data_sz;
+            batch->outs[n].buf     = packet_out->po_data;
+            batch->outs[n].sz      = packet_out->po_data_sz;
         }
-        batch.outs   [n].peer_ctx = conn->cn_peer_ctx;
-        batch.outs   [n].local_sa = (struct sockaddr *) conn->cn_local_addr;
-        batch.outs   [n].dest_sa  = (struct sockaddr *) conn->cn_peer_addr;
-        batch.conns  [n]          = conn;
-        batch.packets[n]          = packet_out;
+        batch->outs   [n].peer_ctx = conn->cn_peer_ctx;
+        batch->outs   [n].local_sa = (struct sockaddr *) conn->cn_local_addr;
+        batch->outs   [n].dest_sa  = (struct sockaddr *) conn->cn_peer_addr;
+        batch->conns  [n]          = conn;
+        batch->packets[n]          = packet_out;
         ++n;
         if (n == engine->batch_size)
         {
             n = 0;
-            w = send_batch(engine, &conns_iter, &batch, engine->batch_size);
+            w = send_batch(engine, &conns_iter, batch, engine->batch_size);
             ++n_batches_sent;
             n_sent += w;
             if (w < engine->batch_size)
@@ -1449,7 +1449,7 @@ send_packets_out (struct lsquic_engine *engine,
   end_for:
 
     if (n > 0) {
-        w = send_batch(engine, &conns_iter, &batch, n);
+        w = send_batch(engine, &conns_iter, batch, n);
         n_sent += w;
         shrink = w < n;
         ++n_batches_sent;

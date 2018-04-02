@@ -135,6 +135,8 @@ The client library has been tested on the following platforms:
   - ARM (Raspberry Pi 3)
 - FreeBSD
   - i386
+- Windows
+  - x86_64
 - MacOS
   - x86_64
 

@@ -1,3 +1,9 @@
+2018-04-02
+
+    - [FEATURE] Windows support
+
+    - Reduce stack use -- outgoing packet batch is now allocated on the heap.
+
 2018-03-09
 
     - [OPTIMIZATION] Merge series of ACKs if possible
