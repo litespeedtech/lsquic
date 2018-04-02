@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * http_client.c -- A simple HTTP/QUIC client
  */

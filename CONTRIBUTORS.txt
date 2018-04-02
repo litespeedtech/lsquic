@@ -1,0 +1,10 @@
+# Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE.
+In addition to the LiteSpeed QUIC Team, the following people contributed
+to the LiteSpeed Client Library:
+
+    - Brian Prodoehl -- Docker file
+    - Amol Desphande -- Windows support
+
+Thank you!
+
+We welcome contributions in any form -- patches, issues, pull requests.

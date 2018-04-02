@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Test hpack: encode a bunch of headers, decode and compare.
  */

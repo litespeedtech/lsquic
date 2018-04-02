@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_send_ctl.c -- Logic for sending and sent packets
  */

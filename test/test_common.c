@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 #define _GNU_SOURCE     /* For struct in6_pktinfo */
 #include <assert.h>
 #include <errno.h>

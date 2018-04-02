@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_PARSE_H
 #define LSQUIC_PARSE_H 1
 
