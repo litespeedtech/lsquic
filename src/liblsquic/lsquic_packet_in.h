@@ -6,7 +6,6 @@
 #ifndef LSQUIC_PACKET_IN_H
 #define LSQUIC_PACKET_IN_H 1
 
-
 struct lsquic_packet_in;
 
 struct data_frame

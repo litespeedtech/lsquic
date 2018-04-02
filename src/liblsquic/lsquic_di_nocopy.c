@@ -116,7 +116,29 @@ struct nocopy_data_in
     ((unsigned char *) (data_frame) - offsetof(struct stream_frame, data_frame))
 
 
+static const struct data_in_iface *di_if_nocopy_ptr;
 
+
+struct data_in *
+data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
+{
+    struct nocopy_data_in *ncdi;
+
+    ncdi = malloc(sizeof(*ncdi));
+    if (!ncdi)
+        return NULL;
+
+    TAILQ_INIT(&ncdi->ncdi_frames_in);
+    ncdi->ncdi_data_in.di_if    = di_if_nocopy_ptr;
+    ncdi->ncdi_data_in.di_flags = 0;
+    ncdi->ncdi_conn_pub         = conn_pub;
+    ncdi->ncdi_stream_id        = stream_id;
+    ncdi->ncdi_byteage          = 0;
+    ncdi->ncdi_n_frames         = 0;
+    ncdi->ncdi_n_holes          = 0;
+    ncdi->ncdi_cons_far         = 0;
+    return &ncdi->ncdi_data_in;
+}
 
 
 static void
@@ -422,24 +444,5 @@ static const struct data_in_iface di_if_nocopy = {
     .di_mem_used     = nocopy_di_mem_used,
     .di_switch_impl  = nocopy_di_switch_impl,
 };
-struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
-{
-    struct nocopy_data_in *ncdi;
 
-    ncdi = malloc(sizeof(*ncdi));
-    if (!ncdi)
-        return NULL;
-
-    TAILQ_INIT(&ncdi->ncdi_frames_in);
-    ncdi->ncdi_data_in.di_if    = &di_if_nocopy;
-    ncdi->ncdi_data_in.di_flags = 0;
-    ncdi->ncdi_conn_pub         = conn_pub;
-    ncdi->ncdi_stream_id        = stream_id;
-    ncdi->ncdi_byteage          = 0;
-    ncdi->ncdi_n_frames         = 0;
-    ncdi->ncdi_n_holes          = 0;
-    ncdi->ncdi_cons_far         = 0;
-    return &ncdi->ncdi_data_in;
-}
-
+static const struct data_in_iface *di_if_nocopy_ptr = &di_if_nocopy;

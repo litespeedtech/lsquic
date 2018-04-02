@@ -83,9 +83,7 @@ lsquic_stream_acked (lsquic_stream_t *stream)
 static void
 elide_single_stream_frame (void)
 {
-#ifndef NDEBUG
-    struct packet_out_srec_iter posi;
-#endif
+    struct packet_out_srec_iter posi = { 0 };
     struct lsquic_engine_public enpub;
     lsquic_stream_t streams[1];
     lsquic_packet_out_t *packet_out;

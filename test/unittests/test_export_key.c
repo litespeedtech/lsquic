@@ -440,9 +440,9 @@ run_ekt_test (const struct export_key_test *test)
     assert(test->ekt_server_iv_sz < sizeof(server_iv));
     assert(test->ekt_client_iv_sz < sizeof(client_iv));
 
-    s = export_key_material(test->ekt_ikm,              (uint16_t)test->ekt_ikm_sz,
-                            test->ekt_salt,             (uint16_t)test->ekt_salt_sz,
-                            test->ekt_context,          (uint16_t)test->ekt_context_sz,
+    s = export_key_material(test->ekt_ikm,              (uint32_t)test->ekt_ikm_sz,
+                            test->ekt_salt,             (int)test->ekt_salt_sz,
+                            test->ekt_context,          (uint32_t)test->ekt_context_sz,
                             (uint16_t)test->ekt_client_key_sz,    client_key,
                             (uint16_t)test->ekt_server_key_sz,    server_key,
                             (uint16_t)test->ekt_client_iv_sz,     client_iv,

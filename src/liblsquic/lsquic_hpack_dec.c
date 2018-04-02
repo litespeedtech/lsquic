@@ -188,7 +188,10 @@ hdec_huff_decode (const unsigned char *src, int src_len,
 
 
 //reutrn the length in the dst, also update the src
-static int
+#ifdef NDEBUG
+static
+#endif
+       int
 hdec_dec_str (unsigned char *dst, size_t dst_len, const unsigned char **src,
         const unsigned char *src_end)
 {

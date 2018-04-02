@@ -519,7 +519,10 @@ henc_enc_int (unsigned char *dst, unsigned char *const end, uint32_t value,
 }
 
 
-static int
+#ifdef NDEBUG
+static 
+#endif
+       int
 henc_huffman_enc (const unsigned char *src, const unsigned char *const src_end,
                                             unsigned char *dst, int dst_len)
 {
@@ -828,13 +831,13 @@ lsquic_henc_set_max_capacity (struct lsquic_henc *enc, unsigned max_capacity)
     henc_remove_overflow_entries(enc);
 }
 
-
 #ifndef NDEBUG
 void
 lsquic_henc_iter_reset (struct lsquic_henc *enc)
 {
     enc->hpe_iter = STAILQ_FIRST(&enc->hpe_all_entries);
 }
+
 
 /* Returns 0 if entry is found */
 int
@@ -857,7 +860,6 @@ lsquic_henc_iter_next (struct lsquic_henc *enc,
     return 0;
 }
 #endif
-
 
 size_t
 lsquic_henc_mem_used (const struct lsquic_henc *enc)

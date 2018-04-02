@@ -185,28 +185,24 @@ void displayHeader(unsigned char *buf, int len)
 static void
 printTable (struct lsquic_henc *enc)
 {
-#ifndef NDEBUG
     struct enc_dyn_table_entry entry;
     lsquic_henc_iter_reset(enc);
     printf("Dynamic Table : \n");
     while (0 == lsquic_henc_iter_next(enc, &entry))
         printf("[%d] `%.*s' = `%.*s'\n",
             entry.entry_id, entry.name_len, entry.name, entry.value_len, entry.value);
-#endif //NDEBUG
 }
 
 
 void testNameValue(const char *name, const char *val, int result,
         int val_match_result)
 {
-#ifndef NDEBUG
     int val_match;
     int index = lsquic_henc_get_stx_tab_id((char *)name, (uint16_t)strlen(name) ,
             (char *)val, (uint16_t)strlen(val), &val_match);
     printf("name: %s, val: %s, index = %d match = %d\n", name, val, index,
             val_match);
     assert(index == result && val_match == val_match_result);
-#endif //NDEBUG
 }
 
 
@@ -659,7 +655,6 @@ test_hpack_encode_and_decode (void)
 static void
 test_hpack_self_enc_dec_test_firefox_error (void)
 {
-#ifndef NDEBUG
     unsigned char respBuf[8192] = {0};
     unsigned char *respBufEnd;
     // Hpack hpack;
@@ -737,7 +732,6 @@ test_hpack_self_enc_dec_test_firefox_error (void)
     assert(memcmp(respBuf, buf, 90) == 0);
     lsquic_henc_cleanup(&henc);
     lsquic_hdec_cleanup(&hdec);
-#endif //NDEBUG
 }
 
 
@@ -991,7 +985,6 @@ test_henc_long_uncompressable (void)
 static void
 test_static_table_search_exhaustive (void)
 {
-#ifndef NDEBUG
     int i;
     int count = sizeof(g_HpackStaticTableTset) / sizeof(hpack_hdr_tbl_t);
     assert(count == 61);
@@ -1053,14 +1046,12 @@ test_static_table_search_exhaustive (void)
     assert(val_matched == 0);
 
     printf("%s Done.\n", __func__);
-#endif //NDEBUG
 }
 
 
 static void
 test_integer_decoding (void)
 {
-#ifndef NDEBUG
     static const struct integer_decoding_test
     {
         int             idt_lineno;
@@ -1138,14 +1129,12 @@ test_integer_decoding (void)
         if (0 == s)
             assert(value == test->idt_value);
     }
-#endif //NDEBUG
 }
 
 
 static void
 test_huffman_encoding_corner_cases (void)
 {
-#ifndef NDEBUG
     int s;
     unsigned char buf[0x10];
 
@@ -1173,7 +1162,6 @@ test_huffman_encoding_corner_cases (void)
     s = lsquic_henc_enc_str(buf, 1, (unsigned char *) "a", 1000);
     assert(-1 == s);
     assert(0 == buf[1]);
-#endif //NDEBUG
 }
 
 

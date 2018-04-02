@@ -8,7 +8,9 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef MSVC
 #include <vc_compat.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
@@ -94,13 +96,13 @@ lsquic_rechist_stop_wait (lsquic_rechist_t *rechist, lsquic_packno_t cutoff)
         {
             if (pi->range.high < cutoff)
             {
-                rechist->rh_n_packets -= pi->range.high - pi->range.low + 1;
+                rechist->rh_n_packets -= (unsigned)(pi->range.high - pi->range.low + 1);
                 TAILQ_REMOVE(&rechist->rh_pints.pk_intervals, pi, next_pi);
                 free(pi);
             }
             else
             {
-                rechist->rh_n_packets -= cutoff - pi->range.low;
+                rechist->rh_n_packets -= (unsigned)(cutoff - pi->range.low);
                 pi->range.low = cutoff;
             }
         }

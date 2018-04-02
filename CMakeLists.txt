@@ -28,6 +28,7 @@ ENDIF()
 
 MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
 
+
 IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
@@ -71,11 +72,11 @@ ENDIF()
 ELSE()
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
 IF(DEVEL_MODE EQUAL 1)
-    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od ")
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
     #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
     #SET (FIULIB "fiu")
 ELSE()
-    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -OX")
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Ox")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DNDEBUG")
     # Comment out the following line to compile out debug messages:
     #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
@@ -83,9 +84,9 @@ ENDIF()
 
 SET (BORINGSSL_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/include)
 SET (VCPKG_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/include )
+set (BORINGSSL_BASE_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl)
 
 SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
-set (BORINGSSL_BASE_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/build/x64)
 
 ENDIF() #MSVC
 
@@ -113,6 +114,7 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
     link_directories( /usr/local/lib )
 ENDIF()
 
+
 IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
 add_executable(http_client
     test/http_client.c
@@ -131,23 +133,23 @@ add_executable(http_client
     wincompat/getopt1.c
 )
 
-target_link_libraries(http_client 
+target_link_libraries(http_client
 		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
 		debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib
 		debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib
-		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib 
-		debug  ${BORINGSSL_BASE_LIB_DIR}/debug/crypto.lib
+		debug  ${BORINGSSL_BASE_LIB_DIR}/ssl/debug/ssl.lib
+		debug  ${BORINGSSL_BASE_LIB_DIR}/crypto/debug/crypto.lib
 		ws2_32
 		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
 		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
 		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
-		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib 
-		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto.lib
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl/release/ssl.lib
+		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto/release/crypto.lib
 		${FIULIB} )
 
 ENDIF()
 
-
+#target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
 
 add_subdirectory(src)
 

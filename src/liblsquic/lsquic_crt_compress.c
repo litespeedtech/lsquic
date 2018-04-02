@@ -445,7 +445,7 @@ int decompress_certs(const unsigned char *in, const unsigned char *in_end,
 {
     int ret;
     size_t i;
-    uint8_t* uncompressed_data = NULL, *uncompressed_data_buf = NULL;
+    uint8_t* uncompressed_data, *uncompressed_data_buf;
     lsquic_str_t *dict;
     uint32_t uncompressed_size;
     size_t count = *out_certs_count;
@@ -463,6 +463,9 @@ int decompress_certs(const unsigned char *in, const unsigned char *in_end,
         return -1;
 
     uncompressed_data_buf = NULL;
+#ifdef WIN32
+    uncompressed_data = NULL;
+#endif
     entries = malloc(count * sizeof(cert_entry_t));
     if (!entries)
         goto err;
@@ -487,6 +490,9 @@ int decompress_certs(const unsigned char *in, const unsigned char *in_end,
             goto err;
         
         uncompressed_data_buf = uncompressed_data = malloc(uncompressed_size);
+        if (!uncompressed_data)
+            goto err;
+
         memset(&z, 0, sizeof(z));
         z.next_out  = uncompressed_data;
         z.avail_out = uncompressed_size;

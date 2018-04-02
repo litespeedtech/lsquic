@@ -44,10 +44,10 @@ struct lsquic_henc
     struct enc_head     hpe_all_entries;
     struct double_enc_head
                        *hpe_buckets;
-#ifndef NDEBUG
+#ifndef NDEBUG                       
     const struct enc_table_entry
                        *hpe_iter;
-#endif
+#endif                       
 };
 
 

@@ -299,7 +299,7 @@ static void
 set_retx_alarm (lsquic_send_ctl_t *ctl)
 {
     enum retx_mode rm;
-    lsquic_time_t delay = 0, now;
+    lsquic_time_t delay, now;
 
     assert(!TAILQ_EMPTY(&ctl->sc_unacked_packets));
 
@@ -339,6 +339,10 @@ set_retx_alarm (lsquic_send_ctl_t *ctl)
          */
         delay = calculate_packet_rto(ctl);
         break;
+#ifdef WIN32
+    default:
+        delay = 0;
+#endif
     }
 
     if (delay > MAX_RTO_DELAY)
@@ -926,7 +930,7 @@ static void
 send_ctl_expire (lsquic_send_ctl_t *ctl, enum expire_filter filter)
 {
     lsquic_packet_out_t *packet_out, *next;
-    int n_resubmitted =0;
+    int n_resubmitted;
     static const char *const filter_type2str[] = {
         [EXFI_ALL] = "all",
         [EXFI_HSK] = "handshake",
@@ -957,6 +961,10 @@ send_ctl_expire (lsquic_send_ctl_t *ctl, enum expire_filter filter)
         else
             n_resubmitted = 0;
         break;
+#ifdef WIN32
+    default:
+        n_resubmitted = 0;
+#endif
     }
 
     LSQ_DEBUG("consider %s packets lost: %d resubmitted",
@@ -1301,11 +1309,14 @@ lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *ctl, int tcid0)
 void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
 {
-    struct lsquic_packet_out *packet_out, *next = NULL;
+    struct lsquic_packet_out *packet_out, *next;
     struct lsquic_packet_out *pre_dropped;
     unsigned n, adj;
 
     pre_dropped = NULL;
+#ifdef WIN32
+    next = NULL;
+#endif
     for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
                                                             packet_out = next)
     {

@@ -615,7 +615,7 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
     struct stream_rec **new_srecs, **srecs = local_arr;
     struct stream_rec *srec;
     unsigned n_srecs_alloced = sizeof(local_arr) / sizeof(local_arr[0]);
-    unsigned n_srecs, max_idx = 0, n, nbytes;
+    unsigned n_srecs, max_idx, n, nbytes;
 #ifndef NDEBUG
     unsigned short frame_sum = 0;
 #endif
@@ -627,6 +627,9 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
     assert(packet_out->po_frame_types == (1 << QUIC_FRAME_STREAM));
 
     n_srecs = 0;
+#ifdef WIN32
+    max_idx = 0;
+#endif
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
     {
         /* We only expect references to STREAM frames (buffered packets): */
