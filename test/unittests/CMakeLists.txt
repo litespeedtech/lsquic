@@ -243,7 +243,7 @@ target_link_libraries(test_dec libssl.a libcrypto.a z m pthread ${FIULIB})
 #MSVC
 ELSE()
 
-SET (UGH_LIB_LIST debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib debug  ${BORINGSSL_BASE_LIB_DIR}/debug/ssl.lib debug  ${BORINGSSL_BASE_LIB_DIR}/debug/crypto.lib optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib optimized  ${VCPKG_BASE_DIR}/lib/event.lib optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl.lib optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto.lib)
+SET (UGH_LIB_LIST debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib debug  ${BORINGSSL_BASE_LIB_DIR}/ssl/debug/ssl.lib debug  ${BORINGSSL_BASE_LIB_DIR}/crypto/debug/crypto.lib optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib optimized  ${VCPKG_BASE_DIR}/lib/event.lib optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl/Release/ssl.lib optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto/Release/crypto.lib)
 
 set(MIN_LIBS_LIST ${FIULIB} ws2_32)
 set(LIBS_LIST ${UGH_LIB_LIST} ${MIN_LIBS_LIST})
