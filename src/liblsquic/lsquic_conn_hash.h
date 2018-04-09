@@ -21,19 +21,20 @@ TAILQ_HEAD(lsquic_conn_head, lsquic_conn);
 
 struct conn_hash
 {
-    struct lsquic_conn_head  ch_all;
     struct lsquic_conn_head *ch_buckets;
-    struct lsquic_conn      *ch_next;
+    struct {
+        unsigned             cur_buckno;
+        struct lsquic_conn  *next_conn;
+    }                        ch_iter;
     unsigned                 ch_count;
     unsigned                 ch_nbits;
-    unsigned                 ch_max_count;
 };
 
 #define conn_hash_count(conn_hash) (+(conn_hash)->ch_count)
 
 /* Returns -1 if malloc fails */
 int
-conn_hash_init (struct conn_hash *, unsigned max_count);
+conn_hash_init (struct conn_hash *);
 
 void
 conn_hash_cleanup (struct conn_hash *);

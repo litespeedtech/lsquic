@@ -26,7 +26,6 @@ struct attq
 {
     struct malo        *aq_elem_malo;
     struct attq_elem  **aq_heap;
-    lsquic_time_t       aq_min;
     unsigned            aq_nelem;
     unsigned            aq_nalloc;
 };
@@ -89,17 +88,6 @@ attq_verify (struct attq *q)
 #else
 #define attq_verify(q)
 #endif
-
-
-int
-attq_maybe_add (struct attq *q, struct lsquic_conn *conn,
-                                            lsquic_time_t advisory_time)
-{
-    if (advisory_time < q->aq_min)
-        return 1;
-    else
-        return attq_add(q, conn, advisory_time);
-}
 
 
 static void
@@ -272,14 +260,4 @@ attq_next_time (struct attq *q)
         return &q->aq_heap[0]->ae_adv_time;
     else
         return NULL;
-}
-
-
-lsquic_time_t
-attq_set_min (struct attq *q, lsquic_time_t new_min)
-{
-    lsquic_time_t prev_value;
-    prev_value = q->aq_min;
-    q->aq_min = new_min;
-    return prev_value;
 }

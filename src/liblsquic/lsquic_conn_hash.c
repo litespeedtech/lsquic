@@ -20,24 +20,19 @@
 
 
 int
-conn_hash_init (struct conn_hash *conn_hash, unsigned max_count)
+conn_hash_init (struct conn_hash *conn_hash)
 {
     unsigned n;
 
-    if (!max_count)
-        max_count = 1000000;
-
     memset(conn_hash, 0, sizeof(*conn_hash));
-    conn_hash->ch_max_count = max_count;
     conn_hash->ch_nbits = 1;  /* Start small */
-    TAILQ_INIT(&conn_hash->ch_all);
     conn_hash->ch_buckets = malloc(sizeof(conn_hash->ch_buckets[0]) *
                                                 n_buckets(conn_hash->ch_nbits));
     if (!conn_hash->ch_buckets)
         return -1;
     for (n = 0; n < n_buckets(conn_hash->ch_nbits); ++n)
         TAILQ_INIT(&conn_hash->ch_buckets[n]);
-    LSQ_INFO("initialized: max_count: %u", conn_hash->ch_max_count);
+    LSQ_INFO("initialized");
     return 0;
 }
 
@@ -105,8 +100,6 @@ conn_hash_add (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
 {
     const unsigned hash = XXH32(&lconn->cn_cid, sizeof(lconn->cn_cid),
                                                         (uintptr_t) conn_hash);
-    if (conn_hash->ch_count >= conn_hash->ch_max_count)
-        return -1;
     if (conn_hash->ch_count >=
                 n_buckets(conn_hash->ch_nbits) * CONN_HASH_MAX_PER_BUCKET &&
         conn_hash->ch_nbits < sizeof(hash) * 8 - 1                        &&
@@ -116,7 +109,6 @@ conn_hash_add (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
     }
     const unsigned buckno = conn_hash_bucket_no(conn_hash, hash);
     lconn->cn_hash = hash;
-    TAILQ_INSERT_TAIL(&conn_hash->ch_all, lconn, cn_next_all);
     TAILQ_INSERT_TAIL(&conn_hash->ch_buckets[buckno], lconn, cn_next_hash);
     ++conn_hash->ch_count;
     return 0;
@@ -127,7 +119,6 @@ void
 conn_hash_remove (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
 {
     const unsigned buckno = conn_hash_bucket_no(conn_hash, lconn->cn_hash);
-    TAILQ_REMOVE(&conn_hash->ch_all, lconn, cn_next_all);
     TAILQ_REMOVE(&conn_hash->ch_buckets[buckno], lconn, cn_next_hash);
     --conn_hash->ch_count;
 }
@@ -136,7 +127,8 @@ conn_hash_remove (struct conn_hash *conn_hash, struct lsquic_conn *lconn)
 void
 conn_hash_reset_iter (struct conn_hash *conn_hash)
 {
-    conn_hash->ch_next = TAILQ_FIRST(&conn_hash->ch_all);
+    conn_hash->ch_iter.cur_buckno = 0;
+    conn_hash->ch_iter.next_conn  = TAILQ_FIRST(&conn_hash->ch_buckets[0]);
 }
 
 
@@ -151,8 +143,16 @@ conn_hash_first (struct conn_hash *conn_hash)
 struct lsquic_conn *
 conn_hash_next (struct conn_hash *conn_hash)
 {
-    struct lsquic_conn *lconn = conn_hash->ch_next;
+    struct lsquic_conn *lconn = conn_hash->ch_iter.next_conn;
+    while (!lconn)
+    {
+        ++conn_hash->ch_iter.cur_buckno;
+        if (conn_hash->ch_iter.cur_buckno >= n_buckets(conn_hash->ch_nbits))
+            return NULL;
+        lconn = TAILQ_FIRST(&conn_hash->ch_buckets[
+                                            conn_hash->ch_iter.cur_buckno]);
+    }
     if (lconn)
-        conn_hash->ch_next = TAILQ_NEXT(lconn, cn_next_all);
+        conn_hash->ch_iter.next_conn = TAILQ_NEXT(lconn, cn_next_hash);
     return lconn;
 }

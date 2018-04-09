@@ -19,13 +19,10 @@ struct prog
     unsigned                        prog_engine_flags;
     struct service_port             prog_dummy_sport;   /* Use for options */
     unsigned                        prog_packout_max;
-#define PROG_DEFAULT_PERIOD_USEC                (10 * 1000) /* 10 ms default */
-    unsigned                        prog_period_usec;
     unsigned short                  prog_max_packet_size;
     int                             prog_version_cleared;
     struct event_base              *prog_eb;
     struct event                   *prog_timer,
-                                   *prog_onetimer,
                                    *prog_usr1;
     struct sport_head              *prog_sports;
     struct lsquic_engine           *prog_engine;
@@ -48,7 +45,7 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #   define IP_DONTFRAG_FLAG ""
 #endif
 
-#define PROG_OPTS "i:m:c:y:L:l:o:H:s:S:Y:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
+#define PROG_OPTS "m:c:y:L:l:o:H:s:S:Y:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
 
 /* Returns:
  *  0   Applied
@@ -79,10 +76,10 @@ prog_connect (struct prog *);
 void
 prog_print_common_options (const struct prog *, FILE *);
 
-void
-prog_maybe_set_onetimer (struct prog *);
-
 int
 prog_is_stopped (void);
+
+void
+prog_process_conns (struct prog *);
 
 #endif

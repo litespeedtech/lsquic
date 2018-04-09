@@ -28,9 +28,6 @@
 
 static int prog_stopped;
 
-static void
-prog_set_onetimer (struct prog *prog, unsigned usec);
-
 static const struct lsquic_packout_mem_if pmi = {
     .pmi_allocate = pba_allocate,
     .pmi_release  = pba_release,
@@ -91,8 +88,6 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                   ::1:12345\n"
 "                 If no -s option is given, 0.0.0.0:12345 address\n"
 "                 is used.\n"
-"   -i USEC     Library will `tick' every USEC microseconds.  The default\n"
-"                 is %u\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -122,7 +117,6 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "   -S opt=val  Socket options.  Supported options:\n"
 "                   sndbuf=12345    # Sets SO_SNDBUF\n"
 "                   rcvbuf=12345    # Sets SO_RCVBUF\n"
-        , PROG_DEFAULT_PERIOD_USEC
     );
 
 
@@ -150,9 +144,6 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
 {
     switch (opt)
     {
-    case 'i':
-        prog->prog_period_usec = atoi(arg);
-        return 0;
 #if LSQUIC_DONTFRAG_SUPPORTED
     case 'D':
         {
@@ -248,6 +239,7 @@ prog_connect (struct prog *prog)
                     prog->prog_max_packet_size))
         return -1;
 
+    prog_process_conns(prog);
     return 0;
 }
 
@@ -278,30 +270,30 @@ prog_init_server (struct prog *prog)
 }
 
 
-static void
-drop_onetimer (struct prog *prog)
-{
-    if (prog->prog_onetimer)
-    {
-        event_del(prog->prog_onetimer);
-        event_free(prog->prog_onetimer);
-        prog->prog_onetimer = NULL;
-    }
-}
-
-
 void
-prog_maybe_set_onetimer (struct prog *prog)
+prog_process_conns (struct prog *prog)
 {
     int diff;
+    struct timeval timeout;
+
+    lsquic_engine_process_conns(prog->prog_engine);
 
     if (lsquic_engine_earliest_adv_tick(prog->prog_engine, &diff))
     {
-        if (diff > 0)
-            prog_set_onetimer(prog, (unsigned) diff);
+        if (diff < 4000)
+        {
+            timeout.tv_sec  = 0;
+            timeout.tv_usec = 4000;
+        }
+        else
+        {
+            timeout.tv_sec = (unsigned) diff / 1000000;
+            timeout.tv_usec = (unsigned) diff % 1000000;
+        }
+
+        if (!prog_is_stopped())
+            event_add(prog->prog_timer, &timeout);
     }
-    else
-        drop_onetimer(prog);
 }
 
 
@@ -309,33 +301,8 @@ static void
 prog_timer_handler (int fd, short what, void *arg)
 {
     struct prog *const prog = arg;
-    lsquic_engine_proc_all(prog->prog_engine);
-    prog_maybe_set_onetimer(prog);
-}
-
-
-static void
-prog_onetimer_handler (int fd, short what, void *arg)
-{
-    struct prog *const prog = arg;
-    lsquic_engine_process_conns_to_tick(prog->prog_engine);
-    prog_maybe_set_onetimer(prog);
-}
-
-
-static void
-prog_set_onetimer (struct prog *prog, unsigned usec)
-{
-    struct timeval timeout;
-
-    drop_onetimer(prog);
-    if (usec < 4000)
-        usec = 4000;
-    timeout.tv_sec  = 0;
-    timeout.tv_usec = usec;
-    prog->prog_onetimer = event_new(prog->prog_eb, -1, EV_TIMEOUT,
-                                        prog_onetimer_handler, prog);
-    event_add(prog->prog_onetimer, &timeout);
+    if (!prog_is_stopped())
+        prog_process_conns(prog);
 }
 
 
@@ -350,18 +317,11 @@ prog_usr1_handler (int fd, short what, void *arg)
 int
 prog_run (struct prog *prog)
 {
-    struct timeval timeout;
-    timeout.tv_sec  = 0;
-    timeout.tv_usec = prog->prog_period_usec;
-    prog->prog_timer = event_new(prog->prog_eb, -1, EV_PERSIST,
-                                        prog_timer_handler, prog);
-    event_add(prog->prog_timer, &timeout);
 #ifndef WIN32
     prog->prog_usr1 = evsignal_new(prog->prog_eb, SIGUSR1,
                                                     prog_usr1_handler, prog);
     evsignal_add(prog->prog_usr1, NULL);
 #endif
-
 
     event_base_loop(prog->prog_eb, 0);
 
@@ -392,7 +352,6 @@ prog_stop (struct prog *prog)
         sport_destroy(sport);
     }
 
-    drop_onetimer(prog);
     if (prog->prog_timer)
     {
         event_del(prog->prog_timer);
@@ -413,11 +372,6 @@ prog_prep (struct prog *prog)
 {
     int s;
     char err_buf[100];
-
-    if (0 == prog->prog_period_usec)
-        prog->prog_period_usec = PROG_DEFAULT_PERIOD_USEC;
-    if (prog->prog_settings.es_proc_time_thresh == LSQUIC_DF_PROC_TIME_THRESH)
-        prog->prog_settings.es_proc_time_thresh = prog->prog_period_usec;
 
     if (0 != lsquic_engine_check_settings(prog->prog_api.ea_settings,
                         prog->prog_engine_flags, err_buf, sizeof(err_buf)))
@@ -441,6 +395,9 @@ prog_prep (struct prog *prog)
                                                             &prog->prog_api);
     if (!prog->prog_engine)
         return -1;
+
+    prog->prog_timer = event_new(prog->prog_eb, -1, 0,
+                                        prog_timer_handler, prog);
 
     if (prog->prog_engine_flags & LSENG_SERVER)
         s = prog_init_server(prog);

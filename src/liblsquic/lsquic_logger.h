@@ -70,6 +70,7 @@ enum lsquic_logger_module {
     LSQLM_SPI,
     LSQLM_DI,
     LSQLM_PACER,
+    LSQLM_MIN_HEAP,
     N_LSQUIC_LOGGER_MODULES
 };
 

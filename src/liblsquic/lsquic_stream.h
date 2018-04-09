@@ -280,18 +280,6 @@ struct stream_read_prog_status
     enum stream_flags       srps_flags;
 };
 
-#define lsquic_stream_get_read_prog_status(stream, stats) do {              \
-    (stats)->srps_read_offset = (stream)->read_offset;                      \
-    (stats)->srps_flags       =                                             \
-                        (stream)->stream_flags & STREAM_RW_PROG_FLAGS;      \
-} while (0)
-
-#define lsquic_stream_progress_was_made(stream, stats) (                    \
-    (stats)->srps_read_offset != (stream)->read_offset                      \
- || (stats)->srps_flags       !=                                            \
-                        ((stream)->stream_flags & STREAM_RW_PROG_FLAGS)     \
-)
-
 #define lsquic_stream_is_critical(stream) (                                 \
     (stream)->id == LSQUIC_STREAM_HANDSHAKE ||                              \
     ((stream)->id == LSQUIC_STREAM_HEADERS &&                               \
@@ -304,5 +292,11 @@ lsquic_cid_t
 lsquic_stream_cid (const struct lsquic_stream *);
 
 #define lsquic_stream_has_data_to_flush(stream) ((stream)->sm_n_buffered > 0)
+
+int
+lsquic_stream_readable (const lsquic_stream_t *);
+
+size_t
+lsquic_stream_write_avail (const struct lsquic_stream *);
 
 #endif

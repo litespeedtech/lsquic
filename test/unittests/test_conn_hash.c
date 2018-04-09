@@ -48,7 +48,7 @@ main (int argc, char **argv)
     lsquic_set_log_level("info");
 
     malo = lsquic_malo_create(sizeof(*lconn));
-    s = conn_hash_init(&conn_hash, nelems);
+    s = conn_hash_init(&conn_hash);
     assert(0 == s);
 
     for (n = 0; n < nelems; ++n)
@@ -62,18 +62,6 @@ main (int argc, char **argv)
     }
 
     assert(nelems == conn_hash_count(&conn_hash));
-
-    {
-        lconn = get_new_lsquic_conn(malo);
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
-        assert(!find_lsconn);
-        s = conn_hash_add(&conn_hash, lconn);
-        assert(-1 == s);
-        lsquic_malo_put(lconn);
-    }
-
-    for (n = 0, lconn = conn_hash_first(&conn_hash); lconn; ++n, lconn = conn_hash_next(&conn_hash))
-        assert(n == (uintptr_t) lconn->cn_if);
 
     for (lconn = lsquic_malo_first(malo); lconn;
              lconn = lsquic_malo_next(malo))

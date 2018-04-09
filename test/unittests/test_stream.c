@@ -128,8 +128,8 @@ lsquic_send_ctl_determine_bpt (struct lsquic_send_ctl *ctl,
 
 /* This function is only here to avoid crash in the test: */
 void
-lsquic_engine_add_conn_to_pend_rw (struct lsquic_engine_public *enpub,
-                                lsquic_conn_t *conn, enum rw_reason reason)
+lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
+                                    lsquic_conn_t *conn)
 {
 }
 

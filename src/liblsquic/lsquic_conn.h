@@ -24,7 +24,6 @@ struct parse_funcs;
 struct attq_elem;
 
 enum lsquic_conn_flags {
-    LSCONN_HAS_INCOMING   = (1 << 0),
     LSCONN_HAS_OUTGOING   = (1 << 1),
     LSCONN_HASHED         = (1 << 2),
     LSCONN_HAS_PEER_SA    = (1 << 4),
@@ -35,25 +34,19 @@ enum lsquic_conn_flags {
     LSCONN_TCID0          = (1 << 9),
     LSCONN_VER_SET        = (1 <<10),   /* cn_version is set */
     LSCONN_EVANESCENT     = (1 <<11),   /* evanescent connection */
-    LSCONN_RW_PENDING     = (1 <<12),
+    LSCONN_TICKABLE       = (1 <<12),   /* Connection is in the Tickable Queue */
     LSCONN_COI_ACTIVE     = (1 <<13),
     LSCONN_COI_INACTIVE   = (1 <<14),
     LSCONN_SEND_BLOCKED   = (1 <<15),   /* Send connection blocked frame */
-    LSCONN_NEVER_PEND_RW  = (1 <<17),   /* Do not put onto Pending RW queue */
+    LSCONN_NEVER_TICKABLE = (1 <<17),   /* Do not put onto the Tickable Queue */
     LSCONN_ATTQ           = (1 <<19),
 };
-
-#define TICK_BIT_PROGRESS 2
 
 /* A connection may have things to send and be closed at the same time.
  */
 enum tick_st {
     TICK_SEND    = (1 << 0),
     TICK_CLOSE   = (1 << 1),
-    /* Progress was made (see @ref es_pendrw_check for definition of
-     * "progress.")
-     */
-    TICK_PROGRESS= (1 << TICK_BIT_PROGRESS),
 };
 
 #define TICK_QUIET 0
@@ -86,10 +79,13 @@ struct conn_iface
 
     void
     (*ci_destroy) (struct lsquic_conn *);
-};
 
-#define RW_HIST_BITS 6
-typedef unsigned char rw_hist_idx_t;
+    int
+    (*ci_is_tickable) (struct lsquic_conn *);
+
+    lsquic_time_t
+    (*ci_next_tick_time) (struct lsquic_conn *);
+};
 
 struct lsquic_conn
 {
@@ -99,22 +95,18 @@ struct lsquic_conn
                                 *cn_esf;
     lsquic_cid_t                 cn_cid;
     STAILQ_ENTRY(lsquic_conn)    cn_next_closed_conn;
-    TAILQ_ENTRY(lsquic_conn)     cn_next_all,
-                                 cn_next_in,
-                                 cn_next_pend_rw,
-                                 cn_next_out,
+    STAILQ_ENTRY(lsquic_conn)    cn_next_ticked;
+    TAILQ_ENTRY(lsquic_conn)     cn_next_out,
                                  cn_next_hash;
     const struct conn_iface     *cn_if;
     const struct parse_funcs    *cn_pf;
     struct attq_elem            *cn_attq_elem;
     lsquic_time_t                cn_last_sent;
+    lsquic_time_t                cn_last_ticked;
     enum lsquic_conn_flags       cn_flags;
     enum lsquic_version          cn_version;
-    unsigned                     cn_noprogress_count;
     unsigned                     cn_hash;
     unsigned short               cn_pack_size;
-    rw_hist_idx_t                cn_rw_hist_idx;
-    unsigned char                cn_rw_hist_buf[ 1 << RW_HIST_BITS ];
     unsigned char                cn_peer_addr[sizeof(struct sockaddr_in6)],
                                  cn_local_addr[sizeof(struct sockaddr_in6)];
 };

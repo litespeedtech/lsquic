@@ -52,6 +52,7 @@ SET(lsquic_STAT_SRCS
     lsquic_hpack_enc.c
     lsquic_xxhash.c
     lsquic_buf.c
+    lsquic_min_heap.c
     )
 
 

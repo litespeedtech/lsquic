@@ -219,11 +219,21 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
     }                                                       \
 } while (0)
 
+#define lsquic_send_ctl_next_pacer_time(ctl) (              \
+    ((ctl)->sc_flags & SC_PACE)                             \
+        && pacer_delayed(&(ctl)->sc_pacer)                  \
+        ? pacer_next_sched(&(ctl)->sc_pacer)                \
+        : 0 )
+
 enum lsquic_packno_bits
 lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *);
 
 int
 lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
+
+#define lsquic_send_ctl_has_buffered(ctl) (                                 \
+    TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets)  \
+ || TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets  ))
 
 #define lsquic_send_ctl_invalidate_bpt_cache(ctl) do {      \
     (ctl)->sc_cached_bpt.stream_id = 0;                     \

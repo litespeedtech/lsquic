@@ -1,3 +1,61 @@
+2018-04-09
+
+    [API Change, OPTIMIZATION] Only process conns that need to be processed
+
+    The API is simplified: do not expose the user code to several
+    queues.  A "connection queue" is now an internal concept.
+    The user processes connections using the single function
+    lsquic_engine_process_conns().  When this function is called,
+    only those connections are processed that need to be processed.
+    A connection needs to be processed when:
+
+        1. New incoming packets have been fed to the connection.
+        2. User wants to read from a stream that is readable.
+        3. User wants to write to a stream that is writeable.
+        4. There are buffered packets that can be sent out.  (This
+           means that the user wrote to a stream outside of the
+           lsquic library callback.)
+        5. A control frame (such as BLOCKED) needs to be sent out.
+        6. A stream needs to be serviced or delayed stream needs to
+           be created.
+        7. An alarm rings.
+        8. Pacer timer expires.
+
+    To achieve this, the library places the connections into two
+    priority queues (min heaps):
+
+        1. Tickable Queue; and
+        2. Advisory Tick Time queue (ATTQ).
+
+    Each time lsquic_engine_process_conns() is called, the Tickable
+    Queue is emptied.  After the connections have been ticked, they are
+    queried again: if a connection is not being closed, it is placed
+    either in the Tickable Queue if it is ready to be ticked again or
+    it is placed in the Advisory Tick Time Queue.  It is assumed that
+    a connection always has at least one timer set (the idle alarm).
+
+    The connections in the Tickable Queue are arranged in the least
+    recently ticked order.  This lets connections that have been quiet
+    longer to get their packets scheduled first.
+
+    This change means that the library no longer needs to be ticked
+    periodically.  The user code can query the library when is the
+    next tick event and schedule it exactly.  When connections are
+    processed, only the tickable connections are processed, not *all*
+    the connections.  When there are no tick events, it means that no
+    timer event is necessary -- only the file descriptor READ event
+    is active.
+
+    The following are improvements and simplifications that have
+    been triggered:
+
+        - Queue of connections with incoming packets is gone.
+        - "Pending Read/Write Events" Queue is gone (along with its
+          history and progress checks).  This queue has become the
+          Tickable Queue.
+        - The connection hash no longer needs to track the connection
+          insertion order.
+
 2018-04-02
 
     - [FEATURE] Windows support

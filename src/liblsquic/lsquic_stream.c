@@ -71,9 +71,6 @@ stream_wantread (lsquic_stream_t *stream, int is_want);
 static int
 stream_wantwrite (lsquic_stream_t *stream, int is_want);
 
-static int
-stream_readable (const lsquic_stream_t *stream);
-
 static ssize_t
 stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t);
 
@@ -174,13 +171,12 @@ stream_inside_callback (const lsquic_stream_t *stream)
 
 /* Here, "readable" means that the user is able to read from the stream. */
 static void
-maybe_conn_to_pendrw_if_readable (lsquic_stream_t *stream,
-                                                        enum rw_reason reason)
+maybe_conn_to_tickable_if_readable (lsquic_stream_t *stream)
 {
-    if (!stream_inside_callback(stream) && stream_readable(stream))
+    if (!stream_inside_callback(stream) && lsquic_stream_readable(stream))
     {
-        lsquic_engine_add_conn_to_pend_rw(stream->conn_pub->enpub,
-                                            stream->conn_pub->lconn, reason);
+        lsquic_engine_add_conn_to_tickable(stream->conn_pub->enpub,
+                                           stream->conn_pub->lconn);
     }
 }
 
@@ -189,15 +185,14 @@ maybe_conn_to_pendrw_if_readable (lsquic_stream_t *stream,
  * scheduled to be sent out.
  */
 static void
-maybe_conn_to_pendrw_if_writeable (lsquic_stream_t *stream,
-                                                        enum rw_reason reason)
+maybe_conn_to_tickable_if_writeable (lsquic_stream_t *stream)
 {
     if (!stream_inside_callback(stream) &&
             lsquic_send_ctl_can_send(stream->conn_pub->send_ctl) &&
           ! lsquic_send_ctl_have_delayed_packets(stream->conn_pub->send_ctl))
     {
-        lsquic_engine_add_conn_to_pend_rw(stream->conn_pub->enpub,
-                                            stream->conn_pub->lconn, reason);
+        lsquic_engine_add_conn_to_tickable(stream->conn_pub->enpub,
+                                           stream->conn_pub->lconn);
     }
 }
 
@@ -403,8 +398,8 @@ lsquic_stream_call_on_close (lsquic_stream_t *stream)
 }
 
 
-static int
-stream_readable (const lsquic_stream_t *stream)
+int
+lsquic_stream_readable (const lsquic_stream_t *stream)
 {
     /* A stream is readable if one of the following is true: */
     return
@@ -429,8 +424,8 @@ stream_readable (const lsquic_stream_t *stream)
 }
 
 
-static size_t
-stream_write_avail (const struct lsquic_stream *stream)
+size_t
+lsquic_stream_write_avail (const struct lsquic_stream *stream)
 {
     uint64_t stream_avail, conn_avail;
 
@@ -516,7 +511,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         }
         if (got_next_offset)
             /* Checking the offset saves di_get_frame() call */
-            maybe_conn_to_pendrw_if_readable(stream, RW_REASON_STREAM_IN);
+            maybe_conn_to_tickable_if_readable(stream);
         return 0;
     }
     else if (INS_FRAME_DUP == ins_frame)
@@ -603,7 +598,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     }
 
     /* Let user collect error: */
-    maybe_conn_to_pendrw_if_readable(stream, RW_REASON_RST_IN);
+    maybe_conn_to_tickable_if_readable(stream);
 
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
@@ -793,7 +788,7 @@ lsquic_stream_readv (lsquic_stream_t *stream, const struct iovec *iov,
             if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
                 TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream, next_send_stream);
             stream->stream_flags |= STREAM_SEND_WUF;
-            maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_USER_READ);
+            maybe_conn_to_tickable_if_writeable(stream);
         }
     }
 
@@ -894,7 +889,7 @@ lsquic_stream_shutdown (lsquic_stream_t *stream, int how)
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
     if (how)
-        maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_SHUTDOWN);
+        maybe_conn_to_tickable_if_writeable(stream);
 
     return 0;
 }
@@ -1045,7 +1040,7 @@ lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
     if (!(stream->stream_flags & STREAM_U_READ_DONE))
     {
         if (is_want)
-            maybe_conn_to_pendrw_if_readable(stream, RW_REASON_WANTREAD);
+            maybe_conn_to_tickable_if_readable(stream);
         return stream_wantread(stream, is_want);
     }
     else
@@ -1083,7 +1078,8 @@ stream_dispatch_read_events_loop (lsquic_stream_t *stream)
     no_progress_limit = stream->conn_pub->enpub->enp_settings.es_progress_check;
 
     no_progress_count = 0;
-    while ((stream->stream_flags & STREAM_WANT_READ) && stream_readable(stream))
+    while ((stream->stream_flags & STREAM_WANT_READ)
+                                            && lsquic_stream_readable(stream))
     {
         flags = stream->stream_flags & USER_PROGRESS_FLAGS;
         size  = stream->read_offset;
@@ -1121,7 +1117,7 @@ stream_dispatch_write_events_loop (lsquic_stream_t *stream)
     stream->stream_flags |= STREAM_LAST_WRITE_OK;
     while ((stream->stream_flags & (STREAM_WANT_WRITE|STREAM_LAST_WRITE_OK))
                                 == (STREAM_WANT_WRITE|STREAM_LAST_WRITE_OK)
-           && stream_write_avail(stream))
+           && lsquic_stream_write_avail(stream))
     {
         flags = stream->stream_flags & USER_PROGRESS_FLAGS;
 
@@ -1149,7 +1145,7 @@ stream_dispatch_write_events_loop (lsquic_stream_t *stream)
 static void
 stream_dispatch_read_events_once (lsquic_stream_t *stream)
 {
-    if ((stream->stream_flags & STREAM_WANT_READ) && stream_readable(stream))
+    if ((stream->stream_flags & STREAM_WANT_READ) && lsquic_stream_readable(stream))
     {
         stream->stream_if->on_read(stream, stream->st_ctx);
     }
@@ -1227,7 +1223,7 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     if (stream->stream_flags & STREAM_RW_ONCE)
     {
         if ((stream->stream_flags & STREAM_WANT_WRITE)
-            && stream_write_avail(stream))
+            && lsquic_stream_write_avail(stream))
         {
             stream->stream_if->on_write(stream, stream->st_ctx);
         }
@@ -1395,7 +1391,7 @@ frame_gen_size (void *ctx)
 
     /* Make sure we are not writing past available size: */
     remaining = fg_ctx->fgc_reader->lsqr_size(fg_ctx->fgc_reader->lsqr_ctx);
-    available = stream_write_avail(fg_ctx->fgc_stream);
+    available = lsquic_stream_write_avail(fg_ctx->fgc_stream);
     if (available < remaining)
         remaining = available;
 
@@ -1452,7 +1448,7 @@ frame_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
         stream->sm_n_buffered = 0;
     }
 
-    available = stream_write_avail(fg_ctx->fgc_stream);
+    available = lsquic_stream_write_avail(fg_ctx->fgc_stream);
     n_to_write = end - p;
     if (n_to_write > available)
         n_to_write = available;
@@ -1662,7 +1658,7 @@ save_to_buffer (lsquic_stream_t *stream, struct lsquic_reader *reader,
             return -1;
     }
 
-    avail = stream_write_avail(stream);
+    avail = lsquic_stream_write_avail(stream);
     if (avail < len)
         len = avail;
 
@@ -1891,7 +1887,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint32_t error_code,
     if (do_close)
         lsquic_stream_close(stream);
     else
-        maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_RESET_EXT);
+        maybe_conn_to_tickable_if_writeable(stream);
 }
 
 
@@ -1924,7 +1920,7 @@ lsquic_stream_close (lsquic_stream_t *stream)
     stream_shutdown_read(stream);
     maybe_schedule_call_on_close(stream);
     maybe_finish_stream(stream);
-    maybe_conn_to_pendrw_if_writeable(stream, RW_REASON_STREAM_CLOSE);
+    maybe_conn_to_tickable_if_writeable(stream);
     return 0;
 }
 

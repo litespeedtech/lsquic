@@ -255,9 +255,6 @@ reset_ack_state (struct full_conn *conn);
 static int
 write_is_possible (struct full_conn *);
 
-static int
-dispatch_stream_read_events (struct full_conn *, struct lsquic_stream *);
-
 static const struct headers_stream_callbacks *headers_callbacks_ptr;
 
 #if KEEP_CLOSED_STREAM_HISTORY
@@ -1168,7 +1165,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
          * has not been completed yet.  Nevertheless, this is good enough
          * for now.
          */
-        dispatch_stream_read_events(conn, stream);
+        lsquic_stream_dispatch_read_events(stream);
     }
 
     return parsed_len;
@@ -2350,43 +2347,23 @@ service_streams (struct full_conn *conn)
 }
 
 
-static int
-dispatch_stream_read_events (struct full_conn *conn, lsquic_stream_t *stream)
-{
-    struct stream_read_prog_status saved_status;
-    int progress_made;
-
-    lsquic_stream_get_read_prog_status(stream, &saved_status);
-    lsquic_stream_dispatch_read_events(stream);
-    progress_made = lsquic_stream_progress_was_made(stream, &saved_status);
-
-    return progress_made;
-}
-
-
-/* Return 1 if progress was made, 0 otherwise */
-static int
+static void
 process_streams_read_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     struct stream_prio_iter spi;
-    int progress_count;
 
     if (TAILQ_EMPTY(&conn->fc_pub.read_streams))
-        return 0;
+        return;
 
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.read_streams),
         TAILQ_LAST(&conn->fc_pub.read_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
         STREAM_WANT_READ, conn->fc_conn.cn_cid, "read");
 
-    progress_count = 0;
     for (stream = lsquic_spi_first(&spi); stream;
                                             stream = lsquic_spi_next(&spi))
-        progress_count +=
-            dispatch_stream_read_events(conn, stream);
-
-    return progress_count > 0;
+        lsquic_stream_dispatch_read_events(stream);
 }
 
 
@@ -2429,15 +2406,16 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
 }
 
 
-/* Return 1 if progress was made, 0 otherwise. */
-static int
+static void
 process_hsk_stream_read_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
         if (LSQUIC_STREAM_HANDSHAKE == stream->id)
-            return dispatch_stream_read_events(conn, stream);
-    return 0;
+        {
+            lsquic_stream_dispatch_read_events(stream);
+            break;
+        }
 }
 
 
@@ -2641,13 +2619,13 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     struct full_conn *conn = (struct full_conn *) lconn;
     int have_delayed_packets;
     unsigned n;
-    int progress_made, s;
-    enum tick_st progress_tick = 0;
+    int s;
+    enum tick_st tick = 0;
 
 #define CLOSE_IF_NECESSARY() do {                                       \
     if (conn->fc_flags & FC_IMMEDIATE_CLOSE_FLAGS)                      \
     {                                                                   \
-        progress_tick |= immediate_close(conn);                         \
+        tick |= immediate_close(conn);                         \
         goto end;                                                       \
     }                                                                   \
 } while (0)
@@ -2659,13 +2637,13 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         {                                                               \
             LSQ_DEBUG("used up packet allowance, quiet now (line %d)",  \
                 __LINE__);                                              \
-            progress_tick |= TICK_QUIET;                                \
+            tick |= TICK_QUIET;                                         \
         }                                                               \
         else                                                            \
         {                                                               \
             LSQ_DEBUG("used up packet allowance, sending now (line %d)",\
                 __LINE__);                                              \
-            progress_tick |= TICK_SEND;                                 \
+            tick |= TICK_SEND;                                          \
         }                                                               \
         goto end;                                                       \
     }                                                                   \
@@ -2681,8 +2659,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         conn->fc_mem_logged_last = now;
         LSQ_DEBUG("memory used: %zd bytes", calc_mem_used(conn));
     }
-
-    assert(!(conn->fc_conn.cn_flags & LSCONN_RW_PENDING));
 
     if (conn->fc_flags & FC_HAVE_SAVED_ACK)
     {
@@ -2709,10 +2685,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
      * does not want to wait if it has the server information.
      */
     if (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-        progress_made = process_streams_read_events(conn);
+        process_streams_read_events(conn);
     else
-        progress_made = process_hsk_stream_read_events(conn);
-    progress_tick |= progress_made << TICK_BIT_PROGRESS;
+        process_hsk_stream_read_events(conn);
     CLOSE_IF_NECESSARY();
 
     if (lsquic_send_ctl_pacer_blocked(&conn->fc_send_ctl))
@@ -2774,7 +2749,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          * dropped and replaced by new ACK packet.  This way, we are never
          * more than 1 packet over CWND.
          */
-        progress_tick |= TICK_SEND;
+        tick |= TICK_SEND;
         goto end;
     }
 
@@ -2830,7 +2805,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
-    const unsigned n_sched = lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl);
     if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
     {
         process_hsk_stream_write_events(conn);
@@ -2860,8 +2834,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         process_streams_write_events(conn, 0);
 
   end_write:
-    progress_made = (n_sched < lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl));
-    progress_tick |= progress_made << TICK_BIT_PROGRESS;
 
   skip_write:
     service_streams(conn);
@@ -2883,10 +2855,10 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
                                         !conn->fc_settings->es_silent_close)
         {
             generate_connection_close_packet(conn);
-            progress_tick |= TICK_SEND|TICK_CLOSE;
+            tick |= TICK_SEND|TICK_CLOSE;
         }
         else
-            progress_tick |= TICK_CLOSE;
+            tick |= TICK_CLOSE;
         goto end;
     }
 
@@ -2901,7 +2873,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         }
         else
         {
-            progress_tick |= TICK_QUIET;
+            tick |= TICK_QUIET;
             goto end;
         }
     }
@@ -2924,11 +2896,11 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
                                         lsquic_hash_count(conn->fc_pub.all_streams) > 0)
         lsquic_alarmset_set(&conn->fc_alset, AL_PING, now + TIME_BETWEEN_PINGS);
 
-    progress_tick |= TICK_SEND;
+    tick |= TICK_SEND;
 
   end:
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
-    return progress_tick;
+    return tick;
 }
 
 
@@ -3343,6 +3315,68 @@ lsquic_conn_status (lsquic_conn_t *lconn, char *errbuf, size_t bufsz)
 }
 
 
+static int
+full_conn_ci_is_tickable (lsquic_conn_t *lconn)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    const struct lsquic_stream *stream;
+    int can_send;
+
+    /* This caches the value so that we only need to call the function once */
+#define CAN_SEND() \
+    (can_send >= 0 ? can_send : \
+        (can_send = lsquic_send_ctl_can_send(&conn->fc_send_ctl)))
+
+    if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
+        return 1;
+
+    if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
+        return 1;
+
+    can_send = -1;
+    if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams) && CAN_SEND())
+        return 1;
+
+    TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
+        if (lsquic_stream_readable(stream))
+            return 1;
+
+    if (!TAILQ_EMPTY(&conn->fc_pub.write_streams) && CAN_SEND())
+    {
+        TAILQ_FOREACH(stream, &conn->fc_pub.write_streams, next_write_stream)
+            if (lsquic_stream_write_avail(stream))
+                return 1;
+    }
+
+#undef CAN_SEND
+
+    return 0;
+}
+
+
+static lsquic_time_t
+full_conn_ci_next_tick_time (lsquic_conn_t *lconn)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    lsquic_time_t alarm_time, pacer_time;
+
+    alarm_time = lsquic_alarmset_mintime(&conn->fc_alset);
+    pacer_time = lsquic_send_ctl_next_pacer_time(&conn->fc_send_ctl);
+
+    if (alarm_time && pacer_time)
+    {
+        if (alarm_time < pacer_time)
+            return alarm_time;
+        else
+            return pacer_time;
+    }
+    else if (alarm_time)
+        return alarm_time;
+    else
+        return pacer_time;
+}
+
+
 static const struct headers_stream_callbacks headers_callbacks =
 {
     .hsc_on_headers      = headers_stream_on_incoming_headers,
@@ -3359,7 +3393,9 @@ static const struct conn_iface full_conn_iface = {
     .ci_destroy              =  full_conn_ci_destroy,
     .ci_handshake_failed     =  full_conn_ci_handshake_failed,
     .ci_handshake_ok         =  full_conn_ci_handshake_ok,
+    .ci_is_tickable          =  full_conn_ci_is_tickable,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,
+    .ci_next_tick_time       =  full_conn_ci_next_tick_time,
     .ci_packet_in            =  full_conn_ci_packet_in,
     .ci_packet_not_sent      =  full_conn_ci_packet_not_sent,
     .ci_packet_sent          =  full_conn_ci_packet_sent,

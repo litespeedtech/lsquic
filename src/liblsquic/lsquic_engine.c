@@ -53,6 +53,7 @@
 #include "lsquic_version.h"
 #include "lsquic_hash.h"
 #include "lsquic_attq.h"
+#include "lsquic_min_heap.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -73,7 +74,8 @@ struct out_batch
 typedef struct lsquic_conn * (*conn_iter_f)(struct lsquic_engine *);
 
 static void
-process_connections (struct lsquic_engine *engine, conn_iter_f iter);
+process_connections (struct lsquic_engine *engine, conn_iter_f iter,
+                     lsquic_time_t now);
 
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag);
@@ -96,26 +98,24 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
     (e)->pub.enp_flags &= ~ENPUB_PROC;                  \
 } while (0)
 
-/* A connection can be referenced from one of six places:
+/* A connection can be referenced from one of five places:
  *
  *   1. Connection hash: a connection starts its life in one of those.
  *
  *   2. Outgoing queue.
  *
- *   3. Incoming queue.
+ *   3. Tickable queue
  *
- *   4. Pending RW Events queue.
+ *   4. Advisory Tick Time queue.
  *
- *   5. Advisory Tick Time queue.
- *
- *   6. Closing connections queue.  This is a transient queue -- it only
+ *   5. Closing connections queue.  This is a transient queue -- it only
  *      exists for the duration of process_connections() function call.
  *
  * The idea is to destroy the connection when it is no longer referenced.
  * For example, a connection tick may return TICK_SEND|TICK_CLOSE.  In
- * that case, the connection is referenced from two places: (2) and (6).
- * After its packets are sent, it is only referenced in (6), and at the
- * end of the function call, when it is removed from (6), reference count
+ * that case, the connection is referenced from two places: (2) and (5).
+ * After its packets are sent, it is only referenced in (5), and at the
+ * end of the function call, when it is removed from (5), reference count
  * goes to zero and the connection is destroyed.  If not all packets can
  * be sent, at the end of the function call, the connection is referenced
  * by (2) and will only be removed once all outgoing packets have been
@@ -123,25 +123,9 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
  */
 #define CONN_REF_FLAGS  (LSCONN_HASHED          \
                         |LSCONN_HAS_OUTGOING    \
-                        |LSCONN_HAS_INCOMING    \
-                        |LSCONN_RW_PENDING      \
+                        |LSCONN_TICKABLE        \
                         |LSCONN_CLOSING         \
                         |LSCONN_ATTQ)
-
-
-struct out_heap_elem
-{
-    struct lsquic_conn  *ohe_conn;
-    lsquic_time_t        ohe_last_sent;
-};
-
-
-struct out_heap
-{
-    struct out_heap_elem    *oh_elems;
-    unsigned                 oh_nalloc,
-                             oh_nelem;
-};
 
 
 
@@ -166,140 +150,20 @@ struct lsquic_engine
     lsquic_packets_out_f               packets_out;
     void                              *packets_out_ctx;
     void                              *bad_handshake_ctx;
-    struct conn_hash                   full_conns;
-    TAILQ_HEAD(, lsquic_conn)          conns_in, conns_pend_rw;
-    struct out_heap                    conns_out;
-    /* Use a union because only one iterator is being used at any one time */
-    union {
-        struct {
-            /* This iterator does not have any state: it uses `conns_in' */
-            int ignore;
-        }           conn_in;
-        struct {
-            /* This iterator does not have any state: it uses `conns_pend_rw' */
-            int ignore;
-        }           rw_pend;
-        struct {
-            /* Iterator state to process connections in Advisory Tick Time
-             * queue.
-             */
-            lsquic_time_t   cutoff;
-        }           attq;
-        struct {
-            /* Iterator state to process all connections */
-            int ignore;
-        }           all;
-        struct {
-            lsquic_conn_t  *conn;
-        }           one;
-    }                                  iter_state;
+    struct conn_hash                   conns_hash;
+    struct min_heap                    conns_tickable;
+    struct min_heap                    conns_out;
     struct eng_hist                    history;
     unsigned                           batch_size;
-    unsigned                           time_until_desired_tick;
     struct attq                       *attq;
-    lsquic_time_t                      proc_time;
     /* Track time last time a packet was sent to give new connections
      * priority lower than that of existing connections.
      */
     lsquic_time_t                      last_sent;
+    unsigned                           n_conns;
     lsquic_time_t                      deadline;
     struct out_batch                   out_batch;
 };
-
-
-#define OHE_PARENT(i) ((i - 1) / 2)
-#define OHE_LCHILD(i) (2 * i + 1)
-#define OHE_RCHILD(i) (2 * i + 2)
-
-
-static void
-heapify_out_heap (struct out_heap *heap, unsigned i)
-{
-    struct out_heap_elem el;
-    unsigned smallest;
-
-    assert(i < heap->oh_nelem);
-
-    if (OHE_LCHILD(i) < heap->oh_nelem)
-    {
-        if (heap->oh_elems[ OHE_LCHILD(i) ].ohe_last_sent <
-                                    heap->oh_elems[ i ].ohe_last_sent)
-            smallest = OHE_LCHILD(i);
-        else
-            smallest = i;
-        if (OHE_RCHILD(i) < heap->oh_nelem &&
-            heap->oh_elems[ OHE_RCHILD(i) ].ohe_last_sent <
-                                    heap->oh_elems[ smallest ].ohe_last_sent)
-            smallest = OHE_RCHILD(i);
-    }
-    else
-        smallest = i;
-
-    if (smallest != i)
-    {
-        el = heap->oh_elems[ smallest ];
-        heap->oh_elems[ smallest ] = heap->oh_elems[ i ];
-        heap->oh_elems[ i ] = el;
-        heapify_out_heap(heap, smallest);
-    }
-}
-
-
-static void
-oh_insert (struct out_heap *heap, lsquic_conn_t *conn)
-{
-    struct out_heap_elem el;
-    unsigned nalloc, i;
-
-    if (heap->oh_nelem == heap->oh_nalloc)
-    {
-        if (0 == heap->oh_nalloc)
-            nalloc = 4;
-        else
-            nalloc = heap->oh_nalloc * 2;
-        heap->oh_elems = realloc(heap->oh_elems,
-                                    nalloc * sizeof(heap->oh_elems[0]));
-        if (!heap->oh_elems)
-        {   /* Not much we can do here */
-            LSQ_ERROR("realloc failed");
-            return;
-        }
-        heap->oh_nalloc = nalloc;
-    }
-
-    heap->oh_elems[ heap->oh_nelem ].ohe_conn      = conn;
-    heap->oh_elems[ heap->oh_nelem ].ohe_last_sent = conn->cn_last_sent;
-    ++heap->oh_nelem;
-
-    i = heap->oh_nelem - 1;
-    while (i > 0 && heap->oh_elems[ OHE_PARENT(i) ].ohe_last_sent >
-                                    heap->oh_elems[ i ].ohe_last_sent)
-    {
-        el = heap->oh_elems[ OHE_PARENT(i) ];
-        heap->oh_elems[ OHE_PARENT(i) ] = heap->oh_elems[ i ];
-        heap->oh_elems[ i ] = el;
-        i = OHE_PARENT(i);
-    }
-}
-
-
-static struct lsquic_conn *
-oh_pop (struct out_heap *heap)
-{
-    struct lsquic_conn *conn;
-
-    assert(heap->oh_nelem);
-
-    conn = heap->oh_elems[0].ohe_conn;
-    --heap->oh_nelem;
-    if (heap->oh_nelem > 0)
-    {
-        heap->oh_elems[0] = heap->oh_elems[ heap->oh_nelem ];
-        heapify_out_heap(heap, 0);
-    }
-
-    return conn;
-}
 
 
 void
@@ -336,7 +200,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_support_nstp    = LSQUIC_DF_SUPPORT_NSTP;
     settings->es_honor_prst      = LSQUIC_DF_HONOR_PRST;
     settings->es_progress_check  = LSQUIC_DF_PROGRESS_CHECK;
-    settings->es_pendrw_check    = LSQUIC_DF_PENDRW_CHECK;
     settings->es_rw_once         = LSQUIC_DF_RW_ONCE;
     settings->es_proc_time_thresh= LSQUIC_DF_PROC_TIME_THRESH;
     settings->es_pace_packets    = LSQUIC_DF_PACE_PACKETS;
@@ -456,9 +319,7 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_pmi_ctx  = NULL;
     }
     engine->pub.enp_engine = engine;
-    TAILQ_INIT(&engine->conns_in);
-    TAILQ_INIT(&engine->conns_pend_rw);
-    conn_hash_init(&engine->full_conns, ~0);
+    conn_hash_init(&engine->conns_hash);
     engine->attq = attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
@@ -489,8 +350,44 @@ shrink_batch_size (struct lsquic_engine *engine)
 static void
 destroy_conn (struct lsquic_engine *engine, lsquic_conn_t *conn)
 {
-    conn->cn_flags |= LSCONN_NEVER_PEND_RW;
+    --engine->n_conns;
+    conn->cn_flags |= LSCONN_NEVER_TICKABLE;
     conn->cn_if->ci_destroy(conn);
+}
+
+
+static int
+maybe_grow_conn_heaps (struct lsquic_engine *engine)
+{
+    struct min_heap_elem *els;
+    unsigned count;
+
+    if (engine->n_conns < lsquic_mh_nalloc(&engine->conns_tickable))
+        return 0;   /* Nothing to do */
+
+    if (lsquic_mh_nalloc(&engine->conns_tickable))
+        count = lsquic_mh_nalloc(&engine->conns_tickable) * 2 * 2;
+    else
+        count = 8;
+
+    els = malloc(sizeof(els[0]) * count);
+    if (!els)
+    {
+        LSQ_ERROR("%s: malloc failed", __func__);
+        return -1;
+    }
+
+    LSQ_DEBUG("grew heaps to %u elements", count / 2);
+    memcpy(&els[0], engine->conns_tickable.mh_elems,
+                sizeof(els[0]) * lsquic_mh_count(&engine->conns_tickable));
+    memcpy(&els[count / 2], engine->conns_out.mh_elems,
+                sizeof(els[0]) * lsquic_mh_count(&engine->conns_out));
+    free(engine->conns_tickable.mh_elems);
+    engine->conns_tickable.mh_elems = els;
+    engine->conns_out.mh_elems = &els[count / 2];
+    engine->conns_tickable.mh_nalloc = count / 2;
+    engine->conns_out.mh_nalloc = count / 2;
+    return 0;
 }
 
 
@@ -500,12 +397,15 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
 {
     lsquic_conn_t *conn;
     unsigned flags;
+    if (0 != maybe_grow_conn_heaps(engine))
+        return NULL;
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
     conn = full_conn_client_new(&engine->pub, engine->stream_if,
                     engine->stream_if_ctx, flags, hostname, max_packet_size);
     if (!conn)
         return NULL;
-    if (0 != conn_hash_add(&engine->full_conns, conn))
+    ++engine->n_conns;
+    if (0 != conn_hash_add(&engine->conns_hash, conn))
     {
         LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
             conn->cn_cid);
@@ -514,7 +414,7 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
     }
     assert(!(conn->cn_flags &
         (CONN_REF_FLAGS
-         & ~LSCONN_RW_PENDING /* This flag may be set as effect of user
+         & ~LSCONN_TICKABLE /* This flag may be set as effect of user
                                  callbacks */
                              )));
     conn->cn_flags |= LSCONN_HASHED;
@@ -542,7 +442,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         return NULL;
     }
 
-    conn = conn_hash_find(&engine->full_conns, packet_in->pi_conn_id);
+    conn = conn_hash_find(&engine->conns_hash, packet_in->pi_conn_id);
     if (conn)
     {
         conn->cn_pf->pf_parse_packet_in_finish(packet_in, ppstate);
@@ -553,41 +453,19 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 }
 
 
-static void
-add_conn_to_pend_rw (lsquic_engine_t *engine, lsquic_conn_t *conn,
-                                                        enum rw_reason reason)
-{
-    int hist_idx;
-
-    TAILQ_INSERT_TAIL(&engine->conns_pend_rw, conn, cn_next_pend_rw);
-    engine_incref_conn(conn, LSCONN_RW_PENDING);
-
-    hist_idx = conn->cn_rw_hist_idx & ((1 << RW_HIST_BITS) - 1);
-    conn->cn_rw_hist_buf[ hist_idx ] = reason;
-    ++conn->cn_rw_hist_idx;
-
-    if ((int) sizeof(conn->cn_rw_hist_buf) - 1 == hist_idx)
-        EV_LOG_CONN_EVENT(conn->cn_cid, "added to pending RW queue ('%c'), "
-            "rw_hist: %.*s", (char) reason,
-            (int) sizeof(conn->cn_rw_hist_buf), conn->cn_rw_hist_buf);
-    else
-        EV_LOG_CONN_EVENT(conn->cn_cid, "added to pending RW queue ('%c')",
-                                                                (char) reason);
-}
-
-
 #if !defined(NDEBUG) && __GNUC__
 __attribute__((weak))
 #endif
 void
-lsquic_engine_add_conn_to_pend_rw (struct lsquic_engine_public *enpub,
-                                    lsquic_conn_t *conn, enum rw_reason reason)
+lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
+                                    lsquic_conn_t *conn)
 {
     if (0 == (enpub->enp_flags & ENPUB_PROC) &&
-        0 == (conn->cn_flags & (LSCONN_RW_PENDING|LSCONN_NEVER_PEND_RW)))
+        0 == (conn->cn_flags & (LSCONN_TICKABLE|LSCONN_NEVER_TICKABLE)))
     {
         lsquic_engine_t *engine = (lsquic_engine_t *) enpub;
-        add_conn_to_pend_rw(engine, conn, reason);
+        lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+        engine_incref_conn(conn, LSCONN_TICKABLE);
     }
 }
 
@@ -597,69 +475,24 @@ lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
                                 lsquic_conn_t *conn, lsquic_time_t tick_time)
 {
     lsquic_engine_t *const engine = (lsquic_engine_t *) enpub;
-    /* Instead of performing an update, we simply remove the connection from
-     * the queue and add it back.  This should not happen in at the time of
-     * this writing.
-     */
-    if (conn->cn_flags & LSCONN_ATTQ)
+    if (conn->cn_flags & LSCONN_TICKABLE)
     {
-        attq_remove(engine->attq, conn);
-        conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
+        /* Optimization: no need to add the connection to the Advisory Tick
+         * Time Queue: it is about to be ticked, after which it its next tick
+         * time may be queried again.
+         */;
     }
-    if (conn && !(conn->cn_flags & LSCONN_ATTQ) &&
-                        0 == attq_maybe_add(engine->attq, conn, tick_time))
+    else if (conn->cn_flags & LSCONN_ATTQ)
+    {
+        if (lsquic_conn_adv_time(conn) != tick_time)
+        {
+            attq_remove(engine->attq, conn);
+            if (0 != attq_add(engine->attq, conn, tick_time))
+                engine_decref_conn(engine, conn, LSCONN_ATTQ);
+        }
+    }
+    else if (0 == attq_add(engine->attq, conn, tick_time))
         engine_incref_conn(conn, LSCONN_ATTQ);
-}
-
-
-static void
-update_pend_rw_progress (lsquic_engine_t *engine, lsquic_conn_t *conn,
-                                                            int progress_made)
-{
-    rw_hist_idx_t hist_idx;
-    const unsigned char *empty;
-    const unsigned pendrw_check = engine->pub.enp_settings.es_pendrw_check;
-
-    if (!pendrw_check)
-        return;
-
-    /* Convert previous entry to uppercase: */
-    hist_idx = (conn->cn_rw_hist_idx - 1) & ((1 << RW_HIST_BITS) - 1);
-    conn->cn_rw_hist_buf[ hist_idx ] -= 0x20;
-
-    LSQ_DEBUG("conn %"PRIu64": progress: %d", conn->cn_cid, !!progress_made);
-    if (progress_made)
-    {
-        conn->cn_noprogress_count = 0;
-        return;
-    }
-
-    EV_LOG_CONN_EVENT(conn->cn_cid, "Pending RW Queue processing made "
-                                                                "no progress");
-    ++conn->cn_noprogress_count;
-    if (conn->cn_noprogress_count <= pendrw_check)
-        return;
-
-    conn->cn_flags |= LSCONN_NEVER_PEND_RW;
-    empty = memchr(conn->cn_rw_hist_buf, RW_REASON_EMPTY,
-                                            sizeof(conn->cn_rw_hist_buf));
-    if (empty)
-        LSQ_WARN("conn %"PRIu64" noprogress count reached %u "
-            "(rw_hist: %.*s): will not put it onto Pend RW queue again",
-            conn->cn_cid, conn->cn_noprogress_count,
-            (int) (empty - conn->cn_rw_hist_buf), conn->cn_rw_hist_buf);
-    else
-    {
-        hist_idx = conn->cn_rw_hist_idx & ((1 << RW_HIST_BITS) - 1);
-        LSQ_WARN("conn %"PRIu64" noprogress count reached %u "
-            "(rw_hist: %.*s%.*s): will not put it onto Pend RW queue again",
-            conn->cn_cid, conn->cn_noprogress_count,
-            /* First part of history: */
-            (int) (sizeof(conn->cn_rw_hist_buf) - hist_idx),
-                                            conn->cn_rw_hist_buf + hist_idx,
-            /* Second part of history: */
-            hist_idx, conn->cn_rw_hist_buf);
-    }
 }
 
 
@@ -678,9 +511,10 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         return 1;
     }
 
-    if (0 == (conn->cn_flags & LSCONN_HAS_INCOMING)) {
-        TAILQ_INSERT_TAIL(&engine->conns_in, conn, cn_next_in);
-        engine_incref_conn(conn, LSCONN_HAS_INCOMING);
+    if (0 == (conn->cn_flags & LSCONN_TICKABLE))
+    {
+        lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+        engine_incref_conn(conn, LSCONN_TICKABLE);
     }
     lsquic_conn_record_sockaddr(conn, sa_local, sa_peer);
     lsquic_packet_in_upref(packet_in);
@@ -691,101 +525,11 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 }
 
 
-static int
-conn_attq_expired (const struct lsquic_engine *engine,
-                                                const lsquic_conn_t *conn)
-{
-    assert(conn->cn_attq_elem);
-    return lsquic_conn_adv_time(conn) < engine->proc_time;
-}
-
-
-/* Iterator for connections with incoming packets */
-static lsquic_conn_t *
-conn_iter_next_incoming (struct lsquic_engine *engine)
-{
-    enum lsquic_conn_flags addl_flags;
-    lsquic_conn_t *conn;
-    while ((conn = TAILQ_FIRST(&engine->conns_in)))
-    {
-        TAILQ_REMOVE(&engine->conns_in, conn, cn_next_in);
-        if (conn->cn_flags & LSCONN_RW_PENDING)
-        {
-            TAILQ_REMOVE(&engine->conns_pend_rw, conn, cn_next_pend_rw);
-            EV_LOG_CONN_EVENT(conn->cn_cid,
-                "removed from pending RW queue (processing incoming)");
-        }
-        if ((conn->cn_flags & LSCONN_ATTQ) && conn_attq_expired(engine, conn))
-        {
-            addl_flags = LSCONN_ATTQ;
-            attq_remove(engine->attq, conn);
-        }
-        else
-            addl_flags = 0;
-        conn = engine_decref_conn(engine, conn,
-                        LSCONN_RW_PENDING|LSCONN_HAS_INCOMING|addl_flags);
-        if (conn)
-            break;
-    }
-    return conn;
-}
-
-
-/* Iterator for connections with that have pending read/write events */
-static lsquic_conn_t *
-conn_iter_next_rw_pend (struct lsquic_engine *engine)
-{
-    enum lsquic_conn_flags addl_flags;
-    lsquic_conn_t *conn;
-    while ((conn = TAILQ_FIRST(&engine->conns_pend_rw)))
-    {
-        TAILQ_REMOVE(&engine->conns_pend_rw, conn, cn_next_pend_rw);
-        EV_LOG_CONN_EVENT(conn->cn_cid,
-            "removed from pending RW queue (processing pending RW conns)");
-        if (conn->cn_flags & LSCONN_HAS_INCOMING)
-            TAILQ_REMOVE(&engine->conns_in, conn, cn_next_in);
-        if ((conn->cn_flags & LSCONN_ATTQ) && conn_attq_expired(engine, conn))
-        {
-            addl_flags = LSCONN_ATTQ;
-            attq_remove(engine->attq, conn);
-        }
-        else
-            addl_flags = 0;
-        conn = engine_decref_conn(engine, conn,
-                        LSCONN_RW_PENDING|LSCONN_HAS_INCOMING|addl_flags);
-        if (conn)
-            break;
-    }
-    return conn;
-}
-
-
-void
-lsquic_engine_process_conns_with_incoming (lsquic_engine_t *engine)
-{
-    LSQ_DEBUG("process connections with incoming packets");
-    ENGINE_IN(engine);
-    process_connections(engine, conn_iter_next_incoming);
-    assert(TAILQ_EMPTY(&engine->conns_in));
-    ENGINE_OUT(engine);
-}
-
-
 int
-lsquic_engine_has_pend_rw (lsquic_engine_t *engine)
+lsquic_engine_has_tickable (lsquic_engine_t *engine)
 {
     return !(engine->flags & ENG_PAST_DEADLINE)
-        && !TAILQ_EMPTY(&engine->conns_pend_rw);
-}
-
-
-void
-lsquic_engine_process_conns_with_pend_rw (lsquic_engine_t *engine)
-{
-    LSQ_DEBUG("process connections with pending RW events");
-    ENGINE_IN(engine);
-    process_connections(engine, conn_iter_next_rw_pend);
-    ENGINE_OUT(engine);
+        && lsquic_mh_count(&engine->conns_tickable) > 0;
 }
 
 
@@ -799,71 +543,30 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
     engine->flags |= ENG_DTOR;
 #endif
 
-    while (engine->conns_out.oh_nelem > 0)
+    while ((conn = lsquic_mh_pop(&engine->conns_out)))
     {
-        --engine->conns_out.oh_nelem;
-        conn = engine->conns_out.oh_elems[
-                                engine->conns_out.oh_nelem ].ohe_conn;
         assert(conn->cn_flags & LSCONN_HAS_OUTGOING);
         (void) engine_decref_conn(engine, conn, LSCONN_HAS_OUTGOING);
     }
 
-    for (conn = conn_hash_first(&engine->full_conns); conn;
-                            conn = conn_hash_next(&engine->full_conns))
+    while ((conn = lsquic_mh_pop(&engine->conns_tickable)))
+    {
+        assert(conn->cn_flags & LSCONN_TICKABLE);
+        (void) engine_decref_conn(engine, conn, LSCONN_TICKABLE);
+    }
+
+    for (conn = conn_hash_first(&engine->conns_hash); conn;
+                            conn = conn_hash_next(&engine->conns_hash))
         force_close_conn(engine, conn);
-    conn_hash_cleanup(&engine->full_conns);
+    conn_hash_cleanup(&engine->conns_hash);
 
-
+    assert(0 == engine->n_conns);
     attq_destroy(engine->attq);
 
-    assert(0 == engine->conns_out.oh_nelem);
-    assert(TAILQ_EMPTY(&engine->conns_pend_rw));
-    lsquic_mm_cleanup(&engine->pub.enp_mm);
-    free(engine->conns_out.oh_elems);
+    assert(0 == lsquic_mh_count(&engine->conns_out));
+    assert(0 == lsquic_mh_count(&engine->conns_tickable));
+    free(engine->conns_tickable.mh_elems);
     free(engine);
-}
-
-
-#if __GNUC__
-__attribute__((nonnull(3)))
-#endif
-static lsquic_conn_t *
-remove_from_inc_andor_pend_rw (lsquic_engine_t *engine,
-                                lsquic_conn_t *conn, const char *reason)
-{
-    assert(conn->cn_flags & (LSCONN_HAS_INCOMING|LSCONN_RW_PENDING));
-    if (conn->cn_flags & LSCONN_HAS_INCOMING)
-        TAILQ_REMOVE(&engine->conns_in, conn, cn_next_in);
-    if (conn->cn_flags & LSCONN_RW_PENDING)
-    {
-        TAILQ_REMOVE(&engine->conns_pend_rw, conn, cn_next_pend_rw);
-        EV_LOG_CONN_EVENT(conn->cn_cid,
-                        "removed from pending RW queue (%s)", reason);
-    }
-    conn = engine_decref_conn(engine, conn,
-                        LSCONN_HAS_INCOMING|LSCONN_RW_PENDING);
-    assert(conn);
-    return conn;
-}
-
-
-static lsquic_conn_t *
-conn_iter_next_one (lsquic_engine_t *engine)
-{
-    lsquic_conn_t *conn = engine->iter_state.one.conn;
-    if (conn)
-    {
-        if (conn->cn_flags & (LSCONN_HAS_INCOMING|LSCONN_RW_PENDING))
-            conn = remove_from_inc_andor_pend_rw(engine, conn, "connect");
-        if (conn && (conn->cn_flags & LSCONN_ATTQ) &&
-                                            conn_attq_expired(engine, conn))
-        {
-            attq_remove(engine->attq, conn);
-            conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
-        }
-        engine->iter_state.one.conn = NULL;
-    }
-    return conn;
 }
 
 
@@ -896,13 +599,13 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
     conn = new_full_conn_client(engine, hostname, max_packet_size);
     if (!conn)
         return NULL;
+    lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+    engine_incref_conn(conn, LSCONN_TICKABLE);
     ENGINE_IN(engine);
     lsquic_conn_record_peer_sa(conn, peer_sa);
     conn->cn_peer_ctx = peer_ctx;
     lsquic_conn_set_ctx(conn, conn_ctx);
-    engine->iter_state.one.conn = conn;
     full_conn_client_call_on_new(conn);
-    process_connections(engine, conn_iter_next_one);
     ENGINE_OUT(engine);
     return conn;
 }
@@ -911,19 +614,18 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
 static void
 remove_conn_from_hash (lsquic_engine_t *engine, lsquic_conn_t *conn)
 {
-        conn_hash_remove(&engine->full_conns, conn);
+    conn_hash_remove(&engine->conns_hash, conn);
     (void) engine_decref_conn(engine, conn, LSCONN_HASHED);
 }
 
 
 static void
-refflags2str (enum lsquic_conn_flags flags, char s[7])
+refflags2str (enum lsquic_conn_flags flags, char s[6])
 {
     *s = 'C'; s += !!(flags & LSCONN_CLOSING);
     *s = 'H'; s += !!(flags & LSCONN_HASHED);
     *s = 'O'; s += !!(flags & LSCONN_HAS_OUTGOING);
-    *s = 'I'; s += !!(flags & LSCONN_HAS_INCOMING);
-    *s = 'R'; s += !!(flags & LSCONN_RW_PENDING);
+    *s = 'T'; s += !!(flags & LSCONN_TICKABLE);
     *s = 'A'; s += !!(flags & LSCONN_ATTQ);
     *s = '\0';
 }
@@ -932,7 +634,7 @@ refflags2str (enum lsquic_conn_flags flags, char s[7])
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
 {
-    char str[7];
+    char str[6];
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
@@ -945,7 +647,7 @@ static lsquic_conn_t *
 engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                                         enum lsquic_conn_flags flags)
 {
-    char str[7];
+    char str[6];
     assert(flags & CONN_REF_FLAGS);
     assert(conn->cn_flags & flags);
 #ifndef NDEBUG
@@ -974,41 +676,32 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn)
     const enum lsquic_conn_flags flags = conn->cn_flags;
     assert(conn->cn_flags & CONN_REF_FLAGS);
     assert(!(flags & LSCONN_HAS_OUTGOING));  /* Should be removed already */
+    assert(!(flags & LSCONN_TICKABLE));    /* Should be removed already */
     assert(!(flags & LSCONN_CLOSING));  /* It is in transient queue? */
-    if (flags & LSCONN_HAS_INCOMING)
-    {
-        TAILQ_REMOVE(&engine->conns_in, conn, cn_next_in);
-        (void) engine_decref_conn(engine, conn, LSCONN_HAS_INCOMING);
-    }
-    if (flags & LSCONN_RW_PENDING)
-    {
-        TAILQ_REMOVE(&engine->conns_pend_rw, conn, cn_next_pend_rw);
-        EV_LOG_CONN_EVENT(conn->cn_cid,
-            "removed from pending RW queue (engine destruction)");
-        (void) engine_decref_conn(engine, conn, LSCONN_RW_PENDING);
-    }
     if (flags & LSCONN_ATTQ)
+    {
         attq_remove(engine->attq, conn);
+        (void) engine_decref_conn(engine, conn, LSCONN_ATTQ);
+    }
     if (flags & LSCONN_HASHED)
         remove_conn_from_hash(engine, conn);
 }
 
 
-/* Iterator for all connections.
- * Returned connections are removed from the Incoming, Pending RW Event,
- * and Advisory Tick Time queues if necessary.
+/* Iterator for tickable connections (those on the Tickable Queue).  Before
+ * a connection is returned, it is removed from the Advisory Tick Time queue
+ * if necessary.
  */
 static lsquic_conn_t *
-conn_iter_next_all (struct lsquic_engine *engine)
+conn_iter_next_tickable (struct lsquic_engine *engine)
 {
     lsquic_conn_t *conn;
 
-    conn = conn_hash_next(&engine->full_conns);
+        conn = lsquic_mh_pop(&engine->conns_tickable);
 
-    if (conn && (conn->cn_flags & (LSCONN_HAS_INCOMING|LSCONN_RW_PENDING)))
-        conn = remove_from_inc_andor_pend_rw(engine, conn, "process all");
-    if (conn && (conn->cn_flags & LSCONN_ATTQ)
-                                        && conn_attq_expired(engine, conn))
+    if (conn)
+        conn = engine_decref_conn(engine, conn, LSCONN_TICKABLE);
+    if (conn && (conn->cn_flags & LSCONN_ATTQ))
     {
         attq_remove(engine->attq, conn);
         conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
@@ -1018,62 +711,26 @@ conn_iter_next_all (struct lsquic_engine *engine)
 }
 
 
-static lsquic_conn_t *
-conn_iter_next_attq (struct lsquic_engine *engine)
+void
+lsquic_engine_process_conns (lsquic_engine_t *engine)
 {
     lsquic_conn_t *conn;
+    lsquic_time_t now;
 
-    conn = attq_pop(engine->attq, engine->iter_state.attq.cutoff);
-    if (conn)
-    {
-        assert(conn->cn_flags & LSCONN_ATTQ);
-        if (conn->cn_flags & (LSCONN_HAS_INCOMING|LSCONN_RW_PENDING))
-            conn = remove_from_inc_andor_pend_rw(engine, conn, "process attq");
-        conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
-    }
-
-    return conn;
-}
-
-
-void
-lsquic_engine_proc_all (lsquic_engine_t *engine)
-{
     ENGINE_IN(engine);
-    /* We poke each connection every time as initial implementation.  If it
-     * proves to be too inefficient, we will need to figure out
-     *          a) when to stop processing; and
-     *          b) how to remember state between calls.
-     */
-    conn_hash_reset_iter(&engine->full_conns);
-    process_connections(engine, conn_iter_next_all);
-    ENGINE_OUT(engine);
-}
-
-
-void
-lsquic_engine_process_conns_to_tick (lsquic_engine_t *engine)
-{
-    lsquic_time_t prev_min, now;
 
     now = lsquic_time_now();
-    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    while ((conn = attq_pop(engine->attq, now)))
     {
-        const lsquic_time_t *expected_time;
-        int64_t diff;
-        expected_time = attq_next_time(engine->attq);
-        if (expected_time)
-            diff = *expected_time - now;
-        else
-            diff = -1;
-        LSQ_DEBUG("process connections in attq; time diff: %"PRIi64, diff);
+        conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
+        if (conn && !(conn->cn_flags & LSCONN_TICKABLE))
+        {
+            lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+            engine_incref_conn(conn, LSCONN_TICKABLE);
+        }
     }
 
-    ENGINE_IN(engine);
-    prev_min = attq_set_min(engine->attq, now);  /* Prevent infinite loop */
-    engine->iter_state.attq.cutoff = now;
-    process_connections(engine, conn_iter_next_attq);
-    attq_set_min(engine->attq, prev_min);           /* Restore previos value */
+    process_connections(engine, conn_iter_next_tickable, now);
     ENGINE_OUT(engine);
 }
 
@@ -1164,12 +821,12 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 }
 
 
-STAILQ_HEAD(closed_conns, lsquic_conn);
+STAILQ_HEAD(conns_stailq, lsquic_conn);
 
 
 struct conns_out_iter
 {
-    struct out_heap            *coi_heap;
+    struct min_heap            *coi_heap;
     TAILQ_HEAD(, lsquic_conn)   coi_active_list,
                                 coi_inactive_list;
     lsquic_conn_t              *coi_next;
@@ -1197,9 +854,9 @@ coi_next (struct conns_out_iter *iter)
 {
     lsquic_conn_t *conn;
 
-    if (iter->coi_heap->oh_nelem > 0)
+    if (lsquic_mh_count(iter->coi_heap) > 0)
     {
-        conn = oh_pop(iter->coi_heap);
+        conn = lsquic_mh_pop(iter->coi_heap);
         TAILQ_INSERT_TAIL(&iter->coi_active_list, conn, cn_next_out);
         conn->cn_flags |= LSCONN_COI_ACTIVE;
 #ifndef NDEBUG
@@ -1268,7 +925,7 @@ coi_reheap (struct conns_out_iter *iter, lsquic_engine_t *engine)
     {
         TAILQ_REMOVE(&iter->coi_active_list, conn, cn_next_out);
         conn->cn_flags &= ~LSCONN_COI_ACTIVE;
-        oh_insert(iter->coi_heap, conn);
+        lsquic_mh_insert(iter->coi_heap, conn, conn->cn_last_sent);
     }
     while ((conn = TAILQ_FIRST(&iter->coi_inactive_list)))
     {
@@ -1358,7 +1015,7 @@ check_deadline (lsquic_engine_t *engine)
 
 static void
 send_packets_out (struct lsquic_engine *engine,
-                  struct closed_conns *closed_conns)
+                  struct conns_stailq *closed_conns)
 {
     unsigned n, w, n_sent, n_batches_sent;
     lsquic_packet_out_t *packet_out;
@@ -1471,7 +1128,7 @@ int
 lsquic_engine_has_unsent_packets (lsquic_engine_t *engine)
 {
     return !(engine->flags & ENG_PAST_DEADLINE)
-        && (    engine->conns_out.oh_nelem > 0
+        && (    lsquic_mh_count(&engine->conns_out) > 0
            )
     ;
 }
@@ -1490,7 +1147,7 @@ void
 lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 {
     lsquic_conn_t *conn;
-    struct closed_conns closed_conns;
+    struct conns_stailq closed_conns;
 
     STAILQ_INIT(&closed_conns);
     reset_deadline(engine, lsquic_time_now());
@@ -1506,29 +1163,32 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 
 
 static void
-process_connections (lsquic_engine_t *engine, conn_iter_f next_conn)
+process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
+                     lsquic_time_t now)
 {
     lsquic_conn_t *conn;
     enum tick_st tick_st;
-    lsquic_time_t now = lsquic_time_now();
-    struct closed_conns closed_conns;
+    unsigned i;
+    lsquic_time_t next_tick_time;
+    struct conns_stailq closed_conns, ticked_conns;
 
-    engine->proc_time = now;
     eng_hist_tick(&engine->history, now);
 
     STAILQ_INIT(&closed_conns);
+    STAILQ_INIT(&ticked_conns);
     reset_deadline(engine, now);
 
-    while ((conn = next_conn(engine)))
+    i = 0;
+    while ((conn = next_conn(engine))
+          )
     {
         tick_st = conn->cn_if->ci_tick(conn, now);
-        if (conn_iter_next_rw_pend == next_conn)
-            update_pend_rw_progress(engine, conn, tick_st & TICK_PROGRESS);
+        conn->cn_last_ticked = now + i /* Maintain relative order */ ++;
         if (tick_st & TICK_SEND)
         {
             if (!(conn->cn_flags & LSCONN_HAS_OUTGOING))
             {
-                oh_insert(&engine->conns_out, conn);
+                lsquic_mh_insert(&engine->conns_out, conn, conn->cn_last_sent);
                 engine_incref_conn(conn, LSCONN_HAS_OUTGOING);
             }
         }
@@ -1539,6 +1199,8 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn)
             if (conn->cn_flags & LSCONN_HASHED)
                 remove_conn_from_hash(engine, conn);
         }
+        else
+            STAILQ_INSERT_TAIL(&ticked_conns, conn, cn_next_ticked);
     }
 
     if (lsquic_engine_has_unsent_packets(engine))
@@ -1547,6 +1209,31 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn)
     while ((conn = STAILQ_FIRST(&closed_conns))) {
         STAILQ_REMOVE_HEAD(&closed_conns, cn_next_closed_conn);
         (void) engine_decref_conn(engine, conn, LSCONN_CLOSING);
+    }
+
+    /* TODO Heapification can be optimized by switching to the Floyd method:
+     * https://en.wikipedia.org/wiki/Binary_heap#Building_a_heap
+     */
+    while ((conn = STAILQ_FIRST(&ticked_conns)))
+    {
+        STAILQ_REMOVE_HEAD(&ticked_conns, cn_next_ticked);
+        if (!(conn->cn_flags & LSCONN_TICKABLE)
+            && conn->cn_if->ci_is_tickable(conn))
+        {
+            lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+            engine_incref_conn(conn, LSCONN_TICKABLE);
+        }
+        else if (!(conn->cn_flags & LSCONN_ATTQ))
+        {
+            next_tick_time = conn->cn_if->ci_next_tick_time(conn);
+            if (next_tick_time)
+            {
+                if (0 == attq_add(engine->attq, conn, next_tick_time))
+                    engine_incref_conn(conn, LSCONN_ATTQ);
+            }
+            else
+                assert(0);
+        }
     }
 
 }
@@ -1612,6 +1299,12 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
     const lsquic_time_t *next_time;
     lsquic_time_t now;
+
+    if (lsquic_mh_count(&engine->conns_tickable))
+    {
+        *diff = 0;
+        return 1;
+    }
 
     next_time = attq_next_time(engine->attq);
     if (!next_time)

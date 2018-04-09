@@ -178,9 +178,6 @@ struct lsquic_stream_if {
 /** By default, infinite loop checks are turned on */
 #define LSQUIC_DF_PROGRESS_CHECK    1000
 
-/** By default, Pending RW Queue infinite loop checks are turned on: */
-#define LSQUIC_DF_PENDRW_CHECK      10
-
 /** By default, read/write events are dispatched in a loop */
 #define LSQUIC_DF_RW_ONCE           0
 
@@ -332,23 +329,6 @@ struct lsquic_engine_settings {
     unsigned        es_progress_check;
 
     /**
-     * A non-zero value enables internal checks to identify suspected
-     * infinite loops in Pending RW Queue logic.  The value of this
-     * setting is the number of times a connection on Pending RW Queue
-     * is allowed to be processed without making progress before it is
-     * banished from Pending RW Queue.
-     *
-     * Progress is considered to have happened if any of the following
-     * occurs:
-     *   - User reads data, FIN, or new error (due to a reset) from a
-     *     stream.
-     *   - A new stream-related frame is packetized.
-     *
-     * The defaut value is @ref LSQUIC_DF_PENDRW_CHECK.
-     */
-    unsigned        es_pendrw_check;
-
-    /**
      * A non-zero value make stream dispatch its read-write events once
      * per call.
      *
@@ -364,19 +344,15 @@ struct lsquic_engine_settings {
 
     /**
      * If set, this value specifies that number of microseconds that
-     * functions @ref lsquic_engine_proc_all(),
-     * @ref lsquic_engine_process_conns_with_incoming(),
-     * @ref lsquic_engine_process_conns_to_tick(), and
-     * @ref lsquic_engine_process_conns_with_pend_rw() are allowed
-     * to spend before returning.
+     * @ref lsquic_engine_process_conns() is allowed to spend before
+     * returning.
      *
      * This is not an exact science and the connections must make
      * progress, so the deadline is checked after all connections get
      * a chance to tick and at least one batch of packets is sent out.
      *
      * When processing function runs out of its time slice, immediate
-     * calls to @ref lsquic_engine_has_pend_rw() and
-     * @ref lsquic_engine_has_unsent_packets() return false.
+     * calls to @ref lsquic_engine_has_unsent_packets() return false.
      *
      * The default value is @ref LSQUIC_DF_PROC_TIME_THRESH.
      */
@@ -503,50 +479,11 @@ lsquic_engine_packet_in (lsquic_engine_t *,
         void *peer_ctx);
 
 /**
- * Process all connections.  This function must be called often enough so
+ * Process tickable connections.  This function must be called often enough so
  * that packets and connections do not expire.
  */
 void
-lsquic_engine_proc_all (lsquic_engine_t *engine);
-
-/**
- * Process connections that have incoming packets.  Call this after adding
- * one or more incoming packets using lsquic_engine_packet_in().
- */
-void
-lsquic_engine_process_conns_with_incoming (lsquic_engine_t *);
-
-/**
- * Process connections in Advisory Tick Time queue whose tick times are in
- * the past.
- */
-void
-lsquic_engine_process_conns_to_tick (lsquic_engine_t *);
-
-/**
- * Returns true if engine has connections that have pending read or write
- * events.
- *
- * Connections with pending read or write events are those that have at
- * least one stream whose state changed outside of the regular callback
- * mechanism.  The simplest example is writing directly to the stream
- * object when data comes in.
- *
- * A call to @ref lsquic_engine_proc_all,
- * @ref lsquic_engine_process_conns_with_incoming,
- * @ref lsquic_engine_process_conns_to_tick, or
- * @ref lsquic_engine_process_conns_with_pend_rw removes processed connection
- * from Pending RW queue.
- */
-int
-lsquic_engine_has_pend_rw (lsquic_engine_t *);
-
-/**
- * Process connections that have pending read or write events (@see
- * lsquic_engine_has_pend_rw for description).
- */
-void
-lsquic_engine_process_conns_with_pend_rw (lsquic_engine_t *);
+lsquic_engine_process_conns (lsquic_engine_t *engine);
 
 /**
  * Returns true if engine has some unsent packets.  This happens if
@@ -895,10 +832,10 @@ void
 lsquic_conn_abort (lsquic_conn_t *c);
 
 /**
- * Returns true if there is a connection on the Advisory Tick Time queue,
- * false otherwise.  If true, `diff' is set to the difference between
- * the earliest advisory tick time and now.  If the former is in the past,
- * the value of `diff' is negative.
+ * Returns true if there are connections to be processed, false otherwise.
+ * If true, `diff' is set to the difference between the earliest advisory
+ * tick time and now.  If the former is in the past, the value of `diff'
+ * is negative.
  */
 int
 lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff);

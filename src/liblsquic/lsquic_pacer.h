@@ -57,6 +57,8 @@ pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
 void
 pacer_loss_event (struct pacer *);
 
+#define pacer_delayed(pacer) ((pacer)->pa_flags & PA_LAST_SCHED_DELAYED)
+
 #define pacer_next_sched(pacer) (+(pacer)->pa_next_sched)
 
 #endif

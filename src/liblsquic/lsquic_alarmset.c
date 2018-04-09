@@ -52,3 +52,25 @@ lsquic_alarmset_ring_expired (lsquic_alarmset_t *alset, lsquic_time_t now)
             }
         }
 }
+
+
+lsquic_time_t
+lsquic_alarmset_mintime (const lsquic_alarmset_t *alset)
+{
+    lsquic_time_t expiry;
+    enum alarm_id al_id;
+
+    if (alset->as_armed_set)
+    {
+        expiry = UINT64_MAX;
+        for (al_id = 0; al_id < MAX_LSQUIC_ALARMS; ++al_id)
+            if ((alset->as_armed_set & (1 << al_id))
+                                && alset->as_expiry[al_id] < expiry)
+            {
+                expiry = alset->as_expiry[al_id];
+            }
+        return expiry;
+    }
+    else
+        return 0;
+}

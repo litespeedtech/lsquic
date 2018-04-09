@@ -27,11 +27,6 @@ attq_create (void);
 void
 attq_destroy (struct attq *);
 
-/* Return 1 if advisory_time is too small, 0 on success, -1 on failure */
-int
-attq_maybe_add (struct attq *, struct lsquic_conn *,
-                                            lsquic_time_t advisory_time);
-
 /* Return 0 on success, -1 on failure (malloc) */
 int
 attq_add (struct attq *, struct lsquic_conn *, lsquic_time_t advisory_time);
@@ -47,8 +42,5 @@ attq_count_before (struct attq *, lsquic_time_t cutoff);
 
 const lsquic_time_t *
 attq_next_time (struct attq *);
-
-lsquic_time_t
-attq_set_min (struct attq *, lsquic_time_t new_min);
 
 #endif
