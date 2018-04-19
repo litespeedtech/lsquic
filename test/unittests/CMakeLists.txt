@@ -5,7 +5,7 @@ include_directories( ../../src/liblsquic )
 
 enable_testing()
 
-IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
+IF (NOT MSVC)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
 
 

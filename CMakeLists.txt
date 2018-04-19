@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 2.8)
 
 project(lsquic)
 
-IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
+IF (NOT MSVC)
 # We prefer clang
 IF(NOT ("${CMAKE_C_COMPILER}" MATCHES "ccc-analyzer" OR
         "${CMAKE_C_COMPILER}" MATCHES "gcc"          OR
@@ -29,7 +29,7 @@ ENDIF()
 MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
 
 
-IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
+IF (NOT MSVC)
 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
@@ -115,7 +115,7 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
 ENDIF()
 
 
-IF (NOT (CMAKE_C_COMPILER MATCHES "MSVC"))
+IF (NOT MSVC)
 add_executable(http_client
     test/http_client.c
     test/prog.c
