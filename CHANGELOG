@@ -1,3 +1,13 @@
+2018-04-19
+
+    - [BUGFIX] Add connection to Tickable Queue on stream write
+    - cmake: use MSVC variable instead of trying to detect
+    - engine: improve connection incref/decref logging
+    - stream: don't ignore errors that may occur on triggered flush
+    - connection: remove obsolete method
+    - engine: indicate connection as tickable if previous call went
+      over threshold
+
 2018-04-09
 
     [API Change, OPTIMIZATION] Only process conns that need to be processed

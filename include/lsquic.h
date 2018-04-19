@@ -344,12 +344,14 @@ struct lsquic_engine_settings {
 
     /**
      * If set, this value specifies that number of microseconds that
-     * @ref lsquic_engine_process_conns() is allowed to spend before
-     * returning.
+     * @ref lsquic_engine_process_conns() and
+     * @ref lsquic_engine_send_unsent_packets() are allowed to spend
+     * before returning.
      *
      * This is not an exact science and the connections must make
      * progress, so the deadline is checked after all connections get
-     * a chance to tick and at least one batch of packets is sent out.
+     * a chance to tick (in the case of @ref lsquic_engine_process_conns())
+     * and at least one batch of packets is sent out.
      *
      * When processing function runs out of its time slice, immediate
      * calls to @ref lsquic_engine_has_unsent_packets() return false.

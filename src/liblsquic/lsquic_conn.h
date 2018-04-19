@@ -74,9 +74,6 @@ struct conn_iface
     void
     (*ci_handshake_failed) (struct lsquic_conn *);
 
-    int
-    (*ci_user_wants_read) (struct lsquic_conn *);
-
     void
     (*ci_destroy) (struct lsquic_conn *);
 

@@ -525,14 +525,6 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 }
 
 
-int
-lsquic_engine_has_tickable (lsquic_engine_t *engine)
-{
-    return !(engine->flags & ENG_PAST_DEADLINE)
-        && lsquic_mh_count(&engine->conns_tickable) > 0;
-}
-
-
 void
 lsquic_engine_destroy (lsquic_engine_t *engine)
 {
@@ -634,12 +626,13 @@ refflags2str (enum lsquic_conn_flags flags, char s[6])
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
 {
-    char str[6];
+    char str[2][6];
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
-    LSQ_DEBUG("incref conn %"PRIu64", now '%s'", conn->cn_cid,
-                            (refflags2str(conn->cn_flags, str), str));
+    LSQ_DEBUG("incref conn %"PRIu64", '%s' -> '%s'", conn->cn_cid,
+                    (refflags2str(conn->cn_flags & ~flag, str[0]), str[0]),
+                    (refflags2str(conn->cn_flags, str[1]), str[1]));
 }
 
 
@@ -647,7 +640,7 @@ static lsquic_conn_t *
 engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                                         enum lsquic_conn_flags flags)
 {
-    char str[6];
+    char str[2][6];
     assert(flags & CONN_REF_FLAGS);
     assert(conn->cn_flags & flags);
 #ifndef NDEBUG
@@ -655,8 +648,9 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
         assert(0 == (conn->cn_flags & LSCONN_HASHED));
 #endif
     conn->cn_flags &= ~flags;
-    LSQ_DEBUG("decref conn %"PRIu64", now '%s'", conn->cn_cid,
-                            (refflags2str(conn->cn_flags, str), str));
+    LSQ_DEBUG("decref conn %"PRIu64", '%s' -> '%s'", conn->cn_cid,
+                    (refflags2str(conn->cn_flags | flags, str[0]), str[0]),
+                    (refflags2str(conn->cn_flags, str[1]), str[1]));
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
     {
             eng_hist_inc(&engine->history, 0, sl_del_full_conns);
@@ -1127,9 +1121,7 @@ send_packets_out (struct lsquic_engine *engine,
 int
 lsquic_engine_has_unsent_packets (lsquic_engine_t *engine)
 {
-    return !(engine->flags & ENG_PAST_DEADLINE)
-        && (    lsquic_mh_count(&engine->conns_out) > 0
-           )
+    return lsquic_mh_count(&engine->conns_out) > 0
     ;
 }
 
@@ -1300,7 +1292,9 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     const lsquic_time_t *next_time;
     lsquic_time_t now;
 
-    if (lsquic_mh_count(&engine->conns_tickable))
+    if (((engine->flags & ENG_PAST_DEADLINE)
+                                    && lsquic_mh_count(&engine->conns_out))
+        || lsquic_mh_count(&engine->conns_tickable))
     {
         *diff = 0;
         return 1;

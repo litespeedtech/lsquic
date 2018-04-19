@@ -169,6 +169,15 @@ stream_inside_callback (const lsquic_stream_t *stream)
 }
 
 
+static void
+maybe_conn_to_tickable (lsquic_stream_t *stream)
+{
+    if (!stream_inside_callback(stream))
+        lsquic_engine_add_conn_to_tickable(stream->conn_pub->enpub,
+                                           stream->conn_pub->lconn);
+}
+
+
 /* Here, "readable" means that the user is able to read from the stream. */
 static void
 maybe_conn_to_tickable_if_readable (lsquic_stream_t *stream)
@@ -183,12 +192,18 @@ maybe_conn_to_tickable_if_readable (lsquic_stream_t *stream)
 
 /* Here, "writeable" means that data can be put into packets to be
  * scheduled to be sent out.
+ *
+ * If `check_can_send' is false, it means that we do not need to check
+ * whether packets can be sent.  This check was already performed when
+ * we packetized stream data.
  */
 static void
-maybe_conn_to_tickable_if_writeable (lsquic_stream_t *stream)
+maybe_conn_to_tickable_if_writeable (lsquic_stream_t *stream,
+                                                    int check_can_send)
 {
     if (!stream_inside_callback(stream) &&
-            lsquic_send_ctl_can_send(stream->conn_pub->send_ctl) &&
+            (!check_can_send
+             || lsquic_send_ctl_can_send(stream->conn_pub->send_ctl)) &&
           ! lsquic_send_ctl_have_delayed_packets(stream->conn_pub->send_ctl))
     {
         lsquic_engine_add_conn_to_tickable(stream->conn_pub->enpub,
@@ -788,7 +803,7 @@ lsquic_stream_readv (lsquic_stream_t *stream, const struct iovec *iov,
             if (!(stream->stream_flags & STREAM_SENDING_FLAGS))
                 TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream, next_send_stream);
             stream->stream_flags |= STREAM_SEND_WUF;
-            maybe_conn_to_tickable_if_writeable(stream);
+            maybe_conn_to_tickable_if_writeable(stream, 1);
         }
     }
 
@@ -889,7 +904,7 @@ lsquic_stream_shutdown (lsquic_stream_t *stream, int how)
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
     if (how)
-        maybe_conn_to_tickable_if_writeable(stream);
+        maybe_conn_to_tickable_if_writeable(stream, 1);
 
     return 0;
 }
@@ -1055,7 +1070,11 @@ int
 lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 {
     if (0 == (stream->stream_flags & STREAM_U_WRITE_DONE))
+    {
+        if (is_want)
+            maybe_conn_to_tickable_if_writeable(stream, 1);
         return stream_wantwrite(stream, is_want);
+    }
     else
     {
         errno = EBADF;
@@ -1558,6 +1577,7 @@ abort_connection (struct lsquic_stream *stream)
                                                 next_service_stream);
     stream->stream_flags |= STREAM_ABORT_CONN;
     LSQ_WARN("connection will be aborted");
+    maybe_conn_to_tickable(stream);
 }
 
 
@@ -1567,18 +1587,22 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
 {
     size_t size;
     ssize_t nw;
+    unsigned seen_ok;
     struct frame_gen_ctx fg_ctx = {
         .fgc_stream = stream,
         .fgc_reader = reader,
         .fgc_nread_from_reader = 0,
     };
 
+    seen_ok = 0;
     while ((size = frame_gen_size(&fg_ctx), thresh ? size >= thresh : size > 0)
            || frame_gen_fin(&fg_ctx))
     {
         switch (stream_write_to_packet(&fg_ctx, size))
         {
         case SWTP_OK:
+            if (!seen_ok++)
+                maybe_conn_to_tickable_if_writeable(stream, 0);
             if (frame_gen_fin(&fg_ctx))
             {
                 stream->stream_flags |= STREAM_FIN_SENT;
@@ -1633,13 +1657,15 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
  * None of them flushes, which means that data is not sent and connection
  * WINDOW_UPDATE frame never arrives from peer.  Stall.
  */
-static void
+static int
 maybe_flush_stream (struct lsquic_stream *stream)
 {
     if (stream->sm_n_buffered > 0
           && (stream->stream_flags & STREAM_CONN_LIMITED)
             && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap) == 0)
-        stream_flush_nocheck(stream);
+        return stream_flush_nocheck(stream);
+    else
+        return 0;
 }
 
 
@@ -1668,7 +1694,8 @@ save_to_buffer (lsquic_stream_t *stream, struct lsquic_reader *reader,
     incr_conn_cap(stream, n_written);
     LSQ_DEBUG("buffered %zd bytes; %hu bytes are now in buffer",
               n_written, stream->sm_n_buffered);
-    maybe_flush_stream(stream);
+    if (0 != maybe_flush_stream(stream))
+        return -1;
     return n_written;
 }
 
@@ -1887,7 +1914,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint32_t error_code,
     if (do_close)
         lsquic_stream_close(stream);
     else
-        maybe_conn_to_tickable_if_writeable(stream);
+        maybe_conn_to_tickable_if_writeable(stream, 1);
 }
 
 
@@ -1920,7 +1947,7 @@ lsquic_stream_close (lsquic_stream_t *stream)
     stream_shutdown_read(stream);
     maybe_schedule_call_on_close(stream);
     maybe_finish_stream(stream);
-    maybe_conn_to_tickable_if_writeable(stream);
+    maybe_conn_to_tickable_if_writeable(stream, 1);
     return 0;
 }
 

@@ -2982,14 +2982,6 @@ full_conn_ci_handshake_failed (lsquic_conn_t *lconn)
 }
 
 
-static int
-full_conn_ci_user_wants_read (lsquic_conn_t *lconn)
-{
-    struct full_conn *conn = (struct full_conn *) lconn;
-    return !TAILQ_EMPTY(&conn->fc_pub.read_streams);
-}
-
-
 void
 lsquic_conn_abort (lsquic_conn_t *lconn)
 {
@@ -3400,7 +3392,6 @@ static const struct conn_iface full_conn_iface = {
     .ci_packet_not_sent      =  full_conn_ci_packet_not_sent,
     .ci_packet_sent          =  full_conn_ci_packet_sent,
     .ci_tick                 =  full_conn_ci_tick,
-    .ci_user_wants_read      =  full_conn_ci_user_wants_read,
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;
