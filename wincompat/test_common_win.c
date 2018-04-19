@@ -315,16 +315,10 @@ read_handler (SOCKET fd, short flags, void *ctx)
     while (ROP_NOROOM == rop);
 
     if (n_batches)
-    {
         n += packs_in->n_alloc * (n_batches - 1);
-        lsquic_engine_process_conns_with_incoming(engine);
-    }
-
-    while (lsquic_engine_has_pend_rw(engine))
-        lsquic_engine_process_conns_with_pend_rw(engine);
 
     if (!prog_is_stopped())
-        prog_maybe_set_onetimer(sport->sp_prog);
+        prog_process_conns(sport->sp_prog);
 
     LSQ_DEBUG("read %u packet%.*s in %u batch%s", n, n != 1, "s", n_batches, n_batches != 1 ? "es" : "");
 }
