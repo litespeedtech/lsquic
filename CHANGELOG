@@ -1,3 +1,8 @@
+2018-04-20
+
+    - [BUGFIX] Fix bug in lsquic_engine_connect() exposed by yesterday's
+      changes.
+
 2018-04-19
 
     - [BUGFIX] Add connection to Tickable Queue on stream write

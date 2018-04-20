@@ -568,11 +568,12 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
                        const char *hostname, unsigned short max_packet_size)
 {
     lsquic_conn_t *conn;
+    ENGINE_IN(engine);
 
     if (engine->flags & ENG_SERVER)
     {
         LSQ_ERROR("`%s' must only be called in client mode", __func__);
-        return NULL;
+        goto err;
     }
 
     if (0 == max_packet_size)
@@ -590,16 +591,19 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
 
     conn = new_full_conn_client(engine, hostname, max_packet_size);
     if (!conn)
-        return NULL;
+        goto err;
     lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
     engine_incref_conn(conn, LSCONN_TICKABLE);
-    ENGINE_IN(engine);
     lsquic_conn_record_peer_sa(conn, peer_sa);
     conn->cn_peer_ctx = peer_ctx;
     lsquic_conn_set_ctx(conn, conn_ctx);
     full_conn_client_call_on_new(conn);
+  end:
     ENGINE_OUT(engine);
     return conn;
+  err:
+    conn = NULL;
+    goto end;
 }
 
 
