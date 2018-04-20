@@ -3,6 +3,7 @@
  * LSQUIC Logger implementation.
  */
 
+#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdarg.h>
@@ -124,7 +125,7 @@ lsquic_printf (const char *fmt, ...)
 
 
 #ifdef WIN32
-#define DELTA_EPOCH_IN_MICROSECS  11644473600000000Ui64
+#define DELTA_EPOCH_IN_TICKS  116444736000000000Ui64
 struct timezone
 {
     time_t tz_minuteswest;         /* minutes W of Greenwich */
@@ -135,22 +136,19 @@ static int
 gettimeofday (struct timeval *tv, struct timezone *tz)
 {
     FILETIME ft;
-    unsigned __int64 tmpres = 0;
+    uint64_t tmpres;
     static int tzflag;
 
     if (NULL != tv)
     {
         GetSystemTimeAsFileTime(&ft);
 
-        tmpres |= ft.dwHighDateTime;
-        tmpres <<= 32;
-        tmpres |= ft.dwLowDateTime;
+        tmpres = ((uint64_t) ft.dwHighDateTime << 32)
+               | (ft.dwLowDateTime);
 
-        /*converting file time to unix epoch */
-        tmpres -= DELTA_EPOCH_IN_MICROSECS;
-        tmpres /= 10;           /*convert into microseconds */
-        tv->tv_sec = (long) (tmpres / 1000000UL);
-        tv->tv_usec = (long) (tmpres % 1000000UL);
+        tmpres -= DELTA_EPOCH_IN_TICKS;
+        tv->tv_sec = tmpres / 10000000;
+        tv->tv_usec = tmpres % 1000000;
     }
 
     if (NULL != tz)
@@ -179,8 +177,12 @@ print_timestamp (void)
     gettimeofday(&tv, NULL);
 #ifdef WIN32
     {
+#ifndef NDEBUG
+        errno_t e;
+#endif
         time_t t = tv.tv_sec;
-        localtime_s(&tm, &t); // Could be a macro, but then a type mismatch.
+        e = localtime_s(&tm, &t);
+	assert(!e);
     }
 #else    
     localtime_r(&tv.tv_sec, &tm);
