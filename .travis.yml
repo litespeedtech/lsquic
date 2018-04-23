@@ -12,7 +12,7 @@ addons:
     packages:
     - g++-5
     - clang-3.8
-    - libev-dev
+    - libevent-dev
     - libssl-dev
     - cmake
     - cmake-data
@@ -22,23 +22,20 @@ before_install:
   - $CC --version
   - cmake --version
 before_script:
-  # First build external lib
   - git clone https://boringssl.googlesource.com/boringssl
   - cd boringssl
   - git checkout chromium-stable
   - cmake .
   - make -j$(nproc)
   - BORINGSSL_SOURCE=$PWD
-  - mkdir -p $HOME/tmp/boringssl-libs
-  - cd $HOME/tmp/boringssl-libs
+  - mkdir -p $HOME/boringssl-libs
+  - cd $HOME/boringssl-libs
   - ln -s $BORINGSSL_SOURCE/ssl/libssl.a
   - ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
-  - cd ..
-  #- ./ci/build_boringssl.sh
-  # configure lsquic
+  - cd $TRAVIS_BUILD_DIR
   - echo $BORINGSSL_SOURCE
-  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs .
+  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/boringssl-libs .
 script:
   # Now build lsquic-client
   - make
-  - make test
+  - ctest -VV
