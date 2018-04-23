@@ -2626,7 +2626,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (conn->fc_flags & FC_IMMEDIATE_CLOSE_FLAGS)                      \
     {                                                                   \
         tick |= immediate_close(conn);                         \
-        goto end;                                                       \
+        goto close_end;                                                 \
     }                                                                   \
 } while (0)
 
@@ -2836,9 +2836,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
   end_write:
 
   skip_write:
-    service_streams(conn);
-    CLOSE_IF_NECESSARY();
-
     RETURN_IF_OUT_OF_PACKETS();
 
     if ((conn->fc_flags & FC_CLOSING) && conn_ok_to_close(conn))
@@ -2899,6 +2896,10 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     tick |= TICK_SEND;
 
   end:
+    service_streams(conn);
+    CLOSE_IF_NECESSARY();
+
+  close_end:
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
     return tick;
 }
@@ -3312,35 +3313,24 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     const struct lsquic_stream *stream;
-    int can_send;
-
-    /* This caches the value so that we only need to call the function once */
-#define CAN_SEND() \
-    (can_send >= 0 ? can_send : \
-        (can_send = lsquic_send_ctl_can_send(&conn->fc_send_ctl)))
-
-    if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
-        return 1;
 
     if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
         return 1;
 
-    can_send = -1;
-    if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams) && CAN_SEND())
-        return 1;
-
-    TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
-        if (lsquic_stream_readable(stream))
-            return 1;
-
-    if (!TAILQ_EMPTY(&conn->fc_pub.write_streams) && CAN_SEND())
+    if (lsquic_send_ctl_can_send(&conn->fc_send_ctl))
     {
+        if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
+            return 1;
+        if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
+            return 1;
         TAILQ_FOREACH(stream, &conn->fc_pub.write_streams, next_write_stream)
             if (lsquic_stream_write_avail(stream))
                 return 1;
     }
 
-#undef CAN_SEND
+    TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
+        if (lsquic_stream_readable(stream))
+            return 1;
 
     return 0;
 }

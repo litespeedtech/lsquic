@@ -177,7 +177,7 @@ pacer_tick (struct pacer *pacer, lsquic_time_t now)
 {
     unsigned intertick;
 
-    assert(now > pacer->pa_now);
+    assert(now >= pacer->pa_now);
     if (pacer->pa_now)
     {
         assert(now - pacer->pa_now < (1ULL << sizeof(unsigned) * 8));

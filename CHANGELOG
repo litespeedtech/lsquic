@@ -1,3 +1,17 @@
+2018-04-23
+
+    - Fix busy loop: tickable must make progress.  When connection is
+      self-reporting as tickable, it must make progress when ticked.  There
+      are two issues:
+        1. If there are buffered packets, the connection is only tickable if
+           they can be sent out.
+        2. A connection is tickable if there are streams on the servicing
+           queue.  When the tick occurs, we must service the stream
+           independent of whether any packets are sent.
+    - Fix assertion in pacer which can be incorrect under some
+      conditions.
+    - cmake: do not turn on address sanitizer if in Travis.
+
 2018-04-20
 
     - [BUGFIX] Fix bug in lsquic_engine_connect() exposed by yesterday's
