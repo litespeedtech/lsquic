@@ -15,6 +15,9 @@ Fetch Google's home page:
 
     ./http_client -H www.google.co.uk -s 2a00:1450:4009:80c::2003:443 -p /
 
+NOTE: If you do not get a response from the google server the ip-adress might be wrong. Google.com has different ip-adresses in different regions and if you are using an ip adress from a wrong region the server won't respond.
+	  You can find out the correct ip-adress by visiting google.com in your browser using an add-on that shows you the ip-adress for example. 		
+	
 In the example above, -H specifies the domain; it is also used as the value
 of SNI paramater in the handshake.
 
