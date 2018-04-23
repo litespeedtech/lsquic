@@ -1,0 +1,41 @@
+language: cpp
+compiler:
+  - clang
+  - gcc
+sudo: false
+addons:
+  apt:
+    sources:
+    - ubuntu-toolchain-r-test
+    - llvm-toolchain-precise-3.8
+    - george-edison55-precise-backports
+    packages:
+    - g++-5
+    - clang-3.8
+    - libevent-dev
+    - libssl-dev
+    - cmake
+    - cmake-data
+before_install:
+  - $CC --version
+  - if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; else export CXX="clang++-3.8" CC="clang-3.8"; fi
+  - $CC --version
+  - cmake --version
+before_script:
+  - git clone https://boringssl.googlesource.com/boringssl
+  - cd boringssl
+  - git checkout chromium-stable
+  - cmake .
+  - make -j$(nproc)
+  - BORINGSSL_SOURCE=$PWD
+  - mkdir -p $HOME/boringssl-libs
+  - cd $HOME/boringssl-libs
+  - ln -s $BORINGSSL_SOURCE/ssl/libssl.a
+  - ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
+  - cd $TRAVIS_BUILD_DIR
+  - echo $BORINGSSL_SOURCE
+  - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$HOME/boringssl-libs .
+script:
+  # Now build lsquic-client
+  - make
+  - make test
