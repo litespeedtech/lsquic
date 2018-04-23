@@ -38,4 +38,4 @@ before_script:
 script:
   # Now build lsquic-client
   - make
-  - ctest -VV
+  - make test

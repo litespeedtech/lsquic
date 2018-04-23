@@ -41,7 +41,8 @@ IF(DEVEL_MODE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     # -Werror is used to force us to fix warnings early.
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Werror")
-    IF(CMAKE_C_COMPILER MATCHES "clang")
+    IF(CMAKE_C_COMPILER MATCHES "clang" AND
+                        NOT "$ENV{TRAVIS}" MATCHES "^true$")
         SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fsanitize=address")
     ENDIF()
     # Uncomment to enable fault injection testing via libfiu:
