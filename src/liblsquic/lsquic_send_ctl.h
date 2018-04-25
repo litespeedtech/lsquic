@@ -276,4 +276,7 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
     lsquic_send_ctl_sanity_check(ctl);                          \
 } while (0)
 
+int
+lsquic_send_ctl_sched_is_blocked (const struct lsquic_send_ctl *);
+
 #endif

@@ -2613,6 +2613,14 @@ write_is_possible (struct full_conn *conn)
 }
 
 
+static int
+should_generate_ack (const struct full_conn *conn)
+{
+    return (conn->fc_flags & FC_ACK_QUEUED)
+        || lsquic_send_ctl_lost_ack(&conn->fc_send_ctl);
+}
+
+
 static enum tick_st
 full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 {
@@ -2708,8 +2716,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         have_delayed_packets = lsquic_send_ctl_maybe_squeeze_sched(
                                                     &conn->fc_send_ctl);
 
-    if ((conn->fc_flags & FC_ACK_QUEUED) ||
-                            lsquic_send_ctl_lost_ack(&conn->fc_send_ctl))
+    if (should_generate_ack(conn))
     {
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->fc_send_ctl);
@@ -3317,7 +3324,9 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
     if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
         return 1;
 
-    if (lsquic_send_ctl_can_send(&conn->fc_send_ctl))
+    if (lsquic_send_ctl_can_send(&conn->fc_send_ctl)
+        && (should_generate_ack(conn) ||
+            !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {
         if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
             return 1;
