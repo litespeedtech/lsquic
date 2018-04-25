@@ -5,6 +5,8 @@
     - [BUGFIX] sendctl checks for all unacked bytes, not just retx bytes.
     - [BUGFIX] connections with blocked scheduled packets are not tickable
       for sending.
+    - [BUGFIX] Conn is tickable if it wants to send a connection-level
+      frame.
 
 2018-04-23
 

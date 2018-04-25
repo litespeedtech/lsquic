@@ -3328,6 +3328,9 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
         && (should_generate_ack(conn) ||
             !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {
+        if (conn->fc_flags & (FC_SEND_GOAWAY|FC_SEND_STOP_WAITING
+                             |FC_SEND_PING|FC_SEND_WUF))
+            return 1;
         if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
             return 1;
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
