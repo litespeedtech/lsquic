@@ -938,19 +938,15 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         s = lsquic_hdec_decode(fr->fr_hdec, &comp, end,
                                 hwc.buf, hwc.buf + 16 * 1024,
                                 &hwc.name_len, &hwc.val_len);
-        if (s > 0)
+        if (s == 0)
         {
             err = add_header_to_uh(fr, &hwc);
-            if (0 != err)
-                goto stream_error;
-        }
-        else if (s < 0)
-        {
-            err = FR_ERR_DECOMPRESS;
-            goto stream_error;
+            if (err == 0)
+                continue;
         }
         else
-            break;
+            err = FR_ERR_DECOMPRESS;
+        goto stream_error;
     }
     assert(comp == end);
 

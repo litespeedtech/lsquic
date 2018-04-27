@@ -290,7 +290,7 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
     int indexed_type, len;
 
     if ((*src) == src_end)
-        return 0;
+        return -1;
 
     while ((*(*src) & 0xe0) == 0x20)    //001 xxxxx
     {
@@ -300,7 +300,7 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
             return -1;
         hdec_update_max_capacity(dec, new_capacity);
         if (*src == src_end)
-            return 0;
+            return -1;
     }
 
     /* lsquic_hdec_dec_int() sets `index' and advances `src'.  If we do not call
@@ -373,7 +373,7 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
                     return -1;
                 *val_len = lsquic_hpack_stx_tab[index - 1].val_len;
                 memcpy(name + *name_len, lsquic_hpack_stx_tab[index - 1].val, *val_len);
-                return 1;
+                return 0;
             }
         }
         else
@@ -392,7 +392,7 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
                     return -1;
                 *val_len = entry->dte_val_len;
                 memcpy(name + *name_len, DTE_VALUE(entry), *val_len);
-                return 1;
+                return 0;
             }
         }
     }
@@ -421,7 +421,7 @@ lsquic_hdec_decode (struct lsquic_hdec *dec,
             return -1;  //error
     }
 
-    return 1;
+    return 0;
 }
 
 

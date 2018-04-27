@@ -22,16 +22,11 @@ lsquic_hdec_init (struct lsquic_hdec *);
 void
 lsquic_hdec_cleanup (struct lsquic_hdec *);
 
-/** @lsquic_hdecode
- * @brief HPACK decode one name/value item
- *  @param[in,out] dec - A pointer to a valid HPACK API struct
- *  @param[in,out] src - Address of pointer to source buffer
- *  @param[in] src_end - A pointer to end of source buffer
- *  @param[out] dst - A pointer to destination buffer
- *  @param[out] dst_end - A pointer to end of destination buffer
- *  @param[out] name_len - The item name's length
- *  @param[out] value_len - The item value's length
- *  @return 1: OK, 0: end, -1: FAIL
+/*
+ * Returns 0 on success, a negative value on failure.
+ *
+ * If 0 is returned, `src' is advanced.  Calling with a zero-length input
+ * buffer results in an error.
  */
 int
 lsquic_hdec_decode (struct lsquic_hdec *dec,

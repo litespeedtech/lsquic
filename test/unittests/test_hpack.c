@@ -344,9 +344,11 @@ test_hpack_test_RFC_Example (void)
     char out[2048];
     uint16_t name_len = 1024;
     uint16_t val_len = 1024;
-    while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+    while (pSrc < bufEnd)
     {
+        rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out),
+                                &name_len, &val_len);
+        assert(rc == 0);
         char *name = out;
         char *val = name + name_len;
         printf("%.*s: %.*s\n", name_len, name, val_len, val);
@@ -358,9 +360,11 @@ test_hpack_test_RFC_Example (void)
         "\x82\x86\x84\xbe\x58\x86\xa8\xeb\x10\x64\x9c\xbf";
     pSrc = bufSamp;
     bufEnd =  bufSamp + strlen((const char *)bufSamp);
-    while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+    while (pSrc < bufEnd)
     {
+        rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out),
+                                &name_len, &val_len);
+        assert(rc == 0);
         char *name = out;
         char *val = name + name_len;
         printf("%.*s: %.*s\n", name_len, name, val_len, val);
@@ -370,9 +374,11 @@ test_hpack_test_RFC_Example (void)
         "\x82\x87\x85\xbf\x40\x88\x25\xa8\x49\xe9\x5b\xa9\x7d\x7f\x89\x25\xa8\x49\xe9\x5b\xb8\xe8\xb4\xbf";
     pSrc = bufSamp;
     bufEnd =  bufSamp + strlen((const char *)bufSamp);
-    while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+    while (pSrc < bufEnd)
     {
+        rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out),
+                                &name_len, &val_len);
+        assert(rc == 0);
         char *name = out;
         char *val = name + name_len;
         printf("%.*s: %.*s\n", name_len, name, val_len, val);
@@ -420,7 +426,7 @@ test_decode_limits (void)
         src = comp;
         s = lsquic_hdec_decode(&hdec, &src, end, out, out + enough[n],
                                 &name_len, &val_len);
-        assert(1 == s);
+        assert(0 == s);
         assert(src == end);
         assert(16 == name_len);
         assert(17 == val_len);
@@ -481,7 +487,7 @@ test_hpack_self_enc_dec_test (void)
     pSrc = respBuf;
     bufEnd =  pBuf;
     while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+                    &val_len)) == 0)
     {
         char *name = out;
         char *val = name + name_len;
@@ -515,7 +521,7 @@ test_hpack_self_enc_dec_test (void)
     pSrc = respBuf;
     bufEnd =  pBuf;
     while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+                    &val_len)) == 0)
     {
         char *name = out;
         char *val = name + name_len;
@@ -561,7 +567,7 @@ test_hpack_self_enc_dec_test (void)
     pSrc = respBuf;
     bufEnd =  pBuf;
     while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+                    &val_len)) == 0)
     {
         char *name = out;
         char *val = name + name_len;
@@ -602,7 +608,7 @@ test_hpack_self_enc_dec_test (void)
     pSrc = respBuf;
     bufEnd =  pBuf;
     while ((rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len,
-                    &val_len)) > 0)
+                    &val_len)) == 0)
     {
         char *name = out;
         char *val = name + name_len;
@@ -640,7 +646,7 @@ test_hpack_encode_and_decode (void)
     uint16_t name_len, val_len;
     int rc = lsquic_hdec_decode(&hdec, &dec, enc, out, out + sizeof(out), &name_len,
                                                                 &val_len);
-    assert(rc > 0);
+    assert(rc == 0);
     assert(name_len == 10);
     assert(val_len == 15);
     assert(dec == enc);
@@ -715,7 +721,7 @@ test_hpack_self_enc_dec_test_firefox_error (void)
     while (pSrc < bufEnd)
     {
         rc = lsquic_hdec_decode(&hdec, &pSrc, bufEnd, out, out + sizeof(out), &name_len, &val_len);
-        assert(rc > 0);
+        assert(rc == 0);
 
         char *name = out;
         char *val = name + name_len;
@@ -748,7 +754,7 @@ test_hdec_table_size_updates (void)
      * error.
      */
     {
-        unsigned const char buf[] = { 0x20 | 0x1E };
+        unsigned const char buf[] = { 0x20 | 0x1E, 0x88 };
         src = buf;
         lsquic_hdec_init(&hdec);
         lsquic_hdec_set_max_capacity(&hdec, 0x11);
@@ -762,7 +768,7 @@ test_hdec_table_size_updates (void)
     /* Test 2: inline update of capacity smaller than max succeeds.
      */
     {
-        unsigned const char buf[] = { 0x20 | 0x1E };
+        unsigned const char buf[] = { 0x20 | 0x1E, 0x88 };
         src = buf;
         lsquic_hdec_init(&hdec);
         s = lsquic_hdec_decode(&hdec, &src, src + sizeof(buf), outbuf,
@@ -784,6 +790,7 @@ test_hdec_table_size_updates (void)
         unsigned const char buf[] = {
                 0x20 | 0x00,
                 0x20 | 0x14,
+                0x88,
         };
         src = buf;
         lsquic_hdec_init(&hdec);
@@ -792,6 +799,18 @@ test_hdec_table_size_updates (void)
         assert(s == 0);
         assert(src == buf + sizeof(buf));
         assert(hdec.hpd_cur_max_capacity == 0x14);
+        lsquic_hdec_cleanup(&hdec);
+    }
+
+    /* Test 4: header block with table update at the end fails.
+     */
+    {
+        unsigned const char buf[] = { 0x20 | 0x1E, };
+        src = buf;
+        lsquic_hdec_init(&hdec);
+        s = lsquic_hdec_decode(&hdec, &src, src + sizeof(buf), outbuf,
+                            outbuf + sizeof(outbuf), &name_len, &val_len);
+        assert(s < 0);
         lsquic_hdec_cleanup(&hdec);
     }
 
@@ -886,7 +905,7 @@ test_henc_nonascii (void)
     src = comp;
     s = lsquic_hdec_decode(&hdec, &src, end, uncomp, uncomp + sizeof(uncomp),
                                                         &name_len, &val_len);
-    assert(s == 1);
+    assert(s == 0);
     assert(sizeof(value) == val_len);
     assert(0 == memcmp(value, uncomp + name_len, val_len));
     lsquic_hdec_cleanup(&hdec);
@@ -927,7 +946,7 @@ test_henc_long_compressable (void)
     src = comp;
     s = lsquic_hdec_decode(&hdec, &src, end, uncomp, uncomp + sizeof(uncomp),
                                                         &name_len, &val_len);
-    assert(s == 1);
+    assert(s == 0);
     assert(sizeof(value) == val_len);
     assert(0 == memcmp(value, uncomp + name_len, val_len));
     lsquic_hdec_cleanup(&hdec);
@@ -975,7 +994,7 @@ test_henc_long_uncompressable (void)
     src = comp;
     s = lsquic_hdec_decode(&hdec, &src, end, uncomp, uncomp + sizeof(uncomp),
                                                         &name_len, &val_len);
-    assert(s == 1);
+    assert(s == 0);
     assert(sizeof(value) == val_len);
     assert(0 == memcmp(value, uncomp + name_len, val_len));
     lsquic_hdec_cleanup(&hdec);
@@ -1210,7 +1229,7 @@ main (int argc, char **argv)
     for (i = 0; comp < end; ++i)
     {
         s = lsquic_hdec_decode(&hdec, &comp, end, out, out + sizeof(out), &name_len, &val_len);
-        assert(s > 0);
+        assert(s == 0);
         assert(name_len == header_arr[i].name.iov_len);
         assert(0 == memcmp(header_arr[i].name.iov_base, out, name_len));
         assert(val_len == header_arr[i].value.iov_len);
