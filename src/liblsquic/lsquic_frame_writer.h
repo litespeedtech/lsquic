@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 struct iovec;
-struct lsquic_henc;
+struct lshpack_enc;
 struct lsquic_mm;
 struct lsquic_frame_writer;
 struct lsquic_stream;
@@ -21,7 +21,7 @@ typedef ssize_t (*fw_write_f)(struct lsquic_stream *, const void *, size_t);
 
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *, struct lsquic_stream *,
-                         unsigned max_frame_sz, struct lsquic_henc *,
+                         unsigned max_frame_sz, struct lshpack_enc *,
                          fw_write_f, int is_server);
 
 void

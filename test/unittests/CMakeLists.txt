@@ -2,6 +2,7 @@
 include_directories( BEFORE ../../ssl/include )
 include_directories( ../../include )
 include_directories( ../../src/liblsquic )
+include_directories( ../../src/liblsquic/ls-hpack/include )
 
 enable_testing()
 
@@ -209,10 +210,6 @@ IF (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     target_link_libraries(test_frame_rw lsquic pthread libssl.a libcrypto.a z m ${FIULIB})
     add_test(frame_rw test_frame_rw)
 ENDIF()
-
-add_executable(test_hpack test_hpack.c)
-target_link_libraries(test_hpack lsquic m ${FIULIB})
-add_test(hpack test_hpack)
 
 add_executable(test_hkdf test_hkdf.c)
 target_link_libraries(test_hkdf lsquic pthread libssl.a libcrypto.a m ${FIULIB})
@@ -442,10 +439,6 @@ add_test(frame_writer test_frame_writer)
 add_executable(test_frame_chop test_frame_chop.c ../../wincompat/getopt.c ../../wincompat/getopt1.c)
 target_link_libraries(test_frame_chop lsquic ${LIBS_LIST})
 add_test(frame_chop test_frame_chop)
-
-add_executable(test_hpack test_hpack.c)
-target_link_libraries(test_hpack lsquic ${MIN_LIBS_LIST})
-add_test(hpack test_hpack)
 
 add_executable(test_hkdf test_hkdf.c)
 target_link_libraries(test_hkdf lsquic ${LIBS_LIST})

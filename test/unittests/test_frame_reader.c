@@ -13,8 +13,7 @@
 
 #include "lsquic.h"
 #include "lsquic_frame_common.h"
-#include "lsquic_arr.h"
-#include "lsquic_hpack_dec.h"
+#include "lshpack.h"
 #include "lsquic_mm.h"
 #include "lsquic_logger.h"
 
@@ -1063,12 +1062,12 @@ test_one_frt (const struct frame_reader_test *frt)
 {
     struct lsquic_frame_reader *fr;
     unsigned short exp_off;
-    struct lsquic_hdec hdec;
+    struct lshpack_dec hdec;
     struct lsquic_mm mm;
     int s;
 
     lsquic_mm_init(&mm);
-    lsquic_hdec_init(&hdec);
+    lshpack_dec_init(&hdec);
     memset(&input, 0, sizeof(input));
     memcpy(input.in_buf, frt->frt_buf, frt->frt_bufsz);
     input.in_sz  = frt->frt_bufsz;
@@ -1105,7 +1104,7 @@ test_one_frt (const struct frame_reader_test *frt)
         lsquic_frame_reader_destroy(fr);
     }
     while (input.in_max_sz < input.in_max_req_sz);
-    lsquic_hdec_cleanup(&hdec);
+    lshpack_dec_cleanup(&hdec);
     lsquic_mm_cleanup(&mm);
 }
 

@@ -47,16 +47,15 @@ SET(lsquic_STAT_SRCS
     lsquic_str.c
     lsquic_arr.c
     lsquic_hash.c
-    lsquic_hpack_common.c
-    lsquic_hpack_dec.c
-    lsquic_hpack_enc.c
     lsquic_xxhash.c
     lsquic_buf.c
     lsquic_min_heap.c
+    lshpack.c
     )
 
 
 
+SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DXXH_HEADER_NAME=\\\"lsquic_xxhash.h\\\"")
 
 add_library(lsquic STATIC ${lsquic_STAT_SRCS} )
 

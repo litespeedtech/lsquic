@@ -21,9 +21,7 @@
 #include <sys/queue.h>
 
 #include "lsquic.h"
-#include "lsquic_arr.h"
-#include "lsquic_hpack_enc.h"
-#include "lsquic_hpack_dec.h"
+#include "lshpack.h"
 #include "lsquic_logger.h"
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
@@ -186,13 +184,13 @@ test_rw (unsigned max_frame_sz)
     struct lsquic_stream *stream;
     struct uncompressed_headers *uh;
     struct lsquic_mm mm;
-    struct lsquic_henc henc;
-    struct lsquic_hdec hdec;
+    struct lshpack_enc henc;
+    struct lshpack_dec hdec;
     int s;
 
     lsquic_mm_init(&mm);
-    lsquic_henc_init(&henc);
-    lsquic_hdec_init(&hdec);
+    lshpack_enc_init(&henc);
+    lshpack_dec_init(&hdec);
     stream = stream_new();
     stream->sm_max_sz = 1;
 
@@ -236,8 +234,8 @@ test_rw (unsigned max_frame_sz)
 
     lsquic_frame_writer_destroy(fw);
     stream_destroy(stream);
-    lsquic_henc_cleanup(&henc);
-    lsquic_hdec_cleanup(&hdec);
+    lshpack_enc_cleanup(&henc);
+    lshpack_dec_cleanup(&hdec);
     lsquic_mm_cleanup(&mm);
 }
 

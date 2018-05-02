@@ -586,16 +586,6 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
      */
     stream->stream_flags |= STREAM_RST_RECVD;
 
-    if ((stream->stream_flags & STREAM_FIN_RECVD) &&
-                    /* Pushed streams have fake STREAM_FIN_RECVD set, thus
-                     * we need a special check:
-                     */
-                                            !lsquic_stream_is_pushed(stream))
-    {
-        LSQ_DEBUG("ignore RST_STREAM frame after FIN is received");
-        return 0;
-    }
-
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > offset)
     {
         LSQ_INFO("stream %u: RST_STREAM invalid: its offset 0x%"PRIX64" is "

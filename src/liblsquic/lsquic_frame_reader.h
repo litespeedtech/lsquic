@@ -12,7 +12,7 @@
 #include <vc_compat.h>
 #endif
 
-struct lsquic_hdec;
+struct lshpack_dec;
 struct lsquic_mm;
 struct lsquic_stream;
 struct lsquic_frame_reader;
@@ -110,7 +110,7 @@ typedef ssize_t (*fr_stream_read_f)(struct lsquic_stream *, void *, size_t);
 struct lsquic_frame_reader *
 lsquic_frame_reader_new (enum frame_reader_flags, unsigned max_headers_sz,
                          struct lsquic_mm *, struct lsquic_stream *,
-                         fr_stream_read_f, struct lsquic_hdec *,
+                         fr_stream_read_f, struct lshpack_dec *,
                          const struct frame_reader_callbacks *,
                          void *fr_cb_ctx);
 

@@ -21,7 +21,7 @@
 #include <sys/queue.h>
 
 #include "lsquic.h"
-#include "lsquic_hpack_enc.h"
+#include "lshpack.h"
 #include "lsquic_logger.h"
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
@@ -95,11 +95,11 @@ test_chop (unsigned max_write_sz)
     struct lsquic_frame_writer *fw;
     struct lsquic_stream *stream;
     struct lsquic_mm mm;
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     int s;
 
     lsquic_mm_init(&mm);
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     stream = stream_new(max_write_sz);
 
     fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write, 0);
@@ -161,7 +161,7 @@ test_chop (unsigned max_write_sz)
 
     lsquic_frame_writer_destroy(fw);
     stream_destroy(stream);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 

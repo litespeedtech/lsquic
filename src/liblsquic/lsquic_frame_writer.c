@@ -18,8 +18,7 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include "lsquic_arr.h"
-#include "lsquic_hpack_enc.h"
+#include "lshpack.h"
 #include "lsquic_mm.h"
 #include "lsquic.h"
 
@@ -67,7 +66,7 @@ struct lsquic_frame_writer
     struct lsquic_stream       *fw_stream;
     fw_write_f                  fw_write;
     struct lsquic_mm           *fw_mm;
-    struct lsquic_henc         *fw_henc;
+    struct lshpack_enc         *fw_henc;
     struct frame_buf_head       fw_frabs;
     unsigned                    fw_max_frame_sz;
     uint32_t                    fw_max_header_list_sz;  /* 0 means unlimited */
@@ -88,7 +87,7 @@ struct lsquic_frame_writer
 
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
-     unsigned max_frame_sz, struct lsquic_henc *henc, fw_write_f write,
+     unsigned max_frame_sz, struct lshpack_enc *henc, fw_write_f write,
      int is_server)
 {
     struct lsquic_frame_writer *fw;
@@ -394,8 +393,8 @@ have_oversize_strings (const struct lsquic_http_headers *headers)
     int i, have;
     for (i = 0, have = 0; i < headers->count; ++i)
     {
-        have |= headers->headers[i].name.iov_len  > HPACK_MAX_STRLEN;
-        have |= headers->headers[i].value.iov_len > HPACK_MAX_STRLEN;
+        have |= headers->headers[i].name.iov_len  > LSHPACK_MAX_STRLEN;
+        have |= headers->headers[i].value.iov_len > LSHPACK_MAX_STRLEN;
     }
     return have;
 }
@@ -452,7 +451,7 @@ write_headers (struct lsquic_frame_writer *fw,
 
     for (i = 0; i < headers->count; ++i)
     {
-        end = lsquic_henc_encode(fw->fw_henc, buf, buf + buf_sz,
+        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz,
             headers->headers[i].name.iov_base, headers->headers[i].name.iov_len,
             headers->headers[i].value.iov_base, headers->headers[i].value.iov_len, 0);
         if (end > buf)

@@ -14,8 +14,7 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include "lsquic_arr.h"
-#include "lsquic_hpack_dec.h"
+#include "lshpack.h"
 #include "lsquic.h"
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
@@ -123,7 +122,7 @@ struct reader_state
 struct lsquic_frame_reader
 {
     struct lsquic_mm                *fr_mm;
-    struct lsquic_hdec              *fr_hdec;
+    struct lshpack_dec              *fr_hdec;
     struct lsquic_stream            *fr_stream;
     fr_stream_read_f                 fr_read;
     const struct frame_reader_callbacks
@@ -189,7 +188,7 @@ lsquic_frame_reader_new (enum frame_reader_flags flags,
                     unsigned max_headers_sz,
                     struct lsquic_mm *mm,
                     struct lsquic_stream *stream, fr_stream_read_f read,
-                    struct lsquic_hdec *hdec,
+                    struct lshpack_dec *hdec,
                     const struct frame_reader_callbacks *cb,
                     void *frame_reader_cb_ctx)
 {
@@ -516,7 +515,7 @@ struct header_writer_ctx
     }                            hwc_flags;
     enum pseudo_header           pseh_mask;
     char                        *pseh_bufs[N_PSEH];
-    hpack_strlen_t               name_len,
+    lshpack_strlen_t             name_len,
                                  val_len;
 };
 
@@ -935,7 +934,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
 
     while (comp < end)
     {
-        s = lsquic_hdec_decode(fr->fr_hdec, &comp, end,
+        s = lshpack_dec_decode(fr->fr_hdec, &comp, end,
                                 hwc.buf, hwc.buf + 16 * 1024,
                                 &hwc.name_len, &hwc.val_len);
         if (s == 0)

@@ -1,78 +1,134 @@
 /* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/*
+MIT License
+
+Copyright (c) 2018 LiteSpeed Technologies Inc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/queue.h>
 
-#include "lsquic_hpack_common.h"
+#include "lshpack.h"
+#if LS_HPACK_EMIT_TEST_CODE
+#include "lshpack-test.h"
+#endif
+#include XXH_HEADER_NAME
 
-#define STR_AND_LEN(a) (a), (sizeof(a) -1)
+#define HPACK_STATIC_TABLE_SIZE   61
+#define INITIAL_DYNAMIC_TABLE_SIZE  4096
 
-//ref: https://www.mnot.net/talks/http2-expectations/hpack.html
-const hpack_hdr_tbl_t lsquic_hpack_stx_tab[HPACK_STATIC_TABLE_SIZE] =
+/* RFC 7541, Section 4.1:
+ *
+ * " The size of the dynamic table is the sum of the size of its entries.
+ * "
+ * " The size of an entry is the sum of its name's length in octets (as
+ * " defined in Section 5.2), its value's length in octets, and 32.
+ */
+#define DYNAMIC_ENTRY_OVERHEAD 32
+
+#define NAME_VAL(a, b) sizeof(a) - 1, sizeof(b) - 1, (a), (b)
+
+static const struct
 {
-    { STR_AND_LEN(":authority"),         STR_AND_LEN("") },
-    { STR_AND_LEN(":method"),            STR_AND_LEN("GET") },
-    { STR_AND_LEN(":method"),            STR_AND_LEN("POST") },
-    { STR_AND_LEN(":path"),              STR_AND_LEN("/") },
-    { STR_AND_LEN(":path"),              STR_AND_LEN("/index.html") },
-    { STR_AND_LEN(":scheme"),            STR_AND_LEN("http") },
-    { STR_AND_LEN(":scheme"),            STR_AND_LEN("https") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("200") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("204") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("206") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("304") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("400") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("404") },
-    { STR_AND_LEN(":status"),            STR_AND_LEN("500") },
-    { STR_AND_LEN("accept-charset"),     STR_AND_LEN("") },
-    { STR_AND_LEN("accept-encoding"),    STR_AND_LEN("gzip, deflate") },
-    { STR_AND_LEN("accept-language"),    STR_AND_LEN("") },
-    { STR_AND_LEN("accept-ranges"),    STR_AND_LEN("") },
-    { STR_AND_LEN("accept"),    STR_AND_LEN("") },
-    { STR_AND_LEN("access-control-allow-origin"),    STR_AND_LEN("") },
-    { STR_AND_LEN("age"),    STR_AND_LEN("") },
-    { STR_AND_LEN("allow"),    STR_AND_LEN("") },
-    { STR_AND_LEN("authorization"),    STR_AND_LEN("") },
-    { STR_AND_LEN("cache-control"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-disposition"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-encoding"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-language"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-length"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-location"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-range"),    STR_AND_LEN("") },
-    { STR_AND_LEN("content-type"),    STR_AND_LEN("") },
-    { STR_AND_LEN("cookie"),    STR_AND_LEN("") },
-    { STR_AND_LEN("date"),    STR_AND_LEN("") },
-    { STR_AND_LEN("etag"),    STR_AND_LEN("") },
-    { STR_AND_LEN("expect"),    STR_AND_LEN("") },
-    { STR_AND_LEN("expires"),    STR_AND_LEN("") },
-    { STR_AND_LEN("from"),    STR_AND_LEN("") },
-    { STR_AND_LEN("host"),    STR_AND_LEN("") },
-    { STR_AND_LEN("if-match"),    STR_AND_LEN("") },
-    { STR_AND_LEN("if-modified-since"),    STR_AND_LEN("") },
-    { STR_AND_LEN("if-none-match"),    STR_AND_LEN("") },
-    { STR_AND_LEN("if-range"),    STR_AND_LEN("") },
-    { STR_AND_LEN("if-unmodified-since"),    STR_AND_LEN("") },
-    { STR_AND_LEN("last-modified"),    STR_AND_LEN("") },
-    { STR_AND_LEN("link"),    STR_AND_LEN("") },
-    { STR_AND_LEN("location"),    STR_AND_LEN("") },
-    { STR_AND_LEN("max-forwards"),    STR_AND_LEN("") },
-    { STR_AND_LEN("proxy-authenticate"),    STR_AND_LEN("") },
-    { STR_AND_LEN("proxy-authorization"),    STR_AND_LEN("") },
-    { STR_AND_LEN("range"),    STR_AND_LEN("") },
-    { STR_AND_LEN("referer"),    STR_AND_LEN("") },
-    { STR_AND_LEN("refresh"),    STR_AND_LEN("") },
-    { STR_AND_LEN("retry-after"),    STR_AND_LEN("") },
-    { STR_AND_LEN("server"),    STR_AND_LEN("") },
-    { STR_AND_LEN("set-cookie"),    STR_AND_LEN("") },
-    { STR_AND_LEN("strict-transport-security"),    STR_AND_LEN("") },
-    { STR_AND_LEN("transfer-encoding"),    STR_AND_LEN("") },
-    { STR_AND_LEN("user-agent"),    STR_AND_LEN("") },
-    { STR_AND_LEN("vary"),    STR_AND_LEN("") },
-    { STR_AND_LEN("via"),    STR_AND_LEN("") },
-    { STR_AND_LEN("www-authenticate"),    STR_AND_LEN("") }
+    lshpack_strlen_t  name_len;
+    lshpack_strlen_t  val_len;
+    const char       *name;
+    const char       *val;
+}
+static_table[HPACK_STATIC_TABLE_SIZE] =
+{
+    { NAME_VAL(":authority",                    "") },
+    { NAME_VAL(":method",                       "GET") },
+    { NAME_VAL(":method",                       "POST") },
+    { NAME_VAL(":path",                         "/") },
+    { NAME_VAL(":path",                         "/index.html") },
+    { NAME_VAL(":scheme",                       "http") },
+    { NAME_VAL(":scheme",                       "https") },
+    { NAME_VAL(":status",                       "200") },
+    { NAME_VAL(":status",                       "204") },
+    { NAME_VAL(":status",                       "206") },
+    { NAME_VAL(":status",                       "304") },
+    { NAME_VAL(":status",                       "400") },
+    { NAME_VAL(":status",                       "404") },
+    { NAME_VAL(":status",                       "500") },
+    { NAME_VAL("accept-charset",                "") },
+    { NAME_VAL("accept-encoding",               "gzip, deflate") },
+    { NAME_VAL("accept-language",               "") },
+    { NAME_VAL("accept-ranges",                 "") },
+    { NAME_VAL("accept",                        "") },
+    { NAME_VAL("access-control-allow-origin",   "") },
+    { NAME_VAL("age",                           "") },
+    { NAME_VAL("allow",                         "") },
+    { NAME_VAL("authorization",                 "") },
+    { NAME_VAL("cache-control",                 "") },
+    { NAME_VAL("content-disposition",           "") },
+    { NAME_VAL("content-encoding",              "") },
+    { NAME_VAL("content-language",              "") },
+    { NAME_VAL("content-length",                "") },
+    { NAME_VAL("content-location",              "") },
+    { NAME_VAL("content-range",                 "") },
+    { NAME_VAL("content-type",                  "") },
+    { NAME_VAL("cookie",                        "") },
+    { NAME_VAL("date",                          "") },
+    { NAME_VAL("etag",                          "") },
+    { NAME_VAL("expect",                        "") },
+    { NAME_VAL("expires",                       "") },
+    { NAME_VAL("from",                          "") },
+    { NAME_VAL("host",                          "") },
+    { NAME_VAL("if-match",                      "") },
+    { NAME_VAL("if-modified-since",             "") },
+    { NAME_VAL("if-none-match",                 "") },
+    { NAME_VAL("if-range",                      "") },
+    { NAME_VAL("if-unmodified-since",           "") },
+    { NAME_VAL("last-modified",                 "") },
+    { NAME_VAL("link",                          "") },
+    { NAME_VAL("location",                      "") },
+    { NAME_VAL("max-forwards",                  "") },
+    { NAME_VAL("proxy-authenticate",            "") },
+    { NAME_VAL("proxy-authorization",           "") },
+    { NAME_VAL("range",                         "") },
+    { NAME_VAL("referer",                       "") },
+    { NAME_VAL("refresh",                       "") },
+    { NAME_VAL("retry-after",                   "") },
+    { NAME_VAL("server",                        "") },
+    { NAME_VAL("set-cookie",                    "") },
+    { NAME_VAL("strict-transport-security",     "") },
+    { NAME_VAL("transfer-encoding",             "") },
+    { NAME_VAL("user-agent",                    "") },
+    { NAME_VAL("vary",                          "") },
+    { NAME_VAL("via",                           "") },
+    { NAME_VAL("www-authenticate",              "") }
 };
 
 
-const hpack_huff_encode_t lsquic_hpack_huff_encode_tables[257] =
+struct encode_el
+{
+    uint32_t code;
+    int      bits;
+};
+
+static const struct encode_el encode_table[257] =
 {
     {     0x1ff8,    13},    //        (  0)
     {   0x7fffd8,    23},    //        (  1)
@@ -334,7 +390,14 @@ const hpack_huff_encode_t lsquic_hpack_huff_encode_tables[257] =
 };
 
 
-const hpack_huff_decode_t lsquic_hpack_huff_decode_tables[256][16] =
+struct decode_el
+{
+    uint8_t state;
+    uint8_t flags;
+    uint8_t sym;
+};
+
+static const struct decode_el decode_tables[256][16] =
 {
     /* 0 */
     {
@@ -5201,3 +5264,1335 @@ const hpack_huff_decode_t lsquic_hpack_huff_decode_tables[256][16] =
         { 0, 0x04, 0 },
     },
 };
+
+#define lshpack_arr_init(a) do {                                        \
+    memset((a), 0, sizeof(*(a)));                                       \
+} while (0)
+
+#define lshpack_arr_cleanup(a) do {                                     \
+    free((a)->els);                                                     \
+    memset((a), 0, sizeof(*(a)));                                       \
+} while (0)
+
+#define lshpack_arr_get(a, i) (                                         \
+    assert((i) < (a)->nelem),                                           \
+    (a)->els[(a)->off + (i)]                                            \
+)
+
+#define lshpack_arr_shift(a) (                                          \
+    assert((a)->nelem > 0),                                             \
+    (a)->nelem -= 1,                                                    \
+    (a)->els[(a)->off++]                                                \
+)
+
+#define lshpack_arr_pop(a) (                                            \
+    assert((a)->nelem > 0),                                             \
+    (a)->nelem -= 1,                                                    \
+    (a)->els[(a)->off + (a)->nelem]                                     \
+)
+
+#define lshpack_arr_count(a) (+(a)->nelem)
+
+static int
+lshpack_arr_push (struct lshpack_arr *arr, uintptr_t val)
+{
+    uintptr_t *new_els;
+    unsigned n;
+
+    if (arr->off + arr->nelem < arr->nalloc)
+    {
+        arr->els[arr->off + arr->nelem] = val;
+        ++arr->nelem;
+        return 0;
+    }
+
+    if (arr->off > arr->nalloc / 2)
+    {
+        memmove(arr->els, arr->els + arr->off,
+                                        sizeof(arr->els[0]) * arr->nelem);
+        arr->off = 0;
+        arr->els[arr->nelem] = val;
+        ++arr->nelem;
+        return 0;
+    }
+
+    if (arr->nalloc)
+        n = arr->nalloc * 2;
+    else
+        n = 64;
+    new_els = malloc(n * sizeof(arr->els[0]));
+    if (!new_els)
+        return -1;
+    memcpy(new_els, arr->els + arr->off, sizeof(arr->els[0]) * arr->nelem);
+    free(arr->els);
+    arr->off = 0;
+    arr->els = new_els;
+    arr->nalloc = n;
+    arr->els[arr->off + arr->nelem] = val;
+    ++arr->nelem;
+    return 0;
+}
+
+struct lshpack_double_enc_head
+{
+    struct lshpack_enc_head by_name;
+    struct lshpack_enc_head by_nameval;
+};
+
+struct lshpack_enc_table_entry
+{
+    /* An entry always lives on all three lists */
+    STAILQ_ENTRY(lshpack_enc_table_entry)
+                                    ete_next_nameval,
+                                    ete_next_name,
+                                    ete_next_all;
+    unsigned                        ete_id;
+    unsigned                        ete_nameval_hash;
+    unsigned                        ete_name_hash;
+    lshpack_strlen_t                ete_name_len;
+    lshpack_strlen_t                ete_val_len;
+    char                            ete_buf[0];
+};
+
+#define ETE_NAME(ete) ((ete)->ete_buf)
+#define ETE_VALUE(ete) (&(ete)->ete_buf[(ete)->ete_name_len])
+
+
+#define N_BUCKETS(n_bits) (1U << (n_bits))
+#define BUCKNO(n_bits, hash) ((hash) & (N_BUCKETS(n_bits) - 1))
+
+int
+lshpack_enc_init (struct lshpack_enc *enc)
+{
+    struct lshpack_double_enc_head *buckets;
+    unsigned nbits = 2;
+    unsigned i;
+
+    buckets = malloc(sizeof(buckets[0]) * N_BUCKETS(nbits));
+    if (!buckets)
+        return -1;
+
+    for (i = 0; i < N_BUCKETS(nbits); ++i)
+    {
+        STAILQ_INIT(&buckets[i].by_name);
+        STAILQ_INIT(&buckets[i].by_nameval);
+    }
+
+    memset(enc, 0, sizeof(*enc));
+    STAILQ_INIT(&enc->hpe_all_entries);
+    enc->hpe_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+    enc->hpe_buckets      = buckets;
+    /* The initial value of the entry ID is completely arbitrary.  As long as
+     * there are fewer than 2^32 dynamic table entries, the math to calculate
+     * the entry ID works.  To prove to ourselves that the wraparound works
+     * and to have the unit tests cover it, we initialize the next ID so that
+     * it is just about to wrap around.
+     */
+    enc->hpe_next_id      = ~0 - 3;
+    enc->hpe_nbits        = nbits;
+    enc->hpe_nelem        = 0;
+    return 0;
+}
+
+
+void
+lshpack_enc_cleanup (struct lshpack_enc *enc)
+{
+    struct lshpack_enc_table_entry *entry, *next;
+    for (entry = STAILQ_FIRST(&enc->hpe_all_entries); entry; entry = next)
+    {
+        next = STAILQ_NEXT(entry, ete_next_all);
+        free(entry);
+    }
+    free(enc->hpe_buckets);
+}
+
+
+//not find return 0, otherwise return the index
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       unsigned
+lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
+                const char *val, lshpack_strlen_t val_len, int *val_matched)
+{
+    if (name_len < 3)
+        return 0;
+
+    *val_matched = 0;
+
+    //check value first
+    int i = -1;
+    switch (*val)
+    {
+        case 'G':
+            i = 1;
+            break;
+        case 'P':
+            i = 2;
+            break;
+        case '/':
+            if (val_len == 1)
+                i = 3;
+            else if (val_len == 11)
+                i = 4;
+            break;
+        case 'h':
+            if (val_len == 4)
+                i = 5;
+            else if (val_len == 5)
+                i = 6;
+            break;
+        case '2':
+            if (val_len == 3)
+            {
+                switch (*(val + 2))
+                {
+                    case '0':
+                        i = 7;
+                        break;
+                    case '4':
+                        i = 8;
+                        break;
+                    case '6':
+                        i = 9;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            break;
+        case '3':
+            i = 10;
+            break;
+        case '4':
+            if (val_len == 3)
+            {
+                switch (*(val + 2))
+                {
+                    case '0':
+                        i = 11;
+                        break;
+                    case '4':
+                        i = 12;
+                    default:
+                        break;
+                }
+            }
+            break;
+        case '5':
+            i = 13;
+            break;
+        case 'g':
+            i = 15;
+            break;
+        default:
+            break;
+    }
+
+    if (i > 0 && static_table[i].val_len == val_len
+            && static_table[i].name_len == name_len
+            && memcmp(val, static_table[i].val, val_len) == 0
+            && memcmp(name, static_table[i].name, name_len) == 0)
+    {
+        *val_matched = 1;
+        return i + 1;
+    }
+
+    //macth name only checking
+    i = -1;
+    switch (*name)
+    {
+        case ':':
+            switch (*(name + 1))
+            {
+                case 'a':
+                    i = 0;
+                    break;
+                case 'm':
+                    i = 1;
+                    break;
+                case 'p':
+                    i = 3;
+                    break;
+                case 's':
+                    if (*(name + 2) == 'c') //:scheme
+                        i = 5;
+                    else
+                        i = 7;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 'a':
+            switch (name_len)
+            {
+                case 3:
+                    i = 20; //age
+                    break;
+                case 5:
+                    i = 21; //allow
+                    break;
+                case 6:
+                    i = 18; //accept
+                    break;
+                case 13:
+                    if (*(name + 1) == 'u')
+                        i = 22; //authorization
+                    else
+                        i = 17; //accept-ranges
+                    break;
+                case 14:
+                    i  = 14; //accept-charset
+                    break;
+                case 15:
+                    if (*(name + 7) == 'l')
+                        i = 16; //accept-language,
+                    else
+                        i = 15;// accept-encoding
+                    break;
+                case 27:
+                    i = 19;//access-control-allow-origin
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 'c':
+            switch (name_len)
+            {
+                case 6:
+                    i = 31; //cookie
+                    break;
+                case 12:
+                    i = 30; //content-type
+                    break;
+                case 13:
+                    if (*(name + 1) == 'a')
+                        i = 23; //cache-control
+                    else
+                        i = 29; //content-range
+                    break;
+                case 14:
+                    i = 27; //content-length
+                    break;
+                case 16:
+                    switch (*(name + 9))
+                    {
+                        case 'n':
+                            i = 25 ;//content-encoding
+                            break;
+                        case 'a':
+                            i = 26; //content-language
+                            break;
+                        case 'o':
+                            i = 28; //content-location
+                        default:
+                            break;
+                    }
+                    break;
+                case 19:
+                    i = 24; //content-disposition
+                    break;
+            }
+            break;
+        case 'd':
+            i = 32 ;//date
+            break;
+        case 'e':
+            switch (name_len)
+            {
+                case 4:
+                    i = 33; //etag
+                    break;
+                case 6:
+                    i = 34;
+                    break;
+                case 7:
+                    i = 35;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 'f':
+            i = 36; //from
+            break;
+        case 'h':
+            i = 37; //host
+            break;
+        case 'i':
+            switch (name_len)
+            {
+                case 8:
+                    if (*(name + 3) == 'm')
+                        i = 38; //if-match
+                    else
+                        i = 41; //if-range
+                    break;
+                case 13:
+                    i = 40; //if-none-match
+                    break;
+                case 17:
+                    i = 39; //if-modified-since
+                    break;
+                case 19:
+                    i = 42; //if-unmodified-since
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 'l':
+            switch (name_len)
+            {
+                case 4:
+                    i = 44; //link
+                    break;
+                case 8:
+                    i = 45; //location
+                    break;
+                case 13:
+                    i = 43; //last-modified
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 'm':
+            i = 46; //max-forwards
+            break;
+        case 'p':
+            if (name_len == 18)
+                i = 47; //proxy-authenticate
+            else
+                i = 48; //proxy-authorization
+            break;
+        case 'r':
+            if (name_len >= 5)
+            {
+                switch (*(name + 4))
+                {
+                    case 'e':
+                        if (name_len == 5)
+                            i = 49; //range
+                        else
+                            i = 51; //refresh
+                        break;
+                    case 'r':
+                        i = 50; //referer
+                        break;
+                    case 'y':
+                        i = 52; //retry-after
+                        break;
+                    default:
+                        break;
+                }
+            }
+            break;
+        case 's':
+            switch (name_len)
+            {
+                case 6:
+                    i = 53; //server
+                    break;
+                case 10:
+                    i = 54; //set-cookie
+                    break;
+                case 25:
+                    i = 55; //strict-transport-security
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case 't':
+            i = 56;//transfer-encoding
+            break;
+        case 'u':
+            i = 57; //user-agent
+            break;
+        case 'v':
+            if (name_len == 4)
+                i = 58;
+            else
+                i = 59;
+            break;
+        case 'w':
+            i = 60;
+            break;
+        default:
+            break;
+    }
+
+    if (i >= 0
+            && static_table[i].name_len == name_len
+            && memcmp(name, static_table[i].name, name_len) == 0)
+        return i + 1;
+
+    return 0;
+}
+
+
+/* Given a dynamic entry, return its table ID */
+static unsigned
+henc_calc_table_id (const struct lshpack_enc *enc,
+                                    const struct lshpack_enc_table_entry *entry)
+{
+    return HPACK_STATIC_TABLE_SIZE
+         + (enc->hpe_next_id - entry->ete_id)
+    ;
+}
+
+
+static unsigned
+henc_find_table_id (struct lshpack_enc *enc, const char *name,
+        lshpack_strlen_t name_len, const char *value,
+        lshpack_strlen_t value_len, int *val_matched)
+{
+    struct lshpack_enc_table_entry *entry;
+    unsigned name_hash, nameval_hash, buckno, static_table_id;
+    XXH32_state_t hash_state;
+
+    /* First, look for a match in the static table: */
+    static_table_id = lshpack_enc_get_stx_tab_id(name, name_len, value,
+                                                    value_len, val_matched);
+    if (static_table_id > 0 && *val_matched)
+        return static_table_id;
+
+    /* Search by name and value: */
+    XXH32_reset(&hash_state, (uintptr_t) enc);
+    XXH32_update(&hash_state, &name_len, sizeof(name_len));
+    XXH32_update(&hash_state, name, name_len);
+    name_hash = XXH32_digest(&hash_state);
+    XXH32_update(&hash_state,  &value_len, sizeof(value_len));
+    XXH32_update(&hash_state,  value, value_len);
+    nameval_hash = XXH32_digest(&hash_state);
+    buckno = BUCKNO(enc->hpe_nbits, nameval_hash);
+    STAILQ_FOREACH(entry, &enc->hpe_buckets[buckno].by_nameval,
+                                                        ete_next_nameval)
+        if (nameval_hash == entry->ete_nameval_hash &&
+            name_len == entry->ete_name_len &&
+            value_len == entry->ete_val_len &&
+            0 == memcmp(name, ETE_NAME(entry), name_len) &&
+            0 == memcmp(value, ETE_VALUE(entry), value_len))
+        {
+            *val_matched = 1;
+            return henc_calc_table_id(enc, entry);
+        }
+
+    /* Name/value match is not found, but if the caller found a matching
+     * static table entry, no need to continue to search:
+     */
+    if (static_table_id > 0)
+        return static_table_id;
+
+    /* Search by name only: */
+    buckno = BUCKNO(enc->hpe_nbits, name_hash);
+    STAILQ_FOREACH(entry, &enc->hpe_buckets[buckno].by_name, ete_next_name)
+        if (name_hash == entry->ete_name_hash &&
+            name_len == entry->ete_name_len &&
+            0 == memcmp(name, ETE_NAME(entry), name_len))
+        {
+            *val_matched = 0;
+            return henc_calc_table_id(enc, entry);
+        }
+
+    return 0;
+}
+
+
+static unsigned char *
+henc_enc_int (unsigned char *dst, unsigned char *const end, uint32_t value,
+                                                        uint8_t prefix_bits)
+{
+    unsigned char *const dst_orig = dst;
+
+    /* This function assumes that at least one byte is available */
+    assert(dst < end);
+    if (value < (uint32_t)(1 << prefix_bits) - 1)
+        *dst++ |= value;
+    else
+    {
+        *dst++ |= (1 << prefix_bits) - 1;
+        value -= (1 << prefix_bits) - 1;
+        while (value >= 128)
+        {
+            if (dst < end)
+            {
+                *dst++ = (0x80 | value);
+                value >>= 7;
+            }
+            else
+                return dst_orig;
+        }
+        if (dst < end)
+            *dst++ = value;
+        else
+            return dst_orig;
+    }
+    return dst;
+}
+
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static 
+#endif
+       int
+henc_huffman_enc (const unsigned char *src, const unsigned char *const src_end,
+                                            unsigned char *dst, int dst_len)
+{
+    const unsigned char *p_src = src;
+    unsigned char *p_dst = dst;
+    unsigned char *dst_end = p_dst + dst_len;
+    uint64_t bits = 0;
+    int bits_left = 40;
+    struct encode_el cur_enc_code;
+
+    assert(dst_len > 0);
+
+    while (p_src != src_end)
+    {
+        cur_enc_code = encode_table[(int) *p_src++];
+        assert(bits_left >= cur_enc_code.bits); //  (possible negative shift, undefined behavior)
+        bits |= (uint64_t)cur_enc_code.code << (bits_left - cur_enc_code.bits);
+        bits_left -= cur_enc_code.bits;
+        while (bits_left <= 32)
+        {
+            *p_dst++ = bits >> 32;
+            bits <<= 8;
+            bits_left += 8;
+            if (p_dst == dst_end)
+                return -1;  //dst does not have enough space
+        }
+    }
+
+    if (bits_left != 40)
+    {
+        assert(bits_left < 40 && bits_left > 0);
+        bits |= ((uint64_t)1 << bits_left) - 1;
+        *p_dst++ = bits >> 32;
+    }
+
+    return p_dst - dst;
+}
+
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       int
+lshpack_enc_enc_str (unsigned char *const dst, size_t dst_len,
+                        const unsigned char *str, lshpack_strlen_t str_len)
+{
+    unsigned char size_buf[4];
+    unsigned char *p;
+    unsigned size_len;
+    int rc;
+
+    if (dst_len > 1)
+        /* We guess that the string size fits into a single byte -- meaning
+         * compressed string of size 126 and smaller -- which is the normal
+         * case.  Thus, we immediately write compressed string to the output
+         * buffer.  If our guess is not correct, we fix it later.
+         */
+        rc = henc_huffman_enc(str, str + str_len, dst + 1, dst_len - 1);
+    else if (dst_len == 1)
+        /* Here, the call can only succeed if the string to encode is empty. */
+        rc = 0;
+    else
+        return -1;
+
+    /*
+     * Check if need huffman encoding or not
+     * Comment: (size_t)rc <= str_len   = means if same length, still use
+     *                                                              Huffman
+     *                     ^
+     */
+    if (rc > 0 && (size_t)rc <= str_len)
+    {
+        if (rc < 127)
+        {
+            *dst = 0x80 | rc;
+            return 1 + rc;
+        }
+        size_buf[0] = 0x80;
+        str_len = rc;
+        str = dst + 1;
+    }
+    else if (str_len <= dst_len - 1)
+    {
+        if (str_len < 127)
+        {
+            *dst = str_len;
+            memcpy(dst + 1, str, str_len);
+            return 1 + str_len;
+        }
+        size_buf[0] = 0x00;
+    }
+    else
+        return -1;
+
+    /* The guess of one-byte size was incorrect.  Perform necessary
+     * adjustments.
+     */
+    p = henc_enc_int(size_buf, size_buf + sizeof(size_buf), str_len, 7);
+    if (p == size_buf)
+        return -1;
+
+    size_len = p - size_buf;
+    assert(size_len > 1);
+
+    /* Check if there is enough room in the output buffer for both
+     * encoded size and the string.
+     */
+    if (size_len + str_len > dst_len)
+        return -1;
+
+    memmove(dst + size_len, str, str_len);
+    memcpy(dst, size_buf, size_len);
+    return size_len + str_len;
+}
+
+
+static void
+henc_drop_oldest_entry (struct lshpack_enc *enc)
+{
+    struct lshpack_enc_table_entry *entry;
+    unsigned buckno;
+
+    entry = STAILQ_FIRST(&enc->hpe_all_entries);
+    assert(entry);
+    STAILQ_REMOVE_HEAD(&enc->hpe_all_entries, ete_next_all);
+    buckno = BUCKNO(enc->hpe_nbits, entry->ete_nameval_hash);
+    assert(entry == STAILQ_FIRST(&enc->hpe_buckets[buckno].by_nameval));
+    STAILQ_REMOVE_HEAD(&enc->hpe_buckets[buckno].by_nameval, ete_next_nameval);
+    buckno = BUCKNO(enc->hpe_nbits, entry->ete_name_hash);
+    assert(entry == STAILQ_FIRST(&enc->hpe_buckets[buckno].by_name));
+    STAILQ_REMOVE_HEAD(&enc->hpe_buckets[buckno].by_name, ete_next_name);
+
+    enc->hpe_cur_capacity -= DYNAMIC_ENTRY_OVERHEAD + entry->ete_name_len
+                                                        + entry->ete_val_len;
+    --enc->hpe_nelem;
+    free(entry);
+}
+
+
+static void
+henc_remove_overflow_entries (struct lshpack_enc *enc)
+{
+    while (enc->hpe_cur_capacity > enc->hpe_max_capacity)
+        henc_drop_oldest_entry(enc);
+}
+
+
+static int
+henc_grow_tables (struct lshpack_enc *enc)
+{
+    struct lshpack_double_enc_head *new_buckets, *new[2];
+    struct lshpack_enc_table_entry *entry;
+    unsigned n, old_nbits;
+    int idx;
+
+    old_nbits = enc->hpe_nbits;
+    new_buckets = malloc(sizeof(enc->hpe_buckets[0])
+                                                * N_BUCKETS(old_nbits + 1));
+    if (!new_buckets)
+        return -1;
+
+    for (n = 0; n < N_BUCKETS(old_nbits); ++n)
+    {
+        new[0] = &new_buckets[n];
+        new[1] = &new_buckets[n + N_BUCKETS(old_nbits)];
+        STAILQ_INIT(&new[0]->by_name);
+        STAILQ_INIT(&new[1]->by_name);
+        STAILQ_INIT(&new[0]->by_nameval);
+        STAILQ_INIT(&new[1]->by_nameval);
+        while ((entry = STAILQ_FIRST(&enc->hpe_buckets[n].by_name)))
+        {
+            STAILQ_REMOVE_HEAD(&enc->hpe_buckets[n].by_name, ete_next_name);
+            idx = (BUCKNO(old_nbits + 1, entry->ete_name_hash)
+                                                        >> old_nbits) & 1;
+            STAILQ_INSERT_TAIL(&new[idx]->by_name, entry, ete_next_name);
+        }
+        while ((entry = STAILQ_FIRST(&enc->hpe_buckets[n].by_nameval)))
+        {
+            STAILQ_REMOVE_HEAD(&enc->hpe_buckets[n].by_nameval,
+                                                        ete_next_nameval);
+            idx = (BUCKNO(old_nbits + 1, entry->ete_nameval_hash)
+                                                        >> old_nbits) & 1;
+            STAILQ_INSERT_TAIL(&new[idx]->by_nameval, entry,
+                                                        ete_next_nameval);
+        }
+    }
+
+    free(enc->hpe_buckets);
+    enc->hpe_nbits   = old_nbits + 1;
+    enc->hpe_buckets = new_buckets;
+    return 0;
+}
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       int
+lshpack_enc_push_entry (struct lshpack_enc *enc, const char *name,
+                        lshpack_strlen_t name_len, const char *value,
+                        lshpack_strlen_t value_len)
+{
+    unsigned name_hash, nameval_hash, buckno;
+    struct lshpack_enc_table_entry *entry;
+    XXH32_state_t hash_state;
+    size_t size;
+
+    if (enc->hpe_nelem >= N_BUCKETS(enc->hpe_nbits) / 2 &&
+                                                0 != henc_grow_tables(enc))
+        return -1;
+
+    size = sizeof(*entry) + name_len + value_len;
+    entry = malloc(size);
+    if (!entry)
+        return -1;
+
+    XXH32_reset(&hash_state, (uintptr_t) enc);
+    XXH32_update(&hash_state, &name_len, sizeof(name_len));
+    XXH32_update(&hash_state, name, name_len);
+    name_hash = XXH32_digest(&hash_state);
+    XXH32_update(&hash_state,  &value_len, sizeof(value_len));
+    XXH32_update(&hash_state,  value, value_len);
+    nameval_hash = XXH32_digest(&hash_state);
+
+    entry->ete_name_hash = name_hash;
+    entry->ete_nameval_hash = nameval_hash;
+    entry->ete_name_len = name_len;
+    entry->ete_val_len = value_len;
+    entry->ete_id = enc->hpe_next_id++;
+    memcpy(ETE_NAME(entry), name, name_len);
+    memcpy(ETE_VALUE(entry), value, value_len);
+
+    STAILQ_INSERT_TAIL(&enc->hpe_all_entries, entry, ete_next_all);
+    buckno = BUCKNO(enc->hpe_nbits, nameval_hash);
+    STAILQ_INSERT_TAIL(&enc->hpe_buckets[buckno].by_nameval, entry,
+                                                        ete_next_nameval);
+    buckno = BUCKNO(enc->hpe_nbits, name_hash);
+    STAILQ_INSERT_TAIL(&enc->hpe_buckets[buckno].by_name, entry,
+                                                        ete_next_name);
+
+    enc->hpe_cur_capacity += DYNAMIC_ENTRY_OVERHEAD + name_len + value_len;
+    ++enc->hpe_nelem;
+    henc_remove_overflow_entries(enc);
+    return 0;
+}
+
+
+unsigned char *
+lshpack_enc_encode (struct lshpack_enc *enc, unsigned char *dst,
+        unsigned char *dst_end, const char *name, lshpack_strlen_t name_len,
+        const char *value, lshpack_strlen_t value_len, int indexed_type)
+{
+    //indexed_type: 0, Add, 1,: without, 2: never
+    static const char indexed_prefix_number[] = {0x40, 0x00, 0x10};
+    unsigned char *const dst_org = dst;
+    int val_matched, rc;
+    unsigned table_id;
+
+    assert(indexed_type >= 0 && indexed_type <= 2);
+
+    if (dst_end <= dst)
+        return dst_org;
+
+    table_id = henc_find_table_id(enc, name, name_len, value, value_len,
+                                                                &val_matched);
+    if (table_id > 0)
+    {
+        if (val_matched)
+        {
+            *dst = 0x80;
+            dst = henc_enc_int(dst, dst_end, table_id, 7);
+            /* No need to check return value: we pass it up as-is because
+             * the behavior is the same.
+             */
+            return dst;
+        }
+        else
+        {
+            *dst = indexed_prefix_number[indexed_type];
+            dst = henc_enc_int(dst, dst_end, table_id,
+                                            ((indexed_type == 0) ? 6 : 4));
+            if (dst == dst_org)
+                return dst_org;
+        }
+    }
+    else
+    {
+        *dst++ = indexed_prefix_number[indexed_type];
+        rc = lshpack_enc_enc_str(dst, dst_end - dst,
+                                    (const unsigned char *)name, name_len);
+        if (rc < 0)
+            return dst_org; //Failed to enc this header, return unchanged ptr.
+        dst += rc;
+    }
+
+    rc = lshpack_enc_enc_str(dst, dst_end - dst,
+                                    (const unsigned char *)value, value_len);
+    if (rc < 0)
+        return dst_org; //Failed to enc this header, return unchanged ptr.
+    dst += rc;
+
+    if (indexed_type == 0)
+    {
+        rc = lshpack_enc_push_entry(enc, name, name_len, value, value_len);
+        if (rc != 0)
+            return dst_org; //Failed to enc this header, return unchanged ptr.
+    }
+
+    return dst;
+}
+
+
+void
+lshpack_enc_set_max_capacity (struct lshpack_enc *enc, unsigned max_capacity)
+{
+    enc->hpe_max_capacity = max_capacity;
+    henc_remove_overflow_entries(enc);
+}
+
+#if LS_HPACK_EMIT_TEST_CODE
+void
+lshpack_enc_iter_init (struct lshpack_enc *enc, void **iter)
+{
+    *iter = STAILQ_FIRST(&enc->hpe_all_entries);
+}
+
+
+/* Returns 0 if entry is found */
+int
+lshpack_enc_iter_next (struct lshpack_enc *enc, void **iter,
+                                        struct enc_dyn_table_entry *retval)
+{
+    const struct lshpack_enc_table_entry *entry;
+
+    entry = *iter;
+    if (!entry)
+        return -1;
+
+    *iter = STAILQ_NEXT(entry, ete_next_all);
+
+    retval->name = ETE_NAME(entry);
+    retval->value = ETE_VALUE(entry);
+    retval->name_len = entry->ete_name_len;
+    retval->value_len = entry->ete_val_len;
+    retval->entry_id = henc_calc_table_id(enc, entry);
+    return 0;
+}
+#endif
+
+
+/* Dynamic table entry: */
+struct dec_table_entry
+{
+    uint16_t    dte_name_len;
+    uint16_t    dte_val_len;
+    char        dte_buf[0];     /* Contains both name and value */
+};
+
+#define DTE_NAME(dte) ((dte)->dte_buf)
+#define DTE_VALUE(dte) (&(dte)->dte_buf[(dte)->dte_name_len])
+
+enum
+{
+    HPACK_HUFFMAN_FLAG_ACCEPTED = 0x01,
+    HPACK_HUFFMAN_FLAG_SYM = 0x02,
+    HPACK_HUFFMAN_FLAG_FAIL = 0x04,
+};
+
+struct decode_status
+{
+    uint8_t state;
+    uint8_t eos;
+};
+
+
+void
+lshpack_dec_init (struct lshpack_dec *dec)
+{
+    memset(dec, 0, sizeof(*dec));
+    dec->hpd_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+    dec->hpd_cur_max_capacity = INITIAL_DYNAMIC_TABLE_SIZE;
+    lshpack_arr_init(&dec->hpd_dyn_table);
+}
+
+
+void
+lshpack_dec_cleanup (struct lshpack_dec *dec)
+{
+    uintptr_t val;
+
+    while (lshpack_arr_count(&dec->hpd_dyn_table) > 0)
+    {
+        val = lshpack_arr_pop(&dec->hpd_dyn_table);
+        free((struct dec_table_entry *) val);
+    }
+    lshpack_arr_cleanup(&dec->hpd_dyn_table);
+}
+
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       int
+lshpack_dec_dec_int (const unsigned char **src, const unsigned char *src_end,
+                                        uint8_t prefix_bits, uint32_t *value)
+{
+    uint32_t B, M;
+    uint8_t prefix_max = (1 << prefix_bits) - 1;
+
+    *value = (*(*src)++ & prefix_max);
+
+    if (*value < prefix_max)
+        return 0;
+
+    /* To optimize the loop for the normal case, the overflow is checked
+     * outside the loop.  The decoder is limited to 28-bit integer values,
+     * which is far above limitations imposed by the APIs (16-bit integers).
+     */
+    M = 0;
+    do
+    {
+        if ((*src) >= src_end)
+            return -1;
+        B = *(*src)++;
+        *value = *value + ((B & 0x7f) << M);
+        M += 7;
+    }
+    while (B & 0x80);
+
+    return -(M > sizeof(*value) * 8);
+}
+
+
+static void
+hdec_drop_oldest_entry (struct lshpack_dec *dec)
+{
+    struct dec_table_entry *entry;
+    entry = (void *) lshpack_arr_shift(&dec->hpd_dyn_table);
+    dec->hpd_cur_capacity -= DYNAMIC_ENTRY_OVERHEAD + entry->dte_name_len
+                                                        + entry->dte_val_len;
+    free(entry);
+}
+
+
+static void
+hdec_remove_overflow_entries (struct lshpack_dec *dec)
+{
+    while (dec->hpd_cur_capacity > dec->hpd_cur_max_capacity)
+        hdec_drop_oldest_entry(dec);
+}
+
+
+static void
+hdec_update_max_capacity (struct lshpack_dec *dec, uint32_t new_capacity)
+{
+    dec->hpd_cur_max_capacity = new_capacity;
+    hdec_remove_overflow_entries(dec);
+}
+
+
+void
+lshpack_dec_set_max_capacity (struct lshpack_dec *dec, unsigned max_capacity)
+{
+    dec->hpd_max_capacity = max_capacity;
+    hdec_update_max_capacity(dec, max_capacity);
+}
+
+
+static unsigned char *
+hdec_huff_dec4bits (uint8_t src_4bits, unsigned char *dst,
+                                        struct decode_status *status)
+{
+    const struct decode_el cur_dec_code =
+        decode_tables[status->state][src_4bits];
+    if (cur_dec_code.flags & HPACK_HUFFMAN_FLAG_FAIL) {
+        return NULL; //failed
+    }
+    if (cur_dec_code.flags & HPACK_HUFFMAN_FLAG_SYM)
+    {
+        *dst = cur_dec_code.sym;
+        dst++;
+    }
+
+    status->state = cur_dec_code.state;
+    status->eos = ((cur_dec_code.flags & HPACK_HUFFMAN_FLAG_ACCEPTED) != 0);
+    return dst;
+}
+
+
+static int
+hdec_huff_decode (const unsigned char *src, int src_len,
+                                            unsigned char *dst, int dst_len)
+{
+    const unsigned char *p_src = src;
+    const unsigned char *const src_end = src + src_len;
+    unsigned char *p_dst = dst;
+    unsigned char *dst_end = dst + dst_len;
+    struct decode_status status = { 0, 1 };
+
+    while (p_src != src_end)
+    {
+        if (p_dst == dst_end)
+            return -2;
+        if ((p_dst = hdec_huff_dec4bits(*p_src >> 4, p_dst, &status))
+                == NULL)
+            return -1;
+        if (p_dst == dst_end)
+            return -2;
+        if ((p_dst = hdec_huff_dec4bits(*p_src & 0xf, p_dst, &status))
+                == NULL)
+            return -1;
+        ++p_src;
+    }
+
+    if (!status.eos)
+        return -1;
+
+    return p_dst - dst;
+}
+
+
+//reutrn the length in the dst, also update the src
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       int
+hdec_dec_str (unsigned char *dst, size_t dst_len, const unsigned char **src,
+        const unsigned char *src_end)
+{
+    if ((*src) == src_end)
+        return 0;
+
+    int is_huffman = (*(*src) & 0x80);
+    uint32_t len;
+    if (0 != lshpack_dec_dec_int(src, src_end, 7, &len))
+        return -2;  //wrong int
+
+    int ret = 0;
+    if ((uint32_t)(src_end - (*src)) < len) {
+        return -2;  //wrong int
+    }
+
+    if (is_huffman)
+    {
+        ret = hdec_huff_decode(*src, len, dst, dst_len);
+        if (ret < 0)
+            return -3; //Wrong code
+
+        (*src) += len;
+    }
+    else
+    {
+        if (dst_len < (size_t)(src_end - (*src)))
+            ret = -3;  //dst not enough space
+        else
+        {
+            memcpy(dst, (*src), len);
+            (*src) += len;
+            ret = len;
+        }
+    }
+
+    return ret;
+}
+
+
+/* hpd_dyn_table is a dynamic array.  New entries are pushed onto it,
+ * while old entries are shifted from it.
+ */
+static struct dec_table_entry *
+hdec_get_table_entry (struct lshpack_dec *dec, uint32_t index)
+{
+    uintptr_t val;
+
+    index -= HPACK_STATIC_TABLE_SIZE;
+    if (index == 0 || index > lshpack_arr_count(&dec->hpd_dyn_table))
+        return NULL;
+
+    index = lshpack_arr_count(&dec->hpd_dyn_table) - index;
+    val = lshpack_arr_get(&dec->hpd_dyn_table, index);
+    return (struct dec_table_entry *) val;
+}
+
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       int
+lshpack_dec_push_entry (struct lshpack_dec *dec, const char *name,
+                        uint16_t name_len, const char *val, uint16_t val_len)
+{
+    struct dec_table_entry *entry;
+    size_t size;
+
+    size = sizeof(*entry) + name_len + val_len;
+    entry = malloc(size);
+    if (!entry)
+        return -1;
+
+    if (0 != lshpack_arr_push(&dec->hpd_dyn_table, (uintptr_t) entry))
+    {
+        free(entry);
+        return -1;
+    }
+
+    dec->hpd_cur_capacity += DYNAMIC_ENTRY_OVERHEAD + name_len + val_len;
+    entry->dte_name_len = name_len;
+    entry->dte_val_len = val_len;
+    memcpy(DTE_NAME(entry), name, name_len);
+    memcpy(DTE_VALUE(entry), val, val_len);
+    return 0;
+}
+
+
+int
+lshpack_dec_decode (struct lshpack_dec *dec,
+    const unsigned char **src, const unsigned char *src_end,
+    char *dst, char *const dst_end, uint16_t *name_len, uint16_t *val_len)
+{
+    struct dec_table_entry *entry;
+    uint32_t index, new_capacity;
+    int indexed_type, len;
+
+    if ((*src) == src_end)
+        return -1;
+
+    while ((*(*src) & 0xe0) == 0x20)    //001 xxxxx
+    {
+        if (0 != lshpack_dec_dec_int(src, src_end, 5, &new_capacity))
+            return -1;
+        if (new_capacity > dec->hpd_max_capacity)
+            return -1;
+        hdec_update_max_capacity(dec, new_capacity);
+        if (*src == src_end)
+            return -1;
+    }
+
+    /* lshpack_dec_dec_int() sets `index' and advances `src'.  If we do not
+     * call it, we set `index' and advance `src' ourselves:
+     */
+    if (*(*src) & 0x80) //1 xxxxxxx
+    {
+        if (0 != lshpack_dec_dec_int(src, src_end, 7, &index))
+            return -1;
+
+        indexed_type = 3; //need to parse value
+    }
+    else if (*(*src) > 0x40) //01 xxxxxx
+    {
+        if (0 != lshpack_dec_dec_int(src, src_end, 6, &index))
+            return -1;
+
+        indexed_type = 0;
+    }
+    else if (*(*src) == 0x40) //custmized //0100 0000
+    {
+        indexed_type = 0;
+        index = 0;
+        ++(*src);
+    }
+
+    //Never indexed
+    else if (*(*src) == 0x10)  //00010000
+    {
+        indexed_type = 2;
+        index = 0;
+        ++(*src);
+    }
+    else if ((*(*src) & 0xf0) == 0x10)  //0001 xxxx
+    {
+        if (0 != lshpack_dec_dec_int(src, src_end, 4, &index))
+            return -1;
+
+        indexed_type = 2;
+    }
+
+    //without indexed
+    else if (*(*src) == 0x00)  //0000 0000
+    {
+        indexed_type = 1;
+        index = 0;
+        ++(*src);
+    }
+    else // 0000 xxxx
+    {
+        if (0 != lshpack_dec_dec_int(src, src_end, 4, &index))
+            return -1;
+
+        indexed_type = 1;
+    }
+
+    char *const name = dst;
+    if (index > 0)
+    {
+        if (index <= HPACK_STATIC_TABLE_SIZE) //static table
+        {
+            if (static_table[index - 1].name_len > dst_end - dst)
+                return -1;
+            *name_len = static_table[index - 1].name_len;
+            memcpy(name, static_table[index - 1].name, *name_len);
+            if (indexed_type == 3)
+            {
+                if (static_table[index - 1].name_len +
+                    static_table[index - 1].val_len > dst_end - dst)
+                    return -1;
+                *val_len = static_table[index - 1].val_len;
+                memcpy(name + *name_len, static_table[index - 1].val, *val_len);
+                return 0;
+            }
+        }
+        else
+        {
+            entry = hdec_get_table_entry(dec, index);
+            if (entry == NULL)
+                return -1;
+            if (entry->dte_name_len > dst_end - dst)
+                return -1;
+
+            *name_len = entry->dte_name_len;
+            memcpy(name, DTE_NAME(entry), *name_len);
+            if (indexed_type == 3)
+            {
+                if (entry->dte_name_len + entry->dte_val_len > dst_end - dst)
+                    return -1;
+                *val_len = entry->dte_val_len;
+                memcpy(name + *name_len, DTE_VALUE(entry), *val_len);
+                return 0;
+            }
+        }
+    }
+    else
+    {
+        len = hdec_dec_str((unsigned char *)name, dst_end - dst, src, src_end);
+        if (len < 0)
+            return len; //error
+        if (len > UINT16_MAX)
+            return -2;
+        *name_len = len;
+    }
+
+    len = hdec_dec_str((unsigned char *)name + *name_len,
+                                    dst_end - dst - *name_len, src, src_end);
+    if (len < 0)
+        return len; //error
+    if (len > UINT16_MAX)
+        return -2;
+    *val_len = len;
+
+    if (indexed_type == 0)
+    {
+        if (0 != lshpack_dec_push_entry(dec, name, *name_len,
+                                            name + *name_len, *val_len))
+            return -1;  //error
+    }
+
+    return 0;
+}

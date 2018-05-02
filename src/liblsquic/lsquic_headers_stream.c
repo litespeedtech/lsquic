@@ -17,9 +17,7 @@
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
 #include "lsquic_frame_writer.h"
-#include "lsquic_arr.h"
-#include "lsquic_hpack_enc.h"
-#include "lsquic_hpack_dec.h"
+#include "lshpack.h"
 #include "lsquic.h"
 
 #include "lsquic_headers_stream.h"
@@ -44,8 +42,8 @@ struct headers_stream
                                        *hs_settings;
     void                               *hs_cb_ctx;
     struct lsquic_mm                   *hs_mm;
-    struct lsquic_henc                  hs_henc;
-    struct lsquic_hdec                  hs_hdec;
+    struct lshpack_enc                  hs_henc;
+    struct lshpack_dec                  hs_hdec;
     enum {
             HS_IS_SERVER    = (1 << 0),
             HS_HENC_INITED  = (1 << 1),
@@ -77,8 +75,8 @@ static lsquic_stream_ctx_t *
 headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
     struct headers_stream *hs = stream_if_ctx;
-    lsquic_hdec_init(&hs->hs_hdec);
-    if (0 != lsquic_henc_init(&hs->hs_henc))
+    lshpack_dec_init(&hs->hs_hdec);
+    if (0 != lshpack_enc_init(&hs->hs_henc))
     {
         LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
         return NULL;
@@ -223,8 +221,8 @@ lsquic_headers_stream_destroy (struct headers_stream *hs)
     if (hs->hs_fw)
         lsquic_frame_writer_destroy(hs->hs_fw);
     if (hs->hs_flags & HS_HENC_INITED)
-        lsquic_henc_cleanup(&hs->hs_henc);
-    lsquic_hdec_cleanup(&hs->hs_hdec);
+        lshpack_enc_cleanup(&hs->hs_henc);
+    lshpack_dec_cleanup(&hs->hs_hdec);
     free(hs);
 }
 
@@ -319,7 +317,7 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
         else
         {
             LSQ_INFO("update hpack table size to %u", setting_value);
-            lsquic_henc_set_max_capacity(&hs->hs_henc, setting_value);
+            lshpack_enc_set_max_capacity(&hs->hs_henc, setting_value);
         }
         break;
     case SETTINGS_MAX_HEADER_LIST_SIZE:
@@ -391,13 +389,7 @@ lsquic_headers_stream_mem_used (const struct headers_stream *hs)
     size = sizeof(*hs);
     size += lsquic_frame_reader_mem_used(hs->hs_fr);
     size += lsquic_frame_writer_mem_used(hs->hs_fw);
-    size -= sizeof(hs->hs_hdec);
-    size += lsquic_hdec_mem_used(&hs->hs_hdec);
-    if (hs->hs_flags & HS_HENC_INITED)
-    {
-        size -= sizeof(hs->hs_henc);
-        size += lsquic_henc_mem_used(&hs->hs_henc);
-    }
+    /* XXX: get rid of this mem_used business as we no longer use it? */
 
     return size;
 }
