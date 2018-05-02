@@ -1,5 +1,6 @@
 2018-05-02
 
+    - [BUGFIX] Make lsquic_conn_quic_version() available
     - Switch to using ls-hpack 1.1
     - [BUGFIX] Do not ignore stream resets after receiving FIN
 

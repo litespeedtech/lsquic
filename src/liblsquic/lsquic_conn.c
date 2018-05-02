@@ -149,3 +149,13 @@ lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
 }
 
 
+enum lsquic_version
+lsquic_conn_quic_version (const lsquic_conn_t *lconn)
+{
+    if (lconn->cn_flags & LSCONN_VER_SET)
+        return lconn->cn_version;
+    else
+        return -1;
+}
+
+
