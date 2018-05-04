@@ -117,6 +117,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         break;
     default:
         LSQ_WARN("lsquic_enc_session_handle_chlo_reply returned unknown value %d", s);
+        /* fallthru */
     case DATA_FORMAT_ERROR:
         LSQ_INFO("lsquic_enc_session_handle_chlo_reply returned an error");
         c_hsk->buf_in = NULL;

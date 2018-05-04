@@ -422,6 +422,7 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
             fr->fr_state.payload_length);
         fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, stream_id,
                                                 FR_ERR_HEADERS_TOO_LARGE);
+        /* fallthru */
     continue_skipping:
     default:
         fr->fr_state.by_type.skip_state.n_skipped = 0;
