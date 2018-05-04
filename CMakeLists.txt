@@ -37,6 +37,12 @@ SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
 IF(CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9.3)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-missing-field-initializers")
 ENDIF()
+IF(CMAKE_COMPILER_IS_GNUCC AND (
+        CMAKE_C_COMPILER_VERSION VERSION_EQUAL 6.0.0
+        OR
+        CMAKE_C_COMPILER_VERSION VERSION_GREATER 6))
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-misleading-indentation")
+ENDIF()
 IF(DEVEL_MODE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     # -Werror is used to force us to fix warnings early.
