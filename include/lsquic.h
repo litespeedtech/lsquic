@@ -92,10 +92,10 @@ enum lsquic_version
                 (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_041) | \
                 (1 << LSQVER_042))
 
-#define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_041))
+#define LSQUIC_EXPERIMENTAL_VERSIONS 0
 
 #define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_037) | (1 << LSQVER_038) | \
-                (1 << LSQVER_042))
+                (1 << LSQVER_041) | (1 << LSQVER_042))
 
 /**
  * @struct lsquic_stream_if
