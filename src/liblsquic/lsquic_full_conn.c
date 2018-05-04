@@ -866,7 +866,12 @@ static lsquic_stream_t *
 new_stream_ext (struct full_conn *conn, uint32_t stream_id, int if_idx,
                 enum stream_ctor_flags stream_ctor_flags)
 {
-    lsquic_stream_t *stream = lsquic_stream_new_ext(stream_id, &conn->fc_pub,
+    struct lsquic_stream *stream;
+
+    if (conn->fc_conn.cn_version >= LSQVER_042)
+        stream_ctor_flags |= SCF_ALLOW_OVERLAP;
+
+    stream = lsquic_stream_new_ext(stream_id, &conn->fc_pub,
         conn->fc_stream_ifs[if_idx].stream_if,
         conn->fc_stream_ifs[if_idx].stream_if_ctx, conn->fc_settings->es_sfcw,
         conn->fc_cfg.max_stream_send, stream_ctor_flags);

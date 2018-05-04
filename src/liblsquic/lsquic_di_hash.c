@@ -355,7 +355,12 @@ data_in_hash_insert_data_frame (struct data_in *data_in,
     unsigned size, nw;
 
     if (data_frame->df_offset + data_frame->df_size < read_offset)
-        return INS_FRAME_DUP;
+    {
+        if (data_frame->df_fin)
+            return INS_FRAME_ERR;
+        else
+            return INS_FRAME_DUP;
+    }
 
     if ((hdi->hdi_flags & HDI_FIN) &&
          (
@@ -427,6 +432,7 @@ hash_di_insert_frame (struct data_in *data_in,
     enum ins_frame ins;
 
     ins = data_in_hash_insert_data_frame(data_in, data_frame, read_offset);
+    assert(ins != INS_FRAME_OVERLAP);
     lsquic_packet_in_put(hdi->hdi_conn_pub->mm, new_frame->packet_in);
     lsquic_malo_put(new_frame);
     return ins;

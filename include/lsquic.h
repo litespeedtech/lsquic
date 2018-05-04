@@ -76,19 +76,26 @@ enum lsquic_version
      */
     LSQVER_041,
 
+    /**
+     * Q042.  Receiving overlapping stream data is allowed.
+     */
+    LSQVER_042,
+
     N_LSQVER
 };
 
 /**
- * We currently support versions 35, 37, 38, 39, and 41.
+ * We currently support versions 35, 37, 38, 39, 41, and 42.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << LSQVER_035) | (1 << LSQVER_037) | \
-                    (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_041))
+                (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_041) | \
+                (1 << LSQVER_042))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_041))
 
-#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_037) | (1 << LSQVER_038))
+#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_037) | (1 << LSQVER_038) | \
+                (1 << LSQVER_042))
 
 /**
  * @struct lsquic_stream_if

@@ -1,5 +1,6 @@
 2018-05-04
 
+    - [FEATURE] Add support for Q042.
     - Remove comment: MSPC is obsolete (no code changes)
     - Prog: use lsquic_str2ver() when processing -o version flag
     - Remove unused CTIM and SRBF transport parameters

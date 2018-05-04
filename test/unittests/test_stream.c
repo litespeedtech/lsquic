@@ -1407,6 +1407,221 @@ test_reading_from_stream2 (void)
 }
 
 
+/* This tests stream overlap support */
+static void
+test_overlaps (void)
+{
+    struct test_objs tobjs;
+    char buf[0x1000];
+    lsquic_stream_t *stream;
+    stream_frame_t *frame;
+    int s;
+    const char data[] = "1234567890";
+
+    struct frame_spec
+    {
+        unsigned    off;
+        unsigned    len;
+        signed char fin;
+    };
+
+    struct frame_step
+    {
+        struct frame_spec   frame_spec;
+        int                 insert_res;     /* Expected result */
+    };
+
+    struct overlap_test
+    {
+        int                 line;           /* Test identifier */
+        struct frame_step   steps[10];      /* Sequence of steps */
+        unsigned            n_steps;
+        const unsigned char buf[20];        /* Expected result of read */
+        ssize_t             sz;             /* Expected size of first read */
+        ssize_t             second_read;    /* Expected size of second read:
+                                             *   0 means EOS (FIN).
+                                             */
+    };
+
+    static const struct overlap_test tests[] =
+    {
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 0, .len = 10, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 1,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = -1,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 0, .len = 5, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 10, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 2,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = -1,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 1, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 2, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 2, .len = 6, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 4,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 1, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 2, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 2,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                { .frame_spec = { .off = 1, .len = 6, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 2, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 8, .len = 2, .fin = 1, }, .insert_res = 0, },
+                { .frame_spec = { .off = 3, .len = 2, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 4, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 5, .len = 2, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 6, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 7, .len = 3, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 9, .len = 1, .fin = 1, }, .insert_res = 0, },
+                { .frame_spec = { .off = 0, .len = 2, .fin = 0, }, .insert_res = 0, },
+            },
+            .n_steps = 10,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+    };
+
+    init_test_objs(&tobjs, 0x4000, 0x4000);
+    assert(!(tobjs.ctor_flags & SCF_ALLOW_OVERLAP));    /* Self-check */
+    tobjs.ctor_flags |= SCF_ALLOW_OVERLAP;
+
+    const struct overlap_test *test;
+    for (test = tests; test < tests + sizeof(tests) / sizeof(tests[0]); ++test)
+    {
+        LSQ_NOTICE("executing stream overlap test, line %d", test->line);
+        stream = new_stream(&tobjs, test->line);
+
+        const struct frame_step *step;
+        for (step = test->steps; step < test->steps + test->n_steps; ++step)
+        {
+            frame = new_frame_in_ext(&tobjs, step->frame_spec.off,
+                step->frame_spec.len, step->frame_spec.fin,
+                &data[step->frame_spec.off]);
+            s = lsquic_stream_frame_in(stream, frame);
+            assert(s == step->insert_res);
+        }
+
+        ssize_t nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == test->sz);
+        assert(0 == memcmp(data, buf, test->sz));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == test->second_read);
+        if (nread < 0)
+            assert(EWOULDBLOCK == errno);
+
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        LSQ_NOTICE("Special test on line %d", __LINE__);
+        stream = new_stream(&tobjs, __LINE__);
+        frame = new_frame_in_ext(&tobjs, 0, 5, 0, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        ssize_t nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 5);
+        assert(0 == memcmp(data, buf, 5));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread < 0);
+        assert(EWOULDBLOCK == errno);
+        /* Test that a frame with FIN that ends before the read offset
+         * results in an error.
+         */
+        frame = new_frame_in_ext(&tobjs, 0, 3, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s < 0);
+        /* This frame should be a DUP: the next read should still return -1.
+         */
+        frame = new_frame_in_ext(&tobjs, 3, 2, 0, &data[3]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread < 0);
+        assert(EWOULDBLOCK == errno);
+        /* This frame should be an overlap: FIN should register and
+         * the next read should return 0.
+         */
+        frame = new_frame_in_ext(&tobjs, 0, 5, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 0);
+        lsquic_stream_destroy(stream);
+    }
+
+    tobjs.ctor_flags &= ~SCF_ALLOW_OVERLAP;
+    deinit_test_objs(&tobjs);
+}
+
+
 static void
 test_writing_to_stream_schedule_stream_packets_immediately (void)
 {
@@ -2215,6 +2430,7 @@ main (int argc, char **argv)
             stream_ctor_flags |= SCF_USE_DI_HASH;
             break;
         case 'l':
+            lsquic_log_to_fstream(stderr, 0);
             lsquic_logger_lopt(optarg);
             break;
         default:
@@ -2231,6 +2447,7 @@ main (int argc, char **argv)
     test_forced_flush_when_conn_blocked();
     test_blocked_flags();
     test_reading_from_stream2();
+    test_overlaps();
 
     {
         int idx[6];

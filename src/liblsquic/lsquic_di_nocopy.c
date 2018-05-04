@@ -155,54 +155,110 @@ nocopy_di_destroy (struct data_in *data_in)
     free(ncdi);
 }
 
+#define DF_OFF(frame) (frame)->data_frame.df_offset
+#define DF_FIN(frame) (frame)->data_frame.df_fin
+#define DF_SIZE(frame) (frame)->data_frame.df_size
+#define DF_END(frame) (DF_OFF(frame) + DF_SIZE(frame))
 
-#if 1
-#define CHECK_ORDER(ncdi)
-#else
+
+#if LSQUIC_EXTRA_CHECKS
 static int
-ordered (const struct nocopy_data_in *ncdi)
+frame_list_is_sane (const struct nocopy_data_in *ncdi)
 {
     const stream_frame_t *frame;
-    uint64_t off = 0;
-    int ordered = 1;
+    uint64_t prev_off = 0, prev_end = 0;
+    int ordered = 1, overlaps = 0;
     TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
     {
-        ordered &= off <= frame->data_frame.df_offset;
-        off = frame->data_frame.df_offset;
+        ordered &= prev_off <= DF_OFF(frame);
+        overlaps |= prev_end > DF_OFF(frame);
+        prev_off = DF_OFF(frame);
+        prev_end = DF_END(frame);
     }
-    return ordered;
+    return ordered && !overlaps;
 }
-#define CHECK_ORDER(ncdi) assert(ordered(ncdi))
+#define CHECK_ORDER(ncdi) assert(frame_list_is_sane(ncdi))
+#else
+#define CHECK_ORDER(ncdi)
 #endif
 
 
-/* To reduce the number of conditionals, logical operators have been replaced
- * with arithmetic operators.  Return value is an integer in range [0, 3].
- * Bit 0 is set due to FIN in previous frame.  If bit 1 is set, it means that
- * it's a dup.
+/* When inserting a new frame into the frame list, there are four cases to
+ * consider:
+ *
+ *  I.   New frame is the only frame in the list;
+ *  II.  New frame only has a neighbor to its left (previous frame);
+ *  III. New frame only has a neighbor to its right (next frame); and
+ *  IV.  New frame has both left and right neighbors.
+ *
+ * I. New frame is the only frame in the list.
+ *
+ *      A)  If the read offset is larger than the end of the new frame and
+ *          the new frame has a FIN, it is an ERROR.
+ *
+ *      B)  If the read offset is larger than the end of the new frame and
+ *          the new frame does not have a FIN, it is a DUP.
+ *
+ *      C)  If the read offset is equal to the end of the new frame and
+ *          the new frame has a FIN, it is an OVERLAP.
+ *
+ *      D)  If the read offset is equal to the end of the new frame and
+ *          the new frame does not have a FIN, it is a DUP.
+ *
+ * II. New frame only has a neighbor to its left.
+ *
+ *      - (A) and (B) apply.
+ *
+ *      E)  New frame could be the same as the previous frame: DUP.
+ *
+ *      F)  New frame has the same offset and size as previous frame, but
+ *          previous frame has FIN and the new frame does not: DUP.
+ *
+ *      G)  New frame has the same offset and size as previous frame, but
+ *          previous frame does not have a FIN and the new one does: OVERLAP.
+ *
+ *      H)  New frame could start inside previous frame: OVERLAP.
+ *
+ *  III. New frame only has a neighbor to its right.
+ *
+ *      - (A) and (B) apply.
+ *
+ *      I) Right neighbor could start inside new frame: OVERLAP.
+ *
+ *  IV.  New frame has both left and right neighbors.
+ *
+ *      - (A), (B), (E), (F), (G), (H), and (I) apply.
  */
-static int
+
+
+static enum ins_frame
 insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
                                     uint64_t read_offset, unsigned *p_n_frames)
 {
-    int ins;
-    unsigned count;
     stream_frame_t *prev_frame, *next_frame;
+    unsigned count;
+
+    if (read_offset > DF_END(new_frame))
+    {
+        if (DF_FIN(new_frame))
+            return INS_FRAME_ERR;               /* Case (A) */
+        else
+            return INS_FRAME_DUP;               /* Case (B) */
+    }
 
     /* Find position in the list, going backwards.  We go backwards because
      * that is the most likely scenario.
      */
     next_frame = TAILQ_LAST(&ncdi->ncdi_frames_in, stream_frames_tailq);
-    if (next_frame && new_frame->data_frame.df_offset < next_frame->data_frame.df_offset)
+    if (next_frame && DF_OFF(new_frame) < DF_OFF(next_frame))
     {
         count = 1;
         prev_frame = TAILQ_PREV(next_frame, stream_frames_tailq, next_frame);
-        for ( ; prev_frame &&
-                    new_frame->data_frame.df_offset < next_frame->data_frame.df_offset;
+        for ( ; prev_frame && DF_OFF(new_frame) < DF_OFF(next_frame);
                 next_frame = prev_frame,
                     prev_frame = TAILQ_PREV(prev_frame, stream_frames_tailq, next_frame))
         {
-            if (new_frame->data_frame.df_offset >= prev_frame->data_frame.df_offset)
+            if (DF_OFF(new_frame) >= DF_OFF(prev_frame))
                 break;
             ++count;
         }
@@ -213,69 +269,74 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
         prev_frame = NULL;
     }
 
-    if (!prev_frame && next_frame && new_frame->data_frame.df_offset >=
-                                            next_frame->data_frame.df_offset)
+    if (!prev_frame && next_frame && DF_OFF(new_frame) >= DF_OFF(next_frame))
     {
         prev_frame = next_frame;
         next_frame = TAILQ_NEXT(next_frame, next_frame);
     }
 
-    /* Perform checks */
-    if (prev_frame)
-        ins =
-          (((prev_frame->data_frame.df_offset == new_frame->data_frame.df_offset) &
-            (prev_frame->data_frame.df_size   == new_frame->data_frame.df_size)   &
-            (prev_frame->data_frame.df_fin    == new_frame->data_frame.df_fin)) << 1)   /* Duplicate */
-          | prev_frame->data_frame.df_fin                                               /* FIN in the middle or dup */
-          | (prev_frame->data_frame.df_offset + prev_frame->data_frame.df_size
-                                            > new_frame->data_frame.df_offset)          /* Overlap */
-        ;
-    else
-        ins = 0;
-
-    if (next_frame)
-        ins |=
-          (((next_frame->data_frame.df_offset == new_frame->data_frame.df_offset) &
-            (next_frame->data_frame.df_size   == new_frame->data_frame.df_size)   &
-            (next_frame->data_frame.df_fin    == new_frame->data_frame.df_fin)) << 1)   /* Duplicate */
-          | (new_frame->data_frame.df_offset < read_offset) << 1                        /* Duplicate */
-          | new_frame->data_frame.df_fin                                                /* FIN in the middle or dup */
-          | (new_frame->data_frame.df_offset + new_frame->data_frame.df_size
-                                            > next_frame->data_frame.df_offset)         /* Overlap */
-        ;
-    else
-        ins |=
-            (new_frame->data_frame.df_offset < read_offset) << 1                        /* Duplicate */
-        ;
-
-    if (ins)
-        return ins;
+    const int select = !!prev_frame << 1 | !!next_frame;
+    switch (select)
+    {
+    default:    /* No neighbors */
+        if (read_offset == DF_END(new_frame) && DF_SIZE(new_frame))
+        {
+            if (DF_FIN(new_frame))
+                return INS_FRAME_OVERLAP;       /* Case (C) */
+            else
+                return INS_FRAME_DUP;           /* Case (D) */
+        }
+        goto list_was_empty;
+    case 3:     /* Both left and right neighbors */
+    case 2:     /* Only left neighbor (prev_frame) */
+        if (DF_OFF(prev_frame) == DF_OFF(new_frame)
+            && DF_SIZE(prev_frame) == DF_SIZE(new_frame))
+        {
+            if (!DF_FIN(prev_frame) && DF_FIN(new_frame))
+                return INS_FRAME_OVERLAP;       /* Case (G) */
+            else
+                return INS_FRAME_DUP;           /* Cases (E) and (F) */
+        }
+        if (DF_END(prev_frame) > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP;           /* Case (H) */
+        if (select == 2)
+        {
+            if (DF_FIN(prev_frame))
+                return INS_FRAME_ERR;
+            goto have_prev;
+        }
+        /* Fall-through */
+    case 1:     /* Only right neighbor (next_frame) */
+        if (DF_END(new_frame) > DF_OFF(next_frame))
+            return INS_FRAME_OVERLAP;           /* Case (I) */
+        break;
+    }
 
     if (prev_frame)
     {
+  have_prev:
         TAILQ_INSERT_AFTER(&ncdi->ncdi_frames_in, prev_frame, new_frame, next_frame);
-        ncdi->ncdi_n_holes += prev_frame->data_frame.df_offset +
-                    prev_frame->data_frame.df_size != new_frame->data_frame.df_offset;
+        ncdi->ncdi_n_holes += DF_END(prev_frame) != DF_OFF(new_frame);
         if (next_frame)
         {
-            ncdi->ncdi_n_holes += new_frame->data_frame.df_offset +
-                    new_frame->data_frame.df_size != next_frame->data_frame.df_offset;
+            ncdi->ncdi_n_holes += DF_END(new_frame) != DF_OFF(next_frame);
             --ncdi->ncdi_n_holes;
         }
     }
     else
     {
-        ncdi->ncdi_n_holes += next_frame && new_frame->data_frame.df_offset +
-                    new_frame->data_frame.df_size != next_frame->data_frame.df_offset;
+        ncdi->ncdi_n_holes += next_frame
+                           && DF_END(new_frame) != DF_OFF(next_frame);
+  list_was_empty:
         TAILQ_INSERT_HEAD(&ncdi->ncdi_frames_in, new_frame, next_frame);
     }
     CHECK_ORDER(ncdi);
 
     ++ncdi->ncdi_n_frames;
-    ncdi->ncdi_byteage += new_frame->data_frame.df_size;
+    ncdi->ncdi_byteage += DF_SIZE(new_frame);
     *p_n_frames = count;
 
-    return 0;
+    return INS_FRAME_OK;
 }
 
 
@@ -321,27 +382,26 @@ nocopy_di_insert_frame (struct data_in *data_in,
 {
     struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
     unsigned count;
-    int ins;
+    enum ins_frame ins;
 
     assert(0 == (new_frame->data_frame.df_fin & ~1));
     ins = insert_frame(ncdi, new_frame, read_offset, &count);
     switch (ins)
     {
-    case 0:
+    case INS_FRAME_OK:
         if (check_efficiency(ncdi, count))
             set_eff_alert(ncdi);
-        return INS_FRAME_OK;
-    case 2:
-    case 3:
+        break;
+    case INS_FRAME_DUP:
+    case INS_FRAME_ERR:
         lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, new_frame->packet_in);
         lsquic_malo_put(new_frame);
-        return INS_FRAME_DUP;
+        break;
     default:
-        assert(1 == ins);
-        lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, new_frame->packet_in);
-        lsquic_malo_put(new_frame);
-        return INS_FRAME_ERR;
+        break;
     }
+
+    return ins;
 }
 
 

@@ -272,6 +272,8 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
         lsquic_stream_call_on_new(stream);
     if (ctor_flags & SCF_DISP_RW_ONCE)
         stream->stream_flags |= STREAM_RW_ONCE;
+    if (ctor_flags & SCF_ALLOW_OVERLAP)
+        stream->stream_flags |= STREAM_ALLOW_OVERLAP;
     return stream;
 }
 
@@ -498,6 +500,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
 
     got_next_offset = frame->data_frame.df_offset == stream->read_offset;
+  insert_frame:
     ins_frame = stream->data_in->di_if->di_insert_frame(stream->data_in, frame, stream->read_offset);
     if (INS_FRAME_OK == ins_frame)
     {
@@ -532,6 +535,23 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     else if (INS_FRAME_DUP == ins_frame)
     {
         return 0;
+    }
+    else if (INS_FRAME_OVERLAP == ins_frame)
+    {
+        if (stream->stream_flags & STREAM_ALLOW_OVERLAP)
+        {
+            LSQ_DEBUG("overlap: switching DATA IN implementation");
+            stream->data_in = stream->data_in->di_if->di_switch_impl(
+                                        stream->data_in, stream->read_offset);
+            if (stream->data_in)
+                goto insert_frame;
+            stream->data_in = data_in_error_new();
+        }
+        else
+            LSQ_DEBUG("overlap not supported");
+        lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
+        lsquic_malo_put(frame);
+        return -1;
     }
     else
     {

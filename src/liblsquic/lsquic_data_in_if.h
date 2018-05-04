@@ -18,6 +18,7 @@ enum ins_frame
     INS_FRAME_OK,
     INS_FRAME_ERR,
     INS_FRAME_DUP,
+    INS_FRAME_OVERLAP,
 };
 
 
@@ -29,8 +30,14 @@ struct data_in_iface
     int
     (*di_empty) (struct data_in *);
 
-    /* The caller releases control of stream frame.  Do not reference it
-     * after the call.
+    /* When INS_FRAME_OK, INS_FRAME_ERR, or INS_FRAME_DUP is returned, the
+     * caller releases control of stream frame.  Do not reference it after
+     * the call.
+     *
+     * When INS_FRAME_OVERLAP is returned the caller has a choice to switch
+     * to implementation that supports overlaps and try to insert the frame
+     * again or to treat this as an error.  Either way, the caller retains
+     * control of the frame.
      */
     enum ins_frame
     (*di_insert_frame) (struct data_in *, struct stream_frame *,
@@ -67,9 +74,15 @@ struct data_in
 };
 
 
+/* This implementation does not support overlapping frame and may return
+ * INS_FRAME_OVERLAP.
+ */
 struct data_in *
 data_in_nocopy_new (struct lsquic_conn_public *, uint32_t stream_id);
 
+/* This implementation supports overlapping frames and will never return
+ * INS_FRAME_OVERLAP.
+ */
 struct data_in *
 data_in_hash_new (struct lsquic_conn_public *, uint32_t stream_id,
                   uint64_t byteage);

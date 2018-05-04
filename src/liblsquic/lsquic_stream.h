@@ -66,6 +66,7 @@ struct lsquic_stream
         STREAM_ONNEW_DONE   = (1 <<26),     /* on_new_stream has been called */
         STREAM_AUTOSWITCH   = (1 <<27),
         STREAM_RW_ONCE      = (1 <<28),     /* When set, read/write events are dispatched once per call */
+        STREAM_ALLOW_OVERLAP= (1 <<29),
     }                               stream_flags;
 
     /* There are more than one reason that a stream may be put onto
@@ -144,6 +145,7 @@ enum stream_ctor_flags
                                    * performance.
                                    */
     SCF_DISP_RW_ONCE  = (1 << 3),
+    SCF_ALLOW_OVERLAP = (1 << 4), /* Allow STREAM frames to overlap */
 };
 
 
