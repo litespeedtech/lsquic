@@ -84,14 +84,12 @@ typedef struct hs_ctx_st
     uint32_t    scls;
     uint32_t    cfcw;
     uint32_t    sfcw;
-    uint32_t    srbf;
     uint32_t    icsl;
     
     uint32_t    irtt;
     uint64_t    rcid;
     uint32_t    tcid;
     uint32_t    smhl;
-    uint64_t    ctim;  /* any usage? */
     uint64_t    sttl;
     unsigned char scid[SCID_LENGTH];
     //unsigned char chlo_hash[32]; //SHA256 HASH of CHLO
@@ -566,10 +564,6 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
             return -1;
         break;
 
-    case QTAG_SRBF:
-        hs_ctx->srbf = get_tag_value_i32(val, len);
-        break;
-
     case QTAG_ICSL:
         hs_ctx->icsl = get_tag_value_i32(val, len);
         break;
@@ -584,10 +578,6 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         if (0 == len % sizeof(uint32_t))
             process_copt(enc_session, (uint32_t *) val, len / sizeof(uint32_t));
         /* else ignore, following the reference implementation */
-        break;
-
-    case QTAG_CTIM:
-        hs_ctx->ctim = get_tag_value_i64(val, len);
         break;
 
     case QTAG_SNI:
@@ -957,7 +947,6 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     MSG_LEN_ADD(msg_len, 4);                ++n_tags;           /* SFCW */
     MSG_LEN_ADD(msg_len, 4);                ++n_tags;           /* ICSL */
     MSG_LEN_ADD(msg_len, 4);                ++n_tags;           /* SMHL */
-    MSG_LEN_ADD(msg_len, 8);                ++n_tags;           /* CTIM */
     MSG_LEN_ADD(msg_len, 4);                ++n_tags;           /* KEXS */
     MSG_LEN_ADD(msg_len, 0);                ++n_tags;           /* CSCT */
     if (n_opts > 0)
@@ -1023,11 +1012,6 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     if (MSG_LEN_VAL(msg_len) > *len)
         return -1;
 
-    /* Calculate any remaining values: */
-    enc_session->hs_ctx.ctim = time(NULL);
-
-    /* XXX: should we use MSPC instead of MIDS in newer versions of gQUIC? */
-
     /* Write CHLO: */
     MW_BEGIN(&mw, QTAG_CHLO, n_tags, buf);
     if (include_pad)
@@ -1053,7 +1037,6 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     MW_WRITE_UINT32(&mw, QTAG_PDMD, settings->es_pdmd);
     MW_WRITE_UINT32(&mw, QTAG_SMHL, 1);
     MW_WRITE_UINT32(&mw, QTAG_ICSL, settings->es_idle_conn_to / 1000000);
-    MW_WRITE_UINT64(&mw, QTAG_CTIM, enc_session->hs_ctx.ctim);
     if (lsquic_str_len(&enc_session->info->scfg) > 0 && enc_session->cert_ptr)
         MW_WRITE_BUFFER(&mw, QTAG_PUBS, pub_key, sizeof(pub_key));
     MW_WRITE_UINT32(&mw, QTAG_MIDS, settings->es_max_streams_in);

@@ -906,29 +906,10 @@ set_engine_option (struct lsquic_engine_settings *settings,
                 *version_cleared = 1;
                 settings->es_versions = 0;
             }
-            if (0 == strcmp(val, "Q035"))
+            const enum lsquic_version ver = lsquic_str2ver(val, strlen(val));
+            if (ver < N_LSQVER)
             {
-                settings->es_versions |= 1 << LSQVER_035;
-                return 0;
-            }
-            if (0 == strcmp(val, "Q037"))
-            {
-                settings->es_versions |= 1 << LSQVER_037;
-                return 0;
-            }
-            if (0 == strcmp(val, "Q038"))
-            {
-                settings->es_versions |= 1 << LSQVER_038;
-                return 0;
-            }
-            if (0 == strcmp(val, "Q039"))
-            {
-                settings->es_versions |= 1 << LSQVER_039;
-                return 0;
-            }
-            if (0 == strcmp(val, "Q041"))
-            {
-                settings->es_versions |= 1 << LSQVER_041;
+                settings->es_versions |= 1 << ver;
                 return 0;
             }
         }

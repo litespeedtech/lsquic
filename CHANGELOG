@@ -1,3 +1,14 @@
+2018-05-04
+
+    - Remove comment: MSPC is obsolete (no code changes)
+    - Prog: use lsquic_str2ver() when processing -o version flag
+    - Remove unused CTIM and SRBF transport parameters
+    - Disable QUIC versions Q037 and Q038 by default
+    - Fix Windows compilation by including compat header file in
+      lshpack.c
+    - Address warnings produced by newer versions of gcc
+    - Future-proof: turn off -Werror
+
 2018-05-02
 
     - [BUGFIX] Make lsquic_conn_quic_version() available

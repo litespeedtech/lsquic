@@ -88,6 +88,8 @@ enum lsquic_version
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_041))
 
+#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_037) | (1 << LSQVER_038))
+
 /**
  * @struct lsquic_stream_if
  * @brief The definition of callback functions call by lsquic_stream to
@@ -136,9 +138,10 @@ struct lsquic_stream_if {
  */
 
 /**
- * By default, experimental versions are not included.
+ * By default, deprecated and experimental versions are not included.
  */
 #define LSQUIC_DF_VERSIONS         (LSQUIC_SUPPORTED_VERSIONS & \
+                                            ~LSQUIC_DEPRECATED_VERSIONS & \
                                             ~LSQUIC_EXPERIMENTAL_VERSIONS)
 
 #define LSQUIC_DF_CFCW_SERVER      (3 * 1024 * 1024 / 2)
