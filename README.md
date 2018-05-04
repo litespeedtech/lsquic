@@ -13,10 +13,10 @@ our own products: LiteSpeed Web Server and ADC.  We think it is free of
 major problems.  Nevertheless, do not hesitate to report bugs back to us.
 Even better, send us fixes and improvements!
 
-Currently supported QUIC versions are Q035, Q037, Q038, Q039, and Q041.
-Support for newer versions will be added soon after they are released.
-The version(s) specified by IETF QUIC WG will be added once the IETF
-version of the protocol settles down a little.
+Currently supported QUIC versions are Q035, Q037, Q038, Q039, Q041,
+and Q042.  Support for newer versions will be added soon after they
+are released.  The version(s) specified by IETF QUIC WG will be added
+once the IETF version of the protocol settles down a little.
 
 Documentation
 -------------
@@ -133,6 +133,7 @@ Platforms
 
 The client library has been tested on the following platforms:
 - Linux
+  - i386
   - x86_64
   - ARM (Raspberry Pi 3)
 - FreeBSD
