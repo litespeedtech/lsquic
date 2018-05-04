@@ -28,6 +28,9 @@ SOFTWARE.
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include "lshpack.h"
 #if LS_HPACK_EMIT_TEST_CODE
