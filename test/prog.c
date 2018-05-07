@@ -25,6 +25,7 @@
 #include "test_config.h"
 #include "test_common.h"
 #include "prog.h"
+#include "opts.h"
 
 static int prog_stopped;
 

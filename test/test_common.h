@@ -73,10 +73,6 @@ sport_init_client (struct service_port *, struct lsquic_engine *,
 int
 sport_packets_out (void *ctx, const struct lsquic_out_spec *, unsigned count);
 
-int
-set_engine_option (struct lsquic_engine_settings *,
-                   int *version_cleared, const char *name_value);
-
 struct packout_buf;
 
 struct packout_buf_allocator
