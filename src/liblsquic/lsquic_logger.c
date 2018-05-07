@@ -177,11 +177,11 @@ print_timestamp (void)
     gettimeofday(&tv, NULL);
 #ifdef WIN32
     {
-#ifndef NDEBUG
-        errno_t e;
-#endif
         time_t t = tv.tv_sec;
-        e = localtime_s(&tm, &t);
+#ifndef NDEBUG
+        errno_t e =
+#endif
+	localtime_s(&tm, &t);
 	assert(!e);
     }
 #else    
