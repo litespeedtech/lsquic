@@ -6,6 +6,11 @@
 #ifndef PROG_H
 #define PROG_H 1
 
+//Define Boolean type
+typedef int bool;
+#define true 1
+#define false 0
+
 struct event;
 struct event_base;
 struct lsquic_hash;
@@ -82,4 +87,9 @@ prog_is_stopped (void);
 void
 prog_process_conns (struct prog *);
 
+/*Function resolves a Hostname into an Ip Adress
+Parameters: 
+	-hostname	the URL of the website
+	-version	0 for ipv4 and 1 for ipv6*/
+int getIpfromDNS(char* hostname, char* ipaddr, bool version);
 #endif

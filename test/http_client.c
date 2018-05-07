@@ -499,7 +499,10 @@ main (int argc, char **argv)
             break;
         case 'H':
             client_ctx.hostname = optarg;
-            prog.prog_hostname = optarg;            /* Pokes into prog */
+            prog.prog_hostname = optarg; /* Pokes into prog */
+			/*char ip[512];
+			getIpfromDNS(optarg, ip, 0);
+			printf("IP:%s\n", ip);*/
             break;
         case 'p':
             pe = calloc(1, sizeof(*pe));
@@ -536,6 +539,9 @@ main (int argc, char **argv)
     prog_cleanup(&prog);
     if (promise_fd >= 0)
         (void) close(promise_fd);
-
+	
+	int c;
+	printf("Enter a value :");
+	c = getchar();
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

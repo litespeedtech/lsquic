@@ -1,4 +1,6 @@
 /* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+//To use getaddrinfo in windows
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <assert.h>
 #ifndef WIN32
 #include <netinet/in.h>
@@ -417,4 +419,27 @@ prog_is_stopped (void)
     return prog_stopped != 0;
 }
 
+//Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
+int getIpfromDNS(char* hostname, char* ipaddr, bool version)
+{
+	struct hostent * hostent;
+	struct in_addr **addr_list;
 
+	if((hostent = gethostbyname(hostname)) == NULL)
+	{
+		printf("Couldn't resolve hostname");
+		return -1;
+	}
+
+	addr_list = (struct in_addr **) hostent->h_addr_list;
+
+	int i;
+	for (i = 0; addr_list[i] != NULL; i++)
+	{
+		//Return the first one;
+		strcpy(ipaddr, inet_ntoa(*addr_list[i]));
+		return 0;
+	}
+
+	return -1;
+}
