@@ -442,7 +442,7 @@ read_one_packet (struct read_iter *iter)
 
 
 static void
-read_handler (int fd, short flags, void *ctx)
+read_handler (evutil_socket_t fd, short flags, void *ctx)
 {
     struct service_port *sport = ctx;
     lsquic_engine_t *const engine = sport->engine;
@@ -494,7 +494,6 @@ read_handler (int fd, short flags, void *ctx)
 static int
 add_to_event_loop (struct service_port *sport, struct event_base *eb)
 {
-#pragma warning(suppress:4028)
     sport->ev = event_new(eb, sport->fd, EV_READ|EV_PERSIST, read_handler,
                                                                     sport);
     if (sport->ev)
