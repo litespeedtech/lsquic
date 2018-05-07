@@ -825,7 +825,7 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
         TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
         if (lost_packet->po_frame_types & (1 << QUIC_FRAME_STREAM))
         {
-                lsquic_packet_out_elide_reset_stream_frames(lost_packet, 0);
+            lsquic_packet_out_elide_reset_stream_frames(lost_packet, 0);
         }
         return lost_packet;
     }

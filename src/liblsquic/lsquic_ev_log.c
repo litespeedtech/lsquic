@@ -39,7 +39,7 @@
 void
 lsquic_ev_log_packet_in (lsquic_cid_t cid, const lsquic_packet_in_t *packet_in)
 {
-        LCID("packet in: %"PRIu64, packet_in->pi_packno);
+    LCID("packet in: %"PRIu64, packet_in->pi_packno);
 }
 
 

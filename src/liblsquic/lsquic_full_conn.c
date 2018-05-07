@@ -501,13 +501,13 @@ apply_peer_settings (struct full_conn *conn)
         return 0;
 #endif
 
-        for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
-            if (0 != conn->fc_conn.cn_esf->esf_get_peer_setting(
-                        conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
-            {
-                LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
-                return -1;
-            }
+    for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
+        if (0 != conn->fc_conn.cn_esf->esf_get_peer_setting(
+                    conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
+        {
+            LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
+            return -1;
+        }
 
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
         cfcw, sfcw, mids);
@@ -1793,7 +1793,7 @@ reconstruct_packet_number (struct full_conn *conn, lsquic_packet_in_t *packet_in
 static int
 conn_decrypt_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
-        return lsquic_conn_decrypt_packet(&conn->fc_conn, conn->fc_enpub,
+    return lsquic_conn_decrypt_packet(&conn->fc_conn, conn->fc_enpub,
                                                                 packet_in);
 }
 

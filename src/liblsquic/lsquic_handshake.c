@@ -638,30 +638,30 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_SNO:
-            lsquic_str_setto(&enc_session->ssno, val, len);
+        lsquic_str_setto(&enc_session->ssno, val, len);
         ESHIST_APPEND(enc_session, ESHE_SET_SNO);
         break;
 
     case QTAG_STK:
-            if (lsquic_str_len(&enc_session->info->sstk) > 0)
-                remove_session_info_entry(&enc_session->info->sstk);
-            lsquic_str_setto(&enc_session->info->sstk, val, len);
+        if (lsquic_str_len(&enc_session->info->sstk) > 0)
+            remove_session_info_entry(&enc_session->info->sstk);
+        lsquic_str_setto(&enc_session->info->sstk, val, len);
         ESHIST_APPEND(enc_session, ESHE_SET_STK);
         break;
 
     case QTAG_SCID:
         if (len != SCID_LENGTH)
             return -1;
-            memcpy(enc_session->info->sscid, val, len);
+        memcpy(enc_session->info->sscid, val, len);
         ESHIST_APPEND(enc_session, ESHE_SET_SCID);
         break;
 
     case QTAG_AEAD:
-            enc_session->info->aead = get_tag_value_i32(val, len);
+        enc_session->info->aead = get_tag_value_i32(val, len);
         break;
 
     case QTAG_KEXS:
-            enc_session->info->kexs = get_tag_value_i32(val, len);
+        enc_session->info->kexs = get_tag_value_i32(val, len);
         break;
 
     case QTAG_NONC:
@@ -671,8 +671,8 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_SCFG:
-            lsquic_str_setto(&enc_session->info->scfg, val, len);
-            enc_session->info->scfg_flag = 1;
+        lsquic_str_setto(&enc_session->info->scfg, val, len);
+        enc_session->info->scfg_flag = 1;
         break;
 
     case QTAG_PROF:
@@ -1135,9 +1135,9 @@ determine_diversification_key (lsquic_enc_session_t *enc_session,
     unsigned char *key_i, *iv;
     uint8_t ikm[aes128_key_len + aes128_iv_len];
 
-        ctx_s_key = &enc_session->dec_ctx_i;
-        key_i = enc_session->dec_key_i;
-        iv = enc_session->dec_key_nonce_i;
+    ctx_s_key = &enc_session->dec_ctx_i;
+    key_i = enc_session->dec_key_i;
+    iv = enc_session->dec_key_nonce_i;
     memcpy(ikm, key_i, aes128_key_len);
     memcpy(ikm + aes128_key_len, iv, aes128_iv_len);
     export_key_material(ikm, aes128_key_len + aes128_iv_len,
@@ -1437,10 +1437,10 @@ verify_packet_hash (const lsquic_enc_session_t *enc_session,
 
     if (version >= LSQVER_037)
     {
-            hash = fnv1a_128_3(buf, *header_len,
-                        buf + *header_len + HS_PKT_HASH_LENGTH,
-                        data_len - HS_PKT_HASH_LENGTH,
-                        (unsigned char *) "Server", 6);
+        hash = fnv1a_128_3(buf, *header_len,
+                    buf + *header_len + HS_PKT_HASH_LENGTH,
+                    data_len - HS_PKT_HASH_LENGTH,
+                    (unsigned char *) "Server", 6);
     }
     else
     {
@@ -1602,8 +1602,8 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
 
         if (version >= LSQVER_037)
         {
-                hash = fnv1a_128_3(header, header_len, data, data_len,
-                                            (unsigned char *) "Client", 6);
+            hash = fnv1a_128_3(header, header_len, data, data_len,
+                                        (unsigned char *) "Client", 6);
         }
         else
         {
