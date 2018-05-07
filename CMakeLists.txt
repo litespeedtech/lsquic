@@ -127,7 +127,7 @@ ELSE()
 add_executable(http_client
     test/http_client.c
     test/prog.c
-    wincompat/test_common_win.c
+    test/test_common.c
     wincompat/getopt.c
     wincompat/getopt1.c
 )
