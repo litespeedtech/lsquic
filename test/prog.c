@@ -177,10 +177,15 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'o':
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
-    case 's':
+    
+	case 's':	/*Only used for Port from now on.*/
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
             return -1;
+		if (getIpfromDNS(prog->prog_hostname, ip, ipv6, arg) == 1)/*Resolve the DNS name*/
+		{
+			return -1;/*Couldn't resolve the name*/
+		}
         return prog_add_sport(prog, arg);
     case 'S':
         {
@@ -420,12 +425,14 @@ prog_is_stopped (void)
 }
 
 //Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
-int getIpfromDNS(char* hostname, char* ipaddr, bool version)
+int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port)
 {
-	struct hostent * hostent;
+	/*struct hostent * hostent;
 	struct in_addr **addr_list;
+	char *hostname2 = malloc(strlen(hostname) + 1);;
+	strcpy(hostname2, hostname);
 
-	if((hostent = gethostbyname(hostname)) == NULL)
+	if((hostent = gethostbyname(hostname2)) == NULL)
 	{
 		printf("Couldn't resolve hostname");
 		return -1;
@@ -440,6 +447,59 @@ int getIpfromDNS(char* hostname, char* ipaddr, bool version)
 		strcpy(ipaddr, inet_ntoa(*addr_list[i]));
 		return 0;
 	}
+	
+	return -1;*/
 
-	return -1;
+	
+	struct addrinfo hints, *servinfo, *p;
+	struct sockaddr_in *h;
+	struct sockaddr_in6 *h6;
+	int rv;
+	char * port2 = strdup(port); /*so that it's no longer const */
+	char * hostname2 = strdup(hostname);
+
+	memset(&hints, 0, sizeof(hints));
+	if (version)
+	{
+		hints.ai_family = AF_INET6;
+	}
+	else
+	{
+		hints.ai_family = AF_INET;
+	}
+	
+	hints.ai_socktype = SOCK_STREAM;
+	
+
+	if ((rv = getaddrinfo(hostname2, port2 , &hints, &servinfo)) != 0)
+	{
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+		free(port2);
+		free(hostname2);
+		freeaddrinfo(servinfo);
+		return 1;
+	}
+
+	// loop through all the results and connect to the first we can
+	if (version)/*Ipv6*/
+	{
+		for (p = servinfo; p != NULL; p = p->ai_next)
+		{
+			h6 = (struct sockaddr_in6*) p->ai_addr;
+			inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 64);
+		}
+	}
+	else /*Ipv4*/
+	{
+		for (p = servinfo; p != NULL; p = p->ai_next)
+		{
+			h = (struct sockaddr_in *) p->ai_addr;
+			strcpy(ipaddr, inet_ntoa(h->sin_addr));
+		}
+	}
+
+	free(hostname2);
+	free(port2);
+	freeaddrinfo(servinfo);
+	return 0;
 }

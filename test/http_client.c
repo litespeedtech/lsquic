@@ -435,6 +435,9 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
 
+	ip = (char *)malloc(64 * sizeof(char)); /*46 is the maximal length of an ipv6 adress*/
+	ipv6 = false;
+
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
     client_ctx.hcc_concurrency = 1;
@@ -453,9 +456,12 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "r:R:IKu:EP:M:n:H:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "vr:R:IKu:EP:M:n:H:p:h")))
     {
         switch (opt) {
+		case 'v':
+			ipv6 = true;
+			break;
         case 'I':
             client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;
             break;
@@ -500,9 +506,6 @@ main (int argc, char **argv)
         case 'H':
             client_ctx.hostname = optarg;
             prog.prog_hostname = optarg; /* Pokes into prog */
-			/*char ip[512];
-			getIpfromDNS(optarg, ip, 0);
-			printf("IP:%s\n", ip);*/
             break;
         case 'p':
             pe = calloc(1, sizeof(*pe));
@@ -539,9 +542,10 @@ main (int argc, char **argv)
     prog_cleanup(&prog);
     if (promise_fd >= 0)
         (void) close(promise_fd);
-	
-	int c;
+
+	printf("\nIpadress%s\n", ip);
+	free(ip);
 	printf("Enter a value :");
-	c = getchar();
+	getchar();
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

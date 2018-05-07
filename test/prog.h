@@ -11,6 +11,10 @@ typedef int bool;
 #define true 1
 #define false 0
 
+
+char *ip;	/*The ipadress that will be determined. For easier access it defined here.*/
+bool ipv6;	/*True = Program uses ipv6, False = Program uses ipv4*/
+
 struct event;
 struct event_base;
 struct lsquic_hash;
@@ -91,5 +95,5 @@ prog_process_conns (struct prog *);
 Parameters: 
 	-hostname	the URL of the website
 	-version	0 for ipv4 and 1 for ipv6*/
-int getIpfromDNS(char* hostname, char* ipaddr, bool version);
+int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port);
 #endif

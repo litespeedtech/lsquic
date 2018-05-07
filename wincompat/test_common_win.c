@@ -158,35 +158,46 @@ sport_new (const char *optarg, struct prog *prog)
     sport->ev = NULL;
     sport->packs_in = NULL;
     sport->fd = -1;
+	char *port = strdup(optarg);
+	/*Old code
     char *const addr = strdup(optarg);
     char *port = strrchr(addr, ':');
     if (!port)
         goto err;
     *port = '\0';
     ++port;
-    if ((uintptr_t) port - (uintptr_t) addr > sizeof(sport->host))
-        goto err;
-    memcpy(sport->host, addr, port - addr);
+	
+	//if ((uintptr_t) port - (uintptr_t) ip > sizeof(sport->host))
+        //goto err;
+	*/
+	
+    memcpy(sport->host, ip, sizeof(ip));
 
     struct sockaddr_in  *const sa4 = (void *) &sport->sas;
     struct sockaddr_in6 *const sa6 = (void *) &sport->sas;
-    if        (inet_pton(AF_INET,  addr, &sa4->sin_addr)) {
+	memset(sa6, 0, sizeof(*sa6));
+    if (inet_pton(AF_INET, ip, &sa4->sin_addr)) 
+	{
         sa4->sin_family = AF_INET;
         sa4->sin_port   = htons(atoi(port));
-    } else if (memset(sa6, 0, sizeof(*sa6)),
-                    inet_pton(AF_INET6, addr, &sa6->sin6_addr)) {
+    } 
+	else if (inet_pton(AF_INET6, ip, &sa6->sin6_addr)) 
+	{
         sa6->sin6_family = AF_INET6;
         sa6->sin6_port   = htons(atoi(port));
-    } else
-        goto err;
+    } 
+	else
+	{
+		goto err;
+	}
 
-    free(addr);
+    free(port);
     sport->sp_prog = prog;
     return sport;
 
   err:
     free(sport);
-    free(addr);
+    free(port);
     return NULL;
 }
 
