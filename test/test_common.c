@@ -210,56 +210,40 @@ sport_destroy (struct service_port *sport)
 struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
-    struct service_port *const sport = malloc(sizeof(*sport));
-#if __linux__
-    sport->n_dropped = 0;
-    sport->drop_init = 0;
-#endif
-    sport->ev = NULL;
-    sport->packs_in = NULL;
-    sport->fd = -1;
-    char *const addr = strdup(optarg);
-#if __linux__
-    char *if_name;
-    if_name = strrchr(addr, ',');
-    if (if_name)
-    {
-        strncpy(sport->if_name, if_name + 1, sizeof(sport->if_name) - 1);
-        sport->if_name[ sizeof(sport->if_name) - 1 ] = '\0';
-        *if_name = '\0';
-    }
-    else
-        sport->if_name[0] = '\0';
-#endif
-    char *port = strrchr(addr, ':');
-    if (!port)
-        goto err;
-    *port = '\0';
-    ++port;
-    if ((uintptr_t) port - (uintptr_t) addr > sizeof(sport->host))
-        goto err;
-    memcpy(sport->host, addr, port - addr);
+	struct service_port *const sport = malloc(sizeof(*sport));
+	sport->ev = NULL;
+	sport->packs_in = NULL;
+	sport->fd = -1;
+	char *port = strdup(optarg);
 
-    struct sockaddr_in  *const sa4 = (void *) &sport->sas;
-    struct sockaddr_in6 *const sa6 = (void *) &sport->sas;
-    if        (inet_pton(AF_INET,  addr, &sa4->sin_addr)) {
-        sa4->sin_family = AF_INET;
-        sa4->sin_port   = htons(atoi(port));
-    } else if (memset(sa6, 0, sizeof(*sa6)),
-                    inet_pton(AF_INET6, addr, &sa6->sin6_addr)) {
-        sa6->sin6_family = AF_INET6;
-        sa6->sin6_port   = htons(atoi(port));
-    } else
-        goto err;
+	memcpy(sport->host, ip, sizeof(ip));
 
-    free(addr);
-    sport->sp_prog = prog;
-    return sport;
+	struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+	struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+	memset(sa6, 0, sizeof(*sa6));
+	if (inet_pton(AF_INET, ip, &sa4->sin_addr))
+	{
+		sa4->sin_family = AF_INET;
+		sa4->sin_port = htons(atoi(port));
+	}
+	else if (inet_pton(AF_INET6, ip, &sa6->sin6_addr))
+	{
+		sa6->sin6_family = AF_INET6;
+		sa6->sin6_port = htons(atoi(port));
+}
+	else
+	{
+		goto err;
+	}
 
-  err:
-    free(sport);
-    free(addr);
-    return NULL;
+	free(port);
+	sport->sp_prog = prog;
+	return sport;
+
+err:
+	free(sport);
+	free(port);
+	return NULL;
 }
 
 
