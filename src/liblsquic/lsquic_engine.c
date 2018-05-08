@@ -657,7 +657,7 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
     {
-            eng_hist_inc(&engine->history, 0, sl_del_full_conns);
+        eng_hist_inc(&engine->history, 0, sl_del_full_conns);
         destroy_conn(engine, conn);
         return NULL;
     }
@@ -695,7 +695,7 @@ conn_iter_next_tickable (struct lsquic_engine *engine)
 {
     lsquic_conn_t *conn;
 
-        conn = lsquic_mh_pop(&engine->conns_tickable);
+    conn = lsquic_mh_pop(&engine->conns_tickable);
 
     if (conn)
         conn = engine_decref_conn(engine, conn, LSCONN_TICKABLE);

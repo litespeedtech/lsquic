@@ -63,10 +63,6 @@ void
 sport_destroy (struct service_port *);
 
 int
-sport_init_server (struct service_port *, struct lsquic_engine *,
-                   struct event_base *);
-
-int
 sport_init_client (struct service_port *, struct lsquic_engine *,
                    struct event_base *);
 

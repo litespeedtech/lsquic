@@ -263,19 +263,6 @@ prog_init_client (struct prog *prog)
 }
 
 
-static int
-prog_init_server (struct prog *prog)
-{
-    struct service_port *sport;
-
-    TAILQ_FOREACH(sport, prog->prog_sports, next_sport)
-        if (0 != sport_init_server(sport, prog->prog_engine, prog->prog_eb))
-            return -1;
-
-    return 0;
-}
-
-
 void
 prog_process_conns (struct prog *prog)
 {
@@ -409,10 +396,7 @@ prog_prep (struct prog *prog)
     prog->prog_timer = event_new(prog->prog_eb, -1, 0,
                                         prog_timer_handler, prog);
 
-    if (prog->prog_engine_flags & LSENG_SERVER)
-        s = prog_init_server(prog);
-    else
-        s = prog_init_client(prog);
+    s = prog_init_client(prog);
 
     if (s != 0)
         return -1;
