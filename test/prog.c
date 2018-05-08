@@ -1,6 +1,5 @@
 /* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 //To use getaddrinfo in windows
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <assert.h>
 #ifndef WIN32
 #include <netinet/in.h>
@@ -84,12 +83,11 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"   -s SVCPORT  Service port.  Takes on the form of IPv4:port or\n"
-"                 IPv6:port.  For example:\n"
-"                   127.0.0.1:12345\n"
-"                   ::1:12345\n"
-"                 If no -s option is given, 0.0.0.0:12345 address\n"
+"   -s SVCPORT  The port on which the client should connect.\n"
+"                 If no -s option is given, port 443\n"
 "                 is used.\n"
+"	-v IPv6		The client will try to connect via IPv6\n"
+"				if this flag is used. If not it will use IPv4.\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -391,7 +389,11 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        s = prog_add_sport(prog, "0.0.0.0:12345");
+		if (getIpfromDNS(prog->prog_hostname, ip, ipv6, "443") == 1)/*Resolve the DNS name*/
+		{
+			return -1;/*Couldn't resolve the name*/
+		}
+        s = prog_add_sport(prog, "443");
         if (0 != s)
             return -1;
     }
@@ -427,30 +429,6 @@ prog_is_stopped (void)
 //Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
 int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port)
 {
-	/*struct hostent * hostent;
-	struct in_addr **addr_list;
-	char *hostname2 = malloc(strlen(hostname) + 1);;
-	strcpy(hostname2, hostname);
-
-	if((hostent = gethostbyname(hostname2)) == NULL)
-	{
-		printf("Couldn't resolve hostname");
-		return -1;
-	}
-
-	addr_list = (struct in_addr **) hostent->h_addr_list;
-
-	int i;
-	for (i = 0; addr_list[i] != NULL; i++)
-	{
-		//Return the first one;
-		strcpy(ipaddr, inet_ntoa(*addr_list[i]));
-		return 0;
-	}
-	
-	return -1;*/
-
-	
 	struct addrinfo hints, *servinfo, *p;
 	struct sockaddr_in *h;
 	struct sockaddr_in6 *h6;
@@ -486,7 +464,7 @@ int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* p
 		for (p = servinfo; p != NULL; p = p->ai_next)
 		{
 			h6 = (struct sockaddr_in6*) p->ai_addr;
-			inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 64);
+			inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 47);
 		}
 	}
 	else /*Ipv4*/
@@ -494,7 +472,7 @@ int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* p
 		for (p = servinfo; p != NULL; p = p->ai_next)
 		{
 			h = (struct sockaddr_in *) p->ai_addr;
-			strcpy(ipaddr, inet_ntoa(h->sin_addr));
+			inet_ntop(AF_INET, &h->sin_addr, ipaddr, 47);
 		}
 	}
 

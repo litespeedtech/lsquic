@@ -435,7 +435,7 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
 
-	ip = (char *)malloc(64 * sizeof(char)); /*46 is the maximal length of an ipv6 adress*/
+	ip = (char *)malloc(47 * sizeof(char)); /*46 is the maximal length of an ipv6 adress + '\0' character*/
 	ipv6 = false;
 
     TAILQ_INIT(&sports);
@@ -543,9 +543,8 @@ main (int argc, char **argv)
     if (promise_fd >= 0)
         (void) close(promise_fd);
 
-	printf("\nIpadress%s\n", ip);
-	free(ip);
-	printf("Enter a value :");
 	getchar();
+
+	free(ip);
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

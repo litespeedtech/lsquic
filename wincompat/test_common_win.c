@@ -159,17 +159,6 @@ sport_new (const char *optarg, struct prog *prog)
     sport->packs_in = NULL;
     sport->fd = -1;
 	char *port = strdup(optarg);
-	/*Old code
-    char *const addr = strdup(optarg);
-    char *port = strrchr(addr, ':');
-    if (!port)
-        goto err;
-    *port = '\0';
-    ++port;
-	
-	//if ((uintptr_t) port - (uintptr_t) ip > sizeof(sport->host))
-        //goto err;
-	*/
 	
     memcpy(sport->host, ip, sizeof(ip));
 
