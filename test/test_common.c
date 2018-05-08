@@ -230,7 +230,7 @@ sport_new (const char *optarg, struct prog *prog)
 	{
 		sa6->sin6_family = AF_INET6;
 		sa6->sin6_port = htons(atoi(port));
-}
+	}
 	else
 	{
 		goto err;
