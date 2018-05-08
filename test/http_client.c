@@ -543,8 +543,6 @@ main (int argc, char **argv)
     if (promise_fd >= 0)
         (void) close(promise_fd);
 
-	getchar();
-
 	free(ip);
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

@@ -84,11 +84,12 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
+"	-v IPv6		The client will try to connect via IPv6\n"
+"				if this flag is used. If not it will use IPv4.\n"
+"				-v MUST be entered before -s in order to work."
 "   -s SVCPORT  The port on which the client should connect.\n"
 "                 If no -s option is given, port 443\n"
 "                 is used.\n"
-"	-v IPv6		The client will try to connect via IPv6\n"
-"				if this flag is used. If not it will use IPv4.\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
