@@ -2,6 +2,7 @@
 //To use getaddrinfo in windows
 #include <assert.h>
 #ifndef WIN32
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <signal.h>
 #endif
