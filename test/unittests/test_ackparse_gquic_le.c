@@ -13,7 +13,7 @@
 #include "lsquic_util.h"
 #include "lsquic.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 static lsquic_packno_t
 n_acked (const ack_info_t *acki)

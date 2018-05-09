@@ -18,7 +18,7 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_version.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 
 /* The struct is used to test both generation and parsing of version
@@ -40,27 +40,27 @@ static const struct gen_ver_nego_test tests[] = {
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_037),
+        .gvnt_versions  = (1 << LSQVER_035),
         .gvnt_bufsz     = 13,
         .gvnt_len       = 13,
         .gvnt_buf       = {
             PACKET_PUBLIC_FLAGS_VERSION|
             PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
             0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-            'Q', '0', '3', '7',
+            'Q', '0', '3', '5',
         },
     },
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_037),
+        .gvnt_versions  = (1 << LSQVER_035),
         .gvnt_bufsz     = 12,
         .gvnt_len       = -1,       /* Buffer size is too small */
     },
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_037) | (1 << N_LSQVER),
+        .gvnt_versions  = (1 << LSQVER_035) | (1 << N_LSQVER),
         .gvnt_bufsz     = 20,
         .gvnt_len       = -1,       /* Invalid version specified in the bitmask */
     },
@@ -68,7 +68,7 @@ static const struct gen_ver_nego_test tests[] = {
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_037) | (1 << LSQVER_035) | (1 << LSQVER_038),
+        .gvnt_versions  = (1 << LSQVER_035) | (1 << LSQVER_039) | (1 << LSQVER_043),
         .gvnt_bufsz     = 21,
         .gvnt_len       = 21,
         .gvnt_buf       = {
@@ -76,8 +76,8 @@ static const struct gen_ver_nego_test tests[] = {
             PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
             0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
             'Q', '0', '3', '5',
-            'Q', '0', '3', '7',
-            'Q', '0', '3', '8',
+            'Q', '0', '3', '9',
+            'Q', '0', '4', '3',
         },
     },
 };

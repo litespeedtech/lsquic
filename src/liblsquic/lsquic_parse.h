@@ -164,8 +164,7 @@ extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q041;
 
 #define select_pf_by_ver(ver) (                                         \
-    ((1 << (ver)) & ((1 << LSQVER_035) |                                \
-                     (1 << LSQVER_037) | (1 << LSQVER_038)))            \
+    ((1 << (ver)) & (1 << LSQVER_035))                                  \
         ? &lsquic_parse_funcs_gquic_le :                                \
     ((1 << (ver)) & (1 << LSQVER_041))                                  \
         ? &lsquic_parse_funcs_gquic_Q041                                \

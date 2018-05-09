@@ -50,19 +50,23 @@ enum lsquic_version
     /** Q035.  This is the first version to be supported by LSQUIC. */
     LSQVER_035,
 
-    /**
+    /*
      * Q037.  This version is like Q035, except the way packet hashes are
      * generated is different for clients and servers.  In addition, new
      * option NSTP (no STOP_WAITING frames) is rumored to be supported at
      * some point in the future.
      */
-    LSQVER_037,
+    /* Support for this version has been removed.  The comment remains to
+     * document the changes.
+     */
 
-    /**
+    /*
      * Q038.  Based on Q037, supports PADDING frames in the middle of packet
      * and NSTP (no STOP_WAITING frames) option.
      */
-    LSQVER_038,
+    /* Support for this version has been removed.  The comment remains to
+     * document the changes.
+     */
 
     /**
      * Q039.  Switch to big endian.  Do not ack acks.  Send connection level
@@ -76,10 +80,12 @@ enum lsquic_version
      */
     LSQVER_041,
 
-    /**
+    /*
      * Q042.  Receiving overlapping stream data is allowed.
      */
-    LSQVER_042,
+    /* Support for this version has been removed.  The comment remains to
+     * document the changes.
+     */
 
     /**
      * Q043.  Support for processing PRIORITY frames.  Since this library
@@ -99,8 +105,7 @@ enum lsquic_version
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS 0
 
-#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_037) | (1 << LSQVER_038) | \
-                (1 << LSQVER_041) | (1 << LSQVER_042))
+#define LSQUIC_DEPRECATED_VERSIONS (1 << LSQVER_041)
 
 /**
  * @struct lsquic_stream_if

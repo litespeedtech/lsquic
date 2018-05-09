@@ -38,7 +38,7 @@
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 struct test_ctl_settings
 {

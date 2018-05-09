@@ -38,7 +38,7 @@ static const struct test tests[] = {
      */
     {   "Balls to the wall: every possible bit is set",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x40 | 0x20 | 0x1C | 0x3,
@@ -58,7 +58,7 @@ static const struct test tests[] = {
 
     {   "Balls to the wall #2: every possible bit is set, except FIN",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x20 | 0x1C | 0x3,
@@ -78,7 +78,7 @@ static const struct test tests[] = {
 
     {   "Data length is zero",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x40 | 0x00 | 0x1C | 0x3,
@@ -98,7 +98,7 @@ static const struct test tests[] = {
 
     {   "Stream ID length is 1",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x40 | 0x20 | 0x1C | 0x0,
@@ -118,7 +118,7 @@ static const struct test tests[] = {
 
     {   "All bits are zero save offset length",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x00 | 0x04 | 0x0,
@@ -138,7 +138,7 @@ static const struct test tests[] = {
 
     {   "Sanity check: either FIN must be set or data length is not zero #1",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x00 | 0x04 | 0x0,
@@ -160,7 +160,7 @@ static const struct test tests[] = {
 
     {   "Sanity check: either FIN must be set or data length is not zero #2",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x20 | 0x04 | 0x0,
@@ -180,7 +180,7 @@ static const struct test tests[] = {
 
     {   "Sanity check: either FIN must be set or data length is not zero #3",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x40 | 0x20 | 0x04 | 0x0,
@@ -200,7 +200,7 @@ static const struct test tests[] = {
 
     {   "Check data bounds #1",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x20 | 0x04 | 0x0,
@@ -220,7 +220,7 @@ static const struct test tests[] = {
 
     {   "Check data bounds #2",
         __LINE__,
-        select_pf_by_ver(LSQVER_037),
+        select_pf_by_ver(LSQVER_035),
       /*  1      f      d      ooo    ss            1fdoooss */
       /*  TYPE   FIN    DLEN   OLEN   SLEN  */
         { 0x80 | 0x00 | 0x20 | 0x04 | 0x0,

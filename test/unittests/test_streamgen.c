@@ -44,7 +44,7 @@ static const struct test tests[] = {
      * Little-endian:
      */
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 1, },
         .offset     = 0x0807060504030201UL,
         .stream_id  = 0x210,
@@ -65,7 +65,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0x0807060504030201UL,
         .stream_id  = 0x210,
@@ -86,7 +86,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 1, 0, },
         .offset     = 0x0807060504030201UL,
         .stream_id  = 0x210,
@@ -107,7 +107,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 1, 0, },
         .offset     = 0x0807060504030201UL,
         .stream_id  = 0x21,
@@ -128,7 +128,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0x77,
         .stream_id  = 0x210,
@@ -149,7 +149,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0x0,
         .stream_id  = 0x210,
@@ -170,7 +170,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 1, },
         .offset     = 0x0,
         .stream_id  = 0x210,
@@ -191,7 +191,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0xFFFFFF,
         .stream_id  = 0x210,
@@ -212,7 +212,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0xFFFFFF + 1,
         .stream_id  = 0x210,
@@ -233,7 +233,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 0, 0, },
         .offset     = 0xFFFFFF + 1,
         .stream_id  = 0x210,
@@ -253,7 +253,7 @@ static const struct test tests[] = {
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
+        .pf         = select_pf_by_ver(LSQVER_035),
         .fin        = { 1, 0, },
         .offset     = 0xB4,
         .stream_id  = 0x01,
