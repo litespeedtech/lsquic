@@ -167,9 +167,9 @@ extern const struct parse_funcs lsquic_parse_funcs_gquic_Q041;
     ((1 << (ver)) & ((1 << LSQVER_035) |                                \
                      (1 << LSQVER_037) | (1 << LSQVER_038)))            \
         ? &lsquic_parse_funcs_gquic_le :                                \
-    ((1 << (ver)) & ((1 << LSQVER_039) | (1 << LSQVER_042)))            \
-        ? &lsquic_parse_funcs_gquic_Q039                                \
-        : &lsquic_parse_funcs_gquic_Q041)
+    ((1 << (ver)) & (1 << LSQVER_041))                                  \
+        ? &lsquic_parse_funcs_gquic_Q041                                \
+        : &lsquic_parse_funcs_gquic_Q039)
 
 /* This function is QUIC-version independent */
 int

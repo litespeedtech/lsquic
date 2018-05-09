@@ -81,16 +81,21 @@ enum lsquic_version
      */
     LSQVER_042,
 
+    /**
+     * Q043.  Support for processing PRIORITY frames.  Since this library
+     * has supported PRIORITY frames from the beginning, this version is
+     * exactly the same as LSQVER_042.
+     */
+    LSQVER_043,
+
     N_LSQVER
 };
 
 /**
- * We currently support versions 35, 37, 38, 39, 41, and 42.
+ * We currently support versions 35, 37, 38, 39, 41, 42, and 43.
  * @see lsquic_version
  */
-#define LSQUIC_SUPPORTED_VERSIONS ((1 << LSQVER_035) | (1 << LSQVER_037) | \
-                (1 << LSQVER_038) | (1 << LSQVER_039) | (1 << LSQVER_041) | \
-                (1 << LSQVER_042))
+#define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS 0
 

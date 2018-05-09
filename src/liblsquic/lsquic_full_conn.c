@@ -2275,7 +2275,7 @@ packetize_standalone_stream_reset (struct full_conn *conn, uint32_t stream_id)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
-    LSQ_DEBUG("generated standaloen RST_STREAM frame for stream %"PRIu32,
+    LSQ_DEBUG("generated standalone RST_STREAM frame for stream %"PRIu32,
                                                                     stream_id);
     return 1;
 }
