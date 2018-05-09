@@ -161,7 +161,6 @@ struct parse_funcs
 extern const struct parse_funcs lsquic_parse_funcs_gquic_le;
 /* Q039 and later are big-endian: */
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
-extern const struct parse_funcs lsquic_parse_funcs_gquic_Q041;
 
 #define select_pf_by_ver(ver) (                                         \
     ((1 << (ver)) & (1 << LSQVER_035))                                  \
@@ -175,9 +174,6 @@ parse_packet_in_begin (struct lsquic_packet_in *, size_t length,
 
 enum QUIC_FRAME_TYPE
 parse_frame_type_gquic_Q035_thru_Q039 (unsigned char first_byte);
-
-enum QUIC_FRAME_TYPE
-parse_frame_type_gquic_Q041 (unsigned char first_byte);
 
 unsigned
 parse_stream_frame_header_sz_gquic (unsigned char type);
