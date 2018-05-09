@@ -210,40 +210,40 @@ sport_destroy (struct service_port *sport)
 struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
-	struct service_port *const sport = malloc(sizeof(*sport));
-	sport->ev = NULL;
-	sport->packs_in = NULL;
-	sport->fd = -1;
-	char *port = strdup(optarg);
+    struct service_port *const sport = malloc(sizeof(*sport));
+    sport->ev = NULL;
+    sport->packs_in = NULL;
+    sport->fd = -1;
+    char *port = strdup(optarg);
 
-	memcpy(sport->host, ip, sizeof(ip));
+    memcpy(sport->host, ip, sizeof(ip));
 
-	struct sockaddr_in  *const sa4 = (void *)&sport->sas;
-	struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
-	memset(sa6, 0, sizeof(*sa6));
-	if (inet_pton(AF_INET, ip, &sa4->sin_addr))
-	{
-		sa4->sin_family = AF_INET;
-		sa4->sin_port = htons(atoi(port));
-	}
-	else if (inet_pton(AF_INET6, ip, &sa6->sin6_addr))
-	{
-		sa6->sin6_family = AF_INET6;
-		sa6->sin6_port = htons(atoi(port));
-	}
-	else
-	{
-		goto err;
-	}
+    struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+    struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+    memset(sa6, 0, sizeof(*sa6));
+    if (inet_pton(AF_INET, ip, &sa4->sin_addr))
+    {
+        sa4->sin_family = AF_INET;
+        sa4->sin_port = htons(atoi(port));
+    }
+    else if (inet_pton(AF_INET6, ip, &sa6->sin6_addr))
+    {
+        sa6->sin6_family = AF_INET6;
+        sa6->sin6_port = htons(atoi(port));
+    }
+    else
+    {
+        goto err;
+    }
 
-	free(port);
-	sport->sp_prog = prog;
-	return sport;
+    free(port);
+    sport->sp_prog = prog;
+    return sport;
 
 err:
-	free(sport);
-	free(port);
-	return NULL;
+    free(sport);
+    free(port);
+    return NULL;
 }
 
 
@@ -388,7 +388,7 @@ read_one_packet (struct read_iter *iter)
     if (SOCKET_ERROR == socket_ret) {
         if (WSAEWOULDBLOCK != WSAGetLastError())
             LSQ_ERROR("recvmsg: %d", WSAGetLastError());
-	return ROP_ERROR;
+    return ROP_ERROR;
     }
 #endif
 

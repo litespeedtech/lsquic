@@ -93,7 +93,7 @@ prog_process_conns (struct prog *);
 
 /*Function resolves a Hostname into an Ip Adress
 Parameters: 
-	-hostname	the URL of the website
-	-version	0 for ipv4 and 1 for ipv6*/
+    -hostname	the URL of the website
+    -version	0 for ipv4 and 1 for ipv6*/
 int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port);
 #endif

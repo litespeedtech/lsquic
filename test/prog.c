@@ -1,5 +1,4 @@
 /* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
-//To use getaddrinfo in windows
 #include <assert.h>
 #ifndef WIN32
 #include <arpa/inet.h>
@@ -84,7 +83,7 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"	-v IPv6		The client will try to connect via IPv6\n"
+"	-6 IPv6		The client will try to connect via IPv6\n"
 "				if this flag is used. If not it will use IPv4.\n"
 "				-v MUST be entered before -s in order to work."
 "   -s SVCPORT  The port on which the client should connect.\n"
@@ -178,14 +177,14 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
     
-	case 's':	/*Only used for Port from now on.*/
+    case 's':	/*Only used for Port from now on.*/
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
             return -1;
-		if (getIpfromDNS(prog->prog_hostname, ip, ipv6, arg) == 1)/*Resolve the DNS name*/
-		{
-			return -1;/*Couldn't resolve the name*/
-		}
+        if (getIpfromDNS(prog->prog_hostname, ip, ipv6, arg) == 1)
+        {
+            return -1;/*Couldn't resolve the name*/
+        }
         return prog_add_sport(prog, arg);
     case 'S':
         {
@@ -378,10 +377,10 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-		if (getIpfromDNS(prog->prog_hostname, ip, ipv6, "443") == 1)/*Resolve the DNS name*/
-		{
-			return -1;/*Couldn't resolve the name*/
-		}
+        if (getIpfromDNS(prog->prog_hostname, ip, ipv6, "443") == 1)/*Resolve the DNS name*/
+        {
+            return -1;/*Couldn't resolve the name*/
+        }
         s = prog_add_sport(prog, "443");
         if (0 != s)
             return -1;
@@ -415,55 +414,55 @@ prog_is_stopped (void)
 //Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
 int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port)
 {
-	struct addrinfo hints, *servinfo, *p;
-	struct sockaddr_in *h;
-	struct sockaddr_in6 *h6;
-	int rv;
-	char * port2 = strdup(port); /*so that it's no longer const */
-	char * hostname2 = strdup(hostname);
+    struct addrinfo hints, *servinfo, *p;
+    struct sockaddr_in *h;
+    struct sockaddr_in6 *h6;
+    int rv;
+    char * port2 = strdup(port); /*so that it's no longer const */
+    char * hostname2 = strdup(hostname);
 
-	memset(&hints, 0, sizeof(hints));
-	if (version)
-	{
-		hints.ai_family = AF_INET6;
-	}
-	else
-	{
-		hints.ai_family = AF_INET;
-	}
-	
-	hints.ai_socktype = SOCK_STREAM;
-	
+    memset(&hints, 0, sizeof(hints));
+    if (version)
+    {
+        hints.ai_family = AF_INET6;
+    }
+    else
+    {
+        hints.ai_family = AF_INET;
+    }
+    
+    hints.ai_socktype = SOCK_STREAM;
+    
 
-	if ((rv = getaddrinfo(hostname2, port2 , &hints, &servinfo)) != 0)
-	{
-		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
-		free(port2);
-		free(hostname2);
-		freeaddrinfo(servinfo);
-		return 1;
-	}
+    if ((rv = getaddrinfo(hostname2, port2 , &hints, &servinfo)) != 0)
+    {
+        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));/*TODO: test if LSQ_Error works like printf*/ 
+        free(port2);
+        free(hostname2);
+        freeaddrinfo(servinfo);
+        return 1;
+    }
 
-	// loop through all the results and connect to the first we can
-	if (version)/*Ipv6*/
-	{
-		for (p = servinfo; p != NULL; p = p->ai_next)
-		{
-			h6 = (struct sockaddr_in6*) p->ai_addr;
-			inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 47);
-		}
-	}
-	else /*Ipv4*/
-	{
-		for (p = servinfo; p != NULL; p = p->ai_next)
-		{
-			h = (struct sockaddr_in *) p->ai_addr;
-			inet_ntop(AF_INET, &h->sin_addr, ipaddr, 47);
-		}
-	}
+    // loop through all the results and connect to the first we can
+    if (version)/*Ipv6*/
+    {
+        for (p = servinfo; p != NULL; p = p->ai_next)
+        {
+            h6 = (struct sockaddr_in6*) p->ai_addr;
+            inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 47);
+        }
+    }
+    else /*Ipv4*/
+    {
+        for (p = servinfo; p != NULL; p = p->ai_next)
+        {
+            h = (struct sockaddr_in *) p->ai_addr;
+            inet_ntop(AF_INET, &h->sin_addr, ipaddr, 47);
+        }
+    }
 
-	free(hostname2);
-	free(port2);
-	freeaddrinfo(servinfo);
-	return 0;
+    free(hostname2);
+    free(port2);
+    freeaddrinfo(servinfo);
+    return 0;
 }

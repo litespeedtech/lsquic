@@ -313,7 +313,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     unsigned char buf[0x200];
     unsigned nreads = 0;
 #ifdef WIN32
-	srand(GetTickCount());
+    srand(GetTickCount());
 #endif
 
     do
@@ -435,8 +435,8 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
 
-	ip = (char *)malloc(47 * sizeof(char)); /*46 is the maximal length of an ipv6 adress + '\0' character*/
-	ipv6 = false;
+    ip = (char *)malloc(47 * sizeof(char)); /*46 is the maximal length of an ipv6 adress + '\0' character*/
+    ipv6 = false;
 
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
@@ -456,12 +456,12 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "vr:R:IKu:EP:M:n:H:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "6r:R:IKu:EP:M:n:H:p:h")))
     {
         switch (opt) {
-		case 'v':
-			ipv6 = true;
-			break;
+        case '6':
+            ipv6 = true;
+            break;
         case 'I':
             client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;
             break;
@@ -543,6 +543,6 @@ main (int argc, char **argv)
     if (promise_fd >= 0)
         (void) close(promise_fd);
 
-	free(ip);
+    free(ip);
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }
