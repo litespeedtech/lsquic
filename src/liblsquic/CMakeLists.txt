@@ -8,7 +8,6 @@ SET(lsquic_STAT_SRCS
     lsquic_parse_gquic_common.c
     lsquic_parse_gquic_le.c
     lsquic_parse_gquic_be.c
-    lsquic_parse_gquic_Q041.c
     lsquic_packet_in.c
     lsquic_packet_out.c
     lsquic_crypto.c

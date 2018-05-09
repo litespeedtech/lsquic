@@ -1,9 +1,7 @@
 2018-05-09
 
     - [FEATURE] Add support for Q043.
-    - Support for versions Q037, Q038, and Q042 has been removed.
-    - Q041 is marked deprecated.  It is still fully usable, but not
-      enabled by default.
+    - Support for versions Q037, Q038, Q041, and Q042 has been removed.
     - Fix typo in debug message.
     - Fix code indentation.
     - Add /* fallthru */ comment to stop newer gcc from complaining.

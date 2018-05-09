@@ -75,10 +75,12 @@ enum lsquic_version
      */
     LSQVER_039,
 
-    /**
+    /*
      * Q041.  RST_STREAM, ACK and STREAM frames match IETF format.
      */
-    LSQVER_041,
+    /* Support for this version has been removed.  The comment remains to
+     * document the changes.
+     */
 
     /*
      * Q042.  Receiving overlapping stream data is allowed.
@@ -98,14 +100,14 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 35, 37, 38, 39, 41, 42, and 43.
+ * We currently support versions 35, 39, and 43.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS 0
 
-#define LSQUIC_DEPRECATED_VERSIONS (1 << LSQVER_041)
+#define LSQUIC_DEPRECATED_VERSIONS 0
 
 /**
  * @struct lsquic_stream_if
