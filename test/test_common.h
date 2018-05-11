@@ -106,4 +106,13 @@ create_lsquic_reader_ctx (const char *filename);
 void
 destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 
+/*Function resolves a Hostname into an Ip Adress
+Parameters:
+-hostname	the URL of the website
+-ipaddr     the variable where the ipaddress gets stored
+-version	0 for ipv4 and 1 for ipv6
+-port       the port of the connection
+-size       the size of the ipaddr variable (the entire array even if less is used)
+*/
+int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char* port, int size);
 #endif

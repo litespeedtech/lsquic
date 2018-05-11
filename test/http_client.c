@@ -159,66 +159,6 @@ struct lsquic_stream_ctx {
     struct lsquic_reader reader;
 };
 
-
-/*Function resolves a Hostname into an Ip Adress
-Parameters:
--hostname	the URL of the website
--version	0 for ipv4 and 1 for ipv6
-Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/ */
-int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char* port)
-{
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_in *h;
-    struct sockaddr_in6 *h6;
-    int rv;
-    char * port2 = strdup(port); /*so that it's no longer const */
-    char * hostname2 = strdup(hostname);
-
-    memset(&hints, 0, sizeof(hints));
-    if (version)
-    {
-        hints.ai_family = AF_INET6;
-    }
-    else
-    {
-        hints.ai_family = AF_INET;
-    }
-
-    hints.ai_socktype = SOCK_STREAM;
-
-
-    if ((rv = getaddrinfo(hostname2, port2, &hints, &servinfo)) != 0)
-    {
-        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
-        free(port2);
-        free(hostname2);
-        freeaddrinfo(servinfo);
-        return 1;
-    }
-
-    if (version)/*Ipv6*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h6 = (struct sockaddr_in6*) p->ai_addr;
-            inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 47);
-        }
-    }
-    else /*Ipv4*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h = (struct sockaddr_in *) p->ai_addr;
-            inet_ntop(AF_INET, &h->sin_addr, ipaddr, 47);
-        }
-    }
-
-    free(hostname2);
-    free(port2);
-    freeaddrinfo(servinfo);
-    return 0;
-}
-
 static lsquic_stream_ctx_t *
 http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
@@ -468,6 +408,9 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
+"	-6 IPv6		The client will try to connect via IPv6\n"
+"				if this flag is used. If not it will use IPv4.\n"
+"				-6 MUST be entered before -s in order to work."
 "   -p PATH     Path to request.  May be specified more than once.\n"
 "   -n CONNS    Number of concurrent connections.  Defaults to 1.\n"
 "   -r NREQS    Total number of requests to send.  Defaults to 1.\n"
@@ -494,7 +437,6 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
 
-    ip = (char *)malloc(47 * sizeof(char)); /*46 is the maximal length of an ipv6 adress + '\0' character*/
     ipv6 = 0;
 
     TAILQ_INIT(&sports);
@@ -602,6 +544,5 @@ main (int argc, char **argv)
     if (promise_fd >= 0)
         (void) close(promise_fd);
 
-    free(ip);
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

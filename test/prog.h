@@ -6,8 +6,6 @@
 #ifndef PROG_H
 #define PROG_H 1
 
-
-char *ip;	/*The ipadress that will be determined. For easier access it defined here.*/
 int ipv6;	/*True = Program uses ipv6, False = Program uses ipv4*/
 
 struct event;

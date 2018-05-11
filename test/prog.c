@@ -83,12 +83,11 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"	-6 IPv6		The client will try to connect via IPv6\n"
-"				if this flag is used. If not it will use IPv4.\n"
-"				-v MUST be entered before -s in order to work."
 "   -s SVCPORT  The port on which the client should connect.\n"
 "                 If no -s option is given, port 443\n"
 "                 is used.\n"
+"                 You can also specify an certain ipadress to be used here.\n"
+"                 To do that enter an ipadress and the port seperated by :\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -177,7 +176,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
     
-    case 's':	/*Only used for Port from now on.*/
+    case 's':
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
             return -1;
@@ -373,10 +372,6 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, "443") == 1)
-        {
-            return -1;/*Couldn't resolve the name*/
-        }
         s = prog_add_sport(prog, "443");
         if (0 != s)
             return -1;

@@ -106,6 +106,61 @@ GUID sendGuid = WSAID_WSASENDMSG;
 CRITICAL_SECTION initLock;
 LONG initialized = 0;
 
+/*Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/ */
+int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char* port, int size)
+{
+    struct addrinfo hints, *servinfo, *p;
+    struct sockaddr_in *h;
+    struct sockaddr_in6 *h6;
+    int rv;
+    char * port2 = strdup(port); /*so that it's no longer const */
+    char * hostname2 = strdup(hostname);
+
+    memset(&hints, 0, sizeof(hints));
+    if (version)
+    {
+        hints.ai_family = AF_INET6;
+    }
+    else
+    {
+        hints.ai_family = AF_INET;
+    }
+
+    hints.ai_socktype = SOCK_STREAM;
+
+
+    if ((rv = getaddrinfo(hostname2, port2, &hints, &servinfo)) != 0)
+    {
+        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
+        free(port2);
+        free(hostname2);
+        freeaddrinfo(servinfo);
+        return 1;
+    }
+
+    if (version)/*Ipv6*/
+    {
+        for (p = servinfo; p != NULL; p = p->ai_next)
+        {
+            h6 = (struct sockaddr_in6*) p->ai_addr;
+            inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, size);
+        }
+    }
+    else /*Ipv4*/
+    {
+        for (p = servinfo; p != NULL; p = p->ai_next)
+        {
+            h = (struct sockaddr_in *) p->ai_addr;
+            inet_ntop(AF_INET, &h->sin_addr, ipaddr, size);
+        }
+    }
+
+    free(hostname2);
+    free(port2);
+    freeaddrinfo(servinfo);
+    return 0;
+}
+
 static void getExtensionPtrs()
 {
     if (InterlockedCompareExchange(&initialized, 1, 0) == 0)
@@ -210,27 +265,60 @@ sport_destroy (struct service_port *sport)
 struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
-    if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, optarg) == 1)
-    {
-        return -1;/*Couldn't resolve the name*/
-    }
     struct service_port *const sport = malloc(sizeof(*sport));
+#if __linux__
+    sport->n_dropped = 0;
+    sport->drop_init = 0;
+#endif
     sport->ev = NULL;
     sport->packs_in = NULL;
     sport->fd = -1;
-    char *port = strdup(optarg);
+    char *const addr = strdup(optarg);
+    char ip[INET6_ADDRSTRLEN];
+#if __linux__
+    char *if_name;
+    if_name = strrchr(addr, ',');
+    if (if_name)
+    {
+        strncpy(sport->if_name, if_name + 1, sizeof(sport->if_name) - 1);
+        sport->if_name[sizeof(sport->if_name) - 1] = '\0';
+        *if_name = '\0';
+    }
+    else
+        sport->if_name[0] = '\0';
+#endif
+    char *port = strrchr(addr, ':');
+    if (!port)/*IpAdress wasn't specified by the user*/
+    {
+        if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, addr, INET6_ADDRSTRLEN) == 1)
+        {
+            LSQ_ERROR("Couldn't resolve the hostname.\n");
+            goto err;
+        }
+        port = strdup(optarg);
 
-    memcpy(sport->host, ip, sizeof(ip));
+        memcpy(sport->host, ip, sizeof(ip));
+    }
+    else /*The user specified an ipaddress*/
+    {
+        *port = '\0';
+        ++port;
+        if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
+            goto err;
+        memcpy(sport->host, addr, port - addr);
+
+        strcpy(ip, addr); /*copy addr to ip so we only need to have the inet_pton code once*/
+    }
 
     struct sockaddr_in  *const sa4 = (void *)&sport->sas;
     struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
-    memset(sa6, 0, sizeof(*sa6));
+
     if (inet_pton(AF_INET, ip, &sa4->sin_addr))
     {
         sa4->sin_family = AF_INET;
         sa4->sin_port = htons(atoi(port));
     }
-    else if (inet_pton(AF_INET6, ip, &sa6->sin6_addr))
+    else if (memset(sa6, 0, sizeof(*sa6)), inet_pton(AF_INET6, ip, &sa6->sin6_addr))
     {
         sa6->sin6_family = AF_INET6;
         sa6->sin6_port = htons(atoi(port));
@@ -239,14 +327,14 @@ sport_new (const char *optarg, struct prog *prog)
     {
         goto err;
     }
-
-    free(port);
+    
+    free(addr);
     sport->sp_prog = prog;
     return sport;
 
 err:
     free(sport);
-    free(port);
+    free(addr);
     return NULL;
 }
 
