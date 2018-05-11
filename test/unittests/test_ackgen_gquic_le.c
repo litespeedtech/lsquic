@@ -17,7 +17,7 @@
 #include "lsquic_logger.h"
 #include "lsquic.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 static void
 test1 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock */

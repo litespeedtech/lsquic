@@ -19,7 +19,7 @@
 
 struct lsquic_stream_if;
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 lsquic_stream_t *
 lsquic_stream_new_ext (uint32_t id,

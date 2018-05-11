@@ -40,7 +40,7 @@ struct test {
 static const struct test tests[] = {
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
@@ -74,7 +74,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
@@ -91,7 +91,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
@@ -134,7 +134,7 @@ static const struct test tests[] = {
 #define NONCENSE_BYTES '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v'
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
@@ -152,7 +152,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0,    /* Do not set connection ID */
         .nonce  = NONCENSE,
@@ -168,7 +168,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
@@ -189,7 +189,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_037),
+        .pf     = select_pf_by_ver(LSQVER_035),
         .bufsz  = QUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,

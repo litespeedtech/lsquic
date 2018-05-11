@@ -385,7 +385,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (randomly_reprioritize_streams && (st_h->count++ & 0x3F) == 0)
             {
                 old_prio = lsquic_stream_priority(stream);
-                new_prio = random() & 0xFF;
+                new_prio = 1 + (random() & 0xFF);
 #ifndef NDEBUG
                 const int s =
 #endif

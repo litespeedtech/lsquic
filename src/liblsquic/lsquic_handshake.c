@@ -1435,7 +1435,7 @@ verify_packet_hash (const lsquic_enc_session_t *enc_session,
     if (data_len < HS_PKT_HASH_LENGTH)
         return -1;
 
-    if (version >= LSQVER_037)
+    if (version >= LSQVER_039)
     {
         hash = fnv1a_128_3(buf, *header_len,
                     buf + *header_len + HS_PKT_HASH_LENGTH,
@@ -1600,7 +1600,7 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
         if (max_out_len < *out_len)
             return -1;
 
-        if (version >= LSQVER_037)
+        if (version >= LSQVER_039)
         {
             hash = fnv1a_128_3(header, header_len, data, data_len,
                                         (unsigned char *) "Client", 6);
