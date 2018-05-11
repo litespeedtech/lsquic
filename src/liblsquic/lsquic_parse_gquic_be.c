@@ -960,7 +960,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q039 =
     .pf_parse_packet_in_finish        =  gquic_be_parse_packet_in_finish,
     .pf_gen_stream_frame              =  gquic_be_gen_stream_frame,
     .pf_calc_stream_frame_header_sz   =  calc_stream_frame_header_sz_gquic,
-    .pf_parse_stream_frame_header_sz  =  parse_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  gquic_be_parse_stream_frame,
     .pf_parse_ack_frame               =  gquic_be_parse_ack_frame,
     .pf_gen_ack_frame                 =  gquic_be_gen_ack_frame,

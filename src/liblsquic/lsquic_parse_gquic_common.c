@@ -401,16 +401,6 @@ parse_frame_type_gquic_Q035_thru_Q039 (unsigned char b)
 }
 
 
-unsigned
-parse_stream_frame_header_sz_gquic (unsigned char type)
-{
-    const unsigned data_len      = (type >> 4) & 2;
-    const unsigned offset_len    = ((type >> 2) & 7) + 1 - !((type >> 2) & 7);
-    const unsigned stream_id_len = 1 + (type & 3);
-    return 1 + data_len + offset_len + stream_id_len;
-}
-
-
 void
 lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *stream_header)
 {
