@@ -106,6 +106,46 @@ GUID sendGuid = WSAID_WSASENDMSG;
 CRITICAL_SECTION initLock;
 LONG initialized = 0;
 
+static void getExtensionPtrs()
+{
+    if (InterlockedCompareExchange(&initialized, 1, 0) == 0)
+    {
+        InitializeCriticalSection(&initLock);
+    }
+    EnterCriticalSection(&initLock);
+    if(pfnWSARecvMsg == NULL|| pfnWSASendMsg == NULL)
+    {
+        SOCKET sock= socket(PF_INET, SOCK_DGRAM, 0);
+        DWORD dwBytes;
+        int rc = 0;
+        if (pfnWSARecvMsg == NULL)
+        {
+            rc = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &recvGuid,
+                    sizeof(recvGuid), &pfnWSARecvMsg, sizeof(pfnWSARecvMsg),
+                    &dwBytes, NULL, NULL);
+        }
+        if (rc != SOCKET_ERROR)
+        {
+            if (pfnWSASendMsg == NULL)
+            {
+                rc = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                        &sendGuid, sizeof(sendGuid), &pfnWSASendMsg,
+                        sizeof(pfnWSASendMsg), &dwBytes, NULL, NULL);
+            }
+        }
+        if (rc == SOCKET_ERROR)
+        {
+            LSQ_ERROR("Can't get extension function pointers: %d",
+                                                        WSAGetLastError());
+        }
+        closesocket(sock);
+    }
+    LeaveCriticalSection(&initLock);
+}
+
+
+#endif
+
 /*Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/ */
 int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char* port, int size)
 {
@@ -160,47 +200,6 @@ int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char*
     freeaddrinfo(servinfo);
     return 0;
 }
-
-static void getExtensionPtrs()
-{
-    if (InterlockedCompareExchange(&initialized, 1, 0) == 0)
-    {
-        InitializeCriticalSection(&initLock);
-    }
-    EnterCriticalSection(&initLock);
-    if(pfnWSARecvMsg == NULL|| pfnWSASendMsg == NULL)
-    {
-        SOCKET sock= socket(PF_INET, SOCK_DGRAM, 0);
-        DWORD dwBytes;
-        int rc = 0;
-        if (pfnWSARecvMsg == NULL)
-        {
-            rc = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &recvGuid,
-                    sizeof(recvGuid), &pfnWSARecvMsg, sizeof(pfnWSARecvMsg),
-                    &dwBytes, NULL, NULL);
-        }
-        if (rc != SOCKET_ERROR)
-        {
-            if (pfnWSASendMsg == NULL)
-            {
-                rc = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-                        &sendGuid, sizeof(sendGuid), &pfnWSASendMsg,
-                        sizeof(pfnWSASendMsg), &dwBytes, NULL, NULL);
-            }
-        }
-        if (rc == SOCKET_ERROR)
-        {
-            LSQ_ERROR("Can't get extension function pointers: %d",
-                                                        WSAGetLastError());
-        }
-        closesocket(sock);
-    }
-    LeaveCriticalSection(&initLock);
-}
-
-
-#endif
-
 
 static struct packets_in *
 allocate_packets_in (SOCKET_TYPE fd)
