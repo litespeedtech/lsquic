@@ -210,6 +210,10 @@ sport_destroy (struct service_port *sport)
 struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
+    if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, optarg) == 1)
+    {
+        return -1;/*Couldn't resolve the name*/
+    }
     struct service_port *const sport = malloc(sizeof(*sport));
     sport->ev = NULL;
     sport->packs_in = NULL;

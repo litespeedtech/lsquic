@@ -181,10 +181,6 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
             return -1;
-        if (getIpfromDNS(prog->prog_hostname, ip, ipv6, arg) == 1)
-        {
-            return -1;/*Couldn't resolve the name*/
-        }
         return prog_add_sport(prog, arg);
     case 'S':
         {
@@ -377,7 +373,7 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        if (getIpfromDNS(prog->prog_hostname, ip, ipv6, "443") == 1)/*Resolve the DNS name*/
+        if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, "443") == 1)
         {
             return -1;/*Couldn't resolve the name*/
         }
@@ -409,60 +405,4 @@ int
 prog_is_stopped (void)
 {
     return prog_stopped != 0;
-}
-
-//Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/
-int getIpfromDNS(const char* hostname, char* ipaddr, bool version, const char* port)
-{
-    struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_in *h;
-    struct sockaddr_in6 *h6;
-    int rv;
-    char * port2 = strdup(port); /*so that it's no longer const */
-    char * hostname2 = strdup(hostname);
-
-    memset(&hints, 0, sizeof(hints));
-    if (version)
-    {
-        hints.ai_family = AF_INET6;
-    }
-    else
-    {
-        hints.ai_family = AF_INET;
-    }
-    
-    hints.ai_socktype = SOCK_STREAM;
-    
-
-    if ((rv = getaddrinfo(hostname2, port2 , &hints, &servinfo)) != 0)
-    {
-        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));/*TODO: test if LSQ_Error works like printf*/ 
-        free(port2);
-        free(hostname2);
-        freeaddrinfo(servinfo);
-        return 1;
-    }
-
-    // loop through all the results and connect to the first we can
-    if (version)/*Ipv6*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h6 = (struct sockaddr_in6*) p->ai_addr;
-            inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, 47);
-        }
-    }
-    else /*Ipv4*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h = (struct sockaddr_in *) p->ai_addr;
-            inet_ntop(AF_INET, &h->sin_addr, ipaddr, 47);
-        }
-    }
-
-    free(hostname2);
-    free(port2);
-    freeaddrinfo(servinfo);
-    return 0;
 }
