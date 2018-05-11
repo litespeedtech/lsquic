@@ -27,7 +27,6 @@
 #endif
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <event2/event.h>
 
 #include "lsquic.h"
 #include "test_common.h"
@@ -408,8 +407,6 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
-"	-6 IPv6		The client will try to connect via IPv6\n"
-"				if this flag is used. If not it will use IPv4.\n"
 "				-6 MUST be entered before -s in order to work."
 "   -p PATH     Path to request.  May be specified more than once.\n"
 "   -n CONNS    Number of concurrent connections.  Defaults to 1.\n"
@@ -423,6 +420,8 @@ usage (const char *prog)
 "                 content-length\n"
 "   -K          Discard server response\n"
 "   -I          Abort on incomplete reponse from server\n"
+"	-6 IPv6	    The client will try to connect via IPv6\n"
+"				  if this flag is used. If not it will use IPv4.\n"
             , prog);
 }
 
@@ -544,5 +543,6 @@ main (int argc, char **argv)
     if (promise_fd >= 0)
         (void) close(promise_fd);
 
+    getchar();
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

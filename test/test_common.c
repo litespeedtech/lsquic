@@ -153,8 +153,6 @@ int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char*
     struct sockaddr_in *h;
     struct sockaddr_in6 *h6;
     int rv;
-    char * port2 = strdup(port); /*so that it's no longer const */
-    char * hostname2 = strdup(hostname);
 
     memset(&hints, 0, sizeof(hints));
     if (version)
@@ -169,11 +167,9 @@ int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char*
     hints.ai_socktype = SOCK_STREAM;
 
 
-    if ((rv = getaddrinfo(hostname2, port2, &hints, &servinfo)) != 0)
+    if ((rv = getaddrinfo(hostname, port, &hints, &servinfo)) != 0)
     {
         LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
-        free(port2);
-        free(hostname2);
         freeaddrinfo(servinfo);
         return 1;
     }
@@ -195,8 +191,6 @@ int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char*
         }
     }
 
-    free(hostname2);
-    free(port2);
     freeaddrinfo(servinfo);
     return 0;
 }
@@ -298,15 +292,22 @@ sport_new (const char *optarg, struct prog *prog)
 
         memcpy(sport->host, ip, sizeof(ip));
     }
-    else /*The user specified an ipaddress*/
+    else 
     {
         *port = '\0';
         ++port;
-        if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
-            goto err;
-        memcpy(sport->host, addr, port - addr);
+        if (get_Ip_from_DNS(addr, ip, ipv6, port, INET6_ADDRSTRLEN) == 0) /*The user specified a hostname*/
+        {
+            memcpy(sport->host, ip, sizeof(ip));
+        }
+        else /*The user specified an ipaddress*/
+        {
+            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
+                goto err;
+            memcpy(sport->host, addr, port - addr);
 
-        strcpy(ip, addr); /*copy addr to ip so we only need to have the inet_pton code once*/
+            strcpy(ip, addr); /*copy addr to ip so we only need to have the inet_pton code once*/
+        }
     }
 
     struct sockaddr_in  *const sa4 = (void *)&sport->sas;
@@ -322,10 +323,11 @@ sport_new (const char *optarg, struct prog *prog)
         sa6->sin6_family = AF_INET6;
         sa6->sin6_port = htons(atoi(port));
     }
-    else
+    else 
     {
         goto err;
     }
+
     
     free(addr);
     sport->sp_prog = prog;

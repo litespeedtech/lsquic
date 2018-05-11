@@ -88,6 +88,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 is used.\n"
 "                 You can also specify an certain ipadress to be used here.\n"
 "                 To do that enter an ipadress and the port seperated by :\n"
+"                 e.g -s ::1:12345 or -s 0.0.0.0:12345 or -s 443 or -s example.com:443\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
