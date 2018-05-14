@@ -85,8 +85,6 @@ struct parse_funcs
     (*pf_gen_stream_frame) (unsigned char *buf, size_t bufsz,
                             uint32_t stream_id, uint64_t offset,
                             int fin, size_t size, gsf_read_f, void *stream);
-    unsigned
-    (*pf_parse_stream_frame_header_sz) (unsigned char type);
     int
     (*pf_parse_stream_frame) (const unsigned char *buf, size_t rem_packet_sz,
                                                     struct stream_frame *);
@@ -174,9 +172,6 @@ parse_packet_in_begin (struct lsquic_packet_in *, size_t length,
 
 enum QUIC_FRAME_TYPE
 parse_frame_type_gquic_Q035_thru_Q039 (unsigned char first_byte);
-
-unsigned
-parse_stream_frame_header_sz_gquic (unsigned char type);
 
 size_t
 calc_stream_frame_header_sz_gquic (uint32_t stream_id, uint64_t offset);
