@@ -146,12 +146,11 @@ static void getExtensionPtrs()
 
 #endif
 
-/*Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/ */
 int get_Ip_from_DNS(const char* hostname, struct service_port * sport, const char* port, int version)
 {
-    struct sockaddr_in  *const saa4 = (void *)&sport->sas;
-    struct sockaddr_in6 *const saa6 = (void *)&sport->sas;
-    struct addrinfo hints, *servinfo, *p;
+    struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+    struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+    struct addrinfo hints, *servinfo;
     int rv;
     char ip[INET6_ADDRSTRLEN];
 
@@ -169,21 +168,17 @@ int get_Ip_from_DNS(const char* hostname, struct service_port * sport, const cha
     }
 
     if (version){ /*Ipv6*/
-        memset(saa6, 0, sizeof(*saa6));
-        for (p = servinfo; p != NULL; p = p->ai_next){
-            saa6->sin6_addr = ((struct sockaddr_in6*) p->ai_addr)->sin6_addr;
-        }
-        saa6->sin6_family = AF_INET6;
-        saa6->sin6_port = htons(atoi(port));
-        inet_ntop(AF_INET6, &saa6->sin6_addr, ip, INET6_ADDRSTRLEN);
+        memset(sa6, 0, sizeof(*sa6));
+        sa6->sin6_addr = ((struct sockaddr_in6*) servinfo->ai_addr)->sin6_addr;
+        sa6->sin6_family = AF_INET6;
+        sa6->sin6_port = htons(atoi(port));
+        inet_ntop(AF_INET6, &sa6->sin6_addr, ip, INET6_ADDRSTRLEN);
     }
     else{/*Ipv4*/
-        for (p = servinfo; p != NULL; p = p->ai_next){
-            saa4->sin_addr = ((struct sockaddr_in *) p->ai_addr)->sin_addr;
-        }
-        saa4->sin_family = AF_INET;
-        saa4->sin_port = htons(atoi(port));
-        inet_ntop(AF_INET, &saa4->sin_addr, ip, INET6_ADDRSTRLEN);
+        sa4->sin_addr = ((struct sockaddr_in *) servinfo->ai_addr)->sin_addr;
+        sa4->sin_family = AF_INET;
+        sa4->sin_port = htons(atoi(port));
+        inet_ntop(AF_INET, &sa4->sin_addr, ip, INET6_ADDRSTRLEN);
     }
     memcpy(sport->host, ip, sizeof(ip));
 
