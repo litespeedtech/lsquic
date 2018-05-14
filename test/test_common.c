@@ -147,49 +147,45 @@ static void getExtensionPtrs()
 #endif
 
 /*Partly taken from https://www.binarytides.com/hostname-to-ip-address-c-sockets-linux/ */
-int get_Ip_from_DNS(const char* hostname, char* ipaddr, int version, const char* port, int size)
+int get_Ip_from_DNS(const char* hostname, struct service_port * sport, const char* port, int version)
 {
+    struct sockaddr_in  *const saa4 = (void *)&sport->sas;
+    struct sockaddr_in6 *const saa6 = (void *)&sport->sas;
     struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_in *h;
-    struct sockaddr_in6 *h6;
     int rv;
+    char ip[INET6_ADDRSTRLEN];
 
     memset(&hints, 0, sizeof(hints));
     if (version)
-    {
         hints.ai_family = AF_INET6;
-    }
     else
-    {
         hints.ai_family = AF_INET;
-    }
-
     hints.ai_socktype = SOCK_STREAM;
 
-
-    if ((rv = getaddrinfo(hostname, port, &hints, &servinfo)) != 0)
-    {
+    if ((rv = getaddrinfo(hostname, port, &hints, &servinfo)) != 0){
         LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
         freeaddrinfo(servinfo);
         return 1;
     }
 
-    if (version)/*Ipv6*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h6 = (struct sockaddr_in6*) p->ai_addr;
-            inet_ntop(AF_INET6, &h6->sin6_addr, ipaddr, size);
+    if (version){ /*Ipv6*/
+        memset(saa6, 0, sizeof(*saa6));
+        for (p = servinfo; p != NULL; p = p->ai_next){
+            saa6->sin6_addr = ((struct sockaddr_in6*) p->ai_addr)->sin6_addr;
         }
+        saa6->sin6_family = AF_INET6;
+        saa6->sin6_port = htons(atoi(port));
+        inet_ntop(AF_INET6, &saa6->sin6_addr, ip, INET6_ADDRSTRLEN);
     }
-    else /*Ipv4*/
-    {
-        for (p = servinfo; p != NULL; p = p->ai_next)
-        {
-            h = (struct sockaddr_in *) p->ai_addr;
-            inet_ntop(AF_INET, &h->sin_addr, ipaddr, size);
+    else{/*Ipv4*/
+        for (p = servinfo; p != NULL; p = p->ai_next){
+            saa4->sin_addr = ((struct sockaddr_in *) p->ai_addr)->sin_addr;
         }
+        saa4->sin_family = AF_INET;
+        saa4->sin_port = htons(atoi(port));
+        inet_ntop(AF_INET, &saa4->sin_addr, ip, INET6_ADDRSTRLEN);
     }
+    memcpy(sport->host, ip, sizeof(ip));
 
     freeaddrinfo(servinfo);
     return 0;
@@ -267,7 +263,7 @@ sport_new (const char *optarg, struct prog *prog)
     sport->packs_in = NULL;
     sport->fd = -1;
     char *const addr = strdup(optarg);
-    char ip[INET6_ADDRSTRLEN];
+    //char ip[INET6_ADDRSTRLEN];
 #if __linux__
     char *if_name;
     if_name = strrchr(addr, ',');
@@ -280,60 +276,45 @@ sport_new (const char *optarg, struct prog *prog)
     else
         sport->if_name[0] = '\0';
 #endif
-    char *port = strrchr(addr, ':');
-    if (!port)/*IpAdress wasn't specified by the user*/
-    {
-        if (get_Ip_from_DNS(prog->prog_hostname, ip, ipv6, addr, INET6_ADDRSTRLEN) == 1)
-        {
-            LSQ_ERROR("Couldn't resolve the hostname.\n");
-            goto err;
-        }
-        port = strdup(optarg);
 
-        memcpy(sport->host, ip, sizeof(ip));
+    char *port = strrchr(addr, ':');
+    if (!port){/*IpAdress wasn't specified by the user*/
+        if (get_Ip_from_DNS(prog->prog_hostname, sport, addr, ipv6) == 1)
+            goto err;
     }
-    else 
-    {
+    else {
         *port = '\0';
         ++port;
-        if (get_Ip_from_DNS(addr, ip, ipv6, port, INET6_ADDRSTRLEN) == 0) /*The user specified a hostname*/
-        {
-            memcpy(sport->host, ip, sizeof(ip));
-        }
-        else /*The user specified an ipaddress*/
-        {
+        
+        struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+        struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+        
+        if (inet_pton(AF_INET, addr, &sa4->sin_addr)){
+            sa4->sin_family = AF_INET;
+            sa4->sin_port = htons(atoi(port));
+
             if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
                 goto err;
             memcpy(sport->host, addr, port - addr);
-
-            strcpy(ip, addr); /*copy addr to ip so we only need to have the inet_pton code once*/
         }
-    }
+        else if (memset(sa6, 0, sizeof(*sa6)), inet_pton(AF_INET6, addr, &sa6->sin6_addr)){
+            sa6->sin6_family = AF_INET6;
+            sa6->sin6_port = htons(atoi(port));
 
-    struct sockaddr_in  *const sa4 = (void *)&sport->sas;
-    struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
-
-    if (inet_pton(AF_INET, ip, &sa4->sin_addr))
-    {
-        sa4->sin_family = AF_INET;
-        sa4->sin_port = htons(atoi(port));
+            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
+                goto err;
+            memcpy(sport->host, addr, port - addr);
+        }
+        else if (get_Ip_from_DNS(addr, sport, port, ipv6) != 0)
+            goto err;
     }
-    else if (memset(sa6, 0, sizeof(*sa6)), inet_pton(AF_INET6, ip, &sa6->sin6_addr))
-    {
-        sa6->sin6_family = AF_INET6;
-        sa6->sin6_port = htons(atoi(port));
-    }
-    else 
-    {
-        goto err;
-    }
-
     
     free(addr);
     sport->sp_prog = prog;
     return sport;
 
 err:
+    LSQ_ERROR("Couldn't resolve hostname or ip-address");
     free(sport);
     free(addr);
     return NULL;
