@@ -258,7 +258,6 @@ sport_new (const char *optarg, struct prog *prog)
     sport->packs_in = NULL;
     sport->fd = -1;
     char *const addr = strdup(optarg);
-    //char ip[INET6_ADDRSTRLEN];
 #if __linux__
     char *if_name;
     if_name = strrchr(addr, ',');
