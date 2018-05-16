@@ -83,12 +83,15 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"   -s SVCPORT  The port on which the client should connect.\n"
-"                 If no -s option is given, port 443\n"
-"                 is used.\n"
-"                 You can also specify an certain ipadress to be used here.\n"
-"                 To do that enter an ipadress and the port seperated by :\n"
-"                 e.g -s ::1:12345 or -s 0.0.0.0:12345 or -s 443 or -s example.com:443\n"
+"   -s SERVER   Server address.  Takes on the form of host:port, host,\n"
+"                 or port.  If host is not an IPv4 or IPv6 address, it is\n"
+"                 resolved.  If host is not set, the value of SNI is\n"
+"                 use (see the -H flag).  If port is not set, the default\n"
+"                 is 443.  Examples:\n"
+"                     127.0.0.1:12345\n"
+"                     ::1:12345\n"
+"                     example.com\n"
+"                     example.com:8443\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -124,8 +127,9 @@ prog_print_common_options (const struct prog *prog, FILE *out)
     {
         if (prog->prog_engine_flags & LSENG_HTTP)
             fprintf(out,
-"   -H host     Value of `host' HTTP header.  Defaults to `localhost'.  This\n"
-"                 is also used as SNI.\n"
+"   -H host     Value of `host' HTTP header.  This is also used as SNI\n"
+"                 in Client Hello.  This option is used to override the\n"
+"                 `host' part of the address specified using -s flag.\n"
             );
         else
             fprintf(out,
@@ -176,7 +180,6 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'o':
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
-    
     case 's':
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
@@ -373,7 +376,9 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        s = prog_add_sport(prog, "443");
+        if (!prog->prog_hostname)
+            return -1;
+        s = prog_add_sport(prog, prog->prog_hostname);
         if (0 != s)
             return -1;
     }

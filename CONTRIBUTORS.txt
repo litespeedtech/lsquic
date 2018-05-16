@@ -6,7 +6,7 @@ to the LiteSpeed Client Library:
     - Amol Desphande -- Windows support
     - Alexis La Goutte -- Travis-CI integration
     - Bernhard Jaeger -- DNS Resolution
-    
+
 Thank you!
 
 We welcome contributions in any form -- patches, issues, pull requests.

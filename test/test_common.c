@@ -27,6 +27,8 @@
 #include <sys/stat.h>
 #include <sys/queue.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <regex.h>
 
 #include <event2/event.h>
 
@@ -146,45 +148,6 @@ static void getExtensionPtrs()
 
 #endif
 
-int get_Ip_from_DNS(const char* hostname, struct service_port * sport, const char* port, int version)
-{
-    struct sockaddr_in  *const sa4 = (void *)&sport->sas;
-    struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
-    struct addrinfo hints, *servinfo;
-    int rv;
-    char ip[INET6_ADDRSTRLEN];
-
-    memset(&hints, 0, sizeof(hints));
-    if (version)
-        hints.ai_family = AF_INET6;
-    else
-        hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if ((rv = getaddrinfo(hostname, port, &hints, &servinfo)) != 0){
-        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
-        freeaddrinfo(servinfo);
-        return 1;
-    }
-
-    if (version){ /*Ipv6*/
-        memset(sa6, 0, sizeof(*sa6));
-        sa6->sin6_addr = ((struct sockaddr_in6*) servinfo->ai_addr)->sin6_addr;
-        sa6->sin6_family = AF_INET6;
-        sa6->sin6_port = htons(atoi(port));
-        inet_ntop(AF_INET6, &sa6->sin6_addr, ip, INET6_ADDRSTRLEN);
-    }
-    else{/*Ipv4*/
-        sa4->sin_addr = ((struct sockaddr_in *) servinfo->ai_addr)->sin_addr;
-        sa4->sin_family = AF_INET;
-        sa4->sin_port = htons(atoi(port));
-        inet_ntop(AF_INET, &sa4->sin_addr, ip, INET6_ADDRSTRLEN);
-    }
-    memcpy(sport->host, ip, sizeof(ip));
-
-    freeaddrinfo(servinfo);
-    return 0;
-}
 
 static struct packets_in *
 allocate_packets_in (SOCKET_TYPE fd)
@@ -250,6 +213,13 @@ struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
     struct service_port *const sport = malloc(sizeof(*sport));
+    regex_t re;
+    regmatch_t matches[5];
+    int re_code, port, e;
+    const char *host;
+    const char *port_str;
+    struct addrinfo hints, *res = NULL;
+    char errbuf[80];
 #if __linux__
     sport->n_dropped = 0;
     sport->drop_init = 0;
@@ -264,51 +234,109 @@ sport_new (const char *optarg, struct prog *prog)
     if (if_name)
     {
         strncpy(sport->if_name, if_name + 1, sizeof(sport->if_name) - 1);
-        sport->if_name[sizeof(sport->if_name) - 1] = '\0';
+        sport->if_name[ sizeof(sport->if_name) - 1 ] = '\0';
         *if_name = '\0';
     }
     else
         sport->if_name[0] = '\0';
 #endif
-
-    char *port = strrchr(addr, ':');
-    if (!port){/*IpAdress wasn't specified by the user*/
-        if (get_Ip_from_DNS(prog->prog_hostname, sport, addr, ipv6) == 1)
-            goto err;
+    re_code = regcomp(&re, "^(.*):([0-9][0-9]*)$"
+                          "|^([0-9][0-9]*)$"
+                          "|^(..*)$"
+                                                    , REG_EXTENDED);
+    if (re_code != 0)
+    {
+        regerror(re_code, &re, errbuf, sizeof(errbuf));
+        LSQ_ERROR("cannot compile regex: %s", errbuf);
+        goto err;
     }
-    else {
-        *port = '\0';
-        ++port;
-        
-        struct sockaddr_in  *const sa4 = (void *)&sport->sas;
-        struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
-        
-        if (inet_pton(AF_INET, addr, &sa4->sin_addr)){
-            sa4->sin_family = AF_INET;
-            sa4->sin_port = htons(atoi(port));
-
-            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
-                goto err;
-            memcpy(sport->host, addr, port - addr);
-        }
-        else if (memset(sa6, 0, sizeof(*sa6)), inet_pton(AF_INET6, addr, &sa6->sin6_addr)){
-            sa6->sin6_family = AF_INET6;
-            sa6->sin6_port = htons(atoi(port));
-
-            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
-                goto err;
-            memcpy(sport->host, addr, port - addr);
-        }
-        else if (get_Ip_from_DNS(addr, sport, port, ipv6) != 0)
-            goto err;
+    if (0 != regexec(&re, addr, sizeof(matches) / sizeof(matches[0]),
+                                                            matches, 0))
+    {
+        LSQ_ERROR("Invalid argument `%s'", addr);
+        goto err;
     }
-    
+    if (matches[1].rm_so >= 0)
+    {
+        addr[ matches[1].rm_so + matches[1].rm_eo ] = '\0';
+        host = addr;
+        port_str = &addr[ matches[2].rm_so ];
+        port = atoi(port_str);
+    }
+    else if (matches[3].rm_so >= 0)
+    {
+        if (!prog->prog_hostname)
+        {
+            LSQ_ERROR("hostname is not specified");
+            goto err;
+        }
+        host = prog->prog_hostname;
+        port_str = &addr[ matches[3].rm_so ];
+        port = atoi(port_str);
+    }
+    else
+    {
+        assert(matches[4].rm_so >= 0);
+        host = addr;
+        port_str = "443";
+        port = 443;
+    }
+    assert(host);
+    LSQ_DEBUG("host: %s; port: %d", host, port);
+    if (strlen(host) > sizeof(sport->host) - 1)
+    {
+        LSQ_ERROR("argument `%s' too long", host);
+        goto err;
+    }
+    strcpy(sport->host, host);
+
+    struct sockaddr_in  *const sa4 = (void *) &sport->sas;
+    struct sockaddr_in6 *const sa6 = (void *) &sport->sas;
+    if        (inet_pton(AF_INET, host, &sa4->sin_addr)) {
+        sa4->sin_family = AF_INET;
+        sa4->sin_port   = htons(port);
+    } else if (memset(sa6, 0, sizeof(*sa6)),
+                    inet_pton(AF_INET6, host, &sa6->sin6_addr)) {
+        sa6->sin6_family = AF_INET6;
+        sa6->sin6_port   = htons(port);
+    } else
+    {
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_flags = AI_NUMERICSERV;
+        if (prog->prog_ipver == 4)
+            hints.ai_family = AF_INET;
+        else if (prog->prog_ipver == 6)
+            hints.ai_family = AF_INET6;
+        e = getaddrinfo(host, port_str, &hints, &res);
+        if (e != 0)
+        {
+            LSQ_ERROR("could not resolve %s:%s: %s", host, port_str,
+                                                        gai_strerror(e));
+            goto err;
+        }
+        if (res->ai_addrlen > sizeof(sport->sas))
+        {
+            LSQ_ERROR("resolved socket length is too long");
+            goto err;
+        }
+        memcpy(&sport->sas, res->ai_addr, res->ai_addrlen);
+        if (!prog->prog_hostname)
+            prog->prog_hostname = sport->host;
+    }
+
+    if (0 == re_code)
+        regfree(&re);
+    if (res)
+        freeaddrinfo(res);
     free(addr);
     sport->sp_prog = prog;
     return sport;
 
-err:
-    LSQ_ERROR("Couldn't resolve hostname or ip-address");
+  err:
+    if (0 == re_code)
+        regfree(&re);
+    if (res)
+        freeaddrinfo(res);
     free(sport);
     free(addr);
     return NULL;
@@ -456,7 +484,7 @@ read_one_packet (struct read_iter *iter)
     if (SOCKET_ERROR == socket_ret) {
         if (WSAEWOULDBLOCK != WSAGetLastError())
             LSQ_ERROR("recvmsg: %d", WSAGetLastError());
-    return ROP_ERROR;
+	return ROP_ERROR;
     }
 #endif
 

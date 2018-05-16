@@ -6,8 +6,6 @@
 #ifndef PROG_H
 #define PROG_H 1
 
-int ipv6;	/*True = Program uses ipv6, False = Program uses ipv4*/
-
 struct event;
 struct event_base;
 struct lsquic_hash;
@@ -29,6 +27,7 @@ struct prog
     struct sport_head              *prog_sports;
     struct lsquic_engine           *prog_engine;
     const char                     *prog_hostname;
+    int                             prog_ipver;     /* 0, 4, or 6 */
 };
 
 void

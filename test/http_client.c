@@ -2,6 +2,7 @@
 /*
  * http_client.c -- A simple HTTP/QUIC client
  */
+
 #ifndef WIN32
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -52,7 +53,6 @@ struct path_elem {
 struct http_client_ctx {
     TAILQ_HEAD(, lsquic_conn_ctx)
                                  conn_ctxs;
-    struct service_port         *sport;
     const char                  *hostname;
     const char                  *method;
     const char                  *payload;
@@ -158,6 +158,7 @@ struct lsquic_stream_ctx {
     struct lsquic_reader reader;
 };
 
+
 static lsquic_stream_ctx_t *
 http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
@@ -205,6 +206,9 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 static void
 send_headers (lsquic_stream_ctx_t *st_h)
 {
+    const char *hostname = st_h->client_ctx->hostname;
+    if (!hostname)
+        hostname = st_h->client_ctx->prog->prog_hostname;
     lsquic_http_header_t headers_arr[] = {
         {
             .name  = { .iov_base = ":method",       .iov_len = 7, },
@@ -222,8 +226,8 @@ send_headers (lsquic_stream_ctx_t *st_h)
         },
         {
             .name  = { ":authority",     10, },
-            .value = { .iov_base = (void *) st_h->client_ctx->hostname,
-                       .iov_len = strlen(st_h->client_ctx->hostname), },
+            .value = { .iov_base = (void *) hostname,
+                       .iov_len = strlen(hostname), },
         },
         /*
         {
@@ -311,7 +315,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     unsigned char buf[0x200];
     unsigned nreads = 0;
 #ifdef WIN32
-    srand(GetTickCount());
+	srand(GetTickCount());
 #endif
 
     do
@@ -407,7 +411,6 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
-"				-6 MUST be entered before -s in order to work."
 "   -p PATH     Path to request.  May be specified more than once.\n"
 "   -n CONNS    Number of concurrent connections.  Defaults to 1.\n"
 "   -r NREQS    Total number of requests to send.  Defaults to 1.\n"
@@ -420,8 +423,8 @@ usage (const char *prog)
 "                 content-length\n"
 "   -K          Discard server response\n"
 "   -I          Abort on incomplete reponse from server\n"
-"	-6 IPv6	    The client will try to connect via IPv6\n"
-"				  if this flag is used. If not it will use IPv4.\n"
+"   -4          Prefer IPv4 when resolving hostname\n"
+"   -6          Prefer IPv6 when resolving hostname\n"
             , prog);
 }
 
@@ -436,14 +439,11 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
 
-    ipv6 = 0;
-
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
     client_ctx.hcc_concurrency = 1;
     TAILQ_INIT(&client_ctx.hcc_path_elems);
     TAILQ_INIT(&client_ctx.conn_ctxs);
-    client_ctx.hostname = "localhost";
     client_ctx.method = "GET";
     client_ctx.hcc_concurrency = 1;
     client_ctx.hcc_reqs_per_conn = 1;
@@ -456,11 +456,14 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "6r:R:IKu:EP:M:n:H:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46r:R:IKu:EP:M:n:H:p:h")))
     {
         switch (opt) {
+        case '4':
+            prog.prog_ipver = 4;
+            break;
         case '6':
-            ipv6 = 1;
+            prog.prog_ipver = 4;
             break;
         case 'I':
             client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;
@@ -505,7 +508,7 @@ main (int argc, char **argv)
             break;
         case 'H':
             client_ctx.hostname = optarg;
-            prog.prog_hostname = optarg; /* Pokes into prog */
+            prog.prog_hostname = optarg;            /* Pokes into prog */
             break;
         case 'p':
             pe = calloc(1, sizeof(*pe));
