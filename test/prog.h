@@ -6,6 +6,8 @@
 #ifndef PROG_H
 #define PROG_H 1
 
+int ipv6;	/*True = Program uses ipv6, False = Program uses ipv4*/
+
 struct event;
 struct event_base;
 struct lsquic_hash;
