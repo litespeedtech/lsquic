@@ -322,5 +322,3 @@ lsquic_mm_mem_used (const struct lsquic_mm *mm)
 
     return size;
 }
-
-

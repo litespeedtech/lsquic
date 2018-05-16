@@ -7,7 +7,6 @@
 
 #define LSQUIC_STREAM_DEFAULT_PRIO 16   /* RFC 7540, Section 5.3.5 */
 
-
 struct lsquic_stream_if;
 struct lsquic_stream_ctx;
 struct lsquic_conn_public;
@@ -15,7 +14,6 @@ struct stream_frame;
 struct uncompressed_headers;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
-
 
 #ifndef LSQUIC_KEEP_STREAM_HISTORY
 #   ifdef NDEBUG
@@ -25,13 +23,11 @@ TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 #   endif
 #endif
 
-
 #if LSQUIC_KEEP_STREAM_HISTORY
 #define SM_HIST_BITS 6
 #define SM_HIST_IDX_MASK ((1 << SM_HIST_BITS) - 1)
 typedef unsigned char sm_hist_idx_t;
 #endif
-
 
 struct lsquic_stream
 {
@@ -133,7 +129,6 @@ struct lsquic_stream
 #endif
 };
 
-
 enum stream_ctor_flags
 {
     SCF_CALL_ON_NEW   = (1 << 0), /* Call on_new_stream() immediately */
@@ -147,7 +142,6 @@ enum stream_ctor_flags
     SCF_DISP_RW_ONCE  = (1 << 3),
     SCF_ALLOW_OVERLAP = (1 << 4), /* Allow STREAM frames to overlap */
 };
-
 
 lsquic_stream_t *
 lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,

@@ -462,5 +462,3 @@ acki2str (const struct ack_info *acki, size_t *sz)
     *sz = off;
     return buf;
 }
-
-

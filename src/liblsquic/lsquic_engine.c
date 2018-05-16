@@ -1325,5 +1325,3 @@ lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now)
         now += from_now;
     return attq_count_before(engine->attq, now);
 }
-
-

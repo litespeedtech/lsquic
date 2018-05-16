@@ -316,5 +316,3 @@ lsquic_ev_log_generated_http_push_promise (lsquic_cid_t cid,
                 (int)    extra_headers->headers[i].value.iov_len,
                 (char *) extra_headers->headers[i].value.iov_base);
 }
-
-

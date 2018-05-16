@@ -389,5 +389,3 @@ lsquic_set_log_level (const char *level_str)
     else
         return -1;
 }
-
-

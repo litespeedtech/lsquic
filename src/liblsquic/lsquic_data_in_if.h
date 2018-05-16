@@ -6,12 +6,10 @@
 #ifndef LSQUIC_DATA_IN_IF_H
 #define LSQUIC_DATA_IN_IF_H 1
 
-
 struct data_frame;
 struct data_in;
 struct lsquic_conn_public;
 struct stream_frame;
-
 
 enum ins_frame
 {
@@ -20,7 +18,6 @@ enum ins_frame
     INS_FRAME_DUP,
     INS_FRAME_OVERLAP,
 };
-
 
 struct data_in_iface
 {
@@ -57,8 +54,8 @@ struct data_in_iface
 
     size_t
     (*di_mem_used) (struct data_in *);
-};
 
+};
 
 struct data_in
 {
@@ -72,7 +69,6 @@ struct data_in
         DI_SWITCH_IMPL = (1 << 0),
     }                            di_flags;
 };
-
 
 /* This implementation does not support overlapping frame and may return
  * INS_FRAME_OVERLAP.

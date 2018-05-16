@@ -1623,6 +1623,73 @@ test_overlaps (void)
 
 
 static void
+test_insert_edge_cases (void)
+{
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    stream_frame_t *frame;
+    int s;
+    ssize_t nread;
+    const char data[] = "1234567890";
+    unsigned buf[0x1000];
+
+    init_test_objs(&tobjs, 0x4000, 0x4000);
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        /* Invalid frame: different FIN location */
+        frame = new_frame_in_ext(&tobjs, 3, 2, 1, &data[3]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Invalid frame: different FIN location", -1 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 0, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(6 == nread);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 0, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate frame", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == -1 && errno == EAGAIN);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Frame OK", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 0); /* Hit EOF */
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate FIN frame", 0 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(6 == nread);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(0 == nread); /* Hit EOF */
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted duplicate frame", 0 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
 test_writing_to_stream_schedule_stream_packets_immediately (void)
 {
     ssize_t nw;
@@ -2448,6 +2515,7 @@ main (int argc, char **argv)
     test_blocked_flags();
     test_reading_from_stream2();
     test_overlaps();
+    test_insert_edge_cases();
 
     {
         int idx[6];

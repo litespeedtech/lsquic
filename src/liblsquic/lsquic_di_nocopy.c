@@ -102,10 +102,15 @@ struct nocopy_data_in
     struct data_in              ncdi_data_in;
     struct lsquic_conn_public  *ncdi_conn_pub;
     uint64_t                    ncdi_byteage;
+    uint64_t                    ncdi_fin_off;
     uint32_t                    ncdi_stream_id;
     unsigned                    ncdi_n_frames;
     unsigned                    ncdi_n_holes;
     unsigned                    ncdi_cons_far;
+    enum {
+        NCDI_FIN_SET        = 1 << 0,
+        NCDI_FIN_REACHED    = 1 << 1,
+    }                           ncdi_flags;
 };
 
 
@@ -137,6 +142,9 @@ data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
     ncdi->ncdi_n_frames         = 0;
     ncdi->ncdi_n_holes          = 0;
     ncdi->ncdi_cons_far         = 0;
+    ncdi->ncdi_fin_off          = 0;
+    ncdi->ncdi_flags            = 0;
+    LSQ_DEBUG("initialized");
     return &ncdi->ncdi_data_in;
 }
 
@@ -154,6 +162,7 @@ nocopy_di_destroy (struct data_in *data_in)
     }
     free(ncdi);
 }
+
 
 #define DF_OFF(frame) (frame)->data_frame.df_offset
 #define DF_FIN(frame) (frame)->data_frame.df_fin
@@ -177,61 +186,17 @@ frame_list_is_sane (const struct nocopy_data_in *ncdi)
     }
     return ordered && !overlaps;
 }
+
+
 #define CHECK_ORDER(ncdi) assert(frame_list_is_sane(ncdi))
 #else
 #define CHECK_ORDER(ncdi)
 #endif
 
 
-/* When inserting a new frame into the frame list, there are four cases to
- * consider:
- *
- *  I.   New frame is the only frame in the list;
- *  II.  New frame only has a neighbor to its left (previous frame);
- *  III. New frame only has a neighbor to its right (next frame); and
- *  IV.  New frame has both left and right neighbors.
- *
- * I. New frame is the only frame in the list.
- *
- *      A)  If the read offset is larger than the end of the new frame and
- *          the new frame has a FIN, it is an ERROR.
- *
- *      B)  If the read offset is larger than the end of the new frame and
- *          the new frame does not have a FIN, it is a DUP.
- *
- *      C)  If the read offset is equal to the end of the new frame and
- *          the new frame has a FIN, it is an OVERLAP.
- *
- *      D)  If the read offset is equal to the end of the new frame and
- *          the new frame does not have a FIN, it is a DUP.
- *
- * II. New frame only has a neighbor to its left.
- *
- *      - (A) and (B) apply.
- *
- *      E)  New frame could be the same as the previous frame: DUP.
- *
- *      F)  New frame has the same offset and size as previous frame, but
- *          previous frame has FIN and the new frame does not: DUP.
- *
- *      G)  New frame has the same offset and size as previous frame, but
- *          previous frame does not have a FIN and the new one does: OVERLAP.
- *
- *      H)  New frame could start inside previous frame: OVERLAP.
- *
- *  III. New frame only has a neighbor to its right.
- *
- *      - (A) and (B) apply.
- *
- *      I) Right neighbor could start inside new frame: OVERLAP.
- *
- *  IV.  New frame has both left and right neighbors.
- *
- *      - (A), (B), (E), (F), (G), (H), and (I) apply.
- */
+#define CASE(letter) ((int) (letter) << 8)
 
-
-static enum ins_frame
+static int
 insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
                                     uint64_t read_offset, unsigned *p_n_frames)
 {
@@ -241,9 +206,17 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
     if (read_offset > DF_END(new_frame))
     {
         if (DF_FIN(new_frame))
-            return INS_FRAME_ERR;               /* Case (A) */
+            return INS_FRAME_ERR                                | CASE('A');
         else
-            return INS_FRAME_DUP;               /* Case (B) */
+            return INS_FRAME_DUP                                | CASE('B');
+    }
+
+    if (ncdi->ncdi_flags & NCDI_FIN_SET)
+    {
+        if (DF_FIN(new_frame) && DF_END(new_frame) != ncdi->ncdi_fin_off)
+            return INS_FRAME_ERR                                | CASE('C');
+        if (DF_END(new_frame) > ncdi->ncdi_fin_off)
+            return INS_FRAME_ERR                                | CASE('D');
     }
 
     /* Find position in the list, going backwards.  We go backwards because
@@ -279,12 +252,21 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
     switch (select)
     {
     default:    /* No neighbors */
-        if (read_offset == DF_END(new_frame) && DF_SIZE(new_frame))
+        if (read_offset == DF_END(new_frame))
         {
-            if (DF_FIN(new_frame))
-                return INS_FRAME_OVERLAP;       /* Case (C) */
-            else
-                return INS_FRAME_DUP;           /* Case (D) */
+            if (DF_SIZE(new_frame))
+            {
+                if (DF_FIN(new_frame)
+                    && !((ncdi->ncdi_flags & NCDI_FIN_REACHED)
+                            && read_offset == ncdi->ncdi_fin_off))
+                    return INS_FRAME_OVERLAP                    | CASE('E');
+                else
+                    return INS_FRAME_DUP                        | CASE('F');
+            }
+            else if (!DF_FIN(new_frame)
+                     || ((ncdi->ncdi_flags & NCDI_FIN_REACHED)
+                         && read_offset == ncdi->ncdi_fin_off))
+                return INS_FRAME_DUP                            | CASE('G');
         }
         goto list_was_empty;
     case 3:     /* Both left and right neighbors */
@@ -293,22 +275,18 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
             && DF_SIZE(prev_frame) == DF_SIZE(new_frame))
         {
             if (!DF_FIN(prev_frame) && DF_FIN(new_frame))
-                return INS_FRAME_OVERLAP;       /* Case (G) */
+                return INS_FRAME_OVERLAP                        | CASE('H');
             else
-                return INS_FRAME_DUP;           /* Cases (E) and (F) */
+                return INS_FRAME_DUP                            | CASE('I');
         }
         if (DF_END(prev_frame) > DF_OFF(new_frame))
-            return INS_FRAME_OVERLAP;           /* Case (H) */
+            return INS_FRAME_OVERLAP                            | CASE('J');
         if (select == 2)
-        {
-            if (DF_FIN(prev_frame))
-                return INS_FRAME_ERR;
             goto have_prev;
-        }
         /* Fall-through */
     case 1:     /* Only right neighbor (next_frame) */
         if (DF_END(new_frame) > DF_OFF(next_frame))
-            return INS_FRAME_OVERLAP;           /* Case (I) */
+            return INS_FRAME_OVERLAP                            | CASE('K');
         break;
     }
 
@@ -332,11 +310,18 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
     }
     CHECK_ORDER(ncdi);
 
+    if (DF_FIN(new_frame))
+    {
+        ncdi->ncdi_flags |= NCDI_FIN_SET;
+        ncdi->ncdi_fin_off = DF_END(new_frame);
+        LSQ_DEBUG("FIN set at %"PRIu64, DF_END(new_frame));
+    }
+
     ++ncdi->ncdi_n_frames;
     ncdi->ncdi_byteage += DF_SIZE(new_frame);
     *p_n_frames = count;
 
-    return INS_FRAME_OK;
+    return INS_FRAME_OK                                         | CASE('Z');
 }
 
 
@@ -383,9 +368,13 @@ nocopy_di_insert_frame (struct data_in *data_in,
     struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
     unsigned count;
     enum ins_frame ins;
+    int ins_case;
 
     assert(0 == (new_frame->data_frame.df_fin & ~1));
-    ins = insert_frame(ncdi, new_frame, read_offset, &count);
+    ins_case = insert_frame(ncdi, new_frame, read_offset, &count);
+    ins = ins_case & 0xFF;
+    ins_case >>= 8;
+    LSQ_DEBUG("%s: ins: %d (case '%c')", __func__, ins, (char) ins_case);
     switch (ins)
     {
     case INS_FRAME_OK:
@@ -430,6 +419,11 @@ nocopy_di_frame_done (struct data_in *data_in, struct data_frame *data_frame)
                     frame->data_frame.df_size != first->data_frame.df_offset;
     --ncdi->ncdi_n_frames;
     ncdi->ncdi_byteage -= frame->data_frame.df_size;
+    if (DF_FIN(frame))
+    {
+        ncdi->ncdi_flags |= NCDI_FIN_REACHED;
+        LSQ_DEBUG("FIN has been reached at offset %"PRIu64, DF_END(frame));
+    }
     lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, frame->packet_in);
     lsquic_malo_put(frame);
 }
@@ -494,6 +488,7 @@ nocopy_di_mem_used (struct data_in *data_in)
 
     return size;
 }
+
 
 static const struct data_in_iface di_if_nocopy = {
     .di_destroy      = nocopy_di_destroy,

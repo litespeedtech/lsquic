@@ -12,6 +12,7 @@
 
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -454,6 +455,8 @@ ctz (unsigned long long x)
     if (0 == (x & ((1ULL <<  1) - 1))) { n +=  1; x >>=  1; }
     return n;
 }
+
+
 #endif
 
 
