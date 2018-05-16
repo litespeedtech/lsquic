@@ -9,24 +9,25 @@ Usage Examples
 
 Fetch Google's home page:
 
-    ./http_client -H www.google.com -s 74.125.22.106:443 -p /
-
-    or even
-
-    ./http_client -H www.google.co.uk -s 2a00:1450:4009:80c::2003:443 -p /
+    ./http_client -H www.google.com -s 443 -p /
 
 In the example above, -H specifies the domain; it is also used as the value
 of SNI paramater in the handshake.
 
-The IP address and the port number are specified using the -s flag.
+The port number is specified using the -s flag.
+The ip adress is determined automatically.
+The -6 flag tells the program to use IPv6 instead of IPv4. 
+Note that -6 must be used before -s in order to work.
 
-(Since www.google.com has different IP addresses in different regions, check
-that you are using the correct IP address by resolving www.google.com first
-by using nslookup, dig, ping, or some other tool.)
+You can also specify a certain ip-address with the -s command.
+Note that this example won't work everywhere since google has a lot of different ips. 
+You have to look up the correct one for yourself.
+
+    ./http_client -H www.google.com -s 172.217.22.4:443 -p /
 
 POST a file to calculate its CRC32 checksum:
 
-    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+    ./http_client -H www.litespeedtech.com -s 443 \
                         -p /cgi-bin/crc32.cgi -P file-256M -M POST
 
     HTTP/1.1 200 OK
@@ -50,7 +51,7 @@ On the command line, I do
 
 To submit several requests concurrently, one can use -n and -r options:
 
-    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+    ./http_client -H www.litespeedtech.com -s 443 \
                 -p /cgi-bin/crc32.cgi -P file-256M -M POST -n 3 -r 10
 
 This will open three parallel connections which will make ten POST
