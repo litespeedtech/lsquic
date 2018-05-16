@@ -1,6 +1,7 @@
 /* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #ifndef WIN32
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <signal.h>
 #endif
@@ -82,12 +83,12 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"   -s SVCPORT  Service port.  Takes on the form of IPv4:port or\n"
-"                 IPv6:port.  For example:\n"
-"                   127.0.0.1:12345\n"
-"                   ::1:12345\n"
-"                 If no -s option is given, 0.0.0.0:12345 address\n"
+"   -s SVCPORT  The port on which the client should connect.\n"
+"                 If no -s option is given, port 443\n"
 "                 is used.\n"
+"                 You can also specify an certain ipadress to be used here.\n"
+"                 To do that enter an ipadress and the port seperated by :\n"
+"                 e.g -s ::1:12345 or -s 0.0.0.0:12345 or -s 443 or -s example.com:443\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -175,6 +176,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'o':
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
+    
     case 's':
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
@@ -371,7 +373,7 @@ prog_prep (struct prog *prog)
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        s = prog_add_sport(prog, "0.0.0.0:12345");
+        s = prog_add_sport(prog, "443");
         if (0 != s)
             return -1;
     }

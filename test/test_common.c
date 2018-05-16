@@ -146,6 +146,45 @@ static void getExtensionPtrs()
 
 #endif
 
+int get_Ip_from_DNS(const char* hostname, struct service_port * sport, const char* port, int version)
+{
+    struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+    struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+    struct addrinfo hints, *servinfo;
+    int rv;
+    char ip[INET6_ADDRSTRLEN];
+
+    memset(&hints, 0, sizeof(hints));
+    if (version)
+        hints.ai_family = AF_INET6;
+    else
+        hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ((rv = getaddrinfo(hostname, port, &hints, &servinfo)) != 0){
+        LSQ_ERROR("getaddrinfo: %s\n", gai_strerror(rv));
+        freeaddrinfo(servinfo);
+        return 1;
+    }
+
+    if (version){ /*Ipv6*/
+        memset(sa6, 0, sizeof(*sa6));
+        sa6->sin6_addr = ((struct sockaddr_in6*) servinfo->ai_addr)->sin6_addr;
+        sa6->sin6_family = AF_INET6;
+        sa6->sin6_port = htons(atoi(port));
+        inet_ntop(AF_INET6, &sa6->sin6_addr, ip, INET6_ADDRSTRLEN);
+    }
+    else{/*Ipv4*/
+        sa4->sin_addr = ((struct sockaddr_in *) servinfo->ai_addr)->sin_addr;
+        sa4->sin_family = AF_INET;
+        sa4->sin_port = htons(atoi(port));
+        inet_ntop(AF_INET, &sa4->sin_addr, ip, INET6_ADDRSTRLEN);
+    }
+    memcpy(sport->host, ip, sizeof(ip));
+
+    freeaddrinfo(servinfo);
+    return 0;
+}
 
 static struct packets_in *
 allocate_packets_in (SOCKET_TYPE fd)
@@ -225,38 +264,51 @@ sport_new (const char *optarg, struct prog *prog)
     if (if_name)
     {
         strncpy(sport->if_name, if_name + 1, sizeof(sport->if_name) - 1);
-        sport->if_name[ sizeof(sport->if_name) - 1 ] = '\0';
+        sport->if_name[sizeof(sport->if_name) - 1] = '\0';
         *if_name = '\0';
     }
     else
         sport->if_name[0] = '\0';
 #endif
+
     char *port = strrchr(addr, ':');
-    if (!port)
-        goto err;
-    *port = '\0';
-    ++port;
-    if ((uintptr_t) port - (uintptr_t) addr > sizeof(sport->host))
-        goto err;
-    memcpy(sport->host, addr, port - addr);
+    if (!port){/*IpAdress wasn't specified by the user*/
+        if (get_Ip_from_DNS(prog->prog_hostname, sport, addr, ipv6) == 1)
+            goto err;
+    }
+    else {
+        *port = '\0';
+        ++port;
+        
+        struct sockaddr_in  *const sa4 = (void *)&sport->sas;
+        struct sockaddr_in6 *const sa6 = (void *)&sport->sas;
+        
+        if (inet_pton(AF_INET, addr, &sa4->sin_addr)){
+            sa4->sin_family = AF_INET;
+            sa4->sin_port = htons(atoi(port));
 
-    struct sockaddr_in  *const sa4 = (void *) &sport->sas;
-    struct sockaddr_in6 *const sa6 = (void *) &sport->sas;
-    if        (inet_pton(AF_INET,  addr, &sa4->sin_addr)) {
-        sa4->sin_family = AF_INET;
-        sa4->sin_port   = htons(atoi(port));
-    } else if (memset(sa6, 0, sizeof(*sa6)),
-                    inet_pton(AF_INET6, addr, &sa6->sin6_addr)) {
-        sa6->sin6_family = AF_INET6;
-        sa6->sin6_port   = htons(atoi(port));
-    } else
-        goto err;
+            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
+                goto err;
+            memcpy(sport->host, addr, port - addr);
+        }
+        else if (memset(sa6, 0, sizeof(*sa6)), inet_pton(AF_INET6, addr, &sa6->sin6_addr)){
+            sa6->sin6_family = AF_INET6;
+            sa6->sin6_port = htons(atoi(port));
 
+            if ((uintptr_t)port - (uintptr_t)addr > sizeof(sport->host))
+                goto err;
+            memcpy(sport->host, addr, port - addr);
+        }
+        else if (get_Ip_from_DNS(addr, sport, port, ipv6) != 0)
+            goto err;
+    }
+    
     free(addr);
     sport->sp_prog = prog;
     return sport;
 
-  err:
+err:
+    LSQ_ERROR("Couldn't resolve hostname or ip-address");
     free(sport);
     free(addr);
     return NULL;
@@ -404,7 +456,7 @@ read_one_packet (struct read_iter *iter)
     if (SOCKET_ERROR == socket_ret) {
         if (WSAEWOULDBLOCK != WSAGetLastError())
             LSQ_ERROR("recvmsg: %d", WSAGetLastError());
-	return ROP_ERROR;
+    return ROP_ERROR;
     }
 #endif
 
