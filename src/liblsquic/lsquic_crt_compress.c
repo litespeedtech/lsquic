@@ -569,5 +569,3 @@ lsquic_crt_cleanup (void)
         s_ccsbuf = NULL;
     }
 }
-
-

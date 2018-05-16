@@ -747,5 +747,3 @@ lsquic_frame_writer_mem_used (const struct lsquic_frame_writer *fw)
 
     return size;
 }
-
-

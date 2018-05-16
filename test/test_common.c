@@ -1140,5 +1140,3 @@ destroy_lsquic_reader_ctx (struct reader_ctx *ctx)
     (void) close(ctx->fd);
     free(ctx);
 }
-
-

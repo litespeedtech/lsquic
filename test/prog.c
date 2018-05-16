@@ -400,5 +400,3 @@ prog_is_stopped (void)
 {
     return prog_stopped != 0;
 }
-
-

@@ -1853,5 +1853,3 @@ lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *ctl)
 
     return size;
 }
-
-

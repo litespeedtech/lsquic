@@ -130,5 +130,3 @@ lsquic_str_copy (lsquic_str_t *lstr_dst, const lsquic_str_t *lstr_src)
     lstr_dst->len = lstr_src->len;
     return lstr_dst;
 }
-
-
