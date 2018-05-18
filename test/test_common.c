@@ -49,11 +49,6 @@
 #   define CLOSE_SOCKET close
 #   define CHAR_CAST
 #else
-
-    /* XXX detect these using cmake? */
-#   define HAVE_IP_DONTFRAG 1
-#   define HAVE_IP_MTU_DISCOVER 1
-
 #   define SOCKET_TYPE SOCKET
 #   define CLOSE_SOCKET closesocket
 #   define CHAR_CAST (char *)
