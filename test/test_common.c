@@ -28,6 +28,8 @@
 #include <sys/queue.h>
 #include <fcntl.h>
 #include <sys/types.h>
+
+#include "test_config.h"
 #if HAVE_REGEX
 #include <regex.h>
 #endif

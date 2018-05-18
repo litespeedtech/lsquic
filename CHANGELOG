@@ -1,3 +1,8 @@
+2018-05-18
+
+    - Improve checks of number of incoming streams limit and associated
+      error reporting.
+
 2018-05-16
 
     - [FEATURE] DNS resolution

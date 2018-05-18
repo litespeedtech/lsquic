@@ -95,6 +95,8 @@ enum full_conn_flags {
     FC_TICK_CLOSE     = (1 <<20),   /* We returned TICK_CLOSE */
     FC_HSK_FAILED     = (1 <<21),
     FC_HAVE_SAVED_ACK = (1 <<22),
+    FC_ABORT_COMPLAINED
+                      = (1 <<23),
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -224,15 +226,17 @@ struct full_conn
         snprintf((conn)->fc_errmsg, MAX_ERRMSG, __VA_ARGS__);               \
 } while (0)
 
-#define ABORT_WITH_FLAG(conn, flag, ...) do {                               \
+#define ABORT_WITH_FLAG(conn, log_level, flag, ...) do {                    \
     SET_ERRMSG(conn, __VA_ARGS__);                                          \
-    (conn)->fc_flags |= flag;                                               \
-    LSQ_ERROR("Abort connection: " __VA_ARGS__);                            \
+    if (!((conn)->fc_flags & FC_ABORT_COMPLAINED))                          \
+        LSQ_LOG(log_level, "Abort connection: " __VA_ARGS__);               \
+    (conn)->fc_flags |= flag|FC_ABORT_COMPLAINED;                           \
 } while (0)
 
-#define ABORT_ERROR(...) ABORT_WITH_FLAG(conn, FC_ERROR, __VA_ARGS__)
-
-#define ABORT_TIMEOUT(...) ABORT_WITH_FLAG(conn, FC_TIMED_OUT, __VA_ARGS__)
+#define ABORT_ERROR(...) \
+    ABORT_WITH_FLAG(conn, LSQ_LOG_ERROR, FC_ERROR, __VA_ARGS__)
+#define ABORT_WARN(...) \
+    ABORT_WITH_FLAG(conn, LSQ_LOG_WARN, FC_ERROR, __VA_ARGS__)
 
 static void
 idle_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
@@ -725,10 +729,48 @@ count_streams (const struct full_conn *conn, int peer)
         stream = lsquic_hashelem_getdata(el);
         ours = (1 & stream->id) ^ is_server;
         if (ours ^ peer)
-            count += !lsquic_stream_is_closed(stream);
+            count += !(lsquic_stream_is_closed(stream)
+                                /* When counting peer-initiated streams, do not
+                                 * include those that have been reset:
+                                 */
+                                || (peer && lsquic_stream_is_reset(stream)));
     }
 
     return count;
+}
+
+
+enum stream_count { SCNT_ALL, SCNT_PEER, SCNT_CLOSED, SCNT_RESET,
+    SCNT_RES_UNCLO /* reset and not closed */, N_SCNTS };
+
+static void
+collect_stream_counts (const struct full_conn *conn, int peer,
+                                                    unsigned counts[N_SCNTS])
+{
+    const lsquic_stream_t *stream;
+    int ours;
+    int is_server;
+    struct lsquic_hash_elem *el;
+
+    peer = !!peer;
+    is_server = !!(conn->fc_flags & FC_SERVER);
+    memset(counts, 0, N_SCNTS * sizeof(counts[0]));
+
+    for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
+                             el = lsquic_hash_next(conn->fc_pub.all_streams))
+    {
+        ++counts[SCNT_ALL];
+        stream = lsquic_hashelem_getdata(el);
+        ours = (1 & stream->id) ^ is_server;
+        if (ours ^ peer)
+        {
+            ++counts[SCNT_PEER];
+            counts[SCNT_CLOSED] += lsquic_stream_is_closed(stream);
+            counts[SCNT_RESET] += lsquic_stream_is_reset(stream);
+            counts[SCNT_RES_UNCLO] += lsquic_stream_is_reset(stream)
+                                        && !lsquic_stream_is_closed(stream);
+        }
+    }
 }
 
 
@@ -1120,8 +1162,17 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
             LSQ_DEBUG("number of peer-initiated streams: %u", in_count);
             if (in_count >= conn->fc_cfg.max_streams_in)
             {
-                ABORT_ERROR("incoming stream would exceed limit: %u",
-                                        conn->fc_cfg.max_streams_in);
+                if (!(conn->fc_flags & FC_ABORT_COMPLAINED))
+                {
+                    enum stream_count counts[N_SCNTS];
+                    collect_stream_counts(conn, 1, counts);
+                    ABORT_WARN("incoming stream would exceed limit: %u.  "
+                        "all: %u; peer: %u; closed: %u; reset: %u; reset "
+                        "and not closed: %u", conn->fc_cfg.max_streams_in,
+                        counts[SCNT_ALL], counts[SCNT_PEER],
+                        counts[SCNT_CLOSED], counts[SCNT_RESET],
+                        counts[SCNT_RES_UNCLO]);
+                }
                 lsquic_malo_put(stream_frame);
                 return 0;
             }
@@ -3081,8 +3132,17 @@ find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
     LSQ_DEBUG("number of peer-initiated streams: %u", in_count);
     if (in_count >= conn->fc_cfg.max_streams_in)
     {
-        ABORT_ERROR("incoming %s for stream %u would exceed "
-            "limit: %u", what, stream_id, conn->fc_cfg.max_streams_in);
+        if (!(conn->fc_flags & FC_ABORT_COMPLAINED))
+        {
+            enum stream_count counts[N_SCNTS];
+            collect_stream_counts(conn, 1, counts);
+            ABORT_WARN("incoming %s for stream %u would exceed "
+                "limit: %u.  all: %u; peer: %u; closed: %u; reset: %u; reset "
+                "and not closed: %u",
+                what, stream_id, conn->fc_cfg.max_streams_in, counts[SCNT_ALL],
+                counts[SCNT_PEER], counts[SCNT_CLOSED], counts[SCNT_RESET],
+                counts[SCNT_RES_UNCLO]);
+        }
         return NULL;
     }
     if ((conn->fc_flags & FC_GOING_AWAY) &&

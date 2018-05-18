@@ -92,8 +92,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 #else
 "   -s SERVER   Server address.  Takes on the form of host:port or host.\n"
 "                 If host is not an IPv4 or IPv6 address, it is resolved.\n"
-"                 If port is not set, the default is 443.  If -s is not\n"
-"                 specified, the value of SNI is used (see the -H flag).\n"
+"                 If port is not set, the default is 443.\n"
 #endif
 "                 Examples:\n"
 "                     127.0.0.1:12345\n"
@@ -103,6 +102,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 #if HAVE_REGEX
 "                     8443\n"
 #endif
+"                 If -s is not specified, the value of SNI is used (see\n"
+"                   the -H flag).\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
