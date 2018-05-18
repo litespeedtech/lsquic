@@ -1322,28 +1322,6 @@ lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *ctl, int tcid0)
 }
 
 
-/* Need to assign new packet numbers to all packets following the first
- * dropped packet to eliminate packet number gap.
- */
-static void
-send_ctl_repackno_sched_tail (struct lsquic_send_ctl *ctl,
-                              struct lsquic_packet_out *pre_dropped)
-{
-    struct lsquic_packet_out *packet_out;
-
-    assert(pre_dropped);
-
-    ctl->sc_cur_packno = lsquic_senhist_largest(&ctl->sc_senhist);
-    for (packet_out = TAILQ_NEXT(pre_dropped, po_next); packet_out;
-                            packet_out = TAILQ_NEXT(packet_out, po_next))
-    {
-        packet_out->po_flags |= PO_REPACKNO;
-        if (packet_out->po_flags & PO_ENCRYPTED)
-            send_ctl_release_enc_data(ctl, packet_out);
-    }
-}
-
-
 /* The controller elides this STREAM frames of stream `stream_id' from
  * scheduled and buffered packets.  If a packet becomes empty as a result,
  * it is dropped.
@@ -1356,10 +1334,10 @@ void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
 {
     struct lsquic_packet_out *packet_out, *next;
-    struct lsquic_packet_out *pre_dropped;
     unsigned n, adj;
+    int dropped;
 
-    pre_dropped = NULL;
+    dropped = 0;
 #ifdef WIN32
     next = NULL;
 #endif
@@ -1376,19 +1354,17 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
             ctl->sc_bytes_scheduled -= adj;
             if (0 == packet_out->po_frame_types)
             {
-                if (!pre_dropped)
-                    pre_dropped = TAILQ_PREV(packet_out, lsquic_packets_tailq,
-                                                                    po_next);
                 LSQ_DEBUG("cancel packet %"PRIu64" after eliding frames for "
                     "stream %"PRIu32, packet_out->po_packno, stream_id);
                 send_ctl_sched_remove(ctl, packet_out);
                 lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+                ++dropped;
             }
         }
     }
 
-    if (pre_dropped)
-        send_ctl_repackno_sched_tail(ctl, pre_dropped);
+    if (dropped && ctl->sc_n_scheduled)
+        lsquic_send_ctl_reset_packnos(ctl);
 
     for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++n)
@@ -1490,12 +1466,12 @@ int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
 {
     struct lsquic_packet_out *packet_out, *next;
-    struct lsquic_packet_out *pre_dropped;
+    int dropped;
 #ifndef NDEBUG
     int pre_squeeze_logged = 0;
 #endif
 
-    pre_dropped = NULL;
+    dropped = 0;
     for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
                                                             packet_out = next)
     {
@@ -1513,18 +1489,16 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
                 LOG_PACKET_Q(&ctl->sc_scheduled_packets,
                                         "unacked packets before squeezing");
 #endif
-            if (!pre_dropped)
-                pre_dropped = TAILQ_PREV(packet_out, lsquic_packets_tailq,
-                                                                    po_next);
             send_ctl_sched_remove(ctl, packet_out);
             LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
                 packet_out->po_packno);
             lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            ++dropped;
         }
     }
 
-    if (pre_dropped)
-        send_ctl_repackno_sched_tail(ctl, pre_dropped);
+    if (dropped && ctl->sc_n_scheduled)
+        lsquic_send_ctl_reset_packnos(ctl);
 
 #ifndef NDEBUG
     if (pre_squeeze_logged)

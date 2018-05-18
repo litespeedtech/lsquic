@@ -915,6 +915,148 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
 }
 
 
+/* Test that when stream frame is elided and the packet is dropped,
+ * the send controller produces a gapless sequence.
+ *
+ * Case "middle": 3 packets with STREAM frames for streams A, B, and A.
+ *          Stream B is reset.  We should get a gapless sequence
+ *          of packets 1, 2.
+ */
+static void
+test_gapless_elision_middle (struct test_objs *tobjs)
+{
+    lsquic_stream_t *streamA, *streamB;
+    unsigned char buf[0x1000], buf_out[0x1000];
+    size_t n, thresh, written_to_A = 0;
+    int s, fin;
+    lsquic_packet_out_t *packet_out;
+
+    streamA = new_stream(tobjs, 345);
+    streamB = new_stream(tobjs, 347);
+
+    init_buf(buf_out, sizeof(buf_out));
+    thresh = lsquic_stream_flush_threshold(streamA);
+    n = lsquic_stream_write(streamA, buf_out, thresh);
+    assert(n == thresh);
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    thresh = lsquic_stream_flush_threshold(streamB);
+    n = lsquic_stream_write(streamB, buf_out, thresh);
+    assert(n == thresh);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    thresh = lsquic_stream_flush_threshold(streamA);
+    n = lsquic_stream_write(streamA, buf_out + written_to_A, thresh);
+    assert(n == thresh);
+    assert(3 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    /* Verify contents of A: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    /* Now reset stream A: */
+    s = lsquic_stream_rst_in(streamB, 0, 0);
+    assert(s == 0);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    /* Verify A again: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(packet_out->po_packno == 1);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(packet_out->po_packno == 2);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(!packet_out);
+
+    /* Now we can call on_close: */
+    lsquic_stream_destroy(streamA);
+    lsquic_stream_destroy(streamB);
+}
+
+
+/* Test that when stream frame is elided and the packet is dropped,
+ * the send controller produces a gapless sequence.
+ *
+ * Case "beginnig": 3 packets with STREAM frames for streams B, A, and A.
+ *          Stream B is reset.  We should get a gapless sequence
+ *          of packets 1, 2.
+ */
+static void
+test_gapless_elision_beginning (struct test_objs *tobjs)
+{
+    lsquic_stream_t *streamA, *streamB;
+    unsigned char buf[0x1000], buf_out[0x1000];
+    size_t n, thresh, written_to_A = 0;
+    int s, fin;
+    lsquic_packet_out_t *packet_out;
+
+    streamA = new_stream(tobjs, 345);
+    streamB = new_stream(tobjs, 347);
+
+    init_buf(buf_out, sizeof(buf_out));
+
+    thresh = lsquic_stream_flush_threshold(streamB);
+    n = lsquic_stream_write(streamB, buf_out, thresh);
+    assert(n == thresh);
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    thresh = lsquic_stream_flush_threshold(streamA);
+    n = lsquic_stream_write(streamA, buf_out, thresh);
+    assert(n == thresh);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    thresh = lsquic_stream_flush_threshold(streamA);
+    n = lsquic_stream_write(streamA, buf_out + written_to_A, thresh);
+    assert(n == thresh);
+    assert(3 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    /* Verify contents of A: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    /* Now reset stream A: */
+    s = lsquic_stream_rst_in(streamB, 0, 0);
+    assert(s == 0);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    /* Verify A again: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(packet_out->po_packno == 1);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(packet_out->po_packno == 2);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
+    assert(!packet_out);
+
+    /* Now we can call on_close: */
+    lsquic_stream_destroy(streamA);
+    lsquic_stream_destroy(streamB);
+}
+
+
+
 /* Write data to the stream, but do not flush: connection cap take a hit.
  * After stream is destroyed, connection cap should go back up.
  */
@@ -1045,6 +1187,8 @@ test_termination (void)
         test_loc_FIN_rem_RST,
         test_loc_data_rem_RST,
         test_loc_RST_rem_FIN,
+        test_gapless_elision_beginning,
+        test_gapless_elision_middle,
     };
 
     for (i = 0; i < sizeof(test_funcs) / sizeof(test_funcs[0]); ++i)

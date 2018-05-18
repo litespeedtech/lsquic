@@ -890,6 +890,9 @@ enum LSQUIC_CONN_STATUS
 enum LSQUIC_CONN_STATUS
 lsquic_conn_status (lsquic_conn_t *, char *errbuf, size_t bufsz);
 
+extern const char *const
+lsquic_ver2str[N_LSQVER];
+
 #ifdef __cplusplus
 }
 #endif

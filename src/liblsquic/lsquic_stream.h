@@ -295,4 +295,9 @@ lsquic_stream_readable (const lsquic_stream_t *);
 size_t
 lsquic_stream_write_avail (const struct lsquic_stream *);
 
+#ifndef NDEBUG
+size_t
+lsquic_stream_flush_threshold (const struct lsquic_stream *);
+#endif
+
 #endif

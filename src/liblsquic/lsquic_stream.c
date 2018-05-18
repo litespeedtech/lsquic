@@ -1354,8 +1354,11 @@ lsquic_stream_flush (lsquic_stream_t *stream)
 /* The flush threshold is the maximum size of stream data that can be sent
  * in a full packet.
  */
-static size_t
-flush_threshold (const lsquic_stream_t *stream)
+#ifdef NDEBUG
+static
+#endif
+       size_t
+lsquic_stream_flush_threshold (const struct lsquic_stream *stream)
 {
     enum packet_out_flags flags;
     enum lsquic_packno_bits bits;
@@ -1716,7 +1719,7 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader)
 {
     size_t thresh, len;
 
-    thresh = flush_threshold(stream);
+    thresh = lsquic_stream_flush_threshold(stream);
     len = reader->lsqr_size(reader->lsqr_ctx);
     if (stream->sm_n_buffered + len <= SM_BUF_SIZE &&
                                     stream->sm_n_buffered + len < thresh)
