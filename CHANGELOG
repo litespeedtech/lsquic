@@ -2,6 +2,7 @@
 
     - Improve checks of number of incoming streams limit and associated
       error reporting.
+    - [BUGFIX] Command-line option `-6` now works correctly.
 
 2018-05-16
 

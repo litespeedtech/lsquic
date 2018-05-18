@@ -460,10 +460,8 @@ main (int argc, char **argv)
     {
         switch (opt) {
         case '4':
-            prog.prog_ipver = 4;
-            break;
         case '6':
-            prog.prog_ipver = 4;
+            prog.prog_ipver = opt - '0';
             break;
         case 'I':
             client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;
