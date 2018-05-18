@@ -1164,7 +1164,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
             {
                 if (!(conn->fc_flags & FC_ABORT_COMPLAINED))
                 {
-                    enum stream_count counts[N_SCNTS];
+                    unsigned counts[N_SCNTS];
                     collect_stream_counts(conn, 1, counts);
                     ABORT_WARN("incoming stream would exceed limit: %u.  "
                         "all: %u; peer: %u; closed: %u; reset: %u; reset "
@@ -3134,7 +3134,7 @@ find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
     {
         if (!(conn->fc_flags & FC_ABORT_COMPLAINED))
         {
-            enum stream_count counts[N_SCNTS];
+            unsigned counts[N_SCNTS];
             collect_stream_counts(conn, 1, counts);
             ABORT_WARN("incoming %s for stream %u would exceed "
                 "limit: %u.  all: %u; peer: %u; closed: %u; reset: %u; reset "
