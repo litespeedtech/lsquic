@@ -419,3 +419,24 @@ prog_is_stopped (void)
 {
     return prog_stopped != 0;
 }
+
+
+static void
+send_unsent (evutil_socket_t fd, short what, void *arg)
+{
+    struct prog *const prog = arg;
+    assert(prog->prog_send);
+    event_del(prog->prog_send);
+    event_free(prog->prog_send);
+    prog->prog_send = NULL;
+    lsquic_engine_send_unsent_packets(prog->prog_engine);
+}
+
+
+void
+prog_sport_cant_send (struct prog *prog, int fd)
+{
+    assert(!prog->prog_send);
+    prog->prog_send = event_new(prog->prog_eb, fd, EV_WRITE, send_unsent, prog);
+    event_add(prog->prog_send, NULL);
+}

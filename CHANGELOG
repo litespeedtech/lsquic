@@ -1,3 +1,8 @@
+2018-05-21
+
+    - [API Change] Add optional callback to call when handshake is done
+    - [API Change, BUGFIX] After send failure, wait until transport available
+
 2018-05-18
 
     - [API] Expose useful lsquic_ver2str[] in lsquic.h

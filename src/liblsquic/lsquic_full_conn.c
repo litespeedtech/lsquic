@@ -3033,6 +3033,8 @@ full_conn_ci_handshake_ok (lsquic_conn_t *lconn)
         lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
     else
         conn->fc_flags |= FC_ERROR;
+    if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
+        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 1);
 }
 
 
@@ -3043,6 +3045,8 @@ full_conn_ci_handshake_failed (lsquic_conn_t *lconn)
     LSQ_DEBUG("handshake failed");
     lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
     conn->fc_flags |= FC_HSK_FAILED;
+    if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
+        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 0);
 }
 
 
@@ -3389,7 +3393,8 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
     if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
         return 1;
 
-    if (lsquic_send_ctl_can_send(&conn->fc_send_ctl)
+    if ((conn->fc_enpub->enp_flags & ENPUB_CAN_SEND)
+        && lsquic_send_ctl_can_send(&conn->fc_send_ctl)
         && (should_generate_ack(conn) ||
             !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {

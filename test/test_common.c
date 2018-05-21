@@ -875,6 +875,23 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
     if (0 == count)
         return 0;
 
+#if LSQUIC_RANDOM_SEND_FAILURE
+    {
+        const char *freq_str = getenv("LSQUIC_RANDOM_SEND_FAILURE");
+        int freq;
+        if (freq_str)
+            freq = atoi(freq_str);
+        else
+            freq = 10;
+        if (rand() % freq == 0)
+        {
+            assert(count > 0);
+            sport = specs[0].peer_ctx;
+            LSQ_NOTICE("sending \"randomly\" fails");
+            goto random_send_failure;
+        }
+    }
+#endif
 
     for (n = 0; n < count; ++n)
     {
@@ -931,7 +948,13 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
     if (n > 0)
         return n;
     else if (s < 0)
+    {
+#if LSQUIC_RANDOM_SEND_FAILURE
+  random_send_failure:
+#endif
+        prog_sport_cant_send(sport->sp_prog, sport->fd);
         return -1;
+    }
     else
         return 0;
 }

@@ -21,6 +21,7 @@ struct lsquic_engine_public {
         ENPUB_PROC  = (1 << 0), /* Being processed by one of the user-facing
                                  * functions.
                                  */
+        ENPUB_CAN_SEND = (1 << 1),
     }                               enp_flags;
     unsigned char                   enp_ver_tags_buf[ sizeof(lsquic_ver_tag_t) * N_LSQVER ];
     unsigned                        enp_ver_tags_len;

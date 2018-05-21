@@ -97,6 +97,13 @@ LSQUIC_CUBIC_SAMPLING_RATE
 
     Only available in debug builds.
 
+LSQUIC_RANDOM_SEND_FAILURE
+
+    Frequency with which sending of packets fails: one out of this many
+    times on average.
+
+    Only available when compiled with -DLSQUIC_RANDOM_SEND_FAILURE=1
+
 Control Network-Related Stuff
 -----------------------------
 
@@ -141,3 +148,9 @@ More Compilation Options
 
     Add relatively expensive run-time sanity checks
 
+-DLSQUIC_RANDOM_SEND_FAILURE=1
+
+    Simulate failure to send packets to test send resumption logic.  When
+    this flag is specified, sending of packets will randomly fail, about
+    one out of every 10 attempts.  Set environment variable
+    LSQUIC_RANDOM_SEND_FAILURE to change this frequency.

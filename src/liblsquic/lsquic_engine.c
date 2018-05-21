@@ -302,6 +302,7 @@ lsquic_engine_new (unsigned flags,
         return NULL;
     }
     engine->pub.enp_ver_tags_len = tag_buf_len;
+    engine->pub.enp_flags = ENPUB_CAN_SEND;
 
     engine->flags           = flags;
     engine->stream_if       = api->ea_stream_if;
@@ -951,7 +952,9 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
         LSQ_DEBUG("packets out returned %d (out of %u)", n_sent, n_to_send);
     else
     {
+        engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
         LSQ_DEBUG("packets out returned an error: %s", strerror(errno));
+        EV_LOG_GENERIC_EVENT("cannot send packets");
         n_sent = 0;
     }
     if (n_sent > 0)
@@ -1147,6 +1150,12 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 
     STAILQ_INIT(&closed_conns);
     reset_deadline(engine, lsquic_time_now());
+    if (!(engine->pub.enp_flags & ENPUB_CAN_SEND))
+    {
+        LSQ_DEBUG("can send again");
+        EV_LOG_GENERIC_EVENT("can send again");
+        engine->pub.enp_flags |= ENPUB_CAN_SEND;
+    }
 
     send_packets_out(engine, &closed_conns);
 
@@ -1199,7 +1208,8 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
             STAILQ_INSERT_TAIL(&ticked_conns, conn, cn_next_ticked);
     }
 
-    if (lsquic_engine_has_unsent_packets(engine))
+    if ((engine->pub.enp_flags & ENPUB_CAN_SEND)
+                        && lsquic_engine_has_unsent_packets(engine))
         send_packets_out(engine, &closed_conns);
 
     while ((conn = STAILQ_FIRST(&closed_conns))) {

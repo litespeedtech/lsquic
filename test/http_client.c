@@ -147,6 +147,13 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
 }
 
 
+static void
+http_client_on_hsk_done (lsquic_conn_t *conn, int ok)
+{
+    LSQ_INFO("handshake %s", ok ? "completed successfully" : "failed");
+}
+
+
 struct lsquic_stream_ctx {
     lsquic_stream_t     *stream;
     struct http_client_ctx   *client_ctx;
@@ -398,6 +405,7 @@ const struct lsquic_stream_if http_client_if = {
     .on_read                = http_client_on_read,
     .on_write               = http_client_on_write,
     .on_close               = http_client_on_close,
+    .on_hsk_done            = http_client_on_hsk_done,
 };
 
 

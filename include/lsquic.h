@@ -143,6 +143,14 @@ struct lsquic_stream_if {
     void (*on_read)     (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
     void (*on_write)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
     void (*on_close)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
+    /**
+     * When handshake is completed, this callback is called.  `ok' is set
+     * to true if handshake was successful; otherwise, `ok' is set to
+     * false.
+     *
+     * This callback is optional.
+     */
+    void (*on_hsk_done)(lsquic_conn_t *c, int ok);
 };
 
 /**
@@ -428,7 +436,9 @@ struct lsquic_out_spec
 
 /**
  * Returns number of packets successfully sent out or -1 on error.  -1 should
- * only be returned if no packets were sent out.
+ * only be returned if no packets were sent out.  If -1 is returned,
+ * no packets will be attempted to be sent out until
+ * @ref lsquic_engine_send_unsent_packets() is called.
  */
 typedef int (*lsquic_packets_out_f)(
     void                          *packets_out_ctx,
@@ -519,6 +529,10 @@ lsquic_engine_has_unsent_packets (lsquic_engine_t *engine);
 /**
  * Send out as many unsent packets as possibe: until we are out of unsent
  * packets or until @ref ea_packets_out() fails.
+ *
+ * If @ref ea_packets_out() does fail (that is, it returns an error), this
+ * function must be called to signify that sending of packets is possible
+ * again.
  */
 void
 lsquic_engine_send_unsent_packets (lsquic_engine_t *engine);

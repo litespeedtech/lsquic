@@ -23,6 +23,7 @@ struct prog
     int                             prog_version_cleared;
     struct event_base              *prog_eb;
     struct event                   *prog_timer,
+                                   *prog_send,
                                    *prog_usr1;
     struct sport_head              *prog_sports;
     struct lsquic_engine           *prog_engine;
@@ -82,5 +83,8 @@ prog_is_stopped (void);
 
 void
 prog_process_conns (struct prog *);
+
+void
+prog_sport_cant_send (struct prog *, int fd);
 
 #endif
