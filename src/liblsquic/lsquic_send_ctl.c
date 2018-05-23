@@ -1363,7 +1363,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
         }
     }
 
-    if (dropped && ctl->sc_n_scheduled)
+    if (dropped)
         lsquic_send_ctl_reset_packnos(ctl);
 
     for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
@@ -1497,7 +1497,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
         }
     }
 
-    if (dropped && ctl->sc_n_scheduled)
+    if (dropped)
         lsquic_send_ctl_reset_packnos(ctl);
 
 #ifndef NDEBUG
@@ -1517,7 +1517,6 @@ lsquic_send_ctl_reset_packnos (lsquic_send_ctl_t *ctl)
 {
     struct lsquic_packet_out *packet_out;
 
-    assert(ctl->sc_n_scheduled > 0);    /* Otherwise, why is this called? */
     ctl->sc_cur_packno = lsquic_senhist_largest(&ctl->sc_senhist);
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         packet_out->po_flags |= PO_REPACKNO;
