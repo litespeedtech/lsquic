@@ -98,7 +98,7 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
     (e)->pub.enp_flags &= ~ENPUB_PROC;                  \
 } while (0)
 
-/* A connection can be referenced from one of five places:
+/* A connection can be referenced from one of six places:
  *
  *   1. Connection hash: a connection starts its life in one of those.
  *
@@ -110,6 +110,8 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
  *
  *   5. Closing connections queue.  This is a transient queue -- it only
  *      exists for the duration of process_connections() function call.
+ *
+ *   6. Ticked connections queue.  Another transient queue, similar to (5).
  *
  * The idea is to destroy the connection when it is no longer referenced.
  * For example, a connection tick may return TICK_SEND|TICK_CLOSE.  In
@@ -124,6 +126,7 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
 #define CONN_REF_FLAGS  (LSCONN_HASHED          \
                         |LSCONN_HAS_OUTGOING    \
                         |LSCONN_TICKABLE        \
+                        |LSCONN_TICKED          \
                         |LSCONN_CLOSING         \
                         |LSCONN_ATTQ)
 
@@ -624,6 +627,7 @@ refflags2str (enum lsquic_conn_flags flags, char s[6])
     *s = 'O'; s += !!(flags & LSCONN_HAS_OUTGOING);
     *s = 'T'; s += !!(flags & LSCONN_TICKABLE);
     *s = 'A'; s += !!(flags & LSCONN_ATTQ);
+    *s = 'K'; s += !!(flags & LSCONN_TICKED);
     *s = '\0';
 }
 
@@ -631,7 +635,7 @@ refflags2str (enum lsquic_conn_flags flags, char s[6])
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
 {
-    char str[2][6];
+    char str[2][7];
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
@@ -645,7 +649,7 @@ static lsquic_conn_t *
 engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                                         enum lsquic_conn_flags flags)
 {
-    char str[2][6];
+    char str[2][7];
     assert(flags & CONN_REF_FLAGS);
     assert(conn->cn_flags & flags);
 #ifndef NDEBUG
@@ -821,6 +825,7 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 
 
 STAILQ_HEAD(conns_stailq, lsquic_conn);
+TAILQ_HEAD(conns_tailq, lsquic_conn);
 
 
 struct conns_out_iter
@@ -889,18 +894,6 @@ coi_deactivate (struct conns_out_iter *iter, lsquic_conn_t *conn)
         conn->cn_flags &= ~LSCONN_COI_ACTIVE;
         TAILQ_INSERT_TAIL(&iter->coi_inactive_list, conn, cn_next_out);
         conn->cn_flags |= LSCONN_COI_INACTIVE;
-    }
-}
-
-
-static void
-coi_remove (struct conns_out_iter *iter, lsquic_conn_t *conn)
-{
-    assert(conn->cn_flags & LSCONN_COI_ACTIVE);
-    if (conn->cn_flags & LSCONN_COI_ACTIVE)
-    {
-        TAILQ_REMOVE(&iter->coi_active_list, conn, cn_next_out);
-        conn->cn_flags &= ~LSCONN_COI_ACTIVE;
     }
 }
 
@@ -1016,6 +1009,7 @@ check_deadline (lsquic_engine_t *engine)
 
 static void
 send_packets_out (struct lsquic_engine *engine,
+                  struct conns_tailq *ticked_conns,
                   struct conns_stailq *closed_conns)
 {
     unsigned n, w, n_sent, n_batches_sent;
@@ -1061,7 +1055,12 @@ send_packets_out (struct lsquic_engine *engine,
                         if (conn->cn_flags & LSCONN_HASHED)
                             remove_conn_from_hash(engine, conn);
                     }
-                    coi_remove(&conns_iter, conn);
+                    coi_deactivate(&conns_iter, conn);
+                    if (conn->cn_flags & LSCONN_TICKED)
+                    {
+                        TAILQ_REMOVE(ticked_conns, conn, cn_next_ticked);
+                        engine_decref_conn(engine, conn, LSCONN_TICKED);
+                    }
                 }
                 continue;
             case ENCPA_OK:
@@ -1147,6 +1146,7 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 {
     lsquic_conn_t *conn;
     struct conns_stailq closed_conns;
+    struct conns_tailq ticked_conns = TAILQ_HEAD_INITIALIZER(ticked_conns);
 
     STAILQ_INIT(&closed_conns);
     reset_deadline(engine, lsquic_time_now());
@@ -1157,7 +1157,7 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
         engine->pub.enp_flags |= ENPUB_CAN_SEND;
     }
 
-    send_packets_out(engine, &closed_conns);
+    send_packets_out(engine, &ticked_conns, &closed_conns);
 
     while ((conn = STAILQ_FIRST(&closed_conns))) {
         STAILQ_REMOVE_HEAD(&closed_conns, cn_next_closed_conn);
@@ -1175,12 +1175,13 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
     enum tick_st tick_st;
     unsigned i;
     lsquic_time_t next_tick_time;
-    struct conns_stailq closed_conns, ticked_conns;
+    struct conns_stailq closed_conns;
+    struct conns_tailq ticked_conns;
 
     eng_hist_tick(&engine->history, now);
 
     STAILQ_INIT(&closed_conns);
-    STAILQ_INIT(&ticked_conns);
+    TAILQ_INIT(&ticked_conns);
     reset_deadline(engine, now);
 
     i = 0;
@@ -1205,12 +1206,15 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                 remove_conn_from_hash(engine, conn);
         }
         else
-            STAILQ_INSERT_TAIL(&ticked_conns, conn, cn_next_ticked);
+        {
+            TAILQ_INSERT_TAIL(&ticked_conns, conn, cn_next_ticked);
+            engine_incref_conn(conn, LSCONN_TICKED);
+        }
     }
 
     if ((engine->pub.enp_flags & ENPUB_CAN_SEND)
                         && lsquic_engine_has_unsent_packets(engine))
-        send_packets_out(engine, &closed_conns);
+        send_packets_out(engine, &ticked_conns, &closed_conns);
 
     while ((conn = STAILQ_FIRST(&closed_conns))) {
         STAILQ_REMOVE_HEAD(&closed_conns, cn_next_closed_conn);
@@ -1220,9 +1224,10 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
     /* TODO Heapification can be optimized by switching to the Floyd method:
      * https://en.wikipedia.org/wiki/Binary_heap#Building_a_heap
      */
-    while ((conn = STAILQ_FIRST(&ticked_conns)))
+    while ((conn = TAILQ_FIRST(&ticked_conns)))
     {
-        STAILQ_REMOVE_HEAD(&ticked_conns, cn_next_ticked);
+        TAILQ_REMOVE(&ticked_conns, conn, cn_next_ticked);
+        engine_decref_conn(engine, conn, LSCONN_TICKED);
         if (!(conn->cn_flags & LSCONN_TICKABLE)
             && conn->cn_if->ci_is_tickable(conn))
         {

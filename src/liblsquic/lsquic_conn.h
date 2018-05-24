@@ -24,6 +24,7 @@ struct parse_funcs;
 struct attq_elem;
 
 enum lsquic_conn_flags {
+    LSCONN_TICKED         = (1 << 0),
     LSCONN_HAS_OUTGOING   = (1 << 1),
     LSCONN_HASHED         = (1 << 2),
     LSCONN_HAS_PEER_SA    = (1 << 4),
@@ -92,7 +93,7 @@ struct lsquic_conn
                                 *cn_esf;
     lsquic_cid_t                 cn_cid;
     STAILQ_ENTRY(lsquic_conn)    cn_next_closed_conn;
-    STAILQ_ENTRY(lsquic_conn)    cn_next_ticked;
+    TAILQ_ENTRY(lsquic_conn)     cn_next_ticked;
     TAILQ_ENTRY(lsquic_conn)     cn_next_out,
                                  cn_next_hash;
     const struct conn_iface     *cn_if;
