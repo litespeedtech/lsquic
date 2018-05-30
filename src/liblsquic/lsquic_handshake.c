@@ -964,6 +964,10 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     }
     else
         ua_len = 0;
+    if (settings->es_support_tcid0)
+    {
+        MSG_LEN_ADD(msg_len, 4);            ++n_tags;           /* TCID */
+    }
     MSG_LEN_ADD(msg_len, lsquic_str_len(&enc_session->hs_ctx.sni));
                                             ++n_tags;           /* SNI  */
     MSG_LEN_ADD(msg_len, lsquic_str_len(ccs));  ++n_tags;           /* CCS  */
@@ -1034,6 +1038,8 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     if (lsquic_str_len(&enc_session->info->scfg) > 0)
         MW_WRITE_BUFFER(&mw, QTAG_SCID, enc_session->info->sscid,
                                         sizeof(enc_session->info->sscid));
+    if (settings->es_support_tcid0)
+        MW_WRITE_UINT32(&mw, QTAG_TCID, 0);
     MW_WRITE_UINT32(&mw, QTAG_PDMD, settings->es_pdmd);
     MW_WRITE_UINT32(&mw, QTAG_SMHL, 1);
     MW_WRITE_UINT32(&mw, QTAG_ICSL, settings->es_idle_conn_to / 1000000);

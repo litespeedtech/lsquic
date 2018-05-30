@@ -512,7 +512,7 @@ read_one_packet (struct read_iter *iter)
 #endif
 
     local_addr = &packs_in->local_addresses[iter->ri_idx];
-    memcpy(local_addr, &sport->sas, sizeof(*local_addr));
+    memcpy(local_addr, &sport->sp_local_addr, sizeof(*local_addr));
 #if __linux__
     n_dropped = 0;
 #endif
@@ -753,6 +753,9 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
         return -1;
     }
 
+    memcpy((void *) &sport->sp_local_addr, sa_local,
+        sa_local->sa_family == AF_INET ?
+        sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
     switch (sa_local->sa_family) {
     case AF_INET:
         LSQ_DEBUG("local address: %s:%d",

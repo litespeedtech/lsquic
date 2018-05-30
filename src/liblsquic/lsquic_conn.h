@@ -113,9 +113,6 @@ void
 lsquic_conn_record_sockaddr (lsquic_conn_t *lconn, const struct sockaddr *local,
                                                   const struct sockaddr *peer);
 
-void
-lsquic_conn_record_peer_sa (lsquic_conn_t *lconn, const struct sockaddr *peer);
-
 int
 lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
                     struct lsquic_engine_public *, struct lsquic_packet_in *);

@@ -1,3 +1,7 @@
+2018-05-30
+
+    - [FEATURE, API CHANGE] Support zero-sized CIDs in received packets
+
 2018-05-24
 
     - Close connection properly when packet encryption fails

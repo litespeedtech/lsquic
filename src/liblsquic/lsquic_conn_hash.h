@@ -16,6 +16,7 @@
 #define CONN_HASH_MAX_PER_BUCKET 2
 
 struct lsquic_conn;
+struct sockaddr;
 
 TAILQ_HEAD(lsquic_conn_head, lsquic_conn);
 
@@ -28,19 +29,24 @@ struct conn_hash
     }                        ch_iter;
     unsigned                 ch_count;
     unsigned                 ch_nbits;
+    const unsigned char *  (*ch_conn2hash)(const struct lsquic_conn *,
+                                            unsigned char *, size_t *);
 };
 
 #define conn_hash_count(conn_hash) (+(conn_hash)->ch_count)
 
 /* Returns -1 if malloc fails */
 int
-conn_hash_init (struct conn_hash *);
+conn_hash_init (struct conn_hash *, int server);
 
 void
 conn_hash_cleanup (struct conn_hash *);
 
 struct lsquic_conn *
-conn_hash_find (struct conn_hash *conn_hash, lsquic_cid_t);
+conn_hash_find_by_cid (struct conn_hash *, lsquic_cid_t);
+
+struct lsquic_conn *
+conn_hash_find_by_addr (struct conn_hash *, const struct sockaddr *);
 
 /* Returns -1 if limit has been reached or if malloc fails */
 int

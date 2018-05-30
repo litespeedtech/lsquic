@@ -51,23 +51,6 @@ lsquic_conn_record_sockaddr (lsquic_conn_t *lconn,
 }
 
 
-void
-lsquic_conn_record_peer_sa (lsquic_conn_t *lconn, const struct sockaddr *peer)
-{
-    switch (peer->sa_family)
-    {
-    case AF_INET:
-        lconn->cn_flags |= LSCONN_HAS_PEER_SA;
-        memcpy(lconn->cn_peer_addr, peer, sizeof(struct sockaddr_in));
-        break;
-    case AF_INET6:
-        lconn->cn_flags |= LSCONN_HAS_PEER_SA;
-        memcpy(lconn->cn_peer_addr, peer, sizeof(struct sockaddr_in6));
-        break;
-    }
-}
-
-
 int
 lsquic_conn_get_sockaddr (const lsquic_conn_t *lconn,
                 const struct sockaddr **local, const struct sockaddr **peer)

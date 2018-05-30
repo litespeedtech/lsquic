@@ -323,7 +323,7 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_pmi_ctx  = NULL;
     }
     engine->pub.enp_engine = engine;
-    conn_hash_init(&engine->conns_hash);
+    conn_hash_init(&engine->conns_hash, flags & ENG_SERVER);
     engine->attq = attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
@@ -409,48 +409,26 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
     if (!conn)
         return NULL;
     ++engine->n_conns;
-    if (0 != conn_hash_add(&engine->conns_hash, conn))
-    {
-        LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
-            conn->cn_cid);
-        destroy_conn(engine, conn);
-        return NULL;
-    }
-    assert(!(conn->cn_flags &
-        (CONN_REF_FLAGS
-         & ~LSCONN_TICKABLE /* This flag may be set as effect of user
-                                 callbacks */
-                             )));
-    conn->cn_flags |= LSCONN_HASHED;
     return conn;
 }
 
 
 static lsquic_conn_t *
-find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
-         struct packin_parse_state *ppstate, const struct sockaddr *sa_peer,
-         void *peer_ctx)
+find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+         struct packin_parse_state *ppstate, const struct sockaddr *sa_local)
 {
     lsquic_conn_t *conn;
 
-    if (lsquic_packet_in_is_prst(packet_in)
-                                && !engine->pub.enp_settings.es_honor_prst)
-    {
-        LSQ_DEBUG("public reset packet: discarding");
+    conn = conn_hash_find_by_addr(&engine->conns_hash, sa_local);
+    if (!conn)
         return NULL;
-    }
 
-    if (!(packet_in->pi_flags & PI_CONN_ID))
+    conn->cn_pf->pf_parse_packet_in_finish(packet_in, ppstate);
+    if ((packet_in->pi_flags & PI_CONN_ID)
+        && conn->cn_cid != packet_in->pi_conn_id)
     {
-        LSQ_DEBUG("packet header does not have connection ID: discarding");
+        LSQ_DEBUG("connection IDs do not match");
         return NULL;
-    }
-
-    conn = conn_hash_find(&engine->conns_hash, packet_in->pi_conn_id);
-    if (conn)
-    {
-        conn->cn_pf->pf_parse_packet_in_finish(packet_in, ppstate);
-        return conn;
     }
 
     return conn;
@@ -508,7 +486,16 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 {
     lsquic_conn_t *conn;
 
-    conn = find_or_create_conn(engine, packet_in, ppstate, sa_peer, peer_ctx);
+    if (lsquic_packet_in_is_prst(packet_in)
+                                && !engine->pub.enp_settings.es_honor_prst)
+    {
+        lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
+        LSQ_DEBUG("public reset packet: discarding");
+        return 1;
+    }
+
+    conn = find_conn(engine, packet_in, ppstate, sa_local);
+
     if (!conn)
     {
         lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
@@ -567,7 +554,8 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
 
 
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
+lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
+                       const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
                        const char *hostname, unsigned short max_packet_size)
 {
@@ -596,9 +584,22 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *peer_sa,
     conn = new_full_conn_client(engine, hostname, max_packet_size);
     if (!conn)
         goto err;
+    lsquic_conn_record_sockaddr(conn, local_sa, peer_sa);
+    if (0 != conn_hash_add(&engine->conns_hash, conn))
+    {
+        LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
+            conn->cn_cid);
+        destroy_conn(engine, conn);
+        goto err;
+    }
+    assert(!(conn->cn_flags &
+        (CONN_REF_FLAGS
+         & ~LSCONN_TICKABLE /* This flag may be set as effect of user
+                                 callbacks */
+                             )));
+    conn->cn_flags |= LSCONN_HASHED;
     lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
     engine_incref_conn(conn, LSCONN_TICKABLE);
-    lsquic_conn_record_peer_sa(conn, peer_sa);
     conn->cn_peer_ctx = peer_ctx;
     lsquic_conn_set_ctx(conn, conn_ctx);
     full_conn_client_call_on_new(conn);

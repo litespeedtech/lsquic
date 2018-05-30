@@ -251,6 +251,7 @@ prog_connect (struct prog *prog)
 
     sport = TAILQ_FIRST(prog->prog_sports);
     if (NULL == lsquic_engine_connect(prog->prog_engine,
+                    (struct sockaddr *) &sport->sp_local_addr,
                     (struct sockaddr *) &sport->sas, sport, NULL,
                     prog->prog_hostname ? prog->prog_hostname : sport->host,
                     prog->prog_max_packet_size))

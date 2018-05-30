@@ -47,6 +47,7 @@ struct service_port {
     void                      *conn_ctx;
     char                       host[80];
     struct sockaddr_storage    sas;
+    struct sockaddr_storage    sp_local_addr;
     struct packets_in         *packs_in;
     enum sport_flags           sp_flags;
     int                        sp_sndbuf;   /* If SPORT_SET_SNDBUF is set */

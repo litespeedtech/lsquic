@@ -319,8 +319,7 @@ struct lsquic_engine_settings {
      * If set to true value, the server will not include connection ID in
      * outgoing packets if client's CHLO specifies TCID=0.
      *
-     * For client, this means including TCID=0 into CHLO message.  TODO:
-     * this does not work yet.
+     * For client, this means including TCID=0 into CHLO message.
      */
     int             es_support_tcid0;
 
@@ -492,7 +491,8 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
  * 1350 for IPv6 and 1370 for IPv4.
  */
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *peer_sa,
+lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *local_sa,
+                       const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
                        const char *hostname, unsigned short max_packet_size);
 
