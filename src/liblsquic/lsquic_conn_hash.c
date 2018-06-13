@@ -26,7 +26,7 @@
 
 
 static const unsigned char *
-conn2hash_server (const struct lsquic_conn *lconn, unsigned char *buf,
+conn2hash_by_cid (const struct lsquic_conn *lconn, unsigned char *buf,
                                                                 size_t *sz)
 {
     *sz = sizeof(lconn->cn_cid);
@@ -63,7 +63,7 @@ sockaddr2hash (const struct sockaddr *sa, unsigned char *buf, size_t *sz)
 
 
 static const unsigned char *
-conn2hash_client (const struct lsquic_conn *lconn, unsigned char *buf,
+conn2hash_by_addr (const struct lsquic_conn *lconn, unsigned char *buf,
                                                                 size_t *sz)
 {
     sockaddr2hash((struct sockaddr *) &lconn->cn_local_addr, buf, sz);
@@ -72,7 +72,7 @@ conn2hash_client (const struct lsquic_conn *lconn, unsigned char *buf,
 
 
 int
-conn_hash_init (struct conn_hash *conn_hash, int server)
+conn_hash_init (struct conn_hash *conn_hash, enum conn_hash_flags flags)
 {
     unsigned n;
 
@@ -84,10 +84,11 @@ conn_hash_init (struct conn_hash *conn_hash, int server)
         return -1;
     for (n = 0; n < n_buckets(conn_hash->ch_nbits); ++n)
         TAILQ_INIT(&conn_hash->ch_buckets[n]);
-    if (server)
-        conn_hash->ch_conn2hash = conn2hash_server;
+    conn_hash->ch_flags = flags;
+    if (flags & CHF_USE_ADDR)
+        conn_hash->ch_conn2hash = conn2hash_by_addr;
     else
-        conn_hash->ch_conn2hash = conn2hash_client;
+        conn_hash->ch_conn2hash = conn2hash_by_cid;
     LSQ_INFO("initialized");
     return 0;
 }

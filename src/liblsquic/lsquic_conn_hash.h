@@ -20,6 +20,12 @@ struct sockaddr;
 
 TAILQ_HEAD(lsquic_conn_head, lsquic_conn);
 
+enum conn_hash_flags
+{
+    CHF_USE_ADDR    = 1 << 0,
+};
+
+
 struct conn_hash
 {
     struct lsquic_conn_head *ch_buckets;
@@ -29,6 +35,7 @@ struct conn_hash
     }                        ch_iter;
     unsigned                 ch_count;
     unsigned                 ch_nbits;
+    enum conn_hash_flags     ch_flags;
     const unsigned char *  (*ch_conn2hash)(const struct lsquic_conn *,
                                             unsigned char *, size_t *);
 };
@@ -37,7 +44,7 @@ struct conn_hash
 
 /* Returns -1 if malloc fails */
 int
-conn_hash_init (struct conn_hash *, int server);
+conn_hash_init (struct conn_hash *, enum conn_hash_flags);
 
 void
 conn_hash_cleanup (struct conn_hash *);
@@ -75,5 +82,7 @@ conn_hash_first (struct conn_hash *);
 
 struct lsquic_conn *
 conn_hash_next (struct conn_hash *);
+
+#define conn_hash_using_addr(h) ((h)->ch_flags & CHF_USE_ADDR)
 
 #endif

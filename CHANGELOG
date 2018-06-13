@@ -1,3 +1,12 @@
+2018-06-13
+
+    - [BUGFIX] allow multiple parallel connections by default
+
+      Use the original method of tracking connections by CIDs by default.
+      If zero-sized CID support is turned on, connections are tracked by
+      the address.  A new connection is not created if another connection
+      is using the same network address
+
 2018-05-30
 
     - [FEATURE, API CHANGE] Support zero-sized CIDs in received packets

@@ -48,7 +48,7 @@ main (int argc, char **argv)
     lsquic_set_log_level("info");
 
     malo = lsquic_malo_create(sizeof(*lconn));
-    s = conn_hash_init(&conn_hash, 1);
+    s = conn_hash_init(&conn_hash, 0);
     assert(0 == s);
 
     for (n = 0; n < nelems; ++n)

@@ -201,7 +201,7 @@ struct lsquic_stream_if {
 /** Do not use NSTP by default */
 #define LSQUIC_DF_SUPPORT_NSTP     0
 #define LSQUIC_DF_SUPPORT_PUSH         1
-#define LSQUIC_DF_SUPPORT_TCID0    1
+#define LSQUIC_DF_SUPPORT_TCID0    0
 /** By default, LSQUIC ignores Public Reset packets. */
 #define LSQUIC_DF_HONOR_PRST       0
 
@@ -319,7 +319,12 @@ struct lsquic_engine_settings {
      * If set to true value, the server will not include connection ID in
      * outgoing packets if client's CHLO specifies TCID=0.
      *
-     * For client, this means including TCID=0 into CHLO message.
+     * For client, this means including TCID=0 into CHLO message.  Note that
+     * in this case, the engine tracks connections by the
+     * (source-addr, dest-addr) tuple, thereby making it necessary to create
+     * a socket for each connection.
+     *
+     * The default is @ref LSQUIC_DF_SUPPORT_TCID0.
      */
     int             es_support_tcid0;
 

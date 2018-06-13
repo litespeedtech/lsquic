@@ -323,7 +323,9 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_pmi_ctx  = NULL;
     }
     engine->pub.enp_engine = engine;
-    conn_hash_init(&engine->conns_hash, flags & ENG_SERVER);
+    conn_hash_init(&engine->conns_hash,
+        !(flags & ENG_SERVER) && engine->pub.enp_settings.es_support_tcid0 ?
+        CHF_USE_ADDR : 0);
     engine->attq = attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
@@ -419,7 +421,17 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 {
     lsquic_conn_t *conn;
 
-    conn = conn_hash_find_by_addr(&engine->conns_hash, sa_local);
+    if (conn_hash_using_addr(&engine->conns_hash))
+        conn = conn_hash_find_by_addr(&engine->conns_hash, sa_local);
+    else if (packet_in->pi_flags & PI_CONN_ID)
+        conn = conn_hash_find_by_cid(&engine->conns_hash,
+                                                    packet_in->pi_conn_id);
+    else
+    {
+        LSQ_DEBUG("packet header does not have connection ID: discarding");
+        return NULL;
+    }
+
     if (!conn)
         return NULL;
 
@@ -565,6 +577,13 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
     if (engine->flags & ENG_SERVER)
     {
         LSQ_ERROR("`%s' must only be called in client mode", __func__);
+        goto err;
+    }
+
+    if (conn_hash_using_addr(&engine->conns_hash)
+                && conn_hash_find_by_addr(&engine->conns_hash, local_sa))
+    {
+        LSQ_ERROR("cannot have more than one connection on the same port");
         goto err;
     }
 
