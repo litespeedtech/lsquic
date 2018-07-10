@@ -43,6 +43,7 @@
 #include "../src/liblsquic/lsquic_logger.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 #ifndef WIN32
 #   define SOCKET_TYPE int
@@ -552,6 +553,8 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
     struct packets_in *packs_in = sport->packs_in;
     struct read_iter iter;
     unsigned n, n_batches;
+    /* Save the value in case program is stopped packs_in is freed: */
+    const unsigned n_alloc = packs_in->n_alloc;
     enum rop rop;
 
     n_batches = 0;
@@ -569,7 +572,7 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
         n_batches += iter.ri_idx > 0;
 
         for (n = 0; n < iter.ri_idx; ++n)
-            if (0 != lsquic_engine_packet_in(engine,
+            if (0 > lsquic_engine_packet_in(engine,
 #ifndef WIN32
                         packs_in->vecs[n].iov_base,
                         packs_in->vecs[n].iov_len,
@@ -581,14 +584,14 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
                         (struct sockaddr *) &packs_in->peer_addresses[n],
                         sport))
                 break;
+
+        if (n > 0)
+            prog_process_conns(sport->sp_prog);
     }
-    while (ROP_NOROOM == rop);
+    while (ROP_NOROOM == rop && !prog_is_stopped());
 
     if (n_batches)
-        n += packs_in->n_alloc * (n_batches - 1);
-
-    if (!prog_is_stopped())
-        prog_process_conns(sport->sp_prog);
+        n += n_alloc * (n_batches - 1);
 
     LSQ_DEBUG("read %u packet%.*s in %u batch%s", n, n != 1, "s", n_batches, n_batches != 1 ? "es" : "");
 }

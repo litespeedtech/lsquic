@@ -12,19 +12,20 @@
 #include <lsquic_types.h>
 #ifndef WIN32
 #include <sys/uio.h>
-#include <sys/types.h>
 #include <time.h>
-#include <sys/queue.h>
 #else
 #include <vc_compat.h>
 #endif
 
-struct iovec;
 struct sockaddr;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define LSQUIC_MAJOR_VERSION 1
+#define LSQUIC_MINOR_VERSION 10
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:

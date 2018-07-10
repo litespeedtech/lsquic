@@ -35,19 +35,13 @@ void
 prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
                     const struct lsquic_stream_if *, void *stream_if_ctx);
 
-#if HAVE_SENDMMSG
-#   define SENDMMSG_FLAG "g"
-#else
-#   define SENDMMSG_FLAG ""
-#endif
-
 #if LSQUIC_DONTFRAG_SUPPORTED
 #   define IP_DONTFRAG_FLAG "D"
 #else
 #   define IP_DONTFRAG_FLAG ""
 #endif
 
-#define PROG_OPTS "m:c:y:L:l:o:H:s:S:Y:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
+#define PROG_OPTS "m:c:y:L:l:o:H:s:S:Y:z:" IP_DONTFRAG_FLAG
 
 /* Returns:
  *  0   Applied

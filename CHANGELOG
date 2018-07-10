@@ -1,3 +1,14 @@
+2018-07-10
+
+    - 1.10.1
+    - [BUGFIX]  process connections after each batch of packets is read
+      This avoids a problem of accumulating a very large list of packets
+      (possible when speeds are high and socket's receive buffer is large)
+      and processing it all at once.
+    - If glibc is older than 2.17, link with rt.  This is necessary for
+      clock_getres(2).
+    - Add version macros to lsquic.h; remove unnecessary includes.
+
 2018-06-13
 
     - [BUGFIX] allow multiple parallel connections by default

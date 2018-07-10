@@ -17,6 +17,14 @@ ENDIF()
 
 ENDIF()
 
+# If using older glibc, need to link with -lrt.  See clock_getres(2).
+EXECUTE_PROCESS(
+    COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
+    OUTPUT_VARIABLE GLIBC_VERSION)
+IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
+    SET(LIBS ${LIBS} rt)
+ENDIF()
+
 # By default, we compile in development mode.  To compile production code,
 # pass -DDEVEL_MODE=0 to cmake (before that, `make clean' and remove any
 # cmake cache files).
@@ -45,7 +53,7 @@ IF(DEVEL_MODE EQUAL 1)
     ENDIF()
     # Uncomment to enable fault injection testing via libfiu:
     #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
-    #SET (FIULIB "fiu")
+    #SET(LIBS ${LIBS} fiu)
 ELSE()
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O3 -g0")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DNDEBUG")
@@ -73,7 +81,7 @@ SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINM
 IF(DEVEL_MODE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
     #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
-    #SET (FIULIB "fiu")
+    #SET(LIBS ${LIBS} fiu)
 ELSE()
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Ox")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DNDEBUG")
@@ -120,7 +128,7 @@ add_executable(http_client
     test/prog.c
     test/test_common.c
 )
-target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
+target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${LIBS} z m)
 
 #MSVC
 ELSE()
@@ -144,11 +152,11 @@ target_link_libraries(http_client
 		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
 		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl/release/ssl.lib
 		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto/release/crypto.lib
-		${FIULIB} )
+		${LIBS} )
 
 ENDIF()
 
-#target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${FIULIB} z m)
+#target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${LIBS} z m)
 
 add_subdirectory(src)
 
