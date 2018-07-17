@@ -114,8 +114,7 @@ link_directories( ${BORINGSSL_LIB}  )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include )
-
-IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     # Find libevent on FreeBSD:
     include_directories( /usr/local/include )
     link_directories( /usr/local/lib )
