@@ -6,6 +6,7 @@ to the LiteSpeed Client Library:
     - Amol Desphande -- Windows support
     - Alexis La Goutte -- Travis-CI integration
     - Bernhard Jaeger -- DNS Resolution
+    - Zhang Chi -- libevent build fix on Darwin
 
 Thank you!
 

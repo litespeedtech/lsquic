@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 1
 #define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 2
 
 /**
  * Engine flags:
@@ -109,6 +109,11 @@ enum lsquic_version
 #define LSQUIC_EXPERIMENTAL_VERSIONS 0
 
 #define LSQUIC_DEPRECATED_VERSIONS 0
+
+/**
+ * List of version in which the server does not include CID in short packets.
+ */
+#define LSQUIC_FORCED_TCID0_VERSIONS 0
 
 /**
  * @struct lsquic_stream_if

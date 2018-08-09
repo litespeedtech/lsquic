@@ -2349,11 +2349,51 @@ packetize_standalone_stream_resets (struct full_conn *conn)
 
 
 static void
+create_delayed_streams (struct full_conn *conn)
+{
+    unsigned stream_count, avail, i;
+
+    stream_count = count_streams(conn, 0);
+
+    if (stream_count >= conn->fc_cfg.max_streams_out)
+        return;
+
+    avail = conn->fc_cfg.max_streams_out - stream_count;
+    if (conn->fc_n_delayed_streams < avail)
+        avail = conn->fc_n_delayed_streams;
+
+    struct lsquic_stream *new_streams[ avail ];
+
+    LSQ_DEBUG("creating delayed streams");
+    for (i = 0; i < avail; ++i)
+    {
+        /* Delay calling on_new in order not to let the user screw up
+         * the counts by making more streams.
+         */
+        new_streams[i] = new_stream(conn, generate_stream_id(conn), 0);
+        if (!new_streams[i])
+        {
+            ABORT_ERROR("%s: cannot create new stream: %s", __func__,
+                                                        strerror(errno));
+            return;
+        }
+    }
+    LSQ_DEBUG("created %u delayed stream%.*s", avail, avail != 1, "s");
+
+    assert(count_streams(conn, 0) <= conn->fc_cfg.max_streams_out);
+    conn->fc_n_delayed_streams -= avail;
+
+    for (i = 0; i < avail; ++i)
+        lsquic_stream_call_on_new(new_streams[i]);
+}
+
+
+static void
 service_streams (struct full_conn *conn)
 {
     struct lsquic_hash_elem *el;
     lsquic_stream_t *stream, *next;
-    int n_our_destroyed = 0;
+    int closed_some = 0;
 
     for (stream = TAILQ_FIRST(&conn->fc_pub.service_streams); stream; stream = next)
     {
@@ -2364,15 +2404,17 @@ service_streams (struct full_conn *conn)
              */
             ABORT_ERROR("aborted due to error in stream %"PRIu32, stream->id);
         if (stream->stream_flags & STREAM_CALL_ONCLOSE)
+        {
             lsquic_stream_call_on_close(stream);
+            closed_some |= is_our_stream(conn, stream);
+            conn_mark_stream_closed(conn, stream->id);
+        }
         if (stream->stream_flags & STREAM_FREE_STREAM)
         {
-            n_our_destroyed += is_our_stream(conn, stream);
             TAILQ_REMOVE(&conn->fc_pub.service_streams, stream, next_service_stream);
             el = lsquic_hash_find(conn->fc_pub.all_streams, &stream->id, sizeof(stream->id));
             if (el)
                 lsquic_hash_erase(conn->fc_pub.all_streams, el);
-            conn_mark_stream_closed(conn, stream->id);
             SAVE_STREAM_HISTORY(conn, stream);
             lsquic_stream_destroy(stream);
         }
@@ -2387,19 +2429,8 @@ service_streams (struct full_conn *conn)
                 conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx, NULL);
         }
     else
-        while (n_our_destroyed && conn->fc_n_delayed_streams)
-        {
-            --n_our_destroyed;
-            --conn->fc_n_delayed_streams;
-            LSQ_DEBUG("creating delayed stream");
-            if (!new_stream(conn, generate_stream_id(conn), SCF_CALL_ON_NEW))
-            {
-                ABORT_ERROR("%s: cannot create new stream: %s", __func__,
-                                                            strerror(errno));
-                break;
-            }
-            assert(count_streams(conn, 0) <= conn->fc_cfg.max_streams_out);
-        }
+        if (closed_some && conn->fc_n_delayed_streams)
+            create_delayed_streams(conn);
 }
 
 
