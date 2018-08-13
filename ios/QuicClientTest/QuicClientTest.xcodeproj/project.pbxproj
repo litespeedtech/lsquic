@@ -1,0 +1,507 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 50;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		82EA169CDB3F3F1188C94891 /* libPods-QuicClientTest.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3861F01ABFF9DF06F059EE58 /* libPods-QuicClientTest.a */; };
+		E01C3A7A2112E2D80076770E /* test_common.c in Sources */ = {isa = PBXBuildFile; fileRef = E01C3A762112E2D80076770E /* test_common.c */; };
+		E01C3A7B2112E2D80076770E /* prog.c in Sources */ = {isa = PBXBuildFile; fileRef = E01C3A772112E2D80076770E /* prog.c */; };
+		E01C3A7C2112E2D80076770E /* test_config.h.in in Resources */ = {isa = PBXBuildFile; fileRef = E01C3A792112E2D80076770E /* test_config.h.in */; };
+		E01C3A8A2112EA660076770E /* libevent.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E01C3A892112EA660076770E /* libevent.a */; };
+		E01C3A922112EA730076770E /* event2 in Resources */ = {isa = PBXBuildFile; fileRef = E01C3A8E2112EA730076770E /* event2 */; };
+		E01C3A932112EA730076770E /* openssl in Resources */ = {isa = PBXBuildFile; fileRef = E01C3A8F2112EA730076770E /* openssl */; };
+		E03B745620FF6CFC000EDCCA /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = E03B745520FF6CFC000EDCCA /* AppDelegate.m */; };
+		E03B745920FF6CFC000EDCCA /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = E03B745820FF6CFC000EDCCA /* ViewController.m */; };
+		E03B745C20FF6CFC000EDCCA /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E03B745A20FF6CFC000EDCCA /* Main.storyboard */; };
+		E03B745F20FF6CFC000EDCCA /* QuicClientTest.xcdatamodeld in Sources */ = {isa = PBXBuildFile; fileRef = E03B745D20FF6CFC000EDCCA /* QuicClientTest.xcdatamodeld */; };
+		E03B746120FF6CFE000EDCCA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E03B746020FF6CFE000EDCCA /* Assets.xcassets */; };
+		E03B746420FF6CFE000EDCCA /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = E03B746220FF6CFE000EDCCA /* LaunchScreen.storyboard */; };
+		E03B746720FF6CFE000EDCCA /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = E03B746620FF6CFE000EDCCA /* main.m */; };
+		E08A4F012121133A00F5C57F /* libcrypto.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E08A4EFF2121133A00F5C57F /* libcrypto.a */; };
+		E08A4F022121133A00F5C57F /* libssl.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E08A4F002121133A00F5C57F /* libssl.a */; };
+		E0F657F92109AEF800D66FDD /* libz.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E0F657F32109ADB400D66FDD /* libz.a */; };
+		E0F657FD2109F2EF00D66FDD /* liblsquic.a in Frameworks */ = {isa = PBXBuildFile; fileRef = E0F657FC2109F2EF00D66FDD /* liblsquic.a */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3861F01ABFF9DF06F059EE58 /* libPods-QuicClientTest.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-QuicClientTest.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5638A5A4B871988F778E27AB /* Pods-QuicClientTest.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuicClientTest.release.xcconfig"; path = "Pods/Target Support Files/Pods-QuicClientTest/Pods-QuicClientTest.release.xcconfig"; sourceTree = "<group>"; };
+		97EB93FB1DCB9C7D2EAEF057 /* Pods-QuicClientTest.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuicClientTest.debug.xcconfig"; path = "Pods/Target Support Files/Pods-QuicClientTest/Pods-QuicClientTest.debug.xcconfig"; sourceTree = "<group>"; };
+		E01C3A742112E2D80076770E /* prog.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = prog.h; sourceTree = "<group>"; };
+		E01C3A752112E2D80076770E /* test_common.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = test_common.h; sourceTree = "<group>"; };
+		E01C3A762112E2D80076770E /* test_common.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = test_common.c; sourceTree = "<group>"; };
+		E01C3A772112E2D80076770E /* prog.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = prog.c; sourceTree = "<group>"; };
+		E01C3A782112E2D80076770E /* test_config.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = test_config.h; sourceTree = "<group>"; };
+		E01C3A792112E2D80076770E /* test_config.h.in */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = test_config.h.in; sourceTree = "<group>"; };
+		E01C3A7D2112E3120076770E /* lsquic_hash.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lsquic_hash.h; sourceTree = "<group>"; };
+		E01C3A892112EA660076770E /* libevent.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libevent.a; sourceTree = "<group>"; };
+		E01C3A8B2112EA720076770E /* evutil.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evutil.h; sourceTree = "<group>"; };
+		E01C3A8C2112EA730076770E /* evhttp.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evhttp.h; sourceTree = "<group>"; };
+		E01C3A8D2112EA730076770E /* evrpc.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evrpc.h; sourceTree = "<group>"; };
+		E01C3A8E2112EA730076770E /* event2 */ = {isa = PBXFileReference; lastKnownFileType = folder; path = event2; sourceTree = "<group>"; };
+		E01C3A8F2112EA730076770E /* openssl */ = {isa = PBXFileReference; lastKnownFileType = folder; path = openssl; sourceTree = "<group>"; };
+		E01C3A902112EA730076770E /* event.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = event.h; sourceTree = "<group>"; };
+		E01C3A912112EA730076770E /* evdns.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evdns.h; sourceTree = "<group>"; };
+		E03B745120FF6CFC000EDCCA /* QuicClientTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QuicClientTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E03B745420FF6CFC000EDCCA /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
+		E03B745520FF6CFC000EDCCA /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
+		E03B745720FF6CFC000EDCCA /* ViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ViewController.h; sourceTree = "<group>"; };
+		E03B745820FF6CFC000EDCCA /* ViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ViewController.m; sourceTree = "<group>"; };
+		E03B745B20FF6CFC000EDCCA /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		E03B745E20FF6CFC000EDCCA /* QuicClientTest.xcdatamodel */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcdatamodel; path = QuicClientTest.xcdatamodel; sourceTree = "<group>"; };
+		E03B746020FF6CFE000EDCCA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E03B746320FF6CFE000EDCCA /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		E03B746520FF6CFE000EDCCA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E03B746620FF6CFE000EDCCA /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		E08A4EFF2121133A00F5C57F /* libcrypto.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libcrypto.a; sourceTree = "<group>"; };
+		E08A4F002121133A00F5C57F /* libssl.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libssl.a; sourceTree = "<group>"; };
+		E0C58BF5210EE98E0082D678 /* lsquic_logger.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lsquic_logger.h; sourceTree = "<group>"; };
+		E0F657EB2108C27100D66FDD /* lsquic.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lsquic.h; sourceTree = "<group>"; };
+		E0F657EC2108C27F00D66FDD /* lsquic_types.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = lsquic_types.h; sourceTree = "<group>"; };
+		E0F657F32109ADB400D66FDD /* libz.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libz.a; sourceTree = "<group>"; };
+		E0F657FA2109B4C000D66FDD /* libBoringSSL.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; path = libBoringSSL.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		E0F657FC2109F2EF00D66FDD /* liblsquic.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = liblsquic.a; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E03B744E20FF6CFC000EDCCA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E08A4F022121133A00F5C57F /* libssl.a in Frameworks */,
+				E0F657FD2109F2EF00D66FDD /* liblsquic.a in Frameworks */,
+				E01C3A8A2112EA660076770E /* libevent.a in Frameworks */,
+				E08A4F012121133A00F5C57F /* libcrypto.a in Frameworks */,
+				E0F657F92109AEF800D66FDD /* libz.a in Frameworks */,
+				82EA169CDB3F3F1188C94891 /* libPods-QuicClientTest.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		901BEE757E89B16BE91F0DCF /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				97EB93FB1DCB9C7D2EAEF057 /* Pods-QuicClientTest.debug.xcconfig */,
+				5638A5A4B871988F778E27AB /* Pods-QuicClientTest.release.xcconfig */,
+			);
+			name = Pods;
+			sourceTree = "<group>";
+		};
+		DFE1AF46EAF8C72FAABFE71F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				E0F657FA2109B4C000D66FDD /* libBoringSSL.a */,
+				3861F01ABFF9DF06F059EE58 /* libPods-QuicClientTest.a */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E03B744820FF6CFC000EDCCA = {
+			isa = PBXGroup;
+			children = (
+				E03B745320FF6CFC000EDCCA /* QuicClientTest */,
+				E03B745220FF6CFC000EDCCA /* Products */,
+				901BEE757E89B16BE91F0DCF /* Pods */,
+				DFE1AF46EAF8C72FAABFE71F /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		E03B745220FF6CFC000EDCCA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E03B745120FF6CFC000EDCCA /* QuicClientTest.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E03B745320FF6CFC000EDCCA /* QuicClientTest */ = {
+			isa = PBXGroup;
+			children = (
+				E0AD57DE210032060084AA9D /* lsquic */,
+				E03B745420FF6CFC000EDCCA /* AppDelegate.h */,
+				E03B745520FF6CFC000EDCCA /* AppDelegate.m */,
+				E03B745720FF6CFC000EDCCA /* ViewController.h */,
+				E03B745820FF6CFC000EDCCA /* ViewController.m */,
+				E03B745A20FF6CFC000EDCCA /* Main.storyboard */,
+				E03B746020FF6CFE000EDCCA /* Assets.xcassets */,
+				E03B746220FF6CFE000EDCCA /* LaunchScreen.storyboard */,
+				E03B746520FF6CFE000EDCCA /* Info.plist */,
+				E03B746620FF6CFE000EDCCA /* main.m */,
+				E03B745D20FF6CFC000EDCCA /* QuicClientTest.xcdatamodeld */,
+			);
+			path = QuicClientTest;
+			sourceTree = "<group>";
+		};
+		E0AD57DE210032060084AA9D /* lsquic */ = {
+			isa = PBXGroup;
+			children = (
+				E08A4EFF2121133A00F5C57F /* libcrypto.a */,
+				E08A4F002121133A00F5C57F /* libssl.a */,
+				E01C3A912112EA730076770E /* evdns.h */,
+				E01C3A902112EA730076770E /* event.h */,
+				E01C3A8E2112EA730076770E /* event2 */,
+				E01C3A8C2112EA730076770E /* evhttp.h */,
+				E01C3A8D2112EA730076770E /* evrpc.h */,
+				E01C3A8B2112EA720076770E /* evutil.h */,
+				E01C3A8F2112EA730076770E /* openssl */,
+				E01C3A892112EA660076770E /* libevent.a */,
+				E01C3A7D2112E3120076770E /* lsquic_hash.h */,
+				E01C3A772112E2D80076770E /* prog.c */,
+				E01C3A742112E2D80076770E /* prog.h */,
+				E01C3A762112E2D80076770E /* test_common.c */,
+				E01C3A752112E2D80076770E /* test_common.h */,
+				E01C3A782112E2D80076770E /* test_config.h */,
+				E01C3A792112E2D80076770E /* test_config.h.in */,
+				E0F657F32109ADB400D66FDD /* libz.a */,
+				E0F657FC2109F2EF00D66FDD /* liblsquic.a */,
+				E0C58BF5210EE98E0082D678 /* lsquic_logger.h */,
+				E0F657EB2108C27100D66FDD /* lsquic.h */,
+				E0F657EC2108C27F00D66FDD /* lsquic_types.h */,
+			);
+			name = lsquic;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E03B745020FF6CFC000EDCCA /* QuicClientTest */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E03B746A20FF6CFE000EDCCA /* Build configuration list for PBXNativeTarget "QuicClientTest" */;
+			buildPhases = (
+				128D9813E416A334F5F4FDCA /* [CP] Check Pods Manifest.lock */,
+				E03B744D20FF6CFC000EDCCA /* Sources */,
+				E03B744E20FF6CFC000EDCCA /* Frameworks */,
+				E03B744F20FF6CFC000EDCCA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = QuicClientTest;
+			productName = QuicClientTest;
+			productReference = E03B745120FF6CFC000EDCCA /* QuicClientTest.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E03B744920FF6CFC000EDCCA /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0940;
+				ORGANIZATIONNAME = "Chi Zhang";
+				TargetAttributes = {
+					E03B745020FF6CFC000EDCCA = {
+						CreatedOnToolsVersion = 9.4.1;
+					};
+				};
+			};
+			buildConfigurationList = E03B744C20FF6CFC000EDCCA /* Build configuration list for PBXProject "QuicClientTest" */;
+			compatibilityVersion = "Xcode 9.3";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E03B744820FF6CFC000EDCCA;
+			productRefGroup = E03B745220FF6CFC000EDCCA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E03B745020FF6CFC000EDCCA /* QuicClientTest */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E03B744F20FF6CFC000EDCCA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E01C3A922112EA730076770E /* event2 in Resources */,
+				E01C3A7C2112E2D80076770E /* test_config.h.in in Resources */,
+				E03B746420FF6CFE000EDCCA /* LaunchScreen.storyboard in Resources */,
+				E01C3A932112EA730076770E /* openssl in Resources */,
+				E03B746120FF6CFE000EDCCA /* Assets.xcassets in Resources */,
+				E03B745C20FF6CFC000EDCCA /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		128D9813E416A334F5F4FDCA /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-QuicClientTest-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E03B744D20FF6CFC000EDCCA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E01C3A7A2112E2D80076770E /* test_common.c in Sources */,
+				E01C3A7B2112E2D80076770E /* prog.c in Sources */,
+				E03B745F20FF6CFC000EDCCA /* QuicClientTest.xcdatamodeld in Sources */,
+				E03B745920FF6CFC000EDCCA /* ViewController.m in Sources */,
+				E03B746720FF6CFE000EDCCA /* main.m in Sources */,
+				E03B745620FF6CFC000EDCCA /* AppDelegate.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		E03B745A20FF6CFC000EDCCA /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				E03B745B20FF6CFC000EDCCA /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		E03B746220FF6CFE000EDCCA /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				E03B746320FF6CFE000EDCCA /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		E03B746820FF6CFE000EDCCA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 11.4;
+				MTL_ENABLE_DEBUG_INFO = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+			};
+			name = Debug;
+		};
+		E03B746920FF6CFE000EDCCA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 11.4;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E03B746B20FF6CFE000EDCCA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 97EB93FB1DCB9C7D2EAEF057 /* Pods-QuicClientTest.debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BHC4DHMQ4E;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				INFOPLIST_FILE = QuicClientTest/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/QuicClientTest",
+				);
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-isystem",
+					"\"${PODS_ROOT}/Headers/Public\"",
+					"-isystem",
+					"\"${PODS_ROOT}/Headers/Public/BoringSSL\"",
+					"-D__APPLE_USE_RFC_3542",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.baidu.quicclienttest.QuicClientTest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = "armv7s armv7 arm64 x86_64 i386";
+			};
+			name = Debug;
+		};
+		E03B746C20FF6CFE000EDCCA /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5638A5A4B871988F778E27AB /* Pods-QuicClientTest.release.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BHC4DHMQ4E;
+				GCC_C_LANGUAGE_STANDARD = c99;
+				INFOPLIST_FILE = QuicClientTest/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/QuicClientTest",
+				);
+				OTHER_CFLAGS = (
+					"$(inherited)",
+					"-isystem",
+					"\"${PODS_ROOT}/Headers/Public\"",
+					"-isystem",
+					"\"${PODS_ROOT}/Headers/Public/BoringSSL\"",
+					"-D__APPLE_USE_RFC_3542",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.baidu.quicclienttest.QuicClientTest;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = "armv7s armv7 arm64 x86_64 i386";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E03B744C20FF6CFC000EDCCA /* Build configuration list for PBXProject "QuicClientTest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E03B746820FF6CFE000EDCCA /* Debug */,
+				E03B746920FF6CFE000EDCCA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E03B746A20FF6CFE000EDCCA /* Build configuration list for PBXNativeTarget "QuicClientTest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E03B746B20FF6CFE000EDCCA /* Debug */,
+				E03B746C20FF6CFE000EDCCA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCVersionGroup section */
+		E03B745D20FF6CFC000EDCCA /* QuicClientTest.xcdatamodeld */ = {
+			isa = XCVersionGroup;
+			children = (
+				E03B745E20FF6CFC000EDCCA /* QuicClientTest.xcdatamodel */,
+			);
+			currentVersion = E03B745E20FF6CFC000EDCCA /* QuicClientTest.xcdatamodel */;
+			path = QuicClientTest.xcdatamodeld;
+			sourceTree = "<group>";
+			versionGroupType = wrapper.xcdatamodel;
+		};
+/* End XCVersionGroup section */
+	};
+	rootObject = E03B744920FF6CFC000EDCCA /* Project object */;
+}
