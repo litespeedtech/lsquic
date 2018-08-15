@@ -8,10 +8,12 @@
 #endif
 
 #include "lsquic_types.h"
+#include "lsquic.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_out.h"
+#include "lsquic_conn.h"
 #include "lsquic_parse.h"
-#include "lsquic.h"
 
 struct test {
     /* Inputs. */
@@ -232,11 +234,23 @@ run_test (int i)
 {
     const struct test *const test = &tests[i];
 
+    struct lsquic_packet_out packet_out =
+    {
+        .po_flags = (test->cid ? PO_CONN_ID : 0)
+                  | (test->ver.val ? PO_VERSION : 0)
+                  | (test->nonce ? PO_NONCE: 0)
+                  ,
+        .po_nonce = (unsigned char *) test->nonce,
+        .po_ver_tag = test->ver.val,
+        .po_packno = test->packno,
+    };
+    lsquic_packet_out_set_packno_bits(&packet_out, test->bits);
+
+    struct lsquic_conn lconn = { .cn_cid = test->cid, };
+
     unsigned char out[QUIC_MAX_PUBHDR_SZ];
-    int len = test->pf->pf_gen_reg_pkt_header(out, sizeof(out),
-                (test->cid ? &test->cid : NULL),
-                (test->ver.val ? &test->ver.val : NULL),
-                (unsigned char *) test->nonce, test->packno, test->bits);
+    int len = test->pf->pf_gen_reg_pkt_header(&lconn, &packet_out, out,
+                                                                sizeof(out));
 
     assert(("Packet length is correct", len == test->len));
 

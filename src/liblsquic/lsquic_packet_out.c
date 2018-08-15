@@ -22,6 +22,7 @@
 #include "lsquic_stream.h"
 #include "lsquic_logger.h"
 #include "lsquic_ev_log.h"
+#include "lsquic_conn.h"
 
 typedef char _stream_rec_arr_is_at_most_64bytes[
                                 (sizeof(struct stream_rec_arr) <= 64)? 1: - 1];
@@ -212,12 +213,12 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
-                unsigned short max_size, enum lsquic_packno_bits bits,
+                const struct lsquic_conn *lconn, enum lsquic_packno_bits bits,
                 const lsquic_ver_tag_t *ver_tag, const unsigned char *nonce)
 {
     lsquic_packet_out_t *packet_out;
     enum packet_out_flags flags;
-    unsigned short header_size;
+    unsigned short header_size, max_size;
 
     flags = bits << POBIT_SHIFT;
     if (ver_tag)
@@ -226,8 +227,22 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
         flags |= PO_NONCE;
     if (use_cid)
         flags |= PO_CONN_ID;
+    if ((1 << lconn->cn_version) & LSQUIC_GQUIC_HEADER_VERSIONS)
+        flags |= PO_GQUIC;
+    if (
+        0 == (lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
+        )
+    {
+        flags |= PO_LONGHEAD;
+        if (!((1 << lconn->cn_version) & LSQUIC_GQUIC_HEADER_VERSIONS))
+        {
+            flags &= ~(3 << POBIT_SHIFT);
+            flags |= PACKNO_LEN_4 << POBIT_SHIFT;
+        }
+    }
 
-    header_size = lsquic_po_header_length(flags);
+    header_size = lsquic_po_header_length(lconn, flags);
+    max_size = lconn->cn_pack_size;
     if (header_size + QUIC_PACKET_HASH_SZ >= max_size)
     {
         errno = EINVAL;
@@ -255,6 +270,8 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
         }
         memcpy(packet_out->po_nonce, nonce, 32);
     }
+    if (flags & PO_LONGHEAD)
+        packet_out->po_header_type = HETY_HANDSHAKE;
 
     return packet_out;
 }
@@ -602,6 +619,8 @@ verify_srecs (lsquic_packet_out_t *packet_out)
 
     assert(packet_out->po_data_sz == off);
 }
+
+
 #endif
 
 

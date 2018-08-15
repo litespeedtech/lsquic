@@ -60,7 +60,9 @@ typedef struct lsquic_packet_in
 #define PIBIT_ENC_LEV_SHIFT 5
         PI_ENC_LEV_BIT_0= (1 << 5),                /* Encodes encryption level */
         PI_ENC_LEV_BIT_1= (1 << 6),                /*  (see enum enc_level). */
+        PI_GQUIC        = (1 << 7),
     }                               pi_flags:8;
+    enum header_type                pi_header_type:8;
     /* If PI_OWN_DATA flag is not set, `pi_data' points to user-supplied
      * packet data, which is NOT TO BE MODIFIED.
      */
@@ -69,11 +71,19 @@ typedef struct lsquic_packet_in
 
 #define lsquic_packet_in_public_flags(p) ((p)->pi_data[0])
 
-#define lsquic_packet_in_is_prst(p) \
-    (lsquic_packet_in_public_flags(p) & PACKET_PUBLIC_FLAGS_RST)
+#define lsquic_packet_in_is_gquic_prst(p) \
+    (((p)->pi_flags & PI_GQUIC) \
+        && (lsquic_packet_in_public_flags(p) & PACKET_PUBLIC_FLAGS_RST))
+
+#define lsquic_packet_in_is_verneg(p) \
+    (((p)->pi_flags & PI_GQUIC) ? \
+        lsquic_packet_in_public_flags(p) & PACKET_PUBLIC_FLAGS_VERSION : \
+        (p)->pi_header_type == HETY_VERNEG)
 
 #define lsquic_packet_in_packno_bits(p) \
-                    ((lsquic_packet_in_public_flags(p) >> 4) & 3)
+    (((p)->pi_flags & PI_GQUIC) ? \
+                    ((lsquic_packet_in_public_flags(p) >> 4) & 3) : \
+                    ((p)->pi_data[0] & 3))
 
 #define lsquic_packet_in_upref(p) (++(p)->pi_refcnt)
 

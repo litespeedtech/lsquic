@@ -9,6 +9,7 @@
 #include <sys/queue.h>
 
 struct malo;
+struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_mm;
 struct lsquic_stream;
@@ -84,7 +85,12 @@ typedef struct lsquic_packet_out
                                          */
         PO_SCHED    = (1 <<14),         /* On scheduled queue */
         PO_SENT_SZ  = (1 <<15),
-    }                  po_flags:16;
+        PO_LONGHEAD = (1 <<16),
+        PO_GQUIC    = (1 <<17),         /* Used for logging */
+#define POLEV_SHIFT 18
+        PO_BITS_2   = (1 <<18),         /* PO_BITS_2 and PO_BITS_3 encode the */
+        PO_BITS_3   = (1 <<19),         /*   crypto level.  Used for logging. */
+    }                  po_flags;
     enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
@@ -95,6 +101,7 @@ typedef struct lsquic_packet_out
                                          * frames.
                                          */
     unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
+    enum header_type   po_header_type:8;
     unsigned char     *po_data;
     lsquic_packno_t    po_ack2ed;       /* If packet has ACK frame, value of
                                          * largest acked in it.
@@ -135,33 +142,27 @@ typedef struct lsquic_packet_out
     (p)->po_flags |= ((b) & 0x3) << POBIT_SHIFT;                        \
 } while (0)
 
-#define lsquic_po_header_length(po_flags) (                                 \
-    1                                                   /* Type */          \
-  + (!!((po_flags) & PO_CONN_ID) << 3)                  /* Connection ID */ \
-  + (!!((po_flags) & PO_VERSION) << 2)                  /* Version */       \
-  + (!!((po_flags) & PO_NONCE)   << 5)                  /* Nonce */         \
-  + packno_bits2len(((po_flags) >> POBIT_SHIFT) & 0x3)  /* Packet number */ \
-)
+#define lsquic_po_header_length(lconn, po_flags) ( \
+    lconn->cn_pf->pf_packout_header_size(lconn, po_flags))
 
-#define lsquic_packet_out_total_sz(p) \
-    ((p)->po_data_sz + lsquic_po_header_length((p)->po_flags) \
-        + QUIC_PACKET_HASH_SZ)
+#define lsquic_packet_out_total_sz(lconn, p) (\
+    lconn->cn_pf->pf_packout_size(lconn, p))
 
 #if __GNUC__
 #if LSQUIC_EXTRA_CHECKS
-#define lsquic_packet_out_sent_sz(p) (                                      \
+#define lsquic_packet_out_sent_sz(lconn, p) (                               \
         __builtin_expect(((p)->po_flags & PO_SENT_SZ), 1) ?                 \
-        (assert((p)->po_sent_sz == lsquic_packet_out_total_sz(p)),          \
-            (p)->po_sent_sz) : lsquic_packet_out_total_sz(p))
+        (assert((p)->po_sent_sz == lsquic_packet_out_total_sz(lconn, p)),   \
+            (p)->po_sent_sz) : lsquic_packet_out_total_sz(lconn, p))
 #   else
-#define lsquic_packet_out_sent_sz(p) (                                      \
+#define lsquic_packet_out_sent_sz(lconn, p) (                               \
         __builtin_expect(((p)->po_flags & PO_SENT_SZ), 1) ?                 \
-        (p)->po_sent_sz : lsquic_packet_out_total_sz(p))
+        (p)->po_sent_sz : lsquic_packet_out_total_sz(lconn, p))
 #endif
 #else
-#   define lsquic_packet_out_sent_sz(p) (                                   \
+#   define lsquic_packet_out_sent_sz(lconn, p) (                            \
         (p)->po_flags & PO_SENT_SZ ?                                        \
-        (p)->po_sent_sz : lsquic_packet_out_total_sz(p))
+        (p)->po_sent_sz : lsquic_packet_out_total_sz(lconn, p))
 #endif
 
 #define lsquic_packet_out_verneg(p) \
@@ -169,6 +170,13 @@ typedef struct lsquic_packet_out
 
 #define lsquic_packet_out_pubres(p) \
     (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG)) ==  PO_NOENCRYPT           )
+
+#define lsquic_packet_out_set_enc_level(p, level) do {                      \
+    (p)->po_flags &= ~(3 << POLEV_SHIFT);                                   \
+    (p)->po_flags |= level << POLEV_SHIFT;                                  \
+} while (0)
+
+#define lsquic_packet_out_enc_level(p)  (((p)->po_flags >> POLEV_SHIFT) & 3)
 
 struct packet_out_srec_iter {
     lsquic_packet_out_t         *packet_out;
@@ -185,7 +193,7 @@ posi_next (struct packet_out_srec_iter *posi);
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
-                       unsigned short size, enum lsquic_packno_bits,
+                       const struct lsquic_conn *, enum lsquic_packno_bits,
                        const lsquic_ver_tag_t *, const unsigned char *nonce);
 
 void

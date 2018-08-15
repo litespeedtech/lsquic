@@ -7,7 +7,10 @@
 #include "lsquic_packet_common.h"
 
 struct lsquic_packet_in;
+struct lsquic_packet_out;
+struct packin_parse_state;
 struct stream_frame;
+enum packet_out_flags;
 
 #define LSQUIC_PARSE_ACK_TIMESTAMPS 0
 
@@ -54,27 +57,17 @@ typedef lsquic_time_t
 /* gsf_: generate stream frame */
 typedef size_t (*gsf_read_f) (void *stream, void *buf, size_t len, int *fin);
 
-struct packin_parse_state {
-    const unsigned char     *pps_p;      /* Pointer to packet number */
-    unsigned                 pps_nbytes; /* Number of bytes in packet number */
-};
-
 /* This structure contains functions that parse and generate packets and
  * frames in version-specific manner.  To begin with, there is difference
  * between GQUIC's little-endian (Q038 and lower) and big-endian formats
- * (Q039 and higher).
+ * (Q039 and higher).  Q044 uses different format for packet headers.
  */
 struct parse_funcs
 {
-    int
-    (*pf_gen_ver_nego_pkt) (unsigned char *buf, size_t bufsz, uint64_t conn_id,
-                            unsigned version_bitmask);
     /* Return buf length */
     int
-    (*pf_gen_reg_pkt_header) (unsigned char *buf, size_t bufsz,
-                            const lsquic_cid_t *, const lsquic_ver_tag_t *,
-                            const unsigned char *nonce, lsquic_packno_t,
-                            enum lsquic_packno_bits);
+    (*pf_gen_reg_pkt_header) (const struct lsquic_conn *,
+                const struct lsquic_packet_out *, unsigned char *, size_t);
     void
     (*pf_parse_packet_in_finish) (struct lsquic_packet_in *packet_in,
                                                 struct packin_parse_state *);
@@ -154,27 +147,56 @@ struct parse_funcs
     (*pf_calc_stream_frame_header_sz) (uint32_t stream_id, uint64_t offset);
     void
     (*pf_turn_on_fin) (unsigned char *);
+
+    size_t
+    (*pf_packout_size) (const struct lsquic_conn *,
+                                            const struct lsquic_packet_out *);
+
+    size_t
+    (*pf_packout_header_size) (const struct lsquic_conn *,
+                                            enum packet_out_flags);
 };
 
 extern const struct parse_funcs lsquic_parse_funcs_gquic_le;
 /* Q039 and later are big-endian: */
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
+extern const struct parse_funcs lsquic_parse_funcs_gquic_Q044;
 
 #define select_pf_by_ver(ver) (                                         \
     ((1 << (ver)) & (1 << LSQVER_035))                                  \
         ? &lsquic_parse_funcs_gquic_le                                  \
-        : &lsquic_parse_funcs_gquic_Q039)
+        : (ver) < LSQVER_044                                            \
+        ? &lsquic_parse_funcs_gquic_Q039                                \
+        : &lsquic_parse_funcs_gquic_Q044)
 
-/* This function is QUIC-version independent */
 int
-parse_packet_in_begin (struct lsquic_packet_in *, size_t length,
+lsquic_gquic_parse_packet_in_begin (struct lsquic_packet_in *, size_t length,
                                 int is_server, struct packin_parse_state *);
+
+int
+lsquic_iquic_parse_packet_in_long_begin (struct lsquic_packet_in *,
+            size_t length, int is_server, struct packin_parse_state *state);
+
+int
+lsquic_iquic_parse_packet_in_short_begin (struct lsquic_packet_in *,
+            size_t length, int is_server, struct packin_parse_state *state);
 
 enum QUIC_FRAME_TYPE
 parse_frame_type_gquic_Q035_thru_Q039 (unsigned char first_byte);
 
 size_t
 calc_stream_frame_header_sz_gquic (uint32_t stream_id, uint64_t offset);
+
+size_t
+lsquic_gquic_packout_size (const struct lsquic_conn *,
+                                            const struct lsquic_packet_out *);
+
+size_t
+lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
+                                                enum packet_out_flags flags);
+
+size_t
+lsquic_gquic_po_header_sz (enum packet_out_flags flags);
 
 /* This maps two bits as follows:
  *  00  ->  1

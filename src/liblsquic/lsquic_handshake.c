@@ -60,6 +60,7 @@ enum enc_sess_history_event
     ESHE_SET_STK            =  'K',
     ESHE_SET_SCID           =  'D',
     ESHE_SET_PROF           =  'P',
+    ESHE_SET_SRST           =  'S',
 };
 #endif
 
@@ -71,6 +72,7 @@ typedef struct hs_ctx_st
         HSET_SMHL     =   (1 << 1),     /* smhl is set */
         HSET_SCID     =   (1 << 2),
         HSET_IRTT     =   (1 << 3),
+        HSET_SRST     =   (1 << 4),
     }           set;
     enum {
         HOPT_NSTP     =   (1 << 0),     /* NSTP option present in COPT */
@@ -95,6 +97,7 @@ typedef struct hs_ctx_st
     //unsigned char chlo_hash[32]; //SHA256 HASH of CHLO
     unsigned char nonc[DNONC_LENGTH]; /* 4 tm, 8 orbit ---> REJ, 20 rand */
     unsigned char  pubs[32];
+    unsigned char srst[SRST_LENGTH];
     
     uint32_t    rrej;
     struct lsquic_str ccs;
@@ -684,6 +687,18 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         hs_ctx->sttl = get_tag_value_i64(val, len);
         break;
 
+    case QTAG_SRST:
+        if (len != sizeof(hs_ctx->srst))
+        {
+            LSQ_INFO("Unexpected size of SRST: %u instead of %zu bytes",
+                len, sizeof(hs_ctx->srst));
+            return -1;
+        }
+        memcpy(hs_ctx->srst, val, len);
+        hs_ctx->set |= HSET_SRST;
+        ESHIST_APPEND(enc_session, ESHE_SET_SRST);
+        break;
+
     default:
         LSQ_DEBUG("Ignored tag '%.*s'", 4, (char *)&tag);
         break;
@@ -848,7 +863,7 @@ struct message_writer
     memset(data_ptr + 4 + 2, 0, 2);                                 \
     (mw)->mw_entry = (void *) (data_ptr + 8);                       \
     (mw)->mw_p = data_ptr + 8 +                                     \
-                    n_entries * sizeof((mw)->mw_entry[0]);          \
+                    (n_entries) * sizeof((mw)->mw_entry[0]);        \
     (mw)->mw_first_dummy_entry.tag = 0;                             \
     (mw)->mw_first_dummy_entry.off = 0;                             \
     (mw)->mw_prev_entry = &(mw)->mw_first_dummy_entry;              \
@@ -1575,7 +1590,7 @@ lsquic_enc_session_decrypt (lsquic_enc_session_t *enc_session,
 }
 
 
-static int
+static enum enc_level
 lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
                enum lsquic_version version,
                uint8_t path_id, uint64_t pack_num,
@@ -1587,6 +1602,7 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
     uint8_t md[HS_PKT_HASH_LENGTH];
     uint128 hash;
     int ret;
+    enum enc_level enc_level;
     int is_chlo = (is_hello && ((IS_SERVER(enc_session)) == 0));
     int is_shlo = (is_hello && (IS_SERVER(enc_session)));
 
@@ -1620,7 +1636,7 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
         memcpy(buf_out, header, header_len);
         memcpy(buf_out + header_len, md, HS_PKT_HASH_LENGTH);
         memcpy(buf_out + header_len + HS_PKT_HASH_LENGTH, data, data_len);
-        return 0;
+        return ENC_LEV_CLEAR;
     }
     else
     {
@@ -1635,12 +1651,14 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
             {
                 enc_session->server_start_use_final_key = 1;
             }
+            enc_level = ENC_LEV_INIT;
         }
         else
         {
             LSQ_DEBUG("lsquic_enc_session_encrypt using 'F' key...");
             key = enc_session->enc_ctx_f;
             memcpy(nonce, enc_session->enc_key_nonce_f, 4);
+            enc_level = ENC_LEV_FORW;
         }
         path_id_packet_number = combine_path_id_pack_num(path_id, pack_num);
         memcpy(nonce + 4, &path_id_packet_number,
@@ -1651,8 +1669,13 @@ lsquic_enc_session_encrypt (lsquic_enc_session_t *enc_session,
 
         ret = aes_aead_enc(key, header, header_len, nonce, 12, data,
                            data_len, buf_out + header_len, out_len);
-        *out_len += header_len;
-        return ret;
+        if (ret == 0)
+        {
+            *out_len += header_len;
+            return enc_level;
+        }
+        else
+            return -1;
     }
 }
 
@@ -1801,6 +1824,19 @@ lsquic_enc_session_mem_used (struct lsquic_enc_session *enc_session)
 }
 
 
+static int
+lsquic_enc_session_verify_reset_token (lsquic_enc_session_t *enc_session,
+                                        const unsigned char *buf, size_t bufsz)
+{
+    if (bufsz == SRST_LENGTH
+            && (enc_session->hs_ctx.set & HSET_SRST)
+            && 0 == memcmp(buf, enc_session->hs_ctx.srst, SRST_LENGTH))
+        return 0;
+    else
+        return -1;
+}
+
+
 #ifdef NDEBUG
 const
 #endif
@@ -1822,4 +1858,14 @@ struct enc_session_funcs lsquic_enc_session_gquic_1 =
     .esf_gen_chlo = lsquic_enc_session_gen_chlo,
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
     .esf_mem_used = lsquic_enc_session_mem_used,
+    .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
+};
+
+
+const char *const lsquic_enclev2str[] =
+{
+    [ENC_LEV_UNSET] = "unset",
+    [ENC_LEV_CLEAR] = "clear",
+    [ENC_LEV_INIT]  = "initial",
+    [ENC_LEV_FORW]  = "forw-secure",
 };

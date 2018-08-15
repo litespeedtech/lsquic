@@ -116,10 +116,25 @@ lsquic_frame_types_to_str (char *buf, size_t bufsz, enum quic_ft_bit);
 #define QFRAME_RETRANSMITTABLE(frame_type) \
                         ((1 << (frame_type)) & QFRAME_RETRANSMITTABLE_MASK)
 
-#define QUIC_MAX_PUBHDR_SZ (1 /* Type */ + 8 /* CID */ + 4 /* Version */ \
+#define GQUIC_MAX_PUBHDR_SZ (1 /* Type */ + 8 /* CID */ + 4 /* Version */ \
                             + 32 /* Nonce */ + 6 /* Packet Number */ )
 
-#define QUIC_MIN_PUBHDR_SZ (1 /* Type */ + 1 /* Packet number */)
+#define GQUIC_MIN_PUBHDR_SZ (1 /* Type */ + 1 /* Packet number */)
+
+#define GQUIC_IETF_LONG_HEADER_SIZE (1 /* Type */ + 4 /* Version */ \
+                + 1 /* DCIL/SCIL */ + 8 /* CID */ + 4 /* Packet number */)
+
+/* XXX Nonce? */
+#define IQUIC_MAX_PUBHDR_SZ GQUIC_IETF_LONG_HEADER_SIZE
+
+#define IQUIC_MIN_PUBHDR_SZ (1 /* Type */ + 8 /* CID */ \
+                                                + 1 /* Packet number */)
+
+#define QUIC_MAX_PUBHDR_SZ (GQUIC_MAX_PUBHDR_SZ > IQUIC_MAX_PUBHDR_SZ \
+                                ? GQUIC_MAX_PUBHDR_SZ : IQUIC_MAX_PUBHDR_SZ)
+
+#define QUIC_MIN_PUBHDR_SZ (GQUIC_MIN_PUBHDR_SZ < IQUIC_MIN_PUBHDR_SZ \
+                                ? GQUIC_MIN_PUBHDR_SZ : IQUIC_MIN_PUBHDR_SZ)
 
 /* 12 bytes of FNV hash or encryption IV */
 #define QUIC_PACKET_HASH_SZ 12
@@ -150,6 +165,19 @@ enum lsquic_packno_bits
     PACKNO_LEN_4    = 2,
     PACKNO_LEN_6    = 3,
 };
+
+
+enum header_type
+{
+    HETY_NOT_SET,       /* This value must be zero */
+    HETY_VERNEG,
+    HETY_INITIAL,
+    HETY_RETRY,
+    HETY_HANDSHAKE,
+    HETY_0RTT,
+};
+
+extern const char *const lsquic_hety2str[];
 
 enum lsquic_packno_bits
 calc_packno_bits (lsquic_packno_t packno, lsquic_packno_t least_unacked,

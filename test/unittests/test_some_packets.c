@@ -62,6 +62,7 @@ lsquic_stream_tosend_sz (const lsquic_stream_t *stream)
 
 static int make_complex_packet(unsigned char *pkt_buf, int max_buf_len)
 {
+#if 0       /* What is this function testing?  Seems useless. */
     unsigned char *p = pkt_buf;
     unsigned char *const pend  = p + 1500;
     lsquic_stream_t *stream = lsquic_stream_new(12345, NULL, NULL, NULL, 0, 0);
@@ -90,6 +91,8 @@ static int make_complex_packet(unsigned char *pkt_buf, int max_buf_len)
     free(stream);
 
     return p - pkt_buf;
+#endif
+    return 0;
 }
 
 

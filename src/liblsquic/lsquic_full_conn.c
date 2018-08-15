@@ -383,6 +383,7 @@ set_versions (struct full_conn *conn, unsigned versions)
     conn->fc_ver_neg.vn_ver  = highest_bit_set(versions);
     conn->fc_ver_neg.vn_buf  = lsquic_ver2tag(conn->fc_ver_neg.vn_ver);
     conn->fc_conn.cn_version = conn->fc_ver_neg.vn_ver;
+    conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
     LSQ_DEBUG("negotiating version %s",
                             lsquic_ver2str[conn->fc_ver_neg.vn_ver]);
 }
@@ -675,7 +676,6 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
     init_ver_neg(conn, conn->fc_settings->es_versions);
-    conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
@@ -1873,6 +1873,18 @@ parse_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 
 
 static int
+conn_is_stateless_reset (const struct full_conn *conn,
+                                    const struct lsquic_packet_in *packet_in)
+{
+    return packet_in->pi_data_sz > SRST_LENGTH
+        && 0 == conn->fc_conn.cn_esf->esf_verify_reset_token(
+                    conn->fc_conn.cn_enc_session,
+                    packet_in->pi_data + packet_in->pi_data_sz - SRST_LENGTH,
+                    SRST_LENGTH);
+}
+
+
+static int
 process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
     enum received_st st;
@@ -1893,11 +1905,20 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
     if (0 == (packet_in->pi_flags & PI_DECRYPTED) &&
         0 != conn_decrypt_packet(conn, packet_in))
     {
-        LSQ_INFO("could not decrypt packet");
+        if (conn_is_stateless_reset(conn, packet_in))
+        {
+            LSQ_INFO("received public reset packet: aborting connection");
+            conn->fc_flags |= FC_GOT_PRST;
+            return -1;
+        }
+        else
+        {
+            LSQ_INFO("could not decrypt packet");
 #if FULL_CONN_STATS
-        ++conn->fc_stats.n_undec_packets;
+            ++conn->fc_stats.n_undec_packets;
 #endif
-        return 0;
+            return 0;
+        }
     }
 
     st = lsquic_rechist_received(&conn->fc_rechist, packet_in->pi_packno,
@@ -1937,13 +1958,18 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 static int
 process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
+    int is_prst, is_verneg;
+
     recent_packet_hist_new(conn, 0, packet_in->pi_received);
     LSQ_DEBUG("Processing packet %"PRIu64, packet_in->pi_packno);
+
+    is_prst = lsquic_packet_in_is_gquic_prst(packet_in);
+    is_verneg = lsquic_packet_in_is_verneg(packet_in);
+
     /* See flowchart in Section 4.1 of [draft-ietf-quic-transport-00].  We test
      * for the common case first.
      */
-    const unsigned flags = lsquic_packet_in_public_flags(packet_in);
-    if (0 == (flags & (PACKET_PUBLIC_FLAGS_RST|PACKET_PUBLIC_FLAGS_VERSION)))
+    if (0 == is_prst && 0 == is_verneg)
     {
         if (conn->fc_ver_neg.vn_tag)
         {
@@ -1966,7 +1992,7 @@ process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         }
         return process_regular_packet(conn, packet_in);
     }
-    else if (flags & PACKET_PUBLIC_FLAGS_RST)
+    else if (is_prst)
     {
         LSQ_INFO("received public reset packet: aborting connection");
         conn->fc_flags |= FC_GOT_PRST;

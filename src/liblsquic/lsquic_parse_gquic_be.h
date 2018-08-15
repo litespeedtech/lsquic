@@ -8,24 +8,6 @@
  * and that would be a mess.
  */
 
-#if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__NetBSD__)
-#include <sys/endian.h>
-#define bswap_16 bswap16 
-#define bswap_32 bswap32 
-#define bswap_64 bswap64 
-#elif defined(__APPLE__)
-#include <libkern/OSByteOrder.h>
-#define bswap_16 OSSwapInt16
-#define bswap_32 OSSwapInt32
-#define bswap_64 OSSwapInt64
-#elif defined(WIN32)
-#define bswap_16 _byteswap_ushort
-#define bswap_32 _byteswap_ulong
-#define bswap_64 _byteswap_uint64
-#else
-#include <byteswap.h>
-#endif
-
 #define CHECK_SPACE(need, pstart, pend)  \
     do { if ((intptr_t) (need) > ((pend) - (pstart))) { return -1; } } while (0)
 
@@ -57,11 +39,6 @@ gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
 int
 gquic_be_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz, uint64_t conn_id,
                   unsigned version_bitmask);
-
-int
-gquic_be_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_t *conn_id,
-                    const lsquic_ver_tag_t *ver, const unsigned char *nonce,
-                    lsquic_packno_t packno, enum lsquic_packno_bits bits);
 
 int
 gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,

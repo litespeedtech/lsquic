@@ -13,12 +13,12 @@
 #include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_parse.h"
+#include "lsquic_parse_common.h"
 #include "lsquic_mm.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_version.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 
 /* The struct is used to test both generation and parsing of version
@@ -100,7 +100,7 @@ test_parsing_ver_nego (const struct gen_ver_nego_test *gvnt)
     packet_in->pi_data = lsquic_mm_get_1370(&mm);
     packet_in->pi_flags |= PI_OWN_DATA;
     memcpy(packet_in->pi_data, gvnt->gvnt_buf, gvnt->gvnt_len);
-    s = parse_packet_in_begin(packet_in, gvnt->gvnt_len, 0, &ppstate);
+    s = lsquic_parse_packet_in_begin(packet_in, gvnt->gvnt_len, 0, &ppstate);
     assert(s == 0);
 
     for (s = packet_in_ver_first(packet_in, &vi, &ver_tag); s;
@@ -119,32 +119,12 @@ test_parsing_ver_nego (const struct gen_ver_nego_test *gvnt)
 }
 
 
-static void
-run_gvnt (int i)
-{
-    const struct gen_ver_nego_test *const gvnt = &tests[i];
-
-    unsigned char out[0x40];
-    assert(sizeof(out) <= sizeof(gvnt->gvnt_buf));  /* Internal sanity check */
-    int len = pf->pf_gen_ver_nego_pkt(out, gvnt->gvnt_bufsz, gvnt->gvnt_cid,
-                                                    gvnt->gvnt_versions);
-
-    assert(("Packet length is correct", len == gvnt->gvnt_len));
-
-    if (gvnt->gvnt_len > 0)
-    {
-        assert(("Packet contents are correct",
-            0 == memcmp(out, gvnt->gvnt_buf, gvnt->gvnt_len)));
-        test_parsing_ver_nego(gvnt);
-    }
-}
-
-
 int
 main (void)
 {
     unsigned i;
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
-        run_gvnt(i);
+        if (tests[i].gvnt_len > 0)
+            test_parsing_ver_nego(&tests[i]);
     return 0;
 }

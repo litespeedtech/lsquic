@@ -1369,8 +1369,10 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream)
     flags = bits << POBIT_SHIFT;
     if (!(stream->conn_pub->lconn->cn_flags & LSCONN_TCID0))
         flags |= PO_CONN_ID;
+    if (LSQUIC_STREAM_HANDSHAKE == stream->id)
+        flags |= PO_LONGHEAD;
 
-    packet_header_sz = lsquic_po_header_length(flags);
+    packet_header_sz = lsquic_po_header_length(stream->conn_pub->lconn, flags);
     stream_header_sz = stream->conn_pub->lconn->cn_pf
             ->pf_calc_stream_frame_header_sz(stream->id, stream->tosend_off);
 
@@ -1542,6 +1544,9 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
     packet_out = get_packet[hsk](send_ctl, need_at_least, stream);
     if (!packet_out)
         return SWTP_STOP;
+    if (hsk)
+        packet_out->po_header_type = stream->tosend_off == 0
+                                            ? HETY_INITIAL : HETY_HANDSHAKE;
 
     off = packet_out->po_data_sz;
     len = pf->pf_gen_stream_frame(

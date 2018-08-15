@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 11
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -97,23 +97,45 @@ enum lsquic_version
      */
     LSQVER_043,
 
+    /**
+     * Q044.  IETF-like packet headers are used.  Frames are the same as
+     * in Q043.  Server never includes CIDs in short packets.
+     */
+    LSQVER_044,
+
+#if LSQUIC_USE_Q098
+    /**
+     * Q098.  This is a made-up, experimental version used to test version
+     * negotiation.  The choice of 98 is similar to Google's choice of 99
+     * as the "IETF" version.
+     */
+    LSQVER_098,
+#define LSQUIC_EXPERIMENTAL_Q098 (1 << LSQVER_098)
+#else
+#define LSQUIC_EXPERIMENTAL_Q098 0
+#endif
+
     N_LSQVER
 };
 
 /**
- * We currently support versions 35, 39, and 43.
+ * We currently support versions 35, 39, 43, and 44.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
 
-#define LSQUIC_EXPERIMENTAL_VERSIONS 0
+#define LSQUIC_EXPERIMENTAL_VERSIONS (0 \
+                                                | LSQUIC_EXPERIMENTAL_Q098)
 
 #define LSQUIC_DEPRECATED_VERSIONS 0
 
+#define LSQUIC_GQUIC_HEADER_VERSIONS ( \
+                (1 << LSQVER_035) | (1 << LSQVER_039) | (1 << LSQVER_043))
+
 /**
- * List of version in which the server does not include CID in short packets.
+ * List of versions in which the server never includes CID in short packets.
  */
-#define LSQUIC_FORCED_TCID0_VERSIONS 0
+#define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_044)
 
 /**
  * @struct lsquic_stream_if
@@ -329,6 +351,9 @@ struct lsquic_engine_settings {
      * in this case, the engine tracks connections by the
      * (source-addr, dest-addr) tuple, thereby making it necessary to create
      * a socket for each connection.
+     *
+     * This option has no effect in Q044, as the server never includes CIDs
+     * in the short packets.
      *
      * The default is @ref LSQUIC_DF_SUPPORT_TCID0.
      */

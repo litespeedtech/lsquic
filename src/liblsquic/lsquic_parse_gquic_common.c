@@ -17,8 +17,11 @@
 
 #include "lsquic_types.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_out.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_parse.h"
+#include "lsquic_parse_common.h"
+#include "lsquic_version.h"
 #include "lsquic.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PARSE
@@ -35,8 +38,8 @@
  * pf_parse_packet_in_finish() routine.
  */
 int
-parse_packet_in_begin (lsquic_packet_in_t *packet_in, size_t length,
-                            int is_server, struct packin_parse_state *state)
+lsquic_gquic_parse_packet_in_begin (struct lsquic_packet_in *packet_in,
+            size_t length, int is_server, struct packin_parse_state *state)
 {
     int nbytes;
     enum PACKET_PUBLIC_FLAGS public_flags;
@@ -128,6 +131,7 @@ parse_packet_in_begin (lsquic_packet_in_t *packet_in, size_t length,
     packet_in->pi_data_sz      = length;
     packet_in->pi_refcnt       = 0;
     packet_in->pi_received     = 0;
+    packet_in->pi_flags       |= PI_GQUIC;
 
     return 0;
 }
@@ -462,3 +466,36 @@ acki2str (const struct ack_info *acki, size_t *sz)
     *sz = off;
     return buf;
 }
+
+
+size_t
+lsquic_gquic_po_header_sz (enum packet_out_flags flags)
+{
+    return 1                                                /* Type */
+           + (!!(flags & PO_CONN_ID) << 3)                  /* Connection ID */
+           + (!!(flags & PO_VERSION) << 2)                  /* Version */
+           + (!!(flags & PO_NONCE)   << 5)                  /* Nonce */
+           + packno_bits2len((flags >> POBIT_SHIFT) & 0x3)  /* Packet number */
+           ;
+}
+
+
+size_t
+lsquic_gquic_packout_size (const struct lsquic_conn *conn,
+                                const struct lsquic_packet_out *packet_out)
+{
+    return lsquic_gquic_po_header_sz(packet_out->po_flags)
+         + packet_out->po_data_sz
+         + QUIC_PACKET_HASH_SZ
+         ;
+}
+
+
+size_t
+lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
+                                                enum packet_out_flags flags)
+{
+    return lsquic_gquic_po_header_sz(flags);
+}
+
+

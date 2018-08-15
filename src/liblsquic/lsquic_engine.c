@@ -27,6 +27,7 @@
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_alarmset.h"
+#include "lsquic_parse_common.h"
 #include "lsquic_parse.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
@@ -261,6 +262,18 @@ static const struct lsquic_packout_mem_if stock_pmi =
 };
 
 
+static int
+hash_conns_by_addr (const struct lsquic_engine *engine)
+{
+    if (engine->pub.enp_settings.es_versions & LSQUIC_FORCED_TCID0_VERSIONS)
+        return 1;
+    if ((engine->pub.enp_settings.es_versions & LSQUIC_GQUIC_HEADER_VERSIONS)
+                                && engine->pub.enp_settings.es_support_tcid0)
+        return 1;
+    return 0;
+}
+
+
 lsquic_engine_t *
 lsquic_engine_new (unsigned flags,
                    const struct lsquic_engine_api *api)
@@ -295,7 +308,7 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_settings        = *api->ea_settings;
     else
         lsquic_engine_init_settings(&engine->pub.enp_settings, flags);
-    tag_buf_len = gen_ver_tags(engine->pub.enp_ver_tags_buf,
+    tag_buf_len = lsquic_gen_ver_tags(engine->pub.enp_ver_tags_buf,
                                     sizeof(engine->pub.enp_ver_tags_buf),
                                     engine->pub.enp_settings.es_versions);
     if (tag_buf_len <= 0)
@@ -324,8 +337,7 @@ lsquic_engine_new (unsigned flags,
     }
     engine->pub.enp_engine = engine;
     conn_hash_init(&engine->conns_hash,
-        !(flags & ENG_SERVER) && engine->pub.enp_settings.es_support_tcid0 ?
-        CHF_USE_ADDR : 0);
+                        hash_conns_by_addr(engine) ?  CHF_USE_ADDR : 0);
     engine->attq = attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
@@ -498,7 +510,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 {
     lsquic_conn_t *conn;
 
-    if (lsquic_packet_in_is_prst(packet_in)
+    if (lsquic_packet_in_is_gquic_prst(packet_in)
                                 && !engine->pub.enp_settings.es_honor_prst)
     {
         lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
@@ -758,44 +770,34 @@ lsquic_engine_process_conns (lsquic_engine_t *engine)
 }
 
 
-static int
-generate_header (const lsquic_packet_out_t *packet_out,
-                 const struct parse_funcs *pf, lsquic_cid_t cid,
-                 unsigned char *buf, size_t bufsz)
-{
-    return pf->pf_gen_reg_pkt_header(buf, bufsz,
-        packet_out->po_flags & PO_CONN_ID ? &cid                    : NULL,
-        packet_out->po_flags & PO_VERSION ? &packet_out->po_ver_tag : NULL,
-        packet_out->po_flags & PO_NONCE   ? packet_out->po_nonce    : NULL,
-        packet_out->po_packno, lsquic_packet_out_packno_bits(packet_out));
-}
-
-
 static ssize_t
 really_encrypt_packet (const lsquic_conn_t *conn,
-                       const lsquic_packet_out_t *packet_out,
+                       struct lsquic_packet_out *packet_out,
                        unsigned char *buf, size_t bufsz)
 {
-    int enc, header_sz, is_hello_packet;
+    int header_sz, is_hello_packet;
+    enum enc_level enc_level;
     size_t packet_sz;
     unsigned char header_buf[QUIC_MAX_PUBHDR_SZ];
 
-    header_sz = generate_header(packet_out, conn->cn_pf, conn->cn_cid,
+    header_sz = conn->cn_pf->pf_gen_reg_pkt_header(conn, packet_out,
                                             header_buf, sizeof(header_buf));
     if (header_sz < 0)
         return -1;
 
     is_hello_packet = !!(packet_out->po_flags & PO_HELLO);
-    enc = conn->cn_esf->esf_encrypt(conn->cn_enc_session, conn->cn_version, 0,
+    enc_level = conn->cn_esf->esf_encrypt(conn->cn_enc_session,
+                conn->cn_version, 0,
                 packet_out->po_packno, header_buf, header_sz,
                 packet_out->po_data, packet_out->po_data_sz,
                 buf, bufsz, &packet_sz, is_hello_packet);
-    if (0 == enc)
+    if ((int) enc_level >= 0)
     {
-        LSQ_DEBUG("encrypted packet %"PRIu64"; plaintext is %u bytes, "
+        lsquic_packet_out_set_enc_level(packet_out, enc_level);
+        LSQ_DEBUG("encrypted packet %"PRIu64"; plaintext is %zu bytes, "
             "ciphertext is %zd bytes",
             packet_out->po_packno,
-            lsquic_po_header_length(packet_out->po_flags) +
+            conn->cn_pf->pf_packout_header_size(conn, packet_out->po_flags) +
                                                 packet_out->po_data_sz,
             packet_sz);
         return packet_sz;
@@ -814,7 +816,7 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
     unsigned sent_sz;
     unsigned char *buf;
 
-    bufsz = lsquic_po_header_length(packet_out->po_flags) +
+    bufsz = conn->cn_pf->pf_packout_header_size(conn, packet_out->po_flags) +
                                 packet_out->po_data_sz + QUIC_PACKET_HASH_SZ;
     buf = engine->pub.enp_pmi->pmi_allocate(engine->pub.enp_pmi_ctx, bufsz);
     if (!buf)
@@ -1281,6 +1283,8 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
 {
     struct packin_parse_state ppstate;
     lsquic_packet_in_t *packet_in;
+    int (*parse_packet_in_begin) (struct lsquic_packet_in *, size_t length,
+                                int is_server, struct packin_parse_state *);
 
     if (packet_in_size > QUIC_MAX_PACKET_SZ)
     {
@@ -1289,6 +1293,20 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         errno = E2BIG;
         return -1;
     }
+
+    if (conn_hash_using_addr(&engine->conns_hash))
+    {
+        const struct lsquic_conn *conn;
+        conn = conn_hash_find_by_addr(&engine->conns_hash, sa_local);
+        if (!conn)
+            return -1;
+        if ((1 << conn->cn_version) & LSQUIC_GQUIC_HEADER_VERSIONS)
+            parse_packet_in_begin = lsquic_gquic_parse_packet_in_begin;
+        else
+            parse_packet_in_begin = lsquic_iquic_parse_packet_in_begin;
+    }
+    else
+        parse_packet_in_begin = lsquic_parse_packet_in_begin;
 
     packet_in = lsquic_mm_get_packet_in(&engine->pub.enp_mm);
     if (!packet_in)

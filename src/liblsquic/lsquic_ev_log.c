@@ -19,6 +19,8 @@
 #include "lsquic_parse.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
+#include "lsquic_str.h"
+#include "lsquic_handshake.h"
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_EVENT
@@ -39,7 +41,17 @@
 void
 lsquic_ev_log_packet_in (lsquic_cid_t cid, const lsquic_packet_in_t *packet_in)
 {
-    LCID("packet in: %"PRIu64, packet_in->pi_packno);
+    switch (packet_in->pi_flags & (
+                                                PI_GQUIC))
+    {
+    case PI_GQUIC:
+        LCID("packet in: %"PRIu64, packet_in->pi_packno);
+        break;
+    default:
+        LCID("packet in: %"PRIu64", type: %s",
+            packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type]);
+        break;
+    }
 }
 
 
@@ -153,9 +165,21 @@ lsquic_ev_log_packet_sent (lsquic_cid_t cid,
                                                     packet_out->po_data_sz);
     else if (lsquic_packet_out_pubres(packet_out))
         LCID("sent public reset packet, size %hu", packet_out->po_data_sz);
-    else
+    else if (packet_out->po_flags & PO_GQUIC)
         LCID("sent packet %"PRIu64", size %hu, frame types: %s",
             packet_out->po_packno, packet_out->po_enc_data_sz,
+                /* Frame types is a list of different frames types contained
+                 * in the packet, no more.  Count and order of frames is not
+                 * printed.
+                 */
+                lsquic_frame_types_to_str(frames, sizeof(frames),
+                                                packet_out->po_frame_types));
+    else
+        LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
+            "types: %s",
+            packet_out->po_packno, lsquic_hety2str[packet_out->po_header_type],
+            lsquic_enclev2str[ lsquic_packet_out_enc_level(packet_out) ],
+            packet_out->po_enc_data_sz,
                 /* Frame types is a list of different frames types contained
                  * in the packet, no more.  Count and order of frames is not
                  * printed.

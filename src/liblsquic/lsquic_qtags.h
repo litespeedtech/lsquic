@@ -56,4 +56,7 @@
  */
 #define QTAG_NSTP TAG('N', 'S', 'T', 'P')
 
+/* Stateless reset token.  Used in Q044 and later. */
+#define QTAG_SRST TAG('S', 'R', 'S', 'T')
+
 #endif

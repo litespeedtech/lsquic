@@ -13,6 +13,7 @@ typedef struct lsquic_enc_session lsquic_enc_session_t;
 #define DNONC_LENGTH 32
 #define aes128_key_len 16
 #define aes128_iv_len 4
+#define SRST_LENGTH 16
 
 enum handshake_error            /* TODO: rename this enum */
 {
@@ -32,6 +33,8 @@ enum enc_level
     ENC_LEV_INIT,
     ENC_LEV_FORW,
 };
+
+extern const char *const lsquic_enclev2str[];
 
 /* client side need to store 0rtt info per STK */
 typedef struct lsquic_session_cache_info_st
@@ -86,8 +89,8 @@ struct enc_session_funcs
     int (*esf_is_hsk_done)(lsquic_enc_session_t *enc_session);
 
     /* Encrypt buffer */
-    int (*esf_encrypt)(lsquic_enc_session_t *enc_session, enum lsquic_version,
-               uint8_t path_id, uint64_t pack_num,
+    enum enc_level (*esf_encrypt)(lsquic_enc_session_t *enc_session,
+               enum lsquic_version, uint8_t path_id, uint64_t pack_num,
                const unsigned char *header, size_t header_len,
                const unsigned char *data, size_t data_len,
                unsigned char *buf_out, size_t max_out_len, size_t *out_len,
@@ -132,6 +135,10 @@ struct enc_session_funcs
 
     size_t
     (*esf_mem_used)(lsquic_enc_session_t *);
+
+    int
+    (*esf_verify_reset_token) (lsquic_enc_session_t *, const unsigned char *,
+                                                                    size_t);
 };
 
 extern

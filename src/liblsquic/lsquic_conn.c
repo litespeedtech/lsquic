@@ -126,8 +126,8 @@ lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
                         | (enc_level << PIBIT_ENC_LEV_SHIFT);
     packet_in->pi_header_sz = header_len;
     packet_in->pi_data_sz   = out_len + header_len;
-    EV_LOG_CONN_EVENT(lconn->cn_cid, "decrypted packet %"PRIu64,
-                                                    packet_in->pi_packno);
+    EV_LOG_CONN_EVENT(lconn->cn_cid, "decrypted packet %"PRIu64" crypto: %s",
+                        packet_in->pi_packno, lsquic_enclev2str[ enc_level ]);
     return 0;
 }
 

@@ -88,3 +88,14 @@ restore_packno (lsquic_packno_t cur_packno,
 
     return candidates[min];
 }
+
+
+const char *const lsquic_hety2str[] =
+{
+    [HETY_NOT_SET]      = "Short",
+    [HETY_VERNEG]       = "Version Negotiation",
+    [HETY_INITIAL]      = "Initial",
+    [HETY_RETRY]        = "Retry",
+    [HETY_HANDSHAKE]    = "Handshake",
+    [HETY_0RTT]         = "0-RTT",
+};
