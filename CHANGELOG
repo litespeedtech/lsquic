@@ -1,3 +1,8 @@
+2018-08-16
+
+    - 1.11.1
+    - [BUGFIX] Fix STOP_WAITING frame processing in the new Q044 code
+
 2018-08-15
 
     - 1.11.0

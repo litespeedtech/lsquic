@@ -83,7 +83,8 @@ typedef struct lsquic_packet_in
 #define lsquic_packet_in_packno_bits(p) \
     (((p)->pi_flags & PI_GQUIC) ? \
                     ((lsquic_packet_in_public_flags(p) >> 4) & 3) : \
-                    ((p)->pi_data[0] & 3))
+                    ((p)->pi_header_type == HETY_NOT_SET ? \
+                    ((p)->pi_data[0] & 3) : PACKNO_LEN_4))
 
 #define lsquic_packet_in_upref(p) (++(p)->pi_refcnt)
 
