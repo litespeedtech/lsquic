@@ -335,6 +335,8 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_pmi      = &stock_pmi;
         engine->pub.enp_pmi_ctx  = NULL;
     }
+    engine->pub.enp_verify_cert  = api->ea_verify_cert;
+    engine->pub.enp_verify_ctx   = api->ea_verify_ctx;
     engine->pub.enp_engine = engine;
     conn_hash_init(&engine->conns_hash,
                         hash_conns_by_addr(engine) ?  CHF_USE_ADDR : 0);

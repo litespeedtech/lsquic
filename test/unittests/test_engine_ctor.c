@@ -20,6 +20,7 @@ main (void)
         NULL, NULL,     /* stream if and ctx */
         (void *) (uintptr_t) 1, NULL,     /* packets out and ctx */
         NULL, NULL,     /* packout mem interface and ctx */
+        NULL, NULL,     /* verify server cert */
     };
 
     engine = lsquic_engine_new(flags, &api);

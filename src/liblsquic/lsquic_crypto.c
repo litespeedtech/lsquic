@@ -609,14 +609,6 @@ int gen_prof(const uint8_t *chlo_data, size_t chlo_data_len,
 }
 
 
-int verify_cert(const char *buf, int len)
-{
-    //X509_verify_cert();
-    
-    return 0;
-}
-
-
 int verify_prof(const uint8_t *chlo_data, size_t chlo_data_len, lsquic_str_t * scfg,
                 const EVP_PKEY *pub_key, const uint8_t *buf, size_t len)
 {

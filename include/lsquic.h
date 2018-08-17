@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 11
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_MINOR_VERSION 12
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -496,6 +496,8 @@ struct lsquic_packout_mem_if
     void    (*pmi_release)  (void *pmi_ctx, void *obj);
 };
 
+struct stack_st_X509;
+
 /* TODO: describe this important data structure */
 typedef struct lsquic_engine_api
 {
@@ -509,6 +511,20 @@ typedef struct lsquic_engine_api
      */
     const struct lsquic_packout_mem_if  *ea_pmi;
     void                                *ea_pmi_ctx;
+    /**
+     * Function to verify server certificate.  The chain contains at least
+     * one element.  The first element in the chain is the server
+     * certificate.  The chain belongs to the library.  If you want to
+     * retain it, call sk_X509_up_ref().
+     *
+     * 0 is returned on success, -1 on error.
+     *
+     * If the function pointer is not set, no verification is performed
+     * (the connection is allowed to proceed).
+     */
+    int                                (*ea_verify_cert)(void *verify_ctx,
+                                                struct stack_st_X509 *chain);
+    void                                *ea_verify_ctx;
 } lsquic_engine_api_t;
 
 /**
@@ -684,6 +700,18 @@ int lsquic_conn_is_push_enabled(lsquic_conn_t *c);
 int lsquic_stream_shutdown(lsquic_stream_t *s, int how);
 
 int lsquic_stream_close(lsquic_stream_t *s);
+
+/**
+ * Get certificate chain returned by the server.  This can be used for
+ * server certificate verifiction.
+ *
+ * If server certificate cannot be verified, the connection can be closed
+ * using lsquic_conn_cert_verification_failed().
+ *
+ * The caller releases the stack using sk_X509_free().
+ */
+struct stack_st_X509 *
+lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
 
 /** Returns ID of the stream */
 uint32_t

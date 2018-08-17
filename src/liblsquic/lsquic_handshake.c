@@ -1108,15 +1108,17 @@ static int handle_chlo_reply_verify_prof(lsquic_enc_session_t *enc_session,
                                     in + lsquic_str_len(&enc_session->hs_ctx.crt);
     EVP_PKEY *pub_key;
     int ret;
-    X509 *cert;
+    size_t i;
+    X509 *cert, *server_cert;
+    STACK_OF(X509) *chain = NULL;
     ret = decompress_certs(in, in_end,cached_certs, cached_certs_count,
                            out_certs, out_certs_count);
     if (ret)
         return ret;
 
-    cert = bio_to_crt((const char *)lsquic_str_cstr(out_certs[0]),
+    server_cert = bio_to_crt((const char *)lsquic_str_cstr(out_certs[0]),
                       lsquic_str_len(out_certs[0]), 0);
-    pub_key = X509_get_pubkey(cert);
+    pub_key = X509_get_pubkey(server_cert);
     ret = verify_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
                       (size_t)lsquic_str_len(&enc_session->chlo),
                       &enc_session->info->scfg,
@@ -1124,7 +1126,36 @@ static int handle_chlo_reply_verify_prof(lsquic_enc_session_t *enc_session,
                       (const uint8_t *)lsquic_str_cstr(&enc_session->hs_ctx.prof),
                       lsquic_str_len(&enc_session->hs_ctx.prof));
     EVP_PKEY_free(pub_key);
-    X509_free(cert);
+    if (ret != 0)
+        goto cleanup;
+
+    if (enc_session->enpub->enp_verify_cert)
+    {
+        chain = sk_X509_new_null();
+        sk_X509_push(chain, server_cert);
+        for (i = 1; i < *out_certs_count; ++i)
+        {
+            cert = bio_to_crt((const char *)lsquic_str_cstr(out_certs[i]),
+                                    lsquic_str_len(out_certs[i]), 0);
+            if (cert)
+                sk_X509_push(chain, cert);
+            else
+            {
+                LSQ_WARN("cannot push certificate to stack");
+                ret = -1;
+                goto cleanup;
+            }
+        }
+        ret = enc_session->enpub->enp_verify_cert(
+                                enc_session->enpub->enp_verify_ctx, chain);
+        LSQ_INFO("server certificate verification %ssuccessful",
+                                                    ret == 0 ? "" : "not ");
+    }
+
+  cleanup:
+    if (chain)
+        sk_X509_free(chain);
+    X509_free(server_cert);
     return ret;
 }
 
@@ -1837,6 +1868,41 @@ lsquic_enc_session_verify_reset_token (lsquic_enc_session_t *enc_session,
 }
 
 
+static STACK_OF(X509) *
+lsquic_enc_session_get_server_cert_chain (lsquic_enc_session_t *enc_session)
+{
+    const struct cert_hash_item_st *item;
+    STACK_OF(X509) *chain;
+    X509 *cert;
+    int i;
+
+    item = c_find_certs(&enc_session->hs_ctx.sni);
+    if (!item)
+    {
+        LSQ_WARN("could not find certificates for `%.*s'",
+                            (int) lsquic_str_len(&enc_session->hs_ctx.sni),
+                            lsquic_str_cstr(&enc_session->hs_ctx.sni));
+        return NULL;
+    }
+
+    chain = sk_X509_new_null();
+    for (i = 0; i < item->count; ++i)
+    {
+        cert = bio_to_crt(lsquic_str_cstr(&item->crts[i]),
+                                lsquic_str_len(&item->crts[i]), 0);
+        if (cert)
+            sk_X509_push(chain, cert);
+        else
+        {
+            sk_X509_free(chain);
+            return NULL;
+        }
+    }
+
+    return chain;
+}
+
+
 #ifdef NDEBUG
 const
 #endif
@@ -1859,6 +1925,7 @@ struct enc_session_funcs lsquic_enc_session_gquic_1 =
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
     .esf_mem_used = lsquic_enc_session_mem_used,
     .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
+    .esf_get_server_cert_chain = lsquic_enc_session_get_server_cert_chain,
 };
 
 

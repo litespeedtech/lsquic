@@ -2677,7 +2677,7 @@ immediate_close (struct full_conn *conn)
         return TICK_CLOSE;
     }
 
-    assert(conn->fc_flags & (FC_ERROR|FC_ABORTED|FC_TIMED_OUT));
+    assert(conn->fc_flags & (FC_ERROR|FC_ABORTED|FC_TIMED_OUT|FC_HSK_FAILED));
     if (conn->fc_flags & FC_ERROR)
     {
         error_code = 0x01; /* QUIC_INTERNAL_ERROR */
@@ -2692,6 +2692,11 @@ immediate_close (struct full_conn *conn)
     {
         error_code = 0x19; /* QUIC_NETWORK_IDLE_TIMEOUT */
         error_reason = "connection timed out";
+    }
+    else if (conn->fc_flags & FC_HSK_FAILED)
+    {
+        error_code = 0x2A; /* QUIC_PROOF_INVALID */
+        error_reason = "handshake failed";
     }
     else
     {

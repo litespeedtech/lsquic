@@ -9,10 +9,14 @@
 
 struct lsquic_conn;
 struct lsquic_engine;
+struct stack_st_X509;
 
 struct lsquic_engine_public {
     struct lsquic_mm                enp_mm;
     struct lsquic_engine_settings   enp_settings;
+    int                           (*enp_verify_cert)(void *verify_ctx,
+                                            struct stack_st_X509 *chain);
+    void                           *enp_verify_ctx;
     const struct lsquic_packout_mem_if
                                    *enp_pmi;
     void                           *enp_pmi_ctx;

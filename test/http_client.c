@@ -25,9 +25,17 @@
 #ifndef WIN32
 #include <unistd.h>
 #include <sys/types.h>
+#include <dirent.h>
 #endif
 #include <sys/stat.h>
 #include <fcntl.h>
+
+
+#ifndef WIN32
+#include <openssl/bio.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#endif
 
 #include "lsquic.h"
 #include "test_common.h"
@@ -160,6 +168,7 @@ struct lsquic_stream_ctx {
     const char          *path;
     enum {
         HEADERS_SENT    = (1 << 0),
+        CHAIN_DISPLAYED = (1 << 1),
     }                    sh_flags;
     unsigned             count;
     struct lsquic_reader reader;
@@ -274,10 +283,45 @@ send_headers (lsquic_stream_ctx_t *st_h)
 }
 
 
+/* This is here to exercise lsquic_conn_get_server_cert_chain() API */
+static void
+display_cert_chain (lsquic_conn_t *conn)
+{
+    STACK_OF(X509) *chain;
+    X509_NAME *name;
+    X509 *cert;
+    unsigned i;
+    char buf[100];
+
+    chain = lsquic_conn_get_server_cert_chain(conn);
+    if (!chain)
+    {
+        LSQ_WARN("could not get server certificate chain");
+        return;
+    }
+
+    for (i = 0; i < sk_X509_num(chain); ++i)
+    {
+        cert = sk_X509_value(chain, i);
+        name = X509_get_subject_name(cert);
+        LSQ_INFO("cert #%u: name: %s", i,
+                            X509_NAME_oneline(name, buf, sizeof(buf)));
+    }
+
+    sk_X509_free(chain);
+}
+
+
 static void
 http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     ssize_t nw;
+
+    if (!(st_h->sh_flags & CHAIN_DISPLAYED))
+    {
+        display_cert_chain(lsquic_stream_conn(stream));
+        st_h->sh_flags |= CHAIN_DISPLAYED;
+    }
 
     if (st_h->sh_flags & HEADERS_SENT)
     {
@@ -433,8 +477,114 @@ usage (const char *prog)
 "   -I          Abort on incomplete reponse from server\n"
 "   -4          Prefer IPv4 when resolving hostname\n"
 "   -6          Prefer IPv6 when resolving hostname\n"
+#ifndef WIN32
+"   -C DIR      Certificate store.  If specified, server certificate will\n"
+#endif
+"                 be verified.\n"
             , prog);
 }
+
+
+#ifndef WIN32
+static X509_STORE *store;
+
+/* Windows does not have regex... */
+static int
+ends_in_pem (const char *s)
+{
+    int len;
+
+    len = strlen(s);
+
+    return len >= 4
+        && 0 == strcasecmp(s + len - 4, ".pem");
+}
+
+
+static X509 *
+file2cert (const char *path)
+{
+    X509 *cert = NULL;
+    BIO *in;
+
+    in = BIO_new(BIO_s_file());
+    if (!in)
+        goto end;
+
+    if (BIO_read_filename(in, path) <= 0)
+        goto end;
+
+    cert = PEM_read_bio_X509_AUX(in, NULL, NULL, NULL);
+
+  end:
+    BIO_free(in);
+    return cert;
+}
+
+
+static int
+init_x509_cert_store (const char *path)
+{
+    struct dirent *ent;
+    X509 *cert;
+    DIR *dir;
+    char file_path[NAME_MAX];
+
+    dir = opendir(path);
+    if (!dir)
+    {
+        LSQ_WARN("Cannot open directory `%s': %s", path, strerror(errno));
+        return -1;
+    }
+
+    store = X509_STORE_new();
+
+    while ((ent = readdir(dir)))
+    {
+        if (ends_in_pem(ent->d_name))
+        {
+            snprintf(file_path, sizeof(file_path), "%s/%s", path, ent->d_name);
+            cert = file2cert(file_path);
+            if (cert)
+            {
+                if (1 != X509_STORE_add_cert(store, cert))
+                    LSQ_WARN("could not add cert from %s", file_path);
+            }
+            else
+                LSQ_WARN("could not read cert from %s", file_path);
+        }
+    }
+    (void) closedir(dir);
+    return 0;
+}
+
+
+static int
+verify_server_cert (void *ctx, STACK_OF(X509) *chain)
+{
+    X509_STORE_CTX store_ctx;
+    X509 *cert;
+    int ver;
+
+    if (!store)
+    {
+        if (0 != init_x509_cert_store(ctx))
+            return -1;
+    }
+
+    cert = sk_X509_shift(chain);
+    X509_STORE_CTX_init(&store_ctx, store, cert, chain);
+
+    ver = X509_verify_cert(&store_ctx);
+
+    X509_STORE_CTX_cleanup(&store_ctx);
+
+    if (ver != 1)
+        LSQ_WARN("could not verify server certificate");
+
+    return ver == 1 ? 0 : -1;
+}
+#endif
 
 
 int
@@ -464,7 +614,11 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46r:R:IKu:EP:M:n:H:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46r:R:IKu:EP:M:n:H:p:h"
+#ifndef WIN32
+                                                                          "C:"
+#endif
+                                                                            )))
     {
         switch (opt) {
         case '4':
@@ -525,6 +679,12 @@ main (int argc, char **argv)
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
             exit(0);
+#ifndef WIN32
+        case 'C':
+            prog.prog_api.ea_verify_cert = verify_server_cert;
+            prog.prog_api.ea_verify_ctx = optarg;
+            break;
+#endif
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
