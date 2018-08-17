@@ -142,3 +142,11 @@ lsquic_conn_quic_version (const lsquic_conn_t *lconn)
 }
 
 
+struct stack_st_X509 *
+lsquic_conn_get_server_cert_chain (struct lsquic_conn *lconn)
+{
+    if (lconn->cn_enc_session)
+        return lconn->cn_esf->esf_get_server_cert_chain(lconn->cn_enc_session);
+    else
+        return NULL;
+}
