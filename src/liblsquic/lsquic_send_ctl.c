@@ -1270,7 +1270,8 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     assert(packet_out->po_regen_sz < packet_out->po_data_sz);
     if (packet_out->po_regen_sz)
     {
-        assert(!(packet_out->po_flags & PO_SCHED));
+        if (packet_out->po_flags & PO_SCHED)
+            ctl->sc_bytes_scheduled -= packet_out->po_regen_sz;
         lsquic_packet_out_chop_regen(packet_out);
     }
     LSQ_DEBUG("Packet %"PRIu64" repackaged for resending as packet %"PRIu64,

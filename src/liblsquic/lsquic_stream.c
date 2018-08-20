@@ -1386,7 +1386,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream)
     if ((stream->stream_flags & (STREAM_USE_HEADERS|STREAM_HEADERS_SENT))   \
                                                    == STREAM_USE_HEADERS)   \
     {                                                                       \
-        LSQ_WARN("Attempt to write to stream before sending HTTP headers"); \
+        LSQ_INFO("Attempt to write to stream before sending HTTP headers"); \
         errno = EILSEQ;                                                     \
         return -1;                                                          \
     }                                                                       \
@@ -1398,7 +1398,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream)
     }                                                                       \
     if (stream->stream_flags & (STREAM_U_WRITE_DONE|STREAM_FIN_SENT))       \
     {                                                                       \
-        LSQ_WARN("Attempt to write to stream after it was closed for "      \
+        LSQ_INFO("Attempt to write to stream after it was closed for "      \
                                                                 "writing"); \
         errno = EBADF;                                                      \
         return -1;                                                          \
@@ -1847,7 +1847,7 @@ lsquic_stream_send_headers (lsquic_stream_t *stream,
     }
     else
     {
-        LSQ_WARN("cannot send headers for stream %u in this state", stream->id);
+        LSQ_INFO("cannot send headers for stream %u in this state", stream->id);
         errno = EBADMSG;
         return -1;
     }

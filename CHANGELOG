@@ -1,3 +1,11 @@
+2018-08-20
+
+    - 1.12.2
+    - [BUGFIX] Update count of scheduled bytes when adjusting size of
+      an already-scheduled packet.
+    - Emit info instead of warning messages when stream is used in
+      unexpected ways.
+
 2018-08-17
 
     - 1.12.0
