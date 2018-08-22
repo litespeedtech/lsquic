@@ -221,6 +221,10 @@ add_executable(test_cubic test_cubic.c)
 target_link_libraries(test_cubic lsquic pthread libssl.a libcrypto.a m ${LIBS})
 add_test(cubic test_cubic)
 
+add_executable(test_di_nocopy test_di_nocopy.c)
+target_link_libraries(test_di_nocopy lsquic pthread libssl.a libcrypto.a m ${LIBS})
+add_test(di_nocopy test_di_nocopy)
+
 add_executable(test_dec test_dec.c)
 target_link_libraries(test_dec libssl.a libcrypto.a z m pthread ${LIBS})
 
@@ -436,6 +440,10 @@ add_test(buf test_buf)
 add_executable(test_cubic test_cubic.c ../../wincompat/getopt.c ../../wincompat/getopt1.c)
 target_link_libraries(test_cubic lsquic ${LIBS_LIST})
 add_test(cubic test_cubic)
+
+add_executable(test_di_nocopy test_di_nocopy.c)
+target_link_libraries(test_di_nocopy lsquic pthread libssl.a libcrypto.a m ${LIBS})
+add_test(di_nocopy test_di_nocopy)
 
 add_executable(test_dec test_dec.c ../../wincompat/getopt.c ../../wincompat/getopt1.c)
 target_link_libraries(test_dec ${LIBS_LIST})

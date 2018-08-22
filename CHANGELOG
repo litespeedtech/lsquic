@@ -1,3 +1,8 @@
+2018-08-22
+
+    - 1.12.3
+    - [BUGFIX] Fix duplicate STREAM frame detection
+
 2018-08-20
 
     - 1.12.2

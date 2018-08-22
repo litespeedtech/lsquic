@@ -196,6 +196,11 @@ frame_list_is_sane (const struct nocopy_data_in *ncdi)
 
 #define CASE(letter) ((int) (letter) << 8)
 
+/* Not all errors are picked up by this function, as it is expensive (and
+ * potentially error-prone) to check for all possible error conditions.
+ * It an error be misclassified as an overlap or dup, in the worst case
+ * we end up with an application error instead of protocol violation.
+ */
 static int
 insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
                                     uint64_t read_offset, unsigned *p_n_frames)
@@ -217,6 +222,13 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
             return INS_FRAME_ERR                                | CASE('C');
         if (DF_END(new_frame) > ncdi->ncdi_fin_off)
             return INS_FRAME_ERR                                | CASE('D');
+        if (read_offset == DF_END(new_frame))
+            return INS_FRAME_DUP                                | CASE('M');
+    }
+    else
+    {
+        if (read_offset == DF_END(new_frame) && !DF_FIN(new_frame))
+            return INS_FRAME_DUP                                | CASE('L');
     }
 
     /* Find position in the list, going backwards.  We go backwards because
@@ -401,9 +413,17 @@ nocopy_di_get_frame (struct data_in *data_in, uint64_t read_offset)
     struct stream_frame *frame = TAILQ_FIRST(&ncdi->ncdi_frames_in);
     if (frame && frame->data_frame.df_offset +
                                 frame->data_frame.df_read_off == read_offset)
+    {
+        LSQ_DEBUG("get_frame: frame (off: %"PRIu64", size: %u, fin: %d), at "
+            "read offset %"PRIu64, DF_OFF(frame), DF_SIZE(frame), DF_FIN(frame),
+            read_offset);
         return &frame->data_frame;
+    }
     else
+    {
+        LSQ_DEBUG("get_frame: no frame at read offset %"PRIu64, read_offset);
         return NULL;
+    }
 }
 
 
@@ -424,6 +444,8 @@ nocopy_di_frame_done (struct data_in *data_in, struct data_frame *data_frame)
         ncdi->ncdi_flags |= NCDI_FIN_REACHED;
         LSQ_DEBUG("FIN has been reached at offset %"PRIu64, DF_END(frame));
     }
+    LSQ_DEBUG("frame (off: %"PRIu64", size: %u, fin: %d) done",
+                                DF_OFF(frame), DF_SIZE(frame), DF_FIN(frame));
     lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, frame->packet_in);
     lsquic_malo_put(frame);
 }

@@ -20,7 +20,6 @@
 #include "lsquic_version.h"
 
 
-
 /* The struct is used to test both generation and parsing of version
  * negotiation packet.
  */
@@ -65,7 +64,6 @@ static const struct gen_ver_nego_test tests[] = {
         .gvnt_len       = -1,       /* Invalid version specified in the bitmask */
     },
 
-
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
         .gvnt_versions  = (1 << LSQVER_035) | (1 << LSQVER_039) | (1 << LSQVER_043),
@@ -80,6 +78,21 @@ static const struct gen_ver_nego_test tests[] = {
             'Q', '0', '4', '3',
         },
     },
+
+    {   .gvnt_lineno    = __LINE__,
+        .gvnt_cid       = 0x0102030405060708UL,
+        .gvnt_versions  = (1 << LSQVER_044),
+        .gvnt_bufsz     = 18,
+        .gvnt_len       = 18,
+        .gvnt_buf       = {
+            0x80,
+            0x00, 0x00, 0x00, 0x00,     /* Version negotiation indicator */
+            0x05,                       /* SCIL */
+            0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+            'Q', '0', '4', '4',
+        },
+    },
+
 };
 
 
