@@ -306,6 +306,7 @@ display_cert_chain (lsquic_conn_t *conn)
         name = X509_get_subject_name(cert);
         LSQ_INFO("cert #%u: name: %s", i,
                             X509_NAME_oneline(name, buf, sizeof(buf)));
+        X509_free(cert);
     }
 
     sk_X509_free(chain);
@@ -711,6 +712,12 @@ main (int argc, char **argv)
     prog_cleanup(&prog);
     if (promise_fd >= 0)
         (void) close(promise_fd);
+
+    while ((pe = TAILQ_FIRST(&client_ctx.hcc_path_elems)))
+    {
+        TAILQ_REMOVE(&client_ctx.hcc_path_elems, pe, next_pe);
+        free(pe);
+    }
 
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

@@ -281,8 +281,8 @@ run_di_nocopy_test (const struct nocopy_test *test)
     {
         data_frame = di->di_if->di_get_frame(di, nread);
         assert(data_frame);  /* Self-check */
-        n_to_read = test->read_until - nread > data_frame->df_size - data_frame->df_read_off
-                            ? data_frame->df_size - data_frame->df_read_off : test->read_until - nread;
+        n_to_read = test->read_until - nread > (unsigned) data_frame->df_size - data_frame->df_read_off
+                            ? (unsigned) data_frame->df_size - data_frame->df_read_off : test->read_until - nread;
         data_frame->df_read_off += n_to_read;
         nread += n_to_read;
         if (data_frame->df_read_off == data_frame->df_size)

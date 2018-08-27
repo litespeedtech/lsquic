@@ -574,6 +574,7 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
 
     assert(0 == lsquic_mh_count(&engine->conns_out));
     assert(0 == lsquic_mh_count(&engine->conns_tickable));
+    lsquic_mm_cleanup(&engine->pub.enp_mm);
     free(engine->conns_tickable.mh_elems);
     free(engine);
 }

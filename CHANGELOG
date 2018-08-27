@@ -1,3 +1,10 @@
+2018-08-27
+
+    - 1.12.4
+    - Fix memory leak when engine is destroyed
+    - Fix memory leak in http_client
+    - Fix gcc warning in unit tests
+
 2018-08-22
 
     - 1.12.3
