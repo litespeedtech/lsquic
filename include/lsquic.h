@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 12
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_MINOR_VERSION 13
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -498,6 +498,72 @@ struct lsquic_packout_mem_if
 
 struct stack_st_X509;
 
+/**
+ * When headers are processed, various errors may occur.  They are listed
+ * in this enum.
+ */
+enum lsquic_header_status
+{
+    LSQUIC_HDR_OK,
+    /** Duplicate pseudo-header */
+    LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR,
+    /** Not all request pseudo-headers are present */
+    LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR,
+    /** Unnecessary request pseudo-header present in the response */
+    LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR,
+    /** Not all response pseudo-headers are present */
+    LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR,
+    /** Unnecessary response pseudo-header present in the response. */
+    LSQUIC_HDR_ERR_UNNEC_RESP_PSDO_HDR,
+    /** Unknown pseudo-header */
+    LSQUIC_HDR_ERR_UNKNOWN_PSDO_HDR,
+    /** Uppercase letter in header */
+    LSQUIC_HDR_ERR_UPPERCASE_HEADER,
+    /** Misplaced pseudo-header */
+    LSQUIC_HDR_ERR_MISPLACED_PSDO_HDR,
+    /** Missing pseudo-header */
+    LSQUIC_HDR_ERR_MISSING_PSDO_HDR,
+    /** Header or headers are too large */
+    LSQUIC_HDR_ERR_HEADERS_TOO_LARGE,
+    /** Cannot allocate any more memory. */
+    LSQUIC_HDR_ERR_NOMEM,
+};
+
+struct lsquic_hset_if
+{
+    /**
+     * Create a new header set.  This object is (and must be) fetched from a
+     * stream by calling @ref lsquic_stream_get_hset() before the stream can
+     * be read.
+     */
+    void *              (*hsi_create_header_set)(void *hsi_ctx,
+                                                        int is_push_promise);
+    /**
+     * Process new header.  Return 0 on success, -1 if there is a problem with
+     * the header.  -1 is treated as a stream error: the associated stream is
+     * reset.
+     *
+     * `hdr_set' is the header set object returned by
+     * @ref hsi_create_header_set().
+     *
+     * `name_idx' is set to the index in the HPACK static table whose entry's
+     * name element matches `name'.  If there is no such match, `name_idx' is
+     * set to zero.
+     *
+     * If `name' is NULL, this means that no more header are going to be
+     * added to the set.
+     */
+    enum lsquic_header_status (*hsi_process_header)(void *hdr_set,
+                                    unsigned name_idx,
+                                    const char *name, unsigned name_len,
+                                    const char *value, unsigned value_len);
+    /**
+     * Discard header set.  This is called for unclaimed header sets and
+     * header sets that had an error.
+     */
+    void                (*hsi_discard_header_set)(void *hdr_set);
+};
+
 /* TODO: describe this important data structure */
 typedef struct lsquic_engine_api
 {
@@ -525,6 +591,14 @@ typedef struct lsquic_engine_api
     int                                (*ea_verify_cert)(void *verify_ctx,
                                                 struct stack_st_X509 *chain);
     void                                *ea_verify_ctx;
+
+    /**
+     * Optional header set interface.  If not specified, the incoming headers
+     * are converted to HTTP/1.x format and are read from stream and have to
+     * be parsed again.
+     */
+    const struct lsquic_hset_if         *ea_hsi_if;
+    void                                *ea_hsi_ctx;
 } lsquic_engine_api_t;
 
 /**
@@ -694,6 +768,20 @@ struct lsquic_http_headers
 int lsquic_stream_send_headers(lsquic_stream_t *s,
                                const lsquic_http_headers_t *h, int eos);
 
+/**
+ * Get header set associated with the stream.  The header set is created by
+ * @ref hsi_create_header_set() callback.  After this call, the ownership of
+ * the header set is trasnferred to the caller.
+ *
+ * This call must precede calls to @ref lsquic_stream_read() and
+ * @ref lsquic_stream_readv().
+ *
+ * If the optional header set interface (@ref ea_hsi_if) is not specified,
+ * this function returns NULL.
+ */
+void *
+lsquic_stream_get_hset (lsquic_stream_t *);
+
 int lsquic_conn_is_push_enabled(lsquic_conn_t *c);
 
 /** Possible values for how are 0, 1, and 2.  See shutdown(2). */
@@ -743,16 +831,15 @@ lsquic_stream_refuse_push (lsquic_stream_t *s);
  *
  * @param ref_stream_id   Stream ID in response to which push promise was
  *                            sent.
- * @param headers         Uncompressed request headers.
- * @param headers_sz      Size of uncompressed request headers, not counting
- *                          the NUL byte.
+ * @param hdr_set         Header set.  This object was passed to or generated
+ *                            by @ref lsquic_conn_push_stream().
  *
  * @retval   0  Success.
  * @retval  -1  This is not a pushed stream.
  */
 int
 lsquic_stream_push_info (const lsquic_stream_t *, uint32_t *ref_stream_id,
-                         const char **headers, size_t *headers_sz);
+                         void **hdr_set);
 
 /** Return current priority of the stream */
 unsigned lsquic_stream_priority (const lsquic_stream_t *s);

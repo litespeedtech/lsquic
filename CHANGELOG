@@ -1,5 +1,12 @@
 2018-08-27
 
+    - 1.13.0
+    - [FEATURE, API Change] Add ability to create custom header set
+      objects via callbacks.  This avoids reading and re-parsing
+      headers from the stream.
+
+2018-08-27
+
     - 1.12.4
     - Fix memory leak when engine is destroyed
     - Fix memory leak in http_client

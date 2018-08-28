@@ -101,7 +101,7 @@ int
 lshpack_dec_decode (struct lshpack_dec *dec,
     const unsigned char **src, const unsigned char *src_end,
     char *dst, char *const dst_end, lshpack_strlen_t *name_len,
-    lshpack_strlen_t *val_len);
+    lshpack_strlen_t *val_len, uint32_t *name_idx);
 
 void
 lshpack_dec_set_max_capacity (struct lshpack_dec *, unsigned);
@@ -155,6 +155,10 @@ struct lshpack_dec
     unsigned           hpd_cur_capacity;
     struct lshpack_arr hpd_dyn_table;
 };
+
+unsigned
+lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
+                const char *val, lshpack_strlen_t val_len, int *val_matched);
 
 #ifdef __cplusplus
 }

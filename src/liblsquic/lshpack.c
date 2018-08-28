@@ -5412,10 +5412,7 @@ lshpack_enc_cleanup (struct lshpack_enc *enc)
 
 
 //not find return 0, otherwise return the index
-#if !LS_HPACK_EMIT_TEST_CODE
-static
-#endif
-       unsigned
+unsigned
 lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
                 const char *val, lshpack_strlen_t val_len, int *val_matched)
 {
@@ -6197,6 +6194,7 @@ struct dec_table_entry
 {
     uint16_t    dte_name_len;
     uint16_t    dte_val_len;
+    uint8_t     dte_name_idx;
     char        dte_buf[0];     /* Contains both name and value */
 };
 
@@ -6430,7 +6428,7 @@ hdec_get_table_entry (struct lshpack_dec *dec, uint32_t index)
 static
 #endif
        int
-lshpack_dec_push_entry (struct lshpack_dec *dec, const char *name,
+lshpack_dec_push_entry (struct lshpack_dec *dec, uint8_t name_idx, const char *name,
                         uint16_t name_len, const char *val, uint16_t val_len)
 {
     struct dec_table_entry *entry;
@@ -6450,6 +6448,7 @@ lshpack_dec_push_entry (struct lshpack_dec *dec, const char *name,
     dec->hpd_cur_capacity += DYNAMIC_ENTRY_OVERHEAD + name_len + val_len;
     entry->dte_name_len = name_len;
     entry->dte_val_len = val_len;
+    entry->dte_name_idx = name_idx;
     memcpy(DTE_NAME(entry), name, name_len);
     memcpy(DTE_VALUE(entry), val, val_len);
     return 0;
@@ -6459,7 +6458,8 @@ lshpack_dec_push_entry (struct lshpack_dec *dec, const char *name,
 int
 lshpack_dec_decode (struct lshpack_dec *dec,
     const unsigned char **src, const unsigned char *src_end,
-    char *dst, char *const dst_end, uint16_t *name_len, uint16_t *val_len)
+    char *dst, char *const dst_end, uint16_t *name_len, uint16_t *val_len,
+    uint32_t *name_idx)
 {
     struct dec_table_entry *entry;
     uint32_t index, new_capacity;
@@ -6532,6 +6532,7 @@ lshpack_dec_decode (struct lshpack_dec *dec,
 
         indexed_type = 1;
     }
+    *name_idx = index;
 
     char *const name = dst;
     if (index > 0)
@@ -6562,6 +6563,8 @@ lshpack_dec_decode (struct lshpack_dec *dec,
 
             *name_len = entry->dte_name_len;
             memcpy(name, DTE_NAME(entry), *name_len);
+            if (entry->dte_name_idx)
+                *name_idx = entry->dte_name_idx;
             if (indexed_type == 3)
             {
                 if (entry->dte_name_len + entry->dte_val_len > dst_end - dst)
@@ -6592,7 +6595,9 @@ lshpack_dec_decode (struct lshpack_dec *dec,
 
     if (indexed_type == 0)
     {
-        if (0 != lshpack_dec_push_entry(dec, name, *name_len,
+        if (index > HPACK_STATIC_TABLE_SIZE)
+            index = 0;
+        if (0 != lshpack_dec_push_entry(dec, index, name, *name_len,
                                             name + *name_len, *val_len))
             return -1;  //error
     }

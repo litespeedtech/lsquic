@@ -55,6 +55,7 @@
 #include "lsquic_hash.h"
 #include "lsquic_attq.h"
 #include "lsquic_min_heap.h"
+#include "lsquic_http1x_if.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -325,6 +326,16 @@ lsquic_engine_new (unsigned flags,
     engine->stream_if_ctx   = api->ea_stream_if_ctx;
     engine->packets_out     = api->ea_packets_out;
     engine->packets_out_ctx = api->ea_packets_out_ctx;
+    if (api->ea_hsi_if)
+    {
+        engine->pub.enp_hsi_if  = api->ea_hsi_if;
+        engine->pub.enp_hsi_ctx = api->ea_hsi_ctx;
+    }
+    else
+    {
+        engine->pub.enp_hsi_if  = lsquic_http1x_if;
+        engine->pub.enp_hsi_ctx = NULL;
+    }
     if (api->ea_pmi)
     {
         engine->pub.enp_pmi      = api->ea_pmi;

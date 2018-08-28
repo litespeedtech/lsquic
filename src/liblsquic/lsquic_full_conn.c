@@ -42,12 +42,15 @@
 #include "lsquic_headers_stream.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
+#include "lsquic_frame_writer.h"
+#include "lsquic_http1x_if.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_spi.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_version.h"
 #include "lsquic_hash.h"
+#include "lsquic_headers.h"
 
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
@@ -595,7 +598,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     if (conn->fc_flags & FC_HTTP)
     {
         conn->fc_pub.hs = lsquic_headers_stream_new(
-            !!(conn->fc_flags & FC_SERVER), conn->fc_pub.mm, conn->fc_settings,
+            !!(conn->fc_flags & FC_SERVER), conn->fc_enpub,
                                                      headers_callbacks_ptr, conn);
         if (!conn->fc_pub.hs)
             goto cleanup_on_error;

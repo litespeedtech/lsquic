@@ -53,6 +53,7 @@ SET(lsquic_STAT_SRCS
     lsquic_min_heap.c
     lshpack.c
     lsquic_parse_Q044.c
+    lsquic_http1x_if.c
     )
 
 

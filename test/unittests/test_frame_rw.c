@@ -27,6 +27,8 @@
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_reader.h"
+#include "lsquic_headers.h"
+#include "lsquic_http1x_if.h"
 
 
 struct lsquic_stream
@@ -140,11 +142,14 @@ static struct lsquic_http_header header_arr[N_HEADERS];
 static void
 compare_headers (struct uncompressed_headers *uh)
 {
+    struct http1x_headers *h1h;
     char line[0x100], *s;
     FILE *in;
     unsigned i;
 
-    in = fmemopen(uh->uh_headers, uh->uh_size, "r");
+    assert(uh->uh_flags & UH_H1H);
+    h1h = uh->uh_hset;
+    in = fmemopen(h1h->h1h_buf, h1h->h1h_size, "r");
     for (i = 0; i < N_HEADERS; ++i)
     {
         s = fgets(line, sizeof(line), in);
@@ -211,7 +216,7 @@ test_rw (unsigned max_frame_sz)
         stream->sm_off = 0;
 
         fr = lsquic_frame_reader_new(0, 0, &mm, stream, read_from_stream, &hdec,
-                                                    &frame_callbacks, &uh);
+                                &frame_callbacks, &uh, lsquic_http1x_if, NULL);
         do
         {
             s = lsquic_frame_reader_read(fr);

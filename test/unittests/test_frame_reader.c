@@ -15,10 +15,18 @@
 #include "lsquic_frame_common.h"
 #include "lshpack.h"
 #include "lsquic_mm.h"
+#include "lsquic_int_types.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_sfcw.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn.h"
+#include "lsquic_stream.h"
+#include "lsquic_conn_public.h"
 #include "lsquic_logger.h"
 
-#define FRAME_READER_TESTING 0x100
 #include "lsquic_frame_reader.h"
+#include "lsquic_headers.h"
+#include "lsquic_http1x_if.h"
 
 
 struct callback_value   /* What callback returns */
@@ -32,7 +40,16 @@ struct callback_value   /* What callback returns */
     }                                   type;
     unsigned                            stream_off; /* Checked only if not zero */
     union {
-        struct uncompressed_headers     uh;
+        struct headers {
+            uint32_t                stream_id;
+            uint32_t                oth_stream_id;
+            unsigned short          weight;
+            signed char             exclusive;
+            unsigned char           flags;
+            unsigned                size;
+            unsigned                off;
+            char                    buf[0x100];
+        }                               headers;
         struct {
             uint16_t                    id;
             uint32_t                    value;
@@ -53,31 +70,30 @@ struct callback_value   /* What callback returns */
 
 
 void
-compare_headers (const struct uncompressed_headers *got_uh,
-                 const struct uncompressed_headers *exp_uh)
+compare_headers (const struct headers *got_h, const struct headers *exp_h)
 {
-    assert(got_uh->uh_stream_id == exp_uh->uh_stream_id);
-    assert(got_uh->uh_oth_stream_id == exp_uh->uh_oth_stream_id);
-    assert(got_uh->uh_weight == exp_uh->uh_weight);
-    assert(got_uh->uh_exclusive == exp_uh->uh_exclusive);
-    assert(got_uh->uh_size == exp_uh->uh_size);
-    assert(strlen(got_uh->uh_headers) == got_uh->uh_size);
-    assert(got_uh->uh_off == exp_uh->uh_off);
-    assert(got_uh->uh_flags == exp_uh->uh_flags);
-    assert(0 == memcmp(got_uh->uh_headers, exp_uh->uh_headers, got_uh->uh_size));
+    assert(got_h->stream_id == exp_h->stream_id);
+    assert(got_h->oth_stream_id == exp_h->oth_stream_id);
+    assert(got_h->weight == exp_h->weight);
+    assert(got_h->exclusive == exp_h->exclusive);
+    assert(got_h->size == exp_h->size);
+    assert(strlen(got_h->buf) == got_h->size);
+    assert(got_h->off == exp_h->off);
+    assert(got_h->flags == exp_h->flags);
+    assert(0 == memcmp(got_h->buf, exp_h->buf, got_h->size));
 }
 
 
 void
-compare_push_promises (const struct uncompressed_headers *got_uh,
-                 const struct uncompressed_headers *exp_uh)
+compare_push_promises (const struct headers *got_h, const struct headers *exp_h)
 {
-    assert(got_uh->uh_stream_id == exp_uh->uh_stream_id);
-    assert(got_uh->uh_oth_stream_id == exp_uh->uh_oth_stream_id);
-    assert(got_uh->uh_size == exp_uh->uh_size);
-    assert(strlen(got_uh->uh_headers) == got_uh->uh_size);
-    assert(got_uh->uh_flags == exp_uh->uh_flags);
-    assert(0 == memcmp(got_uh->uh_headers, exp_uh->uh_headers, got_uh->uh_size));
+    assert(got_h->stream_id == exp_h->stream_id);
+    assert(got_h->oth_stream_id == exp_h->oth_stream_id);
+    assert(got_h->size == exp_h->size);
+    assert(strlen(got_h->buf) == got_h->size);
+    assert(got_h->off == exp_h->off);
+    assert(got_h->flags == exp_h->flags);
+    assert(0 == memcmp(got_h->buf, exp_h->buf, got_h->size));
 }
 
 
@@ -111,10 +127,10 @@ compare_cb_vals (const struct callback_value *got,
     switch (got->type)
     {
     case CV_HEADERS:
-        compare_headers(&got->u.uh, &exp->u.uh);
+        compare_headers(&got->u.headers, &exp->u.headers);
         break;
     case CV_PUSH_PROMISE:
-        compare_push_promises(&got->u.uh, &exp->u.uh);
+        compare_push_promises(&got->u.headers, &exp->u.headers);
         break;
     case CV_ERROR:
         compare_errors(&got->u.error, &exp->u.error);
@@ -152,10 +168,19 @@ reset_cb_ctx (struct cb_ctx *cb_ctx)
 }
 
 
-static size_t
-uh_size (const struct uncompressed_headers *uh)
+static void
+copy_uh_to_headers (const struct uncompressed_headers *uh, struct headers *h)
 {
-    return sizeof(*uh) - FRAME_READER_TESTING + uh->uh_size;
+    const struct http1x_headers *h1h = uh->uh_hset;
+    h->flags = uh->uh_flags;
+    h->weight = uh->uh_weight;
+    h->stream_id = uh->uh_stream_id;
+    h->exclusive = uh->uh_exclusive;
+    h->oth_stream_id = uh->uh_oth_stream_id;
+    h->size = h1h->h1h_size;
+    h->off = h1h->h1h_off;
+    memcpy(h->buf, h1h->h1h_buf, h->size);
+    h->buf[h->size] = '\0';
 }
 
 
@@ -168,8 +193,9 @@ on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
     assert(i < sizeof(cb_ctx->cb_vals) / sizeof(cb_ctx->cb_vals[0]));
     cb_ctx->cb_vals[i].type = CV_HEADERS;
     cb_ctx->cb_vals[i].stream_off = input.in_off;
-    assert(uh_size(uh) <= sizeof(*uh));
-    memcpy(&cb_ctx->cb_vals[i].u.uh, uh, uh_size(uh) + 1 /* NUL byte */);
+    copy_uh_to_headers(uh, &cb_ctx->cb_vals[i].u.headers);
+    assert(uh->uh_flags & UH_H1H);
+    lsquic_http1x_if->hsi_discard_header_set(uh->uh_hset);
     free(uh);
 }
 
@@ -183,8 +209,9 @@ on_push_promise (void *ctx, struct uncompressed_headers *uh)
     assert(i < sizeof(cb_ctx->cb_vals) / sizeof(cb_ctx->cb_vals[0]));
     cb_ctx->cb_vals[i].type = CV_PUSH_PROMISE;
     cb_ctx->cb_vals[i].stream_off = input.in_off;
-    assert(uh_size(uh) <= sizeof(*uh));
-    memcpy(&cb_ctx->cb_vals[i].u.uh, uh, uh_size(uh) + 1 /* NUL byte */);
+    copy_uh_to_headers(uh, &cb_ctx->cb_vals[i].u.headers);
+    assert(uh->uh_flags & UH_H1H);
+    lsquic_http1x_if->hsi_discard_header_set(uh->uh_hset);
     free(uh);
 }
 
@@ -273,7 +300,7 @@ struct frame_reader_test {
 };
 
 
-#define UH_HEADERS(str) .uh_headers = (str), .uh_size = sizeof(str) - 1
+#define HEADERS(str) .buf = (str), .size = sizeof(str) - 1
 
 static const struct frame_reader_test tests[] = {
     {   .frt_lineno = __LINE__,
@@ -292,13 +319,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0,
-                    .uh_weight          = 0,
-                    .uh_exclusive       = -1,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0,
+                    .weight          = 0,
+                    .exclusive       = -1,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
                 },
             },
         },
@@ -323,13 +351,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0,
-                    .uh_weight          = 0,
-                    .uh_exclusive       = -1,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0,
+                    .weight          = 0,
+                    .exclusive       = -1,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
                 },
             },
         },
@@ -366,14 +395,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 0xFF + 1,
-                    .uh_exclusive       = 1,
-                    .uh_off             = 0,
-                    .uh_flags           = UH_FIN,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 0xFF + 1,
+                    .exclusive       = 1,
+                    .off             = 0,
+                    .flags           = UH_FIN | UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
                 },
             },
             {
@@ -407,13 +436,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 1,
-                    .uh_exclusive       = 0,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 1,
+                    .exclusive       = 0,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
                 },
             },
         },
@@ -439,13 +469,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 1,
-                    .uh_exclusive       = 0,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n"
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 1,
+                    .exclusive       = 0,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n"
                                "Cookie: a=b\r\n\r\n"),
                 },
             },
@@ -474,13 +505,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 1,
-                    .uh_exclusive       = 0,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n"
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 1,
+                    .exclusive       = 0,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n"
                                "Cookie: a=b; c=d; e=f\r\n\r\n"),
                 },
             },
@@ -517,13 +549,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 1,
-                    .uh_exclusive       = 0,
-                    .uh_off             = 0,
-                    UH_HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 1,
+                    .exclusive       = 0,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
                 },
             },
         },
@@ -559,13 +592,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x1234,
-                    .uh_weight          = 1,
-                    .uh_exclusive       = 0,
-                    .uh_off             = 0,
-                    UH_HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x1234,
+                    .weight          = 1,
+                    .exclusive       = 0,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
                 },
             },
         },
@@ -707,13 +741,14 @@ static const struct frame_reader_test tests[] = {
             },
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0,
-                    .uh_weight          = 0,
-                    .uh_exclusive       = -1,
-                    .uh_off             = 0,
-                    UH_HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0,
+                    .weight          = 0,
+                    .exclusive       = -1,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
                 },
             },
         },
@@ -737,11 +772,11 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_PUSH_PROMISE,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0x123456,
-                    .uh_flags           = UH_PP,
-                    UH_HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0x123456,
+                    .flags           = UH_PP | UH_H1H,
+                    HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
                 },
             },
         },
@@ -769,13 +804,14 @@ static const struct frame_reader_test tests[] = {
         .frt_cb_vals = {
             {
                 .type = CV_HEADERS,
-                .u.uh = {
-                    .uh_stream_id       = 12345,
-                    .uh_oth_stream_id   = 0,
-                    .uh_weight          = 0,
-                    .uh_exclusive       = -1,
-                    .uh_off             = 0,
-                    UH_HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
+                .u.headers = {
+                    .stream_id       = 12345,
+                    .oth_stream_id   = 0,
+                    .weight          = 0,
+                    .exclusive       = -1,
+                    .off             = 0,
+                    .flags           = UH_H1H,
+                    HEADERS("HTTP/1.1 302 Found\r\n\r\n"),
                 },
             },
         },
@@ -1064,7 +1100,16 @@ test_one_frt (const struct frame_reader_test *frt)
     unsigned short exp_off;
     struct lshpack_dec hdec;
     struct lsquic_mm mm;
+    struct lsquic_conn lconn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
     int s;
+
+    memset(&stream, 0, sizeof(stream));
+    memset(&lconn, 0, sizeof(lconn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    stream.conn_pub = &conn_pub;
+    conn_pub.lconn = &lconn;
 
     lsquic_mm_init(&mm);
     lshpack_dec_init(&hdec);
@@ -1079,7 +1124,8 @@ test_one_frt (const struct frame_reader_test *frt)
         ++input.in_max_sz;
 
         fr = lsquic_frame_reader_new(frt->frt_fr_flags, frt->frt_max_headers_sz,
-                &mm, NULL, read_from_stream, &hdec, &frame_callbacks, &g_cb_ctx);
+                &mm, &stream, read_from_stream, &hdec, &frame_callbacks, &g_cb_ctx,
+                lsquic_http1x_if, NULL);
         do
         {
             s = lsquic_frame_reader_read(fr);

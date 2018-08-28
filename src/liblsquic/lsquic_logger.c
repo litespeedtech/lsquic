@@ -72,6 +72,7 @@ enum lsq_log_level lsq_log_levels[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_DI]          = LSQ_LOG_WARN,
     [LSQLM_PACER]       = LSQ_LOG_WARN,
     [LSQLM_MIN_HEAP]    = LSQ_LOG_WARN,
+    [LSQLM_HTTP1X]      = LSQ_LOG_WARN,
 };
 
 const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
@@ -100,6 +101,7 @@ const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_DI]          = "di",
     [LSQLM_PACER]       = "pacer",
     [LSQLM_MIN_HEAP]    = "min-heap",
+    [LSQLM_HTTP1X]      = "http1x",
 };
 
 const char *const lsq_loglevel2str[N_LSQUIC_LOG_LEVELS] = {

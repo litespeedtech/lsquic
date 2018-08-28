@@ -50,8 +50,6 @@ struct frame_buf
 #define frab_left_to_write(f) ((unsigned short) sizeof((f)->frab_buf) - (f)->frab_size)
 #define frab_write_to(f) ((f)->frab_buf + (f)->frab_size)
 
-#define MAX_HEADERS_SIZE (64 * 1024)
-
 /* Make sure that frab_buf is at least five bytes long, otherwise a frame
  * won't fit into two adjacent frabs.
  */

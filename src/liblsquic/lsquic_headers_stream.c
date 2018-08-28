@@ -13,12 +13,15 @@
 #include <vc_compat.h>
 #endif
 
+#include "lsquic.h"
 #include "lsquic_types.h"
+#include "lsquic_int_types.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
 #include "lsquic_frame_writer.h"
+#include "lsquic_mm.h"
+#include "lsquic_engine_public.h"
 #include "lshpack.h"
-#include "lsquic.h"
 
 #include "lsquic_headers_stream.h"
 
@@ -38,16 +41,14 @@ struct headers_stream
     struct lsquic_frame_writer         *hs_fw;
     const struct headers_stream_callbacks
                                        *hs_callbacks;
-    const struct lsquic_engine_settings
-                                       *hs_settings;
     void                               *hs_cb_ctx;
-    struct lsquic_mm                   *hs_mm;
     struct lshpack_enc                  hs_henc;
     struct lshpack_dec                  hs_hdec;
     enum {
             HS_IS_SERVER    = (1 << 0),
             HS_HENC_INITED  = (1 << 1),
     }                                   hs_flags;
+    struct lsquic_engine_public        *hs_enpub;
 };
 
 
@@ -85,18 +86,18 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     hs->hs_stream = stream;
     LSQ_DEBUG("stream created");
     hs->hs_fr = lsquic_frame_reader_new((hs->hs_flags & HS_IS_SERVER) ? FRF_SERVER : 0,
-                                MAX_HEADERS_SIZE, hs->hs_mm,
+                                MAX_HEADERS_SIZE, &hs->hs_enpub->enp_mm,
                                 stream, lsquic_stream_read, &hs->hs_hdec,
-                                frame_callbacks_ptr, hs);
+                                frame_callbacks_ptr, hs,
+                        hs->hs_enpub->enp_hsi_if, hs->hs_enpub->enp_hsi_ctx);
     if (!hs->hs_fr)
     {
         LSQ_WARN("could not create frame reader: %s", strerror(errno));
         hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
         return NULL;
     }
-    hs->hs_fw = lsquic_frame_writer_new(hs->hs_mm, stream, 0, &hs->hs_henc,
-                                lsquic_stream_write,
-                                (hs->hs_flags & HS_IS_SERVER));
+    hs->hs_fw = lsquic_frame_writer_new(&hs->hs_enpub->enp_mm, stream, 0,
+            &hs->hs_henc, lsquic_stream_write, (hs->hs_flags & HS_IS_SERVER));
     if (!hs->hs_fw)
     {
         LSQ_WARN("could not create frame writer: %s", strerror(errno));
@@ -193,8 +194,7 @@ lsquic_headers_stream_send_priority (struct headers_stream *hs,
 
 
 struct headers_stream *
-lsquic_headers_stream_new (int is_server, struct lsquic_mm *mm,
-                           const struct lsquic_engine_settings *settings,
+lsquic_headers_stream_new (int is_server, struct lsquic_engine_public *enpub,
                            const struct headers_stream_callbacks *callbacks,
                            void *cb_ctx)
 {
@@ -207,8 +207,7 @@ lsquic_headers_stream_new (int is_server, struct lsquic_mm *mm,
         hs->hs_flags = HS_IS_SERVER;
     else
         hs->hs_flags = 0;
-    hs->hs_settings  = settings;
-    hs->hs_mm        = mm;
+    hs->hs_enpub     = enpub;
     return hs;
 }
 

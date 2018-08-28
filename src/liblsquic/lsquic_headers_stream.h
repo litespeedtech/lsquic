@@ -16,7 +16,7 @@ struct lsquic_http_headers;
 struct lsquic_frame_reader;
 struct lsquic_frame_writer;
 struct uncompressed_headers;
-struct lsquic_engine_settings;
+struct lsquic_engine_public;
 struct lsquic_http2_setting;
 
 
@@ -38,8 +38,7 @@ struct headers_stream_callbacks
 
 
 struct headers_stream *
-lsquic_headers_stream_new (int is_server, struct lsquic_mm *,
-                           const struct lsquic_engine_settings *,
+lsquic_headers_stream_new (int is_server, struct lsquic_engine_public *,
                            const struct headers_stream_callbacks *,
                            void *hs_cb_ctx);
 

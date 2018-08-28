@@ -51,6 +51,12 @@ static int randomly_reprioritize_streams;
  */
 static int promise_fd = -1;
 
+/* Set to true value to use header bypass.  This means that the use code
+ * creates header set via callbacks and then fetches it by calling
+ * lsquic_stream_get_hset() when the first "on_read" event is called.
+ */
+static int g_header_bypass;
+
 struct lsquic_conn_ctx;
 
 struct path_elem {
@@ -83,6 +89,7 @@ struct http_client_ctx {
         HCC_DISCARD_RESPONSE    = (1 << 0),
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
+        HCC_PROCESSED_HEADERS   = (1 << 3),
     }                            hcc_flags;
     struct prog                 *prog;
 };
@@ -95,6 +102,23 @@ struct lsquic_conn_ctx {
                                         * incremented as push promises are accepted.
                                         */
 };
+
+
+struct hset_elem
+{
+    STAILQ_ENTRY(hset_elem)     next;
+    unsigned                    name_idx;
+    char                       *name;
+    char                       *value;
+};
+
+
+STAILQ_HEAD(hset, hset_elem);
+
+static void
+hset_dump (const struct hset *, FILE *);
+static void
+hset_destroy (void *hset);
 
 
 static void
@@ -362,6 +386,7 @@ static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     struct http_client_ctx *const client_ctx = st_h->client_ctx;
+    struct hset *hset;
     ssize_t nread;
     unsigned old_prio, new_prio;
     unsigned char buf[0x200];
@@ -369,6 +394,21 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 #ifdef WIN32
 	srand(GetTickCount());
 #endif
+
+    if (g_header_bypass
+            && !(client_ctx->hcc_flags & HCC_PROCESSED_HEADERS))
+    {
+        hset = lsquic_stream_get_hset(stream);
+        if (!hset)
+        {
+            LSQ_ERROR("could not get header set from stream");
+            exit(2);
+        }
+        if (!(client_ctx->hcc_flags & HCC_DISCARD_RESPONSE))
+            hset_dump(hset, stdout);
+        hset_destroy(hset);
+        client_ctx->hcc_flags |= HCC_PROCESSED_HEADERS;
+    }
 
     do
     {
@@ -588,6 +628,99 @@ verify_server_cert (void *ctx, STACK_OF(X509) *chain)
 #endif
 
 
+static void *
+hset_create (void *hsi_ctx, int is_push_promise)
+{
+    struct hset *hset;
+
+    hset = malloc(sizeof(*hset));
+    if (hset)
+    {
+        STAILQ_INIT(hset);
+        return hset;
+    }
+    else
+        return NULL;
+}
+
+
+static enum lsquic_header_status
+hset_add_header (void *hset_p, unsigned name_idx,
+                 const char *name, unsigned name_len,
+                 const char *value, unsigned value_len)
+{
+    struct hset *hset = hset_p;
+    struct hset_elem *el;
+
+    if (!name)  /* This signals end of headers.  We do no post-processing. */
+        return LSQUIC_HDR_OK;
+
+    el = malloc(sizeof(*el));
+    if (!el)
+        return LSQUIC_HDR_ERR_NOMEM;
+
+    el->name = strndup(name, name_len);
+    el->value = strndup(value, value_len);
+    if (!(el->name && el->value))
+    {
+        free(el->name);
+        free(el->value);
+        free(el);
+        return LSQUIC_HDR_ERR_NOMEM;
+    }
+
+    el->name_idx = name_idx;
+    STAILQ_INSERT_TAIL(hset, el, next);
+    return LSQUIC_HDR_OK;
+}
+
+
+static void
+hset_destroy (void *hset_p)
+{
+    struct hset *hset = hset_p;
+    struct hset_elem *el, *next;
+
+    for (el = STAILQ_FIRST(hset); el; el = next)
+    {
+        next = STAILQ_NEXT(el, next);
+        free(el->name);
+        free(el->value);
+        free(el);
+    }
+    free(hset);
+}
+
+
+static void
+hset_dump (const struct hset *hset, FILE *out)
+{
+    const struct hset_elem *el;
+
+    STAILQ_FOREACH(el, hset, next)
+        if (el->name_idx)
+            fprintf(out, "%s (static table idx %u): %s\n", el->name,
+                                                    el->name_idx, el->value);
+        else
+            fprintf(out, "%s: %s\n", el->name, el->value);
+
+    fprintf(out, "\n");
+    fflush(out);
+}
+
+
+/* These are basic and for illustration purposes only.  You will want to
+ * do your own verification by doing something similar to what is done
+ * in src/liblsquic/lsquic_http1x_if.c
+ */
+static const struct lsquic_hset_if header_bypass_api =
+{
+    .hsi_create_header_set  = hset_create,
+    .hsi_process_header     = hset_add_header,
+    .hsi_discard_header_set = hset_destroy,
+};
+
+
 int
 main (int argc, char **argv)
 {
@@ -615,7 +748,7 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46r:R:IKu:EP:M:n:H:p:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46Br:R:IKu:EP:M:n:H:p:h"
 #ifndef WIN32
                                                                           "C:"
 #endif
@@ -625,6 +758,11 @@ main (int argc, char **argv)
         case '4':
         case '6':
             prog.prog_ipver = opt - '0';
+            break;
+        case 'B':
+            g_header_bypass = 1;
+            prog.prog_api.ea_hsi_if = &header_bypass_api;
+            prog.prog_api.ea_hsi_ctx = NULL;
             break;
         case 'I':
             client_ctx.hcc_flags |= HCC_ABORT_ON_INCOMPLETE;

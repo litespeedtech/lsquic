@@ -40,7 +40,6 @@
 #include "lsquic_util.h"
 #include "lsquic_mm.h"
 #include "lsquic_headers_stream.h"
-#include "lsquic_frame_reader.h"
 #include "lsquic_conn.h"
 #include "lsquic_data_in_if.h"
 #include "lsquic_parse.h"
@@ -50,6 +49,7 @@
 #include "lsquic_pacer.h"
 #include "lsquic_cubic.h"
 #include "lsquic_send_ctl.h"
+#include "lsquic_headers.h"
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
@@ -315,6 +315,20 @@ drop_buffered_data (struct lsquic_stream *stream)
 }
 
 
+static void
+destroy_uh (struct lsquic_stream *stream)
+{
+    if (stream->uh)
+    {
+        if (stream->uh->uh_hset)
+            stream->conn_pub->enpub->enp_hsi_if
+                            ->hsi_discard_header_set(stream->uh->uh_hset);
+        free(stream->uh);
+        stream->uh = NULL;
+    }
+}
+
+
 void
 lsquic_stream_destroy (lsquic_stream_t *stream)
 {
@@ -336,8 +350,14 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     drop_buffered_data(stream);
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
-    free(stream->push_req);
-    free(stream->uh);
+    if (stream->push_req)
+    {
+        if (stream->push_req->uh_hset)
+            stream->conn_pub->enpub->enp_hsi_if
+                            ->hsi_discard_header_set(stream->push_req->uh_hset);
+        free(stream->push_req);
+    }
+    destroy_uh(stream);
     free(stream->sm_buf);
     LSQ_DEBUG("destroyed stream %u @%p", stream->id, stream);
     SM_HISTORY_DUMP_REMAINING(stream);
@@ -682,17 +702,16 @@ lsquic_stream_rst_frame_sent (lsquic_stream_t *stream)
 static size_t
 read_uh (lsquic_stream_t *stream, unsigned char *dst, size_t len)
 {
-    struct uncompressed_headers *uh = stream->uh;
-    size_t n_avail = uh->uh_size - uh->uh_off;
+    struct http1x_headers *h1h = stream->uh->uh_hset;
+    size_t n_avail = h1h->h1h_size - h1h->h1h_off;
     if (n_avail < len)
         len = n_avail;
-    memcpy(dst, uh->uh_headers + uh->uh_off, len);
-    uh->uh_off += len;
-    if (uh->uh_off == uh->uh_size)
+    memcpy(dst, h1h->h1h_buf + h1h->h1h_off, len);
+    h1h->h1h_off += len;
+    if (h1h->h1h_off == h1h->h1h_size)
     {
         LSQ_DEBUG("read all uncompressed headers for stream %u", stream->id);
-        free(uh);
-        stream->uh = NULL;
+        destroy_uh(stream);
         if (stream->stream_flags & STREAM_HEAD_IN_FIN)
         {
             stream->stream_flags |= STREAM_FIN_REACHED;
@@ -749,18 +768,31 @@ lsquic_stream_readv (lsquic_stream_t *stream, const struct iovec *iov,
     iovidx = -1;
     NEXT_IOV();
 
-    if (stream->uh && AVAIL())
+    if (stream->uh)
     {
-        read_unc_headers = 1;
-        do
+        if (stream->uh->uh_flags & UH_H1H)
         {
-            nread = read_uh(stream, p, AVAIL());
-            p += nread;
-            total_nread += nread;
-            if (p == end)
-                NEXT_IOV();
+            if (AVAIL())
+            {
+                read_unc_headers = 1;
+                do
+                {
+                    nread = read_uh(stream, p, AVAIL());
+                    p += nread;
+                    total_nread += nread;
+                    if (p == end)
+                        NEXT_IOV();
+                }
+                while (stream->uh && AVAIL());
+            }
+            else
+                read_unc_headers = 0;
         }
-        while (stream->uh && AVAIL());
+        else
+        {
+            LSQ_INFO("header set not claimed: cannot read from stream");
+            return -1;
+        }
     }
     else
         read_unc_headers = 0;
@@ -2006,14 +2038,13 @@ lsquic_stream_is_pushed (const lsquic_stream_t *stream)
 
 int
 lsquic_stream_push_info (const lsquic_stream_t *stream,
-        uint32_t *ref_stream_id, const char **headers, size_t *headers_sz)
+                                        uint32_t *ref_stream_id, void **hset)
 {
     if (lsquic_stream_is_pushed(stream))
     {
         assert(stream->push_req);
         *ref_stream_id = stream->push_req->uh_stream_id;
-        *headers       = stream->push_req->uh_headers;
-        *headers_sz    = stream->push_req->uh_size;
+        *hset          = stream->push_req->uh_hset;
         return 0;
     }
     else
@@ -2145,3 +2176,34 @@ lsquic_stream_cid (const struct lsquic_stream *stream)
 }
 
 
+void *
+lsquic_stream_get_hset (struct lsquic_stream *stream)
+{
+    void *hset;
+
+    if ((stream->stream_flags & (STREAM_USE_HEADERS|STREAM_HAVE_UH))
+                                        != (STREAM_USE_HEADERS|STREAM_HAVE_UH))
+    {
+        LSQ_INFO("%s: unexpected call, flags: 0x%X", __func__,
+                                                        stream->stream_flags);
+        return NULL;
+    }
+
+    if (!stream->uh)
+    {
+        LSQ_INFO("%s: headers unavailable (already fetched?)", __func__);
+        return NULL;
+    }
+
+    if (stream->uh->uh_flags & UH_H1H)
+    {
+        LSQ_INFO("%s: uncompressed headers have internal format", __func__);
+        return NULL;
+    }
+
+    hset = stream->uh->uh_hset;
+    stream->uh->uh_hset = NULL;
+    destroy_uh(stream);
+    LSQ_DEBUG("return header set");
+    return hset;
+}

@@ -71,6 +71,7 @@ enum lsquic_logger_module {
     LSQLM_DI,
     LSQLM_PACER,
     LSQLM_MIN_HEAP,
+    LSQLM_HTTP1X,
     N_LSQUIC_LOGGER_MODULES
 };
 

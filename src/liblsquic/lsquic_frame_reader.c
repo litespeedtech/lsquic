@@ -19,32 +19,13 @@
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
+#include "lsquic_http1x_if.h"
+#include "lsquic_headers.h"
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_FRAME_READER
 #define LSQUIC_LOG_CONN_ID lsquic_conn_id(lsquic_stream_conn(fr->fr_stream))
 #include "lsquic_logger.h"
-
-
-enum pseudo_header
-{
-    PSEH_METHOD,
-    PSEH_SCHEME,
-    PSEH_AUTHORITY,
-    PSEH_PATH,
-    PSEH_STATUS,
-    N_PSEH
-};
-
-#define BIT(x) (1 << (x))
-
-#define ALL_REQUEST_PSEH (BIT(PSEH_METHOD)|BIT(PSEH_SCHEME)|BIT(PSEH_AUTHORITY)|BIT(PSEH_PATH))
-#define REQUIRED_REQUEST_PSEH (BIT(PSEH_METHOD)|BIT(PSEH_SCHEME)|BIT(PSEH_PATH))
-
-#define ALL_SERVER_PSEH BIT(PSEH_STATUS)
-#define REQUIRED_SERVER_PSEH ALL_SERVER_PSEH
-
-#define PSEH_LEN(h) (sizeof(#h) - 5)
 
 
 /* headers_state is used by HEADERS, PUSH_PROMISE, and CONTINUATION frames */
@@ -128,6 +109,9 @@ struct lsquic_frame_reader
     const struct frame_reader_callbacks
                                     *fr_callbacks;
     void                            *fr_cb_ctx;
+    const struct lsquic_hset_if     *fr_hsi_if;
+    void                            *fr_hsi_ctx;
+    struct http1x_ctor_ctx           fr_h1x_ctor_ctx;
     /* The the header block is shared between HEADERS, PUSH_PROMISE, and
      * CONTINUATION frames.  It gets added to as block fragments come in.
      */
@@ -190,7 +174,8 @@ lsquic_frame_reader_new (enum frame_reader_flags flags,
                     struct lsquic_stream *stream, fr_stream_read_f read,
                     struct lshpack_dec *hdec,
                     const struct frame_reader_callbacks *cb,
-                    void *frame_reader_cb_ctx)
+                    void *frame_reader_cb_ctx,
+                    const struct lsquic_hset_if *hsi_if, void *hsi_ctx)
 {
     struct lsquic_frame_reader *fr = malloc(sizeof(*fr));
     if (!fr)
@@ -204,6 +189,18 @@ lsquic_frame_reader_new (enum frame_reader_flags flags,
     fr->fr_cb_ctx         = frame_reader_cb_ctx;
     fr->fr_header_block   = NULL;
     fr->fr_max_headers_sz = max_headers_sz;
+    fr->fr_hsi_if         = hsi_if;
+    if (hsi_if == lsquic_http1x_if)
+    {
+        fr->fr_h1x_ctor_ctx = (struct http1x_ctor_ctx) {
+            .cid            = LSQUIC_LOG_CONN_ID,
+            .max_headers_sz = fr->fr_max_headers_sz,
+            .is_server      = fr->fr_flags & FRF_SERVER,
+        };
+        fr->fr_hsi_ctx = &fr->fr_h1x_ctor_ctx;
+    }
+    else
+        fr->fr_hsi_ctx = hsi_ctx;
     reset_state(fr);
     return fr;
 }
@@ -500,423 +497,6 @@ skip_headers_padding (struct lsquic_frame_reader *fr)
 }
 
 
-struct header_writer_ctx
-{
-    struct uncompressed_headers *uh;
-    struct lsquic_mm            *mm;
-    char                        *buf;
-    char                        *cookie_val;
-    unsigned                     cookie_sz, cookie_nalloc;
-    unsigned                     max_headers_sz,
-                                 headers_sz,
-                                 w_off;
-    enum {
-        HWC_EXPECT_COLON = (1 << 0),
-        HWC_SEEN_HOST    = (1 << 1),
-    }                            hwc_flags;
-    enum pseudo_header           pseh_mask;
-    char                        *pseh_bufs[N_PSEH];
-    lshpack_strlen_t             name_len,
-                                 val_len;
-};
-
-
-#define HWC_PSEH_LEN(hwc, ph) ((int) strlen((hwc)->pseh_bufs[ph]))
-
-#define HWC_PSEH_VAL(hwc, ph) ((hwc)->pseh_bufs[ph])
-
-static int
-hwc_uh_write (struct header_writer_ctx *hwc, const void *buf, size_t sz)
-{
-    struct uncompressed_headers *uh;
-
-    if (hwc->w_off + sz > hwc->headers_sz)
-    {
-        if (hwc->headers_sz * 2 >= hwc->w_off + sz)
-            hwc->headers_sz *= 2;
-        else
-            hwc->headers_sz = hwc->w_off + sz;
-        uh = realloc(hwc->uh, sizeof(*hwc->uh) + hwc->headers_sz);
-        if (!uh)
-            return -1;
-        hwc->uh = uh;
-    }
-    memcpy(hwc->uh->uh_headers + hwc->w_off, buf, sz);
-    hwc->w_off += sz;
-    return 0;
-}
-
-
-static enum frame_reader_error
-init_hwc (struct header_writer_ctx *hwc, struct lsquic_mm *mm,
-          unsigned max_headers_sz, unsigned headers_block_sz)
-{
-    memset(hwc, 0, sizeof(*hwc));
-    hwc->hwc_flags = HWC_EXPECT_COLON;
-    hwc->max_headers_sz = max_headers_sz;
-    hwc->headers_sz = headers_block_sz * 4;     /* A guess */
-    hwc->uh = malloc(sizeof(*hwc->uh) + hwc->headers_sz);
-    if (!hwc->uh)
-        return FR_ERR_NOMEM;
-    hwc->mm = mm;
-    hwc->buf = lsquic_mm_get_16k(mm);
-    if (!hwc->buf)
-        return FR_ERR_NOMEM;
-    return 0;
-}
-
-
-static void
-deinit_hwc (struct header_writer_ctx *hwc)
-{
-    unsigned i;
-    for (i = 0; i < sizeof(hwc->pseh_bufs) / sizeof(hwc->pseh_bufs[0]); ++i)
-        if (hwc->pseh_bufs[i])
-            free(hwc->pseh_bufs[i]);
-    if (hwc->cookie_val)
-        free(hwc->cookie_val);
-    free(hwc->uh);
-    if (hwc->buf)
-        lsquic_mm_put_16k(hwc->mm, hwc->buf);
-}
-
-
-static enum frame_reader_error
-save_pseudo_header (const struct lsquic_frame_reader *fr,
-                        struct header_writer_ctx *hwc, enum pseudo_header ph)
-{
-    if (0 == (hwc->pseh_mask & BIT(ph)))
-    {
-        assert(!hwc->pseh_bufs[ph]);
-        hwc->pseh_bufs[ph] = malloc(hwc->val_len + 1);
-        if (!hwc->pseh_bufs[ph])
-            return FR_ERR_NOMEM;
-        hwc->pseh_mask |= BIT(ph);
-        memcpy(hwc->pseh_bufs[ph], hwc->buf + hwc->name_len, hwc->val_len);
-        hwc->pseh_bufs[ph][hwc->val_len] = '\0';
-        return 0;
-    }
-    else
-    {
-        LSQ_INFO("header %u is already present", ph);
-        return FR_ERR_DUPLICATE_PSEH;
-    }
-}
-
-
-static enum frame_reader_error
-add_pseudo_header_to_uh (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    if (!(hwc->hwc_flags & HWC_EXPECT_COLON))
-    {
-        LSQ_INFO("unexpected colon");
-        return FR_ERR_MISPLACED_PSEH;
-    }
-
-    switch (hwc->name_len)
-    {
-    case 5:
-        if (0 == memcmp(hwc->buf,     ":path", 5))
-            return save_pseudo_header(fr, hwc, PSEH_PATH);
-        break;
-    case 7:
-        switch (hwc->buf[2])
-        {
-        case 'c':
-            if (0 == memcmp(hwc->buf, ":scheme", 7))
-                return save_pseudo_header(fr, hwc, PSEH_SCHEME);
-            break;
-        case 'e':
-            if (0 == memcmp(hwc->buf, ":method", 7))
-                return save_pseudo_header(fr, hwc, PSEH_METHOD);
-            break;
-        case 't':
-            if (0 == memcmp(hwc->buf, ":status", 7))
-                return save_pseudo_header(fr, hwc, PSEH_STATUS);
-            break;
-        }
-        break;
-    case 10:
-        if (0 == memcmp(hwc->buf,     ":authority", 10))
-            return save_pseudo_header(fr, hwc, PSEH_AUTHORITY);
-        break;
-    }
-
-    LSQ_INFO("unknown pseudo-header `%.*s'", hwc->name_len, hwc->buf);
-    return FR_ERR_UNKNOWN_PSEH;
-}
-
-
-#define HTTP_CODE_LEN 3
-
-static const char *
-code_str_to_reason (const char code_str[HTTP_CODE_LEN])
-{
-    /* RFC 7231, Section 6: */
-    static const char *const http_reason_phrases[] =
-    {
-    #define HTTP_REASON_CODE(code, reason) [code - 100] = reason
-        HTTP_REASON_CODE(100, "Continue"),
-        HTTP_REASON_CODE(101, "Switching Protocols"),
-        HTTP_REASON_CODE(200, "OK"),
-        HTTP_REASON_CODE(201, "Created"),
-        HTTP_REASON_CODE(202, "Accepted"),
-        HTTP_REASON_CODE(203, "Non-Authoritative Information"),
-        HTTP_REASON_CODE(204, "No Content"),
-        HTTP_REASON_CODE(205, "Reset Content"),
-        HTTP_REASON_CODE(206, "Partial Content"),
-        HTTP_REASON_CODE(300, "Multiple Choices"),
-        HTTP_REASON_CODE(301, "Moved Permanently"),
-        HTTP_REASON_CODE(302, "Found"),
-        HTTP_REASON_CODE(303, "See Other"),
-        HTTP_REASON_CODE(304, "Not Modified"),
-        HTTP_REASON_CODE(305, "Use Proxy"),
-        HTTP_REASON_CODE(307, "Temporary Redirect"),
-        HTTP_REASON_CODE(400, "Bad Request"),
-        HTTP_REASON_CODE(401, "Unauthorized"),
-        HTTP_REASON_CODE(402, "Payment Required"),
-        HTTP_REASON_CODE(403, "Forbidden"),
-        HTTP_REASON_CODE(404, "Not Found"),
-        HTTP_REASON_CODE(405, "Method Not Allowed"),
-        HTTP_REASON_CODE(406, "Not Acceptable"),
-        HTTP_REASON_CODE(407, "Proxy Authentication Required"),
-        HTTP_REASON_CODE(408, "Request Timeout"),
-        HTTP_REASON_CODE(409, "Conflict"),
-        HTTP_REASON_CODE(410, "Gone"),
-        HTTP_REASON_CODE(411, "Length Required"),
-        HTTP_REASON_CODE(412, "Precondition Failed"),
-        HTTP_REASON_CODE(413, "Payload Too Large"),
-        HTTP_REASON_CODE(414, "URI Too Long"),
-        HTTP_REASON_CODE(415, "Unsupported Media Type"),
-        HTTP_REASON_CODE(416, "Range Not Satisfiable"),
-        HTTP_REASON_CODE(417, "Expectation Failed"),
-        HTTP_REASON_CODE(426, "Upgrade Required"),
-        HTTP_REASON_CODE(500, "Internal Server Error"),
-        HTTP_REASON_CODE(501, "Not Implemented"),
-        HTTP_REASON_CODE(502, "Bad Gateway"),
-        HTTP_REASON_CODE(503, "Service Unavailable"),
-        HTTP_REASON_CODE(504, "Gateway Timeout"),
-        HTTP_REASON_CODE(505, "HTTP Version Not Supported"),
-    #undef HTTP_REASON_CODE
-    };
-
-    long code;
-    char code_buf[HTTP_CODE_LEN + 1];
-
-    memcpy(code_buf, code_str, HTTP_CODE_LEN);
-    code_buf[HTTP_CODE_LEN] = '\0';
-    code = strtol(code_buf, NULL, 10) - 100;
-    if (code > 0 && code < (long) (sizeof(http_reason_phrases) /
-                                        sizeof(http_reason_phrases[0])))
-        return http_reason_phrases[code];
-    else
-        return NULL;
-}
-
-
-static enum frame_reader_error
-convert_response_pseudo_headers (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    if ((hwc->pseh_mask & REQUIRED_SERVER_PSEH) != REQUIRED_SERVER_PSEH)
-    {
-        LSQ_INFO("not all response pseudo-headers are specified");
-        return FR_ERR_INCOMPL_RESP_PSEH;
-    }
-    if (hwc->pseh_mask & ALL_REQUEST_PSEH)
-    {
-        LSQ_INFO("response pseudo-headers contain request-only headers");
-        return FR_ERR_UNNEC_REQ_PSEH;
-    }
-
-    const char *code_str, *reason;
-    int code_len;
-
-    code_str = HWC_PSEH_VAL(hwc, PSEH_STATUS);
-    code_len = HWC_PSEH_LEN(hwc, PSEH_STATUS);
-
-#define HWC_UH_WRITE(h, buf, sz) do {                                   \
-    if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return FR_ERR_NOMEM;                                            \
-} while (0)
-
-    HWC_UH_WRITE(hwc, "HTTP/1.1 ", 9);
-    HWC_UH_WRITE(hwc, code_str, code_len);
-    if (HTTP_CODE_LEN == code_len && (reason = code_str_to_reason(code_str)))
-    {
-        HWC_UH_WRITE(hwc, " ", 1);
-        HWC_UH_WRITE(hwc, reason, strlen(reason));
-        HWC_UH_WRITE(hwc, "\r\n", 2);
-    }
-    else
-        HWC_UH_WRITE(hwc, " \r\n", 3);
-    if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
-    {
-        LSQ_INFO("headers too large");
-        return FR_ERR_HEADERS_TOO_LARGE;
-    }
-    return 0;
-
-#undef HWC_UH_WRITE
-}
-
-
-static enum frame_reader_error
-convert_request_pseudo_headers (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    if ((hwc->pseh_mask & REQUIRED_REQUEST_PSEH) != REQUIRED_REQUEST_PSEH)
-    {
-        LSQ_INFO("not all request pseudo-headers are specified");
-        return FR_ERR_INCOMPL_REQ_PSEH;
-    }
-    if (hwc->pseh_mask & ALL_SERVER_PSEH)
-    {
-        LSQ_INFO("request pseudo-headers contain response-only headers");
-        return FR_ERR_UNNEC_RESP_PSEH;
-    }
-
-#define HWC_UH_WRITE(h, buf, sz) do {                                   \
-    if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return FR_ERR_NOMEM;                                            \
-} while (0)
-
-    HWC_UH_WRITE(hwc, HWC_PSEH_VAL(hwc, PSEH_METHOD), HWC_PSEH_LEN(hwc, PSEH_METHOD));
-    HWC_UH_WRITE(hwc, " ", 1);
-    HWC_UH_WRITE(hwc, HWC_PSEH_VAL(hwc, PSEH_PATH), HWC_PSEH_LEN(hwc, PSEH_PATH));
-    HWC_UH_WRITE(hwc, " HTTP/1.1\r\n", 11);
-
-    if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
-    {
-        LSQ_INFO("headers too large");
-        return FR_ERR_HEADERS_TOO_LARGE;
-    }
-
-    return 0;
-
-#undef HWC_UH_WRITE
-}
-
-
-static enum frame_reader_error
-convert_pseudo_headers (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    /* We are *reading* the message.  Thus, a server expects a request, and a
-     * client expects a response.  Unless we receive a push promise from the
-     * server, in which case this should also be a request.
-     */
-    if ((fr->fr_flags & FRF_SERVER) ||
-                            READER_PUSH_PROMISE == fr->fr_state.reader_type)
-        return convert_request_pseudo_headers(fr, hwc);
-    else
-        return convert_response_pseudo_headers(fr, hwc);
-}
-
-
-static enum frame_reader_error
-save_cookie (struct header_writer_ctx *hwc)
-{
-    char *cookie_val;
-
-    if (0 == hwc->cookie_sz)
-    {
-        hwc->cookie_nalloc = hwc->cookie_sz = hwc->val_len;
-        cookie_val = malloc(hwc->cookie_nalloc);
-        if (!cookie_val)
-            return FR_ERR_NOMEM;
-        hwc->cookie_val = cookie_val;
-        memcpy(hwc->cookie_val, hwc->buf + hwc->name_len, hwc->val_len);
-    }
-    else
-    {
-        hwc->cookie_sz += hwc->val_len + 2 /* "; " */;
-        if (hwc->cookie_sz > hwc->cookie_nalloc)
-        {
-            hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + hwc->val_len + 2;
-            cookie_val = realloc(hwc->cookie_val, hwc->cookie_nalloc);
-            if (!cookie_val)
-                return FR_ERR_NOMEM;
-            hwc->cookie_val = cookie_val;
-        }
-        memcpy(hwc->cookie_val + hwc->cookie_sz - hwc->val_len - 2, "; ", 2);
-        memcpy(hwc->cookie_val + hwc->cookie_sz - hwc->val_len,
-               hwc->buf + hwc->name_len, hwc->val_len);
-    }
-
-    return 0;
-}
-
-
-static enum frame_reader_error
-add_real_header_to_uh (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    enum frame_reader_error err;
-    unsigned i;
-    int n_upper;
-
-    if (hwc->hwc_flags & HWC_EXPECT_COLON)
-    {
-        if (0 != (err = convert_pseudo_headers(fr, hwc)))
-            return err;
-        hwc->hwc_flags &= ~HWC_EXPECT_COLON;
-    }
-
-    if (4 == hwc->name_len && 0 == memcmp(hwc->buf, "host", 4))
-        hwc->hwc_flags |= HWC_SEEN_HOST;
-
-    n_upper = 0;
-    for (i = 0; i < hwc->name_len; ++i)
-        n_upper += isupper(hwc->buf[i]);
-    if (n_upper > 0)
-    {
-        LSQ_INFO("Header name `%.*s' contains uppercase letters",
-            hwc->name_len, hwc->buf);
-        return FR_ERR_UPPERCASE_HEADER;
-    }
-
-    if (6 == hwc->name_len && memcmp(hwc->buf, "cookie", 6) == 0)
-    {
-        return save_cookie(hwc);
-    }
-
-#define HWC_UH_WRITE(h, buf, sz) do {                                   \
-    if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return FR_ERR_NOMEM;                                            \
-} while (0)
-
-    HWC_UH_WRITE(hwc, hwc->buf, hwc->name_len);
-    HWC_UH_WRITE(hwc, ": ", 2);
-    HWC_UH_WRITE(hwc, hwc->buf + hwc->name_len, hwc->val_len);
-    HWC_UH_WRITE(hwc, "\r\n", 2);
-
-    if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
-    {
-        LSQ_INFO("headers too large");
-        return FR_ERR_HEADERS_TOO_LARGE;
-    }
-
-    return 0;
-
-#undef HWC_UH_WRITE
-}
-
-
-static enum frame_reader_error
-add_header_to_uh (const struct lsquic_frame_reader *fr,
-                                                struct header_writer_ctx *hwc)
-{
-    LSQ_DEBUG("Got header '%.*s': '%.*s'", hwc->name_len, hwc->buf,
-        hwc->val_len, hwc->buf + hwc->name_len);
-    if (':' == hwc->buf[0])
-        return add_pseudo_header_to_uh(fr, hwc);
-    else
-        return add_real_header_to_uh(fr, hwc);
-}
-
-
 static int
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
@@ -924,11 +504,26 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     const unsigned char *comp, *end;
     enum frame_reader_error err;
     int s;
-    struct header_writer_ctx hwc;
+    uint32_t name_idx;
+    lshpack_strlen_t name_len, val_len;
+    char *buf;
+    struct uncompressed_headers *uh = NULL;
+    void *hset = NULL;
 
-    err = init_hwc(&hwc, fr->fr_mm, fr->fr_max_headers_sz, fr->fr_header_block_sz);
-    if (0 != err)
+    buf = lsquic_mm_get_16k(fr->fr_mm);
+    if (!buf)
+    {
+        err = FR_ERR_NOMEM;
         goto stream_error;
+    }
+
+    hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx,
+                            READER_PUSH_PROMISE == fr->fr_state.reader_type);
+    if (!hset)
+    {
+        err = FR_ERR_NOMEM;
+        goto stream_error;
+    }
 
     comp = fr->fr_header_block;
     end = comp + fr->fr_header_block_sz;
@@ -936,11 +531,12 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     while (comp < end)
     {
         s = lshpack_dec_decode(fr->fr_hdec, &comp, end,
-                                hwc.buf, hwc.buf + 16 * 1024,
-                                &hwc.name_len, &hwc.val_len);
+                    buf, buf + 16 * 1024, &name_len, &val_len, &name_idx);
         if (s == 0)
         {
-            err = add_header_to_uh(fr, &hwc);
+            err = (enum frame_reader_error)
+                fr->fr_hsi_if->hsi_process_header(hset, name_idx, buf,
+                                        name_len, buf + name_len, val_len);
             if (err == 0)
                 continue;
         }
@@ -949,93 +545,63 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         goto stream_error;
     }
     assert(comp == end);
+    lsquic_mm_put_16k(fr->fr_mm, buf);
+    buf = NULL;
 
-    if (hwc.hwc_flags & HWC_EXPECT_COLON)
+    err = (enum frame_reader_error)
+        fr->fr_hsi_if->hsi_process_header(hset, 0, 0, 0, 0, 0);
+    if (err)
+        goto stream_error;
+
+    uh = calloc(1, sizeof(*uh));
+    if (!uh)
     {
-        err = convert_pseudo_headers(fr, &hwc);
-        if (0 != err)
-            goto stream_error;
-        hwc.hwc_flags &= ~HWC_EXPECT_COLON;
-    }
-
-
-#define HWC_UH_WRITE(h, buf, sz) do {                                   \
-    err = hwc_uh_write(h, buf, sz);                                     \
-    if (0 != err)                                                       \
-        goto stream_error;                                              \
-} while (0)
-
-    if ((hwc.pseh_mask & BIT(PSEH_AUTHORITY)) &&
-                                0 == (hwc.hwc_flags & HWC_SEEN_HOST))
-    {
-        LSQ_DEBUG("Setting 'Host: %.*s'", HWC_PSEH_LEN(&hwc, PSEH_AUTHORITY),
-                                            HWC_PSEH_VAL(&hwc, PSEH_AUTHORITY));
-        HWC_UH_WRITE(&hwc, "Host: ", 6);
-        HWC_UH_WRITE(&hwc, HWC_PSEH_VAL(&hwc, PSEH_AUTHORITY), HWC_PSEH_LEN(&hwc, PSEH_AUTHORITY));
-        HWC_UH_WRITE(&hwc, "\r\n", 2);
-    }
-
-    if (hwc.cookie_val)
-    {
-        LSQ_DEBUG("Setting 'Cookie: %.*s'", hwc.cookie_sz, hwc.cookie_val);
-        HWC_UH_WRITE(&hwc, "Cookie: ", 8);
-        HWC_UH_WRITE(&hwc, hwc.cookie_val, hwc.cookie_sz);
-        HWC_UH_WRITE(&hwc, "\r\n", 2);
-    }
-
-    HWC_UH_WRITE(&hwc, "\r\n", 2 + 1 /* NUL byte */);
-    hwc.w_off -= 1;     /* Do not count NUL byte */
-
-    if (hwc.max_headers_sz && hwc.w_off > hwc.max_headers_sz)
-    {
-        LSQ_INFO("headers too large");
-        err = FR_ERR_HEADERS_TOO_LARGE;
+        err = FR_ERR_NOMEM;
         goto stream_error;
     }
 
-    memcpy(&hwc.uh->uh_stream_id, fr->fr_state.header.hfh_stream_id,
-                                                sizeof(hwc.uh->uh_stream_id));
-    hwc.uh->uh_stream_id     = ntohl(hwc.uh->uh_stream_id);
-    hwc.uh->uh_size          = hwc.w_off;
-    hwc.uh->uh_oth_stream_id = hs->oth_stream_id;
-    hwc.uh->uh_off           = 0;
+    memcpy(&uh->uh_stream_id, fr->fr_state.header.hfh_stream_id,
+                                                sizeof(uh->uh_stream_id));
+    uh->uh_stream_id     = ntohl(uh->uh_stream_id);
+    uh->uh_oth_stream_id = hs->oth_stream_id;
     if (HTTP_FRAME_HEADERS == fr->fr_state.by_type.headers_state.frame_type)
     {
-        hwc.uh->uh_weight    = hs->weight;
-        hwc.uh->uh_exclusive = hs->exclusive;
-        hwc.uh->uh_flags     = 0;
+        uh->uh_weight    = hs->weight;
+        uh->uh_exclusive = hs->exclusive;
+        uh->uh_flags     = 0;
     }
     else
     {
         assert(HTTP_FRAME_PUSH_PROMISE ==
                                 fr->fr_state.by_type.headers_state.frame_type);
-        hwc.uh->uh_weight    = 0;   /* Zero unused value */
-        hwc.uh->uh_exclusive = 0;   /* Zero unused value */
-        hwc.uh->uh_flags     = UH_PP;
+        uh->uh_weight    = 0;   /* Zero unused value */
+        uh->uh_exclusive = 0;   /* Zero unused value */
+        uh->uh_flags     = UH_PP;
     }
     if (fr->fr_state.header.hfh_flags & HFHF_END_STREAM)
-        hwc.uh->uh_flags    |= UH_FIN;
+        uh->uh_flags    |= UH_FIN;
+    if (fr->fr_hsi_if == lsquic_http1x_if)
+        uh->uh_flags    |= UH_H1H;
+    uh->uh_hset = hset;
 
-    EV_LOG_HTTP_HEADERS_IN(LSQUIC_LOG_CONN_ID, fr->fr_flags & FRF_SERVER,
-                                                                    hwc.uh);
+    EV_LOG_HTTP_HEADERS_IN(LSQUIC_LOG_CONN_ID, fr->fr_flags & FRF_SERVER, uh);
     if (HTTP_FRAME_HEADERS == fr->fr_state.by_type.headers_state.frame_type)
-        fr->fr_callbacks->frc_on_headers(fr->fr_cb_ctx, hwc.uh);
+        fr->fr_callbacks->frc_on_headers(fr->fr_cb_ctx, uh);
     else
-        fr->fr_callbacks->frc_on_push_promise(fr->fr_cb_ctx, hwc.uh);
-
-    hwc.uh = NULL;
-
-    deinit_hwc(&hwc);
+        fr->fr_callbacks->frc_on_push_promise(fr->fr_cb_ctx, uh);
 
     return 0;
 
   stream_error:
     LSQ_INFO("%s: stream error %u", __func__, err);
-    deinit_hwc(&hwc);
+    if (hset)
+        fr->fr_hsi_if->hsi_discard_header_set(hset);
+    if (uh)
+        free(uh);
+    if (buf)
+        lsquic_mm_put_16k(fr->fr_mm, buf);
     fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr), err);
     return 0;
-
-#undef HWC_UH_WRITE
 }
 
 

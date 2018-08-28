@@ -18,7 +18,7 @@
 #include "lsquic_packet_out.h"
 #include "lsquic_parse.h"
 #include "lsquic_frame_common.h"
-#include "lsquic_frame_reader.h"
+#include "lsquic_headers.h"
 #include "lsquic_str.h"
 #include "lsquic_handshake.h"
 #include "lsquic_ev_log.h"
@@ -208,6 +208,7 @@ void
 lsquic_ev_log_http_headers_in (lsquic_cid_t cid, int is_server,
                                         const struct uncompressed_headers *uh)
 {
+    const struct http1x_headers *h1h;
     const char *cr, *p;
 
     if (uh->uh_flags & UH_PP)
@@ -220,13 +221,17 @@ lsquic_ev_log_http_headers_in (lsquic_cid_t cid, int is_server,
             uh->uh_stream_id, uh->uh_oth_stream_id, uh->uh_weight,
             (int) uh->uh_exclusive, !!(uh->uh_flags & UH_FIN));
 
-    for (p = uh->uh_headers; p < uh->uh_headers + uh->uh_size; p = cr + 2)
+    if (uh->uh_flags & UH_H1H)
     {
-        cr = strchr(p, '\r');
-        if (cr && cr > p)
-            LCID("  %.*s", (int) (cr - p), p);
-        else
-            break;
+        h1h = uh->uh_hset;
+        for (p = h1h->h1h_buf; p < h1h->h1h_buf + h1h->h1h_size; p = cr + 2)
+        {
+            cr = strchr(p, '\r');
+            if (cr && cr > p)
+                LCID("  %.*s", (int) (cr - p), p);
+            else
+                break;
+        }
     }
 }
 

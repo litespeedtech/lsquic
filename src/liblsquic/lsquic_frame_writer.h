@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define MAX_HEADERS_SIZE (64 * 1024)
+
 struct iovec;
 struct lshpack_enc;
 struct lsquic_mm;
