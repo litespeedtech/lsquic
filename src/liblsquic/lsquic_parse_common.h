@@ -21,4 +21,13 @@ int
 lsquic_iquic_parse_packet_in_begin (struct lsquic_packet_in *,
                 size_t length, int is_server, struct packin_parse_state *);
 
+/* Instead of just -1 like CHECK_SPACE(), this macro returns the number
+ * of bytes needed.
+ */
+#define CHECK_STREAM_SPACE(need, pstart, pend) do {                 \
+    if ((intptr_t) (need) > ((pend) - (pstart))) {                  \
+        return -((int) (need));                                     \
+    }                                                               \
+} while (0)
+
 #endif

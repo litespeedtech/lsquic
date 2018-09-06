@@ -38,7 +38,7 @@
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
+static const struct parse_funcs *const g_pf = select_pf_by_ver(LSQVER_035);
 
 struct test_ctl_settings
 {
@@ -266,10 +266,10 @@ struct test_objs {
 
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
-                unsigned initial_stream_window)
+                unsigned initial_stream_window, const struct parse_funcs *pf)
 {
     memset(tobjs, 0, sizeof(*tobjs));
-    tobjs->lconn.cn_pf = pf;
+    tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_pack_size = 1370;
     lsquic_mm_init(&tobjs->eng_pub.enp_mm);
     TAILQ_INIT(&tobjs->conn_pub.sending_streams);
@@ -379,7 +379,7 @@ run_frame_ordering_test (uint64_t run_id /* This is used to make it easier to se
 
     struct test_objs tobjs;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     lsquic_stream_t *stream = new_stream(&tobjs, 123);
     struct lsquic_mm *const mm = &tobjs.eng_pub.enp_mm;
@@ -1195,7 +1195,7 @@ test_termination (void)
     {
         init_test_ctl_settings(&g_ctl_settings);
         g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-        init_test_objs(&tobjs, 0x4000, 0x4000);
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
         test_funcs[i](&tobjs);
         deinit_test_objs(&tobjs);
     }
@@ -1217,7 +1217,7 @@ test_flushing (void)
 
     for (i = 0; i < sizeof(test_funcs) / sizeof(test_funcs[0]); ++i)
     {
-        init_test_objs(&tobjs, 0x4000, 0x4000);
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
         test_funcs[i](&tobjs);
         deinit_test_objs(&tobjs);
     }
@@ -1293,7 +1293,7 @@ test_writev (void)
 
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
     {
-        init_test_objs(&tobjs, UINT_MAX, UINT_MAX);
+        init_test_objs(&tobjs, UINT_MAX, UINT_MAX, NULL);
         stream = new_stream(&tobjs, 12345);
         n = lsquic_stream_writev(stream, tests[i].iov, tests[i].count);
         assert(0x4000 == n);
@@ -1317,7 +1317,7 @@ test_prio_conversion (void)
     unsigned prio;
     int s;
 
-    init_test_objs(&tobjs, UINT_MAX, UINT_MAX);
+    init_test_objs(&tobjs, UINT_MAX, UINT_MAX, NULL);
     stream = new_stream(&tobjs, 123);
 
     s = lsquic_stream_set_priority(stream, -2);
@@ -1349,7 +1349,7 @@ test_read_in_middle (void)
     struct test_objs tobjs;
     stream_frame_t *frame;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     lsquic_stream_t *stream = new_stream(&tobjs, 123);
 
@@ -1392,7 +1392,7 @@ test_conn_unlimited (void)
     struct test_objs tobjs;
     lsquic_stream_t *header_stream, *data_stream;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     unsigned char *const data = calloc(1, 0x4000);
 
@@ -1438,9 +1438,9 @@ test_reading_from_stream2 (void)
     stream_frame_t *frame;
     ssize_t nw;
     int s;
-    const char data[] = "1234567890";
+    const char data[10] = "1234567890";
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     stream = new_stream(&tobjs, 123);
 
     frame = new_frame_in_ext(&tobjs, 0, 6, 0, &data[0]);
@@ -1461,18 +1461,18 @@ test_reading_from_stream2 (void)
     {
         int dup;
         unsigned offset, length;
-        for (offset = 0; offset < 9; ++offset)
+        for (offset = 0; offset < 7; ++offset)
         {
-            for (length = 1; length < 10; ++length)
+            for (length = 1; length <= sizeof(data) - offset; ++length)
             {
                 dup = (offset == 0 && length == 6)
                    || (offset == 6 && length == 4);
-                frame = new_frame_in(&tobjs, offset, length, 0);
+                frame = new_frame_in_ext(&tobjs, offset, length, 0, data + offset);
                 s = lsquic_stream_frame_in(stream, frame);
                 if (dup)
                     assert(("Dup OK", 0 == s));
                 else
-                    assert(("Invalid frame: overlap", -1 == s));
+                    assert(("Overlap OK", 0 == s));
             }
         }
     }
@@ -1693,9 +1693,7 @@ test_overlaps (void)
 
     };
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
-    assert(!(tobjs.ctor_flags & SCF_ALLOW_OVERLAP));    /* Self-check */
-    tobjs.ctor_flags |= SCF_ALLOW_OVERLAP;
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     const struct overlap_test *test;
     for (test = tests; test < tests + sizeof(tests) / sizeof(tests[0]); ++test)
@@ -1761,7 +1759,6 @@ test_overlaps (void)
         lsquic_stream_destroy(stream);
     }
 
-    tobjs.ctor_flags &= ~SCF_ALLOW_OVERLAP;
     deinit_test_objs(&tobjs);
 }
 
@@ -1777,7 +1774,7 @@ test_insert_edge_cases (void)
     const char data[] = "1234567890";
     unsigned buf[0x1000];
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     {
         stream = new_stream(&tobjs, 123);
@@ -1847,7 +1844,7 @@ test_writing_to_stream_schedule_stream_packets_immediately (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
@@ -1915,7 +1912,7 @@ test_writing_to_stream_outside_callback (void)
     const struct buf_packet_q *const bpq =
             &tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type];
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
@@ -1982,7 +1979,7 @@ test_window_update1 (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream_ext(&tobjs, 123, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
@@ -2040,7 +2037,7 @@ test_bad_packbits_guess_2 (void)
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
     g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
     streams[1] = new_stream(&tobjs, 7);
     streams[2] = new_stream(&tobjs, 9);
@@ -2143,7 +2140,7 @@ test_bad_packbits_guess_3 (void)
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
     g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
 
     nw = lsquic_stream_write(streams[0], buf,
@@ -2315,7 +2312,7 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
 
     init_test_objs(&tobjs,
         /* Test limits a bit while we are at it: */
-        sizeof(buf) - 1, sizeof(buf) - 1);
+        sizeof(buf) - 1, sizeof(buf) - 1, NULL);
     tobjs.stream_if_ctx = &packet_stream_ctx;
 
     if (schedule_stream_packets_immediately)
@@ -2369,6 +2366,73 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
 }
 
 
+/* Test condition when the room necessary to write a STREAM frame to a packet
+ * is miscalculated and a brand-new packet has to be allocated.
+ */
+static void
+test_cant_fit_frame (const struct parse_funcs *pf)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *streams[2];
+    struct lsquic_packet_out *packet_out;
+    size_t pad_len, rem, nr;
+    int fin, s;
+    const char dude[] = "Dude, where is my car?!";
+    unsigned char buf_out[100];
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    init_test_objs(&tobjs, 0x8000, 0x8000, pf);
+
+    streams[0] = new_stream(&tobjs, 5);
+    streams[1] = new_stream(&tobjs, 7);
+
+    /* Allocate a packet and pad it so just a few bytes remain to trigger
+     * the condition we're after.
+     */
+    lsquic_stream_write(streams[0], dude, sizeof(dude) - 1);
+    lsquic_stream_flush(streams[0]);
+
+    rem = pf->pf_calc_stream_frame_header_sz(streams[1]->id, 0)
+        + 1 /* We'll write one byte */
+        + 1 /* This triggers the refit condition */
+        ;
+
+    packet_out = TAILQ_FIRST(&tobjs.send_ctl.sc_buffered_packets[0].bpq_packets);
+    assert(NULL == TAILQ_NEXT(packet_out, po_next));
+    pad_len = packet_out->po_n_alloc - packet_out->po_data_sz - rem;
+    memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_len);
+    packet_out->po_data_sz += pad_len;
+
+    lsquic_stream_write(streams[1], "A", 1);
+    s = lsquic_stream_flush(streams[1]);
+    assert(0 == s);
+    /* Allocated another packet */
+    assert(TAILQ_NEXT(packet_out, po_next));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl, BPT_HIGHEST_PRIO);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    /* Verify written data: */
+    nr = read_from_scheduled_packets(&tobjs.send_ctl, streams[0]->id, buf_out,
+                                     sizeof(buf_out), 0, &fin, 1);
+    assert(nr == sizeof(dude) - 1);
+    assert(!fin);
+    assert(0 == memcmp(dude, buf_out, sizeof(dude) - 1));
+    nr = read_from_scheduled_packets(&tobjs.send_ctl, streams[1]->id, buf_out,
+                                     sizeof(buf_out), 0, &fin, 1);
+    assert(nr == 1);
+    assert(!fin);
+    assert(buf_out[0] == 'A');
+
+    lsquic_stream_destroy(streams[0]);
+    lsquic_stream_destroy(streams[1]);
+    deinit_test_objs(&tobjs);
+}
+
+
 /* Test window update logic, not connection limited */
 static void
 test_window_update2 (void)
@@ -2381,7 +2445,7 @@ test_window_update2 (void)
     struct lsquic_conn_cap *const conn_cap = &tobjs.conn_pub.conn_cap;
     unsigned char buf[0x1000];
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream_ext(&tobjs, LSQUIC_STREAM_HANDSHAKE, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
@@ -2433,7 +2497,7 @@ test_blocked_flags (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 3, 3);
+    init_test_objs(&tobjs, 3, 3, NULL);
     stream = new_stream_ext(&tobjs, 123, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));
@@ -2465,7 +2529,7 @@ test_forced_flush_when_conn_blocked (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 3, 0x1000);
+    init_test_objs(&tobjs, 3, 0x1000, NULL);
     stream = new_stream(&tobjs, 123);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));
@@ -2502,7 +2566,7 @@ test_conn_abort (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     my_pf = *tobjs.lconn.cn_pf;
     my_pf.pf_gen_stream_frame = my_gen_stream_frame_err;
     tobjs.lconn.cn_pf = &my_pf;
@@ -2540,7 +2604,7 @@ test_bad_packbits_guess_1 (void)
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
     g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
     streams[1] = new_stream(&tobjs, 7);
     streams[2] = new_stream(&tobjs, 9);
@@ -2704,6 +2768,10 @@ main (int argc, char **argv)
                 test_packetization(1, once, RANDOM_WRITE_SIZE, fp_sizes[i]);
         }
     }
+
+    enum lsquic_version ver;
+    for (ver = 0; ver < N_LSQVER; ++ver)
+        test_cant_fit_frame(select_pf_by_ver(ver));
 
     return 0;
 }

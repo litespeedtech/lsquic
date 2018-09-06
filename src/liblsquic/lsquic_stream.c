@@ -273,8 +273,6 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
         lsquic_stream_call_on_new(stream);
     if (ctor_flags & SCF_DISP_RW_ONCE)
         stream->stream_flags |= STREAM_RW_ONCE;
-    if (ctor_flags & SCF_ALLOW_OVERLAP)
-        stream->stream_flags |= STREAM_ALLOW_OVERLAP;
     return stream;
 }
 
@@ -559,17 +557,12 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
     else if (INS_FRAME_OVERLAP == ins_frame)
     {
-        if (stream->stream_flags & STREAM_ALLOW_OVERLAP)
-        {
-            LSQ_DEBUG("overlap: switching DATA IN implementation");
-            stream->data_in = stream->data_in->di_if->di_switch_impl(
-                                        stream->data_in, stream->read_offset);
-            if (stream->data_in)
-                goto insert_frame;
-            stream->data_in = data_in_error_new();
-        }
-        else
-            LSQ_DEBUG("overlap not supported");
+        LSQ_DEBUG("overlap: switching DATA IN implementation");
+        stream->data_in = stream->data_in->di_if->di_switch_impl(
+                                    stream->data_in, stream->read_offset);
+        if (stream->data_in)
+            goto insert_frame;
+        stream->data_in = data_in_error_new();
         lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
         lsquic_malo_put(frame);
         return -1;
@@ -1573,6 +1566,7 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
                                                         stream->tosend_off);
     need_at_least = stream_header_sz + (size > 0);
     hsk = LSQUIC_STREAM_HANDSHAKE == stream->id;
+  get_packet:
     packet_out = get_packet[hsk](send_ctl, need_at_least, stream);
     if (!packet_out)
         return SWTP_STOP;
@@ -1588,8 +1582,18 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
                 frame_gen_fin(fg_ctx), size, frame_gen_read, fg_ctx);
     if (len < 0)
     {
-        LSQ_ERROR("could not generate stream frame");
-        return SWTP_ERROR;
+        if (-len > (int) need_at_least)
+        {
+            LSQ_DEBUG("need more room (%d bytes) than initially calculated "
+                "%u bytes, will try again", -len, need_at_least);
+            need_at_least = -len;
+            goto get_packet;
+        }
+        else
+        {
+            LSQ_ERROR("could not generate stream frame");
+            return SWTP_ERROR;
+        }
     }
 
     EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
@@ -2181,6 +2185,13 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 {
     void *hset;
 
+    if (stream->stream_flags & STREAM_RST_FLAGS)
+    {
+        LSQ_INFO("%s: stream is reset, no headers returned", __func__);
+        errno = ECONNRESET;
+        return NULL;
+    }
+
     if ((stream->stream_flags & (STREAM_USE_HEADERS|STREAM_HAVE_UH))
                                         != (STREAM_USE_HEADERS|STREAM_HAVE_UH))
     {
@@ -2204,6 +2215,11 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
     hset = stream->uh->uh_hset;
     stream->uh->uh_hset = NULL;
     destroy_uh(stream);
+    if (stream->stream_flags & STREAM_HEAD_IN_FIN)
+    {
+        stream->stream_flags |= STREAM_FIN_REACHED;
+        SM_HISTORY_APPEND(stream, SHE_REACH_FIN);
+    }
     LSQ_DEBUG("return header set");
     return hset;
 }

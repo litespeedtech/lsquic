@@ -222,7 +222,7 @@ gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_i
         dlen = (size < n_avail) << 1;
         n_avail -= dlen;
 
-        CHECK_SPACE(1 + olen + slen + dlen +
+        CHECK_STREAM_SPACE(1 + olen + slen + dlen +
             + 1 /* We need to write at least 1 byte */, buf, buf + buf_len);
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -255,7 +255,7 @@ gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_i
     else
     {
         dlen = 2;
-        CHECK_SPACE(1 + slen + olen + 2, buf, buf + buf_len);
+        CHECK_STREAM_SPACE(1 + slen + olen + 2, buf, buf + buf_len);
 #if __BYTE_ORDER == __LITTLE_ENDIAN
         stream_id = bswap_32(stream_id);
 #endif

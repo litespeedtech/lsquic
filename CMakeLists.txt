@@ -113,7 +113,7 @@ include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE} )
 link_directories( ${BORINGSSL_LIB}  )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
-include_directories( include )
+include_directories( include src/lshpack)
 IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     # Find libevent on FreeBSD:
     include_directories( /usr/local/include )

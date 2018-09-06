@@ -977,13 +977,17 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
         batch->packets[i]->po_sent = now;
     n_sent = engine->packets_out(engine->packets_out_ctx, batch->outs,
                                                                 n_to_send);
+    if (n_sent < (int) n_to_send)
+    {
+        engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
+        LSQ_DEBUG("cannot send packets");
+        EV_LOG_GENERIC_EVENT("cannot send packets");
+    }
     if (n_sent >= 0)
         LSQ_DEBUG("packets out returned %d (out of %u)", n_sent, n_to_send);
     else
     {
-        engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
         LSQ_DEBUG("packets out returned an error: %s", strerror(errno));
-        EV_LOG_GENERIC_EVENT("cannot send packets");
         n_sent = 0;
     }
     if (n_sent > 0)

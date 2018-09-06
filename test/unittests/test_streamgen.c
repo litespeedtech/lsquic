@@ -569,7 +569,7 @@ run_test (int i)
             len = test->pf->pf_gen_stream_frame(out, min, test->stream_id,
                         test_ctx.test->offset, stream_tosend_fin(&test_ctx),
                         stream_tosend_size(&test_ctx), stream_tosend_read, &test_ctx);
-            assert(-1 == len);
+            assert(len < 0);
         }
 
         /* Test that it succeeds now: */

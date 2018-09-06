@@ -36,7 +36,7 @@ SOFTWARE.
 #if LS_HPACK_EMIT_TEST_CODE
 #include "lshpack-test.h"
 #endif
-#include XXH_HEADER_NAME
+#include "lsquic_xxhash.h"
 
 #define HPACK_STATIC_TABLE_SIZE   61
 #define INITIAL_DYNAMIC_TABLE_SIZE  4096

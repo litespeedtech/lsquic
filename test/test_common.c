@@ -894,6 +894,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
             assert(count > 0);
             sport = specs[0].peer_ctx;
             LSQ_NOTICE("sending \"randomly\" fails");
+            prog_sport_cant_send(sport->sp_prog, sport->fd);
             goto random_send_failure;
         }
     }
@@ -951,6 +952,9 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         }
     }
 
+    if (n < count)
+        prog_sport_cant_send(sport->sp_prog, sport->fd);
+
     if (n > 0)
         return n;
     else if (s < 0)
@@ -958,7 +962,6 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #if LSQUIC_RANDOM_SEND_FAILURE
   random_send_failure:
 #endif
-        prog_sport_cant_send(sport->sp_prog, sport->fd);
         return -1;
     }
     else

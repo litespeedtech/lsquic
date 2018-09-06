@@ -1,3 +1,17 @@
+2018-09-06
+    - 1.14.0
+    - [API Change] Disable packet sending if full batch cannot be sent
+      If lsquic_packets_out_f() cannot send the whole batch, disable
+      packet sending until lsquic_engine_send_unsent_packets() is called.
+    - [BUGFIX] Handle case when STREAM frame does not fit.
+    - [BUGFIX] Always allow incoming STREAM frames to overlap.  Peers
+      may send overlapping STREAM frames even if using versions older
+      than Q043.
+    - Custom header set fixes:
+      - set "FIN reached" flag when custom header with FIN flag is
+        claimed;
+      - do not return custom header set for a reset stream.
+
 2018-08-27
 
     - 1.13.0

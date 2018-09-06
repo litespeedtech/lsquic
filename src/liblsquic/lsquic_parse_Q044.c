@@ -117,7 +117,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
     p += 4;
 
 
-    assert(need = p - buf);
+    assert(need == (unsigned int)(p - buf));
     return p - buf;
 }
 

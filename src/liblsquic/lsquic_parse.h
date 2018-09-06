@@ -73,7 +73,12 @@ struct parse_funcs
                                                 struct packin_parse_state *);
     enum QUIC_FRAME_TYPE
     (*pf_parse_frame_type) (unsigned char);
-    /* Return used buffer length */
+    /* Return used buffer length or a negative value if there was not enough
+     * room to write the stream frame.  In the latter case, the negative of
+     * the negative return value is the number of bytes required.  The
+     * exception is -1, which is a generic error code, as we always need
+     * more than 1 byte to write a STREAM frame.
+     */
     int
     (*pf_gen_stream_frame) (unsigned char *buf, size_t bufsz,
                             uint32_t stream_id, uint64_t offset,

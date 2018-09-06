@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 13
+#define LSQUIC_MINOR_VERSION 14
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -471,9 +471,10 @@ struct lsquic_out_spec
 
 /**
  * Returns number of packets successfully sent out or -1 on error.  -1 should
- * only be returned if no packets were sent out.  If -1 is returned,
- * no packets will be attempted to be sent out until
- * @ref lsquic_engine_send_unsent_packets() is called.
+ * only be returned if no packets were sent out.  If -1 is returned or if the
+ * return value is smaller than `n_packets_out', this indicates that sending
+ * of packets is not possible  No packets will be attempted to be sent out
+ * until @ref lsquic_engine_send_unsent_packets() is called.
  */
 typedef int (*lsquic_packets_out_f)(
     void                          *packets_out_ctx,
@@ -625,7 +626,7 @@ lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *local_sa,
 /**
  * Pass incoming packet to the QUIC engine.  This function can be called
  * more than once in a row.  After you add one or more packets, call
- * lsquic_engine_process_conns_with_incoming() to schedule output, if any.
+ * lsquic_engine_process_conns() to schedule output, if any.
  *
  * @retval  0   Packet was processed by a real connection.
  *
