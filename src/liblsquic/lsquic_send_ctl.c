@@ -1074,6 +1074,7 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
 {
     lsquic_packet_out_t *packet_out;
 
+  get_packet:
     packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets);
     if (!packet_out)
         return NULL;
@@ -1087,13 +1088,23 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
             return NULL;
     }
 
+    send_ctl_sched_remove(ctl, packet_out);
     if (packet_out->po_flags & PO_REPACKNO)
     {
-        update_for_resending(ctl, packet_out);
-        packet_out->po_flags &= ~PO_REPACKNO;
+        if (packet_out->po_regen_sz < packet_out->po_data_sz)
+        {
+            update_for_resending(ctl, packet_out);
+            packet_out->po_flags &= ~PO_REPACKNO;
+        }
+        else
+        {
+            LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
+                packet_out->po_packno);
+            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            goto get_packet;
+        }
     }
 
-    send_ctl_sched_remove(ctl, packet_out);
     ctl->sc_bytes_out += packet_out_total_sz(packet_out);
     return packet_out;
 }

@@ -1,3 +1,19 @@
+2018-09-12
+    - 1.14.3
+    - [BUGFIX] Do not abort conn on STREAM frame for a reset stream
+    - [BUGFIX] Drop packets that would become empty due to repackaging.
+      Packets on the scheduled queue may be marked for repackaging.
+      Frames such as ACK frame that are never resent are removed from
+      repackaged packets.  We must check that the newly repackaged packet
+      would not be empty.  If it would be, it is destroyed instead and
+      the next packet on the scheduled queue is used.  Note that this
+      change only affects the logic to return the next packet to be sent.
+      Lost packets that are being rescheduled are already processed in
+      this fashion.
+    - Byteswap CID before logging it - this makes it match Chrome CIDs.
+      (Except Q035, which is the last little-endian GQUIC version we
+      support.)
+
 2018-09-06
     - 1.14.0
     - [API Change] Disable packet sending if full batch cannot be sent

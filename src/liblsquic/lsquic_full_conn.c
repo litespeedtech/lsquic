@@ -1148,7 +1148,16 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     }
 
     stream = find_stream_by_id(conn, stream_frame->stream_id);
-    if (!stream)
+    if (stream)
+    {
+        if (lsquic_stream_is_reset(stream))
+        {
+            LSQ_DEBUG("stream %u is reset, ignore frame", stream->id);
+            lsquic_malo_put(stream_frame);
+            return parsed_len;
+        }
+    }
+    else
     {
         if (conn_is_stream_closed(conn, stream_frame->stream_id))
         {

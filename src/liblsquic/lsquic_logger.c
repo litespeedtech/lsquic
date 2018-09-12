@@ -17,7 +17,19 @@
 
 #define LSQUIC_LOGGER_MODULE LSQLM_LOGGER /* Quis custodiet ipsos custodes? */
 #include "lsquic_logger.h"
+#include "lsquic_byteswap.h"
 #include "lsquic.h"
+
+/* The switch to big-endian format in GQUIC also resulted in Chrome swapping
+ * the CID in its log.  We do the same thing in our log messages so that the
+ * CIDs are easy to match.  The exception is Q035, which is the last little-
+ * endian GQUIC version this library supports.
+ */
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#define DISP_CID(cid) bswap_64(cid)
+#else
+#define DISP_CID(cid) (cid)
+#endif
 
 static enum lsquic_logger_timestamp_style g_llts = LLTS_NONE;
 
@@ -220,7 +232,8 @@ lsquic_logger_log3 (enum lsq_log_level log_level,
         print_timestamp();
 
     lsquic_printf("[%s] [QUIC:%"PRIu64"-%"PRIu32"] %s: ",
-        lsq_loglevel2str[log_level], conn_id, stream_id, lsqlm_to_str[module]);
+        lsq_loglevel2str[log_level], DISP_CID(conn_id), stream_id,
+        lsqlm_to_str[module]);
     va_list ap;
     va_start(ap, fmt);
     logger_if->vprintf(logger_ctx, fmt, ap);
@@ -241,7 +254,7 @@ lsquic_logger_log2 (enum lsq_log_level log_level,
         print_timestamp();
 
     lsquic_printf("[%s] [QUIC:%"PRIu64"] %s: ",
-        lsq_loglevel2str[log_level], conn_id, lsqlm_to_str[module]);
+        lsq_loglevel2str[log_level], DISP_CID(conn_id), lsqlm_to_str[module]);
     va_list ap;
     va_start(ap, fmt);
     logger_if->vprintf(logger_ctx, fmt, ap);

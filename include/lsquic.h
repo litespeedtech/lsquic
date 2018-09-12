@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 1
 #define LSQUIC_MINOR_VERSION 14
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -512,6 +512,7 @@ enum lsquic_header_status
     LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR,
     /** Unnecessary request pseudo-header present in the response */
     LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR,
+    LSQUIC_HDR_ERR_BAD_REQ_HEADER = LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR,
     /** Not all response pseudo-headers are present */
     LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR,
     /** Unnecessary response pseudo-header present in the response. */
