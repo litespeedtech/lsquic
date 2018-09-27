@@ -3300,19 +3300,29 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
     stream = find_stream_on_non_stream_frame(conn, uh->uh_stream_id, 0,
                                              "headers");
     if (!stream)
+        goto free_uh;
+
+    if (lsquic_stream_is_reset(stream))
     {
-        free(uh);
-        return;
+        LSQ_DEBUG("stream is reset: ignore headers");
+        goto free_uh;
     }
 
     if (0 != lsquic_stream_uh_in(stream, uh))
     {
         ABORT_ERROR("stream %u refused incoming headers", uh->uh_stream_id);
-        free(uh);
+        goto free_uh;
     }
 
     if (!(stream->stream_flags & STREAM_ONNEW_DONE))
         lsquic_stream_call_on_new(stream);
+
+    return;
+
+  free_uh:
+    if (uh->uh_hset)
+        conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
+    free(uh);
 }
 
 
@@ -3332,8 +3342,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     {
         ABORT_ERROR("invalid push promise stream IDs: %u, %u",
                                     uh->uh_oth_stream_id, uh->uh_stream_id);
-        free(uh);
-        return;
+        goto free_uh;
     }
 
     if (!(conn_is_stream_closed(conn, uh->uh_stream_id) ||
@@ -3341,8 +3350,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     {
         ABORT_ERROR("invalid push promise original stream ID %u never "
                     "initiated", uh->uh_stream_id);
-        free(uh);
-        return;
+        goto free_uh;
     }
 
     if (conn_is_stream_closed(conn, uh->uh_oth_stream_id) ||
@@ -3350,8 +3358,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     {
         ABORT_ERROR("invalid promised stream ID %u already used",
                                                         uh->uh_oth_stream_id);
-        free(uh);
-        return;
+        goto free_uh;
     }
 
     stream = new_stream_ext(conn, uh->uh_oth_stream_id, STREAM_IF_STD,
@@ -3360,12 +3367,16 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     if (!stream)
     {
         ABORT_ERROR("cannot create stream: %s", strerror(errno));
-        free(uh);
-        return;
+        goto free_uh;
     }
     lsquic_stream_push_req(stream, uh);
     lsquic_stream_call_on_new(stream);
     return;
+
+  free_uh:
+    if (uh->uh_hset)
+        conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
+    free(uh);
 }
 
 
@@ -3420,7 +3431,9 @@ lsquic_conn_status (lsquic_conn_t *lconn, char *errbuf, size_t bufsz)
                            |FC_CLOSING
                            |FC_GOING_AWAY)))
     {
-        if (lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
+        if (lconn->cn_flags & LSCONN_PEER_GOING_AWAY)
+            return LSCONN_ST_PEER_GOING_AWAY;
+        else if (lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
             return LSCONN_ST_CONNECTED;
         else
             return LSCONN_ST_HSK_IN_PROGRESS;

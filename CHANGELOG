@@ -1,3 +1,8 @@
+2018-09-27
+    - 1.15.0
+    - [API Change] Add LSCONN_ST_PEER_GOING_AWAY to the list of conn statuses
+    - [BUGFIX] free uncompressed headers correctly when error occurs
+
 2018-09-12
     - 1.14.3
     - [BUGFIX] Do not abort conn on STREAM frame for a reset stream
