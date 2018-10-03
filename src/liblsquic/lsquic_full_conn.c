@@ -989,12 +989,22 @@ either_side_going_away (const struct full_conn *conn)
 }
 
 
+unsigned
+lsquic_conn_n_avail_streams (const lsquic_conn_t *lconn)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    unsigned stream_count = count_streams(conn, 0);
+    if (conn->fc_cfg.max_streams_out < stream_count)
+        return 0;
+    return conn->fc_cfg.max_streams_out - stream_count;
+}
+
+
 void
 lsquic_conn_make_stream (lsquic_conn_t *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    unsigned stream_count = count_streams(conn, 0);
-    if (stream_count < conn->fc_cfg.max_streams_out)
+    if (lsquic_conn_n_avail_streams(lconn) > 0)
     {
         if (!new_stream(conn, generate_stream_id(conn), SCF_CALL_ON_NEW))
             ABORT_ERROR("could not create new stream: %s", strerror(errno));
@@ -1220,6 +1230,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     }
 
     if (stream->id == LSQUIC_STREAM_HANDSHAKE
+        && (stream->stream_flags & STREAM_WANT_READ)
         && !(conn->fc_flags & FC_SERVER)
         && !(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
     {   /* To enable decryption, process handshake stream as soon as its

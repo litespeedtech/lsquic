@@ -1,3 +1,8 @@
+2018-10-03
+    - 1.16.0
+    - [API Change] Add lsquic_conn_n_avail_streams()
+    - [BUGFIX] only dispatch crypto stream read events if WANT_READ is on
+
 2018-09-27
     - 1.15.0
     - [API Change] Add LSCONN_ST_PEER_GOING_AWAY to the list of conn statuses

@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 15
+#define LSQUIC_MINOR_VERSION 16
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -667,6 +667,10 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine);
 
 void
 lsquic_engine_destroy (lsquic_engine_t *);
+
+/** Return max allowed outbound streams less current outbound streams. */
+unsigned
+lsquic_conn_n_avail_streams (const lsquic_conn_t *);
 
 void lsquic_conn_make_stream(lsquic_conn_t *);
 
