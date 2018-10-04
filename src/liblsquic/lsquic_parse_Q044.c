@@ -15,7 +15,9 @@
 #endif
 
 #include "lsquic_types.h"
+#include "lsquic_int_types.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_parse.h"
@@ -28,8 +30,6 @@
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PARSE
 #include "lsquic_logger.h"
-
-
 
 
 static int
@@ -173,16 +173,30 @@ gquic_Q044_packout_size (const struct lsquic_conn *lconn,
         sz = gquic_Q044_packout_header_size_long(lconn, packet_out->po_flags);
 
     sz += packet_out->po_data_sz;
-    sz += QUIC_PACKET_HASH_SZ;
+    sz += GQUIC_PACKET_HASH_SZ;
 
     return sz;
+}
+
+
+static void
+gquic_Q044_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
+                                            struct packin_parse_state *state)
+{
+    lsquic_packno_t packno;
+    if (state->pps_nbytes)
+    {
+        READ_UINT(packno, 64, state->pps_p, state->pps_nbytes);
+        packet_in->pi_packno = packno;
+        packet_in->pi_header_sz += state->pps_nbytes;
+    }
 }
 
 
 const struct parse_funcs lsquic_parse_funcs_gquic_Q044 =
 {
     .pf_gen_reg_pkt_header            =  gquic_Q044_gen_reg_pkt_header,
-    .pf_parse_packet_in_finish        =  gquic_be_parse_packet_in_finish,
+    .pf_parse_packet_in_finish        =  gquic_Q044_parse_packet_in_finish,
     .pf_gen_stream_frame              =  gquic_be_gen_stream_frame,
     .pf_calc_stream_frame_header_sz   =  calc_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  gquic_be_parse_stream_frame,
@@ -209,5 +223,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q044 =
     .pf_parse_frame_type              =  parse_frame_type_gquic_Q035_thru_Q039,
     .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q039,
     .pf_packout_size                  =  gquic_Q044_packout_size,
-    .pf_packout_header_size           =  gquic_Q044_packout_header_size,
+    .pf_packout_max_header_size           =  gquic_Q044_packout_header_size,
+    .pf_calc_packno_bits              =  lsquic_gquic_calc_packno_bits,
 };

@@ -504,6 +504,124 @@ static const struct test tests[] = {
         .min_sz     = 6,
     },
 
+    /*
+     * IETF QUIC Internet-Draft 11:
+     */
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 0, 1, },
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
+        .data_sz    = 10,
+        .data       = "0123456789",
+        .avail      = 0x100,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 1<<2 | 1<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x0A,                                             /* Data length */
+          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        },
+        .len        = 1 + 2 + 8 + 1 + 10,
+        .min_sz     = 1 + 2 + 8 + 0 + 1,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 0, 0, },
+        .offset     = 0,
+        .stream_id  = 0x210,
+        .data_sz    = 10,
+        .data       = "0123456789",
+        .avail      = 0x100,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 0<<2 | 1<<1 | 0<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0x0A,                                             /* Data length */
+          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        },
+        .len        = 1 + 2 + 0 + 1 + 10,
+        .min_sz     = 1 + 2 + 0 + 0 + 1,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 0, 0, },
+        .offset     = 0,
+        .stream_id  = 0x21,
+        .data_sz    = 10,
+        .data       = "0123456789",
+        .avail      = 12,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 0<<2 | 0<<1 | 0<<0,
+          0x21,                                             /* Stream ID */
+          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        },
+        .len        = 1 + 1 + 0 + 0 + 10,
+        .min_sz     = 1 + 1 + 0 + 0 + 1,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 0, 0, },
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
+        .data_sz    = 10,
+        .data       = "0123456789",
+        .avail      = 0x100,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 1<<2 | 1<<1 | 0<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x0A,                                             /* Data length */
+          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        },
+        .len        = 1 + 2 + 8 + 1 + 10,
+        .min_sz     = 1 + 2 + 8 + 0 + 1,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 1, 0, },
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
+        .data_sz    = 0,
+        .data       = "0123456789",
+        .avail      = 11,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 1<<2 | 0<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+        },
+        .len        = 1 + 2 + 8,
+        .min_sz     = 1 + 2 + 8,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID14),
+        .fin        = { 1, 0, },
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
+        .data_sz    = 0,
+        .data       = "0123456789",
+        .avail      = 0x100,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x10 | 1<<2 | 1<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x00,                                             /* Data length */
+        },
+        .len        = 1 + 2 + 8 + 1,
+        .min_sz     = 1 + 2 + 8,
+    },
+
 };
 
 

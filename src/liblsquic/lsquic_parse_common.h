@@ -7,6 +7,7 @@
 #define LSQUIC_PARSE_COMMON_H 1
 
 struct lsquic_packet_in;
+struct packin_parse_state;
 
 struct packin_parse_state {
     const unsigned char     *pps_p;      /* Pointer to packet number */
@@ -15,11 +16,18 @@ struct packin_parse_state {
 
 int
 lsquic_parse_packet_in_begin (struct lsquic_packet_in *,
-                size_t length, int is_server, struct packin_parse_state *);
+                size_t length, int is_server, unsigned cid_len,
+                struct packin_parse_state *);
 
 int
 lsquic_iquic_parse_packet_in_begin (struct lsquic_packet_in *,
-                size_t length, int is_server, struct packin_parse_state *);
+            size_t length, int is_server, unsigned cid_len,
+            struct packin_parse_state *);
+
+int
+lsquic_Q044_parse_packet_in_begin (struct lsquic_packet_in *,
+            size_t length, int is_server, unsigned cid_len,
+            struct packin_parse_state *);
 
 /* Instead of just -1 like CHECK_SPACE(), this macro returns the number
  * of bytes needed.

@@ -66,7 +66,7 @@
 
 
 #define LSQUIC_LOGGER_MODULE LSQLM_DI
-#define LSQUIC_LOG_CONN_ID ncdi->ncdi_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID &ncdi->ncdi_conn_pub->lconn->cn_cid
 #define LSQUIC_LOG_STREAM_ID ncdi->ncdi_stream_id
 #include "lsquic_logger.h"
 
@@ -103,7 +103,7 @@ struct nocopy_data_in
     struct lsquic_conn_public  *ncdi_conn_pub;
     uint64_t                    ncdi_byteage;
     uint64_t                    ncdi_fin_off;
-    uint32_t                    ncdi_stream_id;
+    lsquic_stream_id_t          ncdi_stream_id;
     unsigned                    ncdi_n_frames;
     unsigned                    ncdi_n_holes;
     unsigned                    ncdi_cons_far;
@@ -125,7 +125,8 @@ static const struct data_in_iface *di_if_nocopy_ptr;
 
 
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
+data_in_nocopy_new (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id)
 {
     struct nocopy_data_in *ncdi;
 
@@ -162,12 +163,6 @@ nocopy_di_destroy (struct data_in *data_in)
     }
     free(ncdi);
 }
-
-
-#define DF_OFF(frame) (frame)->data_frame.df_offset
-#define DF_FIN(frame) (frame)->data_frame.df_fin
-#define DF_SIZE(frame) (frame)->data_frame.df_size
-#define DF_END(frame) (DF_OFF(frame) + DF_SIZE(frame))
 
 
 #if LSQUIC_EXTRA_CHECKS

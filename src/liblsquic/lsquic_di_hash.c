@@ -36,7 +36,7 @@
 
 
 #define LSQUIC_LOGGER_MODULE LSQLM_DI
-#define LSQUIC_LOG_CONN_ID hdi->hdi_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID &hdi->hdi_conn_pub->lconn->cn_cid
 #define LSQUIC_LOG_STREAM_ID hdi->hdi_stream_id
 #include "lsquic_logger.h"
 
@@ -73,7 +73,7 @@ struct hash_data_in
     struct dblock_head         *hdi_buckets;
     struct data_block          *hdi_last_block;
     struct data_frame           hdi_data_frame;
-    uint32_t                    hdi_stream_id;
+    lsquic_stream_id_t          hdi_stream_id;
     unsigned                    hdi_count;
     unsigned                    hdi_nbits;
     enum {
@@ -111,8 +111,8 @@ my_log2 /* silly name to suppress compiler warning */ (unsigned sz)
 
 
 struct data_in *
-data_in_hash_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id,
-                  uint64_t byteage)
+data_in_hash_new (struct lsquic_conn_public *conn_pub,
+                        lsquic_stream_id_t stream_id, uint64_t byteage)
 {
     struct hash_data_in *hdi;
     unsigned n;

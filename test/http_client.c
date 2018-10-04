@@ -18,6 +18,7 @@
 #endif
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -426,7 +427,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 #endif
                 lsquic_stream_set_priority(stream, new_prio);
                 assert(s == 0);
-                LSQ_NOTICE("changed stream %u priority from %u to %u",
+                LSQ_NOTICE("changed stream %"PRIu64" priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
             }
         }

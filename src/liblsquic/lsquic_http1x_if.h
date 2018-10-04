@@ -6,7 +6,7 @@ struct lsquic_hset_if;
 
 struct http1x_ctor_ctx
 {
-    lsquic_cid_t    cid;                /* Used for logging */
+    const lsquic_cid_t  *cid;                /* Used for logging */
     unsigned        max_headers_sz;
     int             is_server;
 };

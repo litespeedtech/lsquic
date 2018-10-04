@@ -31,28 +31,30 @@ typedef struct stream_frame
 
     struct data_frame               data_frame;
 
-    uint32_t stream_id;     /* Parsed from packet */
+    lsquic_stream_id_t stream_id;     /* Parsed from packet */
 } stream_frame_t;
+
+#define DF_OFF(frame) (frame)->data_frame.df_offset
+#define DF_ROFF(frame) (DF_OFF(frame) + (frame)->data_frame.df_read_off)
+#define DF_FIN(frame) (frame)->data_frame.df_fin
+#define DF_SIZE(frame) (frame)->data_frame.df_size
+#define DF_END(frame) (DF_OFF(frame) + DF_SIZE(frame))
 
 typedef struct lsquic_packet_in
 {
     TAILQ_ENTRY(lsquic_packet_in)   pi_next;
     lsquic_time_t                   pi_received;   /* Time received */
-    lsquic_cid_t                    pi_conn_id;
+    lsquic_cid_t                    pi_dcid;
+#define pi_conn_id pi_dcid
+    lsquic_cid_t                    pi_scid;
     lsquic_packno_t                 pi_packno;
+    enum quic_ft_bit                pi_frame_types;
     unsigned short                  pi_header_sz;  /* Points to payload */
     unsigned short                  pi_data_sz;    /* Data plus header */
     /* A packet may be referred to by one or more frames and packets_in
      * list.
      */
     unsigned short                  pi_refcnt;
-    enum quic_ft_bit                pi_frame_types:16;
-    unsigned short                  pi_hsk_stream; /* Offset to handshake stream
-                                                    * frame, only valid if
-                                                    * PI_HSK_STREAM is set.
-                                                    */
-    unsigned char                   pi_quic_ver;   /* Offset to QUIC version */
-    unsigned char                   pi_nonce;      /* Offset to nonce */
     enum {
         PI_DECRYPTED    = (1 << 0),
         PI_OWN_DATA     = (1 << 1),                /* We own pi_data */
@@ -61,7 +63,11 @@ typedef struct lsquic_packet_in
         PI_ENC_LEV_BIT_0= (1 << 5),                /* Encodes encryption level */
         PI_ENC_LEV_BIT_1= (1 << 6),                /*  (see enum enc_level). */
         PI_GQUIC        = (1 << 7),
-    }                               pi_flags:8;
+#define PIBIT_KEY_PHASE_SHIFT 8
+        PI_KEY_PHASE    = (1 << 8),
+    }                               pi_flags:16;
+    unsigned char                   pi_quic_ver;   /* Offset to QUIC version */
+    unsigned char                   pi_nonce;      /* Offset to nonce */
     enum header_type                pi_header_type:8;
     /* If PI_OWN_DATA flag is not set, `pi_data' points to user-supplied
      * packet data, which is NOT TO BE MODIFIED.

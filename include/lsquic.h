@@ -115,27 +115,40 @@ enum lsquic_version
 #define LSQUIC_EXPERIMENTAL_Q098 0
 #endif
 
+    /**
+     * IETF QUIC Draft-14
+     */
+    LSQVER_ID14,
+
+    /**
+     * Special version to trigger version negotiation.
+     * [draft-ietf-quic-transport-11], Section 3.
+     */
+    LSQVER_VERNEG,
+
     N_LSQVER
 };
 
 /**
- * We currently support versions 35, 39, 43, and 44.
+ * We currently support versions 35, 39, 43, 44, and IETF Draft-14
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
 
-#define LSQUIC_EXPERIMENTAL_VERSIONS (0 \
-                                                | LSQUIC_EXPERIMENTAL_Q098)
+/**
+ * List of versions in which the server never includes CID in short packets.
+ */
+#define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_044)
+
+#define LSQUIC_EXPERIMENTAL_VERSIONS ((1 << LSQVER_ID14) | \
+                            (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
 
 #define LSQUIC_DEPRECATED_VERSIONS 0
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS ( \
                 (1 << LSQVER_035) | (1 << LSQVER_039) | (1 << LSQVER_043))
 
-/**
- * List of versions in which the server never includes CID in short packets.
- */
-#define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_044)
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID14) | (1 << LSQVER_VERNEG))
 
 /**
  * @struct lsquic_stream_if
@@ -205,12 +218,32 @@ struct lsquic_stream_if {
 #define LSQUIC_DF_SFCW_CLIENT      (6 * 1024 * 1024)
 #define LSQUIC_DF_MAX_STREAMS_IN   100
 
+/* IQUIC uses different names for these: */
+#define LSQUIC_DF_INIT_MAX_DATA_SERVER LSQUIC_DF_CFCW_SERVER
+#define LSQUIC_DF_INIT_MAX_DATA_CLIENT LSQUIC_DF_CFCW_CLIENT
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_SERVER LSQUIC_DF_SFCW_SERVER
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_SERVER LSQUIC_DF_SFCW_SERVER
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_CLIENT LSQUIC_DF_SFCW_CLIENT
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_CLIENT LSQUIC_DF_SFCW_CLIENT
+#define LSQUIC_DF_INIT_MAX_STREAMS_BIDI LSQUIC_DF_MAX_STREAMS_IN
+#define LSQUIC_DF_INIT_MAX_STREAMS_UNI 100
+/* XXX What's a good value here? */
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_CLIENT   (32 * 1024)
+#define LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_SERVER   0
+
+#define LSQUIC_DF_ACK_DELAY_EXP 3
+
+/**
+ * Default idle connection time in seconds.
+ */
+#define LSQUIC_DF_IDLE_TIMEOUT 30
+
 /**
  * Default handshake timeout in microseconds.
  */
 #define LSQUIC_DF_HANDSHAKE_TO     (10 * 1000 * 1000)
 
-#define LSQUIC_DF_IDLE_CONN_TO     (30 * 1000 * 1000)
+#define LSQUIC_DF_IDLE_CONN_TO     (LSQUIC_DF_IDLE_TIMEOUT * 1000 * 1000)
 #define LSQUIC_DF_SILENT_CLOSE     1
 
 /** Default value of maximum header list size.  If set to non-zero value,
@@ -245,12 +278,17 @@ struct lsquic_stream_if {
 /** By default, packets are paced */
 #define LSQUIC_DF_PACE_PACKETS      1
 
+/** The default value is 8 for simplicity */
+#define LSQUIC_DF_SCID_LEN 8
+
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
      * enum lsquic_version.  Client starts negotiating with the highest
      * version and goes down.  Server supports either of the versions
      * specified here.
+     *
+     * This setting applies to both Google and IETF QUIC.
      *
      * @see lsquic_version
      */
@@ -432,6 +470,94 @@ struct lsquic_engine_settings {
      */
     int             es_pace_packets;
 
+    /* The following settings are specific to IETF QUIC. */
+    /* vvvvvvvvvvv */
+
+    /**
+     * Initial max data.
+     *
+     * This is a transport parameter.
+     *
+     * Depending on the engine mode, the default value is either
+     * @ref LSQUIC_DF_INIT_MAX_DATA_CLIENT or
+     * @ref LSQUIC_DF_INIT_MAX_DATA_SERVER.
+     */
+    unsigned        es_init_max_data;
+
+    /**
+     * Initial max stream data.
+     *
+     * This is a transport parameter.
+     *
+     * Depending on the engine mode, the default value is either
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_CLIENT or
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_SERVER.
+     */
+    unsigned        es_init_max_stream_data_bidi_remote;
+    unsigned        es_init_max_stream_data_bidi_local;
+
+    /**
+     * Initial max stream data for unidirectional streams initiated
+     * by remote endpoint.
+     *
+     * This is a transport parameter.
+     *
+     * Depending on the engine mode, the default value is either
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_CLIENT or
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_SERVER.
+     */
+    unsigned        es_init_max_stream_data_uni;
+
+    /**
+     * Maximum initial number of bidirectional stream.
+     *
+     * This is a transport parameter.
+     *
+     * Default value is @ref LSQUIC_DF_INIT_MAX_STREAMS_BIDI.
+     */
+    unsigned        es_init_max_streams_bidi;
+
+    /**
+     * Maximum initial number of unidirectional stream.
+     *
+     * This is a transport parameter.
+     *
+     * Default value is @ref LSQUIC_DF_INIT_MAX_STREAMS_UNI.
+     */
+    unsigned        es_init_max_streams_uni;
+
+    /**
+     * Idle connection timeout.
+     *
+     * This is a transport parameter.
+     *
+     * (Note: es_idle_conn_to is not reused because it is in microseconds,
+     * which, I now realize, was not a good choice.  Since it will be
+     * obsoleted some time after the switchover to IETF QUIC, we do not
+     * have to keep on using strange units.)
+     *
+     * Default value is @ref LSQUIC_DF_IDLE_TIMEOUT.
+     *
+     * Maximum value is 600 seconds.
+     */
+    unsigned        es_idle_timeout;
+
+    /**
+     * ACK delay exponent.
+     *
+     * This is a transport parameter.
+     *
+     * Default value is @ref LSQUIC_DF_ACK_DELAY_EXP.
+     */
+    unsigned char   es_ack_delay_exp;
+
+    /**
+     * Source Connection ID length.  Only applicable to the IETF QUIC
+     * versions.  Valid values are 4 through 18, inclusive.
+     *
+     * Default value is @ref LSQUIC_DF_SCID_LEN.
+     */
+    unsigned        es_scid_len;
 };
 
 /* Initialize `settings' to default values */
@@ -672,7 +798,8 @@ lsquic_engine_destroy (lsquic_engine_t *);
 unsigned
 lsquic_conn_n_avail_streams (const lsquic_conn_t *);
 
-void lsquic_conn_make_stream(lsquic_conn_t *);
+void
+lsquic_conn_make_stream (lsquic_conn_t *);
 
 /** Return number of delayed streams currently pending */
 unsigned
@@ -687,18 +814,38 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
  * any more incoming streams, nor generate streams of our own.
  */
 void
-lsquic_conn_going_away(lsquic_conn_t *conn);
+lsquic_conn_going_away (lsquic_conn_t *);
 
 /**
  * This forces connection close.  on_conn_closed and on_close callbacks
  * will be called.
  */
-void lsquic_conn_close(lsquic_conn_t *conn);
+void
+lsquic_conn_close (lsquic_conn_t *);
 
 int lsquic_stream_wantread(lsquic_stream_t *s, int is_want);
 ssize_t lsquic_stream_read(lsquic_stream_t *s, void *buf, size_t len);
 ssize_t lsquic_stream_readv(lsquic_stream_t *s, const struct iovec *,
                                                             int iovcnt);
+
+/**
+ * This function allows user-supplied callback to read the stream contents.
+ * It is meant to be used for zero-copy stream processing.
+ */
+ssize_t
+lsquic_stream_readf (lsquic_stream_t *s,
+    /**
+     * The callback takes four parameters:
+     *  - Pointer to user-supplied context;
+     *  - Pointer to the data;
+     *  - Data size (can be zero); and
+     *  - Indicator whether the FIN follows the data.
+     *
+     * The callback returns number of bytes processed.  If this number is zero
+     * or is smaller than `len', reading from stream stops.
+     */
+    size_t (*readf)(void *ctx, const unsigned char *buf, size_t len, int fin),
+    void *ctx);
 
 int lsquic_stream_wantwrite(lsquic_stream_t *s, int is_want);
 
@@ -788,7 +935,8 @@ int lsquic_stream_send_headers(lsquic_stream_t *s,
 void *
 lsquic_stream_get_hset (lsquic_stream_t *);
 
-int lsquic_conn_is_push_enabled(lsquic_conn_t *c);
+int
+lsquic_conn_is_push_enabled (lsquic_conn_t *);
 
 /** Possible values for how are 0, 1, and 2.  See shutdown(2). */
 int lsquic_stream_shutdown(lsquic_stream_t *s, int how);
@@ -808,7 +956,7 @@ struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
 
 /** Returns ID of the stream */
-uint32_t
+lsquic_stream_id_t
 lsquic_stream_id (const lsquic_stream_t *s);
 
 /**
@@ -844,8 +992,8 @@ lsquic_stream_refuse_push (lsquic_stream_t *s);
  * @retval  -1  This is not a pushed stream.
  */
 int
-lsquic_stream_push_info (const lsquic_stream_t *, uint32_t *ref_stream_id,
-                         void **hdr_set);
+lsquic_stream_push_info (const lsquic_stream_t *,
+                         lsquic_stream_id_t *ref_stream_id, void **hdr_set);
 
 /** Return current priority of the stream */
 unsigned lsquic_stream_priority (const lsquic_stream_t *s);
@@ -865,10 +1013,10 @@ int lsquic_stream_set_priority (lsquic_stream_t *s, unsigned priority);
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
 
 lsquic_stream_t *
-lsquic_conn_get_stream_by_id (lsquic_conn_t *c, uint32_t stream_id);
+lsquic_conn_get_stream_by_id (lsquic_conn_t *c, lsquic_stream_id_t stream_id);
 
 /** Get connection ID */
-lsquic_cid_t
+const lsquic_cid_t *
 lsquic_conn_id (const lsquic_conn_t *c);
 
 /** Get pointer to the engine */
@@ -1008,23 +1156,25 @@ lsquic_str2ver (const char *str, size_t len);
  * Get user-supplied context associated with the connection.
  */
 lsquic_conn_ctx_t *
-lsquic_conn_get_ctx (const lsquic_conn_t *c);
+lsquic_conn_get_ctx (const lsquic_conn_t *);
 
 /**
  * Set user-supplied context associated with the connection.
  */
-void lsquic_conn_set_ctx (lsquic_conn_t *c, lsquic_conn_ctx_t *h);
+void
+lsquic_conn_set_ctx (lsquic_conn_t *, lsquic_conn_ctx_t *);
 
 /**
  * Get peer context associated with the connection.
  */
-void *lsquic_conn_get_peer_ctx( const lsquic_conn_t *lconn);
+void *
+lsquic_conn_get_peer_ctx (const lsquic_conn_t *);
 
 /**
  * Abort connection.
  */
 void
-lsquic_conn_abort (lsquic_conn_t *c);
+lsquic_conn_abort (lsquic_conn_t *);
 
 /**
  * Returns true if there are connections to be processed, false otherwise.

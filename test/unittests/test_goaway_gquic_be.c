@@ -20,7 +20,7 @@ struct goaway_parse_test {
     unsigned char   buf[0x100];
     size_t          buf_len;
     uint32_t        error_code;
-    uint32_t        last_stream_id;
+    lsquic_stream_id_t        last_stream_id;
     uint16_t        reason_len;
     const char     *reason;
     int             retval;
@@ -68,7 +68,7 @@ static const struct goaway_parse_test parse_tests[] = {
 struct goaway_gen_test {
     int             lineno;
     uint32_t        error_code;
-    uint32_t        last_stream_id;
+    lsquic_stream_id_t        last_stream_id;
     const char     *reason;
     int             retval;
     unsigned char   buf[0x100];
@@ -130,7 +130,7 @@ run_parse_tests (void)
     for (test = parse_tests; test->buf[0]; ++test)
     {
         uint32_t error_code = ~0;
-        uint32_t last_stream_id = ~0;
+        lsquic_stream_id_t last_stream_id = ~0;
         uint16_t reason_len = ~0;
         const char *reason;
         int sz = pf->pf_parse_goaway_frame(test->buf, test->buf_len,

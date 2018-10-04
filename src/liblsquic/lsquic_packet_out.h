@@ -40,7 +40,7 @@ struct stream_rec {
     struct lsquic_stream    *sr_stream;
     unsigned short           sr_off,
                              sr_len;
-    enum quic_ft_bit         sr_frame_types:16;
+    enum quic_ft_bit         sr_frame_types;
 };
 
 #define srec_taken(srec) ((srec)->sr_frame_types)
@@ -66,6 +66,8 @@ typedef struct lsquic_packet_out
     lsquic_time_t      po_sent;       /* Time sent */
     lsquic_packno_t    po_packno;
 
+    enum quic_ft_bit   po_frame_types;  /* Bitmask of QUIC_FRAME_* */
+
     enum packet_out_flags {
         PO_HELLO    = (1 << 1),         /* Packet contains SHLO or CHLO data */
         PO_ENCRYPTED= (1 << 3),         /* po_enc_data has encrypted data */
@@ -88,10 +90,12 @@ typedef struct lsquic_packet_out
         PO_LONGHEAD = (1 <<16),
         PO_GQUIC    = (1 <<17),         /* Used for logging */
 #define POLEV_SHIFT 18
-        PO_BITS_2   = (1 <<18),         /* PO_BITS_2 and PO_BITS_3 encode the */
-        PO_BITS_3   = (1 <<19),         /*   crypto level.  Used for logging. */
+        PO_ELBIT_0  = (1 <<18),         /* EL bits encode the crypto level. */
+        PO_ELBIT_1  = (1 <<19),         /*   Used for logging. */
+#define POPNS_SHIFT 20
+        PO_PNSBIT_0 = (1 <<20),         /* PNS bits contain the value of the */
+        PO_PNSBIT_1 = (1 <<21),         /*   packet number space. */
     }                  po_flags;
-    enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
     unsigned short     po_sent_sz;      /* If PO_SENT_SZ is set, real size of sent buffer. */
@@ -143,7 +147,7 @@ typedef struct lsquic_packet_out
 } while (0)
 
 #define lsquic_po_header_length(lconn, po_flags) ( \
-    lconn->cn_pf->pf_packout_header_size(lconn, po_flags))
+    lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags))
 
 #define lsquic_packet_out_total_sz(lconn, p) (\
     lconn->cn_pf->pf_packout_size(lconn, p))
@@ -178,6 +182,13 @@ typedef struct lsquic_packet_out
 
 #define lsquic_packet_out_enc_level(p)  (((p)->po_flags >> POLEV_SHIFT) & 3)
 
+#define lsquic_packet_out_set_pns(p, pns) do {                              \
+    (p)->po_flags &= ~(3 << POPNS_SHIFT);                                   \
+    (p)->po_flags |= pns << POPNS_SHIFT;                                    \
+} while (0)
+
+#define lsquic_packet_out_pns(p)  (((p)->po_flags >> POPNS_SHIFT) & 3)
+
 struct packet_out_srec_iter {
     lsquic_packet_out_t         *packet_out;
     struct stream_rec_arr       *cur_srec_arr;
@@ -208,7 +219,8 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               unsigned short off, unsigned short len);
 
 unsigned
-lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *, uint32_t);
+lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *,
+                                                    lsquic_stream_id_t);
 
 int
 lsquic_packet_out_split_in_two (struct lsquic_mm *, lsquic_packet_out_t *,

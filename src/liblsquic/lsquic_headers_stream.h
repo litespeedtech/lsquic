@@ -30,9 +30,9 @@ struct headers_stream_callbacks
     void (*hsc_on_enable_push)  (void *hs_cb_ctx, int enable_push);
     void (*hsc_on_push_promise)
                     (void *frame_cb_ctx, struct uncompressed_headers *);
-    void (*hsc_on_priority)     (void *hs_cb_ctx, uint32_t stream_id,
-                    int exclusive, uint32_t dep_stream_id, unsigned weight);
-    void (*hsc_on_stream_error) (void *hs_cb_ctx, uint32_t stream_id);
+    void (*hsc_on_priority)     (void *hs_cb_ctx, lsquic_stream_id_t stream_id,
+            int exclusive, lsquic_stream_id_t dep_stream_id, unsigned weight);
+    void (*hsc_on_stream_error) (void *hs_cb_ctx, lsquic_stream_id_t stream_id);
     void (*hsc_on_conn_error)   (void *hs_cb_ctx);
 };
 
@@ -47,19 +47,20 @@ lsquic_headers_stream_destroy (struct headers_stream *);
 
 int
 lsquic_headers_stream_send_headers (struct headers_stream *hs,
-                                uint32_t stream_id,
+                                lsquic_stream_id_t stream_id,
                                 const struct lsquic_http_headers *, int eos,
                                 unsigned weight);
 
 int
 lsquic_headers_stream_push_promise (struct headers_stream *hs,
-                        uint32_t stream_id, uint32_t promised_stream_id,
+            lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
                         const struct iovec *path, const struct iovec *host,
                         const struct lsquic_http_headers *);
 
 int
 lsquic_headers_stream_send_priority (struct headers_stream *hs,
-    uint32_t stream_id, int exclusive, uint32_t dep_stream_id, unsigned weight);
+    lsquic_stream_id_t stream_id, int exclusive,
+    lsquic_stream_id_t dep_stream_id, unsigned weight);
 
 int
 lsquic_headers_stream_send_settings (struct headers_stream *hs,

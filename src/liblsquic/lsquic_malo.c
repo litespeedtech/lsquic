@@ -260,7 +260,7 @@ static unsigned
 size_in_bits (size_t sz)
 {
 #if __GNUC__
-    unsigned clz = __builtin_clz(sz - 1);
+    unsigned clz = sz > 1 ? __builtin_clz(sz - 1) : 31;
     return 32 - clz;
 #else
     unsigned clz;

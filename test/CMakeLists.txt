@@ -25,6 +25,7 @@ IF(DEVEL_MODE EQUAL 1)
     # Our test framework relies on assertions, only compile if assertions are
     # enabled.
     #
+    add_subdirectory(ietf)
     add_subdirectory(unittests)
     enable_testing()
 ENDIF()

@@ -74,13 +74,13 @@ struct data_in
  * INS_FRAME_OVERLAP.
  */
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *, uint32_t stream_id);
+data_in_nocopy_new (struct lsquic_conn_public *, lsquic_stream_id_t);
 
 /* This implementation supports overlapping frames and will never return
  * INS_FRAME_OVERLAP.
  */
 struct data_in *
-data_in_hash_new (struct lsquic_conn_public *, uint32_t stream_id,
+data_in_hash_new (struct lsquic_conn_public *, lsquic_stream_id_t,
                   uint64_t byteage);
 
 enum ins_frame

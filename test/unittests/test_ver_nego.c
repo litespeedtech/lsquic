@@ -26,7 +26,7 @@
 struct gen_ver_nego_test {
     int             gvnt_lineno;
     /* Generate: inputs; parse: outputs */
-    lsquic_cid_t    gvnt_cid;
+    uint64_t        gvnt_cid;
     unsigned        gvnt_versions;
     size_t          gvnt_bufsz;
     /* Generate: outputs; parse: inputs */
@@ -113,7 +113,7 @@ test_parsing_ver_nego (const struct gen_ver_nego_test *gvnt)
     packet_in->pi_data = lsquic_mm_get_1370(&mm);
     packet_in->pi_flags |= PI_OWN_DATA;
     memcpy(packet_in->pi_data, gvnt->gvnt_buf, gvnt->gvnt_len);
-    s = lsquic_parse_packet_in_begin(packet_in, gvnt->gvnt_len, 0, &ppstate);
+    s = lsquic_parse_packet_in_begin(packet_in, gvnt->gvnt_len, 0, GQUIC_CID_LEN, &ppstate);
     assert(s == 0);
 
     for (s = packet_in_ver_first(packet_in, &vi, &ver_tag); s;

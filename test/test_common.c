@@ -1046,6 +1046,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_max_sfcw = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "scid_len", 8))
+        {
+            settings->es_scid_len = atoi(val);
+            return 0;
+        }
         break;
     case 10:
         if (0 == strncmp(name, "honor_prst", 10))
@@ -1063,6 +1068,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "silent_close", 12))
         {
             settings->es_silent_close = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "support_push", 12))
+        {
+            settings->es_support_push = atoi(val);
             return 0;
         }
         if (0 == strncmp(name, "support_nstp", 12))

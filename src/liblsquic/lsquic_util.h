@@ -30,6 +30,12 @@ char * get_bin_str(const void *s, size_t len, size_t max_display_len);
 size_t
 hexdump (const void *src, size_t src_sz, char *out, size_t out_sz);
 
+void
+lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz);
+
+#define HEXSTR(buf, bufsz, out) \
+    (lsquic_hexstr(buf, bufsz, out, sizeof(out)), out)
+
 #ifdef __cplusplus
 }
 #endif

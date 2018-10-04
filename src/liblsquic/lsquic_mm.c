@@ -18,6 +18,7 @@
 #include "lsquic_conn.h"
 #include "lsquic_rtt.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_parse.h"
@@ -141,9 +142,9 @@ lsquic_mm_get_packet_in (struct lsquic_mm *mm)
 
 /* Based on commonly used MTUs, ordered from small to large: */
 enum {
-    PACKET_OUT_PAYLOAD_0 = 1280                    - QUIC_MIN_PACKET_OVERHEAD,
-    PACKET_OUT_PAYLOAD_1 = QUIC_MAX_IPv6_PACKET_SZ - QUIC_MIN_PACKET_OVERHEAD,
-    PACKET_OUT_PAYLOAD_2 = QUIC_MAX_IPv4_PACKET_SZ - QUIC_MIN_PACKET_OVERHEAD,
+    PACKET_OUT_PAYLOAD_0 = 1280                    - GQUIC_MIN_PACKET_OVERHEAD,
+    PACKET_OUT_PAYLOAD_1 = GQUIC_MAX_IPv6_PACKET_SZ - GQUIC_MIN_PACKET_OVERHEAD,
+    PACKET_OUT_PAYLOAD_2 = GQUIC_MAX_IPv4_PACKET_SZ - GQUIC_MIN_PACKET_OVERHEAD,
 };
 
 
@@ -186,7 +187,7 @@ lsquic_mm_get_packet_out (struct lsquic_mm *mm, struct malo *malo,
     struct packet_out_buf *pob;
     unsigned idx;
 
-    assert(size <= QUIC_MAX_PAYLOAD_SZ);
+    assert(size <= GQUIC_MAX_PAYLOAD_SZ);
 
     fiu_do_on("mm/packet_out", FAIL_NOMEM);
 

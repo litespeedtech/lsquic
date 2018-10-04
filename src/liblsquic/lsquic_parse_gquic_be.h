@@ -11,21 +11,6 @@
 #define CHECK_SPACE(need, pstart, pend)  \
     do { if ((intptr_t) (need) > ((pend) - (pstart))) { return -1; } } while (0)
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#define READ_UINT(varname, varwidth, src, nbytes) do {                      \
-    varname = 0;                                                            \
-    memcpy((unsigned char *) &varname + varwidth / 8 - (nbytes), (src),     \
-                                                                (nbytes));  \
-    varname = bswap_##varwidth(varname);                                    \
-} while (0)
-#else
-#define READ_UINT(varname, varwidth, src, nbytes) do {                      \
-    varname = 0;                                                            \
-    memcpy((unsigned char *) &varname + varwidth / 8 - (nbytes), (src),     \
-                                                                (nbytes));  \
-} while (0)
-#endif
-
 uint64_t
 gquic_be_read_float_time16 (const void *mem);
 
@@ -37,13 +22,13 @@ gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
                                             struct packin_parse_state *state);
 
 int
-gquic_be_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz, uint64_t conn_id,
-                  unsigned version_bitmask);
+gquic_be_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
+                    const lsquic_cid_t *, unsigned version_bitmask);
 
 int
-gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,
-                  uint64_t offset, int fin, size_t size,
-                  gsf_read_f gsf_read, void *stream);
+gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len,
+    lsquic_stream_id_t stream_id, uint64_t offset, int fin, size_t size,
+    gsf_read_f gsf_read, void *stream);
 
 int
 gquic_be_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
@@ -69,27 +54,28 @@ int
 gquic_be_skip_stop_waiting_frame (size_t buf_len, enum lsquic_packno_bits bits);
 
 int
-gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len, uint32_t stream_id,
-                         uint64_t offset);
+gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len,
+                            lsquic_stream_id_t stream_id, uint64_t offset);
 
 int
 gquic_be_parse_window_update_frame (const unsigned char *buf, size_t buf_len,
-                              uint32_t *stream_id, uint64_t *offset);
+                              lsquic_stream_id_t *stream_id, uint64_t *offset);
 
 int
-gquic_be_gen_blocked_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id);
+gquic_be_gen_blocked_frame (unsigned char *buf, size_t buf_len,
+                            lsquic_stream_id_t stream_id);
 
 int
 gquic_be_parse_blocked_frame (const unsigned char *buf, size_t buf_len,
-                                                    uint32_t *stream_id);
+                                                lsquic_stream_id_t *stream_id);
 
 int
-gquic_be_gen_rst_frame (unsigned char *buf, size_t buf_len, uint32_t stream_id,
-                    uint64_t offset, uint32_t error_code);
+gquic_be_gen_rst_frame (unsigned char *buf, size_t buf_len,
+        lsquic_stream_id_t stream_id, uint64_t offset, uint32_t error_code);
 
 int
-gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len, uint32_t *stream_id,
-                    uint64_t *offset, uint32_t *error_code);
+gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len,
+    lsquic_stream_id_t *stream_id, uint64_t *offset, uint32_t *error_code);
 
 int
 gquic_be_gen_ping_frame (unsigned char *buf, int buf_len);
@@ -104,12 +90,12 @@ gquic_be_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
 
 int
 gquic_be_gen_goaway_frame(unsigned char *buf, size_t buf_len, uint32_t error_code,
-                     uint32_t last_good_stream_id, const char *reason,
+                     lsquic_stream_id_t last_good_stream_id, const char *reason,
                      size_t reason_len);
 
 int
 gquic_be_parse_goaway_frame (const unsigned char *buf, size_t buf_len,
-                       uint32_t *error_code, uint32_t *last_good_stream_id,
+               uint32_t *error_code, lsquic_stream_id_t *last_good_stream_id,
                        uint16_t *reason_length, const char **reason);
 
 int

@@ -128,6 +128,27 @@ char *get_bin_str(const void *s, size_t len, size_t max_display_len)
 }
 
 
+void
+lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz)
+{
+    static const char b2c[16] = "0123456789ABCDEF";
+    const unsigned char *const end_input = buf + bufsz;
+    char *const end_output = out + outsz;
+
+    while (buf < end_input && out + 2 < end_output)
+    {
+        *out++ = b2c[ *buf >> 4 ];
+        *out++ = b2c[ *buf & 0xF ];
+        ++buf;
+    }
+
+    if (buf < end_input)
+        out[-1] = '!';
+
+    *out = '\0';
+}
+
+
 size_t
 hexdump (const void *src_void, size_t src_sz, char *out, size_t out_sz)
 {

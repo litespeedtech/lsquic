@@ -44,8 +44,7 @@
 #include "lsquic_full_conn.h"
 #include "lsquic_util.h"
 #include "lsquic_qtags.h"
-#include "lsquic_str.h"
-#include "lsquic_handshake.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_mm.h"
 #include "lsquic_conn_hash.h"
 #include "lsquic_engine_public.h"
@@ -56,6 +55,7 @@
 #include "lsquic_attq.h"
 #include "lsquic_min_heap.h"
 #include "lsquic_http1x_if.h"
+#include "lsquic_parse_common.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -182,12 +182,28 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
+        settings->es_init_max_data
+                                 = LSQUIC_DF_INIT_MAX_DATA_SERVER;
+        settings->es_init_max_stream_data_bidi_remote
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_SERVER;
+        settings->es_init_max_stream_data_bidi_local
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_SERVER;
+        settings->es_init_max_stream_data_uni
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_SERVER;
     }
     else
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
+        settings->es_init_max_data
+                                 = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
+        settings->es_init_max_stream_data_bidi_remote
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_CLIENT;
+        settings->es_init_max_stream_data_bidi_local
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_CLIENT;
+        settings->es_init_max_stream_data_uni
+                         = LSQUIC_DF_INIT_MAX_STREAM_DATA_UNI_CLIENT;
     }
     settings->es_max_streams_in  = LSQUIC_DF_MAX_STREAMS_IN;
     settings->es_idle_conn_to    = LSQUIC_DF_IDLE_CONN_TO;
@@ -208,6 +224,12 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_rw_once         = LSQUIC_DF_RW_ONCE;
     settings->es_proc_time_thresh= LSQUIC_DF_PROC_TIME_THRESH;
     settings->es_pace_packets    = LSQUIC_DF_PACE_PACKETS;
+    settings->es_init_max_streams_uni
+                                 = LSQUIC_DF_INIT_MAX_STREAMS_UNI;
+    settings->es_init_max_streams_bidi
+                                 = LSQUIC_DF_INIT_MAX_STREAMS_BIDI;
+    settings->es_ack_delay_exp   = LSQUIC_DF_ACK_DELAY_EXP;
+    settings->es_scid_len        = LSQUIC_DF_SCID_LEN;
 }
 
 
@@ -237,6 +259,21 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "%s",
                         "one or more unsupported QUIC version is specified");
+        return -1;
+    }
+    if (settings->es_idle_timeout > 600)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "%s",
+                        "The maximum value of idle timeout is 600 seconds");
+        return -1;
+    }
+    if (settings->es_scid_len < 4 || settings->es_scid_len > 18)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "Source connection ID cannot be %u "
+                        "bytes long; it must be between 4 and 18.",
+                        settings->es_scid_len);
         return -1;
     }
     return 0;
@@ -423,24 +460,6 @@ maybe_grow_conn_heaps (struct lsquic_engine *engine)
 
 
 static lsquic_conn_t *
-new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
-                      unsigned short max_packet_size)
-{
-    lsquic_conn_t *conn;
-    unsigned flags;
-    if (0 != maybe_grow_conn_heaps(engine))
-        return NULL;
-    flags = engine->flags & (ENG_SERVER|ENG_HTTP);
-    conn = full_conn_client_new(&engine->pub, engine->stream_if,
-                    engine->stream_if_ctx, flags, hostname, max_packet_size);
-    if (!conn)
-        return NULL;
-    ++engine->n_conns;
-    return conn;
-}
-
-
-static lsquic_conn_t *
 find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          struct packin_parse_state *ppstate, const struct sockaddr *sa_local)
 {
@@ -450,7 +469,7 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         conn = conn_hash_find_by_addr(&engine->conns_hash, sa_local);
     else if (packet_in->pi_flags & PI_CONN_ID)
         conn = conn_hash_find_by_cid(&engine->conns_hash,
-                                                    packet_in->pi_conn_id);
+                                                    &packet_in->pi_conn_id);
     else
     {
         LSQ_DEBUG("packet header does not have connection ID: discarding");
@@ -462,7 +481,7 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 
     conn->cn_pf->pf_parse_packet_in_finish(packet_in, ppstate);
     if ((packet_in->pi_flags & PI_CONN_ID)
-        && conn->cn_cid != packet_in->pi_conn_id)
+        && !LSQUIC_CIDS_EQ(&conn->cn_cid, &packet_in->pi_conn_id))
     {
         LSQ_DEBUG("connection IDs do not match");
         return NULL;
@@ -597,7 +616,11 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
                        const char *hostname, unsigned short max_packet_size)
 {
+    client_conn_ctor_f ctor;
     lsquic_conn_t *conn;
+    unsigned flags;
+    int is_ipv4;
+
     ENGINE_IN(engine);
 
     if (engine->flags & ENG_SERVER)
@@ -613,27 +636,24 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
         goto err;
     }
 
-    if (0 == max_packet_size)
-    {
-        switch (peer_sa->sa_family)
-        {
-        case AF_INET:
-            max_packet_size = QUIC_MAX_IPv4_PACKET_SZ;
-            break;
-        default:
-            max_packet_size = QUIC_MAX_IPv6_PACKET_SZ;
-            break;
-        }
-    }
-
-    conn = new_full_conn_client(engine, hostname, max_packet_size);
+    if (0 != maybe_grow_conn_heaps(engine))
+        return NULL;
+    flags = engine->flags & (ENG_SERVER|ENG_HTTP);
+    is_ipv4 = peer_sa->sa_family == AF_INET;
+    if (engine->pub.enp_settings.es_versions & LSQUIC_IETF_VERSIONS)
+        ctor = lsquic_ietf_full_conn_client_new;
+    else
+        ctor = lsquic_gquic_full_conn_client_new;
+    conn = ctor(&engine->pub, engine->stream_if, engine->stream_if_ctx,
+                flags, hostname, max_packet_size, is_ipv4);
     if (!conn)
         goto err;
+    ++engine->n_conns;
     lsquic_conn_record_sockaddr(conn, local_sa, peer_sa);
     if (0 != conn_hash_add(&engine->conns_hash, conn))
     {
-        LSQ_WARN("cannot add connection %"PRIu64" to hash - destroy",
-            conn->cn_cid);
+        LSQ_WARNC("cannot add connection %"CID_FMT" to hash - destroy",
+            CID_BITS(&conn->cn_cid));
         destroy_conn(engine, conn);
         goto err;
     }
@@ -647,8 +667,8 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
     engine_incref_conn(conn, LSCONN_TICKABLE);
     conn->cn_peer_ctx = peer_ctx;
     lsquic_conn_set_ctx(conn, conn_ctx);
-    full_conn_client_call_on_new(conn);
   end:
+    conn->cn_if->ci_client_call_on_new(conn);
     ENGINE_OUT(engine);
     return conn;
   err:
@@ -685,7 +705,7 @@ engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
-    LSQ_DEBUG("incref conn %"PRIu64", '%s' -> '%s'", conn->cn_cid,
+    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(&conn->cn_cid),
                     (refflags2str(conn->cn_flags & ~flag, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
 }
@@ -703,7 +723,7 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
         assert(0 == (conn->cn_flags & LSCONN_HASHED));
 #endif
     conn->cn_flags &= ~flags;
-    LSQ_DEBUG("decref conn %"PRIu64", '%s' -> '%s'", conn->cn_cid,
+    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(&conn->cn_cid),
                     (refflags2str(conn->cn_flags | flags, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
@@ -781,82 +801,6 @@ lsquic_engine_process_conns (lsquic_engine_t *engine)
 
     process_connections(engine, conn_iter_next_tickable, now);
     ENGINE_OUT(engine);
-}
-
-
-static ssize_t
-really_encrypt_packet (const lsquic_conn_t *conn,
-                       struct lsquic_packet_out *packet_out,
-                       unsigned char *buf, size_t bufsz)
-{
-    int header_sz, is_hello_packet;
-    enum enc_level enc_level;
-    size_t packet_sz;
-    unsigned char header_buf[QUIC_MAX_PUBHDR_SZ];
-
-    header_sz = conn->cn_pf->pf_gen_reg_pkt_header(conn, packet_out,
-                                            header_buf, sizeof(header_buf));
-    if (header_sz < 0)
-        return -1;
-
-    is_hello_packet = !!(packet_out->po_flags & PO_HELLO);
-    enc_level = conn->cn_esf->esf_encrypt(conn->cn_enc_session,
-                conn->cn_version, 0,
-                packet_out->po_packno, header_buf, header_sz,
-                packet_out->po_data, packet_out->po_data_sz,
-                buf, bufsz, &packet_sz, is_hello_packet);
-    if ((int) enc_level >= 0)
-    {
-        lsquic_packet_out_set_enc_level(packet_out, enc_level);
-        LSQ_DEBUG("encrypted packet %"PRIu64"; plaintext is %zu bytes, "
-            "ciphertext is %zd bytes",
-            packet_out->po_packno,
-            conn->cn_pf->pf_packout_header_size(conn, packet_out->po_flags) +
-                                                packet_out->po_data_sz,
-            packet_sz);
-        return packet_sz;
-    }
-    else
-        return -1;
-}
-
-
-static enum { ENCPA_OK, ENCPA_NOMEM, ENCPA_BADCRYPT, }
-encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
-                                            lsquic_packet_out_t *packet_out)
-{
-    ssize_t enc_sz;
-    size_t bufsz;
-    unsigned sent_sz;
-    unsigned char *buf;
-
-    bufsz = conn->cn_pf->pf_packout_header_size(conn, packet_out->po_flags) +
-                                packet_out->po_data_sz + QUIC_PACKET_HASH_SZ;
-    buf = engine->pub.enp_pmi->pmi_allocate(engine->pub.enp_pmi_ctx, bufsz);
-    if (!buf)
-    {
-        LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",
-                                                                        bufsz);
-        return ENCPA_NOMEM;
-    }
-
-    {
-        enc_sz = really_encrypt_packet(conn, packet_out, buf, bufsz);
-        sent_sz = enc_sz;
-    }
-
-    if (enc_sz < 0)
-    {
-        engine->pub.enp_pmi->pmi_release(engine->pub.enp_pmi_ctx, buf);
-        return ENCPA_BADCRYPT;
-    }
-
-    packet_out->po_enc_data    = buf;
-    packet_out->po_enc_data_sz = enc_sz;
-    packet_out->po_sent_sz     = sent_sz;
-    packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ;
-
-    return ENCPA_OK;
 }
 
 
@@ -995,7 +939,7 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
     for (i = 0; i < n_sent; ++i)
     {
         eng_hist_inc(&engine->history, now, sl_packets_out);
-        EV_LOG_PACKET_SENT(batch->conns[i]->cn_cid, batch->packets[i]);
+        EV_LOG_PACKET_SENT(&batch->conns[i]->cn_cid, batch->packets[i]);
         batch->conns[i]->cn_if->ci_packet_sent(batch->conns[i],
                                                     batch->packets[i]);
         /* `i' is added to maintain relative order */
@@ -1015,7 +959,7 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
     }
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
         for ( ; i < (int) n_to_send; ++i)
-            EV_LOG_PACKET_NOT_SENT(batch->conns[i]->cn_cid, batch->packets[i]);
+            EV_LOG_PACKET_NOT_SENT(&batch->conns[i]->cn_cid, batch->packets[i]);
     /* Return packets to the connection in reverse order so that the packet
      * ordering is maintained.
      */
@@ -1069,14 +1013,15 @@ send_packets_out (struct lsquic_engine *engine,
     {
         packet_out = conn->cn_if->ci_next_packet_to_send(conn);
         if (!packet_out) {
-            LSQ_DEBUG("batched all outgoing packets for conn %"PRIu64,
-                                                            conn->cn_cid);
+            LSQ_DEBUGC("batched all outgoing packets for conn %"CID_FMT,
+                                                    CID_BITS(&conn->cn_cid));
             coi_deactivate(&conns_iter, conn);
             continue;
         }
         if (!(packet_out->po_flags & (PO_ENCRYPTED|PO_NOENCRYPT)))
         {
-            switch (encrypt_packet(engine, conn, packet_out))
+            switch (conn->cn_esf_c->esf_encrypt_packet(conn->cn_enc_session,
+                                            &engine->pub, conn, packet_out))
             {
             case ENCPA_NOMEM:
                 /* Send what we have and wait for a more opportune moment */
@@ -1085,7 +1030,8 @@ send_packets_out (struct lsquic_engine *engine,
             case ENCPA_BADCRYPT:
                 /* This is pretty bad: close connection immediately */
                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
-                LSQ_INFO("conn %"PRIu64" has unsendable packets", conn->cn_cid);
+                LSQ_INFOC("conn %"CID_FMT" has unsendable packets",
+                                                    CID_BITS(&conn->cn_cid));
                 if (!(conn->cn_flags & LSCONN_EVANESCENT))
                 {
                     if (!(conn->cn_flags & LSCONN_CLOSING))
@@ -1107,8 +1053,8 @@ send_packets_out (struct lsquic_engine *engine,
                 break;
             }
         }
-        LSQ_DEBUG("batched packet %"PRIu64" for connection %"PRIu64,
-                                        packet_out->po_packno, conn->cn_cid);
+        LSQ_DEBUGC("batched packet %"PRIu64" for connection %"CID_FMT,
+                                packet_out->po_packno, CID_BITS(&conn->cn_cid));
         assert(conn->cn_flags & LSCONN_HAS_PEER_SA);
         if (packet_out->po_flags & PO_ENCRYPTED)
         {
@@ -1299,18 +1245,13 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
     const struct sockaddr *sa_local, const struct sockaddr *sa_peer,
     void *peer_ctx)
 {
+    const unsigned char *const packet_end = packet_in_data + packet_in_size;
     struct packin_parse_state ppstate;
     lsquic_packet_in_t *packet_in;
     int (*parse_packet_in_begin) (struct lsquic_packet_in *, size_t length,
-                                int is_server, struct packin_parse_state *);
-
-    if (packet_in_size > QUIC_MAX_PACKET_SZ)
-    {
-        LSQ_DEBUG("Cannot handle packet_in_size(%zd) > %d packet incoming "
-            "packet's header", packet_in_size, QUIC_MAX_PACKET_SZ);
-        errno = E2BIG;
-        return -1;
-    }
+                int is_server, unsigned cid_len, struct packin_parse_state *);
+    unsigned n_zeroes;
+    int s;
 
     if (conn_hash_using_addr(&engine->conns_hash))
     {
@@ -1320,34 +1261,53 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             return -1;
         if ((1 << conn->cn_version) & LSQUIC_GQUIC_HEADER_VERSIONS)
             parse_packet_in_begin = lsquic_gquic_parse_packet_in_begin;
-        else
+        else if ((1 << conn->cn_version) & LSQUIC_IETF_VERSIONS)
             parse_packet_in_begin = lsquic_iquic_parse_packet_in_begin;
+        else
+        {
+            assert(conn->cn_version == LSQVER_044
+#if LSQUIC_USE_Q098
+                   || conn->cn_version == LSQVER_098
+#endif
+
+                                                    );
+            parse_packet_in_begin = lsquic_Q044_parse_packet_in_begin;
+        }
     }
     else
         parse_packet_in_begin = lsquic_parse_packet_in_begin;
 
-    packet_in = lsquic_mm_get_packet_in(&engine->pub.enp_mm);
-    if (!packet_in)
-        return -1;
-
-    /* Library does not modify packet_in_data, it is not referenced after
-     * this function returns and subsequent release of pi_data is guarded
-     * by PI_OWN_DATA flag.
-     */
-    packet_in->pi_data = (unsigned char *) packet_in_data;
-    if (0 != parse_packet_in_begin(packet_in, packet_in_size,
-                                        engine->flags & ENG_SERVER, &ppstate))
+    n_zeroes = 0;
+    do
     {
-        LSQ_DEBUG("Cannot parse incoming packet's header");
-        lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
-        errno = EINVAL;
-        return -1;
-    }
+        packet_in = lsquic_mm_get_packet_in(&engine->pub.enp_mm);
+        if (!packet_in)
+            return -1;
+        /* Library does not modify packet_in_data, it is not referenced after
+         * this function returns and subsequent release of pi_data is guarded
+         * by PI_OWN_DATA flag.
+         */
+        packet_in->pi_data = (unsigned char *) packet_in_data;
+        if (0 != parse_packet_in_begin(packet_in, packet_end - packet_in_data,
+                                engine->flags & ENG_SERVER,
+                                engine->pub.enp_settings.es_scid_len, &ppstate))
+        {
+            LSQ_DEBUG("Cannot parse incoming packet's header");
+            lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
+            errno = EINVAL;
+            return -1;
+        }
 
-    packet_in->pi_received = lsquic_time_now();
-    eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);
-    return process_packet_in(engine, packet_in, &ppstate, sa_local, sa_peer,
+        packet_in_data += packet_in->pi_data_sz;
+        packet_in->pi_received = lsquic_time_now();
+        eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);
+        s = process_packet_in(engine, packet_in, &ppstate, sa_local, sa_peer,
                                                                     peer_ctx);
+        n_zeroes += s == 0;
+    }
+    while (0 == s && packet_in_data < packet_end);
+
+    return n_zeroes > 0 ? 0 : s;
 }
 
 

@@ -11,9 +11,11 @@
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"
+#include "lsquic_cong_ctl.h"
 #include "lsquic_cubic.h"
 #include "lsquic_logger.h"
 
+static const struct cong_ctl_if *const cci = &lsquic_cong_cubic_if;
 
 static void
 test_post_quiescence_explosion (void)
@@ -21,23 +23,24 @@ test_post_quiescence_explosion (void)
     struct lsquic_cubic cubic;
     lsquic_time_t const rtt = 10000;
     lsquic_time_t t = 12345600;
+    lsquic_cid_t cid = { .len = 8, .idbuf = { __LINE__ }};
     int i;
 
-    lsquic_cubic_init(&cubic, __LINE__);
+    cci->cci_init(&cubic, &cid);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;
 
     for (i = 0; i < 10; ++i)
-        lsquic_cubic_ack(&cubic, t, rtt, 0, 1370);
+        cci->cci_ack(&cubic, t, rtt, 0, 1370);
 
-    assert(lsquic_cubic_get_cwnd(&cubic) == 47026);
+    assert(cci->cci_get_cwnd(&cubic) == 47026);
 
     t += 25 * 1000 * 1000;
-    lsquic_cubic_was_quiet(&cubic, t);
-    lsquic_cubic_ack(&cubic, t, rtt, 0, 1370);
-    assert(lsquic_cubic_get_cwnd(&cubic) == 47060);
+    cci->cci_was_quiet(&cubic, t);
+    cci->cci_ack(&cubic, t, rtt, 0, 1370);
+    assert(cci->cci_get_cwnd(&cubic) == 47060);
 
     t += 2 * 1000 * 1000;
-    lsquic_cubic_ack(&cubic, t, rtt, 0, 1370);
+    cci->cci_ack(&cubic, t, rtt, 0, 1370);
 }
 
 
@@ -47,23 +50,24 @@ test_post_quiescence_explosion2 (void)
     struct lsquic_cubic cubic;
     lsquic_time_t const rtt = 10000;
     lsquic_time_t t = 12345600;
+    lsquic_cid_t cid = { .len = 8, .idbuf = { __LINE__ }};
     int i;
 
-    lsquic_cubic_init(&cubic, __LINE__);
+    cci->cci_init(&cubic, &cid);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;
 
     for (i = 0; i < 10; ++i)
-        lsquic_cubic_ack(&cubic, t, rtt, 1, 1370);
+        cci->cci_ack(&cubic, t, rtt, 1, 1370);
 
-    assert(lsquic_cubic_get_cwnd(&cubic) == 45300);
+    assert(cci->cci_get_cwnd(&cubic) == 45300);
 
     t += 25 * 1000 * 1000;
-    lsquic_cubic_was_quiet(&cubic, t);
-    lsquic_cubic_ack(&cubic, t, rtt, 0, 1370);
-    assert(lsquic_cubic_get_cwnd(&cubic) == 46754);
+    cci->cci_was_quiet(&cubic, t);
+    cci->cci_ack(&cubic, t, rtt, 0, 1370);
+    assert(cci->cci_get_cwnd(&cubic) == 46754);
 
     t += 2 * 1000 * 1000;
-    lsquic_cubic_ack(&cubic, t, rtt, 1, 1370);
+    cci->cci_ack(&cubic, t, rtt, 1, 1370);
 }
 
 

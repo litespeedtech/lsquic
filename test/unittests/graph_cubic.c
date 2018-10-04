@@ -17,8 +17,10 @@
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
+#include "lsquic_cong_ctl.h"
 #include "lsquic_cubic.h"
 
+static const struct cong_ctl_if *const cci = &lsquic_cong_cubic_if;
 
 #define MS(n) ((n) * 1000)  /* MS: Milliseconds */
 
@@ -47,7 +49,7 @@ struct rec
                                     sizeof(recs[0]));   \
     }                                                   \
     recs[i].event = ev;                                 \
-    recs[i].cwnd  = lsquic_cubic_get_cwnd(&cubic);      \
+    recs[i].cwnd  = cci->cci_get_cwnd(&cubic);      \
     if (max_cwnd < recs[i].cwnd)                        \
         max_cwnd = recs[i].cwnd;                        \
 } while (0)
@@ -69,7 +71,7 @@ main (int argc, char **argv)
 #endif
     enum cubic_flags flags;
 
-    lsquic_cubic_init(&cubic, 0);
+    cci->cci_init(&cubic, 0);
     max_cwnd = 0;
     i = 0;
 
@@ -85,7 +87,7 @@ main (int argc, char **argv)
             break;
         case 'f':
             flags = atoi(optarg);
-            lsquic_cubic_init_ext(&cubic, 0, flags);
+            lsquic_cubic_set_flags(&cubic, flags);
             break;
         case 'l':
             app_limited = atoi(optarg);
@@ -94,7 +96,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_ack(&cubic, MS(unit * i), MS(rtt_ms), app_limited, 1370);
+                cci->cci_ack(&cubic, MS(unit * i), MS(rtt_ms), app_limited, 1370);
                 REC(EV_ACK);
             }
             break;
@@ -102,7 +104,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_loss(&cubic);
+                cci->cci_loss(&cubic);
                 REC(EV_LOSS);
             }
             break;
@@ -110,7 +112,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_timeout(&cubic);
+                cci->cci_timeout(&cubic);
                 REC(EV_TIMEOUT);
             }
             break;

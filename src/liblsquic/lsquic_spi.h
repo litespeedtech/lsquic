@@ -17,7 +17,7 @@
 
 struct stream_prio_iter
 {
-    lsquic_cid_t                    spi_cid;            /* Used for logging */
+    const lsquic_cid_t             *spi_cid;            /* Used for logging */
     const char                     *spi_name;           /* Used for logging */
     uint64_t                        spi_set[4];         /* 256 bits */
     enum stream_flags               spi_onlist_mask;
@@ -32,7 +32,7 @@ struct stream_prio_iter
 void
 lsquic_spi_init (struct stream_prio_iter *, struct lsquic_stream *first,
          struct lsquic_stream *last, uintptr_t next_ptr_offset,
-         unsigned onlist_mask, lsquic_cid_t cid, const char *name);
+         unsigned onlist_mask, const lsquic_cid_t *, const char *name);
 
 struct lsquic_stream *
 lsquic_spi_first (struct stream_prio_iter *);

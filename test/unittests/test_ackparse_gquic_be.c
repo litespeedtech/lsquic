@@ -341,8 +341,9 @@ test_max_ack (void)
     const struct lsquic_packno_range *range;
     unsigned char buf[1500];
     struct ack_info acki;
+    lsquic_cid_t cid = { .len = 0, };
 
-    lsquic_rechist_init(&rechist, 12345);
+    lsquic_rechist_init(&rechist, &cid, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)
@@ -394,8 +395,9 @@ test_ack_truncation (void)
     unsigned char buf[1500];
     struct ack_info acki;
     size_t bufsz;
+    lsquic_cid_t cid = { .len = 0, };
 
-    lsquic_rechist_init(&rechist, 12345);
+    lsquic_rechist_init(&rechist, &cid, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)

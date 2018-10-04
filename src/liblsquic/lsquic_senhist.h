@@ -23,8 +23,11 @@ typedef struct lsquic_senhist {
 #endif
 } lsquic_senhist_t;
 
-#define lsquic_senhist_init(hist) do {                                  \
-    (hist)->sh_last_sent = 0;                                           \
+#define lsquic_senhist_init(hist, is_ietf) do {                         \
+    if (is_ietf)                                                        \
+        (hist)->sh_last_sent = ~0ull;                                   \
+    else                                                                \
+        (hist)->sh_last_sent = 0;                                       \
 } while (0)
 
 #define lsquic_senhist_cleanup(hist)

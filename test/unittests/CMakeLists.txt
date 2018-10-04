@@ -8,6 +8,12 @@ enable_testing()
 
 IF (NOT MSVC)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
+IF (CMAKE_C_COMPILER MATCHES gcc)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-override-init")
+ENDIF()
+IF (CMAKE_C_COMPILER MATCHES clang)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-initializer-overrides")
+ENDIF()
 
 
 add_executable(test_rechist test_rechist.c)
@@ -148,10 +154,6 @@ add_executable(test_streamgen test_streamgen.c)
 target_link_libraries(test_streamgen lsquic pthread libssl.a libcrypto.a z m ${LIBS})
 add_test(streamgen test_streamgen)
 
-add_executable(test_some_packets test_some_packets.c)
-target_link_libraries(test_some_packets lsquic pthread libssl.a libcrypto.a z m ${LIBS})
-add_test(some_packets test_some_packets)
-
 
 add_executable(test_elision test_elision.c)
 target_link_libraries(test_elision lsquic pthread libssl.a libcrypto.a z m ${LIBS})
@@ -222,8 +224,20 @@ target_link_libraries(test_cubic lsquic pthread libssl.a libcrypto.a m ${LIBS})
 add_test(cubic test_cubic)
 
 add_executable(test_di_nocopy test_di_nocopy.c)
-target_link_libraries(test_di_nocopy lsquic pthread libssl.a libcrypto.a m ${LIBS})
+target_link_libraries(test_di_nocopy lsquic pthread libssl.a libcrypto.a m z ${LIBS})
 add_test(di_nocopy test_di_nocopy)
+
+add_executable(test_trapa test_trapa.c)
+target_link_libraries(test_trapa lsquic pthread libssl.a libcrypto.a m ${FIULIB})
+add_test(trapa test_trapa)
+
+add_executable(test_clear_aead test_clear_aead.c)
+target_link_libraries(test_clear_aead lsquic libssl.a libcrypto.a pthread m ${FIULIB})
+add_test(clear_aead test_clear_aead)
+
+# add_executable(test_chlo_gen test_chlo_gen.c)
+# target_link_libraries(test_chlo_gen lsquic libssl.a libcrypto.a m pthread ${FIULIB})
+# add_test(chlo_gen test_chlo_gen)
 
 add_executable(test_dec test_dec.c)
 target_link_libraries(test_dec libssl.a libcrypto.a z m pthread ${LIBS})
@@ -375,10 +389,6 @@ add_executable(test_streamgen test_streamgen.c)
 target_link_libraries(test_streamgen lsquic ${LIBS_LIST})
 add_test(streamgen test_streamgen)
 
-add_executable(test_some_packets test_some_packets.c)
-target_link_libraries(test_some_packets lsquic ${LIBS_LIST})
-add_test(some_packets test_some_packets)
-
 
 add_executable(test_elision test_elision.c)
 target_link_libraries(test_elision lsquic ${LIBS_LIST} -FORCE:multiple)
@@ -444,6 +454,10 @@ add_test(cubic test_cubic)
 add_executable(test_di_nocopy test_di_nocopy.c)
 target_link_libraries(test_di_nocopy lsquic pthread libssl.a libcrypto.a m ${LIBS})
 add_test(di_nocopy test_di_nocopy)
+
+add_executable(test_trapa test_trapa.c)
+target_link_libraries(test_trapa lsquic pthread libssl.a libcrypto.a m ${FIULIB})
+add_test(trapa test_trapa)
 
 add_executable(test_dec test_dec.c ../../wincompat/getopt.c ../../wincompat/getopt1.c)
 target_link_libraries(test_dec ${LIBS_LIST})

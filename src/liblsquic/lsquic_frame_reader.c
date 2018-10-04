@@ -507,6 +507,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     uint32_t name_idx;
     lshpack_strlen_t name_len, val_len;
     char *buf;
+    uint32_t stream_id32;
     struct uncompressed_headers *uh = NULL;
     void *hset = NULL;
 
@@ -560,9 +561,9 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         goto stream_error;
     }
 
-    memcpy(&uh->uh_stream_id, fr->fr_state.header.hfh_stream_id,
-                                                sizeof(uh->uh_stream_id));
-    uh->uh_stream_id     = ntohl(uh->uh_stream_id);
+    memcpy(&stream_id32, fr->fr_state.header.hfh_stream_id,
+                                                sizeof(stream_id32));
+    uh->uh_stream_id     = ntohl(stream_id32);
     uh->uh_oth_stream_id = hs->oth_stream_id;
     if (HTTP_FRAME_HEADERS == fr->fr_state.by_type.headers_state.frame_type)
     {

@@ -20,7 +20,7 @@ struct test {
     const struct parse_funcs
                    *pf;
     size_t          bufsz;
-    lsquic_cid_t    cid;    /* Zero means connection ID is not specified */
+    uint64_t        cid;    /* Zero means connection ID is not specified */
     const char     *nonce;
     lsquic_packno_t packno;
     enum lsquic_packno_bits
@@ -43,7 +43,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x01020304,
@@ -60,7 +60,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_039),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x01020304,
@@ -77,7 +77,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x00,
@@ -94,7 +94,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x00,
@@ -114,7 +114,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_039),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x09,
@@ -137,7 +137,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0x00,
@@ -155,7 +155,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0,    /* Do not set connection ID */
         .nonce  = NONCENSE,
         .packno = 0x00,
@@ -171,7 +171,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0x00,
@@ -192,7 +192,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_035),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0xA0A1A2A3A4A5A6A7UL,
@@ -210,7 +210,7 @@ static const struct test tests[] = {
 
     {
         .pf     = select_pf_by_ver(LSQVER_039),
-        .bufsz  = QUIC_MAX_PUBHDR_SZ,
+        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0xA0A1A2A3A4A5A6A7UL,
@@ -246,9 +246,14 @@ run_test (int i)
     };
     lsquic_packet_out_set_packno_bits(&packet_out, test->bits);
 
-    struct lsquic_conn lconn = { .cn_cid = test->cid, };
+    lsquic_cid_t cid;
+    memset(&cid, 0, sizeof(cid));
+    cid.len = sizeof(test->cid);
+    memcpy(cid.idbuf, &test->cid, sizeof(test->cid));
 
-    unsigned char out[QUIC_MAX_PUBHDR_SZ];
+    struct lsquic_conn lconn = { .cn_cid = cid, };
+
+    unsigned char out[GQUIC_MAX_PUBHDR_SZ];
     int len = test->pf->pf_gen_reg_pkt_header(&lconn, &packet_out, out,
                                                                 sizeof(out));
 

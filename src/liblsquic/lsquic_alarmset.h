@@ -20,9 +20,11 @@ typedef struct lsquic_alarm {
 enum alarm_id {
     AL_HANDSHAKE,
     AL_RETX,
-    AL_ACK,
     AL_PING,
     AL_IDLE,
+    AL_ACK_INIT,
+    AL_ACK_HSK,
+    AL_ACK,
     MAX_LSQUIC_ALARMS
 };
 
@@ -31,6 +33,8 @@ enum alarm_id_bit {
     ALBIT_HANDSHAKE = 1 << AL_HANDSHAKE,
     ALBIT_RETX      = 1 << AL_RETX,
     ALBIT_ACK       = 1 << AL_ACK,
+    ALBIT_ACK_INIT  = 1 << AL_ACK_INIT,
+    ALBIT_ACK_HSK   = 1 << AL_ACK_HSK,
     ALBIT_PING      = 1 << AL_PING,
     ALBIT_IDLE      = 1 << AL_IDLE,
 };
@@ -39,13 +43,13 @@ enum alarm_id_bit {
 typedef struct lsquic_alarmset {
     enum alarm_id_bit           as_armed_set;
     lsquic_time_t               as_expiry[MAX_LSQUIC_ALARMS];
-    lsquic_cid_t                as_cid;    /* Used for logging */
+    const lsquic_cid_t         *as_cid;    /* Used for logging */
     struct lsquic_alarm         as_alarms[MAX_LSQUIC_ALARMS];
 } lsquic_alarmset_t;
 
 
 void
-lsquic_alarmset_init (lsquic_alarmset_t *, lsquic_cid_t);
+lsquic_alarmset_init (lsquic_alarmset_t *, const lsquic_cid_t *);
 
 void
 lsquic_alarmset_init_alarm (lsquic_alarmset_t *, enum alarm_id,

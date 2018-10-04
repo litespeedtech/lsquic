@@ -15,7 +15,7 @@
 
 
 void
-lsquic_alarmset_init (lsquic_alarmset_t *alset, lsquic_cid_t cid)
+lsquic_alarmset_init (lsquic_alarmset_t *alset, const lsquic_cid_t *cid)
 {
     alset->as_cid       = cid;
     alset->as_armed_set = 0;

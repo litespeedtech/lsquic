@@ -104,6 +104,11 @@ LSQUIC_RANDOM_SEND_FAILURE
 
     Only available when compiled with -DLSQUIC_RANDOM_SEND_FAILURE=1
 
+LSQUIC_LOG_SECRETS
+
+    If set to true value, crypto secrets will be logged.  Applies to
+    IETF QUIC only.
+
 Control Network-Related Stuff
 -----------------------------
 

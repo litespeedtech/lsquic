@@ -29,8 +29,8 @@ static const unsigned char *
 conn2hash_by_cid (const struct lsquic_conn *lconn, unsigned char *buf,
                                                                 size_t *sz)
 {
-    *sz = sizeof(lconn->cn_cid);
-    return (unsigned char *) &lconn->cn_cid;
+    *sz = lconn->cn_cid.len;
+    return lconn->cn_cid.idbuf;
 }
 
 
@@ -102,13 +102,13 @@ conn_hash_cleanup (struct conn_hash *conn_hash)
 
 
 struct lsquic_conn *
-conn_hash_find_by_cid (struct conn_hash *conn_hash, lsquic_cid_t cid)
+conn_hash_find_by_cid (struct conn_hash *conn_hash, const lsquic_cid_t *cid)
 {
-    const unsigned hash = XXH32(&cid, sizeof(cid), (uintptr_t) conn_hash);
+    const unsigned hash = XXH32(cid->idbuf, cid->len, (uintptr_t) conn_hash);
     const unsigned buckno = conn_hash_bucket_no(conn_hash, hash);
     struct lsquic_conn *lconn;
     TAILQ_FOREACH(lconn, &conn_hash->ch_buckets[buckno], cn_next_hash)
-        if (lconn->cn_cid == cid)
+        if (LSQUIC_CIDS_EQ(&lconn->cn_cid, cid))
             return lconn;
     return NULL;
 }

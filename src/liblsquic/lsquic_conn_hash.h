@@ -50,7 +50,7 @@ void
 conn_hash_cleanup (struct conn_hash *);
 
 struct lsquic_conn *
-conn_hash_find_by_cid (struct conn_hash *, lsquic_cid_t);
+conn_hash_find_by_cid (struct conn_hash *, const lsquic_cid_t *);
 
 struct lsquic_conn *
 conn_hash_find_by_addr (struct conn_hash *, const struct sockaddr *);

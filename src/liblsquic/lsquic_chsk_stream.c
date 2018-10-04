@@ -16,7 +16,7 @@
 #include "lsquic.h"
 
 #include "lsquic_str.h"
-#include "lsquic_handshake.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_chsk_stream.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_conn.h"
@@ -79,7 +79,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
     }
     c_hsk->buf_off += nread;
 
-    s = c_hsk->lconn->cn_esf->esf_handle_chlo_reply(c_hsk->lconn->cn_enc_session,
+    s = c_hsk->lconn->cn_esf.g->esf_handle_chlo_reply(c_hsk->lconn->cn_enc_session,
                                         c_hsk->buf_in, c_hsk->buf_off);
     LSQ_DEBUG("lsquic_enc_session_handle_chlo_reply returned %d", s);
     switch (s)
@@ -103,7 +103,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         lsquic_mm_put_16k(c_hsk->mm, c_hsk->buf_in);
         c_hsk->buf_in = NULL;
         lsquic_stream_wantread(stream, 0);
-        if (c_hsk->lconn->cn_esf->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
+        if (c_hsk->lconn->cn_esf.g->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
         {
             LSQ_DEBUG("handshake is successful, inform connection");
             c_hsk->lconn->cn_if->ci_handshake_ok(c_hsk->lconn);
@@ -151,7 +151,7 @@ hsk_client_on_write (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
     }
     len = 4 * 1024;
 
-    if (0 != c_hsk->lconn->cn_esf->esf_gen_chlo(c_hsk->lconn->cn_enc_session,
+    if (0 != c_hsk->lconn->cn_esf.g->esf_gen_chlo(c_hsk->lconn->cn_enc_session,
                                             c_hsk->ver_neg->vn_ver, buf, &len))
     {
         LSQ_WARN("cannot create CHLO message");

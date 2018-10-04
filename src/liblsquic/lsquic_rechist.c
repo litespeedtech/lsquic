@@ -22,11 +22,12 @@
 
 
 void
-lsquic_rechist_init (struct lsquic_rechist *rechist, lsquic_cid_t cid)
+lsquic_rechist_init (struct lsquic_rechist *rechist, const lsquic_cid_t *cid,
+                                                                    int ietf)
 {
     memset(rechist, 0, sizeof(*rechist));
     rechist->rh_cid = cid;
-    rechist->rh_cutoff = 1;
+    rechist->rh_cutoff = ietf ? 0 : 1;
     lsquic_packints_init(&rechist->rh_pints);
     LSQ_DEBUG("instantiated received packet history");
 }

@@ -16,6 +16,7 @@
 #include "lsquic_types.h"
 #include "lsquic_cubic.h"
 #include "lsquic_util.h"
+#include "lsquic_cong_ctl.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CUBIC
 #define LSQUIC_LOG_CONN_ID cubic->cu_cid
@@ -95,13 +96,21 @@ cubic_update (struct lsquic_cubic *cubic, lsquic_time_t now, unsigned n_bytes)
 
 
 void
-lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
-                                                        enum cubic_flags flags)
+lsquic_cubic_set_flags (struct lsquic_cubic *cubic, enum cubic_flags flags)
 {
+    LSQ_DEBUG("%s(cubic, 0x%X)", __func__, flags);
+    cubic->cu_flags = flags;
+}
+
+
+static void
+lsquic_cubic_init (void *cong_ctl, const lsquic_cid_t *cid)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
     cubic_reset(cubic);
     cubic->cu_ssthresh = 10000 * TCP_MSS; /* Emulate "unbounded" slow start */
     cubic->cu_cid   = cid;
-    cubic->cu_flags = flags;
+    cubic->cu_flags = DEFAULT_CUBIC_FLAGS;
 #ifndef NDEBUG
     const char *s;
     s = getenv("LSQUIC_CUBIC_SAMPLING_RATE");
@@ -110,7 +119,7 @@ lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
     else
 #endif
         cubic->cu_sampling_rate = 100000;
-    LSQ_DEBUG("%s(cubic, %"PRIu64", 0x%X)", __func__, cid, flags);
+    LSQ_DEBUG("%s(cubic, $cid)", __func__);
     LSQ_INFO("initialized");
 }
 
@@ -127,18 +136,20 @@ lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
 } while (0)
 
 
-void
-lsquic_cubic_was_quiet (struct lsquic_cubic *cubic, lsquic_time_t now)
+static void
+lsquic_cubic_was_quiet (void *cong_ctl, lsquic_time_t now)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic, %"PRIu64")", __func__, now);
     cubic->cu_epoch_start = 0;
 }
 
 
-void
-lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now_time,
+static void
+lsquic_cubic_ack (void *cong_ctl, lsquic_time_t now_time,
                   lsquic_time_t rtt, int app_limited, unsigned n_bytes)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic, %"PRIu64", %"PRIu64", %d, %u)", __func__, now_time, rtt,
                                                         app_limited, n_bytes);
     if (0 == cubic->cu_min_delay || rtt < cubic->cu_min_delay)
@@ -162,9 +173,10 @@ lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now_time,
 }
 
 
-void
-lsquic_cubic_loss (struct lsquic_cubic *cubic)
+static void
+lsquic_cubic_loss (void *cong_ctl)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic)", __func__);
     cubic->cu_epoch_start = 0;
     if (FAST_CONVERGENCE && cubic->cu_cwnd < cubic->cu_last_max_cwnd)
@@ -180,9 +192,10 @@ lsquic_cubic_loss (struct lsquic_cubic *cubic)
 }
 
 
-void
-lsquic_cubic_timeout (struct lsquic_cubic *cubic)
+static void
+lsquic_cubic_timeout (void *cong_ctl)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic)", __func__);
     cubic_reset(cubic);
     cubic->cu_ssthresh = cubic->cu_cwnd;
@@ -190,3 +203,38 @@ lsquic_cubic_timeout (struct lsquic_cubic *cubic)
     LSQ_INFO("timeout, cwnd: %lu", cubic->cu_cwnd);
     LOG_CWND(cubic);
 }
+
+
+static void
+lsquic_cubic_cleanup (void *cong_ctl)
+{
+}
+
+
+static unsigned long
+lsquic_cubic_get_cwnd (void *cong_ctl)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    return cubic->cu_cwnd;
+}
+
+
+static int
+lsquic_cubic_in_slow_start (void *cong_ctl)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    return cubic->cu_cwnd < cubic->cu_ssthresh;
+}
+
+
+const struct cong_ctl_if lsquic_cong_cubic_if =
+{
+    .cci_ack           = lsquic_cubic_ack,
+    .cci_cleanup       = lsquic_cubic_cleanup,
+    .cci_get_cwnd      = lsquic_cubic_get_cwnd,
+    .cci_init          = lsquic_cubic_init,
+    .cci_in_slow_start = lsquic_cubic_in_slow_start,
+    .cci_loss          = lsquic_cubic_loss,
+    .cci_timeout       = lsquic_cubic_timeout,
+    .cci_was_quiet     = lsquic_cubic_was_quiet,
+};

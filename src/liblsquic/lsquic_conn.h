@@ -15,7 +15,6 @@
 #endif
 
 struct lsquic_conn;
-struct lsquic_enc_session;
 struct lsquic_engine_public;
 struct lsquic_packet_out;
 struct lsquic_packet_in;
@@ -60,6 +59,14 @@ struct conn_iface
     void
     (*ci_packet_in) (struct lsquic_conn *, struct lsquic_packet_in *);
 
+    /* Note: all packets "checked out" by calling this method should be
+     * returned back to the connection via ci_packet_sent() or
+     * ci_packet_not_sent() calls before the connection is ticked next.
+     * The connection, in turn, should not perform any extra processing
+     * (especially schedule more packets) during any of these method
+     * calls.  This is because the checked out packets are not accounted
+     * for by the congestion controller.
+     */
     struct lsquic_packet_out *
     (*ci_next_packet_to_send) (struct lsquic_conn *);
 
@@ -83,15 +90,64 @@ struct conn_iface
 
     lsquic_time_t
     (*ci_next_tick_time) (struct lsquic_conn *);
+
+    void
+    (*ci_client_call_on_new) (struct lsquic_conn *);
+
+    enum LSQUIC_CONN_STATUS
+    (*ci_status) (struct lsquic_conn *, char *errbuf, size_t bufsz);
+
+    unsigned
+    (*ci_n_avail_streams) (const struct lsquic_conn *);
+
+    unsigned
+    (*ci_n_pending_streams) (const struct lsquic_conn *);
+
+    unsigned
+    (*ci_cancel_pending_streams) (struct lsquic_conn *, unsigned n);
+
+    void
+    (*ci_going_away) (struct lsquic_conn *);
+
+    int
+    (*ci_is_push_enabled) (struct lsquic_conn *);
+
+    struct lsquic_stream *
+    (*ci_get_stream_by_id) (struct lsquic_conn *, lsquic_stream_id_t stream_id);
+
+    struct lsquic_engine *
+    (*ci_get_engine) (struct lsquic_conn *);
+
+    struct lsquic_conn_ctx *
+    (*ci_get_ctx) (const struct lsquic_conn *);
+
+    void
+    (*ci_set_ctx) (struct lsquic_conn *, struct lsquic_conn_ctx *);
+
+    void
+    (*ci_make_stream) (struct lsquic_conn *);
+
+    void
+    (*ci_abort) (struct lsquic_conn *);
+
+    void
+    (*ci_close) (struct lsquic_conn *);
+
 };
 
 struct lsquic_conn
 {
     void                        *cn_peer_ctx;
-    struct lsquic_enc_session   *cn_enc_session;
-    const struct enc_session_funcs
-                                *cn_esf;
+    void                        *cn_enc_session;
+    const struct enc_session_funcs_common
+                                *cn_esf_c;
+    union {
+        const struct enc_session_funcs_gquic   *g;
+        const struct enc_session_funcs_iquic   *i;
+    }                            cn_esf;
     lsquic_cid_t                 cn_cid;
+#define cn_scid cn_cid
+    lsquic_cid_t                 cn_dcid;
     STAILQ_ENTRY(lsquic_conn)    cn_next_closed_conn;
     TAILQ_ENTRY(lsquic_conn)     cn_next_ticked;
     TAILQ_ENTRY(lsquic_conn)     cn_next_out,

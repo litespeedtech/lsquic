@@ -238,7 +238,8 @@ struct header_framer_ctx
     unsigned    hfc_max_frame_sz;   /* Maximum frame size.  We always fill it. */
     unsigned    hfc_cur_sz;         /* Number of bytes in the current frame. */
     unsigned    hfc_n_frames;       /* Number of frames written. */
-    uint32_t    hfc_stream_id;      /* Stream ID */
+    lsquic_stream_id_t
+                hfc_stream_id;      /* Stream ID */
     enum http_frame_header_flags
                 hfc_first_flags;
     enum http_frame_type
@@ -248,8 +249,8 @@ struct header_framer_ctx
 
 static void
 hfc_init (struct header_framer_ctx *hfc, struct lsquic_frame_writer *fw,
-          unsigned max_frame_sz, enum http_frame_type frame_type,
-          uint32_t stream_id, enum http_frame_header_flags first_flags)
+      unsigned max_frame_sz, enum http_frame_type frame_type,
+      lsquic_stream_id_t stream_id, enum http_frame_header_flags first_flags)
 {
     memset(hfc, 0, sizeof(*hfc));
     hfc->hfc_fw           = fw;
@@ -472,7 +473,7 @@ write_headers (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
-                                   uint32_t stream_id,
+                                   lsquic_stream_id_t stream_id,
                                    const struct lsquic_http_headers *headers,
                                    int eos, unsigned weight)
 {
@@ -533,10 +534,12 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
-                           uint32_t stream_id, uint32_t promised_stream_id,
-                           const struct iovec *path, const struct iovec *host,
-                           const struct lsquic_http_headers *extra_headers)
+    lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
+    const struct iovec *path, const struct iovec *host,
+    const struct lsquic_http_headers *extra_headers)
 {
+    uint32_t stream_id = stream_id64;
+    uint32_t promised_stream_id = promised_stream_id64;
     struct header_framer_ctx hfc;
     struct http_push_promise_frame push_frame;
     lsquic_http_header_t mpas_headers[4];
@@ -691,9 +694,11 @@ lsquic_frame_writer_write_settings (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
-            uint32_t stream_id, int exclusive, uint32_t stream_dep_id,
-            unsigned weight)
+        lsquic_stream_id_t stream_id64, int exclusive,
+        lsquic_stream_id_t stream_dep_id64, unsigned weight)
 {
+    uint32_t stream_id = stream_id64;
+    uint32_t stream_dep_id = stream_dep_id64;
     unsigned char buf[ sizeof(struct http_frame_header) +
                                         sizeof(struct http_prio_frame) ];
     struct http_frame_header *fh         = (void *) &buf[0];

@@ -14,6 +14,9 @@
 #include "lsquic.h"
 
 
+static const lsquic_cid_t cid;
+
+
 static void
 test4 (void)
 {
@@ -21,7 +24,7 @@ test4 (void)
     const struct lsquic_packno_range *range;
     lsquic_packno_t packno;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, &cid, 0);
 
     for (packno = 11917; packno <= 11941; ++packno)
         lsquic_rechist_received(&rechist, packno, 0);
@@ -122,7 +125,7 @@ test5 (void)
     lsquic_rechist_t rechist;
     char buf[100];
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, &cid, 0);
 
     lsquic_rechist_received(&rechist, 1, 0);
     /* Packet 2 omitted because it could not be decrypted */
@@ -178,7 +181,7 @@ main (void)
     lsq_log_levels[LSQLM_PARSE]   = LSQ_LOG_DEBUG;
     lsq_log_levels[LSQLM_RECHIST] = LSQ_LOG_DEBUG;
     
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, &cid, 0);
 
     lsquic_time_t now = lsquic_time_now();
     st = lsquic_rechist_received(&rechist, 0, now);

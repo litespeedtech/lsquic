@@ -7,19 +7,20 @@
 #include "lsquic_int_types.h"
 #include "lsquic_conn.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_str.h"
-#include "lsquic_handshake.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_ev_log.h"
 
 #include "lsquic_logger.h"
 
-lsquic_cid_t
+const lsquic_cid_t *
 lsquic_conn_id (const lsquic_conn_t *lconn)
 {
-    return lconn->cn_cid;
+    return &lconn->cn_cid;
 }
 
 
@@ -73,7 +74,7 @@ lsquic_conn_copy_and_release_pi_data (const lsquic_conn_t *conn,
 {
     assert(!(packet_in->pi_flags & PI_OWN_DATA));
     /* The size should be guarded in lsquic_engine_packet_in(): */
-    assert(packet_in->pi_data_sz <= QUIC_MAX_PACKET_SZ);
+    assert(packet_in->pi_data_sz <= GQUIC_MAX_PACKET_SZ);
     unsigned char *const copy = lsquic_mm_get_1370(&enpub->enp_mm);
     if (!copy)
     {
@@ -83,51 +84,6 @@ lsquic_conn_copy_and_release_pi_data (const lsquic_conn_t *conn,
     memcpy(copy, packet_in->pi_data, packet_in->pi_data_sz);
     packet_in->pi_data = copy;
     packet_in->pi_flags |= PI_OWN_DATA;
-    return 0;
-}
-
-
-int
-lsquic_conn_decrypt_packet (lsquic_conn_t *lconn,
-                            struct lsquic_engine_public *enpub,
-                            lsquic_packet_in_t *packet_in)
-{
-    size_t header_len, data_len;
-    enum enc_level enc_level;
-    size_t out_len = 0;
-    unsigned char *copy = lsquic_mm_get_1370(&enpub->enp_mm);
-    if (!copy)
-    {
-        LSQ_WARN("cannot allocate memory to copy incoming packet data");
-        return -1;
-    }
-
-    header_len = packet_in->pi_header_sz;
-    data_len   = packet_in->pi_data_sz - packet_in->pi_header_sz;
-    enc_level = lconn->cn_esf->esf_decrypt(lconn->cn_enc_session,
-                        lconn->cn_version, 0,
-                        packet_in->pi_packno, packet_in->pi_data,
-                        &header_len, data_len,
-                        lsquic_packet_in_nonce(packet_in),
-                        copy, 1370, &out_len);
-    if ((enum enc_level) -1 == enc_level)
-    {
-        lsquic_mm_put_1370(&enpub->enp_mm, copy);
-        EV_LOG_CONN_EVENT(lconn->cn_cid, "could not decrypt packet %"PRIu64,
-                                                        packet_in->pi_packno);
-        return -1;
-    }
-
-    assert(header_len + out_len <= 1370);
-    if (packet_in->pi_flags & PI_OWN_DATA)
-        lsquic_mm_put_1370(&enpub->enp_mm, packet_in->pi_data);
-    packet_in->pi_data = copy;
-    packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED
-                        | (enc_level << PIBIT_ENC_LEV_SHIFT);
-    packet_in->pi_header_sz = header_len;
-    packet_in->pi_data_sz   = out_len + header_len;
-    EV_LOG_CONN_EVENT(lconn->cn_cid, "decrypted packet %"PRIu64" crypto: %s",
-                        packet_in->pi_packno, lsquic_enclev2str[ enc_level ]);
     return 0;
 }
 
@@ -146,7 +102,99 @@ struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (struct lsquic_conn *lconn)
 {
     if (lconn->cn_enc_session)
-        return lconn->cn_esf->esf_get_server_cert_chain(lconn->cn_enc_session);
+        return lconn->cn_esf_c->esf_get_server_cert_chain(lconn->cn_enc_session);
     else
         return NULL;
+}
+
+
+void
+lsquic_conn_make_stream (struct lsquic_conn *lconn)
+{
+    lconn->cn_if->ci_make_stream(lconn);
+}
+
+
+unsigned
+lsquic_conn_n_pending_streams (const struct lsquic_conn *lconn)
+{
+    return lconn->cn_if->ci_n_pending_streams(lconn);
+}
+
+
+unsigned
+lsquic_conn_n_avail_streams (const struct lsquic_conn *lconn)
+{
+    return lconn->cn_if->ci_n_pending_streams(lconn);
+}
+
+
+unsigned
+lsquic_conn_cancel_pending_streams (struct lsquic_conn *lconn, unsigned count)
+{
+    return lconn->cn_if->ci_cancel_pending_streams(lconn, count);
+}
+
+
+void
+lsquic_conn_going_away (struct lsquic_conn *lconn)
+{
+    lconn->cn_if->ci_going_away(lconn);
+}
+
+
+void
+lsquic_conn_close (struct lsquic_conn *lconn)
+{
+    lconn->cn_if->ci_close(lconn);
+}
+
+
+int
+lsquic_conn_is_push_enabled (lsquic_conn_t *lconn)
+{
+    return lconn->cn_if->ci_is_push_enabled(lconn);
+}
+
+
+struct lsquic_stream *
+lsquic_conn_get_stream_by_id (struct lsquic_conn *lconn,
+                              lsquic_stream_id_t stream_id)
+{
+    return lconn->cn_if->ci_get_stream_by_id(lconn, stream_id);
+}
+
+
+struct lsquic_engine *
+lsquic_conn_get_engine (struct lsquic_conn *lconn)
+{
+    return lconn->cn_if->ci_get_engine(lconn);
+}
+
+
+lsquic_conn_ctx_t *
+lsquic_conn_get_ctx (const struct lsquic_conn *lconn)
+{
+    return lconn->cn_if->ci_get_ctx(lconn);
+}
+
+
+void
+lsquic_conn_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
+{
+    lconn->cn_if->ci_set_ctx(lconn, ctx);
+}
+
+
+void
+lsquic_conn_abort (struct lsquic_conn *lconn)
+{
+    lconn->cn_if->ci_abort(lconn);
+}
+
+
+enum LSQUIC_CONN_STATUS
+lsquic_conn_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
+{
+    return lconn->cn_if->ci_status(lconn, errbuf, bufsz);
 }

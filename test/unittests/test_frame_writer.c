@@ -12,6 +12,8 @@
 #include "lsquic.h"
 #include "lshpack.h"
 #include "lsquic_mm.h"
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 
@@ -347,20 +349,18 @@ test_settings_normal (void)
 }
 
 
-/* Gotta override these so that LSQUIC_LOG_CONN_ID in lsquic_frame_writer.c
- * works.
- */
-lsquic_cid_t
-lsquic_conn_id (const lsquic_conn_t *lconn)
-{
-    return 0;
-}
+static struct lsquic_conn my_conn = {
+    .cn_cid = { .len = 8, },
+};
 
 
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
-    return NULL;
+    return &my_conn;
 }
 
 

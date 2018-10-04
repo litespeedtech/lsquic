@@ -20,7 +20,7 @@
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CFCW
-#define LSQUIC_LOG_CONN_ID fc->cf_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID &fc->cf_conn_pub->lconn->cn_cid
 #include "lsquic_logger.h"
 
 

@@ -65,10 +65,10 @@ struct frame_reader_callbacks
     void (*frc_on_push_promise) (void *frame_cb_ctx, struct uncompressed_headers *);
     void (*frc_on_settings)     (void *frame_cb_ctx, uint16_t setting_id,
                                  uint32_t setting_value);
-    void (*frc_on_priority)     (void *frame_cb_ctx, uint32_t stream_id,
-                                 int exclusive, uint32_t dep_stream_id,
+    void (*frc_on_priority)     (void *frame_cb_ctx, lsquic_stream_id_t stream_id,
+                                 int exclusive, lsquic_stream_id_t dep_stream_id,
                                  unsigned weight);
-    void (*frc_on_error)        (void *frame_cb_ctx, uint32_t stream_id,
+    void (*frc_on_error)        (void *frame_cb_ctx, lsquic_stream_id_t stream_id,
                                  enum frame_reader_error);
 };
 

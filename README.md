@@ -46,13 +46,7 @@ git clone https://boringssl.googlesource.com/boringssl
 cd boringssl
 ```
 
-2. Check out stable branch:
-
-```
-git checkout chromium-stable
-```
-
-3. Compile the library
+2. Compile the library
 
 ```
 cmake . &&  make

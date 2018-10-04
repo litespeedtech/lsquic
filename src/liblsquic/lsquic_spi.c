@@ -49,7 +49,7 @@ add_stream_to_spi (struct stream_prio_iter *iter, lsquic_stream_t *stream)
 void
 lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
         struct lsquic_stream *last, uintptr_t next_ptr_offset,
-        enum stream_flags onlist_mask, lsquic_cid_t cid, const char *name)
+        enum stream_flags onlist_mask, const lsquic_cid_t *cid, const char *name)
 {
     struct lsquic_stream *stream;
     unsigned count;
@@ -185,7 +185,7 @@ maybe_evict_prev (struct stream_prio_iter *iter)
 
     if (0 == (iter->spi_prev_stream->stream_flags & iter->spi_onlist_mask))
     {
-        SPI_DEBUG("evict stream %u", iter->spi_prev_stream->id);
+        SPI_DEBUG("evict stream %"PRIu64, iter->spi_prev_stream->id);
         TAILQ_REMOVE(&iter->spi_streams[ iter->spi_prev_prio ],
                                     iter->spi_prev_stream, next_prio_stream);
         if (TAILQ_EMPTY(&iter->spi_streams[ iter->spi_prev_prio ]))
@@ -226,9 +226,9 @@ lsquic_spi_first (struct stream_prio_iter *iter)
     iter->spi_prev_prio   = iter->spi_cur_prio;
     iter->spi_prev_stream = stream;
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
-    if (stream->id != 1 && stream->id != 3)
-        SPI_DEBUG("%s: return stream %u, priority %u", __func__, stream->id,
-                                                            iter->spi_cur_prio);
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
+        SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+                                            stream->id, iter->spi_cur_prio);
     return stream;
 }
 
@@ -247,9 +247,9 @@ lsquic_spi_next (struct stream_prio_iter *iter)
         assert(iter->spi_prev_prio == iter->spi_cur_prio);
         iter->spi_prev_stream = stream;
         iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
-        if (stream->id != 1 && stream->id != 3)
-            SPI_DEBUG("%s: return stream %u, priority %u", __func__, stream->id,
-                                                            iter->spi_cur_prio);
+        if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
+            SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+                                            stream->id, iter->spi_cur_prio);
         return stream;
     }
 
@@ -264,9 +264,9 @@ lsquic_spi_next (struct stream_prio_iter *iter)
     iter->spi_prev_stream = stream;
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
 
-    if (!lsquic_stream_is_critical(stream))
-        SPI_DEBUG("%s: return stream %u, priority %u", __func__, stream->id,
-                                                        iter->spi_cur_prio);
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
+        SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+                                            stream->id, iter->spi_cur_prio);
     return stream;
 }
 

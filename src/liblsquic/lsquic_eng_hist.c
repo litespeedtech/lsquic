@@ -10,6 +10,7 @@
 #if ENG_HIST_ENABLED
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENG_HIST
+#include "lsquic_types.h"
 #include "lsquic_logger.h"
 
 

@@ -42,13 +42,21 @@ struct lsquic_stream
 };
 
 
-lsquic_cid_t
+static const lsquic_cid_t my_cid = { .len = 8, };
+
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
+const lsquic_cid_t *
 lsquic_conn_id (const lsquic_conn_t *lconn)
 {
-    return 0;
+    return &my_cid;
 }
 
 
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
@@ -124,7 +132,8 @@ on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-on_error (void *ctx, uint32_t stream_id, enum frame_reader_error error)
+on_error (void *ctx, lsquic_stream_id_t stream_id,
+                                            enum frame_reader_error error)
 {
     assert(0);
 }

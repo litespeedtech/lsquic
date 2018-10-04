@@ -14,6 +14,7 @@
 #include "lsquic_int_types.h"
 #include "lsquic_pacer.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_util.h"
 
@@ -27,7 +28,8 @@
 
 
 void
-pacer_init (struct pacer *pacer, lsquic_cid_t cid, unsigned max_intertick)
+pacer_init (struct pacer *pacer, const lsquic_cid_t *cid,
+                                                unsigned max_intertick)
 {
     memset(pacer, 0, sizeof(*pacer));
     pacer->pa_burst_tokens = 10;

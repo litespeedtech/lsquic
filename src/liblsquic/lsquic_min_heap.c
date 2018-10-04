@@ -8,6 +8,7 @@
 
 #include "lsquic_min_heap.h"
 #define LSQUIC_LOGGER_MODULE LSQLM_MIN_HEAP
+#include "lsquic_types.h"
 #include "lsquic_logger.h"
 
 #define MHE_PARENT(i) ((i - 1) / 2)

@@ -14,13 +14,15 @@
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_parse.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_headers.h"
 #include "lsquic_str.h"
-#include "lsquic_handshake.h"
+#include "lsquic_frame_reader.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_EVENT
@@ -39,7 +41,8 @@
 /*  VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV  */
 
 void
-lsquic_ev_log_packet_in (lsquic_cid_t cid, const lsquic_packet_in_t *packet_in)
+lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
+                                        const lsquic_packet_in_t *packet_in)
 {
     switch (packet_in->pi_flags & (
                                                 PI_GQUIC))
@@ -56,7 +59,8 @@ lsquic_ev_log_packet_in (lsquic_cid_t cid, const lsquic_packet_in_t *packet_in)
 
 
 void
-lsquic_ev_log_ack_frame_in (lsquic_cid_t cid, const struct ack_info *acki)
+lsquic_ev_log_ack_frame_in (const lsquic_cid_t *cid,
+                                        const struct ack_info *acki)
 {
     size_t sz;
     char *buf;
@@ -70,40 +74,51 @@ lsquic_ev_log_ack_frame_in (lsquic_cid_t cid, const struct ack_info *acki)
 
 
 void
-lsquic_ev_log_stream_frame_in (lsquic_cid_t cid,
+lsquic_ev_log_stream_frame_in (const lsquic_cid_t *cid,
                                         const struct stream_frame *frame)
 {
-    LCID("STREAM frame in: stream %u; offset %"PRIu64"; size %"PRIu16
+    LCID("STREAM frame in: stream %"PRIu64"; offset %"PRIu64"; size %"PRIu16
         "; fin: %d", frame->stream_id, frame->data_frame.df_offset,
         frame->data_frame.df_size, (int) frame->data_frame.df_fin);
 }
 
 
 void
-lsquic_ev_log_stop_waiting_frame_in (lsquic_cid_t cid, lsquic_packno_t least)
+lsquic_ev_log_crypto_frame_in (const lsquic_cid_t *cid,
+                        const struct stream_frame *frame, unsigned enc_level)
+{
+    LCID("CRYPTO frame in: level %u; offset %"PRIu64"; size %"PRIu16,
+        enc_level, frame->data_frame.df_offset, frame->data_frame.df_size);
+}
+
+
+void
+lsquic_ev_log_stop_waiting_frame_in (const lsquic_cid_t *cid,
+                                                        lsquic_packno_t least)
 {
     LCID("STOP_WAITING frame in: least unacked packno %"PRIu64, least);
 }
 
 
 void
-lsquic_ev_log_window_update_frame_in (lsquic_cid_t cid, uint32_t stream_id,
-                                                            uint64_t offset)
+lsquic_ev_log_window_update_frame_in (const lsquic_cid_t *cid,
+                                lsquic_stream_id_t stream_id, uint64_t offset)
 {
-    LCID("WINDOW_UPDATE frame in: stream %"PRIu32"; offset %"PRIu64,
+    LCID("WINDOW_UPDATE frame in: stream %"PRIu64"; offset %"PRIu64,
         stream_id, offset);
 }
 
 
 void
-lsquic_ev_log_blocked_frame_in (lsquic_cid_t cid, uint32_t stream_id)
+lsquic_ev_log_blocked_frame_in (const lsquic_cid_t *cid,
+                                            lsquic_stream_id_t stream_id)
 {
-    LCID("BLOCKED frame in: stream %"PRIu32, stream_id);
+    LCID("BLOCKED frame in: stream %"PRIu64, stream_id);
 }
 
 
 void
-lsquic_ev_log_connection_close_frame_in (lsquic_cid_t cid,
+lsquic_ev_log_connection_close_frame_in (const lsquic_cid_t *cid,
                     uint32_t error_code, int reason_len, const char *reason)
 {
     LCID("CONNECTION_CLOSE frame in: error code %"PRIu32", reason: %.*s",
@@ -112,39 +127,39 @@ lsquic_ev_log_connection_close_frame_in (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_goaway_frame_in (lsquic_cid_t cid, uint32_t error_code,
-                    uint32_t stream_id, int reason_len, const char *reason)
+lsquic_ev_log_goaway_frame_in (const lsquic_cid_t *cid, uint32_t error_code,
+            lsquic_stream_id_t stream_id, int reason_len, const char *reason)
 {
-    LCID("GOAWAY frame in: error code %"PRIu32", stream %"PRIu32
+    LCID("GOAWAY frame in: error code %"PRIu32", stream %"PRIu64
         ", reason: %.*s", error_code, stream_id, reason_len, reason);
 }
 
 
 void
-lsquic_ev_log_rst_stream_frame_in (lsquic_cid_t cid, uint32_t stream_id,
-                                        uint64_t offset, uint32_t error_code)
+lsquic_ev_log_rst_stream_frame_in (const lsquic_cid_t *cid,
+        lsquic_stream_id_t stream_id, uint64_t offset, uint32_t error_code)
 {
-    LCID("RST_FRAME frame in: error code %"PRIu32", stream %"PRIu32
+    LCID("RST_FRAME frame in: error code %"PRIu32", stream %"PRIu64
         ", offset: %"PRIu64, error_code, stream_id, offset);
 }
 
 
 void
-lsquic_ev_log_padding_frame_in (lsquic_cid_t cid, size_t len)
+lsquic_ev_log_padding_frame_in (const lsquic_cid_t *cid, size_t len)
 {
     LCID("PADDING frame in of %zd bytes", len);
 }
 
 
 void
-lsquic_ev_log_ping_frame_in (lsquic_cid_t cid)
+lsquic_ev_log_ping_frame_in (const lsquic_cid_t *cid)
 {
     LCID("PING frame in");
 }
 
 
 void
-lsquic_ev_log_packet_created (lsquic_cid_t cid,
+lsquic_ev_log_packet_created (const lsquic_cid_t *cid,
                                 const struct lsquic_packet_out *packet_out)
 {
     LCID("created packet %"PRIu64"; flags: version=%d, nonce=%d, conn_id=%d",
@@ -156,7 +171,7 @@ lsquic_ev_log_packet_created (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_packet_sent (lsquic_cid_t cid,
+lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
                                 const struct lsquic_packet_out *packet_out)
 {
     char frames[lsquic_frame_types_str_sz];
@@ -190,7 +205,7 @@ lsquic_ev_log_packet_sent (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_packet_not_sent (lsquic_cid_t cid,
+lsquic_ev_log_packet_not_sent (const lsquic_cid_t *cid,
                                 const struct lsquic_packet_out *packet_out)
 {
     char frames[lsquic_frame_types_str_sz];
@@ -205,17 +220,17 @@ lsquic_ev_log_packet_not_sent (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_http_headers_in (lsquic_cid_t cid, int is_server,
+lsquic_ev_log_http_headers_in (const lsquic_cid_t *cid, int is_server,
                                         const struct uncompressed_headers *uh)
 {
     const struct http1x_headers *h1h;
     const char *cr, *p;
 
     if (uh->uh_flags & UH_PP)
-        LCID("read push promise; stream %"PRIu32", promised stream %"PRIu32,
+        LCID("read push promise; stream %"PRIu64", promised stream %"PRIu64,
             uh->uh_stream_id, uh->uh_oth_stream_id);
     else
-        LCID("read %s headers; stream: %"PRIu32", depends on stream: %"PRIu32
+        LCID("read %s headers; stream: %"PRIu64", depends on stream: %"PRIu64
             ", weight: %hu, exclusive: %d, fin: %d",
             is_server ? "request" : "response",
             uh->uh_stream_id, uh->uh_oth_stream_id, uh->uh_weight,
@@ -237,7 +252,7 @@ lsquic_ev_log_http_headers_in (lsquic_cid_t cid, int is_server,
 
 
 void
-lsquic_ev_log_action_stream_frame (lsquic_cid_t cid,
+lsquic_ev_log_action_stream_frame (const lsquic_cid_t *cid,
     const struct parse_funcs *pf, const unsigned char *buf, size_t bufsz,
     const char *what)
 {
@@ -246,7 +261,7 @@ lsquic_ev_log_action_stream_frame (lsquic_cid_t cid,
 
     len = pf->pf_parse_stream_frame(buf, bufsz, &frame);
     if (len > 0)
-        LCID("%s STREAM frame: stream %"PRIu32", offset: %"PRIu64
+        LCID("%s STREAM frame: stream %"PRIu64", offset: %"PRIu64
             ", size: %"PRIu16", fin: %d", what, frame.stream_id,
             frame.data_frame.df_offset, frame.data_frame.df_size,
             frame.data_frame.df_fin);
@@ -256,8 +271,25 @@ lsquic_ev_log_action_stream_frame (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_generated_ack_frame (lsquic_cid_t cid, const struct parse_funcs *pf,
-                                   const unsigned char *ack_buf, size_t ack_buf_sz)
+lsquic_ev_log_generated_crypto_frame (const lsquic_cid_t *cid,
+       const struct parse_funcs *pf, const unsigned char *buf, size_t bufsz)
+{
+    struct stream_frame frame;
+    int len;
+
+    len = pf->pf_parse_crypto_frame(buf, bufsz, &frame);
+    if (len > 0)
+        LCID("generated CRYPTO frame: offset: %"PRIu64", size: %"PRIu16,
+            frame.data_frame.df_offset, frame.data_frame.df_size);
+    else
+        LSQ_LOG2(LSQ_LOG_WARN, "cannot parse CRYPTO frame");
+}
+
+
+void
+lsquic_ev_log_generated_ack_frame (const lsquic_cid_t *cid,
+                const struct parse_funcs *pf, const unsigned char *ack_buf,
+                size_t ack_buf_sz)
 {
     struct ack_info acki;
     size_t sz;
@@ -280,7 +312,7 @@ lsquic_ev_log_generated_ack_frame (lsquic_cid_t cid, const struct parse_funcs *p
 
 
 void
-lsquic_ev_log_generated_stop_waiting_frame (lsquic_cid_t cid,
+lsquic_ev_log_generated_stop_waiting_frame (const lsquic_cid_t *cid,
                                             lsquic_packno_t lunack)
 {
     LCID("generated STOP_WAITING frame; least unacked: %"PRIu64, lunack);
@@ -288,16 +320,17 @@ lsquic_ev_log_generated_stop_waiting_frame (lsquic_cid_t cid,
 
 
 void
-lsquic_ev_log_generated_http_headers (lsquic_cid_t cid, uint32_t stream_id,
+lsquic_ev_log_generated_http_headers (const lsquic_cid_t *cid,
+                    lsquic_stream_id_t stream_id,
                     int is_server, const struct http_prio_frame *prio_frame,
                     const struct lsquic_http_headers *headers)
 {
-    uint32_t dep_stream_id;
+    lsquic_stream_id_t dep_stream_id;
     int exclusive, i;
     unsigned short weight;
 
     if (is_server)
-        LCID("generated HTTP response HEADERS for stream %"PRIu32, stream_id);
+        LCID("generated HTTP response HEADERS for stream %"PRIu64, stream_id);
     else
     {
         memcpy(&dep_stream_id, prio_frame->hpf_stream_id, 4);
@@ -305,8 +338,8 @@ lsquic_ev_log_generated_http_headers (lsquic_cid_t cid, uint32_t stream_id,
         exclusive = dep_stream_id >> 31;
         dep_stream_id &= ~(1 << 31);
         weight = prio_frame->hpf_weight + 1;
-        LCID("generated HTTP request HEADERS for stream %"PRIu32
-            ", dep stream: %"PRIu32", weight: %hu, exclusive: %d", stream_id,
+        LCID("generated HTTP request HEADERS for stream %"PRIu64
+            ", dep stream: %"PRIu64", weight: %hu, exclusive: %d", stream_id,
             dep_stream_id, weight, exclusive);
     }
 
@@ -320,15 +353,15 @@ lsquic_ev_log_generated_http_headers (lsquic_cid_t cid, uint32_t stream_id,
 
 
 void
-lsquic_ev_log_generated_http_push_promise (lsquic_cid_t cid,
-                            uint32_t stream_id, uint32_t promised_stream_id, 
-                            const struct lsquic_http_headers *headers,
-                            const struct lsquic_http_headers *extra_headers)
+lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *cid,
+            lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id, 
+            const struct lsquic_http_headers *headers,
+            const struct lsquic_http_headers *extra_headers)
 {
     int i;
 
-    LCID("generated HTTP PUSH_PROMISE for stream %"PRIu32"; promised stream %"
-        PRIu32, stream_id, promised_stream_id);
+    LCID("generated HTTP PUSH_PROMISE for stream %"PRIu64"; promised stream %"
+        PRIu64, stream_id, promised_stream_id);
 
     for (i = 0; i < headers->count; ++i)
         LCID("  %.*s: %.*s",
