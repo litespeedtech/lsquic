@@ -46,7 +46,15 @@ git clone https://boringssl.googlesource.com/boringssl
 cd boringssl
 ```
 
-2. Compile the library
+2. Patch with the custom_stream API patch
+
+```
+git fetch https://boringssl.googlesource.com/boringssl refs/changes/44/31744/7 && git cherry-pick FETCH_HEAD
+```
+
+(See it [here](https://boringssl-review.googlesource.com/c/boringssl/+/31744).)
+
+3. Compile the library
 
 ```
 cmake . &&  make
