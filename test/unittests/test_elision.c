@@ -116,7 +116,7 @@ elide_single_stream_frame (void)
     assert(0 == packet_out->po_frame_types);
     assert(!posi_first(&posi, packet_out));
 
-    lsquic_packet_out_destroy(packet_out, &enpub);
+    lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     lsquic_mm_cleanup(&enpub.enp_mm);
 }
 
@@ -309,8 +309,8 @@ elide_three_stream_frames (int chop_regen)
     srec = posi_next(&posi);
     assert(!srec);
 
-    lsquic_packet_out_destroy(packet_out, &enpub);
-    lsquic_packet_out_destroy(ref_out, &enpub);
+    lsquic_packet_out_destroy(packet_out, &enpub, NULL);
+    lsquic_packet_out_destroy(ref_out, &enpub, NULL);
     lsquic_mm_cleanup(&enpub.enp_mm);
 }
 

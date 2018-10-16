@@ -90,6 +90,10 @@ typedef struct lsquic_packet_out
 #define POLEV_SHIFT 18
         PO_BITS_2   = (1 <<18),         /* PO_BITS_2 and PO_BITS_3 encode the */
         PO_BITS_3   = (1 <<19),         /*   crypto level.  Used for logging. */
+#define POIPv6_SHIFT 20
+        PO_IPv6     = (1 <<20),         /* Set if pmi_allocate was passed is_ipv6=1,
+                                         *   otherwise unset.
+                                         */
     }                  po_flags;
     enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
@@ -140,6 +144,13 @@ typedef struct lsquic_packet_out
 #define lsquic_packet_out_set_packno_bits(p, b) do {                    \
     (p)->po_flags &= ~(0x3 << POBIT_SHIFT);                             \
     (p)->po_flags |= ((b) & 0x3) << POBIT_SHIFT;                        \
+} while (0)
+
+#define lsquic_packet_out_ipv6(p) ((int)(((p)->po_flags >> POIPv6_SHIFT) & 1))
+
+#define lsquic_packet_out_set_ipv6(p, b) do {                           \
+    (p)->po_flags &= ~(1 << POIPv6_SHIFT);                              \
+    (p)->po_flags |= ((b) & 1) << POIPv6_SHIFT;                         \
 } while (0)
 
 #define lsquic_po_header_length(lconn, po_flags) ( \
@@ -198,7 +209,7 @@ lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
 
 void
 lsquic_packet_out_destroy (lsquic_packet_out_t *,
-                                        struct lsquic_engine_public *);
+                        struct lsquic_engine_public *, void *peer_ctx);
 
 int
 lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,

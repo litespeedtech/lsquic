@@ -279,7 +279,7 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
 
 void
 lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
-                           struct lsquic_engine_public *enpub)
+                           struct lsquic_engine_public *enpub, void *peer_ctx)
 {
     if (packet_out->po_flags & PO_SREC_ARR)
     {
@@ -292,8 +292,8 @@ lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
         }
     }
     if (packet_out->po_flags & PO_ENCRYPTED)
-        enpub->enp_pmi->pmi_release(enpub->enp_pmi_ctx,
-                                                packet_out->po_enc_data);
+        enpub->enp_pmi->pmi_release(enpub->enp_pmi_ctx, peer_ctx,
+                packet_out->po_enc_data, lsquic_packet_out_ipv6(packet_out));
     if (packet_out->po_nonce)
         free(packet_out->po_nonce);
     lsquic_mm_put_packet_out(&enpub->enp_mm, packet_out);

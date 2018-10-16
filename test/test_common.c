@@ -1133,14 +1133,15 @@ pba_init (struct packout_buf_allocator *pba, unsigned max)
 
 
 void *
-pba_allocate (void *packout_buf_allocator, size_t size)
+pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
+                                                                char is_ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
     struct packout_buf *pb;
 
     if (size > MAX_PACKOUT_BUF_SZ)
     {
-        fprintf(stderr, "packout buf size too large: %zd", size);
+        fprintf(stderr, "packout buf size too large: %hu", size);
         abort();
     }
 
@@ -1165,7 +1166,7 @@ pba_allocate (void *packout_buf_allocator, size_t size)
 
 
 void
-pba_release (void *packout_buf_allocator, void *obj)
+pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
     struct packout_buf *const pb = obj;

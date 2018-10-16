@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -244,14 +245,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
 
 
 static void
-free_packet (void *ctx, unsigned char *packet_data)
+free_packet (void *ctx, void *conn_ctx, void *packet_data, char is_ipv6)
 {
     free(packet_data);
 }
 
 
 static void *
-malloc_buf (void *ctx, size_t size)
+malloc_buf (void *ctx, void *conn_ctx, unsigned short size, char is_ipv6)
 {
     return malloc(size);
 }
@@ -259,7 +260,7 @@ malloc_buf (void *ctx, size_t size)
 
 static const struct lsquic_packout_mem_if stock_pmi =
 {
-    malloc_buf, (void(*)(void *, void *)) free_packet,
+    malloc_buf, free_packet, free_packet,
 };
 
 
@@ -821,6 +822,13 @@ really_encrypt_packet (const lsquic_conn_t *conn,
 }
 
 
+static int
+conn_peer_ipv6 (const struct lsquic_conn *conn)
+{
+    return AF_INET6 == ((struct sockaddr *) conn->cn_peer_addr)->sa_family;
+}
+
+
 static enum { ENCPA_OK, ENCPA_NOMEM, ENCPA_BADCRYPT, }
 encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
                                             lsquic_packet_out_t *packet_out)
@@ -829,10 +837,15 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
     size_t bufsz;
     unsigned sent_sz;
     unsigned char *buf;
+    int ipv6;
 
     bufsz = conn->cn_pf->pf_packout_header_size(conn, packet_out->po_flags) +
                                 packet_out->po_data_sz + QUIC_PACKET_HASH_SZ;
-    buf = engine->pub.enp_pmi->pmi_allocate(engine->pub.enp_pmi_ctx, bufsz);
+    if (bufsz > USHRT_MAX)
+        return ENCPA_BADCRYPT;  /* To cause connection to close */
+    ipv6 = conn_peer_ipv6(conn);
+    buf = engine->pub.enp_pmi->pmi_allocate(engine->pub.enp_pmi_ctx,
+                                            conn->cn_peer_ctx, bufsz, ipv6);
     if (!buf)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",
@@ -847,16 +860,48 @@ encrypt_packet (lsquic_engine_t *engine, const lsquic_conn_t *conn,
 
     if (enc_sz < 0)
     {
-        engine->pub.enp_pmi->pmi_release(engine->pub.enp_pmi_ctx, buf);
+        engine->pub.enp_pmi->pmi_return(engine->pub.enp_pmi_ctx,
+                                                conn->cn_peer_ctx, buf, ipv6);
         return ENCPA_BADCRYPT;
     }
 
     packet_out->po_enc_data    = buf;
     packet_out->po_enc_data_sz = enc_sz;
     packet_out->po_sent_sz     = sent_sz;
-    packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ;
+    packet_out->po_flags &= ~PO_IPv6;
+    packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ|(ipv6 << POIPv6_SHIFT);
 
     return ENCPA_OK;
+}
+
+
+static void
+release_or_return_enc_data (struct lsquic_engine *engine,
+                void (*pmi_rel_or_ret) (void *, void *, void *, char),
+                struct lsquic_conn *conn, struct lsquic_packet_out *packet_out)
+{
+    pmi_rel_or_ret(engine->pub.enp_pmi_ctx, conn->cn_peer_ctx,
+                packet_out->po_enc_data, lsquic_packet_out_ipv6(packet_out));
+    packet_out->po_flags &= ~PO_ENCRYPTED;
+    packet_out->po_enc_data = NULL;
+}
+
+
+static void
+release_enc_data (struct lsquic_engine *engine, struct lsquic_conn *conn,
+                                        struct lsquic_packet_out *packet_out)
+{
+    release_or_return_enc_data(engine, engine->pub.enp_pmi->pmi_release,
+                                conn, packet_out);
+}
+
+
+static void
+return_enc_data (struct lsquic_engine *engine, struct lsquic_conn *conn,
+                                        struct lsquic_packet_out *packet_out)
+{
+    release_or_return_enc_data(engine, engine->pub.enp_pmi->pmi_return,
+                                conn, packet_out);
 }
 
 
@@ -1006,12 +1051,7 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
          * or until it times out and regenerated.
          */
         if (batch->packets[i]->po_flags & PO_ENCRYPTED)
-        {
-            batch->packets[i]->po_flags &= ~PO_ENCRYPTED;
-            engine->pub.enp_pmi->pmi_release(engine->pub.enp_pmi_ctx,
-                                                batch->packets[i]->po_enc_data);
-            batch->packets[i]->po_enc_data = NULL;  /* JIC */
-        }
+            release_enc_data(engine, batch->conns[i], batch->packets[i]);
     }
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
         for ( ; i < (int) n_to_send; ++i)
@@ -1073,6 +1113,14 @@ send_packets_out (struct lsquic_engine *engine,
                                                             conn->cn_cid);
             coi_deactivate(&conns_iter, conn);
             continue;
+        }
+        if ((packet_out->po_flags & PO_ENCRYPTED)
+                && lsquic_packet_out_ipv6(packet_out) != conn_peer_ipv6(conn))
+        {
+            /* Peer address changed since the packet was encrypted.  Need to
+             * reallocate.
+             */
+            return_enc_data(engine, conn, packet_out);
         }
         if (!(packet_out->po_flags & (PO_ENCRYPTED|PO_NOENCRYPT)))
         {

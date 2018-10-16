@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 16
+#define LSQUIC_MINOR_VERSION 17
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -485,16 +485,29 @@ typedef int (*lsquic_packets_out_f)(
 /**
  * The packet out memory interface is used by LSQUIC to get buffers to
  * which outgoing packets will be written before they are passed to
- * ea_packets_out callback.  pmi_release() is called at some point,
- * usually after the packet is sent successfully, to return the buffer
- * to the pool.
+ * ea_packets_out callback.
  *
  * If not specified, malloc() and free() are used.
  */
 struct lsquic_packout_mem_if
 {
-    void *  (*pmi_allocate) (void *pmi_ctx, size_t sz);
-    void    (*pmi_release)  (void *pmi_ctx, void *obj);
+    /**
+     * Allocate buffer for sending.
+     */
+    void *  (*pmi_allocate) (void *pmi_ctx, void *conn_ctx, unsigned short sz,
+                                                                char is_ipv6);
+    /**
+     * This function is used to release the allocated buffer after it is
+     * sent via @ref ea_packets_out.
+     */
+    void    (*pmi_release)  (void *pmi_ctx, void *conn_ctx, void *buf,
+                                                                char is_ipv6);
+    /**
+     * If allocated buffer is not going to be sent, return it to the caller
+     * using this function.
+     */
+    void    (*pmi_return)  (void *pmi_ctx, void *conn_ctx, void *buf,
+                                                                char is_ipv6);
 };
 
 struct stack_st_X509;

@@ -83,7 +83,7 @@ main (void)
 
     assert((void *) 0 == posi_next(&posi));
 
-    lsquic_packet_out_destroy(packet_out, &enpub);
+    lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     assert(!lsquic_malo_first(enpub.enp_mm.malo.stream_rec_arr));
 
     lsquic_mm_cleanup(&enpub.enp_mm);

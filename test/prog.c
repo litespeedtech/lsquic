@@ -32,6 +32,7 @@ static int prog_stopped;
 static const struct lsquic_packout_mem_if pmi = {
     .pmi_allocate = pba_allocate,
     .pmi_release  = pba_release,
+    .pmi_return   = pba_release,
 };
 
 

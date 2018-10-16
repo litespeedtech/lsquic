@@ -25,16 +25,12 @@ IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
     SET(LIBS ${LIBS} rt)
 ENDIF()
 
-# By default, we compile in development mode.  To compile production code,
-# pass -DDEVEL_MODE=0 to cmake (before that, `make clean' and remove any
-# cmake cache files).
-#
-IF(NOT DEFINED DEVEL_MODE)
-    SET(DEVEL_MODE 1)
+IF("${CMAKE_BUILD_TYPE}" STREQUAL "")
+    SET(CMAKE_BUILD_TYPE Debug)
 ENDIF()
 
 
-MESSAGE(STATUS "DEVEL_MODE: ${DEVEL_MODE}")
+MESSAGE(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 
 IF (NOT MSVC)
@@ -45,7 +41,7 @@ SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
 IF(CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9.3)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-missing-field-initializers")
 ENDIF()
-IF(DEVEL_MODE EQUAL 1)
+IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     IF(CMAKE_C_COMPILER MATCHES "clang" AND
                         NOT "$ENV{TRAVIS}" MATCHES "^true$")
@@ -78,7 +74,7 @@ ENDIF()
 #MSVC
 ELSE()
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
-IF(DEVEL_MODE EQUAL 1)
+IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
     #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
     #SET(LIBS ${LIBS} fiu)
@@ -161,7 +157,7 @@ add_subdirectory(src)
 
 add_subdirectory(test)
 
-IF(DEVEL_MODE EQUAL 1)
+IF(NOT (CMAKE_C_FLAGS MATCHES "-DNDEBUG"))
     # Our test framework relies on assertions, only compile if assertions are
     # enabled.
     #

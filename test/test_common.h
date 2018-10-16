@@ -87,10 +87,10 @@ void
 pba_init (struct packout_buf_allocator *, unsigned max);
 
 void *
-pba_allocate (void *packout_buf_allocator, size_t);
+pba_allocate (void *packout_buf_allocator, void*, unsigned short, char);
 
 void
-pba_release (void *packout_buf_allocator, void *obj);
+pba_release (void *packout_buf_allocator, void *, void *obj, char);
 
 void
 pba_cleanup (struct packout_buf_allocator *);

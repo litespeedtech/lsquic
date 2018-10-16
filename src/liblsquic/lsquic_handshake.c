@@ -173,6 +173,7 @@ static void free_info (lsquic_session_cache_info_t *);
 /* client */
 static cert_hash_item_t *make_cert_hash_item(struct lsquic_str *domain, struct lsquic_str **certs, int count);
 static int c_insert_certs(cert_hash_item_t *item);
+static void c_erase_certs(struct lsquic_hash_elem *el);
 static void c_free_cert_hash_item (cert_hash_item_t *item);
 
 static int get_tag_val_u32 (unsigned char *v, int len, uint32_t *val);
@@ -265,16 +266,23 @@ static int init_hs_hash_tables(int flags)
 
 
 /* client */
-cert_hash_item_t *
-c_find_certs (const lsquic_str_t *domain)
+struct lsquic_hash_elem *
+c_get_certs_elem (const lsquic_str_t *domain)
 {
-    struct lsquic_hash_elem *el;
-
     if (!s_cached_client_certs)
         return NULL;
 
-    el = lsquic_hash_find(s_cached_client_certs, lsquic_str_cstr(domain),
+    return lsquic_hash_find(s_cached_client_certs, lsquic_str_cstr(domain),
                                                     lsquic_str_len(domain));
+}
+
+
+/* client */
+cert_hash_item_t *
+c_find_certs (const lsquic_str_t *domain)
+{
+    struct lsquic_hash_elem *el = c_get_certs_elem(domain);
+
     if (el == NULL)
         return NULL;
 
@@ -332,6 +340,15 @@ c_insert_certs (cert_hash_item_t *item)
         return -1;
     else
         return 0;
+}
+
+
+/* client */
+static void
+c_erase_certs (struct lsquic_hash_elem *el)
+{
+    if (s_cached_client_certs && el)
+        lsquic_hash_erase(s_cached_client_certs, el);
 }
 
 
@@ -1364,7 +1381,11 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
     int ret;
     lsquic_session_cache_info_t *info = enc_session->info;
     hs_ctx_t * hs_ctx = &enc_session->hs_ctx;
-    cert_hash_item_t *cached_certs_item = c_find_certs(&hs_ctx->sni);
+    cert_hash_item_t *cached_certs_item = NULL;
+    struct lsquic_hash_elem *el = c_get_certs_elem(&hs_ctx->sni);
+
+    if (el)
+        cached_certs_item = lsquic_hashelem_getdata(el);
 
     /* FIXME get the number first */
     lsquic_str_t **out_certs = NULL;
@@ -1427,6 +1448,8 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
                             ;
                         else
                         {
+                            if (el)
+                                c_erase_certs(el);
                             if (cached_certs_item)
                                 c_free_cert_hash_item(cached_certs_item);
 

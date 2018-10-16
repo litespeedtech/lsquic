@@ -1,3 +1,14 @@
+2018-10-16
+    - 1.17.0
+    - [API Change] Packet out Memory Interface (PMI) update:
+      - Split PMI pool return into pmi_release and pmi_return
+      - PMI callbacks take peer_ctx and is_ipv6 arguments
+    - [BUGFIX] Fix use-after-free when certificate is updated
+    - Silence gcc warning in optimized mode by performing useless
+      initialization
+    - cmake: use the standard variable CMAKE_BUILD_TYPE instead of
+      DEVEL_MODE
+
 2018-10-03
     - 1.16.0
     - [API Change] Add lsquic_conn_n_avail_streams()

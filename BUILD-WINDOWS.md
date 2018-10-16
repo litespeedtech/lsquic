@@ -78,7 +78,7 @@ cmake must be run to prepare to build the software in the top level
 cloned directory.  The dot at the end is required.  Begin with the debug
 version as it includes all of the programs.
    ```
-   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF -DDEVEL_MODE=1 .
+   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF
    ```
 
 Visual Studio can now be brought up, and there will be projects in the
@@ -93,7 +93,7 @@ environment as they are compiled to different directories.
 To build the optimized version, repeat the process above with a slightly
 different cmake command:
    ```
-   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Release -DBUILD_SHARED_LIBS=OFF -DDEVEL_MODE=0 .
+   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release .
    ```
 
 After cmake has finished, you can open the project, set the solution 

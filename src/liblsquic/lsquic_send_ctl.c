@@ -528,9 +528,19 @@ send_ctl_release_enc_data (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
     ctl->sc_enpub->enp_pmi->pmi_release(ctl->sc_enpub->enp_pmi_ctx,
-                                            packet_out->po_enc_data);
+        ctl->sc_conn_pub->lconn->cn_peer_ctx, packet_out->po_enc_data,
+        lsquic_packet_out_ipv6(packet_out));
     packet_out->po_flags &= ~PO_ENCRYPTED;
     packet_out->po_enc_data = NULL;
+}
+
+
+static void
+send_ctl_destroy_packet (struct lsquic_send_ctl *ctl,
+                                        struct lsquic_packet_out *packet_out)
+{
+    lsquic_packet_out_destroy(packet_out, ctl->sc_enpub,
+                                        ctl->sc_conn_pub->lconn->cn_peer_ctx);
 }
 
 
@@ -564,7 +574,7 @@ send_ctl_handle_lost_packet (lsquic_send_ctl_t *ctl,
     {
         LSQ_DEBUG("lost unretransmittable packet %"PRIu64,
                                                     packet_out->po_packno);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
         return 0;
     }
 }
@@ -754,7 +764,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             lsquic_cubic_ack(&ctl->sc_cubic, now, now - packet_out->po_sent,
                              app_limited, packet_sz);
             lsquic_packet_out_ack_streams(packet_out);
-            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            send_ctl_destroy_packet(ctl, packet_out);
         }
         packet_out = next;
     }
@@ -853,7 +863,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     while ((packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets)))
     {
         send_ctl_sched_remove(ctl, packet_out);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
     assert(0 == ctl->sc_bytes_scheduled);
@@ -861,7 +871,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     {
         TAILQ_REMOVE(&ctl->sc_unacked_packets, packet_out, po_next);
         ctl->sc_bytes_unacked_all -= packet_out_total_sz(packet_out);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
         --ctl->sc_n_in_flight_all;
     }
     assert(0 == ctl->sc_n_in_flight_all);
@@ -869,7 +879,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     while ((packet_out = TAILQ_FIRST(&ctl->sc_lost_packets)))
     {
         TAILQ_REMOVE(&ctl->sc_lost_packets, packet_out, po_next);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
     }
     pacer_cleanup(&ctl->sc_pacer);
 #if LSQUIC_SEND_STATS
@@ -1100,7 +1110,7 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
         {
             LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
                 packet_out->po_packno);
-            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            send_ctl_destroy_packet(ctl, packet_out);
             goto get_packet;
         }
     }
@@ -1166,7 +1176,7 @@ send_ctl_allocate_packet (lsquic_send_ctl_t *ctl, enum lsquic_packno_bits bits,
         LSQ_ERROR("wanted to allocate packet with at least %u bytes of "
             "payload, but only got %u bytes (mtu: %u bytes)", need_at_least,
             lsquic_packet_out_avail(packet_out), ctl->sc_pack_size);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
         return NULL;
     }
 
@@ -1311,7 +1321,7 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *ctl)
         {
             LSQ_DEBUG("Dropping packet %"PRIu64" from unacked queue",
                 packet_out->po_packno);
-            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            send_ctl_destroy_packet(ctl, packet_out);
         }
     }
 
@@ -1373,7 +1383,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
                 LSQ_DEBUG("cancel packet %"PRIu64" after eliding frames for "
                     "stream %"PRIu32, packet_out->po_packno, stream_id);
                 send_ctl_sched_remove(ctl, packet_out);
-                lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+                send_ctl_destroy_packet(ctl, packet_out);
                 ++dropped;
             }
         }
@@ -1398,7 +1408,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
                 TAILQ_REMOVE(&ctl->sc_buffered_packets[n].bpq_packets,
                              packet_out, po_next);
                 --ctl->sc_buffered_packets[n].bpq_count;
-                lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+                send_ctl_destroy_packet(ctl, packet_out);
                 LSQ_DEBUG("Elide packet from buffered queue #%u; count: %u",
                           n, ctl->sc_buffered_packets[n].bpq_count);
             }
@@ -1508,7 +1518,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
             send_ctl_sched_remove(ctl, packet_out);
             LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
                 packet_out->po_packno);
-            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+            send_ctl_destroy_packet(ctl, packet_out);
             ++dropped;
         }
     }
@@ -1560,7 +1570,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *ctl)
     while ((packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets)))
     {
         send_ctl_sched_remove(ctl, packet_out);
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
     ctl->sc_cur_packno = lsquic_senhist_largest(&ctl->sc_senhist);
@@ -1743,7 +1753,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
     }
     else
     {
-        lsquic_packet_out_destroy(packet_out, ctl->sc_enpub);
+        send_ctl_destroy_packet(ctl, packet_out);
         return -1;
     }
 }
