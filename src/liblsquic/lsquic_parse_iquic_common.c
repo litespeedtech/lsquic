@@ -159,7 +159,7 @@ lsquic_iquic_parse_packet_in_short_begin (lsquic_packet_in_t *packet_in,
     {
         memcpy(&packet_in->pi_conn_id, p, cid_len);
         p += cid_len;
-        packet_in->pi_flags = PI_CONN_ID;
+        packet_in->pi_flags |= PI_CONN_ID;
     }
 
     /* We could read in the packet number here, but we choose to do it in
