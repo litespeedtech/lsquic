@@ -1,3 +1,9 @@
+2018-10-19
+    - 1.17.2
+    - [BUGFIX] Memory leak in test_frame_rw unit test.
+    - [BUGFIX] Parsing packets with short IETF header: do not overwrite
+      flags.  (Only a problem in unit tests -- benign otherwise.)
+
 2018-10-16
     - 1.17.0
     - [API Change] Packet out Memory Interface (PMI) update:
