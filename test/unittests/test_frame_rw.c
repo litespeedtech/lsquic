@@ -230,6 +230,7 @@ test_rw (unsigned max_frame_sz)
         compare_headers(uh);
 
         lsquic_frame_reader_destroy(fr);
+        lsquic_http1x_if->hsi_discard_header_set(uh->uh_hset);
         free(uh);
 
         assert(stream->sm_max_req_sz >= sizeof(struct http_frame_header));
