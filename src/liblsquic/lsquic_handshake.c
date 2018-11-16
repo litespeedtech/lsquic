@@ -965,6 +965,9 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
         return -1;
 
     n_opts = 0;
+    /* CHLO is not regenerated during version negotiation.  Hence we always
+     * include this option to cover the case when Q044 gets negotiated down.
+     */
     if (settings->es_support_nstp)
         opts[ n_opts++ ] = QTAG_NSTP;
 

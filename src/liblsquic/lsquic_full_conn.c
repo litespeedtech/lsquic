@@ -2001,7 +2001,8 @@ process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
             if (conn->fc_conn.cn_version >= LSQVER_039)
             {
                 assert(!(conn->fc_flags & FC_NSTP)); /* This bit off at start */
-                if (conn->fc_settings->es_support_nstp)
+                if (conn->fc_conn.cn_version >= LSQVER_044
+                                        || conn->fc_settings->es_support_nstp)
                 {
                     conn->fc_flags |= FC_NSTP;
                     lsquic_send_ctl_turn_nstp_on(&conn->fc_send_ctl);

@@ -1,3 +1,7 @@
+2018-11-16
+    - 1.17.3
+    - [BUGFIX] Do not send STOP_WAITING frames when using Q044
+
 2018-10-19
     - 1.17.2
     - [BUGFIX] Memory leak in test_frame_rw unit test.
