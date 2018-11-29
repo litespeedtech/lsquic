@@ -61,6 +61,8 @@
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 
 /* The batch of outgoing packets grows and shrinks dynamically */
 #define MAX_OUT_BATCH_SIZE 1024
@@ -168,6 +170,7 @@ struct lsquic_engine
     lsquic_time_t                      last_sent;
     unsigned                           n_conns;
     lsquic_time_t                      deadline;
+    lsquic_time_t                      resume_sending_at;
     struct out_batch                   out_batch;
 };
 
@@ -1025,6 +1028,7 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
     if (n_sent < (int) n_to_send)
     {
         engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
+        engine->resume_sending_at = now + 1000000;
         LSQ_DEBUG("cannot send packets");
         EV_LOG_GENERIC_EVENT("cannot send packets");
     }
@@ -1272,6 +1276,15 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
     TAILQ_INIT(&ticked_conns);
     reset_deadline(engine, now);
 
+    if (!(engine->pub.enp_flags & ENPUB_CAN_SEND)
+                                        && now > engine->resume_sending_at)
+    {
+        LSQ_NOTICE("failsafe activated: resume sending packets again after "
+                    "timeout");
+        EV_LOG_GENERIC_EVENT("resume sending packets again after timeout");
+        engine->pub.enp_flags |= ENPUB_CAN_SEND;
+    }
+
     i = 0;
     while ((conn = next_conn(engine))
           )
@@ -1412,8 +1425,8 @@ lsquic_engine_quic_versions (const lsquic_engine_t *engine)
 int
 lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
-    const lsquic_time_t *next_time;
-    lsquic_time_t now;
+    const lsquic_time_t *next_attq_time;
+    lsquic_time_t now, next_time;
 
     if (((engine->flags & ENG_PAST_DEADLINE)
                                     && lsquic_mh_count(&engine->conns_out))
@@ -1423,12 +1436,24 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
         return 1;
     }
 
-    next_time = attq_next_time(engine->attq);
-    if (!next_time)
-        return 0;
+    next_attq_time = attq_next_time(engine->attq);
+    if (engine->pub.enp_flags & ENPUB_CAN_SEND)
+    {
+        if (next_attq_time)
+            next_time = *next_attq_time;
+        else
+            return 0;
+    }
+    else
+    {
+        if (next_attq_time)
+            next_time = MIN(*next_attq_time, engine->resume_sending_at);
+        else
+            next_time = engine->resume_sending_at;
+    }
 
     now = lsquic_time_now();
-    *diff = (int) ((int64_t) *next_time - (int64_t) now);
+    *diff = (int) ((int64_t) next_time - (int64_t) now);
     return 1;
 }
 

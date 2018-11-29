@@ -94,6 +94,7 @@ typedef struct lsquic_packet_out
         PO_IPv6     = (1 <<20),         /* Set if pmi_allocate was passed is_ipv6=1,
                                          *   otherwise unset.
                                          */
+        PO_LIMITED  = (1 <<21),         /* Used to credit sc_next_limit if needed. */
     }                  po_flags;
     enum quic_ft_bit   po_frame_types:16; /* Bitmask of QUIC_FRAME_* */
     unsigned short     po_data_sz;      /* Number of usable bytes in data */

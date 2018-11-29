@@ -1,3 +1,17 @@
+2018-11-29
+    - 1.17.6
+    - Add failsafe: resume sending packets after some time
+
+      The change puts a 1-second limit on the amount of time the engine
+      will not send packets after some packets are delayed.  This makes
+      the library robust in case the user does not unblock the engine
+      explicitly using lsquic_engine_send_unsent_packets() call.
+
+    - [BUGFIX] Handle corner cases in send controller when packets are
+      a) delayed or b) dropped during repackaging.
+    - [BUGFIX] Memory leak: destroy buffered packets during controller
+      cleanup.
+
 2018-11-16
     - 1.17.3
     - [BUGFIX] Do not send STOP_WAITING frames when using Q044

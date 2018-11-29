@@ -858,7 +858,8 @@ send_ctl_next_packno (lsquic_send_ctl_t *ctl)
 void
 lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
 {
-    lsquic_packet_out_t *packet_out;
+    lsquic_packet_out_t *packet_out, *next;
+    unsigned n;
     lsquic_senhist_cleanup(&ctl->sc_senhist);
     while ((packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets)))
     {
@@ -880,6 +881,16 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     {
         TAILQ_REMOVE(&ctl->sc_lost_packets, packet_out, po_next);
         send_ctl_destroy_packet(ctl, packet_out);
+    }
+    for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
+                                sizeof(ctl->sc_buffered_packets[0]); ++n)
+    {
+        for (packet_out = TAILQ_FIRST(&ctl->sc_buffered_packets[n].bpq_packets);
+                                                packet_out; packet_out = next)
+        {
+            next = TAILQ_NEXT(packet_out, po_next);
+            send_ctl_destroy_packet(ctl, packet_out);
+        }
     }
     pacer_cleanup(&ctl->sc_pacer);
 #if LSQUIC_SEND_STATS
@@ -1083,6 +1094,7 @@ lsquic_packet_out_t *
 lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
 {
     lsquic_packet_out_t *packet_out;
+    int dec_limit;
 
   get_packet:
     packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets);
@@ -1093,10 +1105,12 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
                     !(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK)))
     {
         if (ctl->sc_next_limit)
-            --ctl->sc_next_limit;
+            dec_limit = 1;
         else
             return NULL;
     }
+    else
+        dec_limit = 0;
 
     send_ctl_sched_remove(ctl, packet_out);
     if (packet_out->po_flags & PO_REPACKNO)
@@ -1116,6 +1130,13 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
     }
 
     ctl->sc_bytes_out += packet_out_total_sz(packet_out);
+    if (dec_limit)
+    {
+        --ctl->sc_next_limit;
+        packet_out->po_flags |= PO_LIMITED;
+    }
+    else
+        packet_out->po_flags &= ~PO_LIMITED;
     return packet_out;
 }
 
@@ -1126,6 +1147,8 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
 {
     send_ctl_sched_prepend(ctl, packet_out);
     ctl->sc_bytes_out -= packet_out_total_sz(packet_out);
+    if (packet_out->po_flags & PO_LIMITED)
+        ++ctl->sc_next_limit;
     LSQ_DEBUG("packet %"PRIu64" has been delayed", packet_out->po_packno);
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_delayed;
