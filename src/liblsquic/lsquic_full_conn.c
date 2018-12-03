@@ -2818,12 +2818,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
     CLOSE_IF_NECESSARY();
 
-    if (!(conn->fc_flags & FC_SERVER))
-    {
-        lsquic_alarmset_unset(&conn->fc_alset, AL_PING);
-        lsquic_send_ctl_sanity_check(&conn->fc_send_ctl);
-    }
-
     lsquic_alarmset_ring_expired(&conn->fc_alset, now);
     CLOSE_IF_NECESSARY();
 

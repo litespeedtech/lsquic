@@ -1,3 +1,8 @@
+2018-12-03
+    - 1.17.7
+    - [BUGFIX] Do not unset PING alarm before ringing expired alarms.
+      This prevented PING from ever being sent.
+
 2018-11-29
     - 1.17.6
     - Add failsafe: resume sending packets after some time
