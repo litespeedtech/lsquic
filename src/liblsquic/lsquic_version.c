@@ -69,26 +69,3 @@ const char *const lsquic_ver2str[N_LSQVER] = {
 };
 
 
-int
-lsquic_gen_ver_tags (unsigned char *buf, size_t bufsz, unsigned version_bitmask)
-{
-    unsigned n;
-    lsquic_ver_tag_t tag;
-    unsigned char *p = buf;
-    unsigned char *const pend = p + bufsz;
-    for (n = 0; version_bitmask; ++n)
-    {
-        if (version_bitmask & (1 << n))
-        {
-            if (p + 4 > pend)
-                return -1;
-            version_bitmask &= ~(1 << n);
-            tag = lsquic_ver2tag(n);
-            if (0 == tag)
-                return -1;
-            memcpy(p, &tag, 4);
-            p += 4;
-        }
-    }
-    return p - buf;
-}

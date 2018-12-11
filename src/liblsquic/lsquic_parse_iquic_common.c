@@ -93,7 +93,7 @@ lsquic_iquic_parse_packet_in_long_begin (lsquic_packet_in_t *packet_in,
      * the packet number field and the version tag are the same.  The check
      * will probably have to be split in the future.
      */
-    if (end - p < dcil + scil + packet_len)
+    if (end - p < (ptrdiff_t) (dcil + scil + packet_len))
         return -1;
 
     memcpy(&packet_in->pi_conn_id, p, cid_len);
@@ -150,7 +150,7 @@ lsquic_iquic_parse_packet_in_short_begin (lsquic_packet_in_t *packet_in,
         return -1;
 
     packet_len = 1 << (*p & 3);
-    if (pend - p < 1 + cid_len + packet_len)
+    if (pend - p < (ptrdiff_t) (1 + cid_len + packet_len))
         return -1;
 
     ++p;

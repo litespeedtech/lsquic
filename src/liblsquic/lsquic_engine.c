@@ -284,7 +284,6 @@ lsquic_engine_new (unsigned flags,
                    const struct lsquic_engine_api *api)
 {
     lsquic_engine_t *engine;
-    int tag_buf_len;
     char err_buf[100];
 
     if (!api->ea_packets_out)
@@ -313,16 +312,6 @@ lsquic_engine_new (unsigned flags,
         engine->pub.enp_settings        = *api->ea_settings;
     else
         lsquic_engine_init_settings(&engine->pub.enp_settings, flags);
-    tag_buf_len = lsquic_gen_ver_tags(engine->pub.enp_ver_tags_buf,
-                                    sizeof(engine->pub.enp_ver_tags_buf),
-                                    engine->pub.enp_settings.es_versions);
-    if (tag_buf_len <= 0)
-    {
-        LSQ_ERROR("cannot generate version tags buffer");
-        free(engine);
-        return NULL;
-    }
-    engine->pub.enp_ver_tags_len = tag_buf_len;
     engine->pub.enp_flags = ENPUB_CAN_SEND;
 
     engine->flags           = flags;

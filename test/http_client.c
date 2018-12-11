@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <limits.h>
 #endif
 #include <sys/stat.h>
 #include <fcntl.h>
