@@ -66,8 +66,8 @@
 
 /* The batch of outgoing packets grows and shrinks dynamically */
 #define MAX_OUT_BATCH_SIZE 1024
-#define MIN_OUT_BATCH_SIZE 256
-#define INITIAL_OUT_BATCH_SIZE 512
+#define MIN_OUT_BATCH_SIZE 4
+#define INITIAL_OUT_BATCH_SIZE 32
 
 struct out_batch
 {
