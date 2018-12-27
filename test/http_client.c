@@ -30,6 +30,7 @@
 #endif
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <event2/event.h>
 
 
 #ifndef WIN32
@@ -153,11 +154,39 @@ http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 }
 
 
+struct create_another_conn_or_stop_ctx
+{
+    struct event            *event;
+    struct http_client_ctx  *client_ctx;
+};
+
+
+static void
+create_another_conn_or_stop (evutil_socket_t sock, short events, void *ctx)
+{
+    struct create_another_conn_or_stop_ctx *const cacos = ctx;
+    struct http_client_ctx *const client_ctx = cacos->client_ctx;
+
+    event_del(cacos->event);
+    event_free(cacos->event);
+    free(cacos);
+
+    create_connections(client_ctx);
+    if (0 == client_ctx->hcc_n_open_conns)
+    {
+        LSQ_INFO("All connections are closed: stop engine");
+        prog_stop(client_ctx->prog);
+    }
+}
+
+
 static void
 http_client_on_conn_closed (lsquic_conn_t *conn)
 {
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
+    struct create_another_conn_or_stop_ctx *cacos;
     enum LSQUIC_CONN_STATUS status;
+    struct event_base *eb;
     char errmsg[80];
 
     status = lsquic_conn_status(conn, errmsg, sizeof(errmsg));
@@ -170,12 +199,28 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
     }
     TAILQ_REMOVE(&conn_h->client_ctx->conn_ctxs, conn_h, next_ch);
     --conn_h->client_ctx->hcc_n_open_conns;
-    create_connections(conn_h->client_ctx);
-    if (0 == conn_h->client_ctx->hcc_n_open_conns)
+
+    cacos = calloc(1, sizeof(*cacos));
+    if (!cacos)
     {
-        LSQ_INFO("All connections are closed: stop engine");
-        prog_stop(conn_h->client_ctx->prog);
+        LSQ_ERROR("cannot allocate cacos");
+        exit(1);
     }
+    eb = prog_eb(conn_h->client_ctx->prog);
+    cacos->client_ctx = conn_h->client_ctx;
+    cacos->event = event_new(eb, -1, 0, create_another_conn_or_stop, cacos);
+    if (!cacos->event)
+    {
+        LSQ_ERROR("cannot allocate event");
+        exit(1);
+    }
+    if (0 != event_add(cacos->event, NULL))
+    {
+        LSQ_ERROR("cannot add cacos event");
+        exit(1);
+    }
+    event_active(cacos->event, 0, 0);
+
     free(conn_h);
 }
 

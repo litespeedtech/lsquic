@@ -1,6 +1,11 @@
+2018-12-27
+    - 1.17.10
+    - Fix the example program to be able to use parallel connections
+      again.  (See the -n argument.)
+
 2018-12-18
     - 1.17.9
-    - [BUGFIX] Engine: reduce minumum batch size from 256 to 4
+    - [BUGFIX] Engine: reduce minimum batch size from 256 to 4
 
 2018-12-10
     - 1.17.8
