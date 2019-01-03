@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_conn.h -- Connection interface
  *
@@ -105,8 +105,12 @@ struct lsquic_conn
     enum lsquic_version          cn_version;
     unsigned                     cn_hash;
     unsigned short               cn_pack_size;
-    unsigned char                cn_peer_addr[sizeof(struct sockaddr_in6)],
-                                 cn_local_addr[sizeof(struct sockaddr_in6)];
+    unsigned char                cn_local_addr[sizeof(struct sockaddr_in6)];
+    union {
+        unsigned char       buf[sizeof(struct sockaddr_in6)];
+        struct sockaddr     sa;
+    }                            cn_peer_addr_u;
+#define cn_peer_addr cn_peer_addr_u.buf
 };
 
 void

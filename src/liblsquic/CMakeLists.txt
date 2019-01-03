@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
 SET(lsquic_STAT_SRCS
     lsquic_alarmset.c
     lsquic_conn.c

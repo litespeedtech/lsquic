@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
 include_directories( BEFORE ../../ssl/include )
 include_directories( ../../include )
 include_directories( ../../src/liblsquic )

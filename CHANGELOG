@@ -1,3 +1,7 @@
+2019-01-03
+    - 1.17.11
+    - Fix strict aliasing warning in optimized compilation.
+
 2018-12-27
     - 1.17.10
     - Fix the example program to be able to use parallel connections

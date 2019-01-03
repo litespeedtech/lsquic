@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_engine.c - QUIC engine
  */
@@ -817,7 +817,7 @@ really_encrypt_packet (const lsquic_conn_t *conn,
 static int
 conn_peer_ipv6 (const struct lsquic_conn *conn)
 {
-    return AF_INET6 == ((struct sockaddr *) conn->cn_peer_addr)->sa_family;
+    return AF_INET6 == conn->cn_peer_addr_u.sa.sa_family;
 }
 
 
