@@ -1,3 +1,8 @@
+2019-01-10
+    - 1.17.12
+    - [FEATURE] http_client can now issue parallel requests in the context
+      of a single connection.  See -w option.
+
 2019-01-03
     - 1.17.11
     - Fix strict aliasing warning in optimized compilation.
