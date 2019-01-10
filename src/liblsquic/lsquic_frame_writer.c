@@ -450,8 +450,9 @@ write_headers (struct lsquic_frame_writer *fw,
     for (i = 0; i < headers->count; ++i)
     {
         end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz,
-            headers->headers[i].name.iov_base, headers->headers[i].name.iov_len,
-            headers->headers[i].value.iov_base, headers->headers[i].value.iov_len, 0);
+                                 LSHPACK_HDR_UNKNOWN,
+                                 (const lshpack_header_t *)&headers->headers[i],
+                                 0);
         if (end > buf)
         {
             s = hfc_write(hfc, buf, end - buf);

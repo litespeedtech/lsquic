@@ -6087,7 +6087,7 @@ lshpack_enc_push_entry (struct lshpack_enc *enc, const char *name,
 
 
 unsigned char *
-lshpack_enc_encode (struct lshpack_enc *enc, unsigned char *dst,
+lshpack_enc_encode2 (struct lshpack_enc *enc, unsigned char *dst,
         unsigned char *dst_end, const char *name, lshpack_strlen_t name_len,
         const char *value, lshpack_strlen_t value_len, int indexed_type)
 {
@@ -6148,6 +6148,16 @@ lshpack_enc_encode (struct lshpack_enc *enc, unsigned char *dst,
     }
 
     return dst;
+}
+
+
+unsigned char *
+lshpack_enc_encode (struct lshpack_enc *henc, unsigned char *dst,
+                     unsigned char *dst_end, int hpack_idx,
+                     const lshpack_header_t *hdr, int indexed_type)
+{
+    return lshpack_enc_encode2(henc, dst, dst_end, hdr->name.iov_base,
+        hdr->name.iov_len, hdr->value.iov_base, hdr->value.iov_len, indexed_type);
 }
 
 

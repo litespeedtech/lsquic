@@ -31,6 +31,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <sys/uio.h>
 
 /**
  * Strings up to 65535 characters in length are supported.
@@ -42,6 +43,85 @@ typedef uint16_t lshpack_strlen_t;
 
 struct lshpack_enc;
 struct lshpack_dec;
+
+/**
+ * @typedef lshpack_http_header_t
+ * @brief HTTP header structure. Contains header name and value.
+ *
+ */
+typedef struct lshpack_header
+{
+   struct iovec name;
+   struct iovec value;
+} lshpack_header_t;
+
+
+enum lshpack_static_hdr_idx
+{
+    LSHPACK_HDR_UNKNOWN,
+    LSHPACK_HDR_AUTHORITY,
+    LSHPACK_HDR_METHOD_GET,
+    LSHPACK_HDR_METHOD_POST,
+    LSHPACK_HDR_PATH,
+    LSHPACK_HDR_PATH_INDEX_HTML,
+    LSHPACK_HDR_SCHEME_HTTP,
+    LSHPACK_HDR_SCHEME_HTTPS,
+    LSHPACK_HDR_STATUS_200,
+    LSHPACK_HDR_STATUS_204,
+    LSHPACK_HDR_STATUS_206,
+    LSHPACK_HDR_STATUS_304,
+    LSHPACK_HDR_STATUS_400,
+    LSHPACK_HDR_STATUS_404,
+    LSHPACK_HDR_STATUS_500,
+    LSHPACK_HDR_ACCEPT_CHARSET,
+    LSHPACK_HDR_ACCEPT_ENCODING,
+    LSHPACK_HDR_ACCEPT_LANGUAGE,
+    LSHPACK_HDR_ACCEPT_RANGES,
+    LSHPACK_HDR_ACCEPT,
+    LSHPACK_HDR_ACCESS_CONTROL_ALLOW_ORIGIN,
+    LSHPACK_HDR_AGE,
+    LSHPACK_HDR_ALLOW,
+    LSHPACK_HDR_AUTHORIZATION,
+    LSHPACK_HDR_CACHE_CONTROL,
+    LSHPACK_HDR_CONTENT_DISPOSITION,
+    LSHPACK_HDR_CONTENT_ENCODING,
+    LSHPACK_HDR_CONTENT_LANGUAGE,
+    LSHPACK_HDR_CONTENT_LENGTH,
+    LSHPACK_HDR_CONTENT_LOCATION,
+    LSHPACK_HDR_CONTENT_RANGE,
+    LSHPACK_HDR_CONTENT_TYPE,
+    LSHPACK_HDR_COOKIE,
+    LSHPACK_HDR_DATE,
+    LSHPACK_HDR_ETAG,
+    LSHPACK_HDR_EXPECT,
+    LSHPACK_HDR_EXPIRES,
+    LSHPACK_HDR_FROM,
+    LSHPACK_HDR_HOST,
+    LSHPACK_HDR_IF_MATCH,
+    LSHPACK_HDR_IF_MODIFIED_SINCE,
+    LSHPACK_HDR_IF_NONE_MATCH,
+    LSHPACK_HDR_IF_RANGE,
+    LSHPACK_HDR_IF_UNMODIFIED_SINCE,
+    LSHPACK_HDR_LAST_MODIFIED,
+    LSHPACK_HDR_LINK,
+    LSHPACK_HDR_LOCATION,
+    LSHPACK_HDR_MAX_FORWARDS,
+    LSHPACK_HDR_PROXY_AUTHENTICATE,
+    LSHPACK_HDR_PROXY_AUTHORIZATION,
+    LSHPACK_HDR_RANGE,
+    LSHPACK_HDR_REFERER,
+    LSHPACK_HDR_REFRESH,
+    LSHPACK_HDR_RETRY_AFTER,
+    LSHPACK_HDR_SERVER,
+    LSHPACK_HDR_SET_COOKIE,
+    LSHPACK_HDR_STRICT_TRANSPORT_SECURITY,
+    LSHPACK_HDR_TRANSFER_ENCODING,
+    LSHPACK_HDR_USER_AGENT,
+    LSHPACK_HDR_VARY,
+    LSHPACK_HDR_VIA,
+    LSHPACK_HDR_WWW_AUTHENTICATE
+};
+
 
 /**
  * Initialization routine allocates memory.  -1 is returned if memory
@@ -72,9 +152,29 @@ lshpack_enc_cleanup (struct lshpack_enc *);
  * pointer was not advanced, an error must have occurred.
  */
 unsigned char *
-lshpack_enc_encode (struct lshpack_enc *henc, unsigned char *dst,
+lshpack_enc_encode2 (struct lshpack_enc *henc, unsigned char *dst,
     unsigned char *dst_end, const char *name, lshpack_strlen_t name_len,
     const char *value, lshpack_strlen_t value_len, int indexed_type);
+
+
+/**
+ * @brief Encode one name/value pair
+ *
+ * @param[in,out] henc - A pointer to a valid HPACK API struct
+ * @param[out] dst - A pointer to destination buffer
+ * @param[out] dst_end - A pointer to end of destination buffer
+ * @param[in] hpack_idx - The position of header name in static table,
+ *              0 = unknown, < 0 not in static table, 1 - 63 the position
+ * @param[in] hdr - the header name and value
+ * @param[in] indexed_type - 0, Add, 1,: without, 2: never
+ *
+ * @return The (possibly advanced) dst pointer.  If the destination
+ * pointer was not advanced, an error must have occurred.
+ */
+unsigned char *
+lshpack_enc_encode (struct lshpack_enc *henc, unsigned char *dst,
+                     unsigned char *dst_end, int hpack_idx,
+                     const lshpack_header_t *hdr, int indexed_type);
 
 void
 lshpack_enc_set_max_capacity (struct lshpack_enc *, unsigned);
