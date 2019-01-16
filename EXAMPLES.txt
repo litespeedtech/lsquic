@@ -119,15 +119,15 @@ Control Network-Related Stuff
 More Compilation Options
 ------------------------
 
--DFULL_CONN_STATS=1
+-DLSQUIC_CONN_STATS=1
 
-    Track some statistics about full connection -- packets in, sent, delayed,
+    Track some statistics about connections -- packets in, sent, delayed,
     stream payload per packet size ratio, and some others -- and print them
     at NOTICE level when connection is destroyed.
 
-    This is useful when performing network testing and especially analyzing
-    the effects of changing send buffer size (see -S sndbuf= in the previous
-    section).
+    Cumulative connections statistics are printed by the engine when it is
+    destroyed if lsquic_engine_api.ea_stats_fh is set.  The HTTP client
+    programs sets it when -t or -T command-line option is used.
 
 -DLSQUIC_PACKINTS_SANITY_CHECK=1
 

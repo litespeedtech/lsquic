@@ -49,6 +49,9 @@ struct headers_stream
             HS_HENC_INITED  = (1 << 1),
     }                                   hs_flags;
     struct lsquic_engine_public        *hs_enpub;
+#if LSQUIC_CONN_STATS
+    struct conn_stats                  *hs_conn_stats;
+#endif
 };
 
 
@@ -89,6 +92,9 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
                                 MAX_HEADERS_SIZE, &hs->hs_enpub->enp_mm,
                                 stream, lsquic_stream_read, &hs->hs_hdec,
                                 frame_callbacks_ptr, hs,
+#if LSQUIC_CONN_STATS
+                        hs->hs_conn_stats,
+#endif
                         hs->hs_enpub->enp_hsi_if, hs->hs_enpub->enp_hsi_ctx);
     if (!hs->hs_fr)
     {
@@ -97,7 +103,11 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         return NULL;
     }
     hs->hs_fw = lsquic_frame_writer_new(&hs->hs_enpub->enp_mm, stream, 0,
-            &hs->hs_henc, lsquic_stream_write, (hs->hs_flags & HS_IS_SERVER));
+            &hs->hs_henc, lsquic_stream_write,
+#if LSQUIC_CONN_STATS
+            hs->hs_conn_stats,
+#endif
+            (hs->hs_flags & HS_IS_SERVER));
     if (!hs->hs_fw)
     {
         LSQ_WARN("could not create frame writer: %s", strerror(errno));
@@ -196,6 +206,9 @@ lsquic_headers_stream_send_priority (struct headers_stream *hs,
 struct headers_stream *
 lsquic_headers_stream_new (int is_server, struct lsquic_engine_public *enpub,
                            const struct headers_stream_callbacks *callbacks,
+#if LSQUIC_CONN_STATS
+                           struct conn_stats *conn_stats,
+#endif
                            void *cb_ctx)
 {
     struct headers_stream *hs = calloc(1, sizeof(*hs));
@@ -208,6 +221,9 @@ lsquic_headers_stream_new (int is_server, struct lsquic_engine_public *enpub,
     else
         hs->hs_flags = 0;
     hs->hs_enpub     = enpub;
+#if LSQUIC_CONN_STATS
+    hs->hs_conn_stats= conn_stats;
+#endif
     return hs;
 }
 

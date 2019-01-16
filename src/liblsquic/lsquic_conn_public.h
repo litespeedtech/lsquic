@@ -16,6 +16,9 @@ struct lsquic_mm;
 struct lsquic_hash;
 struct headers_stream;
 struct lsquic_send_ctl;
+#if LSQUIC_CONN_STATS
+struct conn_stats;
+#endif
 
 struct lsquic_conn_public {
     struct lsquic_streams_tailq     sending_streams,    /* Send RST_STREAM, BLOCKED, and WUF frames */
@@ -32,6 +35,9 @@ struct lsquic_conn_public {
     struct lsquic_mm               *mm;
     struct headers_stream          *hs;
     struct lsquic_send_ctl         *send_ctl;
+#if LSQUIC_CONN_STATS
+    struct conn_stats              *conn_stats;
+#endif
 };
 
 #endif

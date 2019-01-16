@@ -32,7 +32,9 @@ struct stream_prio_iter
 void
 lsquic_spi_init (struct stream_prio_iter *, struct lsquic_stream *first,
          struct lsquic_stream *last, uintptr_t next_ptr_offset,
-         unsigned onlist_mask, lsquic_cid_t cid, const char *name);
+         unsigned onlist_mask, lsquic_cid_t cid, const char *name,
+         int (*filter)(void *filter_ctx, struct lsquic_stream *),
+         void *filter_ctx);
 
 struct lsquic_stream *
 lsquic_spi_first (struct stream_prio_iter *);

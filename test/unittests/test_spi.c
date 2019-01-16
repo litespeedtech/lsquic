@@ -72,7 +72,7 @@ test_same_priority (unsigned priority)
     lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
         TAILQ_LAST(&streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        flags, 0, __func__);
+        flags, 0, __func__, NULL, NULL);
 
     stream = lsquic_spi_first(&spi);
     assert(stream == stream_arr[0]);
@@ -88,7 +88,7 @@ test_same_priority (unsigned priority)
     /* Test reinitialization: */
     lsquic_spi_init(&spi, stream_arr[0], stream_arr[1],
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        flags, 0, __func__);
+        flags, 0, __func__, NULL, NULL);
     stream = lsquic_spi_first(&spi);
     assert(stream == stream_arr[0]);
     stream = lsquic_spi_next(&spi);
@@ -122,7 +122,7 @@ test_different_priorities (int *priority)
     lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
         TAILQ_LAST(&streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        flags, 0, __func__);
+        flags, 0, __func__, NULL, NULL);
 
     for (prev_prio = -1, count = 0, stream = lsquic_spi_first(&spi); stream;
                                         stream = lsquic_spi_next(&spi), ++count)
@@ -209,7 +209,7 @@ test_drop (const struct drop_test *test)
         lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
             TAILQ_LAST(&streams, lsquic_streams_tailq),
             (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-            STREAM_WRITE_Q_FLAGS, 0, __func__);
+            STREAM_WRITE_Q_FLAGS, 0, __func__, NULL, NULL);
 
         if (drop_high)
             lsquic_spi_drop_high(&spi);
@@ -225,6 +225,69 @@ test_drop (const struct drop_test *test)
             assert((((1 << test->n_infos) - 1) & ~test->high_streams) == seen_mask);
         else
             assert(test->high_streams == seen_mask);
+    }
+}
+
+
+#define MAGIC 0x12312312U
+
+struct my_filter_ctx
+{
+    unsigned magic;
+};
+
+
+static int
+filter_out_odd_priorities (void *ctx, lsquic_stream_t *stream)
+{
+    struct my_filter_ctx *fctx = ctx;
+    assert(fctx->magic == MAGIC);
+    return 0 == (stream->sm_priority & 1);
+}
+
+
+static void
+test_different_priorities_filter_odd (int *priority)
+{
+    struct lsquic_streams_tailq streams;
+    unsigned flags = 0xC000;     /* Arbitrary value */
+    lsquic_stream_t *stream;
+    int prio, prev_prio, count, n_streams = 0;
+
+    TAILQ_INIT(&streams);
+
+    for ( ; *priority >= 0; ++priority)
+    {
+        assert(*priority < 256);
+        stream = new_stream(*priority);
+        TAILQ_INSERT_TAIL(&streams, stream, next_send_stream);
+        stream->stream_flags |= flags;
+        ++n_streams;
+    }
+
+    struct my_filter_ctx my_filter_ctx = { MAGIC };
+
+    lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
+        TAILQ_LAST(&streams, lsquic_streams_tailq),
+        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
+        flags, 0, NULL, filter_out_odd_priorities, &my_filter_ctx);
+
+    for (prev_prio = -1, count = 0, stream = lsquic_spi_first(&spi); stream;
+                                        stream = lsquic_spi_next(&spi), ++count)
+    {
+        prio = stream->sm_priority;
+        assert(0 == (prio & 1));
+        assert(prio >= prev_prio);
+        if (prio > prev_prio)
+            prev_prio = prio;
+    }
+
+    assert(count < n_streams);
+
+    while ((stream = TAILQ_FIRST(&streams)))
+    {
+        TAILQ_REMOVE(&streams, stream, next_send_stream);
+        free(stream);
     }
 }
 
@@ -257,6 +320,11 @@ main (int argc, char **argv)
     {
         int prio[] = { 200, 202, 240, 201, 200, 199, -1 };
         test_different_priorities(prio);
+    }
+
+    {
+        int prio[] = { 200, 202, 240, 201, 200, 199, -1 };
+        test_different_priorities_filter_odd(prio);
     }
 
     unsigned n;

@@ -22,6 +22,9 @@ struct lsquic_packet_in;
 struct sockaddr;
 struct parse_funcs;
 struct attq_elem;
+#if LSQUIC_CONN_STATS
+struct conn_stats;
+#endif
 
 enum lsquic_conn_flags {
     LSCONN_TICKED         = (1 << 0),
@@ -83,6 +86,11 @@ struct conn_iface
 
     lsquic_time_t
     (*ci_next_tick_time) (struct lsquic_conn *);
+
+#if LSQUIC_CONN_STATS
+    const struct conn_stats *
+    (*ci_get_stats) (struct lsquic_conn *);
+#endif
 };
 
 struct lsquic_conn
@@ -126,5 +134,38 @@ lsquic_conn_copy_and_release_pi_data (const lsquic_conn_t *conn,
                     struct lsquic_engine_public *, struct lsquic_packet_in *);
 
 #define lsquic_conn_adv_time(c) ((c)->cn_attq_elem->ae_adv_time)
+
+#if LSQUIC_CONN_STATS
+struct conn_stats {
+    /* All counters are of the same type, unsigned long, because we cast the
+     * struct to an array to update the aggregate.
+     */
+    unsigned long           n_ticks;            /* How many time connection was ticked */
+    struct {
+        unsigned long       stream_data_sz;     /* Sum of all STREAM frames payload */
+        unsigned long       stream_frames;      /* Number of STREAM frames */
+        unsigned long       packets,            /* Incoming packets */
+                            undec_packets,      /* Undecryptable packets */
+                            dup_packets,        /* Duplicate packets */
+                            err_packets;        /* Error packets(?) */
+        unsigned long       n_acks,
+                            n_acks_proc,
+                            n_acks_merged[2];
+        unsigned long       bytes;              /* Overall bytes in */
+        unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
+        unsigned long       headers_comp;       /* Sum of compressed header bytes */
+    }                   in;
+    struct {
+        unsigned long       stream_data_sz;
+        unsigned long       stream_frames;
+        unsigned long       acks;
+        unsigned long       packets;            /* Number of sent packets */
+        unsigned long       retx_packets;       /* Number of retransmitted packets */
+        unsigned long       bytes;              /* Overall bytes out */
+        unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
+        unsigned long       headers_comp;       /* Sum of compressed header bytes */
+    }                   out;
+};
+#endif
 
 #endif

@@ -21,6 +21,8 @@
 #include "lshpack.h"
 #include "lsquic_mm.h"
 #include "lsquic.h"
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
 
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_common.h"
@@ -65,6 +67,9 @@ struct lsquic_frame_writer
     fw_write_f                  fw_write;
     struct lsquic_mm           *fw_mm;
     struct lshpack_enc         *fw_henc;
+#if LSQUIC_CONN_STATS
+    struct conn_stats          *fw_conn_stats;
+#endif
     struct frame_buf_head       fw_frabs;
     unsigned                    fw_max_frame_sz;
     uint32_t                    fw_max_header_list_sz;  /* 0 means unlimited */
@@ -86,6 +91,9 @@ struct lsquic_frame_writer
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
      unsigned max_frame_sz, struct lshpack_enc *henc, fw_write_f write,
+#if LSQUIC_CONN_STATS
+     struct conn_stats *conn_stats,
+#endif
      int is_server)
 {
     struct lsquic_frame_writer *fw;
@@ -124,6 +132,9 @@ lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
     else
         fw->fw_flags    = 0;
     TAILQ_INIT(&fw->fw_frabs);
+#if LSQUIC_CONN_STATS
+    fw->fw_conn_stats   = conn_stats;
+#endif
     return fw;
 }
 
@@ -458,6 +469,12 @@ write_headers (struct lsquic_frame_writer *fw,
             s = hfc_write(hfc, buf, end - buf);
             if (s < 0)
                 return s;
+#if LSQUIC_CONN_STATS
+            fw->fw_conn_stats->out.headers_uncomp +=
+                headers->headers[i].name.iov_len
+                    + headers->headers[i].value.iov_len;
+            fw->fw_conn_stats->out.headers_comp += end - buf;
+#endif
         }
         else
         {

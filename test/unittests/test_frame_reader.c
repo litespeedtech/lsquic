@@ -23,6 +23,10 @@
 #include "lsquic_stream.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_logger.h"
+#if LSQUIC_CONN_STATS
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
+#endif
 
 #include "lsquic_frame_reader.h"
 #include "lsquic_headers.h"
@@ -1105,6 +1109,11 @@ test_one_frt (const struct frame_reader_test *frt)
     struct lsquic_stream stream;
     int s;
 
+#if LSQUIC_CONN_STATS
+    struct conn_stats conn_stats;
+    memset(&conn_stats, 0, sizeof(conn_stats));
+#endif
+
     memset(&stream, 0, sizeof(stream));
     memset(&lconn, 0, sizeof(lconn));
     memset(&conn_pub, 0, sizeof(conn_pub));
@@ -1125,6 +1134,9 @@ test_one_frt (const struct frame_reader_test *frt)
 
         fr = lsquic_frame_reader_new(frt->frt_fr_flags, frt->frt_max_headers_sz,
                 &mm, &stream, read_from_stream, &hdec, &frame_callbacks, &g_cb_ctx,
+#if LSQUIC_CONN_STATS
+                &conn_stats,
+#endif
                 lsquic_http1x_if, NULL);
         do
         {

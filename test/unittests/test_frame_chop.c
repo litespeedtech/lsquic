@@ -27,6 +27,10 @@
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_reader.h"
+#if LSQUIC_CONN_STATS
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
+#endif
 
 
 struct lsquic_stream
@@ -98,11 +102,20 @@ test_chop (unsigned max_write_sz)
     struct lshpack_enc henc;
     int s;
 
+#if LSQUIC_CONN_STATS
+    struct conn_stats conn_stats;
+    memset(&conn_stats, 0, sizeof(conn_stats));
+#endif
+
     lsquic_mm_init(&mm);
     lshpack_enc_init(&henc);
     stream = stream_new(max_write_sz);
 
-    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write, 0);
+    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write,
+#if LSQUIC_CONN_STATS
+                                 &conn_stats,
+#endif
+                                0);
 
     struct lsquic_http_header header_arr[] =
     {

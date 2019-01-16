@@ -1,3 +1,19 @@
+2019-01-16
+    - 1.17.14
+    - [FEATURE] http_client can now collect stats: time to connect, TTFB,
+      time to download, requests per seconds, and bandwidth.  See -t flag.
+    - [BUGFIX] http_client: -B, -K, and -r can be used at the same time.
+    - [BUGFIX] http_client: do not display cert chain before each request.
+      Now this is only done once per connection, if the handshake is
+      successful and -a option is given.
+    - [BUGFIX] Do not wait to dispatch on_close() after reading.  If a
+      stream is scheduled to be closed after on_read() callback returns,
+      close it immediately instead of waiting until the end of the tick.
+      If client creates new request from on_close() event, they will be
+      processed in the same tick instead of waiting for the next one.
+    - [BUGFIX] HEADERS stream is critical: always treat it with highest
+      priority.
+
 2019-01-10
     - 1.17.12
     - [FEATURE] http_client can now issue parallel requests in the context

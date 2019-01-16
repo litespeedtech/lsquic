@@ -18,6 +18,9 @@ struct lsquic_stream;
 struct lsquic_frame_reader;
 struct lsquic_hset_if;
 struct uncompressed_headers;
+#if LSQUIC_CONN_STATS
+struct conn_stats;
+#endif
 
 
 enum frame_reader_flags
@@ -79,6 +82,9 @@ lsquic_frame_reader_new (enum frame_reader_flags, unsigned max_headers_sz,
                          struct lsquic_mm *, struct lsquic_stream *,
                          fr_stream_read_f, struct lshpack_dec *,
                          const struct frame_reader_callbacks *, void *fr_cb_ctx,
+#if LSQUIC_CONN_STATS
+                         struct conn_stats *conn_stats,
+#endif
                          const struct lsquic_hset_if *, void *hsi_ctx);
 
 int

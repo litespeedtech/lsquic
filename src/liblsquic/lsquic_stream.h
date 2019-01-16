@@ -62,6 +62,7 @@ struct lsquic_stream
         STREAM_ONNEW_DONE   = (1 <<26),     /* on_new_stream has been called */
         STREAM_AUTOSWITCH   = (1 <<27),
         STREAM_RW_ONCE      = (1 <<28),     /* When set, read/write events are dispatched once per call */
+        STREAM_CRITICAL     = (1 <<29),
     }                               stream_flags;
 
     /* There are more than one reason that a stream may be put onto
@@ -139,6 +140,7 @@ enum stream_ctor_flags
                                    * performance.
                                    */
     SCF_DISP_RW_ONCE  = (1 << 3),
+    SCF_CRITICAL      = (1 << 4), /* This is a critical stream */
 };
 
 lsquic_stream_t *
@@ -274,10 +276,8 @@ struct stream_read_prog_status
     enum stream_flags       srps_flags;
 };
 
-#define lsquic_stream_is_critical(stream) (                                 \
-    (stream)->id == LSQUIC_STREAM_HANDSHAKE ||                              \
-    ((stream)->id == LSQUIC_STREAM_HEADERS &&                               \
-        (stream)->stream_flags & STREAM_USE_HEADERS))
+#define lsquic_stream_is_critical(stream) \
+                                ((stream)->stream_flags & STREAM_CRITICAL)
 
 size_t
 lsquic_stream_mem_used (const struct lsquic_stream *);

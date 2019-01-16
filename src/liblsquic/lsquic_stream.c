@@ -273,6 +273,8 @@ lsquic_stream_new_ext (uint32_t id, struct lsquic_conn_public *conn_pub,
         lsquic_stream_call_on_new(stream);
     if (ctor_flags & SCF_DISP_RW_ONCE)
         stream->stream_flags |= STREAM_RW_ONCE;
+    if (ctor_flags & SCF_CRITICAL)
+        stream->stream_flags |= STREAM_CRITICAL;
     return stream;
 }
 
@@ -1574,6 +1576,9 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
         packet_out->po_header_type = stream->tosend_off == 0
                                             ? HETY_INITIAL : HETY_HANDSHAKE;
 
+#if LSQUIC_CONN_STATS
+    const uint64_t begin_off = stream->tosend_off;
+#endif
     off = packet_out->po_data_sz;
     len = pf->pf_gen_stream_frame(
                 packet_out->po_data + packet_out->po_data_sz,
@@ -1596,6 +1601,11 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
         }
     }
 
+#if LSQUIC_CONN_STATS
+    stream->conn_pub->conn_stats->out.stream_frames += 1;
+    stream->conn_pub->conn_stats->out.stream_data_sz
+                                            += stream->tosend_off - begin_off;
+#endif
     EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
     lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);

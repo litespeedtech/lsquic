@@ -171,6 +171,13 @@ struct lsquic_engine
     unsigned                           n_conns;
     lsquic_time_t                      deadline;
     lsquic_time_t                      resume_sending_at;
+#if LSQUIC_CONN_STATS
+    struct {
+        unsigned                conns;
+    }                                  stats;
+    struct conn_stats                  conn_stats_sum;
+    FILE                              *stats_fh;
+#endif
     struct out_batch                   out_batch;
 };
 
@@ -348,6 +355,9 @@ lsquic_engine_new (unsigned flags,
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
 
+#if LSQUIC_CONN_STATS
+    engine->stats_fh = api->ea_stats_fh;
+#endif
 
     LSQ_INFO("instantiated engine");
     return engine;
@@ -368,12 +378,37 @@ shrink_batch_size (struct lsquic_engine *engine)
 }
 
 
+#if LSQUIC_CONN_STATS
+void
+update_stats_sum (struct lsquic_engine *engine, struct lsquic_conn *conn)
+{
+    unsigned long *const dst = (unsigned long *) &engine->conn_stats_sum;
+    const unsigned long *src;
+    const struct conn_stats *stats;
+    unsigned i;
+
+    if (conn->cn_if->ci_get_stats && (stats = conn->cn_if->ci_get_stats(conn)))
+    {
+        ++engine->stats.conns;
+        src = (unsigned long *) stats;
+        for (i = 0; i < sizeof(*stats) / sizeof(unsigned long); ++i)
+            dst[i] += src[i];
+    }
+}
+
+
+#endif
+
+
 /* Wrapper to make sure important things occur before the connection is
  * really destroyed.
  */
 static void
 destroy_conn (struct lsquic_engine *engine, lsquic_conn_t *conn)
 {
+#if LSQUIC_CONN_STATS
+    update_stats_sum(engine, conn);
+#endif
     --engine->n_conns;
     conn->cn_flags |= LSCONN_NEVER_TICKABLE;
     conn->cn_if->ci_destroy(conn);
@@ -580,6 +615,44 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
     assert(0 == lsquic_mh_count(&engine->conns_tickable));
     lsquic_mm_cleanup(&engine->pub.enp_mm);
     free(engine->conns_tickable.mh_elems);
+#if LSQUIC_CONN_STATS
+    if (engine->stats_fh)
+    {
+        const struct conn_stats *const stats = &engine->conn_stats_sum;
+        fprintf(engine->stats_fh, "Aggregate connection stats collected by engine:\n");
+        fprintf(engine->stats_fh, "Connections: %u\n", engine->stats.conns);
+        fprintf(engine->stats_fh, "Ticks: %lu\n", stats->n_ticks);
+        fprintf(engine->stats_fh, "In:\n");
+        fprintf(engine->stats_fh, "    Total bytes: %lu\n", stats->in.bytes);
+        fprintf(engine->stats_fh, "    packets: %lu\n", stats->in.packets);
+        fprintf(engine->stats_fh, "    undecryptable packets: %lu\n", stats->in.undec_packets);
+        fprintf(engine->stats_fh, "    duplicate packets: %lu\n", stats->in.dup_packets);
+        fprintf(engine->stats_fh, "    error packets: %lu\n", stats->in.err_packets);
+        fprintf(engine->stats_fh, "    STREAM frame count: %lu\n", stats->in.stream_frames);
+        fprintf(engine->stats_fh, "    STREAM payload size: %lu\n", stats->in.stream_data_sz);
+        fprintf(engine->stats_fh, "    Header bytes: %lu; uncompressed: %lu; ratio %.3lf\n",
+            stats->in.headers_comp, stats->in.headers_uncomp,
+            stats->in.headers_uncomp ?
+            (double) stats->in.headers_comp / (double) stats->in.headers_uncomp
+            : 0);
+        fprintf(engine->stats_fh, "    ACK frames: %lu\n", stats->in.n_acks);
+        fprintf(engine->stats_fh, "    ACK frames processed: %lu\n", stats->in.n_acks_proc);
+        fprintf(engine->stats_fh, "    ACK frames merged to new: %lu\n", stats->in.n_acks_merged[0]);
+        fprintf(engine->stats_fh, "    ACK frames merged to old: %lu\n", stats->in.n_acks_merged[1]);
+        fprintf(engine->stats_fh, "Out:\n");
+        fprintf(engine->stats_fh, "    Total bytes: %lu\n", stats->out.bytes);
+        fprintf(engine->stats_fh, "    packets: %lu\n", stats->out.packets);
+        fprintf(engine->stats_fh, "    retx packets: %lu\n", stats->out.retx_packets);
+        fprintf(engine->stats_fh, "    STREAM frame count: %lu\n", stats->out.stream_frames);
+        fprintf(engine->stats_fh, "    STREAM payload size: %lu\n", stats->out.stream_data_sz);
+        fprintf(engine->stats_fh, "    Header bytes: %lu; uncompressed: %lu; ratio %.3lf\n",
+            stats->out.headers_comp, stats->out.headers_uncomp,
+            stats->out.headers_uncomp ?
+            (double) stats->out.headers_comp / (double) stats->out.headers_uncomp
+            : 0);
+        fprintf(engine->stats_fh, "    ACKs: %lu\n", stats->out.acks);
+    }
+#endif
     free(engine);
 }
 

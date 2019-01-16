@@ -18,6 +18,9 @@ struct lsquic_frame_writer;
 struct uncompressed_headers;
 struct lsquic_engine_public;
 struct lsquic_http2_setting;
+#if LSQUIC_CONN_STATS
+struct conn_stats;
+#endif
 
 
 /* Incoming frames result in new objects or events.  Callbacks in this
@@ -40,6 +43,9 @@ struct headers_stream_callbacks
 struct headers_stream *
 lsquic_headers_stream_new (int is_server, struct lsquic_engine_public *,
                            const struct headers_stream_callbacks *,
+#if LSQUIC_CONN_STATS
+                           struct conn_stats *,
+#endif
                            void *hs_cb_ctx);
 
 void

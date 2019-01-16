@@ -1117,6 +1117,9 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
     {
         if (packet_out->po_regen_sz < packet_out->po_data_sz)
         {
+#if LSQUIC_CONN_STATS
+            ++ctl->sc_conn_pub->conn_stats->out.retx_packets;
+#endif
             update_for_resending(ctl, packet_out);
             packet_out->po_flags &= ~PO_REPACKNO;
         }

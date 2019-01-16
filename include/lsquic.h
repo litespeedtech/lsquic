@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 1
 #define LSQUIC_MINOR_VERSION 17
-#define LSQUIC_PATCH_VERSION 12
+#define LSQUIC_PATCH_VERSION 14
 
 /**
  * Engine flags:
@@ -614,6 +614,13 @@ typedef struct lsquic_engine_api
      */
     const struct lsquic_hset_if         *ea_hsi_if;
     void                                *ea_hsi_ctx;
+#if LSQUIC_CONN_STATS
+    /**
+     * If set, engine will print cumulative connection statistics to this
+     * file just before it is destroyed.
+     */
+    void /* FILE, really */             *ea_stats_fh;
+#endif
 } lsquic_engine_api_t;
 
 /**
