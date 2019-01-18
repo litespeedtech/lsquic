@@ -4,6 +4,7 @@
 
 # Variables
 CLIENT_TYPE=''
+CLIENT_PATH='http_client'
 CLIENTS='1'
 TRIALS='1'
 HOST='www.example.com'
@@ -31,6 +32,7 @@ Arguments:
                         Supported QUIC options: http_client.
                         Supported HTTP options: curl, curl-caddy, ab, h2load.
                         (Default: http_client)
+ -a, --client_path      Path to http_client. (Default: http_client)
  -C, --clients          Number of concurrent clients. (Default: 1)
  -H  --host             Name of server. (Default: www.example.com)
  -S, --ip_port          IP:PORT of domain. (Default: 192.168.0.1:8000)
@@ -56,6 +58,9 @@ function check_input() {
                             ;;
       -t | --client_type)   shift
                             CLIENT_TYPE="$1"
+                            ;;
+      -a | --client_path)   shift
+                            CLIENT_PATH="$1"
                             ;;
       -C | --clients )      shift
                             CLIENTS="$1"
@@ -130,9 +135,9 @@ function run_h2load() {
 
 function run_client() {
   if [[ "${CLIENT_OPTIONS}" == 'none' ]]; then
-    ${CLIENT_OPTIONS} = ''
+    CLIENT_OPTIONS=''
   fi
-  /root/proj/lsquic/build/http_client ${IGNORE_OUT} \
+  ${CLIENT_PATH} ${IGNORE_OUT} \
     -H ${HOST} -s ${IP_PORT} \
     -p ${REQ_PATH} \
     -S rcvbuf=$[2000 * 2048] \
