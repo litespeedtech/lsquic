@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 1
 #define LSQUIC_MINOR_VERSION 17
-#define LSQUIC_PATCH_VERSION 14
+#define LSQUIC_PATCH_VERSION 15
 
 /**
  * Engine flags:

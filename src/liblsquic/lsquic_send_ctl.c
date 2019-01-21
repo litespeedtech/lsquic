@@ -1228,8 +1228,6 @@ lsquic_send_ctl_new_packet_out (lsquic_send_ctl_t *ctl, unsigned need_at_least)
 }
 
 
-/* Do not use for STREAM frames
- */
 lsquic_packet_out_t *
 lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
                                       unsigned need_at_least, int *is_err)
@@ -1248,44 +1246,16 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
 
     if (!lsquic_send_ctl_can_send(ctl))
     {
-        *is_err = 0;
+        if (is_err)
+            *is_err = 0;
         return NULL;
     }
 
     packet_out = lsquic_send_ctl_new_packet_out(ctl, need_at_least);
     if (packet_out)
         lsquic_send_ctl_scheduled_one(ctl, packet_out);
-    else
+    else if (is_err)
         *is_err = 1;
-    return packet_out;
-}
-
-
-static lsquic_packet_out_t *
-send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
-                      unsigned need_at_least, const lsquic_stream_t *stream)
-{
-    lsquic_packet_out_t *packet_out;
-
-    assert(need_at_least > 0);
-
-    packet_out = lsquic_send_ctl_last_scheduled(ctl);
-    if (packet_out
-        && !(packet_out->po_flags & PO_STREAM_END)
-        && lsquic_packet_out_avail(packet_out) >= need_at_least
-        && !lsquic_packet_out_has_frame(packet_out, stream, QUIC_FRAME_STREAM))
-    {
-        return packet_out;
-    }
-
-    if (!lsquic_send_ctl_can_send(ctl))
-        return NULL;
-
-    packet_out = lsquic_send_ctl_new_packet_out(ctl, need_at_least);
-    if (!packet_out)
-        return NULL;
-
-    lsquic_send_ctl_scheduled_one(ctl, packet_out);
     return packet_out;
 }
 
@@ -1670,6 +1640,24 @@ send_ctl_max_bpq_count (const lsquic_send_ctl_t *ctl,
 }
 
 
+static void
+send_ctl_move_ack (struct lsquic_send_ctl *ctl, struct lsquic_packet_out *dst,
+                    struct lsquic_packet_out *src)
+{
+    assert(dst->po_data_sz == 0);
+
+    if (lsquic_packet_out_avail(dst) >= src->po_regen_sz)
+    {
+        memcpy(dst->po_data, src->po_data, src->po_regen_sz);
+        dst->po_data_sz = src->po_regen_sz;
+        dst->po_regen_sz = src->po_regen_sz;
+        dst->po_frame_types |= (QFRAME_REGEN_MASK & src->po_frame_types);
+        src->po_frame_types &= ~QFRAME_REGEN_MASK;
+        lsquic_packet_out_chop_regen(src);
+    }
+}
+
+
 static lsquic_packet_out_t *
 send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
                 enum buf_packet_type packet_type, unsigned need_at_least,
@@ -1677,14 +1665,15 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
 {
     struct buf_packet_q *const packet_q =
                                     &ctl->sc_buffered_packets[packet_type];
+    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
     lsquic_packet_out_t *packet_out;
     enum lsquic_packno_bits bits;
+    enum { AA_STEAL, AA_GENERATE, AA_NONE, } ack_action;
 
     packet_out = TAILQ_LAST(&packet_q->bpq_packets, lsquic_packets_tailq);
     if (packet_out
         && !(packet_out->po_flags & PO_STREAM_END)
-        && lsquic_packet_out_avail(packet_out) >= need_at_least
-        && !lsquic_packet_out_has_frame(packet_out, stream, QUIC_FRAME_STREAM))
+        && lsquic_packet_out_avail(packet_out) >= need_at_least)
     {
         return packet_out;
     }
@@ -1693,9 +1682,55 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
         return NULL;
 
     bits = lsquic_send_ctl_guess_packno_bits(ctl);
+    if (packet_q->bpq_count == 0)
+    {
+        /* If ACK was written to the low-priority queue first, steal it */
+        if (packet_q == &ctl->sc_buffered_packets[BPT_HIGHEST_PRIO]
+            && !TAILQ_EMPTY(&ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets)
+            && (TAILQ_FIRST(&ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets)
+                                        ->po_frame_types & QUIC_FTBIT_ACK))
+        {
+            LSQ_DEBUG("steal ACK frame from low-priority buffered queue");
+            ack_action = AA_STEAL;
+            bits = PACKNO_LEN_6;
+        }
+        /* If ACK can be generated, write it to the first buffered packet. */
+        else if (lconn->cn_if->ci_can_write_ack(lconn))
+        {
+            LSQ_DEBUG("generate ACK frame for first buffered packet in "
+                                                    "queue #%u", packet_type);
+            ack_action = AA_GENERATE;
+            /* Packet length is set to the largest possible size to guarantee
+             * that buffered packet with the ACK will not need to be split.
+             */
+            bits = PACKNO_LEN_6;
+        }
+        else
+            goto no_ack_action;
+    }
+    else
+    {
+  no_ack_action:
+        ack_action = AA_NONE;
+        bits = lsquic_send_ctl_guess_packno_bits(ctl);
+    }
+
     packet_out = send_ctl_allocate_packet(ctl, bits, need_at_least);
     if (!packet_out)
         return NULL;
+
+    switch (ack_action)
+    {
+    case AA_STEAL:
+        send_ctl_move_ack(ctl, packet_out,
+            TAILQ_FIRST(&ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets));
+        break;
+    case AA_GENERATE:
+        lconn->cn_if->ci_write_ack(lconn, packet_out);
+        break;
+    case AA_NONE:
+        break;
+    }
 
     TAILQ_INSERT_TAIL(&packet_q->bpq_packets, packet_out, po_next);
     ++packet_q->bpq_count;
@@ -1712,13 +1747,22 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
     enum buf_packet_type packet_type;
 
     if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
-        return send_ctl_get_packet_for_stream(ctl, need_at_least, stream);
+        return lsquic_send_ctl_get_writeable_packet(ctl, need_at_least, NULL);
     else
     {
         packet_type = send_ctl_lookup_bpt(ctl, stream);
         return send_ctl_get_buffered_packet(ctl, packet_type, need_at_least,
                                             stream);
     }
+}
+
+
+int
+lsquic_send_ctl_buffered_and_same_prio_as_headers (struct lsquic_send_ctl *ctl,
+                                            const struct lsquic_stream *stream)
+{
+    return !lsquic_send_ctl_schedule_stream_packets_immediately(ctl)
+        && BPT_HIGHEST_PRIO == send_ctl_lookup_bpt(ctl, stream);
 }
 
 
@@ -1817,9 +1861,10 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *ctl,
         }
         TAILQ_REMOVE(&packet_q->bpq_packets, packet_out, po_next);
         --packet_q->bpq_count;
-        LSQ_DEBUG("Remove packet from buffered queue #%u; count: %u",
-                  packet_type, packet_q->bpq_count);
         packet_out->po_packno = send_ctl_next_packno(ctl);
+        LSQ_DEBUG("Remove packet from buffered queue #%u; count: %u.  "
+            "It becomes packet %"PRIu64, packet_type, packet_q->bpq_count,
+            packet_out->po_packno);
         lsquic_send_ctl_scheduled_one(ctl, packet_out);
     }
 

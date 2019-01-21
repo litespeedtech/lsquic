@@ -391,6 +391,8 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         st_h->reader.lsqr_ctx = NULL;
     LSQ_INFO("created new stream, path: %s", st_h->path);
     lsquic_stream_wantwrite(stream, 1);
+    if (randomly_reprioritize_streams)
+        lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
 
     return st_h;
 }
@@ -542,28 +544,26 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 	srand(GetTickCount());
 #endif
 
-    if (g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
-    {
-        hset = lsquic_stream_get_hset(stream);
-        if (!hset)
-        {
-            LSQ_ERROR("could not get header set from stream");
-            exit(2);
-        }
-        st_h->sh_ttfb = lsquic_time_now();
-        update_sample_stats(&s_stat_ttfb, st_h->sh_ttfb - st_h->sh_created);
-        if (s_discard_response)
-            LSQ_DEBUG("discard response: do not dump headers");
-        else
-            hset_dump(hset, stdout);
-        hset_destroy(hset);
-        st_h->sh_flags |= PROCESSED_HEADERS;
-    }
-
     do
     {
-        nread = lsquic_stream_read(stream, buf, sizeof(buf));
-        if (nread > 0)
+        if (g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
+        {
+            hset = lsquic_stream_get_hset(stream);
+            if (!hset)
+            {
+                LSQ_ERROR("could not get header set from stream");
+                exit(2);
+            }
+            st_h->sh_ttfb = lsquic_time_now();
+            update_sample_stats(&s_stat_ttfb, st_h->sh_ttfb - st_h->sh_created);
+            if (s_discard_response)
+                LSQ_DEBUG("discard response: do not dump headers");
+            else
+                hset_dump(hset, stdout);
+            hset_destroy(hset);
+            st_h->sh_flags |= PROCESSED_HEADERS;
+        }
+        else if (nread = lsquic_stream_read(stream, buf, sizeof(buf)), nread > 0)
         {
             s_stat_downloaded_bytes += nread;
             if (!g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
@@ -585,7 +585,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 #endif
                 lsquic_stream_set_priority(stream, new_prio);
                 assert(s == 0);
-                LSQ_NOTICE("changed stream %u priority from %u to %u",
+                LSQ_DEBUG("changed stream %u priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
             }
         }

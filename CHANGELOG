@@ -1,3 +1,21 @@
+2019-01-17
+    - 1.17.15
+    - [BUGFIX] http_client: make sure only one read per on_read() callback
+      is performed in the header conversion bypass (-B) mode.
+    - http_client: with -E, assign random priority when stream is created.
+    - [OPTIMIZATION] On immediate write, place an ACK frame into the first
+      buffered packet if an ACK is queued.  This reduces the number of
+      standalone ACK packets.
+    - [OPTIMIZATION] Allow placing more than one STREAM frame from the same
+      stream into an outgoing packet.  This change minimizes the number of
+      buffered packets required to store several small HTTP messages by
+      virtue of allowing more than one STREAM frame from HEADERS stream in
+      the same packet.
+    - [OPTIMIZATION] Flush headers when writing to buffered packets.  This
+      causes the headers to be written to the same buffered packet queue,
+      thereby improving packet utilization, especially for small HTTP
+      messages.
+
 2019-01-16
     - 1.17.14
     - [FEATURE] http_client can now collect stats: time to connect, TTFB,

@@ -25,7 +25,7 @@
 static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 static struct {
-    char        buf[0x100];
+    unsigned char   buf[0x1000];
     size_t      bufsz;
     uint64_t    off;
 } stream_contents;
@@ -37,6 +37,15 @@ setup_stream_contents (uint64_t off, const char *str)
     stream_contents.bufsz = strlen(str);
     stream_contents.off   = off;
     memcpy(stream_contents.buf, str, stream_contents.bufsz);
+}
+
+
+void
+setup_stream_contents_n (uint64_t off, const unsigned char *buf, size_t size)
+{
+    stream_contents.bufsz = size;
+    stream_contents.off   = off;
+    memcpy(stream_contents.buf, buf, size);
 }
 
 
@@ -115,6 +124,78 @@ elide_single_stream_frame (void)
     assert(0 == streams[0].n_unacked);
     assert(0 == packet_out->po_frame_types);
     assert(!posi_first(&posi, packet_out));
+
+    lsquic_packet_out_destroy(packet_out, &enpub, NULL);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+/* In this test, we check that if the last STREAM frame is moved due to
+ * elision and PO_STREAM_END is set, the packet size is adjusted.  This
+ * is needed to prevent data corruption for STREAM frames that have
+ * implicit length.
+ */
+static void
+shrink_packet_post_elision (void)
+{
+    struct packet_out_srec_iter posi;
+    struct lsquic_engine_public enpub;
+    lsquic_stream_t streams[2];
+    lsquic_packet_out_t *packet_out;
+    const struct stream_rec *srec;
+    int len, off = 0;
+    unsigned char stream2_data[0x1000];
+
+    memset(stream2_data, '2', sizeof(stream2_data));
+    memset(streams, 0, sizeof(streams));
+    memset(&enpub, 0, sizeof(enpub));
+    lsquic_mm_init(&enpub.enp_mm);
+    packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, QUIC_MAX_PAYLOAD_SZ);
+
+    setup_stream_contents(123, "Dude, where is my car?");
+    len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            streams[0].id, lsquic_stream_tosend_offset(&streams[0]),
+            lsquic_stream_tosend_fin(&streams[0]),
+            lsquic_stream_tosend_sz(&streams[0]),
+            (gsf_read_f) lsquic_stream_tosend_read,
+            &streams[0]);
+    packet_out->po_data_sz += len;
+    packet_out->po_frame_types |= (1 << QUIC_FRAME_STREAM);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
+                                                QUIC_FRAME_STREAM, off, len);
+
+    /* We want to fill the packet just right so that PO_STREAM_END gets set */
+    const int exp = lsquic_packet_out_avail(packet_out);
+    setup_stream_contents_n(0, stream2_data, exp - 2);
+    len = pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            streams[1].id, lsquic_stream_tosend_offset(&streams[1]),
+            lsquic_stream_tosend_fin(&streams[1]),
+            lsquic_stream_tosend_sz(&streams[1]),
+            (gsf_read_f) lsquic_stream_tosend_read,
+            &streams[1]);
+    assert(len == exp);
+    packet_out->po_data_sz += len;
+    packet_out->po_frame_types |= (1 << QUIC_FRAME_STREAM);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[1],
+                                                QUIC_FRAME_STREAM, off, len);
+    assert(0 == lsquic_packet_out_avail(packet_out));   /* Same as len == exp check really */
+    packet_out->po_flags |= PO_STREAM_END;
+
+    assert(1 == streams[0].n_unacked);
+    assert(1 == streams[1].n_unacked);
+    assert(posi_first(&posi, packet_out));
+
+    streams[0].stream_flags |= STREAM_RST_SENT;
+
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
+    assert(0 == streams[0].n_unacked);
+
+    assert(QUIC_FTBIT_STREAM == packet_out->po_frame_types);
+    srec = posi_first(&posi, packet_out);
+    assert(srec->sr_stream == &streams[1]);
+    assert(packet_out->po_data_sz == exp);
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     lsquic_mm_cleanup(&enpub.enp_mm);
@@ -237,7 +318,7 @@ elide_three_stream_frames (int chop_regen)
         len = pf->pf_gen_rst_frame(packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out), 'A', 133, 0);
         lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
-                                     QUIC_FRAME_RST_STREAM, 0, 0);
+                                     QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, len);
         packet_out->po_data_sz += len;
         /* STREAM D */
         setup_stream_contents(123, "DDDDDDDDDD");
@@ -293,17 +374,17 @@ elide_three_stream_frames (int chop_regen)
     assert(packet_out->po_frame_types == ((1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM)));
 
     srec = posi_first(&posi, packet_out);
-    assert(srec->sr_stream == &streams[0]);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_RST_STREAM));
-
-    srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[1]);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
     assert(srec->sr_off == b_off - (chop_regen ? 5 : 0));
 
     srec = posi_next(&posi);
+    assert(srec->sr_stream == &streams[0]);
+    assert(srec->sr_frame_type == QUIC_FRAME_RST_STREAM);
+
+    srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[3]);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
     assert(srec->sr_off == d_off - (chop_regen ? 5 : 0));
 
     srec = posi_next(&posi);
@@ -320,6 +401,7 @@ main (void)
 {
     /* TODO-ENDIAN: test with every PF */
     elide_single_stream_frame();
+    shrink_packet_post_elision();
     elide_three_stream_frames(0);
     elide_three_stream_frames(1);
 

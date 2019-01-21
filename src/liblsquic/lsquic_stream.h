@@ -63,6 +63,7 @@ struct lsquic_stream
         STREAM_AUTOSWITCH   = (1 <<27),
         STREAM_RW_ONCE      = (1 <<28),     /* When set, read/write events are dispatched once per call */
         STREAM_CRITICAL     = (1 <<29),
+        STREAM_HDRS_FLUSHED = (1 <<30),     /* Only used in buffered packets mode */
     }                               stream_flags;
 
     /* There are more than one reason that a stream may be put onto

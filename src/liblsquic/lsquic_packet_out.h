@@ -17,12 +17,10 @@ struct parse_funcs;
 
 /* Each stream_rec is associated with one packet_out.  packet_out can have
  * zero or more stream_rec structures.  stream_rec keeps a pointer to a stream
- * that has STREAM or RST_STREAM frames inside packet_out.  `sr_frame_types'
- * is a bitmask that records which of these two frames are in the packet.
- * If this value is zero, values of the other struct members are not valid.
- * `sr_off' indicates where inside packet_out->po_data STREAM frame begins
- * and `sr_len' is its length.  These values are not kept for RST_STREAM
- * frames.
+ * that has STREAM or RST_STREAM frames inside packet_out.  `sr_frame_type'
+ * specifies the type of the frame; if this value is zero, values of the
+ * other struct members are not valid.  `sr_off' indicates where inside
+ * packet_out->po_data the frame begins and `sr_len' is its length.
  *
  * We need this information for three reasons:
  *   1. A stream is not destroyed until all of its STREAM and RST_STREAM
@@ -40,10 +38,10 @@ struct stream_rec {
     struct lsquic_stream    *sr_stream;
     unsigned short           sr_off,
                              sr_len;
-    enum quic_ft_bit         sr_frame_types:16;
+    enum QUIC_FRAME_TYPE     sr_frame_type:16;
 };
 
-#define srec_taken(srec) ((srec)->sr_frame_types)
+#define srec_taken(srec) ((srec)->sr_frame_type)
 
 struct stream_rec_arr {
     TAILQ_ENTRY(stream_rec_arr)     next_stream_rec_arr;
@@ -228,10 +226,6 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *, lsquic_packet_out_t *,
 
 void
 lsquic_packet_out_chop_regen (lsquic_packet_out_t *);
-
-int
-lsquic_packet_out_has_frame (struct lsquic_packet_out *,
-                        const struct lsquic_stream *, enum QUIC_FRAME_TYPE);
 
 int
 lsquic_packet_out_has_hsk_frames (struct lsquic_packet_out *);

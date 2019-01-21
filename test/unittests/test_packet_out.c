@@ -54,32 +54,37 @@ main (void)
     srec = posi_first(&posi, packet_out);
     assert(srec->sr_stream == &streams[0]);
     assert(srec->sr_off == 7);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
 
     srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[1]);
     assert(srec->sr_off == 8);
-    assert(srec->sr_frame_types == ((1 << QUIC_FRAME_STREAM)|(1 << QUIC_FRAME_RST_STREAM)));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
 
     srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[2]);
     assert(srec->sr_off == 9);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+
+    srec = posi_next(&posi);
+    assert(srec->sr_stream == &streams[1]);
+    assert(srec->sr_off == 10);
+    assert(srec->sr_frame_type == QUIC_FRAME_RST_STREAM);
 
     srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[3]);
     assert(srec->sr_off == 11);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
 
     srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[4]);
     assert(srec->sr_off == 12);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
 
     srec = posi_next(&posi);
     assert(srec->sr_stream == &streams[5]);
     assert(srec->sr_off == 13);
-    assert(srec->sr_frame_types == (1 << QUIC_FRAME_STREAM));
+    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
 
     assert((void *) 0 == posi_next(&posi));
 

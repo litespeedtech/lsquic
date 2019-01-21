@@ -279,4 +279,8 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
 int
 lsquic_send_ctl_sched_is_blocked (const struct lsquic_send_ctl *);
 
+int
+lsquic_send_ctl_buffered_and_same_prio_as_headers (struct lsquic_send_ctl *,
+                                                const struct lsquic_stream *);
+
 #endif

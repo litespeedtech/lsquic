@@ -87,6 +87,13 @@ struct conn_iface
     lsquic_time_t
     (*ci_next_tick_time) (struct lsquic_conn *);
 
+    int
+    (*ci_can_write_ack) (struct lsquic_conn *);
+
+    /* No return status: best effort */
+    void
+    (*ci_write_ack) (struct lsquic_conn *, struct lsquic_packet_out *);
+
 #if LSQUIC_CONN_STATS
     const struct conn_stats *
     (*ci_get_stats) (struct lsquic_conn *);

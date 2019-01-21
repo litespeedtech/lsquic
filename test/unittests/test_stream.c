@@ -202,7 +202,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
         {
             if (fullcheck)
             {
-                assert(srec->sr_frame_types & (1 << QUIC_FRAME_STREAM));
+                assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
                 if (packet_out->po_packno != 1)
                 {
                     /* First packet may contain two stream frames, do not
@@ -216,7 +216,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
                     }
                 }
             }
-            if ((srec->sr_frame_types & (1 << QUIC_FRAME_STREAM)) &&
+            if (srec->sr_frame_type == QUIC_FRAME_STREAM &&
                                             srec->sr_stream->id == stream_id)
             {
                 assert(!fin);
@@ -264,6 +264,19 @@ struct test_objs {
 };
 
 
+static int
+unit_test_doesnt_write_ack (struct lsquic_conn *lconn)
+{
+    return 0;
+}
+
+
+static const struct conn_iface our_conn_if =
+{
+    .ci_can_write_ack = unit_test_doesnt_write_ack,
+};
+
+
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
                 unsigned initial_stream_window, const struct parse_funcs *pf)
@@ -271,6 +284,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     memset(tobjs, 0, sizeof(*tobjs));
     tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_pack_size = 1370;
+    tobjs->lconn.cn_if = &our_conn_if;
     lsquic_mm_init(&tobjs->eng_pub.enp_mm);
     TAILQ_INIT(&tobjs->conn_pub.sending_streams);
     TAILQ_INIT(&tobjs->conn_pub.read_streams);
@@ -1871,8 +1885,8 @@ test_writing_to_stream_schedule_stream_packets_immediately (void)
     assert(("9 bytes written correctly", nw == 9));
     s = lsquic_stream_flush(stream);
     assert(0 == s);
-    assert(("packetized -- 2 packets now",
-                        2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("packetized -- still 1 packet",
+                        1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
 
     assert(("connection cap is reduced by 23 bytes",
                     lsquic_conn_cap_avail(conn_cap) == 0x4000 - 23));
@@ -1934,7 +1948,7 @@ test_writing_to_stream_outside_callback (void)
     assert(("9 bytes written correctly", nw == 9));
     s = lsquic_stream_flush(stream);
     assert(0 == s);
-    assert(("packetized -- 2 packets now", 2 == bpq->bpq_count));
+    assert(("packetized -- still 1 packet", 1 == bpq->bpq_count));
 
     assert(("connection cap is reduced by 23 bytes",
                     lsquic_conn_cap_avail(conn_cap) == 0x4000 - 23));
@@ -1943,8 +1957,8 @@ test_writing_to_stream_outside_callback (void)
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
     lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
-    assert(("packetized -- 2 packets now",
-                        2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("packetized -- 1 packet",
+                        1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
 
     nw = read_from_scheduled_packets(&tobjs.send_ctl, stream->id, buf,
                                                     sizeof(buf), 0, NULL, 0);

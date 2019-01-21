@@ -1564,6 +1564,25 @@ stream_write_to_packet (struct frame_gen_ctx *fg_ctx, const size_t size)
     lsquic_packet_out_t *packet_out;
     int len, s, hsk;
 
+    if ((stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
+                                                        == STREAM_HEADERS_SENT
+        && lsquic_send_ctl_buffered_and_same_prio_as_headers(send_ctl, stream))
+    {
+        struct lsquic_stream *const headers_stream
+                = lsquic_headers_stream_get_stream(stream->conn_pub->hs);
+        if (lsquic_stream_has_data_to_flush(headers_stream))
+        {
+            LSQ_DEBUG("flushing headers stream before potential write to a "
+                                                            "buffered packet");
+            (void) lsquic_stream_flush(headers_stream);
+        }
+        else
+            /* Some other stream must have flushed it: this means our headers
+             * are flushed.
+             */
+            stream->stream_flags |= STREAM_HDRS_FLUSHED;
+    }
+
     stream_header_sz = pf->pf_calc_stream_frame_header_sz(stream->id,
                                                         stream->tosend_off);
     need_at_least = stream_header_sz + (size > 0);

@@ -903,6 +903,93 @@ reset_ack_state (struct full_conn *conn)
 }
 
 
+#if 1
+#   define verify_ack_frame(a, b, c)
+#else
+static void
+verify_ack_frame (struct full_conn *conn, const unsigned char *buf, int bufsz)
+{
+    unsigned i;
+    int parsed_len;
+    struct ack_info *ack_info;
+    const struct lsquic_packno_range *range;
+    char ack_buf[512];
+    unsigned buf_off = 0;
+    int nw;
+
+    ack_info = conn->fc_pub.mm->acki;
+    parsed_len = parse_ack_frame(buf, bufsz, ack_info);
+    assert(parsed_len == bufsz);
+
+    for (range = lsquic_rechist_first(&conn->fc_rechist), i = 0; range;
+            range = lsquic_rechist_next(&conn->fc_rechist), ++i)
+    {
+        assert(i < ack_info->n_ranges);
+        assert(range->high == ack_info->ranges[i].high);
+        assert(range->low == ack_info->ranges[i].low);
+        if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+        {
+            nw = snprintf(ack_buf + buf_off, sizeof(ack_buf) - buf_off,
+                            "[%"PRIu64"-%"PRIu64"]", range->high, range->low);
+            assert(nw >= 0);
+            buf_off += nw;
+        }
+    }
+    assert(i == ack_info->n_ranges);
+    LSQ_DEBUG("Sent ACK frame %s", ack_buf);
+}
+
+
+#endif
+
+
+static void
+full_conn_ci_write_ack (struct lsquic_conn *lconn,
+                                    struct lsquic_packet_out *packet_out)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    lsquic_time_t now;
+    int has_missing, w;
+
+    now = lsquic_time_now();
+    w = conn->fc_conn.cn_pf->pf_gen_ack_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            (gaf_rechist_first_f)        lsquic_rechist_first,
+            (gaf_rechist_next_f)         lsquic_rechist_next,
+            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+            &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed);
+    if (w < 0) {
+        ABORT_ERROR("generating ACK frame failed: %d", errno);
+        return;
+    }
+#if LSQUIC_CONN_STATS
+    ++conn->fc_stats.out.acks;
+#endif
+    EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->fc_conn.cn_pf,
+                        packet_out->po_data + packet_out->po_data_sz, w);
+    verify_ack_frame(conn, packet_out->po_data + packet_out->po_data_sz, w);
+    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
+    packet_out->po_regen_sz += w;
+    if (has_missing)
+        conn->fc_flags |= FC_ACK_HAD_MISS;
+    else
+        conn->fc_flags &= ~FC_ACK_HAD_MISS;
+    LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
+    if (conn->fc_conn.cn_version >= LSQVER_039 &&
+            conn->fc_n_cons_unretx >= 20 &&
+                !lsquic_send_ctl_have_outgoing_retx_frames(&conn->fc_send_ctl))
+    {
+        LSQ_DEBUG("schedule WINDOW_UPDATE frame after %u non-retx "
+                                    "packets sent", conn->fc_n_cons_unretx);
+        conn->fc_flags |= FC_SEND_WUF;
+    }
+    reset_ack_state(conn);
+}
+
+
 static lsquic_stream_t *
 new_stream_ext (struct full_conn *conn, uint32_t stream_id, int if_idx,
                 enum stream_ctor_flags stream_ctor_flags)
@@ -2232,7 +2319,7 @@ generate_rst_stream_frame (struct full_conn *conn, lsquic_stream_t *stream)
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
     s = lsquic_packet_out_add_stream(packet_out, conn->fc_pub.mm, stream,
-                                     QUIC_FRAME_RST_STREAM, 0, 0);
+                             QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz);
     if (s != 0)
     {
         ABORT_ERROR("adding stream to packet failed: %s", strerror(errno));
@@ -2578,96 +2665,19 @@ process_hsk_stream_write_events (struct full_conn *conn)
 }
 
 
-#if 1
-#   define verify_ack_frame(a, b, c)
-#else
-static void
-verify_ack_frame (struct full_conn *conn, const unsigned char *buf, int bufsz)
-{
-    unsigned i;
-    int parsed_len;
-    struct ack_info *ack_info;
-    const struct lsquic_packno_range *range;
-    char ack_buf[512];
-    unsigned buf_off = 0;
-    int nw;
-
-    ack_info = conn->fc_pub.mm->acki;
-    parsed_len = parse_ack_frame(buf, bufsz, ack_info);
-    assert(parsed_len == bufsz);
-
-    for (range = lsquic_rechist_first(&conn->fc_rechist), i = 0; range;
-            range = lsquic_rechist_next(&conn->fc_rechist), ++i)
-    {
-        assert(i < ack_info->n_ranges);
-        assert(range->high == ack_info->ranges[i].high);
-        assert(range->low == ack_info->ranges[i].low);
-        if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
-        {
-            nw = snprintf(ack_buf + buf_off, sizeof(ack_buf) - buf_off,
-                            "[%"PRIu64"-%"PRIu64"]", range->high, range->low);
-            assert(nw >= 0);
-            buf_off += nw;
-        }
-    }
-    assert(i == ack_info->n_ranges);
-    LSQ_DEBUG("Sent ACK frame %s", ack_buf);
-}
-
-
-#endif
-
-
 static void
 generate_ack_frame (struct full_conn *conn)
 {
     lsquic_packet_out_t *packet_out;
-    lsquic_time_t now;
-    int has_missing, w;
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0);
-    if (!packet_out)
+    if (packet_out)
     {
-        ABORT_ERROR("cannot allocate packet: %s", strerror(errno));
-        return;
+        lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
+        full_conn_ci_write_ack(&conn->fc_conn, packet_out);
     }
-
-    lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
-    now = lsquic_time_now();
-    w = conn->fc_conn.cn_pf->pf_gen_ack_frame(
-            packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out),
-            (gaf_rechist_first_f)        lsquic_rechist_first,
-            (gaf_rechist_next_f)         lsquic_rechist_next,
-            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-            &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed);
-    if (w < 0) {
-        ABORT_ERROR("generating ACK frame failed: %d", errno);
-        return;
-    }
-#if LSQUIC_CONN_STATS
-    ++conn->fc_stats.out.acks;
-#endif
-    EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->fc_conn.cn_pf,
-                        packet_out->po_data + packet_out->po_data_sz, w);
-    verify_ack_frame(conn, packet_out->po_data + packet_out->po_data_sz, w);
-    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
-    packet_out->po_regen_sz += w;
-    if (has_missing)
-        conn->fc_flags |= FC_ACK_HAD_MISS;
     else
-        conn->fc_flags &= ~FC_ACK_HAD_MISS;
-    LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
-    if (conn->fc_conn.cn_version >= LSQVER_039 &&
-            conn->fc_n_cons_unretx >= 20 &&
-                !lsquic_send_ctl_have_outgoing_retx_frames(&conn->fc_send_ctl))
-    {
-        LSQ_DEBUG("schedule WINDOW_UPDATE frame after %u non-retx "
-                                    "packets sent", conn->fc_n_cons_unretx);
-        conn->fc_flags |= FC_SEND_WUF;
-    }
+        ABORT_ERROR("cannot allocate packet: %s", strerror(errno));
 }
 
 
@@ -2775,6 +2785,14 @@ should_generate_ack (const struct full_conn *conn)
 }
 
 
+static int
+full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    return should_generate_ack(conn);
+}
+
+
 static enum tick_st
 full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 {
@@ -2874,7 +2892,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          */
         generate_ack_frame(conn);
         CLOSE_IF_NECESSARY();
-        reset_ack_state(conn);
 
         /* Try to send STOP_WAITING frame at the same time we send an ACK
          * This follows reference implementation.
@@ -3575,6 +3592,7 @@ static const struct headers_stream_callbacks headers_callbacks =
 static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_callbacks;
 
 static const struct conn_iface full_conn_iface = {
+    .ci_can_write_ack        =  full_conn_ci_can_write_ack,
     .ci_destroy              =  full_conn_ci_destroy,
 #if LSQUIC_CONN_STATS
     .ci_get_stats            =  full_conn_ci_get_stats,
@@ -3588,6 +3606,7 @@ static const struct conn_iface full_conn_iface = {
     .ci_packet_not_sent      =  full_conn_ci_packet_not_sent,
     .ci_packet_sent          =  full_conn_ci_packet_sent,
     .ci_tick                 =  full_conn_ci_tick,
+    .ci_write_ack            =  full_conn_ci_write_ack,
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;
