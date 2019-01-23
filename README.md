@@ -15,8 +15,9 @@ Even better, send us fixes and improvements!
 
 Currently supported QUIC versions are Q035, Q039, Q043, and Q044.  Support
 for newer versions will be added soon after they are released.  The
-version(s) specified by IETF QUIC WG will be added once the IETF version
-of the protocol settles down a little.
+version(s) specified by IETF QUIC WG are being developed on
+[one or more branches](https://github.com/litespeedtech/lsquic-client/branches).
+When deemed stable, the IETF QUIC support will be added to the master branch.
 
 Documentation
 -------------
