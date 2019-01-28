@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 17
-#define LSQUIC_PATCH_VERSION 15
+#define LSQUIC_MINOR_VERSION 18
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -245,6 +245,9 @@ struct lsquic_stream_if {
 /** By default, packets are paced */
 #define LSQUIC_DF_PACE_PACKETS      1
 
+/** Default clock granularity is 1000 microseconds */
+#define LSQUIC_DF_CLOCK_GRANULARITY      1000
+
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -432,6 +435,11 @@ struct lsquic_engine_settings {
      */
     int             es_pace_packets;
 
+    /**
+     * Clock granularity information is used by the pacer.  The value
+     * is in microseconds; default is @ref LSQUIC_DF_CLOCK_GRANULARITY.
+     */
+    unsigned        es_clock_granularity;
 };
 
 /* Initialize `settings' to default values */

@@ -1088,6 +1088,7 @@ main (int argc, char **argv)
         fprintf(stats_fh, "%.2Lf reqs/sec; %.0Lf bytes/sec\n",
             (long double) s_stat_req.n / elapsed,
             (long double) s_stat_downloaded_bytes / elapsed);
+        fprintf(stats_fh, "read handler count %lu\n", prog.prog_read_count);
     }
 
     prog_cleanup(&prog);

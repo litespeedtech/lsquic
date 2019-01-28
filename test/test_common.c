@@ -560,6 +560,7 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
     n_batches = 0;
     iter.ri_sport = sport;
 
+    sport->sp_prog->prog_read_count += 1;
     do
     {
         iter.ri_off = 0;

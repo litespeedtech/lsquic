@@ -1,3 +1,16 @@
+2019-01-28
+    - 1.18.0
+    - [API Change] Can specify clock granularity in engine settings.
+    - [BUGFIX] Pacer uses fixed clock granularity.  Since the change on
+      2018-04-09, it is not necessary to try to approximate the next tick
+      time in the pacer: it can use fix clock granularity specified by
+      the user.
+    - [BUGFIX] Do not tick constantly before handshake is done.
+    - [BUGFIX] Do not exit tick prematurely: reuse packet with ACK.  Even
+      if we cannot allocate *more* packets, we could still be able to write
+      to one already allocated.
+    - [BUGFIX] Do not schedule pacer if there are no lost packets.
+
 2019-01-17
     - 1.17.15
     - [BUGFIX] http_client: make sure only one read per on_read() callback

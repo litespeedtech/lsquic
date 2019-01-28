@@ -38,7 +38,7 @@ struct stream_rec {
     struct lsquic_stream    *sr_stream;
     unsigned short           sr_off,
                              sr_len;
-    enum QUIC_FRAME_TYPE     sr_frame_type:16;
+    enum quic_frame_type     sr_frame_type:16;
 };
 
 #define srec_taken(srec) ((srec)->sr_frame_type)
@@ -214,7 +214,7 @@ int
 lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               struct lsquic_mm *mm,
                               struct lsquic_stream *new_stream,
-                              enum QUIC_FRAME_TYPE,
+                              enum quic_frame_type,
                               unsigned short off, unsigned short len);
 
 unsigned
@@ -226,9 +226,6 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *, lsquic_packet_out_t *,
 
 void
 lsquic_packet_out_chop_regen (lsquic_packet_out_t *);
-
-int
-lsquic_packet_out_has_hsk_frames (struct lsquic_packet_out *);
 
 void
 lsquic_packet_out_ack_streams (struct lsquic_packet_out *);

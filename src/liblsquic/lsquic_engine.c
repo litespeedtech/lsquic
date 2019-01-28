@@ -219,6 +219,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_rw_once         = LSQUIC_DF_RW_ONCE;
     settings->es_proc_time_thresh= LSQUIC_DF_PROC_TIME_THRESH;
     settings->es_pace_packets    = LSQUIC_DF_PACE_PACKETS;
+    settings->es_clock_granularity = LSQUIC_DF_CLOCK_GRANULARITY;
 }
 
 

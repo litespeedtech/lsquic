@@ -114,7 +114,7 @@ int
 lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               struct lsquic_mm *mm,
                               struct lsquic_stream *new_stream,
-                              enum QUIC_FRAME_TYPE frame_type,
+                              enum quic_frame_type frame_type,
                               unsigned short off, unsigned short len)
 {
     struct stream_rec_arr *srec_arr;
@@ -345,23 +345,6 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
     for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
         if (srec->sr_frame_type == QUIC_FRAME_STREAM)
             srec->sr_off -= delta;
-}
-
-
-int
-lsquic_packet_out_has_hsk_frames (struct lsquic_packet_out *packet_out)
-{
-    struct packet_out_srec_iter posi;
-    struct stream_rec *srec;
-
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
-        if (srec->sr_frame_type == QUIC_FRAME_STREAM
-            && LSQUIC_STREAM_HANDSHAKE == srec->sr_stream->id)
-        {
-            return 1;
-        }
-
-    return 0;
 }
 
 

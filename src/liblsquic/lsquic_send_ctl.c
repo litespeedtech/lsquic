@@ -252,7 +252,8 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     lsquic_senhist_init(&ctl->sc_senhist);
     lsquic_cubic_init(&ctl->sc_cubic, LSQUIC_LOG_CONN_ID);
     if (ctl->sc_flags & SC_PACE)
-        pacer_init(&ctl->sc_pacer, LSQUIC_LOG_CONN_ID, 100000);
+        pacer_init(&ctl->sc_pacer, LSQUIC_LOG_CONN_ID,
+                                    enpub->enp_settings.es_clock_granularity);
     for (i = 0; i < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++i)
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
@@ -833,18 +834,32 @@ lsquic_send_ctl_smallest_unacked (lsquic_send_ctl_t *ctl)
 static struct lsquic_packet_out *
 send_ctl_next_lost (lsquic_send_ctl_t *ctl)
 {
-    lsquic_packet_out_t *lost_packet = TAILQ_FIRST(&ctl->sc_lost_packets);
+    struct lsquic_packet_out *lost_packet;
+
+  get_next_lost:
+    lost_packet = TAILQ_FIRST(&ctl->sc_lost_packets);
     if (lost_packet)
     {
-        TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
         if (lost_packet->po_frame_types & (1 << QUIC_FRAME_STREAM))
         {
             lsquic_packet_out_elide_reset_stream_frames(lost_packet, 0);
+            if (lost_packet->po_regen_sz >= lost_packet->po_data_sz)
+            {
+                LSQ_DEBUG("Dropping packet %"PRIu64" from lost queue",
+                    lost_packet->po_packno);
+                TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
+                send_ctl_destroy_packet(ctl, lost_packet);
+                goto get_next_lost;
+            }
         }
-        return lost_packet;
+
+        if (!lsquic_send_ctl_can_send(ctl))
+            return NULL;
+
+        TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
     }
-    else
-        return NULL;
+
+    return lost_packet;
 }
 
 
@@ -1117,9 +1132,6 @@ lsquic_send_ctl_next_packet_to_send (lsquic_send_ctl_t *ctl)
     {
         if (packet_out->po_regen_sz < packet_out->po_data_sz)
         {
-#if LSQUIC_CONN_STATS
-            ++ctl->sc_conn_pub->conn_stats->out.retx_packets;
-#endif
             update_for_resending(ctl, packet_out);
             packet_out->po_flags &= ~PO_REPACKNO;
         }
@@ -1304,21 +1316,15 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *ctl)
     lsquic_packet_out_t *packet_out;
     unsigned n = 0;
 
-    while (lsquic_send_ctl_can_send(ctl) &&
-                                (packet_out = send_ctl_next_lost(ctl)))
+    while ((packet_out = send_ctl_next_lost(ctl)))
     {
-        if (packet_out->po_regen_sz < packet_out->po_data_sz)
-        {
-            ++n;
-            update_for_resending(ctl, packet_out);
-            lsquic_send_ctl_scheduled_one(ctl, packet_out);
-        }
-        else
-        {
-            LSQ_DEBUG("Dropping packet %"PRIu64" from unacked queue",
-                packet_out->po_packno);
-            send_ctl_destroy_packet(ctl, packet_out);
-        }
+        assert(packet_out->po_regen_sz < packet_out->po_data_sz);
+        ++n;
+#if LSQUIC_CONN_STATS
+        ++ctl->sc_conn_pub->conn_stats->out.retx_packets;
+#endif
+        update_for_resending(ctl, packet_out);
+        lsquic_send_ctl_scheduled_one(ctl, packet_out);
     }
 
     if (n)

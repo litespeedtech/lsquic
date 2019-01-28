@@ -152,6 +152,10 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 
 
     fprintf(out,
+"   -i USECS    Clock granularity in microseconds.  Defaults to %u.\n",
+        LSQUIC_DF_CLOCK_GRANULARITY
+    );
+    fprintf(out,
 "   -h          Print this help screen and exit\n"
     );
 }
@@ -193,6 +197,9 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'o':
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
+    case 'i':
+        prog->prog_settings.es_clock_granularity = atoi(arg);
+        return 0;
     case 's':
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
@@ -286,10 +293,11 @@ prog_process_conns (struct prog *prog)
 
     if (lsquic_engine_earliest_adv_tick(prog->prog_engine, &diff))
     {
-        if (diff < 4000)
+        if (diff < 0
+                || (unsigned) diff < prog->prog_settings.es_clock_granularity)
         {
             timeout.tv_sec  = 0;
-            timeout.tv_usec = 4000;
+            timeout.tv_usec = prog->prog_settings.es_clock_granularity;
         }
         else
         {

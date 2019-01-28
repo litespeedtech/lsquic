@@ -16,7 +16,7 @@ enum PACKET_PUBLIC_FLAGS
   PACKET_PUBLIC_FLAGS_TWO_OR_MORE_BYTES = 1 << 7,
 };
 
-enum QUIC_FRAME_TYPE
+enum quic_frame_type
 {
     QUIC_FRAME_INVALID,
 

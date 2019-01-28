@@ -1877,7 +1877,7 @@ static unsigned
 process_packet_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                       const unsigned char *p, size_t len)
 {
-    enum QUIC_FRAME_TYPE type = conn->fc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum quic_frame_type type = conn->fc_conn.cn_pf->pf_parse_frame_type(p[0]);
     packet_in->pi_frame_types |= 1 << type;
     recent_packet_hist_frames(conn, 0, 1 << type);
     return process_frames[type](conn, packet_in, p, len);
@@ -2954,8 +2954,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (n > 0)
         CLOSE_IF_NECESSARY();
 
-    RETURN_IF_OUT_OF_PACKETS();
-
     if (conn->fc_conn.cn_flags & LSCONN_SEND_BLOCKED)
     {
         if (generate_blocked_frame(conn, 0))
@@ -3531,9 +3529,21 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             return 1;
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
             return 1;
-        TAILQ_FOREACH(stream, &conn->fc_pub.write_streams, next_write_stream)
-            if (lsquic_stream_write_avail(stream))
-                return 1;
+        if (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        {
+            TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
+                                                        next_write_stream)
+                if (lsquic_stream_write_avail(stream))
+                    return 1;
+        }
+        else
+        {
+            TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
+                                                        next_write_stream)
+                if (LSQUIC_STREAM_HANDSHAKE == stream->id
+                                    && lsquic_stream_write_avail(stream))
+                    return 1;
+        }
     }
 
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)

@@ -137,7 +137,7 @@ lsquic_gquic_parse_packet_in_begin (struct lsquic_packet_in *packet_in,
 }
 
 
-static const enum QUIC_FRAME_TYPE byte2frame_type_Q035_thru_Q039[0x100] =
+static const enum quic_frame_type byte2frame_type_Q035_thru_Q039[0x100] =
 {
     [0x00] = QUIC_FRAME_PADDING,
     [0x01] = QUIC_FRAME_RST_STREAM,
@@ -398,7 +398,7 @@ static const enum QUIC_FRAME_TYPE byte2frame_type_Q035_thru_Q039[0x100] =
 };
 
 
-enum QUIC_FRAME_TYPE
+enum quic_frame_type
 parse_frame_type_gquic_Q035_thru_Q039 (unsigned char b)
 {
     return byte2frame_type_Q035_thru_Q039[b];

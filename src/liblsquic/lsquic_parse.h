@@ -71,7 +71,7 @@ struct parse_funcs
     void
     (*pf_parse_packet_in_finish) (struct lsquic_packet_in *packet_in,
                                                 struct packin_parse_state *);
-    enum QUIC_FRAME_TYPE
+    enum quic_frame_type
     (*pf_parse_frame_type) (unsigned char);
     /* Return used buffer length or a negative value if there was not enough
      * room to write the stream frame.  In the latter case, the negative of
@@ -186,7 +186,7 @@ int
 lsquic_iquic_parse_packet_in_short_begin (struct lsquic_packet_in *,
             size_t length, int is_server, struct packin_parse_state *state);
 
-enum QUIC_FRAME_TYPE
+enum quic_frame_type
 parse_frame_type_gquic_Q035_thru_Q039 (unsigned char first_byte);
 
 size_t
