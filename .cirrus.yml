@@ -2,5 +2,18 @@ freebsd_instance:
     image: freebsd-11-2-release-amd64
 
 task:
-    install_script: pkg install -y cmake bash
-    script: cmake . && make && make test
+    install_script:
+        - pkg install -y cmake bash libevent2
+        - git clone https://boringssl.googlesource.com/boringssl
+        - cd boringssl
+        - git checkout chromium-stable
+        - cmake .
+        - make
+        - BORINGSSL_SOURCE=$PWD
+        - ln -s $BORINGSSL_SOURCE/ssl/libssl.a
+        - ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
+        - cd -
+    script:
+        - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$BORINGSSL_SOURCE .
+        - make
+        - make test
