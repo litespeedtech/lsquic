@@ -3,7 +3,7 @@ freebsd_instance:
 
 task:
     install_script:
-        - pkg install -y cmake bash libevent2
+        - pkg install -y cmake bash libevent
         - git clone https://boringssl.googlesource.com/boringssl
         - cd boringssl
         - git checkout chromium-stable
