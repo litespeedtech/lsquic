@@ -15,17 +15,12 @@ matrix:
             apt:
                 packages:
                 - libevent-dev
-        - name: macOS (gcc)
+        - name: macOS
           os: osx
-          compiler: gcc
-        - name: macOS (clang)
-          os: osx
-          compiler: clang
 sudo: false
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
     - cd boringssl
-    - git checkout chromium-stable
     # This is so that both GQUIC and IETF branches build.  Just picking
     # a known good revision:
     - git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
