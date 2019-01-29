@@ -9,7 +9,6 @@ matrix:
           addons:
             apt:
                 packages:
-                - libevent
                 - libevent-dev
                 - cmake
 sudo: false
