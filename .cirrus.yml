@@ -9,11 +9,10 @@ task:
         - git checkout chromium-stable
         - cmake .
         - make
-        - BORINGSSL_SOURCE=$PWD
-        - ln -s $BORINGSSL_SOURCE/ssl/libssl.a
-        - ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
+        - ln -s ssl/libssl.a
+        - ln -s crypto/libcrypto.a
         - cd -
     script:
-        - cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include -DBORINGSSL_LIB=$BORINGSSL_SOURCE .
+        - cmake -DBORINGSSL_INCLUDE=$PWD/boringssl/include -DBORINGSSL_LIB=$PWD/boringssl .
         - make
         - make test
