@@ -85,11 +85,7 @@ ELSE()
     #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
 ENDIF()
 
-SET (BORINGSSL_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl/include)
-SET (VCPKG_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static/include )
-set (BORINGSSL_BASE_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../boringssl)
-
-SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
+# SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
 
 ENDIF() #MSVC
 
@@ -105,7 +101,7 @@ IF(NOT DEFINED BORINGSSL_LIB)
 ENDIF()
 
 
-include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE} )
+include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE})
 link_directories( ${BORINGSSL_LIB}  )
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -137,10 +133,10 @@ add_executable(http_client
 
 target_link_libraries(http_client
 		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
-		debug  ${VCPKG_BASE_DIR}/debug/lib/event.lib
-		debug  ${VCPKG_BASE_DIR}/debug/lib/zlibd.lib
-		debug  ${BORINGSSL_BASE_LIB_DIR}/ssl/debug/ssl.lib
-		debug  ${BORINGSSL_BASE_LIB_DIR}/crypto/debug/crypto.lib
+		debug  ${VCPKG_BASE_DIR}/event.lib
+		debug  ${VCPKG_BASE_DIR}/zlibd.lib
+		debug  ${BORINGSSL_LIB}/ssl.lib
+		debug  ${BORINGSSL_LIB}/crypto.lib
 		ws2_32
 		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
 		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
