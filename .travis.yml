@@ -1,11 +1,16 @@
 language: c
-addons:
-    apt:
 matrix:
     include:
         - name: Linux (gcc)
           os: linux
           compiler: gcc
+          addons:
+            apt:
+                packages:
+                - libevent-dev
+        - name: Linux (clang)
+          os: linux
+          compiler: clang
           addons:
             apt:
                 packages:
