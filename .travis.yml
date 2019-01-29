@@ -15,8 +15,12 @@ matrix:
             apt:
                 packages:
                 - libevent-dev
-        - name: macOS (xcode)
+        - name: macOS (gcc)
           os: osx
+          compiler: gcc
+        - name: macOS (clang)
+          os: osx
+          compiler: clang
 sudo: false
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
