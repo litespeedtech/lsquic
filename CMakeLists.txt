@@ -17,12 +17,14 @@ ENDIF()
 
 ENDIF()
 
-# If using older glibc, need to link with -lrt.  See clock_getres(2).
-EXECUTE_PROCESS(
-    COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
-    OUTPUT_VARIABLE GLIBC_VERSION)
-IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
-    SET(LIBS ${LIBS} rt)
+IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # If using older glibc, need to link with -lrt.  See clock_getres(2).
+    EXECUTE_PROCESS(
+        COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
+        OUTPUT_VARIABLE GLIBC_VERSION)
+    IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
+        SET(LIBS ${LIBS} rt)
+    ENDIF()
 ENDIF()
 
 IF("${CMAKE_BUILD_TYPE}" STREQUAL "")
@@ -73,6 +75,7 @@ ENDIF()
 
 #MSVC
 ELSE()
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4214")	# nonstandard extension used: bit field types other than int
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
 IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
@@ -134,15 +137,10 @@ add_executable(http_client
 target_link_libraries(http_client
 		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
 		debug  ${VCPKG_BASE_DIR}/event.lib
-		debug  ${VCPKG_BASE_DIR}/zlibd.lib
+		debug  ${VCPKG_BASE_DIR}/zlib.lib
 		debug  ${BORINGSSL_LIB}/ssl.lib
 		debug  ${BORINGSSL_LIB}/crypto.lib
 		ws2_32
-		optimized  $(SolutionDir)src/liblsquic/release/lsquic.lib
-		optimized  ${VCPKG_BASE_DIR}/lib/event.lib
-		optimized  ${VCPKG_BASE_DIR}/lib/zlib.lib
-		optimized  ${BORINGSSL_BASE_LIB_DIR}/ssl/release/ssl.lib
-		optimized  ${BORINGSSL_BASE_LIB_DIR}/crypto/release/crypto.lib
 		${LIBS} )
 
 ENDIF()

@@ -31,7 +31,11 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#ifndef WIN32
 #include <sys/uio.h>
+#else
+#include "vc_compat.h"
+#endif
 
 /**
  * Strings up to 65535 characters in length are supported.

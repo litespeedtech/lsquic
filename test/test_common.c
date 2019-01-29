@@ -901,7 +901,8 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
     }
 #endif
 
-    for (n = 0; n < count; ++n)
+    n = 0;
+    do
     {
         sport = specs[n].peer_ctx;
 #ifndef WIN32
@@ -951,7 +952,9 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #endif
             break;
         }
+        ++n;
     }
+    while (n < count);
 
     if (n < count)
         prog_sport_cant_send(sport->sp_prog, sport->fd);
