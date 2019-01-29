@@ -13,7 +13,7 @@ matrix:
                 - libevent-dev
                 - cmake
 sudo: false
-#before_install:
+before_install:
 #  - $CC --version
 #  - if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; else export CXX="clang++-3.8" CC="clang-3.8"; fi
   - $CC --version
