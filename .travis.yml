@@ -16,12 +16,9 @@ matrix:
                 packages:
                 - libevent-dev
                 - cmake
+        - name: macOS (xcode)
+          os: osx
 sudo: false
-before_install:
-#  - $CC --version
-#  - if [ "$CXX" = "g++" ]; then export CXX="g++-5" CC="gcc-5"; else export CXX="clang++-3.8" CC="clang-3.8"; fi
-  - $CC --version
-  - cmake --version
 before_script:
   - git clone https://boringssl.googlesource.com/boringssl
   - cd boringssl
