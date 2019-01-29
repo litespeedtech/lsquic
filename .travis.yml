@@ -1,21 +1,21 @@
 language: c
 matrix:
     include:
-        - name: Linux (gcc)
-          os: linux
-          compiler: gcc
-          addons:
-            apt:
-                packages:
-                - libevent-dev
-        - name: Linux (clang)
-          os: linux
-          compiler: clang
-          addons:
-            apt:
-                packages:
-                - libevent-dev
-                - cmake
+#       - name: Linux (gcc)
+#         os: linux
+#         compiler: gcc
+#         addons:
+#           apt:
+#               packages:
+#               - libevent-dev
+#       - name: Linux (clang)
+#         os: linux
+#         compiler: clang
+#         addons:
+#           apt:
+#               packages:
+#               - libevent-dev
+#               - cmake
         - name: macOS (xcode)
           os: osx
 sudo: false
@@ -36,4 +36,5 @@ before_script:
 script:
   # Now build lsquic-client
   - make
+  - find
   - make test

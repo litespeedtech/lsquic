@@ -17,12 +17,14 @@ ENDIF()
 
 ENDIF()
 
-# If using older glibc, need to link with -lrt.  See clock_getres(2).
-EXECUTE_PROCESS(
-    COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
-    OUTPUT_VARIABLE GLIBC_VERSION)
-IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
-    SET(LIBS ${LIBS} rt)
+IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # If using older glibc, need to link with -lrt.  See clock_getres(2).
+    EXECUTE_PROCESS(
+        COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
+        OUTPUT_VARIABLE GLIBC_VERSION)
+    IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
+        SET(LIBS ${LIBS} rt)
+    ENDIF()
 ENDIF()
 
 IF("${CMAKE_BUILD_TYPE}" STREQUAL "")
