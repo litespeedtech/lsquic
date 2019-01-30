@@ -948,7 +948,6 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 __attribute__((weak))
 #endif
 #endif
-__declspec(selectany)
 int
 lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
 {
