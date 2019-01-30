@@ -1452,7 +1452,7 @@ test_reading_from_stream2 (void)
     stream_frame_t *frame;
     ssize_t nw;
     int s;
-    const char data[10] = "1234567890";
+    const char data[] = "1234567890";
 
     init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     stream = new_stream(&tobjs, 123);
@@ -1477,7 +1477,7 @@ test_reading_from_stream2 (void)
         unsigned offset, length;
         for (offset = 0; offset < 7; ++offset)
         {
-            for (length = 1; length <= sizeof(data) - offset; ++length)
+            for (length = 1; length <= sizeof(data) - 1 - offset; ++length)
             {
                 dup = (offset == 0 && length == 6)
                    || (offset == 6 && length == 4);
@@ -1813,7 +1813,7 @@ test_insert_edge_cases (void)
         s = lsquic_stream_frame_in(stream, frame);
         assert(("Duplicate frame", 0 == s));
         nread = lsquic_stream_read(stream, buf, sizeof(buf));
-        assert(nread == -1 && errno == EAGAIN);
+        assert(nread == -1 && errno == EWOULDBLOCK);
         frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
         s = lsquic_stream_frame_in(stream, frame);
         assert(("Frame OK", 0 == s));

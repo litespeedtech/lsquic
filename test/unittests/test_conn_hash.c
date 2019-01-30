@@ -59,6 +59,7 @@ main (int argc, char **argv)
         assert(!find_lsconn);
         s = conn_hash_add(&conn_hash, lconn);
         assert(0 == s);
+        lconn->cn_flags = 1;    /* In hash */
     }
 
     assert(nelems == conn_hash_count(&conn_hash));
@@ -66,9 +67,11 @@ main (int argc, char **argv)
     for (lconn = lsquic_malo_first(malo); lconn;
              lconn = lsquic_malo_next(malo))
     {
+        assert(lconn->cn_flags == 1);
         find_lsconn = conn_hash_find_by_cid(&conn_hash, lconn->cn_cid);
         assert(find_lsconn == lconn);
         conn_hash_remove(&conn_hash, lconn);
+        lconn->cn_flags = 0;
         find_lsconn = conn_hash_find_by_cid(&conn_hash, lconn->cn_cid);
         assert(!find_lsconn);
     }

@@ -17,6 +17,8 @@
 #include <string.h>
 #ifndef WIN32
 #include <unistd.h>
+#else
+#include "getopt.h"
 #endif
 #include <sys/queue.h>
 

@@ -2486,6 +2486,7 @@ static void
 create_delayed_streams (struct full_conn *conn)
 {
     unsigned stream_count, avail, i;
+    struct lsquic_stream **new_streams;
 
     stream_count = count_streams(conn, 0);
 
@@ -2496,7 +2497,7 @@ create_delayed_streams (struct full_conn *conn)
     if (conn->fc_n_delayed_streams < avail)
         avail = conn->fc_n_delayed_streams;
 
-    struct lsquic_stream *new_streams[ avail ];
+    new_streams = malloc(sizeof(new_streams[0]) * avail);
 
     LSQ_DEBUG("creating delayed streams");
     for (i = 0; i < avail; ++i)
@@ -2509,7 +2510,7 @@ create_delayed_streams (struct full_conn *conn)
         {
             ABORT_ERROR("%s: cannot create new stream: %s", __func__,
                                                         strerror(errno));
-            return;
+            goto cleanup;
         }
     }
     LSQ_DEBUG("created %u delayed stream%.*s", avail, avail != 1, "s");
@@ -2519,6 +2520,8 @@ create_delayed_streams (struct full_conn *conn)
 
     for (i = 0; i < avail; ++i)
         lsquic_stream_call_on_new(new_streams[i]);
+  cleanup:
+    free(new_streams);
 }
 
 

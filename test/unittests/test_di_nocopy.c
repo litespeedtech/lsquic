@@ -7,7 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include "getopt.h"
+#else
 #include <unistd.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"

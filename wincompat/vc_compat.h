@@ -11,7 +11,7 @@ struct iovec {
 
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 
-#pragma warning(disable: 4018 4100 4127 4189 4200 4204 4214 4152 4221 4244 4245 4267 4334 4702 4706 4804 ) 
+#pragma warning(disable: 4018 4100 4127 4189 4200 4204 4152 4221 4244 4245 4267 4334 4702 4706 4804 ) 
                                     /*
                                     4018:signed/unsigned mismatch
                                     4100:unreferenced formal parameter,
@@ -20,7 +20,6 @@ struct iovec {
 									4189:local variable is initialized but not referenced
                                     4200:zero-sized-array in struct, 
                                     4204: nonstandard extension used: non-constant aggregate initializer,
-                                    4214: nonstandard extension used: bit field types other than int
                                     4221: nonstandard extension used:xx cannot be initialized using address of automatic variable y,
                                     4244: '+=': conversion from 'int' to 'unsigned short', possible loss of data
                                     4245:'=': conversion from 'int' to 'unsigned int', signed/unsigned mismatch
@@ -30,5 +29,4 @@ struct iovec {
                                     4706: assignment within conditional expression,
                                     4804: '-': unsafe use of type 'bool' in operation
                                     */
-
 
