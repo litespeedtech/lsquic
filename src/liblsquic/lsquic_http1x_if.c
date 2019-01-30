@@ -92,7 +92,7 @@ hwc_uh_write (struct header_writer_ctx *hwc, const void *buf, size_t sz)
         else
             hwc->headers_sz = hwc->w_off + sz;
         h1h_buf = realloc(hwc->hwc_h1h.h1h_buf, hwc->headers_sz);
-        if (!buf)
+        if (!h1h_buf)
             return -1;
         hwc->hwc_h1h.h1h_buf = h1h_buf;
     }
