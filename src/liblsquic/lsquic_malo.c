@@ -50,6 +50,7 @@
 #include <sys/queue.h>
 #ifdef WIN32
 #include <vc_compat.h>
+#include <intrin.h>
 #endif
 
 #include "fiu-local.h"
@@ -262,7 +263,14 @@ size_in_bits (size_t sz)
 #if __GNUC__
     unsigned clz = __builtin_clz(sz - 1);
     return 32 - clz;
+#elif defined(WIN32)
+    unsigned char s;
+    unsigned long idx;
+    s = _BitScanReverse(&idx, sz);
+    assert(s);
+    return (unsigned) idx + 1;
 #else
+#error This function contains a bug!
     unsigned clz;
     size_t y;
 
