@@ -286,7 +286,7 @@ block_write (struct data_block *block, unsigned block_off,
     set = block_off >> 6;
     bit = block_off & 0x3F;
 
-    assert(set <= N_DB_SETS);
+    assert(set < N_DB_SETS);
 
     if (bit)
     {
