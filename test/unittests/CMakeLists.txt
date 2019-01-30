@@ -6,9 +6,9 @@ ENABLE_TESTING()
 
 IF (MSVC)
     SET(LIBS
-        $(SolutionDir)src/liblsquic/${CMAKE_BUILD_TYPE}/lsquic.lib
-		${VCPKG_BASE_DIR}/event.lib
-		${VCPKG_BASE_DIR}/zlib.lib
+        lsquic
+        ${VCPKG_LIB}/event.lib
+        ${VCPKG_LIB}/zlib.lib
 		${BORINGSSL_LIB}/ssl.lib
 		${BORINGSSL_LIB}/crypto.lib
 		ws2_32)

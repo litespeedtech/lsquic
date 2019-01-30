@@ -88,8 +88,6 @@ ELSE()
     #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
 ENDIF()
 
-# SET (VCPKG_BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows-static)
-
 ENDIF() #MSVC
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
@@ -135,11 +133,11 @@ add_executable(http_client
 )
 
 target_link_libraries(http_client
-		debug  $(SolutionDir)src/liblsquic/debug/lsquic.lib
-		debug  ${VCPKG_BASE_DIR}/event.lib
-		debug  ${VCPKG_BASE_DIR}/zlib.lib
-		debug  ${BORINGSSL_LIB}/ssl.lib
-		debug  ${BORINGSSL_LIB}/crypto.lib
+        lsquic
+        ${VCPKG_LIB}/event.lib
+        ${VCPKG_LIB}/zlib.lib
+		${BORINGSSL_LIB}/ssl.lib
+		${BORINGSSL_LIB}/crypto.lib
 		ws2_32
 		${LIBS} )
 
