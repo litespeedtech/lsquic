@@ -1813,7 +1813,7 @@ test_insert_edge_cases (void)
         s = lsquic_stream_frame_in(stream, frame);
         assert(("Duplicate frame", 0 == s));
         nread = lsquic_stream_read(stream, buf, sizeof(buf));
-        assert(nread == -1 && errno == EAGAIN);
+        assert(nread == -1 && errno == EWOULDBLOCK);
         frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
         s = lsquic_stream_frame_in(stream, frame);
         assert(("Frame OK", 0 == s));
