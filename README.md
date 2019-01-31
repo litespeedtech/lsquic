@@ -1,5 +1,6 @@
 [![Build Status](https://travis-ci.org/litespeedtech/lsquic-client.svg?branch=master)](https://travis-ci.org/litespeedtech/lsquic-client)
 [![Build Status](https://api.cirrus-ci.com/github/litespeedtech/lsquic-client.svg)](https://cirrus-ci.com/github/litespeedtech/lsquic-client)
+[![Build status](https://ci.appveyor.com/api/projects/status/kei9649t9leoqicr?svg=true)](https://ci.appveyor.com/project/litespeedtech/lsquic-client)
 
 LiteSpeed QUIC (LSQUIC) Client Library README
 =============================================
