@@ -61,34 +61,15 @@ git checkout chromium-stable
 cmake . &&  make
 ```
 
+Remember where BoringSSL sources are:
+```
+BORINGSSL=$PWD
+```
+
 If you want to turn on optimizations, do
 
 ```
 cmake -DCMAKE_BUILD_TYPE=Release . && make
-```
-
-4. Install the library
-
-This is the manual step.  You will need to copy library files manually.
-LSQUIC client library needs two: `ssl/libssl.a` and `crypto/libcrypto.a`.
-To install these in `/usr/local/lib`, you should do the following:
-
-```
-BORINGSSL_SOURCE=$PWD
-cd /usr/local/lib
-sudo cp $BORINGSSL_SOURCE/ssl/libssl.a .
-sudo cp $BORINGSSL_SOURCE/crypto/libcrypto.a .
-```
-
-If you do not want to install the library (or do not have root), you
-can do this instead:
-
-```
-BORINGSSL_SOURCE=$PWD
-mkdir -p $HOME/tmp/boringssl-libs
-cd $HOME/tmp/boringssl-libs
-ln -s $BORINGSSL_SOURCE/ssl/libssl.a
-ln -s $BORINGSSL_SOURCE/crypto/libcrypto.a
 ```
 
 Building LSQUIC Client Library
@@ -108,8 +89,8 @@ cd lsquic-client
 
 
 ```
-cmake -DBORINGSSL_INCLUDE=$BORINGSSL_SOURCE/include \
-                                -DBORINGSSL_LIB=$HOME/tmp/boringssl-libs .
+# $BORINGSSL is the top-level BoringSSL directory from the previous step
+cmake -DBORINGSSL_DIR=$BORINGSSL .
 make
 ```
 
