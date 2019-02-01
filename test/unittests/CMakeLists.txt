@@ -7,8 +7,7 @@ ENABLE_TESTING()
 IF (MSVC)
     SET(LIBS
         lsquic
-        ${VCPKG_LIB}/event.lib
-        ${VCPKG_LIB}/zlib.lib
+        ${ZLIB_LIB}
 		${BORINGSSL_LIB}/ssl.lib
 		${BORINGSSL_LIB}/crypto.lib
 		ws2_32)

@@ -2,20 +2,7 @@
 cmake_minimum_required(VERSION 2.8)
 
 
-project(lsquic)
-
-IF (NOT MSVC)
-# We prefer clang
-IF(NOT ("${CMAKE_C_COMPILER}" MATCHES "ccc-analyzer" OR
-        "${CMAKE_C_COMPILER}" MATCHES "gcc"          OR
-        "${CMAKE_C_COMPILER}" MATCHES "afl-gcc"))
-    FIND_PROGRAM(CLANG "clang")
-    IF(CLANG)
-        SET(CMAKE_C_COMPILER "${CLANG}")
-    ENDIF()
-ENDIF()
-
-ENDIF()
+project(lsquic C)
 
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
@@ -102,8 +89,35 @@ IF(NOT DEFINED BORINGSSL_LIB)
 ENDIF()
 
 
-include_directories(${BORINGSSL_INCLUDE} ${VCPKG_INCLUDE})
+include_directories(${BORINGSSL_INCLUDE})
 link_directories( ${BORINGSSL_LIB}  )
+
+# Find zlib and libevent header files and library files
+# TODO: libevent is not strictly necessary to build the library.
+FIND_PATH(ZLIB_INCLUDE_DIR NAMES zlib.h)
+IF (ZLIB_INCLUDE_DIR)
+    INCLUDE_DIRECTORIES(${ZLIB_INCLUDE_DIR})
+ELSE()
+    MESSAGE(FATAL_ERROR "zlib.h was not found")
+ENDIF()
+FIND_LIBRARY(ZLIB_LIB zlib)
+IF(ZLIB_LIB)
+    MESSAGE(STATUS "Found zlib: ${ZLIB_LIB}")
+ELSE()
+    MESSAGE(STATUS "zlib not found")
+ENDIF()
+FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h)
+IF (EVENT_INCLUDE_DIR)
+    INCLUDE_DIRECTORIES(${EVENT_INCLUDE_DIR})
+ELSE()
+    MESSAGE(FATAL_ERROR "event2/event.h was not found")
+ENDIF()
+FIND_LIBRARY(EVENT_LIB event)
+IF(EVENT_LIB)
+    MESSAGE(STATUS "Found event: ${EVENT_LIB}")
+ELSE()
+    MESSAGE(STATUS "libevent not found")
+ENDIF()
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 include_directories( include src/lshpack)
@@ -112,7 +126,6 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR ${CMAKE_SYSTEM_NAME} MATCHES "Darwi
     include_directories( /usr/local/include )
     link_directories( /usr/local/lib )
 ENDIF()
-
 
 IF (NOT MSVC)
 add_executable(http_client
@@ -134,8 +147,8 @@ add_executable(http_client
 
 target_link_libraries(http_client
         lsquic
-        ${VCPKG_LIB}/event.lib
-        ${VCPKG_LIB}/zlib.lib
+        ${EVENT_LIB}
+        ${ZLIB_LIB}
 		${BORINGSSL_LIB}/ssl.lib
 		${BORINGSSL_LIB}/crypto.lib
 		ws2_32
