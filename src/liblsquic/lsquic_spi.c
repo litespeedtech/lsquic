@@ -161,7 +161,7 @@ find_and_set_next_priority (struct stream_prio_iter *iter)
         if (iter->spi_set[ set ])
             break;
 
-    if (set == 4)
+    if (set >= 4)
     {
         //SPI_DEBUG("%s: cannot find any", __func__);
         return -1;

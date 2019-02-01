@@ -278,6 +278,7 @@ block_write (struct data_block *block, unsigned block_off,
     unsigned set, bit, n_full_sets, n;
     uint64_t mask;
 
+    assert(block_off < DB_DATA_SIZE);
     if (data_sz > DB_DATA_SIZE - block_off)
         data_sz = DB_DATA_SIZE - block_off;
 
