@@ -81,42 +81,74 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
 
+IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
+    FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
+                PATHS ${BORINGSSL_DIR}/include
+                NO_DEFAULT_PATH)
+ENDIF()
 # This must be done before adding other include directories to take
 # precedence over header files from other SSL installs.
-FIND_PATH(BORINGSSL_INCLUDE_DIR NAMES openssl/ssl.h
-            PATHS ${BORINGSSL_DIR}/include
-            NO_DEFAULT_PATH)
-IF (BORINGSSL_INCLUDE_DIR)
-    MESSAGE(STATUS "BoringSSL include directory ${BORINGSSL_INCLUDE_DIR}")
-    INCLUDE_DIRECTORIES(${BORINGSSL_INCLUDE_DIR})
+
+IF (BORINGSSL_INCLUDE)
+    MESSAGE(STATUS "BoringSSL include directory ${BORINGSSL_INCLUDE}")
+    INCLUDE_DIRECTORIES(${BORINGSSL_INCLUDE})
 ELSE()
     MESSAGE(FATAL_ERROR "BoringSSL headers not found")
 ENDIF()
 
-FOREACH(BORINGSSL_LIB ssl crypto decrepit)
-    IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-        FIND_LIBRARY(BORINGSSL_LIB_${BORINGSSL_LIB}
-            NAMES ${BORINGSSL_LIB}
-            PATHS ${BORINGSSL_DIR}/${BORINGSSL_LIB}
-            PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
-            NO_DEFAULT_PATH)
-    ELSE()
-        FIND_LIBRARY(BORINGSSL_LIB_${BORINGSSL_LIB}
-            NAMES lib${BORINGSSL_LIB}.a
-            PATHS ${BORINGSSL_DIR}/${BORINGSSL_LIB}
-            NO_DEFAULT_PATH)
-    ENDIF()
-    IF(BORINGSSL_LIB_${BORINGSSL_LIB})
-        MESSAGE(STATUS "Found ${BORINGSSL_LIB} library: ${BORINGSSL_LIB_${BORINGSSL_LIB}}")
-    ELSE()
-        MESSAGE(STATUS "${BORINGSSL_LIB} library not found")
-    ENDIF()
-ENDFOREACH()
+IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
+    FOREACH(LIB_NAME ssl crypto decrepit)
+        IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                NAMES ${LIB_NAME}
+                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
+                PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+                NO_DEFAULT_PATH)
+        ELSE()
+            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                NAMES lib${LIB_NAME}.a
+                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
+                NO_DEFAULT_PATH)
+        ENDIF()
+        IF(BORINGSSL_LIB_${LIB_NAME})
+            MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+        ELSE()
+            MESSAGE(STATUS "${LIB_NAME} library not found")
+        ENDIF()
+    ENDFOREACH()
 
+ELSE()
+
+
+    FOREACH(LIB_NAME ssl crypto decrepit)
+        IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                NAMES ${LIB_NAME}
+                PATHS ${BORINGSSL_LIB}
+                PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+                NO_DEFAULT_PATH)
+        ELSE()
+            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                NAMES lib${LIB_NAME}.a
+                PATHS ${BORINGSSL_LIB}
+                NO_DEFAULT_PATH)
+        ENDIF()
+        IF(BORINGSSL_LIB_${LIB_NAME})
+            MESSAGE(STATUS "Found ${BORINGSSL_LIB} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+        ELSE()
+            MESSAGE(STATUS "${BORINGSSL_LIB} library not found")
+        ENDIF()
+    ENDFOREACH()
+#endif
+
+ENDIF()
+
+SET(CMAKE_INCLUDE_CURRENT_DIR ON)
+INCLUDE_DIRECTORIES(include src/lshpack)
 IF(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # Find libevent on FreeBSD:
-    INCLUDE_DIRECTORIES( /usr/local/include )
-    LINK_DIRECTORIES( /usr/local/lib )
+    include_directories( /usr/local/include )
+    link_directories( /usr/local/lib )
 ENDIF()
 
 # Find zlib and libevent header files and library files
@@ -157,8 +189,8 @@ ELSE()
     MESSAGE(STATUS "libevent not found")
 ENDIF()
 
-SET(CMAKE_INCLUDE_CURRENT_DIR ON)
-include_directories( include src/lshpack)
+
+SET(LIBS lsquic ${EVENT_LIB} pthread ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
 
 IF (NOT MSVC)
 add_executable(http_client
@@ -166,8 +198,7 @@ add_executable(http_client
     test/prog.c
     test/test_common.c
 )
-TARGET_LINK_LIBRARIES(http_client lsquic ${EVENT_LIB} pthread
-    ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${LIBS} ${ZLIB_LIB} m)
+LIST(APPEND LIBS pthread m)
 
 #MSVC
 ELSE()
@@ -178,19 +209,12 @@ add_executable(http_client
     wincompat/getopt.c
     wincompat/getopt1.c
 )
-
-target_link_libraries(http_client
-        lsquic
-        ${EVENT_LIB}
-        ${ZLIB_LIB}
-		${BORINGSSL_LIB_ssl}
-		${BORINGSSL_LIB_crypto}
-		ws2_32
-		${LIBS} )
+LIST(APPEND LIBS ws2_2)
 
 ENDIF()
 
-#target_link_libraries(http_client lsquic event pthread libssl.a libcrypto.a ${LIBS} z m)
+TARGET_LINK_LIBRARIES(http_client ${LIBS})
+
 
 add_subdirectory(src)
 
