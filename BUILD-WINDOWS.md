@@ -32,7 +32,9 @@ Some open source code required to be installed to build the code include:
    - The Windows vcpkg package manager.  It can be cloned from [here](https://github.com/Microsoft/vcpkg).
      Clone it at the same level to be used to clone/develop the lsquic-client.
      The package must be compiled following the instructions on the git 
-     repository.  
+     repository.
+   - Perform builds using the _Developer Command Prompt for Visual Studio_ instead
+     of the regular `cmd.exe`.
    - Once the package manager has been built, it must be used to install
      and build some open source projects.  Before doing that, an environment 
      variable must be defined which specifies how the package should be built.
@@ -48,15 +50,18 @@ Some open source code required to be installed to build the code include:
      install *openssl*.  If it does not, it may need to be manually specified 
      to properly link the lsquic-client executables.
         ```
-        vcpkg install zlib
-        vcpkg install libevent
+        vcpkg install zlib:x86-windows-static
+        vcpkg install libevent:x64-windows-static
+        vcpkg integrate install
         ```
-   - Clone and compile boringssl.  It can be cloned from [here](https://boringssl.googlesource.com/boringssl) 
-     and should be cloned at the same level to be used to clone/develop 
-     the lsquic-client.  Once cloned, cmake must be run to create the projects 
-     (the dot at the end of the line is required):
+   - Clone and compile boringssl.  It can be cloned from [here](https://boringssl.googlesource.com/boringssl).
+   
         ```
+        git clone https://boringssl.googlesource.com/boringssl
+        cd boringssl
         cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF -DOPENSSL_NO_ASM=1 .
+        msbuild ALL_BUILD.vcxproj
+        set boringssl=%cd%
         ```
    - Visual Studio can be run, and the project opened within the boringssl
      directory.  Set the solution configuration to *Debug* and the solution 
@@ -66,42 +71,40 @@ Some open source code required to be installed to build the code include:
 Make and Compile LSQUIC-Client
 ------------------------------
 
-The LSQUIC-Client for Windows is currently housed on the master branch.  
-To check it out specify (from the directory where the code will be housed):
+
+Clone lsquic-client:
+
    ```
    git clone https://github.com/litespeedtech/lsquic-client.git
    cd lsquic-client
-   git checkout master
    ```
 
-cmake must be run to prepare to build the software in the top level
-cloned directory.  The dot at the end is required.  Begin with the debug
-version as it includes all of the programs.
-   ```
-   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF
-   ```
+Configure the build using cmake (you can specify `Release` instead of `Debug`
+to build an optimized version of the library, but that won't build tests):
 
-Visual Studio can now be brought up, and there will be projects in the
-cloned directory.  The ALL_BUILD project will build the full project.
-Make sure the solution configuration is set to *Debug*.  The project may
-need to be built twice as the first time some of the compiles will fail
-as the lsquic.lib library has not completed building in the first attempt.
-
-Both the debug and optmized versions can co-exist in the same 
-environment as they are compiled to different directories.
-
-To build the optimized version, repeat the process above with a slightly
-different cmake command:
    ```
-   cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release .
+   cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DBUILD_SHARED_LIBS=OFF ^
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_BUILD_TYPE=Debug ^
+        -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake ^
+        -DBORINGSSL_DIR=%boringssl% .
    ```
 
-After cmake has finished, you can open the project, set the solution 
-configuration to *Release* and build the ALL_BUILD project.  There are 
-many fewer programs in the optimized version.
+Compile everything (add `/m` flag if you have processors to spare):
+
+   ```
+   msbuild ALL_BUILD.vcxproj
+   ```
+
+`http_client.exe` should be found in the `Debug` (or `Release`) directory.
+   
+Run tests (assuming `Debug` build):
+
+   ```
+   msbuild RUN_TESTS.vcxproj
+   ```
 
 Have fun,
 
 LiteSpeed QUIC Team.
 
-Copyright (c) 2017-2018 LiteSpeed Technologies Inc
+Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc
