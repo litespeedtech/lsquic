@@ -2496,6 +2496,8 @@ create_delayed_streams (struct full_conn *conn)
     avail = conn->fc_cfg.max_streams_out - stream_count;
     if (conn->fc_n_delayed_streams < avail)
         avail = conn->fc_n_delayed_streams;
+    if (avail == 0)
+	return;
 
     new_streams = malloc(sizeof(new_streams[0]) * avail);
     if (!new_streams)
