@@ -2498,6 +2498,11 @@ create_delayed_streams (struct full_conn *conn)
         avail = conn->fc_n_delayed_streams;
 
     new_streams = malloc(sizeof(new_streams[0]) * avail);
+    if (!new_streams)
+    {
+        ABORT_WARN("%s: malloc failed", __func__);
+        return;
+    }
 
     LSQ_DEBUG("creating delayed streams");
     for (i = 0; i < avail; ++i)
