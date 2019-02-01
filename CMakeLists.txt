@@ -190,7 +190,7 @@ ELSE()
 ENDIF()
 
 
-SET(LIBS lsquic ${EVENT_LIB} pthread ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
+SET(LIBS lsquic ${EVENT_LIB} ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
 
 IF (NOT MSVC)
 add_executable(http_client
