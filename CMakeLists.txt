@@ -209,7 +209,7 @@ add_executable(http_client
     wincompat/getopt.c
     wincompat/getopt1.c
 )
-LIST(APPEND LIBS ws2_2)
+LIST(APPEND LIBS ws2_32)
 
 ENDIF()
 
