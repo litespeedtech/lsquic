@@ -4,18 +4,15 @@ INCLUDE_DIRECTORIES(../../src/liblsquic)
 
 ENABLE_TESTING()
 
+SET(LIBS lsquic ${BORINGSSL_LIB_crypto} ${BORINGSSL_LIB_ssl} ${ZLIB_LIB})
+
 IF (MSVC)
-    SET(LIBS
-        lsquic
-        ${ZLIB_LIB}
-		${BORINGSSL_LIB}/ssl.lib
-		${BORINGSSL_LIB}/crypto.lib
-		ws2_32)
+    LIST(APPEND LIBS ws2_32)
     SET(ADDL_SOURCES ../../wincompat/getopt.c ../../wincompat/getopt1.c)
     SET(LIB_FLAGS "-FORCE:MULTIPLE")
 ELSE()
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
-    SET(LIBS lsquic libcrypto.a libssl.a z m pthread)
+    LIST(APPEND LIBS m pthread)
 ENDIF()
 
 SET(TESTS
