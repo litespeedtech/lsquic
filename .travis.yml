@@ -26,10 +26,8 @@ before_script:
     - git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
     - cmake .
     - make
-    - ln -s ssl/libssl.a
-    - ln -s crypto/libcrypto.a
     - cd -
-    - cmake -DBORINGSSL_INCLUDE=$PWD/boringssl/include -DBORINGSSL_LIB=$PWD/boringssl .
+    - cmake -DBORINGSSL_DIR=$PWD/boringssl .
 script:
     # Now build lsquic-client
     - make
