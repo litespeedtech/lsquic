@@ -47,6 +47,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
     struct client_hsk_ctx *const c_hsk = (struct client_hsk_ctx *) sh;
     ssize_t nread;
     int s;
+    enum lsquic_hsk_status status;
 
     if (!c_hsk->buf_in)
     {
@@ -95,7 +96,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
             lsquic_mm_put_16k(c_hsk->mm, c_hsk->buf_in);
             c_hsk->buf_in = NULL;
             lsquic_stream_wantread(stream, 0);
-            c_hsk->lconn->cn_if->ci_handshake_failed(c_hsk->lconn);
+            c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, LSQ_HSK_FAIL);
             lsquic_conn_close(c_hsk->lconn);
         }
         break;
@@ -106,7 +107,9 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         if (c_hsk->lconn->cn_esf->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
         {
             LSQ_DEBUG("handshake is successful, inform connection");
-            c_hsk->lconn->cn_if->ci_handshake_ok(c_hsk->lconn);
+            status = (c_hsk->lconn->cn_esf->esf_did_zero_rtt_succeed(
+                c_hsk->lconn->cn_enc_session)) ? LSQ_HSK_0RTT_OK : LSQ_HSK_OK;
+            c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, status);
         }
         else
         {
@@ -122,7 +125,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         LSQ_INFO("lsquic_enc_session_handle_chlo_reply returned an error");
         c_hsk->buf_in = NULL;
         lsquic_stream_wantread(stream, 0);
-        c_hsk->lconn->cn_if->ci_handshake_failed(c_hsk->lconn);
+        c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, LSQ_HSK_FAIL);
         lsquic_conn_close(c_hsk->lconn);
         break;
     }

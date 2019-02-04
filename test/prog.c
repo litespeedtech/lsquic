@@ -253,7 +253,7 @@ prog_eb (struct prog *prog)
 
 
 int
-prog_connect (struct prog *prog)
+prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct service_port *sport;
 
@@ -262,7 +262,7 @@ prog_connect (struct prog *prog)
                     (struct sockaddr *) &sport->sp_local_addr,
                     (struct sockaddr *) &sport->sas, sport, NULL,
                     prog->prog_hostname ? prog->prog_hostname : sport->host,
-                    prog->prog_max_packet_size))
+                    prog->prog_max_packet_size, zero_rtt, zero_rtt_len))
         return -1;
 
     prog_process_conns(prog);

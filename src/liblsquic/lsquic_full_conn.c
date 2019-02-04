@@ -435,7 +435,6 @@ send_smhl (const struct full_conn *conn)
 {
     uint32_t smhl;
     return conn->fc_conn.cn_enc_session
-        && (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && 0 == conn->fc_conn.cn_esf->esf_get_peer_setting(
                             conn->fc_conn.cn_enc_session, QTAG_SMHL, &smhl)
         && 1 == smhl;
@@ -509,8 +508,6 @@ apply_peer_settings (struct full_conn *conn)
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
         cfcw, sfcw, mids);
     conn_on_peer_config(conn, cfcw, sfcw, mids);
-    if (conn->fc_flags & FC_HTTP)
-        maybe_send_settings(conn);
     return 0;
 }
 
@@ -640,7 +637,8 @@ struct lsquic_conn *
 full_conn_client_new (struct lsquic_engine_public *enpub,
                       const struct lsquic_stream_if *stream_if,
                       void *stream_if_ctx, unsigned flags,
-                      const char *hostname, unsigned short max_packet_size)
+                      const char *hostname, unsigned short max_packet_size,
+                      const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct full_conn *conn;
     enum lsquic_version version;
@@ -656,7 +654,8 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
         return NULL;
     conn->fc_conn.cn_esf = esf;
     conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub);
+        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub,
+                                                    zero_rtt, zero_rtt_len);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -2985,7 +2984,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
-    if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
+    if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) &&
+        !conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+                                                conn->fc_conn.cn_enc_session))
     {
         process_hsk_stream_write_events(conn);
         goto end_write;
@@ -3145,29 +3146,30 @@ full_conn_ci_packet_not_sent (lsquic_conn_t *lconn, lsquic_packet_out_t *packet_
 
 
 static void
-full_conn_ci_handshake_ok (lsquic_conn_t *lconn)
+full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    LSQ_DEBUG("handshake reportedly done");
     lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
-    if (0 == apply_peer_settings(conn))
-        lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
-    else
-        conn->fc_flags |= FC_ERROR;
+    switch (status)
+    {
+        case LSQ_HSK_FAIL:
+            conn->fc_flags |= FC_HSK_FAILED;
+            break;
+        case LSQ_HSK_OK:
+        case LSQ_HSK_0RTT_OK:
+            if (0 == apply_peer_settings(conn))
+            {
+                if (conn->fc_flags & FC_HTTP)
+                    maybe_send_settings(conn);
+                lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
+            }
+            else
+                conn->fc_flags |= FC_ERROR;
+            break;
+    }
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
-        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 1);
-}
-
-
-static void
-full_conn_ci_handshake_failed (lsquic_conn_t *lconn)
-{
-    struct full_conn *conn = (struct full_conn *) lconn;
-    LSQ_DEBUG("handshake failed");
-    lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
-    conn->fc_flags |= FC_HSK_FAILED;
-    if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
-        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 0);
+        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn,
+                                                                        status);
 }
 
 
@@ -3539,7 +3541,9 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             return 1;
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
             return 1;
-        if (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) ||
+            conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+                                                conn->fc_conn.cn_enc_session))
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
@@ -3617,8 +3621,7 @@ static const struct conn_iface full_conn_iface = {
 #if LSQUIC_CONN_STATS
     .ci_get_stats            =  full_conn_ci_get_stats,
 #endif
-    .ci_handshake_failed     =  full_conn_ci_handshake_failed,
-    .ci_handshake_ok         =  full_conn_ci_handshake_ok,
+    .ci_hsk_done             =  full_conn_ci_hsk_done,
     .ci_is_tickable          =  full_conn_ci_is_tickable,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,
     .ci_next_tick_time       =  full_conn_ci_next_tick_time,

@@ -1,3 +1,15 @@
+2019-02-04
+    - 1.19.0
+    - [FEATURE, API Change] 0-RTT support.  Add function to export 0-RTT
+      information; it can be supplied to a subsequent connect() call.
+    - [FEATURE] Add -0 flag to http_client to exercise 0-RTT support.
+    - [BUGFIX] Resuscitate the Windows build.
+    - [BUGFIX] Send HTTP settings (max header list size) if necessary.
+    - [BUGFIX] Buffered packets can contain ACK frames.
+    - [BUGFIX] Make packet writeable once all STREAM frames are elided.
+    - [BUGFIX] Fix potential null dereference when realloc fails.
+    - cmake: simplify build configuration.
+
 2019-01-28
     - 1.18.0
     - [API Change] Can specify clock granularity in engine settings.

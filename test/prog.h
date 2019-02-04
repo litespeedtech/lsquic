@@ -68,7 +68,7 @@ int
 prog_prep (struct prog *);
 
 int
-prog_connect (struct prog *);
+prog_connect (struct prog *, unsigned char *, size_t);
 
 void
 prog_print_common_options (const struct prog *, FILE *);

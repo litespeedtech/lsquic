@@ -674,8 +674,6 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                          const struct ack_info *acki,
                          lsquic_time_t ack_recv_time)
 {
-    struct lsquic_packets_tailq acked_acks =
-                                    TAILQ_HEAD_INITIALIZER(acked_acks);
     const struct lsquic_packno_range *range =
                                     &acki->ranges[ acki->n_ranges - 1 ];
     lsquic_packet_out_t *packet_out, *next;
@@ -1401,18 +1399,20 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl, uint32_t stream_id)
                                                 packet_out; packet_out = next)
         {
             next = TAILQ_NEXT(packet_out, po_next);
-            assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-            lsquic_packet_out_elide_reset_stream_frames(packet_out, stream_id);
-            if (0 == packet_out->po_frame_types)
+            if (packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM))
             {
-                LSQ_DEBUG("cancel buffered packet in queue #%u after eliding "
-                    "frames for stream %"PRIu32, n, stream_id);
-                TAILQ_REMOVE(&ctl->sc_buffered_packets[n].bpq_packets,
-                             packet_out, po_next);
-                --ctl->sc_buffered_packets[n].bpq_count;
-                send_ctl_destroy_packet(ctl, packet_out);
-                LSQ_DEBUG("Elide packet from buffered queue #%u; count: %u",
-                          n, ctl->sc_buffered_packets[n].bpq_count);
+                lsquic_packet_out_elide_reset_stream_frames(packet_out, stream_id);
+                if (0 == packet_out->po_frame_types)
+                {
+                    LSQ_DEBUG("cancel buffered packet in queue #%u after eliding "
+                        "frames for stream %"PRIu32, n, stream_id);
+                    TAILQ_REMOVE(&ctl->sc_buffered_packets[n].bpq_packets,
+                                 packet_out, po_next);
+                    --ctl->sc_buffered_packets[n].bpq_count;
+                    send_ctl_destroy_packet(ctl, packet_out);
+                    LSQ_DEBUG("Elide packet from buffered queue #%u; count: %u",
+                              n, ctl->sc_buffered_packets[n].bpq_count);
+                }
             }
         }
     }
@@ -1687,7 +1687,6 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
     if (packet_q->bpq_count >= send_ctl_max_bpq_count(ctl, packet_type))
         return NULL;
 
-    bits = lsquic_send_ctl_guess_packno_bits(ctl);
     if (packet_q->bpq_count == 0)
     {
         /* If ACK was written to the low-priority queue first, steal it */

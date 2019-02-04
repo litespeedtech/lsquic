@@ -5860,7 +5860,7 @@ henc_huffman_enc (const unsigned char *src, const unsigned char *const src_end,
         bits_left -= cur_enc_code.bits;
         while (bits_left <= 32)
         {
-            *p_dst++ = bits >> 32;
+            *p_dst++ = (unsigned char) (bits >> 32);
             bits <<= 8;
             bits_left += 8;
             if (p_dst == dst_end)
@@ -5872,7 +5872,7 @@ henc_huffman_enc (const unsigned char *src, const unsigned char *const src_end,
     {
         assert(bits_left < 40 && bits_left > 0);
         bits |= ((uint64_t)1 << bits_left) - 1;
-        *p_dst++ = bits >> 32;
+        *p_dst++ = (unsigned char) (bits >> 32);
     }
 
     return p_dst - dst;
@@ -5925,7 +5925,7 @@ lshpack_enc_enc_str (unsigned char *const dst, size_t dst_len,
     {
         if (str_len < 127)
         {
-            *dst = str_len;
+            *dst = (unsigned char) str_len;
             memcpy(dst + 1, str, str_len);
             return 1 + str_len;
         }

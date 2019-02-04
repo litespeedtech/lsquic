@@ -8,6 +8,8 @@ struct stack_st_X509;
 
 typedef struct lsquic_enc_session lsquic_enc_session_t;
 
+#define MAX_SCFG_LENGTH 512
+#define MAX_SPUBS_LENGTH 32
 #define STK_LENGTH   60
 #define SNO_LENGTH   56
 #define SCID_LENGTH  16
@@ -37,6 +39,14 @@ enum enc_level
 
 extern const char *const lsquic_enclev2str[];
 
+/* client */
+typedef struct c_cert_item_st
+{
+    struct lsquic_str*  crts;
+    struct lsquic_str*  hashs;
+    int                 count;
+} c_cert_item_t;
+
 /* client side need to store 0rtt info per STK */
 typedef struct lsquic_session_cache_info_st
 {
@@ -54,6 +64,33 @@ typedef struct lsquic_session_cache_info_st
     struct lsquic_str    sni_key;   /* This is only used as key */
 
 } lsquic_session_cache_info_t;
+
+struct lsquic_cert_storage
+{
+    uint32_t    len;
+    uint8_t     data[0];
+};
+
+struct lsquic_zero_rtt_storage
+{
+    uint32_t    quic_version_tag;
+    uint32_t    serializer_version;
+    uint32_t    ver;
+    uint32_t    aead;
+    uint32_t    kexs;
+    uint32_t    pdmd;
+    uint64_t    orbt;
+    uint64_t    expy;
+    uint64_t    sstk_len;
+    uint64_t    scfg_len;
+    uint64_t    scfg_flag;
+    uint8_t     sstk[STK_LENGTH];
+    uint8_t     scfg[MAX_SCFG_LENGTH];
+    uint8_t     sscid[SCID_LENGTH];
+    uint8_t     spubs[MAX_SPUBS_LENGTH];
+    uint32_t    cert_count;
+    struct lsquic_cert_storage  cert_storage[0];
+};
 
 #ifndef LSQUIC_KEEP_ENC_SESS_HISTORY
 #   ifndef NDEBUG
@@ -120,7 +157,8 @@ struct enc_session_funcs
     /* Create client session */
     lsquic_enc_session_t *
     (*esf_create_client) (const char *domain, lsquic_cid_t cid,
-                                    const struct lsquic_engine_public *);
+                            const struct lsquic_engine_public *,
+                            const unsigned char *, size_t);
 
     /* Generate connection ID */
     lsquic_cid_t (*esf_generate_cid) (void);
@@ -141,8 +179,21 @@ struct enc_session_funcs
     (*esf_verify_reset_token) (lsquic_enc_session_t *, const unsigned char *,
                                                                     size_t);
 
+    int
+    (*esf_did_zero_rtt_succeed) (const lsquic_enc_session_t *);
+
+    int
+    (*esf_is_zero_rtt_enabled) (const lsquic_enc_session_t *);
+
+    c_cert_item_t *
+    (*esf_get_cert_item) (const lsquic_enc_session_t *);
+
     struct stack_st_X509 *
     (*esf_get_server_cert_chain) (lsquic_enc_session_t *);
+
+    ssize_t
+    (*esf_get_zero_rtt) (lsquic_enc_session_t *, enum lsquic_version,
+                                                            void *, size_t);
 };
 
 extern
@@ -153,15 +204,5 @@ struct enc_session_funcs lsquic_enc_session_gquic_1;
 
 #define select_esf_by_ver(ver) \
     (ver ? &lsquic_enc_session_gquic_1 : &lsquic_enc_session_gquic_1)
-
-/* client side, certs and hashs
- */
-typedef struct cert_hash_item_st
-{
-    struct lsquic_str*   domain; /*with port, such as "xyz.com:8088" as the key */
-    struct lsquic_str*   crts;
-    struct lsquic_str*   hashs;
-    int         count;
-} cert_hash_item_t;
 
 #endif
