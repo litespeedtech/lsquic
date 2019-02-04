@@ -65,12 +65,6 @@ typedef struct lsquic_session_cache_info_st
 
 } lsquic_session_cache_info_t;
 
-struct lsquic_cert_storage
-{
-    uint32_t    len;
-    uint8_t     data[0];
-};
-
 struct lsquic_zero_rtt_storage
 {
     uint32_t    quic_version_tag;
@@ -89,7 +83,10 @@ struct lsquic_zero_rtt_storage
     uint8_t     sscid[SCID_LENGTH];
     uint8_t     spubs[MAX_SPUBS_LENGTH];
     uint32_t    cert_count;
-    struct lsquic_cert_storage  cert_storage[0];
+/*
+ *  uint32_t    cert_len;
+ *  uint8_t     cert_data[0];
+ */
 };
 
 #ifndef LSQUIC_KEEP_ENC_SESS_HISTORY
