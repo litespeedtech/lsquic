@@ -1,4 +1,8 @@
 2019-02-04
+    - 1.19.1
+    - [BUGFIX] Fix Windows build.
+
+2019-02-04
     - 1.19.0
     - [FEATURE, API Change] 0-RTT support.  Add function to export 0-RTT
       information; it can be supplied to a subsequent connect() call.
