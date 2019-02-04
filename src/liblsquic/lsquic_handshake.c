@@ -261,8 +261,8 @@ lsquic_enc_session_serialize_zero_rtt(struct lsquic_zero_rtt_storage *storage,
                                                 const c_cert_item_t *cert_item)
 {
     uint32_t i;
-    uint8_t *next_cert;
-    struct lsquic_cert_storage *cert_storage;
+    uint32_t *cert_len;
+    uint8_t *cert_data;
     /*
      * assign versions
      */
@@ -288,20 +288,20 @@ lsquic_enc_session_serialize_zero_rtt(struct lsquic_zero_rtt_storage *storage,
      * certificate chain
      */
     storage->cert_count = (uint32_t)cert_item->count;
-    next_cert = (uint8_t *)&storage->cert_storage;
+    cert_len = (uint32_t *)(storage + 1);
+    cert_data = (uint8_t *)(cert_len + 1);
     for (i = 0; i < storage->cert_count; i++)
     {
-        cert_storage = (struct lsquic_cert_storage *)next_cert;
-        cert_storage->len = lsquic_str_len(&cert_item->crts[i]);
-        memcpy(cert_storage->data, lsquic_str_buf(&cert_item->crts[i]),
-                                                            cert_storage->len);
-        next_cert += sizeof(struct lsquic_cert_storage) + cert_storage->len;
+        *cert_len = lsquic_str_len(&cert_item->crts[i]);
+        memcpy(cert_data, lsquic_str_buf(&cert_item->crts[i]), *cert_len);
+        cert_len = (uint32_t *)(cert_data + *cert_len);
+        cert_data = (uint8_t *)(cert_len + 1);
     }
 }
 
 
 #define CHECK_SPACE(need, start, end) \
-    do { if ((intptr_t) (need) > ( (intptr_t) (end) - (intptr_t) (start))) \
+    do { if ((intptr_t) (need) > ((intptr_t) (end) - (intptr_t) (start))) \
         { return RTT_DESERIALIZE_BAD_CERT_SIZE; } \
     } while (0) \
 
@@ -315,8 +315,8 @@ lsquic_enc_session_deserialize_zero_rtt(
 {
     uint32_t i, len;
     uint64_t hash;
-    uint8_t *next_cert;
-    struct lsquic_cert_storage *cert_storage;
+    uint32_t *cert_len;
+    uint8_t *cert_data;
     void *storage_end = (uint8_t *)storage + storage_size;
     /*
      * check versions
@@ -345,19 +345,19 @@ lsquic_enc_session_deserialize_zero_rtt(
     cert_item->count = storage->cert_count;
     cert_item->crts = malloc(cert_item->count * sizeof(lsquic_str_t));
     cert_item->hashs = lsquic_str_new(NULL, 0);
-    next_cert = (uint8_t *)storage->cert_storage;
+    cert_len = (uint32_t *)(storage + 1);
     for (i = 0; i < storage->cert_count; i++)
     {
-        CHECK_SPACE(sizeof(struct lsquic_cert_storage), next_cert, storage_end);
-        cert_storage = (struct lsquic_cert_storage *)next_cert;
-        memcpy(&len, cert_storage, sizeof(len));
-        CHECK_SPACE(len, cert_storage->data, storage_end);
+        CHECK_SPACE(sizeof(uint32_t), cert_len, storage_end);
+        cert_data = (uint8_t *)(cert_len + 1);
+        memcpy(&len, cert_len, sizeof(len));
+        CHECK_SPACE(len, cert_data, storage_end);
         lsquic_str_prealloc(&cert_item->crts[i], len);
         lsquic_str_setlen(&cert_item->crts[i], len);
-        memcpy(lsquic_str_buf(&cert_item->crts[i]), cert_storage->data, len);
-        hash = fnv1a_64((const uint8_t *)cert_storage->data, len);
+        memcpy(lsquic_str_buf(&cert_item->crts[i]), cert_data, len);
+        hash = fnv1a_64((const uint8_t *)cert_data, len);
         lsquic_str_append(cert_item->hashs, (char *)&hash, 8);
-        next_cert += sizeof(struct lsquic_cert_storage) + len;
+        cert_len = (uint32_t *)(cert_data + len);
     }
     return RTT_DESERIALIZE_OK;
 }
@@ -1915,7 +1915,7 @@ lsquic_enc_session_get_zero_rtt (lsquic_enc_session_t *enc_session,
     }
     for (i = 0; i < enc_session->cert_item->count; ++i)
     {
-        sz += sizeof(struct lsquic_cert_storage);
+        sz += sizeof(uint32_t);
         sz += lsquic_str_len(&enc_session->cert_item->crts[i]);
     }
     sz += sizeof(struct lsquic_zero_rtt_storage);
