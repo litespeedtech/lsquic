@@ -1,3 +1,8 @@
+2019-02-11
+    - 1.19.2
+    - [BUGFIX] Begin negotiation with version provided in 0-RTT info.
+    - [BUGFIX] Version checking in zero_rtt deserialize function.
+
 2019-02-04
     - 1.19.1
     - [BUGFIX] Fix Windows build.

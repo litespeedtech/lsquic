@@ -905,7 +905,8 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
             send_ctl_destroy_packet(ctl, packet_out);
         }
     }
-    pacer_cleanup(&ctl->sc_pacer);
+    if (ctl->sc_flags & SC_PACE)
+        pacer_cleanup(&ctl->sc_pacer);
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
         ctl->sc_stats.n_total_sent, ctl->sc_stats.n_resent,

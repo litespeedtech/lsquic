@@ -313,6 +313,7 @@ lsquic_enc_session_deserialize_zero_rtt(
                                             lsquic_session_cache_info_t *info,
                                                     c_cert_item_t *cert_item)
 {
+    enum lsquic_version ver;
     uint32_t i, len;
     uint64_t hash;
     uint32_t *cert_len;
@@ -321,7 +322,8 @@ lsquic_enc_session_deserialize_zero_rtt(
     /*
      * check versions
      */
-    if (lsquic_tag2ver(storage->quic_version_tag) & ~settings->es_versions)
+    ver = lsquic_tag2ver(storage->quic_version_tag);
+    if ((int)ver == -1 || !((1 << ver) & settings->es_versions))
         return RTT_DESERIALIZE_BAD_QUIC_VER;
     if (storage->serializer_version != RTT_SERIALIZER_VERSION)
         return RTT_DESERIALIZE_BAD_SERIAL_VER;

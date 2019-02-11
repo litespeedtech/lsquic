@@ -369,10 +369,11 @@ calc_mem_used (const struct full_conn *conn)
 
 
 static void
-set_versions (struct full_conn *conn, unsigned versions)
+set_versions (struct full_conn *conn, unsigned versions,
+                                                    enum lsquic_version *ver)
 {
     conn->fc_ver_neg.vn_supp = versions;
-    conn->fc_ver_neg.vn_ver  = highest_bit_set(versions);
+    conn->fc_ver_neg.vn_ver  = (ver) ? *ver : highest_bit_set(versions);
     conn->fc_ver_neg.vn_buf  = lsquic_ver2tag(conn->fc_ver_neg.vn_ver);
     conn->fc_conn.cn_version = conn->fc_ver_neg.vn_ver;
     conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
@@ -382,9 +383,10 @@ set_versions (struct full_conn *conn, unsigned versions)
 
 
 static void
-init_ver_neg (struct full_conn *conn, unsigned versions)
+init_ver_neg (struct full_conn *conn, unsigned versions,
+                                                    enum lsquic_version *ver)
 {
-    set_versions(conn, versions);
+    set_versions(conn, versions, ver);
     conn->fc_ver_neg.vn_tag   = &conn->fc_ver_neg.vn_buf;
     conn->fc_ver_neg.vn_state = VN_START;
 }
@@ -641,11 +643,19 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
                       const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct full_conn *conn;
-    enum lsquic_version version;
+    enum lsquic_version version, zero_rtt_version;
     lsquic_cid_t cid;
     const struct enc_session_funcs *esf;
 
     version = highest_bit_set(enpub->enp_settings.es_versions);
+    if (zero_rtt)
+    {
+        zero_rtt_version = lsquic_tag2ver(
+                ((struct lsquic_zero_rtt_storage *)zero_rtt)->quic_version_tag);
+        if (zero_rtt_version < N_LSQVER &&
+            ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
+            version = zero_rtt_version;
+    }
     esf = select_esf_by_ver(version);
     cid = esf->esf_generate_cid();
     conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
@@ -673,7 +683,7 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    init_ver_neg(conn, conn->fc_settings->es_versions);
+    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
@@ -1926,7 +1936,7 @@ process_ver_neg_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         return;
     }
 
-    set_versions(conn, versions);
+    set_versions(conn, versions, NULL);
     conn->fc_ver_neg.vn_state = VN_IN_PROGRESS;
     lsquic_send_ctl_expire_all(&conn->fc_send_ctl);
 }
