@@ -257,6 +257,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     for (i = 0; i < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++i)
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
+    ctl->sc_max_packno_bits = PACKNO_LEN_4; /* Safe value before verneg */
 }
 
 
@@ -1698,7 +1699,7 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
         {
             LSQ_DEBUG("steal ACK frame from low-priority buffered queue");
             ack_action = AA_STEAL;
-            bits = PACKNO_LEN_6;
+            bits = ctl->sc_max_packno_bits;
         }
         /* If ACK can be generated, write it to the first buffered packet. */
         else if (lconn->cn_if->ci_can_write_ack(lconn))
@@ -1709,7 +1710,7 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
             /* Packet length is set to the largest possible size to guarantee
              * that buffered packet with the ACK will not need to be split.
              */
-            bits = PACKNO_LEN_6;
+            bits = ctl->sc_max_packno_bits;
         }
         else
             goto no_ack_action;
@@ -1781,12 +1782,17 @@ enum lsquic_packno_bits
 lsquic_send_ctl_calc_packno_bits (lsquic_send_ctl_t *ctl)
 {
     lsquic_packno_t smallest_unacked;
+    enum lsquic_packno_bits bits;
     unsigned n_in_flight;
 
     smallest_unacked = lsquic_send_ctl_smallest_unacked(ctl);
     n_in_flight = lsquic_cubic_get_cwnd(&ctl->sc_cubic) / ctl->sc_pack_size;
-    return calc_packno_bits(ctl->sc_cur_packno + 1, smallest_unacked,
+    bits = calc_packno_bits(ctl->sc_cur_packno + 1, smallest_unacked,
                                                             n_in_flight);
+    if (bits <= ctl->sc_max_packno_bits)
+        return bits;
+    else
+        return ctl->sc_max_packno_bits;
 }
 
 
@@ -1928,4 +1934,19 @@ lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *ctl)
             size += lsquic_packet_out_mem_used(packet_out);
 
     return size;
+}
+
+
+void
+lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *ctl)
+{
+    if ((1 << ctl->sc_conn_pub->lconn->cn_version) &
+                                            LSQUIC_GQUIC_HEADER_VERSIONS)
+        ctl->sc_max_packno_bits = PACKNO_LEN_6;
+    else
+        /* Assuming Q044 */
+        ctl->sc_max_packno_bits = PACKNO_LEN_4;
+    LSQ_DEBUG("version negotiation done (%s): max packno bits: %u",
+        lsquic_ver2str[ ctl->sc_conn_pub->lconn->cn_version ],
+        ctl->sc_max_packno_bits);
 }

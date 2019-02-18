@@ -231,7 +231,7 @@ create_connections (struct http_client_ctx *client_ctx)
     {
         zero_rtt = client_ctx->hcc_zero_rtt;
         zero_rtt_len = client_ctx->hcc_zero_rtt_len;
-        LSQ_INFO("create connection zero_rtt %ld bytes", zero_rtt_len);
+        LSQ_INFO("create connection zero_rtt %zu bytes", zero_rtt_len);
     }
 
     while (client_ctx->hcc_n_open_conns < client_ctx->hcc_concurrency &&
@@ -268,7 +268,8 @@ http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
     client_ctx->hcc_total_n_reqs -= conn_h->ch_n_reqs;
     TAILQ_INSERT_TAIL(&client_ctx->conn_ctxs, conn_h, next_ch);
     ++conn_h->client_ctx->hcc_n_open_conns;
-    create_streams(client_ctx, conn_h);
+    if (!TAILQ_EMPTY(&client_ctx->hcc_path_elems))
+        create_streams(client_ctx, conn_h);
     conn_h->ch_created = lsquic_time_now();
     return conn_h;
 }
@@ -365,7 +366,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
         if (ret > 0)
         {
             client_ctx->hcc_zero_rtt_len = ret;
-            LSQ_INFO("get zero_rtt %ld bytes", client_ctx->hcc_zero_rtt_len);
+            LSQ_INFO("get zero_rtt %zu bytes", client_ctx->hcc_zero_rtt_len);
             client_ctx->hcc_flags |= HCC_RTT_INFO;
             /* clear file and prepare to write */
             if (client_ctx->hcc_zero_rtt_file)
@@ -392,7 +393,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
                 size_t ret2 = fwrite(client_ctx->hcc_zero_rtt, 1,
                                     client_ctx->hcc_zero_rtt_len,
                                     client_ctx->hcc_zero_rtt_file);
-                LSQ_DEBUG("wrote %ld bytes to zero_rtt file", ret2);
+                LSQ_DEBUG("wrote %zu bytes to zero_rtt file", ret2);
                 if (ret2 == client_ctx->hcc_zero_rtt_len)
                 {
                     fclose(client_ctx->hcc_zero_rtt_file);
@@ -419,6 +420,11 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
         ++s_stat_conns_ok;
         update_sample_stats(&s_stat_to_conn,
                                     lsquic_time_now() - conn_h->ch_created);
+        if (TAILQ_EMPTY(&client_ctx->hcc_path_elems))
+        {
+            LSQ_INFO("no paths mode: close connection");
+            lsquic_conn_close(conn_h->conn);
+        }
     }
     else
         ++s_stat_conns_failed;
@@ -762,7 +768,9 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
-"   -p PATH     Path to request.  May be specified more than once.\n"
+"   -p PATH     Path to request.  May be specified more than once.  If no\n"
+"                 path is specified, the connection is closed as soon as\n"
+"                 handshake succeeds.\n"
 "   -n CONNS    Number of concurrent connections.  Defaults to 1.\n"
 "   -r NREQS    Total number of requests to send.  Defaults to 1.\n"
 "   -R MAXREQS  Maximum number of requests per single connection.  Some\n"
@@ -1180,15 +1188,10 @@ main (int argc, char **argv)
         {
             client_ctx.hcc_flags |= HCC_RTT_INFO;
             client_ctx.hcc_zero_rtt_len = ret;
-            LSQ_DEBUG("read %ld bytes from zero_rtt file", ret);
+            LSQ_DEBUG("read %zu bytes from zero_rtt file", ret);
         }
         else
             LSQ_DEBUG("zero_rtt file is empty");
-    }
-    if (TAILQ_EMPTY(&client_ctx.hcc_path_elems))
-    {
-        fprintf(stderr, "Specify at least one path using -p option\n");
-        exit(1);
     }
 
     start_time = lsquic_time_now();

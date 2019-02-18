@@ -28,6 +28,7 @@ enum sport_flags
     SPORT_SET_SNDBUF        = (1 << 1), /* SO_SNDBUF */
     SPORT_SET_RCVBUF        = (1 << 2), /* SO_RCVBUF */
     SPORT_SERVER            = (1 << 3),
+    SPORT_CONNECT           = (1 << 4),
 };
 
 struct service_port {

@@ -183,10 +183,14 @@ lsquic_cubic_loss (struct lsquic_cubic *cubic)
 void
 lsquic_cubic_timeout (struct lsquic_cubic *cubic)
 {
+    unsigned long cwnd;
+
+    cwnd = cubic->cu_cwnd;
     LSQ_DEBUG("%s(cubic)", __func__);
     cubic_reset(cubic);
-    cubic->cu_ssthresh = cubic->cu_cwnd;
-    cubic->cu_tcp_cwnd = cubic->cu_cwnd;
+    cubic->cu_ssthresh = cwnd / 2;
+    cubic->cu_tcp_cwnd = 2 * TCP_MSS;
+    cubic->cu_cwnd = 2 * TCP_MSS;
     LSQ_INFO("timeout, cwnd: %lu", cubic->cu_cwnd);
     LOG_CWND(cubic);
 }

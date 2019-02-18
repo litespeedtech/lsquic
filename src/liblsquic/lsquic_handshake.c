@@ -1923,7 +1923,7 @@ lsquic_enc_session_get_zero_rtt (lsquic_enc_session_t *enc_session,
     sz += sizeof(struct lsquic_zero_rtt_storage);
     if (len < sz)
     {
-        LSQ_DEBUG("client provided buf is too small %lu < %lu", len, sz);
+        LSQ_DEBUG("client provided buf is too small %zu < %zu", len, sz);
         errno = ENOBUFS;
         return -1;
     }

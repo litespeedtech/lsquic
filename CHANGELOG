@@ -1,3 +1,19 @@
+2019-02-18
+    - 1.19.3
+    - [BUGFIX] Q044: don't encode packet number in 6 bytes.  Six-byte
+      packet number encoding does not exist in Q044.  This fixes a
+      regression introduced in '[BUGFIX] Buffered packets can contain
+      ACK frames' -- we need to keep QUIC version in mind when selecting
+      the longest possible packet number encoding used for the buffered
+      packet that carries the ACK.
+    - [BUGFIX] Do not increase CWND when timeout occurs.
+    - http_client: support setting handshake timeout on command line.
+      Use -o handshake_to=timeout.
+    - http_client: use -k to connect UDP socket to pick up ICMP errors.
+    - http_client: allow pathless mode, when only handshake is performed
+      without issuing any requests.  This can be done by simply not
+      specifying a -p flag on the command line.
+
 2019-02-11
     - 1.19.2
     - [BUGFIX] Begin negotiation with version provided in 0-RTT info.
