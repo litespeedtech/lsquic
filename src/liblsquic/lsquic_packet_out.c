@@ -323,7 +323,10 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
 
     assert(n_stream_frames);
     if (n_elided == n_stream_frames)
+    {
         packet_out->po_frame_types &= ~(1 << QUIC_FRAME_STREAM);
+        packet_out->po_flags &= ~PO_STREAM_END;
+    }
 
     return adj;
 }

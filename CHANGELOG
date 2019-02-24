@@ -1,3 +1,40 @@
+2019-02-18
+    - 1.19.3
+    - [BUGFIX] Q044: don't encode packet number in 6 bytes.  Six-byte
+      packet number encoding does not exist in Q044.  This fixes a
+      regression introduced in '[BUGFIX] Buffered packets can contain
+      ACK frames' -- we need to keep QUIC version in mind when selecting
+      the longest possible packet number encoding used for the buffered
+      packet that carries the ACK.
+    - [BUGFIX] Do not increase CWND when timeout occurs.
+    - http_client: support setting handshake timeout on command line.
+      Use -o handshake_to=timeout.
+    - http_client: use -k to connect UDP socket to pick up ICMP errors.
+    - http_client: allow pathless mode, when only handshake is performed
+      without issuing any requests.  This can be done by simply not
+      specifying a -p flag on the command line.
+
+2019-02-11
+    - 1.19.2
+    - [BUGFIX] Begin negotiation with version provided in 0-RTT info.
+    - [BUGFIX] Version checking in zero_rtt deserialize function.
+
+2019-02-04
+    - 1.19.1
+    - [BUGFIX] Fix Windows build.
+
+2019-02-04
+    - 1.19.0
+    - [FEATURE, API Change] 0-RTT support.  Add function to export 0-RTT
+      information; it can be supplied to a subsequent connect() call.
+    - [FEATURE] Add -0 flag to http_client to exercise 0-RTT support.
+    - [BUGFIX] Resuscitate the Windows build.
+    - [BUGFIX] Send HTTP settings (max header list size) if necessary.
+    - [BUGFIX] Buffered packets can contain ACK frames.
+    - [BUGFIX] Make packet writeable once all STREAM frames are elided.
+    - [BUGFIX] Fix potential null dereference when realloc fails.
+    - cmake: simplify build configuration.
+
 2019-01-28
     - 1.18.0
     - [API Change] Can specify clock granularity in engine settings.

@@ -460,7 +460,6 @@ test_priority (void)
 }
 
 
-
 static void
 test_errors (void)
 {
@@ -594,7 +593,6 @@ perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :sc
     lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
-
 
 
 int

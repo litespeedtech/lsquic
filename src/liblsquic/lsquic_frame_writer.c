@@ -418,14 +418,16 @@ check_headers_size (const struct lsquic_frame_writer *fw,
     headers_sz = calc_headers_size(headers);
     if (extra_headers)
         headers_sz += calc_headers_size(extra_headers);
-    if (headers_sz > fw->fw_max_header_list_sz)
+
+    if (headers_sz <= fw->fw_max_header_list_sz)
+        return 0;
+    else
     {
         LSQ_INFO("Headers size %u is larger than max allowed (%u)",
             headers_sz, fw->fw_max_header_list_sz);
         errno = EMSGSIZE;
         return -1;
     }
-    return 0;
 }
 
 

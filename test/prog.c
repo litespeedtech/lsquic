@@ -152,6 +152,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 
 
     fprintf(out,
+"   -k          Connect UDP socket.  Only meant to be used with clients\n"
+"                 to pick up ICMP errors.\n"
 "   -i USECS    Clock granularity in microseconds.  Defaults to %u.\n",
         LSQUIC_DF_CLOCK_GRANULARITY
     );
@@ -239,6 +241,14 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
                 return -1;
             }
         }
+    case 'k':
+        {
+            struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
+            if (!sport)
+                sport = &prog->prog_dummy_sport;
+            sport->sp_flags |= SPORT_CONNECT;
+        }
+        return 0;
     default:
         return 1;
     }
@@ -253,7 +263,7 @@ prog_eb (struct prog *prog)
 
 
 int
-prog_connect (struct prog *prog)
+prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct service_port *sport;
 
@@ -262,7 +272,7 @@ prog_connect (struct prog *prog)
                     (struct sockaddr *) &sport->sp_local_addr,
                     (struct sockaddr *) &sport->sas, sport, NULL,
                     prog->prog_hostname ? prog->prog_hostname : sport->host,
-                    prog->prog_max_packet_size))
+                    prog->prog_max_packet_size, zero_rtt, zero_rtt_len))
         return -1;
 
     prog_process_conns(prog);

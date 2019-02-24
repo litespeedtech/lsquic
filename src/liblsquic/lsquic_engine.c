@@ -453,7 +453,8 @@ maybe_grow_conn_heaps (struct lsquic_engine *engine)
 
 static lsquic_conn_t *
 new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
-                      unsigned short max_packet_size)
+                      unsigned short max_packet_size, const unsigned char *zero_rtt,
+                                                        size_t zero_rtt_len)
 {
     lsquic_conn_t *conn;
     unsigned flags;
@@ -461,7 +462,8 @@ new_full_conn_client (lsquic_engine_t *engine, const char *hostname,
         return NULL;
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
     conn = full_conn_client_new(&engine->pub, engine->stream_if,
-                    engine->stream_if_ctx, flags, hostname, max_packet_size);
+                                engine->stream_if_ctx, flags, hostname,
+                                max_packet_size, zero_rtt, zero_rtt_len);
     if (!conn)
         return NULL;
     ++engine->n_conns;
@@ -662,7 +664,8 @@ lsquic_conn_t *
 lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
-                       const char *hostname, unsigned short max_packet_size)
+                       const char *hostname, unsigned short max_packet_size,
+                       const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     lsquic_conn_t *conn;
     ENGINE_IN(engine);
@@ -693,7 +696,8 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
         }
     }
 
-    conn = new_full_conn_client(engine, hostname, max_packet_size);
+    conn = new_full_conn_client(engine, hostname, max_packet_size,
+                                                    zero_rtt, zero_rtt_len);
     if (!conn)
         goto err;
     lsquic_conn_record_sockaddr(conn, local_sa, peer_sa);

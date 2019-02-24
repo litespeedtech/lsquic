@@ -73,10 +73,7 @@ struct conn_iface
     (*ci_packet_not_sent) (struct lsquic_conn *, struct lsquic_packet_out *);
 
     void
-    (*ci_handshake_ok) (struct lsquic_conn *);
-
-    void
-    (*ci_handshake_failed) (struct lsquic_conn *);
+    (*ci_hsk_done) (struct lsquic_conn *, enum lsquic_hsk_status);
 
     void
     (*ci_destroy) (struct lsquic_conn *);

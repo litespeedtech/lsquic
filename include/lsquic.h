@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 1
-#define LSQUIC_MINOR_VERSION 18
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_MINOR_VERSION 19
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -137,6 +137,22 @@ enum lsquic_version
  */
 #define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_044)
 
+enum lsquic_hsk_status
+{
+    /**
+     * The handshake failed.
+     */
+    LSQ_HSK_FAIL,
+    /**
+     * The handshake succeeded without 0-RTT.
+     */
+    LSQ_HSK_OK,
+    /**
+     * The handshake succeeded with 0-RTT.
+     */
+    LSQ_HSK_0RTT_OK,
+};
+
 /**
  * @struct lsquic_stream_if
  * @brief The definition of callback functions call by lsquic_stream to
@@ -178,7 +194,7 @@ struct lsquic_stream_if {
      *
      * This callback is optional.
      */
-    void (*on_hsk_done)(lsquic_conn_t *c, int ok);
+    void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
 };
 
 /**
@@ -650,7 +666,8 @@ lsquic_conn_t *
 lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
-                       const char *hostname, unsigned short max_packet_size);
+                       const char *hostname, unsigned short max_packet_size,
+                       const unsigned char *zero_rtt, size_t zero_rtt_len);
 
 /**
  * Pass incoming packet to the QUIC engine.  This function can be called
@@ -834,6 +851,14 @@ int lsquic_stream_close(lsquic_stream_t *s);
  */
 struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
+
+/**
+ * Get server config zero_rtt from the encryption session.
+ * Returns the number of bytes written to the zero_rtt.
+ */
+ssize_t
+lsquic_conn_get_zero_rtt(const lsquic_conn_t *,
+                                    unsigned char *zero_rtt, size_t zero_rtt_len);
 
 /** Returns ID of the stream */
 uint32_t
