@@ -1,3 +1,9 @@
+2019-02-15
+    - 1.19.4
+    - [BUGFIX] Check buffer bounds when looking up version in 0-RTT blob.
+    - [BUGFIX] http_client: don't fetch 0-rtt info if handshake failed.
+    - Log number of pacer calls at DEBUG, rather than NOTICE, level.
+
 2019-02-18
     - 1.19.3
     - [BUGFIX] Q044: don't encode packet number in 6 bytes.  Six-byte

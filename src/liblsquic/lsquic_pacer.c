@@ -37,7 +37,7 @@ void
 pacer_cleanup (struct pacer *pacer)
 {
 #ifndef NDEBUG
-    LSQ_NOTICE("scheduled calls: %u", pacer->pa_stats.n_scheduled);
+    LSQ_DEBUG("scheduled calls: %u", pacer->pa_stats.n_scheduled);
 #endif
 }
 

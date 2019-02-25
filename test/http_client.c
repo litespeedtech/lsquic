@@ -358,8 +358,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
     else
         LSQ_INFO("handshake success %s",
                                 status == LSQ_HSK_0RTT_OK ? "with 0-RTT" : "");
-    if (!(client_ctx->hcc_flags & HCC_RTT_INFO) ||
-        ((client_ctx->hcc_flags & HCC_RTT_INFO) && status != LSQ_HSK_0RTT_OK))
+    if (status == LSQ_HSK_OK)
     {
         ret = lsquic_conn_get_zero_rtt(conn, client_ctx->hcc_zero_rtt,
                                             client_ctx->hcc_zero_rtt_max_len);

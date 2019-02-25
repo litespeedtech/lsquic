@@ -202,4 +202,7 @@ struct enc_session_funcs lsquic_enc_session_gquic_1;
 #define select_esf_by_ver(ver) \
     (ver ? &lsquic_enc_session_gquic_1 : &lsquic_enc_session_gquic_1)
 
+enum lsquic_version
+lsquic_zero_rtt_version (const unsigned char *, size_t);
+
 #endif

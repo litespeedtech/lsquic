@@ -16,6 +16,8 @@
 #endif
 #include <sys/queue.h>
 
+#include <openssl/ssl.h>
+
 #include "lsquic_types.h"
 #include "lsquic.h"
 #include "lsquic_alarmset.h"
@@ -51,6 +53,7 @@
 #include "lsquic_version.h"
 #include "lsquic_hash.h"
 #include "lsquic_headers.h"
+#include "lsquic_handshake.h"
 
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
@@ -650,8 +653,7 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     version = highest_bit_set(enpub->enp_settings.es_versions);
     if (zero_rtt)
     {
-        zero_rtt_version = lsquic_tag2ver(
-                ((struct lsquic_zero_rtt_storage *)zero_rtt)->quic_version_tag);
+        zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
         if (zero_rtt_version < N_LSQVER &&
             ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
             version = zero_rtt_version;
