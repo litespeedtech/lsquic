@@ -506,7 +506,7 @@ send_headers (lsquic_stream_ctx_t *st_h)
         },
         {
             .name  = { .iov_base = ":scheme",       .iov_len = 7, },
-            .value = { .iov_base = "HTTP",          .iov_len = 4, }
+            .value = { .iov_base = "https",         .iov_len = 5, }
         },
         {
             .name  = { .iov_base = ":path",         .iov_len = 5, },

@@ -1,4 +1,10 @@
-2019-02-15
+2019-03-05
+    - 1.19.5
+    - [BUGFIX] Use correct public key from PUBS based on KEXS index.
+    - [BUGFIX] Check flags before dispatching writes, avoiding assert.
+    - [BUGFIX] Set :scheme to "https" (instead of "HTTP").
+
+2019-02-25
     - 1.19.4
     - [BUGFIX] Check buffer bounds when looking up version in 0-RTT blob.
     - [BUGFIX] http_client: don't fetch 0-rtt info if handshake failed.

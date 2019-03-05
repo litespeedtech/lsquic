@@ -2655,7 +2655,8 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
 
     for (stream = lsquic_spi_first(&spi); stream && write_is_possible(conn);
                                             stream = lsquic_spi_next(&spi))
-        lsquic_stream_dispatch_write_events(stream);
+        if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
+            lsquic_stream_dispatch_write_events(stream);
 
     maybe_conn_flush_headers_stream(conn);
 }
