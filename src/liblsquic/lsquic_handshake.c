@@ -646,6 +646,9 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
             {
                 const unsigned char *p, *end;
                 unsigned pub_idx, idx;
+#ifdef WIN32
+                pub_idx = 0;
+#endif
 
                 for (p = val; p < val + len; p += 4)
                     if (0 == memcmp(p, "C255", 4))
