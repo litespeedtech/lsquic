@@ -81,6 +81,12 @@ typedef struct lsquic_send_ctl {
      * else and it is not insanely long.)
      */
     lsquic_packno_t                 sc_largest_ack2ed;
+    /* sc_largest_acked is the largest packet number in PNS_APP packet number
+     * space sent by peer for which we generated (not necessarily sent) an ACK.
+     * This information is used to drop stale ACK frames from packets in
+     * buffered queues.
+     */
+    lsquic_packno_t                 sc_largest_acked;
     lsquic_time_t                   sc_loss_to;
     struct
     {
@@ -174,8 +180,9 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *);
 
 #define lsquic_send_ctl_lost_ack(ctl) ((ctl)->sc_flags & SC_LOST_ACK)
 
-#define lsquic_send_ctl_scheduled_ack(ctl) do {                     \
+#define lsquic_send_ctl_scheduled_ack(ctl, packno) do {             \
     (ctl)->sc_flags &= ~SC_LOST_ACK;                                \
+    (ctl)->sc_largest_acked = packno;                               \
 } while (0)
 
 void

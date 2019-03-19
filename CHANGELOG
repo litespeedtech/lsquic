@@ -1,3 +1,12 @@
+2019-03-19
+    - 1.19.6
+    - [BUGFIX] Ensure that Largest Observed does not decrease in ACKs we
+      send.  ACK frames placed in packets in buffered queues (optimization
+      introduced in 1.17.15) can be preceded by an ACK frame generated later.
+      In this case, the older ACK frame should not be sent out, as Chromium-
+      based servers flags decrease in the ACK frame's Largest Observed value
+      as an error.
+
 2019-03-05
     - 1.19.5
     - [BUGFIX] Use correct public key from PUBS based on KEXS index.

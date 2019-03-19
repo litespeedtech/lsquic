@@ -1857,6 +1857,20 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *ctl,
     while ((packet_out = TAILQ_FIRST(&packet_q->bpq_packets)) &&
                                             lsquic_send_ctl_can_send(ctl))
     {
+        if ((packet_out->po_frame_types & QUIC_FTBIT_ACK)
+                            && packet_out->po_ack2ed < ctl->sc_largest_acked)
+        {
+            LSQ_DEBUG("Remove out-of-order ACK from buffered packet");
+            lsquic_packet_out_chop_regen(packet_out);
+            if (packet_out->po_data_sz == 0)
+            {
+                LSQ_DEBUG("Dropping now-empty buffered packet");
+                TAILQ_REMOVE(&packet_q->bpq_packets, packet_out, po_next);
+                --packet_q->bpq_count;
+                send_ctl_destroy_packet(ctl, packet_out);
+                continue;
+            }
+        }
         if (bits != lsquic_packet_out_packno_bits(packet_out))
         {
             used = packno_bits2len(lsquic_packet_out_packno_bits(packet_out));
