@@ -109,12 +109,16 @@ typedef struct hs_ctx_st
     
     struct lsquic_str csct;
     struct lsquic_str crt; /* compressed certs buffer */
+    struct lsquic_str scfg_pubs; /* Need to copy PUBS, as KEXS comes after it */
 } hs_ctx_t;
 
 
 struct lsquic_enc_session
 {
     enum handshake_state hsk_state;
+    enum {
+        ES_RECV_REJ =   1 << 2,
+    }                    es_flags;
     
     uint8_t have_key; /* 0, no 1, I, 2, D, 3, F */
     uint8_t peer_have_final_key;
@@ -138,6 +142,7 @@ struct lsquic_enc_session
 
     hs_ctx_t hs_ctx;
     lsquic_session_cache_info_t *info;
+    c_cert_item_t *cert_item;
     SSL_CTX *  ssl_ctx;
     const struct lsquic_engine_public *enpub;
     struct lsquic_str * cert_ptr; /* pointer to the leaf cert of the server, not real copy */
@@ -152,29 +157,10 @@ struct lsquic_enc_session
 };
 
 
-/***
- * client side, it will store the domain/certs as cache cert
- */
-static struct lsquic_hash *s_cached_client_certs;
-
-/**
- * client side will save the session_info for next time 0rtt
- */
-static struct lsquic_hash *s_cached_client_session_infos;
-
-/* save to hash table */
-static lsquic_session_cache_info_t *retrieve_session_info_entry(const char *key);
-static void remove_expire_session_info_entry();
-static void remove_session_info_entry(struct lsquic_str *key);
-
-static void free_info (lsquic_session_cache_info_t *);
-
 
 /* client */
-static cert_hash_item_t *make_cert_hash_item(struct lsquic_str *domain, struct lsquic_str **certs, int count);
-static int c_insert_certs(cert_hash_item_t *item);
-static void c_erase_certs(struct lsquic_hash_elem *el);
-static void c_free_cert_hash_item (cert_hash_item_t *item);
+static c_cert_item_t *make_c_cert_item(struct lsquic_str **certs, int count);
+static void free_c_cert_item(c_cert_item_t *item);
 
 static int get_tag_val_u32 (unsigned char *v, int len, uint32_t *val);
 static int init_hs_hash_tables(int flags);
@@ -208,41 +194,8 @@ lsquic_handshake_init(int flags)
 
 
 static void
-cleanup_hs_hash_tables (void)
-{
-    struct lsquic_hash_elem *el;
-
-    if (s_cached_client_session_infos)
-    {
-        for (el = lsquic_hash_first(s_cached_client_session_infos); el;
-                        el = lsquic_hash_next(s_cached_client_session_infos))
-        {
-            lsquic_session_cache_info_t *entry = lsquic_hashelem_getdata(el);
-            free_info(entry);
-        }
-        lsquic_hash_destroy(s_cached_client_session_infos);
-        s_cached_client_session_infos = NULL;
-    }
-
-    if (s_cached_client_certs)
-    {
-        for (el = lsquic_hash_first(s_cached_client_certs); el;
-                                el = lsquic_hash_next(s_cached_client_certs))
-        {
-            cert_hash_item_t *item = lsquic_hashelem_getdata(el);
-            c_free_cert_hash_item(item);
-        }
-        lsquic_hash_destroy(s_cached_client_certs);
-        s_cached_client_certs = NULL;
-    }
-
-}
-
-
-static void
 lsquic_handshake_cleanup (void)
 {
-    cleanup_hs_hash_tables();
     lsquic_crt_cleanup();
 }
 
@@ -250,63 +203,26 @@ lsquic_handshake_cleanup (void)
 /* return -1 for fail, 0 OK*/
 static int init_hs_hash_tables(int flags)
 {
-    if (flags & LSQUIC_GLOBAL_CLIENT)
-    {
-        s_cached_client_session_infos = lsquic_hash_create();
-        if (!s_cached_client_session_infos)
-            return -1;
-
-        s_cached_client_certs = lsquic_hash_create();
-        if (!s_cached_client_certs)
-            return -1;
-    }
 
     return 0;
 }
 
 
 /* client */
-struct lsquic_hash_elem *
-c_get_certs_elem (const lsquic_str_t *domain)
-{
-    if (!s_cached_client_certs)
-        return NULL;
-
-    return lsquic_hash_find(s_cached_client_certs, lsquic_str_cstr(domain),
-                                                    lsquic_str_len(domain));
-}
-
-
-/* client */
-cert_hash_item_t *
-c_find_certs (const lsquic_str_t *domain)
-{
-    struct lsquic_hash_elem *el = c_get_certs_elem(domain);
-
-    if (el == NULL)
-        return NULL;
-
-    return lsquic_hashelem_getdata(el);
-}
-
-
-/* client */
-/* certs is an array of lsquic_str_t * */
-static cert_hash_item_t *
-make_cert_hash_item (lsquic_str_t *domain, lsquic_str_t **certs, int count)
+static c_cert_item_t *
+make_c_cert_item (lsquic_str_t **certs, int count)
 {
     int i;
     uint64_t hash;
-    cert_hash_item_t *item = (cert_hash_item_t *)malloc(sizeof(cert_hash_item_t));
+    c_cert_item_t *item = (c_cert_item_t *)malloc(sizeof(c_cert_item_t));
     item->crts = (lsquic_str_t *)malloc(count * sizeof(lsquic_str_t));
-    item->domain = lsquic_str_new(NULL, 0);
     item->hashs = lsquic_str_new(NULL, 0);
-    lsquic_str_copy(item->domain, domain);
     item->count = count;
-    for(i=0; i<count; ++i)
+    for (i = 0; i < count; ++i)
     {
         lsquic_str_copy(&item->crts[i], certs[i]);
-        hash = fnv1a_64((const uint8_t *)lsquic_str_cstr(certs[i]), lsquic_str_len(certs[i]));
+        hash = fnv1a_64((const uint8_t *)lsquic_str_cstr(certs[i]),
+                        lsquic_str_len(certs[i]));
         lsquic_str_append(item->hashs, (char *)&hash, 8);
     }
     return item;
@@ -315,13 +231,12 @@ make_cert_hash_item (lsquic_str_t *domain, lsquic_str_t **certs, int count)
 
 /* client */
 static void
-c_free_cert_hash_item (cert_hash_item_t *item)
+free_c_cert_item (c_cert_item_t *item)
 {
     int i;
     if (item)
     {
         lsquic_str_delete(item->hashs);
-        lsquic_str_delete(item->domain);
         for(i=0; i<item->count; ++i)
             lsquic_str_d(&item->crts[i]);
         free(item->crts);
@@ -330,112 +245,136 @@ c_free_cert_hash_item (cert_hash_item_t *item)
 }
 
 
-/* client */
-static int
-c_insert_certs (cert_hash_item_t *item)
+enum rtt_deserialize_return_type
 {
-    if (lsquic_hash_insert(s_cached_client_certs,
-            lsquic_str_cstr(item->domain),
-                lsquic_str_len(item->domain), item) == NULL)
-        return -1;
-    else
-        return 0;
-}
+    RTT_DESERIALIZE_OK              = 0,
+    RTT_DESERIALIZE_BAD_QUIC_VER    = 1,
+    RTT_DESERIALIZE_BAD_SERIAL_VER  = 2,
+    RTT_DESERIALIZE_BAD_CERT_SIZE   = 3,
+};
 
+#define RTT_SERIALIZER_VERSION  (1 << 0)
 
-/* client */
 static void
-c_erase_certs (struct lsquic_hash_elem *el)
+lsquic_enc_session_serialize_zero_rtt(struct lsquic_zero_rtt_storage *storage,
+                                        enum lsquic_version version,
+                                        const lsquic_session_cache_info_t *info,
+                                                const c_cert_item_t *cert_item)
 {
-    if (s_cached_client_certs && el)
-        lsquic_hash_erase(s_cached_client_certs, el);
-}
-
-
-static int save_session_info_entry(lsquic_str_t *key, lsquic_session_cache_info_t *entry)
-{
-    lsquic_str_setto(&entry->sni_key, lsquic_str_cstr(key), lsquic_str_len(key));
-    if (lsquic_hash_insert(s_cached_client_session_infos,
-            lsquic_str_cstr(&entry->sni_key),
-                lsquic_str_len(&entry->sni_key), entry) == NULL)
+    uint32_t i;
+    uint32_t *cert_len;
+    uint8_t *cert_data;
+    /*
+     * assign versions
+     */
+    storage->quic_version_tag = lsquic_ver2tag(version);
+    storage->serializer_version = RTT_SERIALIZER_VERSION;
+    /*
+     * server config
+     */
+    storage->ver = info->ver;
+    storage->aead = info->aead;
+    storage->kexs = info->kexs;
+    storage->pdmd = info->pdmd;
+    storage->orbt = info->orbt;
+    storage->expy = info->expy;
+    storage->sstk_len = lsquic_str_len(&info->sstk);
+    storage->scfg_len = lsquic_str_len(&info->scfg);
+    storage->scfg_flag = info->scfg_flag;
+    memcpy(storage->sstk, lsquic_str_buf(&info->sstk), storage->sstk_len);
+    memcpy(storage->scfg, lsquic_str_buf(&info->scfg), storage->scfg_len);
+    memcpy(storage->sscid, &info->sscid, SCID_LENGTH);
+    memcpy(storage->spubs, &info->spubs, MAX_SPUBS_LENGTH);
+    /*
+     * certificate chain
+     */
+    storage->cert_count = (uint32_t)cert_item->count;
+    cert_len = (uint32_t *)(storage + 1);
+    cert_data = (uint8_t *)(cert_len + 1);
+    for (i = 0; i < storage->cert_count; i++)
     {
-        lsquic_str_d(&entry->sni_key);
-        return -1;
+        *cert_len = lsquic_str_len(&cert_item->crts[i]);
+        memcpy(cert_data, lsquic_str_buf(&cert_item->crts[i]), *cert_len);
+        cert_len = (uint32_t *)(cert_data + *cert_len);
+        cert_data = (uint8_t *)(cert_len + 1);
     }
-    else
-        return 0;
 }
 
 
-/* If entry updated and need to remove cached entry */
-static void
-remove_session_info_entry (lsquic_str_t *key)
+#define CHECK_SPACE(need, start, end) \
+    do { if ((intptr_t) (need) > ((intptr_t) (end) - (intptr_t) (start))) \
+        { return RTT_DESERIALIZE_BAD_CERT_SIZE; } \
+    } while (0) \
+
+static enum rtt_deserialize_return_type
+lsquic_enc_session_deserialize_zero_rtt(
+                                const struct lsquic_zero_rtt_storage *storage,
+                                                        size_t storage_size,
+                                const struct lsquic_engine_settings *settings,
+                                            lsquic_session_cache_info_t *info,
+                                                    c_cert_item_t *cert_item)
 {
-    lsquic_session_cache_info_t *entry;
-    struct lsquic_hash_elem *el;
-    el = lsquic_hash_find(s_cached_client_session_infos,
-                                lsquic_str_cstr(key), lsquic_str_len(key));
-    if (el)
+    enum lsquic_version ver;
+    uint32_t i, len;
+    uint64_t hash;
+    uint32_t *cert_len;
+    uint8_t *cert_data;
+    void *storage_end = (uint8_t *)storage + storage_size;
+    /*
+     * check versions
+     */
+    ver = lsquic_tag2ver(storage->quic_version_tag);
+    if ((int)ver == -1 || !((1 << ver) & settings->es_versions))
+        return RTT_DESERIALIZE_BAD_QUIC_VER;
+    if (storage->serializer_version != RTT_SERIALIZER_VERSION)
+        return RTT_DESERIALIZE_BAD_SERIAL_VER;
+    /*
+     * server config
+     */
+    info->ver = storage->ver;
+    info->aead = storage->aead;
+    info->kexs = storage->kexs;
+    info->pdmd = storage->pdmd;
+    info->orbt = storage->orbt;
+    info->expy = storage->expy;
+    info->scfg_flag = storage->scfg_flag;
+    lsquic_str_setto(&info->sstk, storage->sstk, storage->sstk_len);
+    lsquic_str_setto(&info->scfg, storage->scfg, storage->scfg_len);
+    memcpy(&info->sscid, storage->sscid, SCID_LENGTH);
+    memcpy(&info->spubs, storage->spubs, MAX_SPUBS_LENGTH);
+    /*
+     * certificate chain
+     */
+    cert_item->count = storage->cert_count;
+    cert_item->crts = malloc(cert_item->count * sizeof(lsquic_str_t));
+    cert_item->hashs = lsquic_str_new(NULL, 0);
+    cert_len = (uint32_t *)(storage + 1);
+    for (i = 0; i < storage->cert_count; i++)
     {
-        entry = lsquic_hashelem_getdata(el);
-        lsquic_str_d(&entry->sni_key);
-        lsquic_hash_erase(s_cached_client_session_infos, el);
+        CHECK_SPACE(sizeof(uint32_t), cert_len, storage_end);
+        cert_data = (uint8_t *)(cert_len + 1);
+        memcpy(&len, cert_len, sizeof(len));
+        CHECK_SPACE(len, cert_data, storage_end);
+        lsquic_str_prealloc(&cert_item->crts[i], len);
+        lsquic_str_setlen(&cert_item->crts[i], len);
+        memcpy(lsquic_str_buf(&cert_item->crts[i]), cert_data, len);
+        hash = fnv1a_64((const uint8_t *)cert_data, len);
+        lsquic_str_append(cert_item->hashs, (char *)&hash, 8);
+        cert_len = (uint32_t *)(cert_data + len);
     }
-}
-
-
-/* client */
-static lsquic_session_cache_info_t *
-retrieve_session_info_entry (const char *key)
-{
-    lsquic_session_cache_info_t *entry;
-    struct lsquic_hash_elem *el;
-
-    if (!s_cached_client_session_infos)
-        return NULL;
-
-    if (!key)
-        return NULL;
-
-    el = lsquic_hash_find(s_cached_client_session_infos, key, strlen(key));
-    if (el == NULL)
-        return NULL;
-
-    entry = lsquic_hashelem_getdata(el);
-    LSQ_DEBUG("[QUIC]retrieve_session_info_entry find cached session info %p.\n", entry);
-    return entry;
-}
-
-
-/* call it in timer() */
-#if __GNUC__
-__attribute__((unused))
-#endif
-static void
-remove_expire_session_info_entry (void)
-{
-    time_t tm = time(NULL);
-    struct lsquic_hash_elem *el;
-
-    for (el = lsquic_hash_first(s_cached_client_session_infos); el;
-                        el = lsquic_hash_next(s_cached_client_session_infos))
-    {
-        lsquic_session_cache_info_t *entry = lsquic_hashelem_getdata(el);
-        if ((uint64_t)tm > entry->expy)
-        {
-            free_info(entry);
-            lsquic_hash_erase(s_cached_client_session_infos, el);
-        }
-    }
+    return RTT_DESERIALIZE_OK;
 }
 
 
 static lsquic_enc_session_t *
 lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
-                                    const struct lsquic_engine_public *enpub)
+                                    const struct lsquic_engine_public *enpub,
+                                    const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     lsquic_session_cache_info_t *info;
     lsquic_enc_session_t *enc_session;
+    c_cert_item_t *item;
+    const struct lsquic_zero_rtt_storage *zero_rtt_storage;
 
     if (!domain)
     {
@@ -447,19 +386,47 @@ lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
     if (!enc_session)
         return NULL;
 
-    info = retrieve_session_info_entry(domain);
-    if (info)
-        memcpy(enc_session->hs_ctx.pubs, info->spubs, 32);
-    else
+    /* have to allocate every time */
+    info = calloc(1, sizeof(*info));
+    if (!info)
     {
-        info = calloc(1, sizeof(*info));
-        if (!info)
-        {
-            free(enc_session);
-            return NULL;
-        }
+        free(enc_session);
+        return NULL;
     }
 
+    if (zero_rtt && zero_rtt_len > sizeof(struct lsquic_zero_rtt_storage))
+    {
+        item = calloc(1, sizeof(*item));
+        if (!item)
+        {
+            free(enc_session);
+            free(info);
+            return NULL;
+        }
+        zero_rtt_storage = (const struct lsquic_zero_rtt_storage *)zero_rtt;
+        switch (lsquic_enc_session_deserialize_zero_rtt(zero_rtt_storage,
+                                                        zero_rtt_len,
+                                                        &enpub->enp_settings,
+                                                        info, item))
+        {
+            case RTT_DESERIALIZE_BAD_QUIC_VER:
+                LSQ_ERROR("provided zero_rtt has unsupported QUIC version");
+                free(item);
+                break;
+            case RTT_DESERIALIZE_BAD_SERIAL_VER:
+                LSQ_ERROR("provided zero_rtt has bad serializer version");
+                free(item);
+                break;
+            case RTT_DESERIALIZE_BAD_CERT_SIZE:
+                LSQ_ERROR("provided zero_rtt has bad cert size");
+                free(item);
+                break;
+            case RTT_DESERIALIZE_OK:
+                memcpy(enc_session->hs_ctx.pubs, info->spubs, 32);
+                enc_session->cert_item = item;
+                break;
+        }
+    }
     enc_session->enpub = enpub;
     enc_session->cid   = cid;
     enc_session->info  = info;
@@ -484,6 +451,7 @@ lsquic_enc_session_destroy (lsquic_enc_session_t *enc_session)
     lsquic_str_d(&hs_ctx->prof);
     lsquic_str_d(&hs_ctx->csct);
     lsquic_str_d(&hs_ctx->crt);
+    lsquic_str_d(&hs_ctx->scfg_pubs);
     lsquic_str_d(&enc_session->chlo);
     lsquic_str_d(&enc_session->sstk);
     lsquic_str_d(&enc_session->ssno);
@@ -507,18 +475,20 @@ lsquic_enc_session_destroy (lsquic_enc_session_t *enc_session)
         EVP_AEAD_CTX_cleanup(enc_session->enc_ctx_f);
         free(enc_session->enc_ctx_f);
     }
+    if (enc_session->info)
+    {
+        lsquic_str_d(&enc_session->info->sstk);
+        lsquic_str_d(&enc_session->info->scfg);
+        lsquic_str_d(&enc_session->info->sni_key);
+        free(enc_session->info);
+    }
+    if (enc_session->cert_item)
+    {
+        free_c_cert_item(enc_session->cert_item);
+        enc_session->cert_item = NULL;
+    }
     free(enc_session);
 
-}
-
-
-static void
-free_info (lsquic_session_cache_info_t *info)
-{
-    lsquic_str_d(&info->sstk);
-    lsquic_str_d(&info->scfg);
-    lsquic_str_d(&info->sni_key);
-    free(info);
 }
 
 
@@ -618,18 +588,10 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_PUBS:
-        /* FIXME:Server side may send a list of pubs,
-         * we support only ONE kenx now.
-         * REJ is 35 bytes, SHLO is 32 bytes
-         * Only save other peer's pubs to hs_ctx
-         */
-        if( len < 32)
-            break;
-        memcpy(hs_ctx->pubs, val + (len - 32), 32);
         if (head_tag == QTAG_SCFG)
-        {
-            memcpy(enc_session->info->spubs, hs_ctx->pubs, 32);
-        }
+            lsquic_str_setto(&hs_ctx->scfg_pubs, val, len);
+        else if (len == 32)
+            memcpy(hs_ctx->pubs, val, len);
         break;
 
     case QTAG_RCID:
@@ -663,11 +625,9 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_STK:
-        if (lsquic_str_len(&enc_session->info->sstk) > 0)
-            remove_session_info_entry(&enc_session->info->sstk);
         lsquic_str_setto(&enc_session->info->sstk, val, len);
-        ESHIST_APPEND(enc_session, ESHE_SET_STK);
-        break;
+    ESHIST_APPEND(enc_session, ESHE_SET_STK);
+    break;
 
     case QTAG_SCID:
         if (len != SCID_LENGTH)
@@ -681,7 +641,61 @@ static int parse_hs_data (lsquic_enc_session_t *enc_session, uint32_t tag,
         break;
 
     case QTAG_KEXS:
-        enc_session->info->kexs = get_tag_value_i32(val, len);
+    {
+            if (head_tag == QTAG_SCFG && 0 == len % 4)
+            {
+                const unsigned char *p, *end;
+                unsigned pub_idx, idx;
+#ifdef WIN32
+                pub_idx = 0;
+#endif
+
+                for (p = val; p < val + len; p += 4)
+                    if (0 == memcmp(p, "C255", 4))
+                    {
+                        memcpy(&enc_session->info->kexs, p, 4);
+                        pub_idx = (p - val) / 4;
+                        LSQ_DEBUG("Parsing SCFG: supported KEXS C255 at "
+                                                        "index %u", pub_idx);
+                        break;
+                    }
+                if (p >= val + len)
+                {
+                    LSQ_INFO("supported KEXS not found, trouble ahead");
+                    break;
+                }
+                if (lsquic_str_len(&hs_ctx->scfg_pubs) > 0)
+                {
+                    p = (const unsigned char *)
+                                        lsquic_str_cstr(&hs_ctx->scfg_pubs);
+                    end = p + lsquic_str_len(&hs_ctx->scfg_pubs);
+
+                    for (idx = 0; p < end; ++idx)
+                    {
+                        uint32_t sz = 0;
+                        if (p + 3 > end)
+                            break;
+                        sz |= *p++;
+                        sz |= *p++ << 8;
+                        sz |= *p++ << 16;
+                        if (p + sz > end)
+                            break;
+                        if (idx == pub_idx)
+                        {
+                            if (sz == 32)
+                            {
+                                memcpy(hs_ctx->pubs, p, 32);
+                                memcpy(enc_session->info->spubs, p, 32);
+                            }
+                            break;
+                        }
+                        p += sz;
+                    }
+                }
+                else
+                    LSQ_INFO("No PUBS from SCFG to parse");
+            }
+        }
         break;
 
     case QTAG_NONC:
@@ -952,8 +966,7 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     const lsquic_str_t *const ccs = get_common_certs_hash();
     const struct lsquic_engine_settings *const settings =
                                         &enc_session->enpub->enp_settings;
-    cert_hash_item_t *const cached_certs_item =
-                                    c_find_certs(&enc_session->hs_ctx.sni);
+    c_cert_item_t *const cert_item = enc_session->cert_item;
     unsigned char pub_key[32];
     size_t ua_len;
     uint32_t opts[1];  /* Only NSTP is supported for now */
@@ -966,7 +979,8 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
 
     n_opts = 0;
     /* CHLO is not regenerated during version negotiation.  Hence we always
-     * include this option to cover the case when Q044 gets negotiated down.
+     * include this option to cover the case when Q044 or Q046 gets negotiated
+     * down.
      */
     if (settings->es_support_nstp)
         opts[ n_opts++ ] = QTAG_NSTP;
@@ -1006,10 +1020,10 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     MSG_LEN_ADD(msg_len, lsquic_str_len(&enc_session->hs_ctx.sni));
                                             ++n_tags;           /* SNI  */
     MSG_LEN_ADD(msg_len, lsquic_str_len(ccs));  ++n_tags;           /* CCS  */
-    if (cached_certs_item)
+    if (cert_item)
     {
-        enc_session->cert_ptr = &cached_certs_item->crts[0];
-        MSG_LEN_ADD(msg_len, lsquic_str_len(cached_certs_item->hashs));
+        enc_session->cert_ptr = &cert_item->crts[0];
+        MSG_LEN_ADD(msg_len, lsquic_str_len(cert_item->hashs));
                                             ++n_tags;           /* CCRT */
         MSG_LEN_ADD(msg_len, 8);            ++n_tags;           /* XLCT */
     }
@@ -1083,14 +1097,14 @@ lsquic_enc_session_gen_chlo (lsquic_enc_session_t *enc_session,
     MW_WRITE_UINT32(&mw, QTAG_MIDS, settings->es_max_streams_in);
     MW_WRITE_UINT32(&mw, QTAG_SCLS, settings->es_silent_close);
     MW_WRITE_UINT32(&mw, QTAG_KEXS, settings->es_kexs);
-    if (cached_certs_item)
-        MW_WRITE_BUFFER(&mw, QTAG_XLCT, lsquic_str_buf(cached_certs_item->hashs), 8);
+    if (cert_item)
+        MW_WRITE_BUFFER(&mw, QTAG_XLCT, lsquic_str_buf(cert_item->hashs), 8);
     /* CSCT is empty on purpose (retained from original code) */
     MW_WRITE_TABLE_ENTRY(&mw, QTAG_CSCT, 0);
     if (n_opts > 0)
         MW_WRITE_BUFFER(&mw, QTAG_COPT, opts, n_opts * sizeof(opts[0]));
-    if (cached_certs_item)
-        MW_WRITE_LS_STR(&mw, QTAG_CCRT, cached_certs_item->hashs);
+    if (cert_item)
+        MW_WRITE_LS_STR(&mw, QTAG_CCRT, cert_item->hashs);
     MW_WRITE_UINT32(&mw, QTAG_CFCW, settings->es_cfcw);
     MW_WRITE_UINT32(&mw, QTAG_SFCW, settings->es_sfcw);
     MW_END(&mw);
@@ -1337,16 +1351,16 @@ static int determine_keys(lsquic_enc_session_t *enc_session)
 
 
 /* 0 Match */
-static int cached_certs_match(cert_hash_item_t *cached_certs_item, lsquic_str_t **certs,
-                                         int certs_count)
+static int cached_certs_match(c_cert_item_t *item,
+                                        lsquic_str_t **certs, int count)
 {
     int i;
-    if (!cached_certs_item || cached_certs_item->count != certs_count)
+    if (!item || item->count != count)
         return -1;
 
-    for (i=0; i<certs_count; ++i)
+    for (i=0; i<count; ++i)
     {
-        if (lsquic_str_bcmp(certs[i], &cached_certs_item->crts[i]) != 0)
+        if (lsquic_str_bcmp(certs[i], &item->crts[i]) != 0)
             return -1;
     }
 
@@ -1383,12 +1397,7 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
     uint32_t head_tag;
     int ret;
     lsquic_session_cache_info_t *info = enc_session->info;
-    hs_ctx_t * hs_ctx = &enc_session->hs_ctx;
-    cert_hash_item_t *cached_certs_item = NULL;
-    struct lsquic_hash_elem *el = c_get_certs_elem(&hs_ctx->sni);
-
-    if (el)
-        cached_certs_item = lsquic_hashelem_getdata(el);
+    c_cert_item_t *cert_item = enc_session->cert_item;
 
     /* FIXME get the number first */
     lsquic_str_t **out_certs = NULL;
@@ -1407,7 +1416,10 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
     }
 
     if (head_tag == QTAG_SREJ || head_tag == QTAG_REJ)
+    {
         enc_session->hsk_state = HSK_CHLO_REJ;
+        enc_session->es_flags |= ES_RECV_REJ;
+    }
     else if(head_tag == QTAG_SHLO)
     {
         enc_session->hsk_state = HSK_COMPLETED;
@@ -1428,7 +1440,7 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
             out_certs_count = get_certs_count(&enc_session->hs_ctx.crt);
             if (out_certs_count > 0)
             {
-                out_certs = (lsquic_str_t **)malloc(out_certs_count * sizeof(lsquic_str_t *));
+                out_certs = malloc(out_certs_count * sizeof(lsquic_str_t *));
                 if (!out_certs)
                 {
                     ret = -1;
@@ -1440,30 +1452,22 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
 
                 ret = handle_chlo_reply_verify_prof(enc_session, out_certs,
                                             &out_certs_count,
-                                            (cached_certs_item ? cached_certs_item->crts : NULL),
-                                            (cached_certs_item ? cached_certs_item->count : 0));
+                                            (cert_item ? cert_item->crts : NULL),
+                                            (cert_item ? cert_item->count : 0));
                 if (ret == 0)
                 {
                     if (out_certs_count > 0)
                     {
-                        if (cached_certs_item &&
-                            cached_certs_match(cached_certs_item, out_certs, out_certs_count) == 0)
-                            ;
-                        else
+                        if (cached_certs_match(cert_item, out_certs,
+                                                        out_certs_count) != 0)
                         {
-                            if (el)
-                                c_erase_certs(el);
-                            if (cached_certs_item)
-                                c_free_cert_hash_item(cached_certs_item);
-
-                            cached_certs_item = make_cert_hash_item(&hs_ctx->sni,
-                                                                    out_certs, out_certs_count);
-                            c_insert_certs(cached_certs_item);
+                            cert_item = make_c_cert_item(out_certs,
+                                                            out_certs_count);
+                            enc_session->cert_item = cert_item;
+                            enc_session->cert_ptr = &cert_item->crts[0];
                         }
-                        enc_session->cert_ptr = &cached_certs_item->crts[0];
                     }
                 }
-
                 for (i=0; i<out_certs_count; ++i)
                     lsquic_str_delete(out_certs[i]);
                 free(out_certs);
@@ -1476,8 +1480,6 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
 
     if (enc_session->hsk_state == HSK_COMPLETED)
     {
-        if (!lsquic_str_buf(&info->sni_key))
-            save_session_info_entry(&enc_session->hs_ctx.sni, info);
         ret = determine_keys(enc_session
                                            ); /* FIXME: check ret */
         enc_session->have_key = 3;
@@ -1894,15 +1896,36 @@ lsquic_enc_session_verify_reset_token (lsquic_enc_session_t *enc_session,
 }
 
 
+static int
+lsquic_enc_session_did_zero_rtt_succeed (const lsquic_enc_session_t *enc_session)
+{
+    return !(enc_session->es_flags & ES_RECV_REJ);
+}
+
+
+static int
+lsquic_enc_session_is_zero_rtt_enabled (const lsquic_enc_session_t *enc_session)
+{
+    return enc_session->info && enc_session->cert_item;
+}
+
+
+static c_cert_item_t *
+lsquic_enc_session_get_cert_item (const lsquic_enc_session_t *enc_session)
+{
+    return enc_session->cert_item;
+}
+
+
 static STACK_OF(X509) *
 lsquic_enc_session_get_server_cert_chain (lsquic_enc_session_t *enc_session)
 {
-    const struct cert_hash_item_st *item;
+    const struct c_cert_item_st *item;
     STACK_OF(X509) *chain;
     X509 *cert;
     int i;
 
-    item = c_find_certs(&enc_session->hs_ctx.sni);
+    item = enc_session->cert_item;
     if (!item)
     {
         LSQ_WARN("could not find certificates for `%.*s'",
@@ -1929,6 +1952,37 @@ lsquic_enc_session_get_server_cert_chain (lsquic_enc_session_t *enc_session)
 }
 
 
+ssize_t
+lsquic_enc_session_get_zero_rtt (lsquic_enc_session_t *enc_session,
+                                                enum lsquic_version version,
+                                                        void *buf, size_t len)
+{
+    int i;
+    size_t sz = 0;
+    if (!enc_session->info || !enc_session->cert_item)
+    {
+        LSQ_DEBUG("client asked for rtt_into but it is not available");
+        return 0;
+    }
+    for (i = 0; i < enc_session->cert_item->count; ++i)
+    {
+        sz += sizeof(uint32_t);
+        sz += lsquic_str_len(&enc_session->cert_item->crts[i]);
+    }
+    sz += sizeof(struct lsquic_zero_rtt_storage);
+    if (len < sz)
+    {
+        LSQ_DEBUG("client provided buf is too small %zu < %zu", len, sz);
+        errno = ENOBUFS;
+        return -1;
+    }
+    lsquic_enc_session_serialize_zero_rtt((struct lsquic_zero_rtt_storage *)buf,
+                                                    version, enc_session->info,
+                                                    enc_session->cert_item);
+    return sz;
+}
+
+
 #ifdef NDEBUG
 const
 #endif
@@ -1951,7 +2005,11 @@ struct enc_session_funcs lsquic_enc_session_gquic_1 =
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
     .esf_mem_used = lsquic_enc_session_mem_used,
     .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
+    .esf_did_zero_rtt_succeed = lsquic_enc_session_did_zero_rtt_succeed,
+    .esf_is_zero_rtt_enabled = lsquic_enc_session_is_zero_rtt_enabled,
+    .esf_get_cert_item = lsquic_enc_session_get_cert_item,
     .esf_get_server_cert_chain = lsquic_enc_session_get_server_cert_chain,
+    .esf_get_zero_rtt = lsquic_enc_session_get_zero_rtt,
 };
 
 
@@ -1962,3 +2020,18 @@ const char *const lsquic_enclev2str[] =
     [ENC_LEV_INIT]  = "initial",
     [ENC_LEV_FORW]  = "forw-secure",
 };
+
+
+enum lsquic_version
+lsquic_zero_rtt_version (const unsigned char *buf, size_t bufsz)
+{
+    lsquic_ver_tag_t tag;
+
+    if (bufsz >= sizeof(tag))
+    {
+        memcpy(&tag, buf, sizeof(tag));
+        return lsquic_tag2ver(tag);
+    }
+    else
+        return -1;
+}

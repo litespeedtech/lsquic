@@ -23,7 +23,7 @@ struct test {
     lsquic_cid_t    cid;    /* Zero means connection ID is not specified */
     const char     *nonce;
     lsquic_packno_t packno;
-    enum lsquic_packno_bits
+    enum packno_bits
                     bits;   /* The test has been retrofitted by adding bits parameter.  The test can
                              * be made more complicated by calculating packet number length based on
                              * some other inputs.  However, this is tested elsewhere.
@@ -47,7 +47,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x01020304,
-        .bits   = PACKNO_LEN_4,
+        .bits   = GQUIC_PACKNO_LEN_4,
         .len    = 1 + 8 + 0 + 4,
         .out    = {     (0 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */
@@ -64,7 +64,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x01020304,
-        .bits   = PACKNO_LEN_4,
+        .bits   = GQUIC_PACKNO_LEN_4,
         .len    = 1 + 8 + 0 + 4,
         .out    = {     (0 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */
@@ -81,7 +81,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x00,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .len    = 1 + 8 + 0 + 1,
         .out    = {     (0 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */
@@ -98,7 +98,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x00,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .ver.buf= { 'Q', '0', '3', '5', },
         .len    = 1 + 8 + 4 + 0 + 1,
         .out    = {     (0 << 2)                                        /* Nonce present */
@@ -118,7 +118,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x09,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .ver.buf= { 'Q', '0', '3', '9', },
         .len    = 1 + 8 + 4 + 0 + 1,
         .out    = {     (0 << 2)                                        /* Nonce present */
@@ -141,7 +141,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0x00,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .len    = 1 + 8 + 32 + 1,
         .out    = {     (1 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */
@@ -159,7 +159,7 @@ static const struct test tests[] = {
         .cid    = 0,    /* Do not set connection ID */
         .nonce  = NONCENSE,
         .packno = 0x00,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .len    = 1 + 0 + 32 + 1,
         .out    = {     (1 << 2)                                        /* Nonce present */
                       | 0x00                                            /* Packet number length */
@@ -175,7 +175,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0x00,
-        .bits   = PACKNO_LEN_1,
+        .bits   = GQUIC_PACKNO_LEN_1,
         .ver.buf= { 'Q', '0', '3', '5', },
         .len    = 1 + 8 + 4 + 32 + 1,
         .out    = {     (1 << 2)                                        /* Nonce present */
@@ -196,7 +196,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0xA0A1A2A3A4A5A6A7UL,
-        .bits   = PACKNO_LEN_6,
+        .bits   = GQUIC_PACKNO_LEN_6,
         .len    = 1 + 8 + 32 + 6,
         .out    = {     (1 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */
@@ -214,7 +214,7 @@ static const struct test tests[] = {
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0xA0A1A2A3A4A5A6A7UL,
-        .bits   = PACKNO_LEN_6,
+        .bits   = GQUIC_PACKNO_LEN_6,
         .len    = 1 + 8 + 32 + 6,
         .out    = {     (1 << 2)                                        /* Nonce present */
                       | 0x08                                            /* Connection ID present */

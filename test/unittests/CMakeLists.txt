@@ -1,18 +1,13 @@
 # Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
-
 INCLUDE_DIRECTORIES(../../src/liblsquic)
 
 ENABLE_TESTING()
 
-SET(LIBS lsquic ${BORINGSSL_LIB_crypto} ${BORINGSSL_LIB_ssl} ${ZLIB_LIB})
-
 IF (MSVC)
-    LIST(APPEND LIBS ws2_32)
     SET(ADDL_SOURCES ../../wincompat/getopt.c ../../wincompat/getopt1.c)
     SET(LIB_FLAGS "-FORCE:MULTIPLE")
 ELSE()
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
-    LIST(APPEND LIBS m pthread)
 ENDIF()
 
 SET(TESTS
@@ -72,6 +67,7 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     SET(TESTS ${TESTS} frame_rw)
 ENDIF()
 
+
 FOREACH(TEST_NAME ${TESTS})
     ADD_EXECUTABLE(test_${TEST_NAME} test_${TEST_NAME}.c ${ADDL_SOURCES})
     TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
@@ -87,3 +83,4 @@ ADD_TEST(stream_hash_A test_stream -A -h)
 
 ADD_EXECUTABLE(graph_cubic graph_cubic.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(graph_cubic ${LIBS})
+

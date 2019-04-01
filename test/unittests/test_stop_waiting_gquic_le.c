@@ -20,7 +20,7 @@ struct parse_test {
     unsigned char   buf[0x10];
     size_t          buf_len;
     lsquic_packno_t cur_packno;
-    enum lsquic_packno_bits
+    enum packno_bits
                     bits;
     /* Expected values: */
     int             retval;
@@ -33,7 +33,7 @@ static const struct parse_test parse_tests[] = {
         .buf_len        = 3,
         .least_unacked  = 0x1111,
         .cur_packno     = 0x4523,
-        .bits           = PACKNO_LEN_2,
+        .bits           = GQUIC_PACKNO_LEN_2,
         .retval         = 3,
     },
 
@@ -42,7 +42,7 @@ static const struct parse_test parse_tests[] = {
         .buf_len        = 2,
         .least_unacked  = 0x1111,
         .cur_packno     = 0x4523,
-        .bits           = PACKNO_LEN_2,
+        .bits           = GQUIC_PACKNO_LEN_2,
         .retval         = -1,
     },
 
@@ -51,7 +51,7 @@ static const struct parse_test parse_tests[] = {
         .buf_len        = 7,
         .least_unacked  = 0x1122324252627282,
         .cur_packno     = 0x1122334455667788,
-        .bits           = PACKNO_LEN_6,
+        .bits           = GQUIC_PACKNO_LEN_6,
         .retval         = 7,
     },
 

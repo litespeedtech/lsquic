@@ -1388,7 +1388,7 @@ static
 lsquic_stream_flush_threshold (const struct lsquic_stream *stream)
 {
     enum packet_out_flags flags;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
     unsigned packet_header_sz, stream_header_sz;
     size_t threshold;
 

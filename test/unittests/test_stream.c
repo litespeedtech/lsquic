@@ -47,7 +47,7 @@ struct test_ctl_settings
     int     tcs_can_send;
     enum buf_packet_type
             tcs_bp_type;
-    enum lsquic_packno_bits
+    enum packno_bits
             tcs_guess_packno_bits,
             tcs_calc_packno_bits;
 };
@@ -68,8 +68,8 @@ init_test_ctl_settings (struct test_ctl_settings *settings)
     settings->tcs_have_delayed_packets = 0;
     settings->tcs_can_send             = 1;
     settings->tcs_bp_type              = BPT_HIGHEST_PRIO;
-    settings->tcs_guess_packno_bits    = PACKNO_LEN_2;
-    settings->tcs_calc_packno_bits     = PACKNO_LEN_2;
+    settings->tcs_guess_packno_bits    = GQUIC_PACKNO_LEN_2;
+    settings->tcs_calc_packno_bits     = GQUIC_PACKNO_LEN_2;
 }
 
 
@@ -83,7 +83,7 @@ apply_test_ctl_settings (const struct test_ctl_settings *settings)
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_calc_packno_bits (struct lsquic_send_ctl *ctl)
 {
     return g_ctl_settings.tcs_calc_packno_bits;
@@ -111,7 +111,7 @@ lsquic_send_ctl_can_send (struct lsquic_send_ctl *ctl)
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_guess_packno_bits (struct lsquic_send_ctl *ctl)
 {
     return g_ctl_settings.tcs_guess_packno_bits;
@@ -2049,7 +2049,7 @@ test_bad_packbits_guess_2 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
     init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
@@ -2082,7 +2082,7 @@ test_bad_packbits_guess_2 (void)
     assert(1 == streams[2]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_6;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_6;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -2105,12 +2105,12 @@ test_bad_packbits_guess_2 (void)
 
     /* Verify packets */
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
@@ -2152,7 +2152,7 @@ test_bad_packbits_guess_3 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
     init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
@@ -2173,7 +2173,7 @@ test_bad_packbits_guess_3 (void)
     assert(1 == streams[0]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_4;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_4;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -2187,12 +2187,12 @@ test_bad_packbits_guess_3 (void)
 
     /* Verify packets */
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_4);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_4);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
@@ -2616,7 +2616,7 @@ test_bad_packbits_guess_1 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
     init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
@@ -2649,7 +2649,7 @@ test_bad_packbits_guess_1 (void)
     assert(1 == streams[2]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_6;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_6;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -2672,12 +2672,12 @@ test_bad_packbits_guess_1 (void)
 
     /* Verify packets */
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);

@@ -81,6 +81,12 @@ typedef struct lsquic_send_ctl {
      * else and it is not insanely long.)
      */
     lsquic_packno_t                 sc_largest_ack2ed;
+    /* sc_largest_acked is the largest packet number in PNS_APP packet number
+     * space sent by peer for which we generated (not necessarily sent) an ACK.
+     * This information is used to drop stale ACK frames from packets in
+     * buffered queues.
+     */
+    lsquic_packno_t                 sc_largest_acked;
     lsquic_time_t                   sc_loss_to;
     struct
     {
@@ -89,6 +95,7 @@ typedef struct lsquic_send_ctl {
     }                               sc_cached_bpt;
     unsigned                        sc_next_limit;
     unsigned                        sc_n_scheduled;
+    enum packno_bits                sc_max_packno_bits;
 #if LSQUIC_SEND_STATS
     struct {
         unsigned            n_total_sent,
@@ -173,8 +180,9 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *);
 
 #define lsquic_send_ctl_lost_ack(ctl) ((ctl)->sc_flags & SC_LOST_ACK)
 
-#define lsquic_send_ctl_scheduled_ack(ctl) do {                     \
+#define lsquic_send_ctl_scheduled_ack(ctl, packno) do {             \
     (ctl)->sc_flags &= ~SC_LOST_ACK;                                \
+    (ctl)->sc_largest_acked = packno;                               \
 } while (0)
 
 void
@@ -225,7 +233,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
         ? pacer_next_sched(&(ctl)->sc_pacer)                \
         : 0 )
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *);
 
 int
@@ -240,7 +248,7 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
 } while (0)
 
 #ifndef NDEBUG
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_guess_packno_bits (struct lsquic_send_ctl *);
 
 int
@@ -250,7 +258,7 @@ enum buf_packet_type
 lsquic_send_ctl_determine_bpt (struct lsquic_send_ctl *,
                                             const struct lsquic_stream *);
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_calc_packno_bits (struct lsquic_send_ctl *);
 #endif
 
@@ -282,5 +290,8 @@ lsquic_send_ctl_sched_is_blocked (const struct lsquic_send_ctl *);
 int
 lsquic_send_ctl_buffered_and_same_prio_as_headers (struct lsquic_send_ctl *,
                                                 const struct lsquic_stream *);
+
+void
+lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *);
 
 #endif

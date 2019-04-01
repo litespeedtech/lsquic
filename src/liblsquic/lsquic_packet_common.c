@@ -43,7 +43,7 @@ lsquic_frame_types_to_str (char *buf, size_t bufsz,
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 calc_packno_bits (lsquic_packno_t packno, lsquic_packno_t least_unacked,
                   uint64_t n_in_flight)
 {
@@ -65,14 +65,13 @@ calc_packno_bits (lsquic_packno_t packno, lsquic_packno_t least_unacked,
 
 lsquic_packno_t
 restore_packno (lsquic_packno_t cur_packno,
-                enum lsquic_packno_bits cur_packno_bits,
+                unsigned len,
                 lsquic_packno_t max_packno)
 {
     lsquic_packno_t candidates[3], epoch_delta;
     int64_t diffs[3];
-    unsigned min, len;
+    unsigned min;
 
-    len = packno_bits2len(cur_packno_bits);
     epoch_delta = 1ULL << (len << 3);
     candidates[1] = (max_packno & ~(epoch_delta - 1)) + cur_packno;
     candidates[0] = candidates[1] - epoch_delta;

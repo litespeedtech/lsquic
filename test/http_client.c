@@ -173,10 +173,17 @@ struct http_client_ctx {
     unsigned                     hcc_concurrency;
     unsigned                     hcc_cc_reqs_per_conn;
     unsigned                     hcc_n_open_conns;
+    
+    unsigned char               *hcc_zero_rtt;
+    size_t                       hcc_zero_rtt_len;
+    size_t                       hcc_zero_rtt_max_len;
+    FILE                        *hcc_zero_rtt_file;
+    char                        *hcc_zero_rtt_file_name;
 
     enum {
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
+        HCC_RTT_INFO            = (1 << 3),
     }                            hcc_flags;
     struct prog                 *prog;
 };
@@ -218,9 +225,18 @@ display_cert_chain (lsquic_conn_t *);
 static void
 create_connections (struct http_client_ctx *client_ctx)
 {
+    unsigned char *zero_rtt = NULL;
+    size_t zero_rtt_len = 0;
+    if (client_ctx->hcc_flags & HCC_RTT_INFO)
+    {
+        zero_rtt = client_ctx->hcc_zero_rtt;
+        zero_rtt_len = client_ctx->hcc_zero_rtt_len;
+        LSQ_INFO("create connection zero_rtt %zu bytes", zero_rtt_len);
+    }
+
     while (client_ctx->hcc_n_open_conns < client_ctx->hcc_concurrency &&
            client_ctx->hcc_total_n_reqs > 0)
-        if (0 != prog_connect(client_ctx->prog))
+        if (0 != prog_connect(client_ctx->prog, zero_rtt, zero_rtt_len))
         {
             LSQ_ERROR("connection failed");
             exit(EXIT_FAILURE);
@@ -252,7 +268,8 @@ http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
     client_ctx->hcc_total_n_reqs -= conn_h->ch_n_reqs;
     TAILQ_INSERT_TAIL(&client_ctx->conn_ctxs, conn_h, next_ch);
     ++conn_h->client_ctx->hcc_n_open_conns;
-    create_streams(client_ctx, conn_h);
+    if (!TAILQ_EMPTY(&client_ctx->hcc_path_elems))
+        create_streams(client_ctx, conn_h);
     conn_h->ch_created = lsquic_time_now();
     return conn_h;
 }
@@ -330,20 +347,83 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
 
 
 static void
-http_client_on_hsk_done (lsquic_conn_t *conn, int ok)
+http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 {
     lsquic_conn_ctx_t *conn_h;
-    LSQ_INFO("handshake %s", ok ? "completed successfully" : "failed");
+    lsquic_conn_ctx_t *conn_ctx = lsquic_conn_get_ctx(conn);
+    struct http_client_ctx *client_ctx = conn_ctx->client_ctx;
+    ssize_t ret;
+    if (status == LSQ_HSK_FAIL)
+        LSQ_INFO("handshake failed");
+    else
+        LSQ_INFO("handshake success %s",
+                                status == LSQ_HSK_0RTT_OK ? "with 0-RTT" : "");
+    if (status == LSQ_HSK_OK)
+    {
+        ret = lsquic_conn_get_zero_rtt(conn, client_ctx->hcc_zero_rtt,
+                                            client_ctx->hcc_zero_rtt_max_len);
+        if (ret > 0)
+        {
+            client_ctx->hcc_zero_rtt_len = ret;
+            LSQ_INFO("get zero_rtt %zu bytes", client_ctx->hcc_zero_rtt_len);
+            client_ctx->hcc_flags |= HCC_RTT_INFO;
+            /* clear file and prepare to write */
+            if (client_ctx->hcc_zero_rtt_file)
+            {
+                client_ctx->hcc_zero_rtt_file = freopen(
+                                        client_ctx->hcc_zero_rtt_file_name,
+                                        "wb", client_ctx->hcc_zero_rtt_file);
+                LSQ_DEBUG("reopen and clear zero_rtt file");
+            }
+            /* open file for the first time */
+            if (client_ctx->hcc_zero_rtt_file_name &&
+                !client_ctx->hcc_zero_rtt_file)
+            {
+                client_ctx->hcc_zero_rtt_file = fopen(
+                                    client_ctx->hcc_zero_rtt_file_name, "wb+");
+                if (client_ctx->hcc_zero_rtt_file)
+                    LSQ_DEBUG("opened zero_rtt file");
+                else
+                    LSQ_DEBUG("zero_rtt file cannot be created");
+            }
+            /* write to file */
+            if (client_ctx->hcc_zero_rtt_file)
+            {
+                size_t ret2 = fwrite(client_ctx->hcc_zero_rtt, 1,
+                                    client_ctx->hcc_zero_rtt_len,
+                                    client_ctx->hcc_zero_rtt_file);
+                LSQ_DEBUG("wrote %zu bytes to zero_rtt file", ret2);
+                if (ret2 == client_ctx->hcc_zero_rtt_len)
+                {
+                    fclose(client_ctx->hcc_zero_rtt_file);
+                    client_ctx->hcc_zero_rtt_file = NULL;
+                    LSQ_DEBUG("close zero_rtt file");
+                }
+                else
+                    LSQ_ERROR("did not write full blob to zero_rtt file");
+            }
+        }
+        else if (ret == 0)
+        {
+            LSQ_INFO("zero_rtt not available");
+        } else
+            LSQ_INFO("get_zero_rtt failed %s", strerror(errno));
+    }
 
-    if (ok && s_display_cert_chain)
+    if ((status != LSQ_HSK_FAIL) && s_display_cert_chain)
         display_cert_chain(conn);
 
-    if (ok)
+    if (status != LSQ_HSK_FAIL)
     {
         conn_h = lsquic_conn_get_ctx(conn);
         ++s_stat_conns_ok;
         update_sample_stats(&s_stat_to_conn,
                                     lsquic_time_now() - conn_h->ch_created);
+        if (TAILQ_EMPTY(&client_ctx->hcc_path_elems))
+        {
+            LSQ_INFO("no paths mode: close connection");
+            lsquic_conn_close(conn_h->conn);
+        }
     }
     else
         ++s_stat_conns_failed;
@@ -426,7 +506,7 @@ send_headers (lsquic_stream_ctx_t *st_h)
         },
         {
             .name  = { .iov_base = ":scheme",       .iov_len = 7, },
-            .value = { .iov_base = "HTTP",          .iov_len = 4, }
+            .value = { .iov_base = "https",         .iov_len = 5, }
         },
         {
             .name  = { .iov_base = ":path",         .iov_len = 5, },
@@ -687,7 +767,9 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
-"   -p PATH     Path to request.  May be specified more than once.\n"
+"   -p PATH     Path to request.  May be specified more than once.  If no\n"
+"                 path is specified, the connection is closed as soon as\n"
+"                 handshake succeeds.\n"
 "   -n CONNS    Number of concurrent connections.  Defaults to 1.\n"
 "   -r NREQS    Total number of requests to send.  Defaults to 1.\n"
 "   -R MAXREQS  Maximum number of requests per single connection.  Some\n"
@@ -703,6 +785,7 @@ usage (const char *prog)
 "   -I          Abort on incomplete reponse from server\n"
 "   -4          Prefer IPv4 when resolving hostname\n"
 "   -6          Prefer IPv6 when resolving hostname\n"
+"   -0 FILE     Provide RTT info file (reading or writing)\n"
 #ifndef WIN32
 "   -C DIR      Certificate store.  If specified, server certificate will\n"
 "                 be verified.\n"
@@ -758,6 +841,7 @@ init_x509_cert_store (const char *path)
     X509 *cert;
     DIR *dir;
     char file_path[NAME_MAX];
+    int ret;
 
     dir = opendir(path);
     if (!dir)
@@ -772,7 +856,18 @@ init_x509_cert_store (const char *path)
     {
         if (ends_in_pem(ent->d_name))
         {
-            snprintf(file_path, sizeof(file_path), "%s/%s", path, ent->d_name);
+            ret = snprintf(file_path, sizeof(file_path), "%s/%s",
+                                                            path, ent->d_name);
+            if (ret < 0)
+            {
+                LSQ_WARN("file_path formatting error %s", strerror(errno));
+                continue;
+            }
+            else if ((unsigned)ret >= sizeof(file_path))
+            {
+                LSQ_WARN("file_path was truncated %s", strerror(errno));
+                continue;
+            }
             cert = file2cert(file_path);
             if (cert)
             {
@@ -945,6 +1040,7 @@ main (int argc, char **argv)
     struct path_elem *pe;
     struct sport_head sports;
     struct prog prog;
+    unsigned char zero_rtt[8192];
 
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
@@ -955,6 +1051,9 @@ main (int argc, char **argv)
     client_ctx.hcc_cc_reqs_per_conn = 1;
     client_ctx.hcc_reqs_per_conn = 1;
     client_ctx.hcc_total_n_reqs = 1;
+    client_ctx.hcc_zero_rtt = (unsigned char *)zero_rtt;
+    client_ctx.hcc_zero_rtt_len = sizeof(zero_rtt);
+    client_ctx.hcc_zero_rtt_max_len = sizeof(zero_rtt);
     client_ctx.prog = &prog;
 #ifdef WIN32
     WSADATA wsd;
@@ -963,7 +1062,7 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46Br:R:IKu:EP:M:n:w:H:p:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46Br:R:IKu:EP:M:n:w:H:p:0:h"
 #ifndef WIN32
                                                                       "C:atT:"
 #endif
@@ -1061,6 +1160,14 @@ main (int argc, char **argv)
                 }
             }
             break;
+        case '0':
+            client_ctx.hcc_zero_rtt_file_name = optarg;
+            client_ctx.hcc_zero_rtt_file = fopen(optarg, "rb+");
+            if (client_ctx.hcc_zero_rtt_file)
+                LSQ_DEBUG("opened zero_rtt file");
+            else
+                LSQ_DEBUG("zero_rtt file is empty, opening later");
+            break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
@@ -1071,10 +1178,19 @@ main (int argc, char **argv)
     prog.prog_api.ea_stats_fh = stats_fh;
 #endif
 
-    if (TAILQ_EMPTY(&client_ctx.hcc_path_elems))
+    if (client_ctx.hcc_zero_rtt_file)
     {
-        fprintf(stderr, "Specify at least one path using -p option\n");
-        exit(1);
+        size_t ret = fread(client_ctx.hcc_zero_rtt, 1,
+                            client_ctx.hcc_zero_rtt_max_len,
+                            client_ctx.hcc_zero_rtt_file);
+        if (ret)
+        {
+            client_ctx.hcc_flags |= HCC_RTT_INFO;
+            client_ctx.hcc_zero_rtt_len = ret;
+            LSQ_DEBUG("read %zu bytes from zero_rtt file", ret);
+        }
+        else
+            LSQ_DEBUG("zero_rtt file is empty");
     }
 
     start_time = lsquic_time_now();
@@ -1089,6 +1205,13 @@ main (int argc, char **argv)
     LSQ_DEBUG("entering event loop");
 
     s = prog_run(&prog);
+
+    if (client_ctx.hcc_zero_rtt_file)
+    {
+        fclose(client_ctx.hcc_zero_rtt_file);
+        client_ctx.hcc_zero_rtt_file = NULL;
+        LSQ_DEBUG("close zero_rtt file");
+    }
 
     if (stats_fh)
     {

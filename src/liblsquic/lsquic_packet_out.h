@@ -203,7 +203,7 @@ posi_next (struct packet_out_srec_iter *posi);
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
-                       const struct lsquic_conn *, enum lsquic_packno_bits,
+                       const struct lsquic_conn *, enum packno_bits,
                        const lsquic_ver_tag_t *, const unsigned char *nonce);
 
 void

@@ -150,3 +150,16 @@ lsquic_conn_get_server_cert_chain (struct lsquic_conn *lconn)
     else
         return NULL;
 }
+
+
+ssize_t
+lsquic_conn_get_zero_rtt(const lsquic_conn_t *lconn,
+                                    unsigned char *zero_rtt, size_t zero_rtt_len)
+{
+    ssize_t ret = -1;
+    if (lconn->cn_enc_session && (lconn->cn_flags & LSCONN_VER_SET))
+        ret = lconn->cn_esf->esf_get_zero_rtt(lconn->cn_enc_session,
+                                                lconn->cn_version,
+                                                    zero_rtt, zero_rtt_len);
+    return ret;
+}

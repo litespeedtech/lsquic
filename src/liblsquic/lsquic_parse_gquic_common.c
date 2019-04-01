@@ -132,6 +132,7 @@ lsquic_gquic_parse_packet_in_begin (struct lsquic_packet_in *packet_in,
     packet_in->pi_refcnt       = 0;
     packet_in->pi_received     = 0;
     packet_in->pi_flags       |= PI_GQUIC;
+    packet_in->pi_flags       |= ((public_flags >> 4) & 3) << PIBIT_BITS_SHIFT;
 
     return 0;
 }
@@ -475,7 +476,7 @@ lsquic_gquic_po_header_sz (enum packet_out_flags flags)
            + (!!(flags & PO_CONN_ID) << 3)                  /* Connection ID */
            + (!!(flags & PO_VERSION) << 2)                  /* Version */
            + (!!(flags & PO_NONCE)   << 5)                  /* Nonce */
-           + packno_bits2len((flags >> POBIT_SHIFT) & 0x3)  /* Packet number */
+           + gquic_packno_bits2len((flags >> POBIT_SHIFT) & 0x3)  /* Packet number */
            ;
 }
 
@@ -499,3 +500,28 @@ lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
 }
 
 
+unsigned
+lsquic_gquic_packno_bits2len (enum packno_bits bits)
+{
+    return gquic_packno_bits2len(bits);
+}
+
+
+enum packno_bits
+lsquic_gquic_calc_packno_bits (lsquic_packno_t packno,
+                        lsquic_packno_t least_unacked, uint64_t n_in_flight)
+{
+    uint64_t delta;
+    unsigned bits;
+
+    delta = packno - least_unacked;
+    if (n_in_flight > delta)
+        delta = n_in_flight;
+
+    delta *= 4;
+    bits = (delta > (1ULL <<  8))
+         + (delta > (1ULL << 16))
+         + (delta > (1ULL << 32));
+
+    return bits;
+}

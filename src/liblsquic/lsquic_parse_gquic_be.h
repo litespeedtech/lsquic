@@ -57,16 +57,16 @@ gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *
 
 int
 gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
-                lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                lsquic_packno_t cur_packno, enum packno_bits bits,
                 lsquic_packno_t least_unacked_packno);
 
 int
 gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
-                 lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                 lsquic_packno_t cur_packno, enum packno_bits bits,
                  lsquic_packno_t *least_unacked);
 
 int
-gquic_be_skip_stop_waiting_frame (size_t buf_len, enum lsquic_packno_bits bits);
+gquic_be_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits);
 
 int
 gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len, uint32_t stream_id,

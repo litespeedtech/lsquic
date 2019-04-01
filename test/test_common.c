@@ -545,6 +545,13 @@ read_one_packet (struct read_iter *iter)
 }
 
 
+#if __GNUC__
+#   define UNLIKELY(cond) __builtin_expect(cond, 0)
+#else
+#   define UNLIKELY(cond) cond
+#endif
+
+
 static void
 read_handler (evutil_socket_t fd, short flags, void *ctx)
 {
@@ -569,6 +576,14 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
         do
             rop = read_one_packet(&iter);
         while (ROP_OK == rop);
+
+        if (UNLIKELY(ROP_ERROR == rop && (sport->sp_flags & SPORT_CONNECT)
+                                                    && errno == ECONNREFUSED))
+        {
+            LSQ_ERROR("connection refused: exit program");
+            prog_cleanup(sport->sp_prog);
+            exit(1);
+        }
 
         n_batches += iter.ri_idx > 0;
 
@@ -623,7 +638,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
     int flags;
 #endif
     SOCKET_TYPE sockfd;
-    socklen_t socklen;
+    socklen_t socklen, peer_socklen;
     union {
         struct sockaddr_in  sin;
         struct sockaddr_in6 sin6;
@@ -661,6 +676,19 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
         CLOSE_SOCKET(sockfd);
         errno = saved_errno;
         return -1;
+    }
+
+    if (sport->sp_flags & SPORT_CONNECT)
+    {
+        peer_socklen = AF_INET == sa_peer->sa_family
+                    ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+        if (0 != connect(sockfd, sa_peer, peer_socklen))
+        {
+            saved_errno = errno;
+            CLOSE_SOCKET(sockfd);
+            errno = saved_errno;
+            return -1;
+        }
     }
 
     /* Make socket non-blocking */
@@ -926,7 +954,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         msg.dwBufferCount  = 1;
         msg.dwFlags        = 0;
 #endif
-        if (sport->sp_flags & SPORT_SERVER)
+        if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)
             setup_control_msg(&msg, &specs[n], ancil.buf, sizeof(ancil.buf));
         else
         {
@@ -1077,6 +1105,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "pace_packets", 12))
         {
             settings->es_pace_packets = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "handshake_to", 12))
+        {
+            settings->es_handshake_to = atoi(val);
             return 0;
         }
         break;

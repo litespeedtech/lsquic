@@ -16,6 +16,8 @@
 #endif
 #include <sys/queue.h>
 
+#include <openssl/ssl.h>
+
 #include "lsquic_types.h"
 #include "lsquic.h"
 #include "lsquic_alarmset.h"
@@ -51,6 +53,7 @@
 #include "lsquic_version.h"
 #include "lsquic_hash.h"
 #include "lsquic_headers.h"
+#include "lsquic_handshake.h"
 
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
@@ -369,10 +372,11 @@ calc_mem_used (const struct full_conn *conn)
 
 
 static void
-set_versions (struct full_conn *conn, unsigned versions)
+set_versions (struct full_conn *conn, unsigned versions,
+                                                    enum lsquic_version *ver)
 {
     conn->fc_ver_neg.vn_supp = versions;
-    conn->fc_ver_neg.vn_ver  = highest_bit_set(versions);
+    conn->fc_ver_neg.vn_ver  = (ver) ? *ver : highest_bit_set(versions);
     conn->fc_ver_neg.vn_buf  = lsquic_ver2tag(conn->fc_ver_neg.vn_ver);
     conn->fc_conn.cn_version = conn->fc_ver_neg.vn_ver;
     conn->fc_conn.cn_pf = select_pf_by_ver(conn->fc_ver_neg.vn_ver);
@@ -382,9 +386,10 @@ set_versions (struct full_conn *conn, unsigned versions)
 
 
 static void
-init_ver_neg (struct full_conn *conn, unsigned versions)
+init_ver_neg (struct full_conn *conn, unsigned versions,
+                                                    enum lsquic_version *ver)
 {
-    set_versions(conn, versions);
+    set_versions(conn, versions, ver);
     conn->fc_ver_neg.vn_tag   = &conn->fc_ver_neg.vn_buf;
     conn->fc_ver_neg.vn_state = VN_START;
 }
@@ -435,7 +440,6 @@ send_smhl (const struct full_conn *conn)
 {
     uint32_t smhl;
     return conn->fc_conn.cn_enc_session
-        && (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && 0 == conn->fc_conn.cn_esf->esf_get_peer_setting(
                             conn->fc_conn.cn_enc_session, QTAG_SMHL, &smhl)
         && 1 == smhl;
@@ -509,8 +513,6 @@ apply_peer_settings (struct full_conn *conn)
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
         cfcw, sfcw, mids);
     conn_on_peer_config(conn, cfcw, sfcw, mids);
-    if (conn->fc_flags & FC_HTTP)
-        maybe_send_settings(conn);
     return 0;
 }
 
@@ -640,14 +642,22 @@ struct lsquic_conn *
 full_conn_client_new (struct lsquic_engine_public *enpub,
                       const struct lsquic_stream_if *stream_if,
                       void *stream_if_ctx, unsigned flags,
-                      const char *hostname, unsigned short max_packet_size)
+                      const char *hostname, unsigned short max_packet_size,
+                      const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct full_conn *conn;
-    enum lsquic_version version;
+    enum lsquic_version version, zero_rtt_version;
     lsquic_cid_t cid;
     const struct enc_session_funcs *esf;
 
     version = highest_bit_set(enpub->enp_settings.es_versions);
+    if (zero_rtt)
+    {
+        zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
+        if (zero_rtt_version < N_LSQVER &&
+            ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
+            version = zero_rtt_version;
+    }
     esf = select_esf_by_ver(version);
     cid = esf->esf_generate_cid();
     conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
@@ -656,7 +666,8 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
         return NULL;
     conn->fc_conn.cn_esf = esf;
     conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub);
+        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub,
+                                                    zero_rtt, zero_rtt_len);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -674,7 +685,7 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    init_ver_neg(conn, conn->fc_settings->es_versions);
+    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
@@ -969,7 +980,7 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->fc_conn.cn_pf,
                         packet_out->po_data + packet_out->po_data_sz, w);
     verify_ack_frame(conn, packet_out->po_data + packet_out->po_data_sz, w);
-    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl);
+    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl, packet_out->po_ack2ed);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
@@ -1656,7 +1667,7 @@ process_stop_waiting_frame (struct full_conn *conn, lsquic_packet_in_t *packet_i
                                             const unsigned char *p, size_t len)
 {
     lsquic_packno_t least, cutoff;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
     int parsed_len;
 
     bits = lsquic_packet_in_packno_bits(packet_in);
@@ -1927,7 +1938,7 @@ process_ver_neg_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         return;
     }
 
-    set_versions(conn, versions);
+    set_versions(conn, versions, NULL);
     conn->fc_ver_neg.vn_state = VN_IN_PROGRESS;
     lsquic_send_ctl_expire_all(&conn->fc_send_ctl);
 }
@@ -1937,12 +1948,14 @@ static void
 reconstruct_packet_number (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
     lsquic_packno_t cur_packno, max_packno;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
+    unsigned packet_len;
 
     cur_packno = packet_in->pi_packno;
     max_packno = lsquic_rechist_largest_packno(&conn->fc_rechist);
     bits = lsquic_packet_in_packno_bits(packet_in);
-    packet_in->pi_packno = restore_packno(cur_packno, bits, max_packno);
+    packet_len = conn->fc_conn.cn_pf->pf_packno_bits2len(bits);
+    packet_in->pi_packno = restore_packno(cur_packno, packet_len, max_packno);
     LSQ_DEBUG("reconstructed (bits: %u, packno: %"PRIu64", max: %"PRIu64") "
         "to %"PRIu64"", bits, cur_packno, max_packno, packet_in->pi_packno);
 }
@@ -2097,6 +2110,7 @@ process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
             }
             LSQ_DEBUG("end of version negotiation: agreed upon %s",
                                     lsquic_ver2str[conn->fc_ver_neg.vn_ver]);
+            lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
         }
         return process_regular_packet(conn, packet_in);
     }
@@ -2365,14 +2379,16 @@ generate_stop_waiting_frame (struct full_conn *conn)
     lsquic_packet_out_t *packet_out;
 
     /* Get packet that has room for the minimum size STOP_WAITING frame: */
-    packet_out = get_writeable_packet(conn, 1 + packno_bits2len(PACKNO_LEN_1));
+    packnum_len = conn->fc_conn.cn_pf->pf_packno_bits2len(GQUIC_PACKNO_LEN_1);
+    packet_out = get_writeable_packet(conn, 1 + packnum_len);
     if (!packet_out)
         return;
 
     /* Now calculate number of bytes we really need.  If there is not enough
      * room in the current packet, get a new one.
      */
-    packnum_len = packno_bits2len(lsquic_packet_out_packno_bits(packet_out));
+    packnum_len = conn->fc_conn.cn_pf->pf_packno_bits2len(
+                                    lsquic_packet_out_packno_bits(packet_out));
     if ((unsigned) lsquic_packet_out_avail(packet_out) < 1 + packnum_len)
     {
         packet_out = get_writeable_packet(conn, 1 + packnum_len);
@@ -2643,7 +2659,8 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
 
     for (stream = lsquic_spi_first(&spi); stream && write_is_possible(conn);
                                             stream = lsquic_spi_next(&spi))
-        lsquic_stream_dispatch_write_events(stream);
+        if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
+            lsquic_stream_dispatch_write_events(stream);
 
     maybe_conn_flush_headers_stream(conn);
 }
@@ -2985,7 +3002,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
-    if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
+    if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) &&
+        !conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+                                                conn->fc_conn.cn_enc_session))
     {
         process_hsk_stream_write_events(conn);
         goto end_write;
@@ -3145,29 +3164,30 @@ full_conn_ci_packet_not_sent (lsquic_conn_t *lconn, lsquic_packet_out_t *packet_
 
 
 static void
-full_conn_ci_handshake_ok (lsquic_conn_t *lconn)
+full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    LSQ_DEBUG("handshake reportedly done");
     lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
-    if (0 == apply_peer_settings(conn))
-        lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
-    else
-        conn->fc_flags |= FC_ERROR;
+    switch (status)
+    {
+        case LSQ_HSK_FAIL:
+            conn->fc_flags |= FC_HSK_FAILED;
+            break;
+        case LSQ_HSK_OK:
+        case LSQ_HSK_0RTT_OK:
+            if (0 == apply_peer_settings(conn))
+            {
+                if (conn->fc_flags & FC_HTTP)
+                    maybe_send_settings(conn);
+                lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
+            }
+            else
+                conn->fc_flags |= FC_ERROR;
+            break;
+    }
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
-        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 1);
-}
-
-
-static void
-full_conn_ci_handshake_failed (lsquic_conn_t *lconn)
-{
-    struct full_conn *conn = (struct full_conn *) lconn;
-    LSQ_DEBUG("handshake failed");
-    lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
-    conn->fc_flags |= FC_HSK_FAILED;
-    if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
-        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn, 0);
+        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn,
+                                                                        status);
 }
 
 
@@ -3539,7 +3559,9 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             return 1;
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
             return 1;
-        if (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) ||
+            conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+                                                conn->fc_conn.cn_enc_session))
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
@@ -3617,8 +3639,7 @@ static const struct conn_iface full_conn_iface = {
 #if LSQUIC_CONN_STATS
     .ci_get_stats            =  full_conn_ci_get_stats,
 #endif
-    .ci_handshake_failed     =  full_conn_ci_handshake_failed,
-    .ci_handshake_ok         =  full_conn_ci_handshake_ok,
+    .ci_hsk_done             =  full_conn_ci_hsk_done,
     .ci_is_tickable          =  full_conn_ci_is_tickable,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,
     .ci_next_tick_time       =  full_conn_ci_next_tick_time,
