@@ -17,10 +17,12 @@ lsquic_parse_packet_in_begin (lsquic_packet_in_t *packet_in, size_t length,
 {
     if (length > 0)
     {
-        switch (packet_in->pi_data[0] & 0x88)
+        switch (packet_in->pi_data[0] & 0xC8)
         {
         case 0x88:
         case 0x80:
+        case 0xC8:
+        case 0xC0:
             return lsquic_iquic_parse_packet_in_long_begin(packet_in, length,
                                                             is_server, state);
         case 0x08:

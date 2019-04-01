@@ -183,7 +183,7 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
-                const struct lsquic_conn *lconn, enum lsquic_packno_bits bits,
+                const struct lsquic_conn *lconn, enum packno_bits bits,
                 const lsquic_ver_tag_t *ver_tag, const unsigned char *nonce)
 {
     lsquic_packet_out_t *packet_out;
@@ -204,10 +204,10 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
         )
     {
         flags |= PO_LONGHEAD;
-        if (!((1 << lconn->cn_version) & LSQUIC_GQUIC_HEADER_VERSIONS))
+        if (lconn->cn_version == LSQVER_044)
         {
             flags &= ~(3 << POBIT_SHIFT);
-            flags |= PACKNO_LEN_4 << POBIT_SHIFT;
+            flags |= GQUIC_PACKNO_LEN_4 << POBIT_SHIFT;
         }
     }
 

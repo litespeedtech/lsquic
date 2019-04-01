@@ -157,13 +157,36 @@ lsquic_frame_types_to_str (char *buf, size_t bufsz, enum quic_ft_bit);
 #define QUIC_GOAWAY_FRAME_SZ 11  /* Type (1) + Error code (4) + Stream ID (4) +
                                                 Reason phrase length (2) */
 
-/* Bitmask to be used as bits 4 and 5 (0x30) in common header's flag field: */
-enum lsquic_packno_bits
+
+/* This value represents a different number of bytes used to encode the packet
+ * length based on whether GQUIC or IQUIC is used.
+ */
+enum packno_bits
 {
-    PACKNO_LEN_1    = 0,
-    PACKNO_LEN_2    = 1,
-    PACKNO_LEN_4    = 2,
-    PACKNO_LEN_6    = 3,
+    PACKNO_BITS_0 = 0,
+    PACKNO_BITS_1 = 1,
+    PACKNO_BITS_2 = 2,
+    PACKNO_BITS_3 = 3,
+};
+
+
+/* GQUIC maps 0, 1, 2, 3 -> 1, 2, 4, 6 */
+enum
+{
+    GQUIC_PACKNO_LEN_1 = PACKNO_BITS_0,
+    GQUIC_PACKNO_LEN_2 = PACKNO_BITS_1,
+    GQUIC_PACKNO_LEN_4 = PACKNO_BITS_2,
+    GQUIC_PACKNO_LEN_6 = PACKNO_BITS_3,
+};
+
+
+/* IQUIC maps 0, 1, 2, 3 -> 1, 2, 3, 4 (as of ID-17) */
+enum
+{
+    IQUIC_PACKNO_LEN_1 = PACKNO_BITS_0,
+    IQUIC_PACKNO_LEN_2 = PACKNO_BITS_1,
+    IQUIC_PACKNO_LEN_3 = PACKNO_BITS_2,
+    IQUIC_PACKNO_LEN_4 = PACKNO_BITS_3,
 };
 
 
@@ -179,15 +202,15 @@ enum header_type
 
 extern const char *const lsquic_hety2str[];
 
-enum lsquic_packno_bits
+enum packno_bits
 calc_packno_bits (lsquic_packno_t packno, lsquic_packno_t least_unacked,
                   uint64_t n_in_flight);
 
-#define packno_bits2len(b) (((b) << 1) + !(b))
+#define gquic_packno_bits2len(b) (((b) << 1) + !(b))
 
 lsquic_packno_t
 restore_packno (lsquic_packno_t cur_packno,
-                enum lsquic_packno_bits cur_packno_bits,
+                unsigned packet_len,
                 lsquic_packno_t max_packno);
 
 #endif

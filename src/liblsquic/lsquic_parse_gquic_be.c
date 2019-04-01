@@ -108,12 +108,12 @@ gquic_be_gen_reg_pkt_header (const struct lsquic_conn *lconn,
                                                                 size_t bufsz)
 {
     unsigned packnum_len, header_len;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
     lsquic_packno_t packno;
     unsigned char *p;
 
     bits = lsquic_packet_out_packno_bits(packet_out);
-    packnum_len = packno_bits2len(bits);
+    packnum_len = gquic_packno_bits2len(bits);
 
     if (0 == (packet_out->po_flags & (PO_CONN_ID|PO_VERSION|PO_NONCE)))
     {
@@ -500,11 +500,11 @@ gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *
 
 int
 gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
-                lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                lsquic_packno_t cur_packno, enum packno_bits bits,
                 lsquic_packno_t least_unacked_packno)
 {
     lsquic_packno_t delta;
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
 
     if (buf_len >= 1 + packnum_len)
     {
@@ -524,11 +524,11 @@ gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
 
 int
 gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
-                 lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                 lsquic_packno_t cur_packno, enum packno_bits bits,
                  lsquic_packno_t *least_unacked)
 {
     lsquic_packno_t delta;
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
 
     if (buf_len >= 1 + packnum_len)
     {
@@ -542,9 +542,9 @@ gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_skip_stop_waiting_frame (size_t buf_len, enum lsquic_packno_bits bits)
+gquic_be_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits)
 {
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
     if (buf_len >= 1 + packnum_len)
         return 1 + packnum_len;
     else
@@ -976,4 +976,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q039 =
     .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q039,
     .pf_packout_size                  =  lsquic_gquic_packout_size,
     .pf_packout_header_size           =  lsquic_gquic_packout_header_size,
+    .pf_calc_packno_bits              =  lsquic_gquic_calc_packno_bits,
+    .pf_packno_bits2len               =  lsquic_gquic_packno_bits2len,
 };

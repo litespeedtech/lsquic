@@ -954,7 +954,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         msg.dwBufferCount  = 1;
         msg.dwFlags        = 0;
 #endif
-        if (sport->sp_flags & SPORT_SERVER)
+        if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)
             setup_control_msg(&msg, &specs[n], ancil.buf, sizeof(ancil.buf));
         else
         {

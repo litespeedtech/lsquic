@@ -103,10 +103,10 @@ static
 #elif __GNUC__
 __attribute__((weak))
 #endif
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_guess_packno_bits (lsquic_send_ctl_t *ctl)
 {
-    return PACKNO_LEN_2;
+    return PACKNO_BITS_1;   /* This is 2 bytes in both GQUIC and IQUIC */
 }
 
 
@@ -257,7 +257,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     for (i = 0; i < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++i)
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
-    ctl->sc_max_packno_bits = PACKNO_LEN_4; /* Safe value before verneg */
+    ctl->sc_max_packno_bits = PACKNO_BITS_2; /* Safe value before verneg */
 }
 
 
@@ -1195,7 +1195,7 @@ lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *ctl)
 
 
 static lsquic_packet_out_t *
-send_ctl_allocate_packet (lsquic_send_ctl_t *ctl, enum lsquic_packno_bits bits,
+send_ctl_allocate_packet (lsquic_send_ctl_t *ctl, enum packno_bits bits,
                                                         unsigned need_at_least)
 {
     lsquic_packet_out_t *packet_out;
@@ -1226,7 +1226,7 @@ lsquic_packet_out_t *
 lsquic_send_ctl_new_packet_out (lsquic_send_ctl_t *ctl, unsigned need_at_least)
 {
     lsquic_packet_out_t *packet_out;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
 
     bits = lsquic_send_ctl_packno_bits(ctl);
     packet_out = send_ctl_allocate_packet(ctl, bits, need_at_least);
@@ -1675,7 +1675,7 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
                                     &ctl->sc_buffered_packets[packet_type];
     struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
     lsquic_packet_out_t *packet_out;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
     enum { AA_STEAL, AA_GENERATE, AA_NONE, } ack_action;
 
     packet_out = TAILQ_LAST(&packet_q->bpq_packets, lsquic_packets_tailq);
@@ -1778,11 +1778,11 @@ static
 #elif __GNUC__
 __attribute__((weak))
 #endif
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_calc_packno_bits (lsquic_send_ctl_t *ctl)
 {
     lsquic_packno_t smallest_unacked;
-    enum lsquic_packno_bits bits;
+    enum packno_bits bits;
     unsigned n_in_flight;
 
     smallest_unacked = lsquic_send_ctl_smallest_unacked(ctl);
@@ -1796,7 +1796,7 @@ lsquic_send_ctl_calc_packno_bits (lsquic_send_ctl_t *ctl)
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *ctl)
 {
 
@@ -1810,7 +1810,7 @@ lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *ctl)
 static int
 split_buffered_packet (lsquic_send_ctl_t *ctl,
         enum buf_packet_type packet_type, lsquic_packet_out_t *packet_out,
-        enum lsquic_packno_bits bits, unsigned excess_bytes)
+        enum packno_bits bits, unsigned excess_bytes)
 {
     struct buf_packet_q *const packet_q =
                                     &ctl->sc_buffered_packets[packet_type];
@@ -1847,12 +1847,13 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *ctl,
 {
     struct buf_packet_q *const packet_q =
                                     &ctl->sc_buffered_packets[packet_type];
+    const struct parse_funcs *const pf = ctl->sc_conn_pub->lconn->cn_pf;
     lsquic_packet_out_t *packet_out;
     unsigned used, excess;
 
     assert(lsquic_send_ctl_schedule_stream_packets_immediately(ctl));
-    const enum lsquic_packno_bits bits = lsquic_send_ctl_calc_packno_bits(ctl);
-    const unsigned need = packno_bits2len(bits);
+    const enum packno_bits bits = lsquic_send_ctl_calc_packno_bits(ctl);
+    const unsigned need = pf->pf_packno_bits2len(bits);
 
     while ((packet_out = TAILQ_FIRST(&packet_q->bpq_packets)) &&
                                             lsquic_send_ctl_can_send(ctl))
@@ -1873,7 +1874,8 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *ctl,
         }
         if (bits != lsquic_packet_out_packno_bits(packet_out))
         {
-            used = packno_bits2len(lsquic_packet_out_packno_bits(packet_out));
+            used = pf->pf_packno_bits2len(
+                                lsquic_packet_out_packno_bits(packet_out));
             if (need > used
                 && need - used > lsquic_packet_out_avail(packet_out))
             {
@@ -1954,12 +1956,10 @@ lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *ctl)
 void
 lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *ctl)
 {
-    if ((1 << ctl->sc_conn_pub->lconn->cn_version) &
-                                            LSQUIC_GQUIC_HEADER_VERSIONS)
-        ctl->sc_max_packno_bits = PACKNO_LEN_6;
+    if (ctl->sc_conn_pub->lconn->cn_version == LSQVER_044)
+        ctl->sc_max_packno_bits = PACKNO_BITS_2;
     else
-        /* Assuming Q044 */
-        ctl->sc_max_packno_bits = PACKNO_LEN_4;
+        ctl->sc_max_packno_bits = PACKNO_BITS_3;
     LSQ_DEBUG("version negotiation done (%s): max packno bits: %u",
         lsquic_ver2str[ ctl->sc_conn_pub->lconn->cn_version ],
         ctl->sc_max_packno_bits);

@@ -60,7 +60,7 @@ typedef size_t (*gsf_read_f) (void *stream, void *buf, size_t len, int *fin);
 /* This structure contains functions that parse and generate packets and
  * frames in version-specific manner.  To begin with, there is difference
  * between GQUIC's little-endian (Q038 and lower) and big-endian formats
- * (Q039 and higher).  Q044 uses different format for packet headers.
+ * (Q039 and higher).  Q044 and higher uses different format for packet headers.
  */
 struct parse_funcs
 {
@@ -96,14 +96,14 @@ struct parse_funcs
                 int *has_missing, lsquic_packno_t *largest_received);
     int
     (*pf_gen_stop_waiting_frame) (unsigned char *buf, size_t buf_len,
-                    lsquic_packno_t cur_packno, enum lsquic_packno_bits,
+                    lsquic_packno_t cur_packno, enum packno_bits,
                     lsquic_packno_t least_unacked_packno);
     int
     (*pf_parse_stop_waiting_frame) (const unsigned char *buf, size_t buf_len,
-                     lsquic_packno_t cur_packno, enum lsquic_packno_bits,
+                     lsquic_packno_t cur_packno, enum packno_bits,
                      lsquic_packno_t *least_unacked);
     int
-    (*pf_skip_stop_waiting_frame) (size_t buf_len, enum lsquic_packno_bits);
+    (*pf_skip_stop_waiting_frame) (size_t buf_len, enum packno_bits);
     int
     (*pf_gen_window_update_frame) (unsigned char *buf, int buf_len,
                                     uint32_t stream_id, uint64_t offset);
@@ -160,19 +160,28 @@ struct parse_funcs
     size_t
     (*pf_packout_header_size) (const struct lsquic_conn *,
                                             enum packet_out_flags);
+
+    enum packno_bits
+    (*pf_calc_packno_bits) (lsquic_packno_t packno,
+                        lsquic_packno_t least_unacked, uint64_t n_in_flight);
+    unsigned
+    (*pf_packno_bits2len) (enum packno_bits);
 };
 
 extern const struct parse_funcs lsquic_parse_funcs_gquic_le;
 /* Q039 and later are big-endian: */
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q044;
+extern const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
 
 #define select_pf_by_ver(ver) (                                         \
     ((1 << (ver)) & (1 << LSQVER_035))                                  \
         ? &lsquic_parse_funcs_gquic_le                                  \
         : (ver) < LSQVER_044                                            \
         ? &lsquic_parse_funcs_gquic_Q039                                \
-        : &lsquic_parse_funcs_gquic_Q044)
+        : (ver) < LSQVER_046                                            \
+        ? &lsquic_parse_funcs_gquic_Q044                                \
+        : &lsquic_parse_funcs_gquic_Q046)
 
 int
 lsquic_gquic_parse_packet_in_begin (struct lsquic_packet_in *, size_t length,
@@ -228,5 +237,12 @@ acki2str (const struct ack_info *acki, size_t *sz);
 
 void
 lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *);
+
+enum packno_bits
+lsquic_gquic_calc_packno_bits (lsquic_packno_t packno,
+                        lsquic_packno_t least_unacked, uint64_t n_in_flight);
+
+unsigned
+lsquic_gquic_packno_bits2len (enum packno_bits);
 
 #endif

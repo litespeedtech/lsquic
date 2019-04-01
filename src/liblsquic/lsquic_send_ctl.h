@@ -95,7 +95,7 @@ typedef struct lsquic_send_ctl {
     }                               sc_cached_bpt;
     unsigned                        sc_next_limit;
     unsigned                        sc_n_scheduled;
-    enum lsquic_packno_bits         sc_max_packno_bits;
+    enum packno_bits                sc_max_packno_bits;
 #if LSQUIC_SEND_STATS
     struct {
         unsigned            n_total_sent,
@@ -233,7 +233,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
         ? pacer_next_sched(&(ctl)->sc_pacer)                \
         : 0 )
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *);
 
 int
@@ -248,7 +248,7 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
 } while (0)
 
 #ifndef NDEBUG
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_guess_packno_bits (struct lsquic_send_ctl *);
 
 int
@@ -258,7 +258,7 @@ enum buf_packet_type
 lsquic_send_ctl_determine_bpt (struct lsquic_send_ctl *,
                                             const struct lsquic_stream *);
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_calc_packno_bits (struct lsquic_send_ctl *);
 #endif
 

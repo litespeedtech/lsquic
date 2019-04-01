@@ -1,3 +1,7 @@
+2019-04-01
+    - 1.20.0
+    - [FEATURE] Add support for Q046.
+
 2019-03-19
     - 1.19.6
     - [BUGFIX] Ensure that Largest Observed does not decrease in ACKs we
