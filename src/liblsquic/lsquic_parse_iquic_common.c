@@ -133,7 +133,7 @@ lsquic_iquic_parse_packet_in_long_begin (lsquic_packet_in_t *packet_in,
             return -1;
 #ifdef WIN32
         /* Useless initialization */
-        packet_len = 0
+        packet_len = 0;
 #endif
     }
 
