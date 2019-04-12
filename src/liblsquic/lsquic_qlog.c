@@ -74,7 +74,8 @@ lsquic_qlog_create_connection (lsquic_cid_t cid,
             lsquic_time_now(), ip_version, srcip, dstip, srcport, dstport);
 }
 
-#define QLOG_FRAME_DICT_PREFIX ",{\"frame_type\":\""
+#define QLOG_FRAME_DICT_PREFIX_COMMA ",{\"frame_type\":\""
+#define QLOG_FRAME_DICT_PREFIX "{\"frame_type\":\""
 #define QLOG_FRAME_DICT_SUFFIX "\"}"
 #define QLOG_FRAME_LIST_PREFIX ",\"frames\":["
 #define QLOG_FRAME_LIST_SUFFIX "]"
@@ -83,7 +84,7 @@ lsquic_qlog_create_connection (lsquic_cid_t cid,
     sizeof(QLOG_FRAME_LIST_SUFFIX) + \
     lsquic_frame_types_str_sz + \
     (N_QUIC_FRAMES * \
-    (sizeof(QLOG_FRAME_DICT_PREFIX) + \
+    (sizeof(QLOG_FRAME_DICT_PREFIX_COMMA) + \
      sizeof(QLOG_FRAME_DICT_SUFFIX)))
 
 void
@@ -112,7 +113,9 @@ lsquic_qlog_packet_rx (lsquic_cid_t cid,
                                 /* prefix + FRAME_NAME + suffix */
                                 "%s%s%s",
                                 /* skip comma in prefix if first frame */
-                                QLOG_FRAME_DICT_PREFIX + (first++ ? 0 : 1),
+                                (first++ ?
+                                    QLOG_FRAME_DICT_PREFIX_COMMA :
+                                    QLOG_FRAME_DICT_PREFIX),
                                 QUIC_FRAME_NAME(i),
                                 QLOG_FRAME_DICT_SUFFIX);
                 if ((unsigned)ret > QLOG_FRAME_LIST_MAX - cur)
@@ -132,7 +135,7 @@ lsquic_qlog_packet_rx (lsquic_cid_t cid,
                 "\"header\":{"
                     "\"type\":\"%s\","
                     "\"payload_length\":\"%d\","
-                    "\"packet_number\":\"%ld\""
+                    "\"packet_number\":\"%" PRIu64 "\""
                 "}%s"
             "}]",
             packet_in->pi_received,

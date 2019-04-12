@@ -17,6 +17,7 @@
 int
 main (void)
 {
+    lsquic_global_init(LSQUIC_GLOBAL_CLIENT | LSQUIC_GLOBAL_CLIENT);
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
     lsquic_set_log_level("debug");
 
