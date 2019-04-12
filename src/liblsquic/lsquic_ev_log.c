@@ -345,3 +345,42 @@ lsquic_ev_log_generated_http_push_promise (lsquic_cid_t cid,
                 (int)    extra_headers->headers[i].value.iov_len,
                 (char *) extra_headers->headers[i].value.iov_base);
 }
+
+
+void
+lsquic_ev_log_create_connection (lsquic_cid_t cid,
+                                    const struct sockaddr *local_sa,
+                                    const struct sockaddr *peer_sa)
+{
+    LCID("connection created");
+}
+
+
+void
+lsquic_ev_log_hsk_completed (lsquic_cid_t cid)
+{
+    LCID("handshake completed");
+}
+
+
+void
+lsquic_ev_log_zero_rtt (lsquic_cid_t cid)
+{
+    LCID("zero_rtt successful");
+}
+
+
+void
+lsquic_ev_log_check_certs (lsquic_cid_t cid, const lsquic_str_t **certs,
+                                                                size_t count)
+{
+    LCID("check certs");
+}
+
+
+void
+lsquic_ev_log_version_negotiation (lsquic_cid_t cid,
+                                        const char *action, const char *ver)
+{
+    LCID("version negotiation: %s version %s", action, ver);
+}

@@ -25,6 +25,8 @@ lsquic_is_zero (const void *buf, size_t bufsz);
 
 char * get_bin_str(const void *s, size_t len, size_t max_display_len);
 
+size_t
+lsquic_hex_encode (const void *src, size_t src_sz, void *dst, size_t dst_sz);
 
 /* `out_sz' is assumed to be at least 1.  `out' is always NUL-terminated. */
 size_t

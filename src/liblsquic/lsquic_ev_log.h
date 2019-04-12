@@ -7,6 +7,7 @@
 #define LSQUIC_EV_LOG_H 1
 
 #include "lsquic_int_types.h"
+#include "lsquic_qlog.h"
 
 struct ack_info;
 struct http_prio_frame;
@@ -206,6 +207,58 @@ lsquic_ev_log_generated_http_push_promise (lsquic_cid_t, uint32_t stream_id,
 #define EV_LOG_GENERATED_HTTP_PUSH_PROMISE(...) do {                        \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
         lsquic_ev_log_generated_http_push_promise(__VA_ARGS__);             \
+} while (0)
+
+void
+lsquic_ev_log_create_connection (lsquic_cid_t, const struct sockaddr *,
+                                                    const struct sockaddr *);
+
+#define EV_LOG_CREATE_CONN(...) do {                                        \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_create_connection(__VA_ARGS__);                       \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_create_connection(__VA_ARGS__);                         \
+} while (0)
+
+void
+lsquic_ev_log_hsk_completed (lsquic_cid_t);
+
+#define EV_LOG_HSK_COMPLETED(...) do {                                      \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_hsk_completed(__VA_ARGS__);                           \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_hsk_completed(__VA_ARGS__);                             \
+} while (0)
+
+
+void
+lsquic_ev_log_zero_rtt (lsquic_cid_t);
+
+#define EV_LOG_ZERO_RTT(...) do {                                           \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_zero_rtt(__VA_ARGS__);                                \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_zero_rtt(__VA_ARGS__);                                  \
+} while (0)
+
+void
+lsquic_ev_log_check_certs (lsquic_cid_t, const lsquic_str_t **, size_t);
+
+#define EV_LOG_CHECK_CERTS(...) do {                                        \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_check_certs(__VA_ARGS__);                             \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_check_certs(__VA_ARGS__);                               \
+} while (0)
+
+void
+lsquic_ev_log_version_negotiation (lsquic_cid_t, const char *, const char *);
+
+#define EV_LOG_VER_NEG(...) do {                                            \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_version_negotiation(__VA_ARGS__);                     \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_version_negotiation(__VA_ARGS__);                       \
 } while (0)
 
 #endif

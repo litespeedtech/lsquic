@@ -1185,6 +1185,7 @@ static int handle_chlo_reply_verify_prof(lsquic_enc_session_t *enc_session,
         LSQ_INFO("server certificate verification %ssuccessful",
                                                     ret == 0 ? "" : "not ");
     }
+    EV_LOG_CHECK_CERTS(enc_session->cid, (const lsquic_str_t **)out_certs, *out_certs_count);
 
   cleanup:
     if (chain)
@@ -1423,6 +1424,9 @@ lsquic_enc_session_handle_chlo_reply (lsquic_enc_session_t *enc_session,
     else if(head_tag == QTAG_SHLO)
     {
         enc_session->hsk_state = HSK_COMPLETED;
+        EV_LOG_HSK_COMPLETED(enc_session->cid);
+        if (!(enc_session->es_flags & ES_RECV_REJ))
+            EV_LOG_ZERO_RTT(enc_session->cid);
     }
 
     if (info->scfg_flag == 1)

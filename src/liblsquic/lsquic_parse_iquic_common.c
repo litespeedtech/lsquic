@@ -75,13 +75,7 @@ lsquic_iquic_parse_packet_in_long_begin (lsquic_packet_in_t *packet_in,
             header_type = bits2ht[ (first_byte >> 4) & 3 ];
     }
     else
-    {
         header_type = HETY_VERNEG;
-#ifdef WIN32
-        /* Useless initialization */
-        version = -1;
-#endif
-    }
 
     packet_in->pi_header_type = header_type;
 
@@ -131,10 +125,6 @@ lsquic_iquic_parse_packet_in_long_begin (lsquic_packet_in_t *packet_in,
         /* Need at least one version in the version array: add 4 */
         if (end - p < (ptrdiff_t) (dcil + scil + 4))
             return -1;
-#ifdef WIN32
-        /* Useless initialization */
-        packet_len = 0;
-#endif
     }
 
     memcpy(&packet_in->pi_conn_id, p, cid_len);

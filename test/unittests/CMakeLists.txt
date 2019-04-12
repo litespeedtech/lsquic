@@ -38,6 +38,7 @@ SET(TESTS
     hkdf
     lsquic_hash
     malo
+    qlog
     packet_out
     packno_len
     parse_packet_in

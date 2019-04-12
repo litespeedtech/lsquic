@@ -64,8 +64,9 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     [QUIC_FRAME_PING]              =  "QUIC_FRAME_PING",
 };
 
-
-#define QUIC_FRAME_SLEN(x) (sizeof(#x) - sizeof("QUIC_FRAME_"))
+#define QUIC_FRAME_PRELEN   (sizeof("QUIC_FRAME_"))
+#define QUIC_FRAME_SLEN(x)  (sizeof(#x) - QUIC_FRAME_PRELEN)
+#define QUIC_FRAME_NAME(i)  (frame_type_2_str[i] + QUIC_FRAME_PRELEN - 1)
 
 
     /* We don't need to include INVALID frame in this list because it is

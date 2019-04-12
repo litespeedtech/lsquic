@@ -39,6 +39,7 @@ SET(lsquic_STAT_SRCS
     lsquic_di_error.c
     lsquic_global.c
     lsquic_packet_common.c
+    lsquic_qlog.c
     lsquic_ev_log.c
     lsquic_frame_common.c
     lsquic_packints.c

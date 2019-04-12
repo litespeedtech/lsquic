@@ -128,6 +128,34 @@ char *get_bin_str(const void *s, size_t len, size_t max_display_len)
 }
 
 
+static char
+hex_digit(uint8_t n)
+{
+    return (n < 10) ? (n + '0') : ((n - 10) + 'a');
+}
+
+
+size_t
+lsquic_hex_encode (const void *src, size_t src_sz, void *dst, size_t dst_sz)
+{
+    size_t src_cur, dst_cur;
+    const uint8_t *src_hex;
+    char *dst_char;
+
+    src_hex = (const uint8_t *)src;
+    dst_char = (char *)dst;
+    src_cur = dst_cur = 0;
+
+    while (src_cur < src_sz && dst_cur < (dst_sz - 2))
+    {
+        dst_char[dst_cur++] = hex_digit((src_hex[src_cur] & 0xf0) >> 4);
+        dst_char[dst_cur++] = hex_digit(src_hex[src_cur++] & 0x0f);
+    }
+    dst_char[dst_cur++] = '\0';
+    return dst_cur;
+}
+
+
 size_t
 hexdump (const void *src_void, size_t src_sz, char *out, size_t out_sz)
 {

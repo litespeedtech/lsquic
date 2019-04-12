@@ -553,6 +553,8 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
        const struct sockaddr *sa_peer, void *peer_ctx)
 {
     lsquic_conn_t *conn;
+    const unsigned char *packet_in_data;
+    size_t packet_in_size;
 
     if (lsquic_packet_in_is_gquic_prst(packet_in)
                                 && !engine->pub.enp_settings.es_honor_prst)
@@ -577,8 +579,27 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     }
     lsquic_conn_record_sockaddr(conn, sa_local, sa_peer);
     lsquic_packet_in_upref(packet_in);
+    /* Note on QLog:
+     * For the PACKET_RX QLog event, we are interested in logging these things:
+     *  - raw packet (however it comes in, encrypted or not)
+     *  - frames (list of frame names)
+     *  - packet type and number
+     *  - packet rx timestamp
+     *
+     * Since only some of these items are available at this code
+     * juncture, we will wait until after the packet has been
+     * decrypted (if necessary) and parsed to call the log functions.
+     *
+     * Once the PACKET_RX event is finally logged, the timestamp
+     * will come from packet_in->pi_received. For correct sequential
+     * ordering of QLog events, be sure to process the QLogs downstream.
+     * (Hint: Use the qlog_parser.py tool in tools/ for full QLog processing.)
+     */
     conn->cn_peer_ctx = peer_ctx;
+    packet_in_data = packet_in->pi_data;
+    packet_in_size = packet_in->pi_data_sz;
     conn->cn_if->ci_packet_in(conn, packet_in);
+    QLOG_PACKET_RX(conn->cn_cid, packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
     return 0;
 }
@@ -700,6 +721,8 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
                                                     zero_rtt, zero_rtt_len);
     if (!conn)
         goto err;
+    EV_LOG_CREATE_CONN(conn->cn_cid, local_sa, peer_sa);
+    EV_LOG_VER_NEG(conn->cn_cid, "proposed", lsquic_ver2str[conn->cn_version]);
     lsquic_conn_record_sockaddr(conn, local_sa, peer_sa);
     if (0 != conn_hash_add(&engine->conns_hash, conn))
     {
