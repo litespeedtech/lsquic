@@ -6,7 +6,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #ifdef WIN32
-#include <Ws2ipdef.h>
+#include <Ws2tcpip.h>
 #else
 #include <netinet/in.h>
 #include <arpa/inet.h>
