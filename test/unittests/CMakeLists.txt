@@ -38,7 +38,6 @@ SET(TESTS
     hkdf
     lsquic_hash
     malo
-    qlog
     packet_out
     packno_len
     parse_packet_in
@@ -66,6 +65,11 @@ SET(TESTS
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Linux has fmemopen
     SET(TESTS ${TESTS} frame_rw)
+ENDIF()
+
+IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    # Linux has fmemopen
+    SET(TESTS ${TESTS} qlog)
 ENDIF()
 
 
