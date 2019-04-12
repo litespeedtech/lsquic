@@ -5,7 +5,12 @@
 #include <inttypes.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <Winsock.h>
+#include <Ws2tcpip.h>
+#else
 #include <arpa/inet.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
