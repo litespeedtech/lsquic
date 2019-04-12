@@ -8,6 +8,7 @@
 #ifdef WIN32
 #include <Ws2tcpip.h>
 #else
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #endif
