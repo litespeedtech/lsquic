@@ -5,7 +5,14 @@
 #include <inttypes.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifdef WIN32
+#include <Ws2tcpip.h>
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
