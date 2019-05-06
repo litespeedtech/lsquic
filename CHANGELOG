@@ -1,3 +1,9 @@
+2019-05-06
+    - 1.21.1
+    - [BUGFIX] If FIN or RST not received, don't delay stream destruction.
+    - [OPTIMIZATION] Speed up HPACK encoder by using same hash value to
+      search static and dynamic tables.
+
 2019-04-12
     - 1.21.0
     - [FEATURE] Add qlog log module.

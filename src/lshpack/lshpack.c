@@ -5411,325 +5411,119 @@ lshpack_enc_cleanup (struct lshpack_enc *enc)
 }
 
 
+#define LSHPACK_XXH_SEED 0
+#define XXH_NAMEVAL_WIDTH 9
+#define XXH_NAMEVAL_SHIFT 2
+#define XXH_NAME_WIDTH 9
+#define XXH_NAME_SHIFT 9
+
+static const unsigned char nameval2id[ 1 << XXH_NAMEVAL_WIDTH ] =
+{
+    [475]  =  2,   [361]  =  3,   [149]  =  4,   [219]  =  5,   [511]  =  6,
+    [299]  =  7,   [298]  =  8,   [19]   =  9,   [370]  =  10,  [95]   =  11,
+    [158]  =  12,  [281]  = 13,   [423]  =  14,  [501]  =  16,
+};
+
+static const unsigned char name2id[ 1 << XXH_NAME_WIDTH ] =
+{
+    [215]  =  1,   [207]  =  2,   [286]  =  4,   [321]  =  6,   [289]  =  8,
+    [63]   =  15,  [122]  =  16,  [209]  =  17,  [194]  =  18,  [331]  =  19,
+    [273]  =  20,  [278]  =  21,  [431]  =  22,  [232]  =  23,  [182]  =  24,
+    [483]  =  25,  [59]   =  26,  [52]   =  27,  [422]  =  28,  [62]   =  29,
+    [381]  =  30,  [233]  =  31,  [110]  =  32,  [15]   =  33,  [85]   =  34,
+    [452]  =  35,  [28]   =  36,  [414]  =  37,  [82]   =  38,  [345]  =  39,
+    [467]  =  40,  [501]  =  41,  [299]  =  42,  [168]  =  43,  [326]  =  44,
+    [199]  =  45,  [360]  =  46,  [36]   =  47,  [349]  =  48,  [347]  =  49,
+    [126]  =  50,  [208]  =  51,  [416]  =  52,  [373]  =  53,  [477]  =  54,
+    [33]   =  55,  [316]  =  56,  [156]  =  57,  [386]  =  58,  [116]  =  59,
+    [450]  =  60,  [297]  =  61,
+};
+
+
 //not find return 0, otherwise return the index
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+        unsigned
+lshpack_enc_get_static_nameval (uint32_t nameval_hash, const char *name,
+        lshpack_strlen_t name_len, const char *val, lshpack_strlen_t val_len)
+{
+    unsigned i;
+ 
+    i = (nameval_hash >> XXH_NAMEVAL_SHIFT) & ((1 << XXH_NAMEVAL_WIDTH) - 1);
+    if (nameval2id[i])
+    {
+        i = nameval2id[i] - 1;
+        if (static_table[i].name_len == name_len
+            && static_table[i].val_len == val_len
+            && memcmp(name, static_table[i].name, name_len) == 0
+            && memcmp(val, static_table[i].val, val_len) == 0)
+        {
+            return i + 1;
+        }
+    }
+
+    return 0;
+}
+
+
+#if !LS_HPACK_EMIT_TEST_CODE
+static
+#endif
+       unsigned
+lshpack_enc_get_static_name (uint32_t name_hash, const char *name,
+                                            lshpack_strlen_t name_len)
+{
+    unsigned i;
+
+    i = (name_hash >> XXH_NAME_SHIFT) & ((1 << XXH_NAME_WIDTH) - 1);
+    if (name2id[i])
+    {
+        i = name2id[i] - 1;
+        if (static_table[i].name_len == name_len
+            && memcmp(name, static_table[i].name, name_len) == 0)
+        {
+            return i + 1;
+        }
+    }
+
+    return 0;
+}
+
+
 unsigned
 lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
-                const char *val, lshpack_strlen_t val_len, int *val_matched)
+                                    const char *val, lshpack_strlen_t val_len)
 {
-    if (name_len < 3)
-        return 0;
+    uint32_t name_hash, nameval_hash;
+    unsigned i;
 
-    *val_matched = 0;
+    name_hash = XXH32(name, name_len, 0);
+    nameval_hash = XXH32(val, val_len, name_hash);
 
-    //check value first
-    int i = -1;
-    switch (*val)
+    i = (nameval_hash >> XXH_NAMEVAL_SHIFT) & ((1 << XXH_NAMEVAL_WIDTH) - 1);
+    if (nameval2id[i])
     {
-        case 'G':
-            i = 1;
-            break;
-        case 'P':
-            i = 2;
-            break;
-        case '/':
-            if (val_len == 1)
-                i = 3;
-            else if (val_len == 11)
-                i = 4;
-            break;
-        case 'h':
-            if (val_len == 4)
-                i = 5;
-            else if (val_len == 5)
-                i = 6;
-            break;
-        case '2':
-            if (val_len == 3)
-            {
-                switch (*(val + 2))
-                {
-                    case '0':
-                        i = 7;
-                        break;
-                    case '4':
-                        i = 8;
-                        break;
-                    case '6':
-                        i = 9;
-                        break;
-                    default:
-                        break;
-                }
-            }
-            break;
-        case '3':
-            i = 10;
-            break;
-        case '4':
-            if (val_len == 3)
-            {
-                switch (*(val + 2))
-                {
-                    case '0':
-                        i = 11;
-                        break;
-                    case '4':
-                        i = 12;
-                    default:
-                        break;
-                }
-            }
-            break;
-        case '5':
-            i = 13;
-            break;
-        case 'g':
-            i = 15;
-            break;
-        default:
-            break;
+        i = nameval2id[i] - 1;
+        if (static_table[i].name_len == name_len
+            && static_table[i].val_len == val_len
+            && memcmp(name, static_table[i].name, name_len) == 0
+            && memcmp(val, static_table[i].val, val_len) == 0)
+        {
+            return i + 1;
+        }
     }
 
-    if (i > 0 && static_table[i].val_len == val_len
-            && static_table[i].name_len == name_len
-            && memcmp(val, static_table[i].val, val_len) == 0
+    i = (name_hash >> XXH_NAME_SHIFT) & ((1 << XXH_NAME_WIDTH) - 1);
+    if (name2id[i])
+    {
+        i = name2id[i] - 1;
+        if (static_table[i].name_len == name_len
             && memcmp(name, static_table[i].name, name_len) == 0)
-    {
-        *val_matched = 1;
-        return i + 1;
+        {
+            return i + 1;
+        }
     }
-
-    //macth name only checking
-    i = -1;
-    switch (*name)
-    {
-        case ':':
-            switch (*(name + 1))
-            {
-                case 'a':
-                    i = 0;
-                    break;
-                case 'm':
-                    i = 1;
-                    break;
-                case 'p':
-                    i = 3;
-                    break;
-                case 's':
-                    if (*(name + 2) == 'c') //:scheme
-                        i = 5;
-                    else
-                        i = 7;
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 'a':
-            switch (name_len)
-            {
-                case 3:
-                    i = 20; //age
-                    break;
-                case 5:
-                    i = 21; //allow
-                    break;
-                case 6:
-                    i = 18; //accept
-                    break;
-                case 13:
-                    if (*(name + 1) == 'u')
-                        i = 22; //authorization
-                    else
-                        i = 17; //accept-ranges
-                    break;
-                case 14:
-                    i  = 14; //accept-charset
-                    break;
-                case 15:
-                    if (*(name + 7) == 'l')
-                        i = 16; //accept-language,
-                    else
-                        i = 15;// accept-encoding
-                    break;
-                case 27:
-                    i = 19;//access-control-allow-origin
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 'c':
-            switch (name_len)
-            {
-                case 6:
-                    i = 31; //cookie
-                    break;
-                case 12:
-                    i = 30; //content-type
-                    break;
-                case 13:
-                    if (*(name + 1) == 'a')
-                        i = 23; //cache-control
-                    else
-                        i = 29; //content-range
-                    break;
-                case 14:
-                    i = 27; //content-length
-                    break;
-                case 16:
-                    switch (*(name + 9))
-                    {
-                        case 'n':
-                            i = 25 ;//content-encoding
-                            break;
-                        case 'a':
-                            i = 26; //content-language
-                            break;
-                        case 'o':
-                            i = 28; //content-location
-                        default:
-                            break;
-                    }
-                    break;
-                case 19:
-                    i = 24; //content-disposition
-                    break;
-            }
-            break;
-        case 'd':
-            i = 32 ;//date
-            break;
-        case 'e':
-            switch (name_len)
-            {
-                case 4:
-                    i = 33; //etag
-                    break;
-                case 6:
-                    i = 34;
-                    break;
-                case 7:
-                    i = 35;
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 'f':
-            i = 36; //from
-            break;
-        case 'h':
-            i = 37; //host
-            break;
-        case 'i':
-            switch (name_len)
-            {
-                case 8:
-                    if (*(name + 3) == 'm')
-                        i = 38; //if-match
-                    else
-                        i = 41; //if-range
-                    break;
-                case 13:
-                    i = 40; //if-none-match
-                    break;
-                case 17:
-                    i = 39; //if-modified-since
-                    break;
-                case 19:
-                    i = 42; //if-unmodified-since
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 'l':
-            switch (name_len)
-            {
-                case 4:
-                    i = 44; //link
-                    break;
-                case 8:
-                    i = 45; //location
-                    break;
-                case 13:
-                    i = 43; //last-modified
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 'm':
-            i = 46; //max-forwards
-            break;
-        case 'p':
-            if (name_len == 18)
-                i = 47; //proxy-authenticate
-            else
-                i = 48; //proxy-authorization
-            break;
-        case 'r':
-            if (name_len >= 5)
-            {
-                switch (*(name + 4))
-                {
-                    case 'e':
-                        if (name_len == 5)
-                            i = 49; //range
-                        else
-                            i = 51; //refresh
-                        break;
-                    case 'r':
-                        i = 50; //referer
-                        break;
-                    case 'y':
-                        i = 52; //retry-after
-                        break;
-                    default:
-                        break;
-                }
-            }
-            break;
-        case 's':
-            switch (name_len)
-            {
-                case 6:
-                    i = 53; //server
-                    break;
-                case 10:
-                    i = 54; //set-cookie
-                    break;
-                case 25:
-                    i = 55; //strict-transport-security
-                    break;
-                default:
-                    break;
-            }
-            break;
-        case 't':
-            i = 56;//transfer-encoding
-            break;
-        case 'u':
-            i = 57; //user-agent
-            break;
-        case 'v':
-            if (name_len == 4)
-                i = 58;
-            else
-                i = 59;
-            break;
-        case 'w':
-            i = 60;
-            break;
-        default:
-            break;
-    }
-
-    if (i >= 0
-            && static_table[i].name_len == name_len
-            && memcmp(name, static_table[i].name, name_len) == 0)
-        return i + 1;
 
     return 0;
 }
@@ -5747,28 +5541,23 @@ henc_calc_table_id (const struct lshpack_enc *enc,
 
 
 static unsigned
-henc_find_table_id (struct lshpack_enc *enc, const char *name,
+henc_find_table_id (struct lshpack_enc *enc, uint32_t name_hash,
+        uint32_t nameval_hash, const char *name,
         lshpack_strlen_t name_len, const char *value,
         lshpack_strlen_t value_len, int *val_matched)
 {
     struct lshpack_enc_table_entry *entry;
-    unsigned name_hash, nameval_hash, buckno, static_table_id;
-    XXH32_state_t hash_state;
+    unsigned buckno, static_table_id;
 
     /* First, look for a match in the static table: */
-    static_table_id = lshpack_enc_get_stx_tab_id(name, name_len, value,
-                                                    value_len, val_matched);
-    if (static_table_id > 0 && *val_matched)
+    static_table_id = lshpack_enc_get_static_nameval(nameval_hash, name,
+                                            name_len, value, value_len);
+    if (static_table_id > 0)
+    {
+        *val_matched = 1;
         return static_table_id;
+    }
 
-    /* Search by name and value: */
-    XXH32_reset(&hash_state, (uintptr_t) enc);
-    XXH32_update(&hash_state, &name_len, sizeof(name_len));
-    XXH32_update(&hash_state, name, name_len);
-    name_hash = XXH32_digest(&hash_state);
-    XXH32_update(&hash_state,  &value_len, sizeof(value_len));
-    XXH32_update(&hash_state,  value, value_len);
-    nameval_hash = XXH32_digest(&hash_state);
     buckno = BUCKNO(enc->hpe_nbits, nameval_hash);
     STAILQ_FOREACH(entry, &enc->hpe_buckets[buckno].by_nameval,
                                                         ete_next_nameval)
@@ -5782,11 +5571,12 @@ henc_find_table_id (struct lshpack_enc *enc, const char *name,
             return henc_calc_table_id(enc, entry);
         }
 
-    /* Name/value match is not found, but if the caller found a matching
-     * static table entry, no need to continue to search:
-     */
+    static_table_id = lshpack_enc_get_static_name(name_hash, name, name_len);
     if (static_table_id > 0)
+    {
+        *val_matched = 0;
         return static_table_id;
+    }
 
     /* Search by name only: */
     buckno = BUCKNO(enc->hpe_nbits, name_hash);
@@ -6037,13 +5827,12 @@ henc_grow_tables (struct lshpack_enc *enc)
 static
 #endif
        int
-lshpack_enc_push_entry (struct lshpack_enc *enc, const char *name,
-                        lshpack_strlen_t name_len, const char *value,
-                        lshpack_strlen_t value_len)
+lshpack_enc_push_entry (struct lshpack_enc *enc, uint32_t name_hash,
+        uint32_t nameval_hash, const char *name, lshpack_strlen_t name_len,
+        const char *value, lshpack_strlen_t value_len)
 {
-    unsigned name_hash, nameval_hash, buckno;
     struct lshpack_enc_table_entry *entry;
-    XXH32_state_t hash_state;
+    unsigned buckno;
     size_t size;
 
     if (enc->hpe_nelem >= N_BUCKETS(enc->hpe_nbits) / 2 &&
@@ -6054,14 +5843,6 @@ lshpack_enc_push_entry (struct lshpack_enc *enc, const char *name,
     entry = malloc(size);
     if (!entry)
         return -1;
-
-    XXH32_reset(&hash_state, (uintptr_t) enc);
-    XXH32_update(&hash_state, &name_len, sizeof(name_len));
-    XXH32_update(&hash_state, name, name_len);
-    name_hash = XXH32_digest(&hash_state);
-    XXH32_update(&hash_state,  &value_len, sizeof(value_len));
-    XXH32_update(&hash_state,  value, value_len);
-    nameval_hash = XXH32_digest(&hash_state);
 
     entry->ete_name_hash = name_hash;
     entry->ete_nameval_hash = nameval_hash;
@@ -6094,16 +5875,24 @@ lshpack_enc_encode2 (struct lshpack_enc *enc, unsigned char *dst,
     //indexed_type: 0, Add, 1,: without, 2: never
     static const char indexed_prefix_number[] = {0x40, 0x00, 0x10};
     unsigned char *const dst_org = dst;
+    uint32_t name_hash, nameval_hash;
     int val_matched, rc;
     unsigned table_id;
+    XXH32_state_t hash_state;
 
     assert(indexed_type >= 0 && indexed_type <= 2);
 
     if (dst_end <= dst)
         return dst_org;
 
-    table_id = henc_find_table_id(enc, name, name_len, value, value_len,
-                                                                &val_matched);
+    XXH32_reset(&hash_state, LSHPACK_XXH_SEED);
+    XXH32_update(&hash_state, name, name_len);
+    name_hash = XXH32_digest(&hash_state);
+    XXH32_update(&hash_state, value, value_len);
+    nameval_hash = XXH32_digest(&hash_state);
+
+    table_id = henc_find_table_id(enc, name_hash, nameval_hash, name,
+                                    name_len, value, value_len, &val_matched);
     if (table_id > 0)
     {
         if (val_matched)
@@ -6142,7 +5931,8 @@ lshpack_enc_encode2 (struct lshpack_enc *enc, unsigned char *dst,
 
     if (indexed_type == 0)
     {
-        rc = lshpack_enc_push_entry(enc, name, name_len, value, value_len);
+        rc = lshpack_enc_push_entry(enc, name_hash, nameval_hash, name,
+                                                name_len, value, value_len);
         if (rc != 0)
             return dst_org; //Failed to enc this header, return unchanged ptr.
     }

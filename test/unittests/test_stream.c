@@ -658,7 +658,7 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
  * DOES NOT result in stream being reset.
  */
 static void
-test_rem_data_loc_close (struct test_objs *tobjs)
+test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
 {
     lsquic_stream_t *stream;
     char buf[0x100];
@@ -695,6 +695,8 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     s = lsquic_stream_rst_in(stream, 100, 1);
     assert(0 == s);
 
+    assert(stream->stream_flags & STREAM_FREE_STREAM);
+
     lsquic_stream_destroy(stream);
     /* This simply checks that the stream got removed from the queue: */
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -703,6 +705,57 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     assert(100 == tobjs->conn_pub.cfcw.cf_read_off);
 }
 
+
+/* Server: we read data and close the read side before reading FIN.  No
+ * FIN or RST arrive from peer.  This should still place the stream on
+ * the "streams to be freed" list.
+ */
+static void
+test_rem_data_loc_close (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    char buf[0x100];
+    ssize_t n;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+
+    s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
+    assert(0 == s);
+
+    n = lsquic_stream_read(stream, buf, 60);
+    assert(60 == n);
+
+    s = lsquic_stream_shutdown(stream, 0);
+    assert(0 == s);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(!((stream->stream_flags & (STREAM_SERVICE_FLAGS))
+                                            == STREAM_CALL_ONCLOSE));
+
+    n = lsquic_stream_read(stream, buf, 60);
+    assert(n == -1);    /* Cannot read from closed stream */
+
+    /* Close write side */
+    s = lsquic_stream_shutdown(stream, 1);
+    assert(0 == s);
+
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl)); /* Shutdown performs a flush */
+
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
+                                            == STREAM_CALL_ONCLOSE);
+
+    assert(!(stream->stream_flags & STREAM_FREE_STREAM));
+    lsquic_stream_acked(stream);
+    assert(stream->stream_flags & STREAM_FREE_STREAM);
+
+    lsquic_stream_destroy(stream);
+    /* This simply checks that the stream got removed from the queue: */
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+
+    assert(100 == tobjs->conn_pub.cfcw.cf_max_recv_off);
+    assert(100 == tobjs->conn_pub.cfcw.cf_read_off);
+}
 
 
 /* Client: we send some data and FIN, but remote end sends some data and
@@ -1197,6 +1250,7 @@ test_termination (void)
     void (*const test_funcs[])(struct test_objs *) = {
         test_loc_FIN_rem_FIN,
         test_rem_FIN_loc_FIN,
+        test_rem_data_loc_close_and_rst_in,
         test_rem_data_loc_close,
         test_loc_FIN_rem_RST,
         test_loc_data_rem_RST,

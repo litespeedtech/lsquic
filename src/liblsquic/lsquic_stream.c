@@ -378,8 +378,7 @@ stream_is_finished (const lsquic_stream_t *stream)
             */
         && 0 == (stream->stream_flags & STREAM_SEND_RST)
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
-          || ((stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
-           && (stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))));
+          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT)));
 }
 
 

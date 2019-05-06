@@ -262,7 +262,7 @@ struct lshpack_dec
 
 unsigned
 lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
-                const char *val, lshpack_strlen_t val_len, int *val_matched);
+                                const char *val, lshpack_strlen_t val_len);
 
 #ifdef __cplusplus
 }
