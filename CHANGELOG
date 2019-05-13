@@ -1,3 +1,7 @@
+2019-05-13
+    - 1.21.2
+    - [OPTIMIZATION] HPACK: use history to improve compression performance
+
 2019-05-06
     - 1.21.1
     - [BUGFIX] If FIN or RST not received, don't delay stream destruction.

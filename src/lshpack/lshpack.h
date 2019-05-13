@@ -30,6 +30,7 @@ SOFTWARE.
 extern "C" {
 #endif
 
+#include <limits.h>
 #include <stdint.h>
 #ifndef WIN32
 #include <sys/uio.h>
@@ -37,13 +38,8 @@ extern "C" {
 #include "vc_compat.h"
 #endif
 
-/**
- * Strings up to 65535 characters in length are supported.
- */
-typedef uint16_t lshpack_strlen_t;
-
 /** Maximum length is defined for convenience */
-#define LSHPACK_MAX_STRLEN UINT16_MAX
+#define LSHPACK_MAX_STRLEN UINT_MAX
 
 struct lshpack_enc;
 struct lshpack_dec;
@@ -157,8 +153,8 @@ lshpack_enc_cleanup (struct lshpack_enc *);
  */
 unsigned char *
 lshpack_enc_encode2 (struct lshpack_enc *henc, unsigned char *dst,
-    unsigned char *dst_end, const char *name, lshpack_strlen_t name_len,
-    const char *value, lshpack_strlen_t value_len, int indexed_type);
+    unsigned char *dst_end, const char *name, unsigned name_len,
+    const char *value, unsigned value_len, int indexed_type);
 
 
 /**
@@ -184,6 +180,20 @@ void
 lshpack_enc_set_max_capacity (struct lshpack_enc *, unsigned);
 
 /**
+ * Turn history on or off.  Turning history on may fail (malloc), in
+ * which case -1 is returned.
+ */
+int
+lshpack_enc_use_hist (struct lshpack_enc *, int on);
+
+/**
+ * Return true if history is used, false otherwise.  By default,
+ * history is off.
+ */
+int
+lshpack_enc_hist_used (const struct lshpack_enc *);
+
+/**
  * Initialize HPACK decoder structure.
  */
 void
@@ -204,8 +214,8 @@ lshpack_dec_cleanup (struct lshpack_dec *);
 int
 lshpack_dec_decode (struct lshpack_dec *dec,
     const unsigned char **src, const unsigned char *src_end,
-    char *dst, char *const dst_end, lshpack_strlen_t *name_len,
-    lshpack_strlen_t *val_len, uint32_t *name_idx);
+    char *dst, char *const dst_end, unsigned *name_len,
+    unsigned *val_len, uint32_t *name_idx);
 
 void
 lshpack_dec_set_max_capacity (struct lshpack_dec *, unsigned);
@@ -242,6 +252,13 @@ struct lshpack_enc
                         hpe_all_entries;
     struct lshpack_double_enc_head
                        *hpe_buckets;
+
+    uint32_t           *hpe_hist_buf;
+    unsigned            hpe_hist_size, hpe_hist_idx;
+    int                 hpe_hist_wrapped;
+    enum {
+        LSHPACK_ENC_USE_HIST    = 1 << 0,
+    }                   hpe_flags;
 };
 
 struct lshpack_arr
@@ -261,8 +278,8 @@ struct lshpack_dec
 };
 
 unsigned
-lshpack_enc_get_stx_tab_id (const char *name, lshpack_strlen_t name_len,
-                                const char *val, lshpack_strlen_t val_len);
+lshpack_enc_get_stx_tab_id (const char *name, unsigned name_len,
+                                const char *val, unsigned val_len);
 
 #ifdef __cplusplus
 }

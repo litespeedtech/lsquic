@@ -173,6 +173,7 @@ test_oversize_header (void)
                                      &s_conn_stats,
 #endif
                                 0);
+    lsquic_frame_writer_max_header_list_size(fw, 1 << 16);
     reset_output(0);
 
     value = malloc(big_len);

@@ -515,7 +515,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     enum frame_reader_error err;
     int s;
     uint32_t name_idx;
-    lshpack_strlen_t name_len, val_len;
+    unsigned name_len, val_len;
     char *buf;
     struct uncompressed_headers *uh = NULL;
     void *hset = NULL;
