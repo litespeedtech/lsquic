@@ -1,0 +1,23 @@
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+#ifndef LSQUIC_PACKET_IETF_H
+#define LSQUIC_PACKET_IETF_H 1
+
+#define IQUIC_MAX_IPv4_PACKET_SZ 1252
+#define IQUIC_MAX_IPv6_PACKET_SZ 1232
+
+#define iquic_packno_bits2len(b) ((b) + 1)
+
+/* [draft-ietf-quic-transport-22] Section 7.2:
+ "
+   When an Initial packet is sent by a client that has not previously
+   received an Initial or Retry packet from the server, it populates the
+   Destination Connection ID field with an unpredictable value.  This
+   MUST be at least 8 bytes in length.
+ "
+ * Because the server always generates 8-byte CIDs, the DCID length cannot be
+ * smaller than 8 even if the client received an Initial or Retry packet from
+ * us.
+ */
+#define MIN_INITIAL_DCID_LEN 8
+
+#endif

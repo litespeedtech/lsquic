@@ -11,19 +11,23 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 
 #include "lsquic_int_types.h"
 #include "lsquic.h"
 
 #include "lsquic_str.h"
-#include "lsquic_handshake.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_chsk_stream.h"
 #include "lsquic_ver_neg.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 #include "lsquic_mm.h"
+#include "lsquic_sizes.h"
+#include "lsquic_full_conn.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HSK_ADAPTER
-#define LSQUIC_LOG_CONN_ID lsquic_conn_id(c_hsk->lconn)
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(c_hsk->lconn)
 #include "lsquic_logger.h"
 
 
@@ -34,6 +38,15 @@ hsk_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 
     LSQ_DEBUG("stream created");
 
+#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
+    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
+    {
+        LSQ_WARN("Handshake disabled: faking it");
+        c_hsk->lconn->cn_flags |= LSCONN_NO_CRYPTO;
+        c_hsk->lconn->cn_if->ci_handshake_ok(c_hsk->lconn);
+        return (void *) c_hsk;
+    }
+#endif
 
     lsquic_stream_wantwrite(stream, 1);
 
@@ -80,7 +93,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
     }
     c_hsk->buf_off += nread;
 
-    s = c_hsk->lconn->cn_esf->esf_handle_chlo_reply(c_hsk->lconn->cn_enc_session,
+    s = c_hsk->lconn->cn_esf.g->esf_handle_chlo_reply(c_hsk->lconn->cn_enc_session,
                                         c_hsk->buf_in, c_hsk->buf_off);
     LSQ_DEBUG("lsquic_enc_session_handle_chlo_reply returned %d", s);
     switch (s)
@@ -104,10 +117,10 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         lsquic_mm_put_16k(c_hsk->mm, c_hsk->buf_in);
         c_hsk->buf_in = NULL;
         lsquic_stream_wantread(stream, 0);
-        if (c_hsk->lconn->cn_esf->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
+        if (c_hsk->lconn->cn_esf.g->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
         {
             LSQ_DEBUG("handshake is successful, inform connection");
-            status = (c_hsk->lconn->cn_esf->esf_did_zero_rtt_succeed(
+            status = (c_hsk->lconn->cn_esf_c->esf_did_zero_rtt_succeed(
                 c_hsk->lconn->cn_enc_session)) ? LSQ_HSK_0RTT_OK : LSQ_HSK_OK;
             c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, status);
         }
@@ -117,6 +130,13 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
                                                                     "message");
             lsquic_stream_wantwrite(stream, 1);
         }
+        break;
+    case HS_SREJ:
+        LSQ_DEBUG("got HS_SREJ");
+        c_hsk->buf_off = 0;
+        lsquic_stream_wantread(stream, 0);
+        if (0 == lsquic_gquic_full_conn_srej(c_hsk->lconn))
+            lsquic_stream_wantwrite(stream, 1);
         break;
     default:
         LSQ_WARN("lsquic_enc_session_handle_chlo_reply returned unknown value %d", s);
@@ -154,7 +174,7 @@ hsk_client_on_write (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
     }
     len = 4 * 1024;
 
-    if (0 != c_hsk->lconn->cn_esf->esf_gen_chlo(c_hsk->lconn->cn_enc_session,
+    if (0 != c_hsk->lconn->cn_esf.g->esf_gen_chlo(c_hsk->lconn->cn_enc_session,
                                             c_hsk->ver_neg->vn_ver, buf, &len))
     {
         LSQ_WARN("cannot create CHLO message");

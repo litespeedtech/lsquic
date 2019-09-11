@@ -9,10 +9,13 @@ task:
         # This is so that both GQUIC and IETF branches build.  Just picking
         # a known good revision:
         - git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
+        - patch -p1 -i ../patches/boringssl-meds.patch
         - cmake .
         - make
         - cd -
     script:
+        - git submodule init
+        - git submodule update
         - cmake -DBORINGSSL_DIR=$PWD/boringssl .
         - make
         - make test

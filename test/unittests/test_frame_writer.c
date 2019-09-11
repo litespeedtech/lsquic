@@ -12,6 +12,9 @@
 #include "lsquic.h"
 #include "lshpack.h"
 #include "lsquic_mm.h"
+#include "lsquic_int_types.h"
+#include "lsquic_hash.h"
+#include "lsquic_conn.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 #if LSQUIC_CONN_STATS
@@ -41,15 +44,18 @@ static struct {
 
 
 static ssize_t
-output_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+output_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 {
+    size_t sz;
+
+    sz = reader->lsqr_size(reader->lsqr_ctx);
     if (output.max - output.sz < sz)
     {
         errno = ENOBUFS;
         return -1;
     }
 
-    memcpy(output.buf + output.sz, buf, sz);
+    sz = reader->lsqr_read(reader->lsqr_ctx, output.buf + output.sz, sz);
     output.sz += sz;
 
     return sz;
@@ -384,20 +390,16 @@ test_settings_normal (void)
 }
 
 
-/* Gotta override these so that LSQUIC_LOG_CONN_ID in lsquic_frame_writer.c
- * works.
- */
-lsquic_cid_t
-lsquic_conn_id (const lsquic_conn_t *lconn)
-{
-    return 0;
-}
+static struct lsquic_conn my_conn = LSCONN_INITIALIZER_CIDLEN(my_conn, 8);
 
 
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
-    return NULL;
+    return &my_conn;
 }
 
 
@@ -461,6 +463,7 @@ test_priority (void)
 }
 
 
+
 static void
 test_errors (void)
 {
@@ -505,8 +508,8 @@ test_errors (void)
         };
         lsquic_frame_writer_max_header_list_size(fw, 40);
         s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 80);
-        assert(-1 == s);
-        assert(EMSGSIZE == errno);
+        /* Server ignores SETTINGS_MAX_HEADER_LIST_SIZE setting */
+        assert(s == 0);
     }
 
     lsquic_frame_writer_destroy(fw);
@@ -594,6 +597,7 @@ perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :sc
     lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
+
 
 
 int

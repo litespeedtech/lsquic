@@ -11,6 +11,9 @@
 #include "lsquic_conn_flow.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_conn.h"
@@ -28,6 +31,7 @@ main (void)
     int s;
 
     memset(&lconn, 0, sizeof(lconn));
+    LSCONN_INITIALIZE(&lconn);
     memset(&conn_pub, 0, sizeof(conn_pub));
     conn_pub.lconn = &lconn;
     lsquic_sfcw_init(&fc, INIT_WINDOW_SIZE, NULL, &conn_pub, 123);

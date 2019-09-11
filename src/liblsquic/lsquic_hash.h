@@ -7,7 +7,20 @@
 #define LSQUIC_HASH_H
 
 struct lsquic_hash;
-struct lsquic_hash_elem;
+
+struct lsquic_hash_elem
+{
+    TAILQ_ENTRY(lsquic_hash_elem)
+                    qhe_next_bucket,
+                    qhe_next_all;
+    const void     *qhe_key_data;
+    void           *qhe_value;
+    unsigned        qhe_key_len;
+    unsigned        qhe_hash_val;
+    enum {
+        QHE_HASHED  = 1 << 0,
+    }               qhe_flags;
+};
 
 struct lsquic_hash *
 lsquic_hash_create (void);
@@ -17,13 +30,12 @@ lsquic_hash_destroy (struct lsquic_hash *);
 
 struct lsquic_hash_elem *
 lsquic_hash_insert (struct lsquic_hash *, const void *key, unsigned key_sz,
-                                                                void *data);
+                                    void *value, struct lsquic_hash_elem *);
 
 struct lsquic_hash_elem *
 lsquic_hash_find (struct lsquic_hash *, const void *key, unsigned key_sz);
 
-void *
-lsquic_hashelem_getdata (const struct lsquic_hash_elem *);
+#define lsquic_hashelem_getdata(el) ((el)->qhe_value)
 
 void
 lsquic_hash_erase (struct lsquic_hash *, struct lsquic_hash_elem *);

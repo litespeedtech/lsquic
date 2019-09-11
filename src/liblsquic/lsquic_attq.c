@@ -13,12 +13,14 @@
 #ifdef WIN32
 #include <vc_compat.h>
 #endif
+#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_attq.h"
 #include "lsquic_malo.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 
 
@@ -212,7 +214,6 @@ attq_remove (struct attq *q, struct lsquic_conn *conn)
     assert(conn->cn_attq_elem == el);
 
     conn->cn_attq_elem = NULL;
-    lsquic_malo_put(el);
 
     q->aq_heap[ idx ] = q->aq_heap[ --q->aq_nelem ];
     q->aq_heap[ idx ]->ae_heap_idx = idx;
@@ -229,6 +230,7 @@ attq_remove (struct attq *q, struct lsquic_conn *conn)
     }
     else if (q->aq_nelem > 1 && idx < q->aq_nelem)
         attq_heapify(q, idx);
+    lsquic_malo_put(el);
     attq_verify(q);
 }
 

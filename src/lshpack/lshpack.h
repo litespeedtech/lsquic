@@ -281,6 +281,8 @@ unsigned
 lshpack_enc_get_stx_tab_id (const char *name, unsigned name_len,
                                 const char *val, unsigned val_len);
 
+typedef unsigned lshpack_strlen_t;  /* Compatibility */
+
 #ifdef __cplusplus
 }
 #endif

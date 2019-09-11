@@ -20,14 +20,14 @@ typedef struct lsquic_sfcw {
     struct lsquic_conn_public
                        *sf_conn_pub;
     unsigned            sf_max_recv_win;    /* Maximum receive window */
-    unsigned            sf_stream_id;       /* Used for logging */
+    lsquic_stream_id_t  sf_stream_id;       /* Used for logging */
 } lsquic_sfcw_t;
 
 
 void
 lsquic_sfcw_init (lsquic_sfcw_t *, unsigned initial_max_recv_window,
                   struct lsquic_cfcw *cfcw, struct lsquic_conn_public *,
-                  unsigned stream_id);
+                  lsquic_stream_id_t stream_id);
 
 /* If update is to be sent, updates max_recv_off and returns true.  Note
  * that if you call this function twice, the second call will return false.

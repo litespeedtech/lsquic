@@ -9,7 +9,6 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 
 static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);

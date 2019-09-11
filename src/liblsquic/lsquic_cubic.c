@@ -8,17 +8,29 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 #ifdef WIN32
 #include <vc_compat.h>
 #endif
 
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
-#include "lsquic_cubic.h"
+#include "lsquic_hash.h"
 #include "lsquic_util.h"
+#include "lsquic_cong_ctl.h"
+#include "lsquic_sfcw.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_stream.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn_public.h"
+#include "lsquic_packet_common.h"
+#include "lsquic_packet_out.h"
+#include "lsquic_cubic.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CUBIC
-#define LSQUIC_LOG_CONN_ID cubic->cu_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(cubic->cu_conn)
 #include "lsquic_logger.h"
 
 #define FAST_CONVERGENCE        1
@@ -31,7 +43,7 @@
 static void
 cubic_reset (struct lsquic_cubic *cubic)
 {
-    memset(cubic, 0, offsetof(struct lsquic_cubic, cu_cid));
+    memset(cubic, 0, offsetof(struct lsquic_cubic, cu_conn));
     cubic->cu_cwnd          = 32 * TCP_MSS;
     cubic->cu_last_max_cwnd = 32 * TCP_MSS;
     cubic->cu_tcp_cwnd      = 32 * TCP_MSS;
@@ -95,13 +107,23 @@ cubic_update (struct lsquic_cubic *cubic, lsquic_time_t now, unsigned n_bytes)
 
 
 void
-lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
-                                                        enum cubic_flags flags)
+lsquic_cubic_set_flags (struct lsquic_cubic *cubic, enum cubic_flags flags)
 {
+    LSQ_DEBUG("%s(cubic, 0x%X)", __func__, flags);
+    cubic->cu_flags = flags;
+}
+
+
+static void
+lsquic_cubic_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
+                                            enum quic_ft_bit UNUSED_retx_frames)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
     cubic_reset(cubic);
     cubic->cu_ssthresh = 10000 * TCP_MSS; /* Emulate "unbounded" slow start */
-    cubic->cu_cid   = cid;
-    cubic->cu_flags = flags;
+    cubic->cu_conn  = conn_pub->lconn;
+    cubic->cu_rtt_stats = &conn_pub->rtt_stats;
+    cubic->cu_flags = DEFAULT_CUBIC_FLAGS;
 #ifndef NDEBUG
     const char *s;
     s = getenv("LSQUIC_CUBIC_SAMPLING_RATE");
@@ -110,7 +132,7 @@ lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
     else
 #endif
         cubic->cu_sampling_rate = 100000;
-    LSQ_DEBUG("%s(cubic, %"PRIu64", 0x%X)", __func__, cid, flags);
+    LSQ_DEBUG("%s(cubic, $conn)", __func__);
     LSQ_INFO("initialized");
 }
 
@@ -127,18 +149,23 @@ lsquic_cubic_init_ext (struct lsquic_cubic *cubic, lsquic_cid_t cid,
 } while (0)
 
 
-void
-lsquic_cubic_was_quiet (struct lsquic_cubic *cubic, lsquic_time_t now)
+static void
+lsquic_cubic_was_quiet (void *cong_ctl, lsquic_time_t now, uint64_t in_flight)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic, %"PRIu64")", __func__, now);
     cubic->cu_epoch_start = 0;
 }
 
 
-void
-lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now_time,
-                  lsquic_time_t rtt, int app_limited, unsigned n_bytes)
+static void
+lsquic_cubic_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                  unsigned n_bytes, lsquic_time_t now_time, int app_limited)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
+    lsquic_time_t rtt;
+
+    rtt = now_time - packet_out->po_sent;
     LSQ_DEBUG("%s(cubic, %"PRIu64", %"PRIu64", %d, %u)", __func__, now_time, rtt,
                                                         app_limited, n_bytes);
     if (0 == cubic->cu_min_delay || rtt < cubic->cu_min_delay)
@@ -162,9 +189,10 @@ lsquic_cubic_ack (struct lsquic_cubic *cubic, lsquic_time_t now_time,
 }
 
 
-void
-lsquic_cubic_loss (struct lsquic_cubic *cubic)
+static void
+lsquic_cubic_loss (void *cong_ctl)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     LSQ_DEBUG("%s(cubic)", __func__);
     cubic->cu_epoch_start = 0;
     if (FAST_CONVERGENCE && cubic->cu_cwnd < cubic->cu_last_max_cwnd)
@@ -180,9 +208,10 @@ lsquic_cubic_loss (struct lsquic_cubic *cubic)
 }
 
 
-void
-lsquic_cubic_timeout (struct lsquic_cubic *cubic)
+static void
+lsquic_cubic_timeout (void *cong_ctl)
 {
+    struct lsquic_cubic *const cubic = cong_ctl;
     unsigned long cwnd;
 
     cwnd = cubic->cu_cwnd;
@@ -194,3 +223,61 @@ lsquic_cubic_timeout (struct lsquic_cubic *cubic)
     LSQ_INFO("timeout, cwnd: %lu", cubic->cu_cwnd);
     LOG_CWND(cubic);
 }
+
+
+static void
+lsquic_cubic_cleanup (void *cong_ctl)
+{
+}
+
+
+static uint64_t
+lsquic_cubic_get_cwnd (void *cong_ctl)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    return cubic->cu_cwnd;
+}
+
+
+static int
+in_slow_start (void *cong_ctl)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    return cubic->cu_cwnd < cubic->cu_ssthresh;
+}
+
+
+static uint64_t
+lsquic_cubic_pacing_rate (void *cong_ctl, int in_recovery)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    uint64_t bandwidth, pacing_rate;
+    lsquic_time_t srtt;
+
+    srtt = lsquic_rtt_stats_get_srtt(cubic->cu_rtt_stats);
+    if (srtt == 0)
+        srtt = 50000;
+    bandwidth = cubic->cu_cwnd * 1000000 / srtt;
+    if (in_slow_start(cubic))
+        pacing_rate = bandwidth * 2;
+    else if (in_recovery)
+        pacing_rate = bandwidth;
+    else
+        pacing_rate = bandwidth + bandwidth / 4;
+
+    return pacing_rate;
+}
+
+
+
+const struct cong_ctl_if lsquic_cong_cubic_if =
+{
+    .cci_ack           = lsquic_cubic_ack,
+    .cci_cleanup       = lsquic_cubic_cleanup,
+    .cci_get_cwnd      = lsquic_cubic_get_cwnd,
+    .cci_init          = lsquic_cubic_init,
+    .cci_pacing_rate   = lsquic_cubic_pacing_rate,
+    .cci_loss          = lsquic_cubic_loss,
+    .cci_timeout       = lsquic_cubic_timeout,
+    .cci_was_quiet     = lsquic_cubic_was_quiet,
+};

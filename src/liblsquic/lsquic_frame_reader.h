@@ -39,6 +39,7 @@ enum frame_reader_error
     FR_ERR_DUPLICATE_PSEH     =  LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR,
     FR_ERR_INCOMPL_REQ_PSEH   =  LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR,
     FR_ERR_UNNEC_REQ_PSEH     =  LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR,
+    FR_ERR_BAD_REQ_HEADER     =  LSQUIC_HDR_ERR_BAD_REQ_HEADER,
     FR_ERR_INCOMPL_RESP_PSEH  =  LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR,
     FR_ERR_UNNEC_RESP_PSEH    =  LSQUIC_HDR_ERR_UNNEC_RESP_PSDO_HDR,
     FR_ERR_UNKNOWN_PSEH       =  LSQUIC_HDR_ERR_UNKNOWN_PSDO_HDR,
@@ -68,10 +69,10 @@ struct frame_reader_callbacks
     void (*frc_on_push_promise) (void *frame_cb_ctx, struct uncompressed_headers *);
     void (*frc_on_settings)     (void *frame_cb_ctx, uint16_t setting_id,
                                  uint32_t setting_value);
-    void (*frc_on_priority)     (void *frame_cb_ctx, uint32_t stream_id,
-                                 int exclusive, uint32_t dep_stream_id,
+    void (*frc_on_priority)     (void *frame_cb_ctx, lsquic_stream_id_t stream_id,
+                                 int exclusive, lsquic_stream_id_t dep_stream_id,
                                  unsigned weight);
-    void (*frc_on_error)        (void *frame_cb_ctx, uint32_t stream_id,
+    void (*frc_on_error)        (void *frame_cb_ctx, lsquic_stream_id_t stream_id,
                                  enum frame_reader_error);
 };
 

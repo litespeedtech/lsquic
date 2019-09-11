@@ -10,7 +10,6 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_parse.h"
 
@@ -21,7 +20,7 @@ static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
 struct packno_bits_test {
     int             pbt_lineno;
     /* Inputs: */
-    lsquic_cid_t    pbt_packno,
+    lsquic_packno_t pbt_packno,
                     pbt_least_unacked;
     uint64_t        pbt_n_in_flight;
     /* Output: */
@@ -206,6 +205,7 @@ static const struct packno_bits_test pb_tests[] = {
 static void
 run_pbt (int i)
 {
+    const struct parse_funcs *pf = select_pf_by_ver(LSQVER_043);
     const struct packno_bits_test *const pbt = &pb_tests[i];
     enum packno_bits packno_bits = pf->pf_calc_packno_bits(pbt->pbt_packno,
                                 pbt->pbt_least_unacked, pbt->pbt_n_in_flight);

@@ -8,13 +8,15 @@
 #ifndef LSQUIC_RECHIST_H
 #define LSQUIC_RECHIST_H 1
 
+struct lsquic_conn;
+
 #include "lsquic_packints.h"
 
 struct lsquic_rechist {
     struct packints                 rh_pints;
     lsquic_packno_t                 rh_cutoff;
     lsquic_time_t                   rh_largest_acked_received;
-    lsquic_cid_t                    rh_cid;        /* Used for logging */
+    const struct lsquic_conn       *rh_conn;        /* Used for logging */
     /* Chromium limits the number of tracked packets (see
      * kMaxTrackedPackets).  We could do this, too.
      */
@@ -27,7 +29,7 @@ struct lsquic_rechist {
 typedef struct lsquic_rechist lsquic_rechist_t;
 
 void
-lsquic_rechist_init (struct lsquic_rechist *, lsquic_cid_t);
+lsquic_rechist_init (struct lsquic_rechist *, const struct lsquic_conn *, int);
 
 void
 lsquic_rechist_cleanup (struct lsquic_rechist *);

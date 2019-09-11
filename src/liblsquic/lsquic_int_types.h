@@ -19,4 +19,13 @@ struct lsquic_packno_range {
     lsquic_packno_t low, high;
 };
 
+/* RFC 3168 */
+enum ecn
+{
+    ECN_NOT_ECT = 0,
+    ECN_ECT1    = 1,
+    ECN_ECT0    = 2,
+    ECN_CE      = 3,
+};
+
 #endif

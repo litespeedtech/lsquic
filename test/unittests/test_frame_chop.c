@@ -70,8 +70,11 @@ stream_destroy (struct lsquic_stream *stream)
 
 
 static ssize_t
-stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+stream_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 {
+    size_t sz;
+
+    sz = reader->lsqr_size(reader->lsqr_ctx);
     if (sz > stream->sm_max_write)
         sz = stream->sm_max_write;
     if (stream->sm_write_off + sz > stream->sm_buf_sz)
@@ -83,7 +86,8 @@ stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
         stream->sm_buf = realloc(stream->sm_buf, stream->sm_buf_sz);
     }
 
-    memcpy(stream->sm_buf + stream->sm_write_off, buf, sz);
+    sz = reader->lsqr_read(reader->lsqr_ctx,
+                                    stream->sm_buf + stream->sm_write_off, sz);
     stream->sm_write_off += sz;
 
     return sz;

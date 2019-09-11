@@ -7,7 +7,7 @@
 #define TEST_COMMON_H 1
 
 #if __linux__
-#   include <linux/if.h>  /* For IFNAMSIZ */
+#   include <net/if.h>  /* For IFNAMSIZ */
 #endif
 
 struct lsquic_engine;
@@ -54,6 +54,8 @@ struct service_port {
     int                        sp_sndbuf;   /* If SPORT_SET_SNDBUF is set */
     int                        sp_rcvbuf;   /* If SPORT_SET_RCVBUF is set */
     struct prog               *sp_prog;
+    unsigned char             *sp_token_buf;
+    size_t                     sp_token_sz;
 };
 
 TAILQ_HEAD(sport_head, service_port);
@@ -65,11 +67,18 @@ void
 sport_destroy (struct service_port *);
 
 int
+sport_init_server (struct service_port *, struct lsquic_engine *,
+                   struct event_base *);
+
+int
 sport_init_client (struct service_port *, struct lsquic_engine *,
                    struct event_base *);
 
 int
 sport_packets_out (void *ctx, const struct lsquic_out_spec *, unsigned count);
+
+int
+sport_set_token (struct service_port *, const char *);
 
 int
 set_engine_option (struct lsquic_engine_settings *,
@@ -95,6 +104,9 @@ pba_release (void *packout_buf_allocator, void *, void *obj, char);
 
 void
 pba_cleanup (struct packout_buf_allocator *);
+
+void
+print_conn_info (const struct lsquic_conn *conn);
 
 size_t
 test_reader_size (void *void_ctx);

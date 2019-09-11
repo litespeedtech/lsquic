@@ -1,11 +1,13 @@
 /* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdlib.h>
+#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_attq.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 
 

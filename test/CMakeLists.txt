@@ -1,4 +1,9 @@
 # Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
+INCLUDE(CheckFunctionExists)
+CHECK_FUNCTION_EXISTS(sendmmsg HAVE_SENDMMSG)
+CHECK_FUNCTION_EXISTS(recvmmsg HAVE_RECVMMSG)
+CHECK_FUNCTION_EXISTS(open_memstream HAVE_OPEN_MEMSTREAM)
+
 
 INCLUDE(CheckSymbolExists)
 
@@ -20,8 +25,7 @@ CHECK_INCLUDE_FILES(regex.h HAVE_REGEX)
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/test_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/test_config.h)
 
-
-IF(NOT (CMAKE_C_FLAGS MATCHES "-DNDEBUG"))
+IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Our test framework relies on assertions, only compile if assertions are
     # enabled.
     #

@@ -198,6 +198,75 @@ int get_common_cert(uint64_t hash, uint32_t index, lsquic_str_t *buf)
 }
 
 
+static int
+comp_ls_str (lsquic_str_t * a, const void * b, size_t b_len)
+{
+    size_t a_len;
+    int r;
+
+    a_len = lsquic_str_len(a);
+    r = memcmp(lsquic_str_buf(a), b, a_len < b_len ? a_len : b_len);
+    if (r)
+        return r;
+    else
+        return (a_len > b_len) - (b_len > a_len);
+}
+
+
+/* 0, matched -1, error */
+int match_common_cert(lsquic_str_t * cert, lsquic_str_t * common_set_hashes,
+        uint64_t* out_hash, uint32_t* out_index)
+{
+    size_t i, j;
+    int n;
+    uint64_t hash;
+    size_t min, max, mid;
+
+    if (lsquic_str_len(common_set_hashes) % sizeof(uint64_t) != 0)
+        return -1;
+    
+    for (i = 0; i < lsquic_str_len(common_set_hashes) / sizeof(uint64_t); i++)
+    {
+        memcpy(&hash, lsquic_str_buf(common_set_hashes) + i * sizeof(uint64_t),
+               sizeof(uint64_t));
+
+        for (j = 0; j < common_certs_num; j++)
+        {
+            if (common_cert_set[j].hash != hash)
+                continue;
+
+            if (common_cert_set[j].num_certs == 0)
+                continue;
+
+            min = 0;
+            max = common_cert_set[j].num_certs - 1;
+            while (max >= min)
+            {
+                mid = min + ((max - min) / 2);
+                n = comp_ls_str(cert, common_cert_set[j].certs[mid],
+                                 common_cert_set[j].lens[mid]);
+                if (n < 0)
+                {
+                    if (mid == 0)
+                        break;
+                    max = mid - 1;
+                }
+                else if (n > 0)
+                    min = mid + 1;
+                else
+                {
+                    *out_hash = hash;
+                    *out_index = mid;
+                    return 0;
+                }
+            }
+        }
+    }
+
+    return -1;
+}
+
+
 /* result is written to dict */
 static void
 make_zlib_dict_for_entries(cert_entry_t *entries,
@@ -240,6 +309,59 @@ void get_certs_hash(lsquic_str_t *certs, size_t certs_count, uint64_t *hashs)
 }
 
 
+static void get_certs_entries(lsquic_str_t **certs, size_t certs_count,
+                              lsquic_str_t *client_common_set_hashes,
+                              lsquic_str_t *client_cached_cert_hashes,
+                              cert_entry_t *entries)
+{
+    size_t i;
+    int j;
+    cert_entry_t *entry;
+    uint64_t hash, cached_hash;
+    bool cached;
+    
+    const bool cached_valid = (lsquic_str_len(client_cached_cert_hashes) % sizeof(uint64_t) == 0)
+                                && (lsquic_str_len(client_cached_cert_hashes) > 0);
+
+    assert(&entries[certs_count - 1]);
+    
+    for (i = 0; i<certs_count; ++i)
+    {
+        entry = &entries[i];
+        if (cached_valid)
+        {
+            cached = false;
+            hash = fnv1a_64((const uint8_t *)lsquic_str_buf(certs[i]), lsquic_str_len(certs[i]));
+
+            for (j = 0; j < (int)lsquic_str_len(client_cached_cert_hashes);
+                 j += sizeof(uint64_t))
+            {
+                memcpy(&cached_hash, lsquic_str_buf(client_cached_cert_hashes) + j,
+                       sizeof(uint64_t));
+                if (hash != cached_hash)
+                    continue;
+
+                entry->type = ENTRY_CACHED;
+                entry->hash = hash;
+                cached = true;
+                break;
+            }
+
+            if (cached)
+                continue;
+        }
+
+        if (0 == match_common_cert(certs[i], client_common_set_hashes,
+            &entry->set_hash, &entry->index))
+        {
+            entry->type = ENTRY_COMMON;
+            continue;
+        }
+
+        entry->type = ENTRY_COMPRESSED;
+   }
+}
+
 size_t get_entries_size(cert_entry_t *entries, size_t entries_count)
 {
     size_t i;
@@ -264,7 +386,6 @@ size_t get_entries_size(cert_entry_t *entries, size_t entries_count)
     entries_size++;  /* for end marker */
     return entries_size;
 }
-
 
 void serialize_cert_entries(uint8_t* out, int *out_len, cert_entry_t *entries,
                             size_t entries_count)
@@ -430,6 +551,116 @@ static int parse_entries(const unsigned char **in_out, const unsigned char *cons
 
   cleanup:
     free(cached_hashes);
+    return rv;
+
+  err:
+    rv = -1;
+    goto cleanup;
+}
+
+
+/* return 0 for OK */
+int compress_certs(lsquic_str_t **certs, size_t certs_count,
+                   lsquic_str_t *client_common_set_hashes,
+                   lsquic_str_t *client_cached_cert_hashes,
+                   lsquic_str_t *result)
+{
+    int rv;
+    size_t i;
+    size_t uncompressed_size = 0, compressed_size = 0 ;
+    z_stream z;
+    lsquic_str_t *dict;
+    size_t entries_size, result_length;
+    int out_len;
+    uint8_t* out;
+    uint32_t tmp_size_32;
+    cert_entry_t *entries;
+
+    entries = malloc(sizeof(cert_entry_t) * certs_count);
+    if (!entries)
+        return -1;
+
+    dict = lsquic_str_new(NULL, 0);
+    if (!dict)
+        goto err;
+
+    get_certs_entries(certs, certs_count, client_common_set_hashes,
+                              client_cached_cert_hashes, entries);
+
+    for (i = 0; i < certs_count; i++)
+    {
+        if (entries[i].type == ENTRY_COMPRESSED)
+        {
+             /*uint32_t length + cert content*/ 
+            uncompressed_size += 4 + lsquic_str_len(certs[i]);
+        }
+    }
+
+    if (uncompressed_size > 0)
+    {
+        memset(&z, 0, sizeof(z));
+        if (Z_OK != deflateInit(&z, Z_DEFAULT_COMPRESSION))
+            goto err;
+
+        make_zlib_dict_for_entries(entries, certs, certs_count, dict);
+        if(Z_OK != deflateSetDictionary(&z, (const unsigned char *)lsquic_str_buf(dict), lsquic_str_len(dict)))
+            goto err;
+        compressed_size = deflateBound(&z, uncompressed_size);
+    }
+
+    entries_size = get_entries_size(entries, certs_count);
+    result_length = entries_size + (uncompressed_size > 0 ? 4 : 0) +
+                    compressed_size;
+    lsquic_str_prealloc(result, result_length);
+
+    out = (unsigned char *)lsquic_str_buf(result);
+    serialize_cert_entries(out, &out_len, entries, certs_count);
+    out += entries_size;
+
+    if (uncompressed_size == 0)
+    {
+        lsquic_str_setlen(result, entries_size);
+        rv = 0;
+        goto cleanup;
+    }
+    
+    tmp_size_32 = uncompressed_size;
+    memcpy(out, &tmp_size_32, sizeof(uint32_t));
+    out += sizeof(uint32_t);
+
+    z.next_out = out;
+    z.avail_out = compressed_size;
+
+    for (i = 0; i < certs_count; ++i)
+    {
+        if (entries[i].type != ENTRY_COMPRESSED)
+            continue;
+
+        tmp_size_32 = lsquic_str_len(certs[i]);
+        z.next_in = (uint8_t*)(&tmp_size_32);
+        z.avail_in = sizeof(tmp_size_32);
+        if (Z_OK != deflate(&z, Z_NO_FLUSH) || z.avail_in)
+            goto err;
+        z.next_in = (unsigned char *)lsquic_str_buf(certs[i]);
+        z.avail_in = lsquic_str_len(certs[i]);
+        if (Z_OK != deflate(&z, Z_NO_FLUSH) || z.avail_in)
+            goto err;
+    }
+
+    z.avail_in = 0;
+    if (Z_STREAM_END != deflate(&z, Z_FINISH))
+        goto err;
+
+    rv = 0;
+    result_length -= z.avail_out;
+    lsquic_str_setlen(result, result_length);
+
+  cleanup:
+    free(entries);
+    if (dict)
+        lsquic_str_delete(dict);
+    if (uncompressed_size)
+        deflateEnd(&z);
     return rv;
 
   err:

@@ -19,7 +19,10 @@
 #include "lsquic_conn_flow.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_rtt.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
 #include "lsquic_stream.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_logger.h"
@@ -61,12 +64,12 @@ struct callback_value   /* What callback returns */
         void                           *push_promise;
         struct cv_error {
             enum frame_reader_error     code;
-            uint32_t                    stream_id;
+            lsquic_stream_id_t          stream_id;
         }                               error;
         struct cv_priority {
-            uint32_t                    stream_id;
+            lsquic_stream_id_t          stream_id;
             int                         exclusive;
-            uint32_t                    dep_stream_id;
+            lsquic_stream_id_t          dep_stream_id;
             unsigned                    weight;
         }                               priority;
     }                                   u;
@@ -221,7 +224,7 @@ on_push_promise (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-on_error (void *ctx, uint32_t stream_id, enum frame_reader_error error)
+on_error (void *ctx, lsquic_stream_id_t stream_id, enum frame_reader_error error)
 {
     struct cb_ctx *cb_ctx = ctx;
     assert(cb_ctx == &g_cb_ctx);
@@ -249,8 +252,8 @@ on_settings (void *ctx, uint16_t id, uint32_t value)
 
 
 static void
-on_priority (void *ctx, uint32_t stream_id, int exclusive,
-             uint32_t dep_stream_id, unsigned weight)
+on_priority (void *ctx, lsquic_stream_id_t stream_id, int exclusive,
+             lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
     struct cb_ctx *cb_ctx = ctx;
     assert(cb_ctx == &g_cb_ctx);

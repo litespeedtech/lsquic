@@ -18,6 +18,7 @@
 #endif
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,14 @@
 #include "../src/liblsquic/lsquic_logger.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
+/* include directly for reset_stream testing */
+#include "../src/liblsquic/lsquic_varint.h"
+#include "../src/liblsquic/lsquic_hq.h"
+#include "../src/liblsquic/lsquic_sfcw.h"
+#include "../src/liblsquic/lsquic_hash.h"
+#include "../src/liblsquic/lsquic_stream.h"
+/* include directly for retire_cid testing */
+#include "../src/liblsquic/lsquic_conn.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -173,19 +182,19 @@ struct http_client_ctx {
     unsigned                     hcc_concurrency;
     unsigned                     hcc_cc_reqs_per_conn;
     unsigned                     hcc_n_open_conns;
+    unsigned                     hcc_reset_after_nbytes;
+    unsigned                     hcc_retire_cid_after_nbytes;
     
-    unsigned char               *hcc_zero_rtt;
-    size_t                       hcc_zero_rtt_len;
-    size_t                       hcc_zero_rtt_max_len;
-    FILE                        *hcc_zero_rtt_file;
     char                        *hcc_zero_rtt_file_name;
 
     enum {
+        HCC_SKIP_0RTT           = (1 << 0),
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
-        HCC_RTT_INFO            = (1 << 3),
     }                            hcc_flags;
     struct prog                 *prog;
+    const char                  *qif_file;
+    FILE                        *qif_fh;
 };
 
 struct lsquic_conn_ctx {
@@ -200,6 +209,9 @@ struct lsquic_conn_ctx {
                                              * and decremented as streams are closed. It should
                                              * never exceed hcc_cc_reqs_per_conn in client_ctx.
                                              */
+    enum {
+        CH_ZERO_RTT_SAVED   = 1 << 0,
+    }                    ch_flags;
 };
 
 
@@ -225,18 +237,33 @@ display_cert_chain (lsquic_conn_t *);
 static void
 create_connections (struct http_client_ctx *client_ctx)
 {
-    unsigned char *zero_rtt = NULL;
-    size_t zero_rtt_len = 0;
-    if (client_ctx->hcc_flags & HCC_RTT_INFO)
+    size_t len;
+    FILE *file;
+    unsigned char zero_rtt[0x2000];
+
+    if (0 == (client_ctx->hcc_flags & HCC_SKIP_0RTT)
+                                    && client_ctx->hcc_zero_rtt_file_name)
     {
-        zero_rtt = client_ctx->hcc_zero_rtt;
-        zero_rtt_len = client_ctx->hcc_zero_rtt_len;
-        LSQ_INFO("create connection zero_rtt %zu bytes", zero_rtt_len);
+        file = fopen(client_ctx->hcc_zero_rtt_file_name, "rb");
+        if (!file)
+        {
+            LSQ_DEBUG("cannot open %s for reading: %s",
+                        client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+            goto no_file;
+        }
+        len = fread(zero_rtt, 1, sizeof(zero_rtt), file);
+        if (0 == len && !feof(file))
+            LSQ_WARN("error reading %s: %s",
+                        client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+        fclose(file);
+        LSQ_INFO("create connection zero_rtt %zu bytes", len);
     }
+    else no_file:
+        len = 0;
 
     while (client_ctx->hcc_n_open_conns < client_ctx->hcc_concurrency &&
            client_ctx->hcc_total_n_reqs > 0)
-        if (0 != prog_connect(client_ctx->prog, zero_rtt, zero_rtt_len))
+        if (0 != prog_connect(client_ctx->prog, len ? zero_rtt : NULL, len))
         {
             LSQ_ERROR("connection failed");
             exit(EXIT_FAILURE);
@@ -346,74 +373,38 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
 }
 
 
+static int
+hsk_status_ok (enum lsquic_hsk_status status)
+{
+    return status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK;
+}
+
+
 static void
 http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 {
-    lsquic_conn_ctx_t *conn_h;
-    lsquic_conn_ctx_t *conn_ctx = lsquic_conn_get_ctx(conn);
-    struct http_client_ctx *client_ctx = conn_ctx->client_ctx;
-    ssize_t ret;
-    if (status == LSQ_HSK_FAIL)
-        LSQ_INFO("handshake failed");
-    else
+    lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
+    struct http_client_ctx *client_ctx = conn_h->client_ctx;
+
+    if (hsk_status_ok(status))
         LSQ_INFO("handshake success %s",
                                 status == LSQ_HSK_0RTT_OK ? "with 0-RTT" : "");
-    if (status == LSQ_HSK_OK)
+    else if (status == LSQ_HSK_FAIL)
+        LSQ_INFO("handshake failed");
+    else if (status == LSQ_HSK_0RTT_FAIL)
     {
-        ret = lsquic_conn_get_zero_rtt(conn, client_ctx->hcc_zero_rtt,
-                                            client_ctx->hcc_zero_rtt_max_len);
-        if (ret > 0)
-        {
-            client_ctx->hcc_zero_rtt_len = ret;
-            LSQ_INFO("get zero_rtt %zu bytes", client_ctx->hcc_zero_rtt_len);
-            client_ctx->hcc_flags |= HCC_RTT_INFO;
-            /* clear file and prepare to write */
-            if (client_ctx->hcc_zero_rtt_file)
-            {
-                client_ctx->hcc_zero_rtt_file = freopen(
-                                        client_ctx->hcc_zero_rtt_file_name,
-                                        "wb", client_ctx->hcc_zero_rtt_file);
-                LSQ_DEBUG("reopen and clear zero_rtt file");
-            }
-            /* open file for the first time */
-            if (client_ctx->hcc_zero_rtt_file_name &&
-                !client_ctx->hcc_zero_rtt_file)
-            {
-                client_ctx->hcc_zero_rtt_file = fopen(
-                                    client_ctx->hcc_zero_rtt_file_name, "wb+");
-                if (client_ctx->hcc_zero_rtt_file)
-                    LSQ_DEBUG("opened zero_rtt file");
-                else
-                    LSQ_DEBUG("zero_rtt file cannot be created");
-            }
-            /* write to file */
-            if (client_ctx->hcc_zero_rtt_file)
-            {
-                size_t ret2 = fwrite(client_ctx->hcc_zero_rtt, 1,
-                                    client_ctx->hcc_zero_rtt_len,
-                                    client_ctx->hcc_zero_rtt_file);
-                LSQ_DEBUG("wrote %zu bytes to zero_rtt file", ret2);
-                if (ret2 == client_ctx->hcc_zero_rtt_len)
-                {
-                    fclose(client_ctx->hcc_zero_rtt_file);
-                    client_ctx->hcc_zero_rtt_file = NULL;
-                    LSQ_DEBUG("close zero_rtt file");
-                }
-                else
-                    LSQ_ERROR("did not write full blob to zero_rtt file");
-            }
-        }
-        else if (ret == 0)
-        {
-            LSQ_INFO("zero_rtt not available");
-        } else
-            LSQ_INFO("get_zero_rtt failed %s", strerror(errno));
+        LSQ_INFO("handshake failed because of 0-RTT, will retry without it");
+        client_ctx->hcc_flags |= HCC_SKIP_0RTT;
+        ++client_ctx->hcc_concurrency;
+        ++client_ctx->hcc_total_n_reqs;
     }
+    else
+        assert(0);
 
-    if ((status != LSQ_HSK_FAIL) && s_display_cert_chain)
+    if (hsk_status_ok(status) && s_display_cert_chain)
         display_cert_chain(conn);
 
-    if (status != LSQ_HSK_FAIL)
+    if (hsk_status_ok(status))
     {
         conn_h = lsquic_conn_get_ctx(conn);
         ++s_stat_conns_ok;
@@ -427,6 +418,49 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
     }
     else
         ++s_stat_conns_failed;
+}
+
+
+static void
+http_client_on_zero_rtt_info (lsquic_conn_t *conn, const unsigned char *buf,
+                                                                size_t bufsz)
+{
+    lsquic_conn_ctx_t *const conn_h = lsquic_conn_get_ctx(conn);
+    struct http_client_ctx *const client_ctx = conn_h->client_ctx;
+    FILE *file;
+    size_t nw;
+
+    assert(client_ctx->hcc_zero_rtt_file_name);
+
+    /* Our client is rather limited: only one file and only one ticket per
+     * connection can be saved.
+     */
+    if (conn_h->ch_flags & CH_ZERO_RTT_SAVED)
+    {
+        LSQ_DEBUG("zero-rtt already saved for this connection");
+        return;
+    }
+
+    file = fopen(client_ctx->hcc_zero_rtt_file_name, "wb");
+    if (!file)
+    {
+        LSQ_WARN("cannot open %s for writing: %s",
+            client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+        return;
+    }
+
+    nw = fwrite(buf, 1, bufsz, file);
+    if (nw == bufsz)
+    {
+        LSQ_DEBUG("wrote %zd bytes of zero-rtt information to %s",
+            nw, client_ctx->hcc_zero_rtt_file_name);
+        conn_h->ch_flags |= CH_ZERO_RTT_SAVED;
+    }
+    else
+        LSQ_WARN("error: fwrite(%s) returns %zd instead of %zd: %s",
+            client_ctx->hcc_zero_rtt_file_name, nw, bufsz, strerror(errno));
+
+    fclose(file);
 }
 
 
@@ -660,6 +694,20 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         else if (nread = lsquic_stream_read(stream, buf, sizeof(buf)), nread > 0)
         {
             s_stat_downloaded_bytes += nread;
+            /* test stream_reset after some number of read bytes */
+            if (client_ctx->hcc_reset_after_nbytes &&
+                s_stat_downloaded_bytes > client_ctx->hcc_reset_after_nbytes)
+            {
+                lsquic_stream_reset(stream, 0x1);
+                break;
+            }
+            /* test retire_cid after some number of read bytes */
+            if (client_ctx->hcc_retire_cid_after_nbytes &&
+                s_stat_downloaded_bytes > client_ctx->hcc_retire_cid_after_nbytes)
+            {
+                lsquic_conn_retire_cid(lsquic_stream_conn(stream));
+                break;
+            }
             if (!g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
             {
                 /* First read is assumed to be the first byte */
@@ -669,7 +717,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 st_h->sh_flags |= PROCESSED_HEADERS;
             }
             if (!s_discard_response)
-                write(STDOUT_FILENO, buf, nread);
+                fwrite(buf, 1, nread, stdout);
             if (randomly_reprioritize_streams && (st_h->count++ & 0x3F) == 0)
             {
                 old_prio = lsquic_stream_priority(stream);
@@ -679,7 +727,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 #endif
                 lsquic_stream_set_priority(stream, new_prio);
                 assert(s == 0);
-                LSQ_DEBUG("changed stream %u priority from %u to %u",
+                LSQ_DEBUG("changed stream %"PRIu64" priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
             }
         }
@@ -693,6 +741,12 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         else if (client_ctx->prog->prog_settings.es_rw_once && EWOULDBLOCK == errno)
         {
             LSQ_NOTICE("emptied the buffer in 'once' mode");
+            break;
+        }
+        else if (lsquic_stream_is_rejected(stream))
+        {
+            LSQ_NOTICE("stream was rejected");
+            lsquic_stream_close(stream);
             break;
         }
         else
@@ -746,7 +800,7 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 }
 
 
-const struct lsquic_stream_if http_client_if = {
+static struct lsquic_stream_if http_client_if = {
     .on_new_conn            = http_client_on_new_conn,
     .on_conn_closed         = http_client_on_conn_closed,
     .on_new_stream          = http_client_on_new_stream,
@@ -776,7 +830,7 @@ usage (const char *prog)
 "                 connections will have fewer requests than this.\n"
 "   -w CONCUR   Number of concurrent requests per single connection.\n"
 "                 Defaults to 1.\n"
-"   -m METHOD   Method.  Defaults to GET.\n"
+"   -M METHOD   Method.  Defaults to GET.\n"
 "   -P PAYLOAD  Name of the file that contains payload to be used in the\n"
 "                 request.  This adds two more headers to the request:\n"
 "                 content-type: application/octet-stream and\n"
@@ -791,8 +845,11 @@ usage (const char *prog)
 "                 be verified.\n"
 #endif
 "   -a          Display server certificate chain after successful handshake.\n"
+"   -b N_BYTES  Send RESET_STREAM frame after the client has read n bytes.\n"
 "   -t          Print stats to stdout.\n"
 "   -T FILE     Print stats to FILE.  If FILE is -, print stats to stdout.\n"
+"   -q FILE     QIF mode: issue requests from the QIF file and validate\n"
+"                 server responses.\n"
             , prog);
 }
 
@@ -1028,10 +1085,298 @@ display_stat (FILE *out, const struct sample_stats *stats, const char *name)
 }
 
 
+static lsquic_conn_ctx_t *
+qif_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
+{
+    lsquic_conn_make_stream(conn);
+    return stream_if_ctx;
+}
+
+
+static void
+qif_client_on_conn_closed (lsquic_conn_t *conn)
+{
+    struct http_client_ctx *client_ctx = (void *) lsquic_conn_get_ctx(conn);
+    LSQ_INFO("connection is closed: stop engine");
+    prog_stop(client_ctx->prog);
+}
+
+
+struct qif_stream_ctx
+{
+    int                         reqno;
+    struct lsquic_http_headers  headers;
+    char                       *qif_str;
+    size_t                      qif_sz;
+    size_t                      qif_off;
+    char                       *resp_str;   /* qif_sz allocated */
+    size_t                      resp_off;   /* Read so far */
+    enum {
+        QSC_HEADERS_SENT = 1 << 0,
+        QSC_GOT_HEADERS  = 1 << 1,
+    }                           flags;
+};
+
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+lsquic_stream_ctx_t *
+qif_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
+{
+    struct http_client_ctx *const client_ctx = stream_if_ctx;
+    FILE *const fh = client_ctx->qif_fh;
+    struct qif_stream_ctx *ctx;
+    struct lsquic_http_header *header;
+    static int reqno;
+    size_t nalloc;
+    int i;
+    char *end, *tab, *line;
+    char line_buf[0x1000];
+
+    ctx = calloc(1, sizeof(*ctx));
+    if (!ctx)
+    {
+        perror("calloc");
+        exit(1);
+    }
+    ctx->reqno = reqno++;
+
+    nalloc = 0;
+    while ((line = fgets(line_buf, sizeof(line_buf), fh)))
+    {
+        end = strchr(line, '\n');
+        if (!end)
+        {
+            fprintf(stderr, "no newline\n");
+            exit(1);
+        }
+
+        if (end == line)
+            break;
+
+        if (*line == '#')
+            continue;
+
+        tab = strchr(line, '\t');
+        if (!tab)
+        {
+            fprintf(stderr, "no TAB\n");
+            exit(1);
+        }
+
+        if (nalloc + (end + 1 - line) > ctx->qif_sz)
+        {
+            if (nalloc)
+                nalloc = MAX(nalloc * 2, nalloc + (end + 1 - line));
+            else
+                nalloc = end + 1 - line;
+            ctx->qif_str = realloc(ctx->qif_str, nalloc);
+            if (!ctx->qif_str)
+            {
+                perror("realloc");
+                exit(1);
+            }
+        }
+        memcpy(ctx->qif_str + ctx->qif_sz, line, end + 1 - line);
+
+        ctx->headers.headers = realloc(ctx->headers.headers,
+                sizeof(ctx->headers.headers[0]) * (ctx->headers.count + 1));
+        if (!ctx->headers.headers)
+        {
+            perror("realloc");
+            exit(1);
+        }
+        header = &ctx->headers.headers[ctx->headers.count++];
+        header->name.iov_base = (void *) ctx->qif_sz;
+        header->name.iov_len = tab - line;
+        header->value.iov_base = (void *) (ctx->qif_sz + (tab - line + 1));
+        header->value.iov_len = end - tab - 1;
+
+        ctx->qif_sz += end + 1 - line;
+    }
+
+    for (i = 0; i < ctx->headers.count; ++i)
+    {
+        ctx->headers.headers[i].name.iov_base = ctx->qif_str
+                + (uintptr_t) ctx->headers.headers[i].name.iov_base;
+        ctx->headers.headers[i].value.iov_base = ctx->qif_str
+                + (uintptr_t) ctx->headers.headers[i].value.iov_base;
+    }
+
+    lsquic_stream_wantwrite(stream, 1);
+
+    if (!line)
+    {
+        LSQ_DEBUG("Input QIF file ends; close file handle");
+        fclose(client_ctx->qif_fh);
+        client_ctx->qif_fh = NULL;
+    }
+
+    return (void *) ctx;
+}
+
+
+static void
+qif_client_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
+{
+    struct qif_stream_ctx *const ctx = (void *) h;
+    size_t towrite;
+    ssize_t nw;
+
+    if (ctx->flags & QSC_HEADERS_SENT)
+    {
+        towrite = ctx->qif_sz - ctx->qif_off;
+        nw = lsquic_stream_write(stream, ctx->qif_str + ctx->qif_off, towrite);
+        if (nw >= 0)
+        {
+            LSQ_DEBUG("wrote %zd bytes to stream", nw);
+            ctx->qif_off += nw;
+            if (ctx->qif_off == (size_t) nw)
+            {
+                lsquic_stream_shutdown(stream, 1);
+                lsquic_stream_wantread(stream, 1);
+                LSQ_DEBUG("finished writing request %d", ctx->reqno);
+            }
+        }
+        else
+        {
+            LSQ_ERROR("cannot write to stream: %s", strerror(errno));
+            lsquic_stream_wantwrite(stream, 0);
+            lsquic_conn_abort(lsquic_stream_conn(stream));
+        }
+    }
+    else
+    {
+        if (0 == lsquic_stream_send_headers(stream, &ctx->headers, 0))
+        {
+            ctx->flags |= QSC_HEADERS_SENT;
+            LSQ_DEBUG("sent headers");
+        }
+        else
+        {
+            LSQ_ERROR("cannot send headers: %s", strerror(errno));
+            lsquic_stream_wantwrite(stream, 0);
+            lsquic_conn_abort(lsquic_stream_conn(stream));
+        }
+    }
+}
+
+
+static void
+qif_client_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
+{
+    struct qif_stream_ctx *const ctx = (void *) h;
+    struct hset *hset;
+    ssize_t nr;
+    unsigned char buf[1];
+
+    LSQ_DEBUG("reading response to request %d", ctx->reqno);
+
+    if (!(ctx->flags & QSC_GOT_HEADERS))
+    {
+        hset = lsquic_stream_get_hset(stream);
+        if (!hset)
+        {
+            LSQ_ERROR("could not get header set from stream");
+            exit(2);
+        }
+        LSQ_DEBUG("got header set for response %d", ctx->reqno);
+        hset_dump(hset, stdout);
+        hset_destroy(hset);
+        ctx->flags |= QSC_GOT_HEADERS;
+    }
+    else
+    {
+        if (!ctx->resp_str)
+        {
+            ctx->resp_str = malloc(ctx->qif_sz);
+            if (!ctx->resp_str)
+            {
+                perror("malloc");
+                exit(1);
+            }
+        }
+        if (ctx->resp_off < ctx->qif_sz)
+        {
+            nr = lsquic_stream_read(stream, ctx->resp_str + ctx->resp_off,
+                                        ctx->qif_sz - ctx->resp_off);
+            if (nr > 0)
+            {
+                ctx->resp_off += nr;
+                LSQ_DEBUG("read %zd bytes of reponse %d", nr, ctx->reqno);
+            }
+            else if (nr == 0)
+            {
+                LSQ_INFO("response %d too short", ctx->reqno);
+                LSQ_WARN("response %d FAIL", ctx->reqno);
+                lsquic_stream_shutdown(stream, 0);
+            }
+            else
+            {
+                LSQ_ERROR("error reading from stream");
+                lsquic_stream_wantread(stream, 0);
+                lsquic_conn_abort(lsquic_stream_conn(stream));
+            }
+        }
+        else
+        {
+            /* Collect EOF */
+            nr = lsquic_stream_read(stream, buf, sizeof(buf));
+            if (nr == 0)
+            {
+                if (0 == memcmp(ctx->qif_str, ctx->resp_str, ctx->qif_sz))
+                    LSQ_INFO("response %d OK", ctx->reqno);
+                else
+                    LSQ_WARN("response %d FAIL", ctx->reqno);
+                lsquic_stream_shutdown(stream, 0);
+            }
+            else if (nr > 0)
+            {
+                LSQ_INFO("response %d too long", ctx->reqno);
+                LSQ_WARN("response %d FAIL", ctx->reqno);
+                lsquic_stream_shutdown(stream, 0);
+            }
+            else
+            {
+                LSQ_ERROR("error reading from stream");
+                lsquic_stream_shutdown(stream, 0);
+                lsquic_conn_abort(lsquic_stream_conn(stream));
+            }
+        }
+    }
+}
+
+
+static void
+qif_client_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
+{
+    struct lsquic_conn *conn = lsquic_stream_conn(stream);
+    struct http_client_ctx *client_ctx = (void *) lsquic_conn_get_ctx(conn);
+    struct qif_stream_ctx *const ctx = (void *) h;
+    free(ctx->qif_str);
+    free(ctx->resp_str);
+    free(ctx->headers.headers);
+    free(ctx);
+    if (client_ctx->qif_fh)
+        lsquic_conn_make_stream(conn);
+    else
+        lsquic_conn_close(conn);
+}
+
+
+const struct lsquic_stream_if qif_client_if = {
+    .on_new_conn            = qif_client_on_new_conn,
+    .on_conn_closed         = qif_client_on_conn_closed,
+    .on_new_stream          = qif_client_on_new_stream,
+    .on_read                = qif_client_on_read,
+    .on_write               = qif_client_on_write,
+    .on_close               = qif_client_on_close,
+};
+
+
 int
 main (int argc, char **argv)
 {
-    int opt, s;
+    int opt, s, was_empty;
     lsquic_time_t start_time;
     FILE *stats_fh = NULL;
     long double elapsed;
@@ -1040,7 +1385,7 @@ main (int argc, char **argv)
     struct path_elem *pe;
     struct sport_head sports;
     struct prog prog;
-    unsigned char zero_rtt[8192];
+    const char *token = NULL;
 
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
@@ -1051,9 +1396,8 @@ main (int argc, char **argv)
     client_ctx.hcc_cc_reqs_per_conn = 1;
     client_ctx.hcc_reqs_per_conn = 1;
     client_ctx.hcc_total_n_reqs = 1;
-    client_ctx.hcc_zero_rtt = (unsigned char *)zero_rtt;
-    client_ctx.hcc_zero_rtt_len = sizeof(zero_rtt);
-    client_ctx.hcc_zero_rtt_max_len = sizeof(zero_rtt);
+    client_ctx.hcc_reset_after_nbytes = 0;
+    client_ctx.hcc_retire_cid_after_nbytes = 0;
     client_ctx.prog = &prog;
 #ifdef WIN32
     WSADATA wsd;
@@ -1062,9 +1406,10 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "46Br:R:IKu:EP:M:n:w:H:p:0:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS
+                                    "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
 #ifndef WIN32
-                                                                      "C:atT:"
+                                                                      "C:"
 #endif
                                                                             )))
     {
@@ -1138,6 +1483,15 @@ main (int argc, char **argv)
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
             exit(0);
+        case 'q':
+            client_ctx.qif_file = optarg;
+            break;
+        case 'e':
+            if (TAILQ_EMPTY(&sports))
+                token = optarg;
+            else
+                sport_set_token(TAILQ_LAST(&sports, sport_head), optarg);
+            break;
 #ifndef WIN32
         case 'C':
             prog.prog_api.ea_verify_cert = verify_server_cert;
@@ -1160,13 +1514,15 @@ main (int argc, char **argv)
                 }
             }
             break;
+        case 'b':
+            client_ctx.hcc_reset_after_nbytes = atoi(optarg);
+            break;
+        case 'd':
+            client_ctx.hcc_retire_cid_after_nbytes = atoi(optarg);
+            break;
         case '0':
+            http_client_if.on_zero_rtt_info = http_client_on_zero_rtt_info;
             client_ctx.hcc_zero_rtt_file_name = optarg;
-            client_ctx.hcc_zero_rtt_file = fopen(optarg, "rb+");
-            if (client_ctx.hcc_zero_rtt_file)
-                LSQ_DEBUG("opened zero_rtt file");
-            else
-                LSQ_DEBUG("zero_rtt file is empty, opening later");
             break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
@@ -1178,40 +1534,51 @@ main (int argc, char **argv)
     prog.prog_api.ea_stats_fh = stats_fh;
 #endif
 
-    if (client_ctx.hcc_zero_rtt_file)
+    if (client_ctx.qif_file)
     {
-        size_t ret = fread(client_ctx.hcc_zero_rtt, 1,
-                            client_ctx.hcc_zero_rtt_max_len,
-                            client_ctx.hcc_zero_rtt_file);
-        if (ret)
+        client_ctx.qif_fh = fopen(client_ctx.qif_file, "r");
+        if (!client_ctx.qif_fh)
         {
-            client_ctx.hcc_flags |= HCC_RTT_INFO;
-            client_ctx.hcc_zero_rtt_len = ret;
-            LSQ_DEBUG("read %zu bytes from zero_rtt file", ret);
+            fprintf(stderr, "Cannot open %s for reading: %s\n",
+                                    client_ctx.qif_file, strerror(errno));
+            exit(1);
         }
-        else
-            LSQ_DEBUG("zero_rtt file is empty");
+        LSQ_NOTICE("opened QIF file %s for reading\n", client_ctx.qif_file);
+        prog.prog_api.ea_stream_if = &qif_client_if;
+        g_header_bypass = 1;
+        prog.prog_api.ea_hsi_if = &header_bypass_api;
+        prog.prog_api.ea_hsi_ctx = NULL;
+    }
+    else if (TAILQ_EMPTY(&client_ctx.hcc_path_elems))
+    {
+        fprintf(stderr, "Specify at least one path using -p option\n");
+        exit(1);
     }
 
     start_time = lsquic_time_now();
+    was_empty = TAILQ_EMPTY(&sports);
     if (0 != prog_prep(&prog))
     {
         LSQ_ERROR("could not prep");
         exit(EXIT_FAILURE);
     }
+    if (was_empty && token)
+        sport_set_token(TAILQ_LAST(&sports, sport_head), token);
 
-    create_connections(&client_ctx);
+    if (client_ctx.qif_file)
+    {
+        if (0 != prog_connect(&prog, NULL, 0))
+        {
+            LSQ_ERROR("connection failed");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else
+        create_connections(&client_ctx);
 
     LSQ_DEBUG("entering event loop");
 
     s = prog_run(&prog);
-
-    if (client_ctx.hcc_zero_rtt_file)
-    {
-        fclose(client_ctx.hcc_zero_rtt_file);
-        client_ctx.hcc_zero_rtt_file = NULL;
-        LSQ_DEBUG("close zero_rtt file");
-    }
 
     if (stats_fh)
     {
@@ -1237,6 +1604,9 @@ main (int argc, char **argv)
         TAILQ_REMOVE(&client_ctx.hcc_path_elems, pe, next_pe);
         free(pe);
     }
+
+    if (client_ctx.qif_fh)
+        (void) fclose(client_ctx.qif_fh);
 
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

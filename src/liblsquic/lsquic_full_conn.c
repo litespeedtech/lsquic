@@ -19,9 +19,11 @@
 #include <openssl/ssl.h>
 
 #include "lsquic_types.h"
+#include "lsquic_sizes.h"
 #include "lsquic.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_alarmset.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_parse.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
@@ -29,18 +31,26 @@
 #include "lsquic_util.h"
 #include "lsquic_conn_flow.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_senhist.h"
 #include "lsquic_rtt.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
+#include "lsquic_bw_sampler.h"
+#include "lsquic_minmax.h"
+#include "lsquic_bbr.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_set.h"
 #include "lsquic_malo.h"
 #include "lsquic_chsk_stream.h"
+#include "lsquic_shsk_stream.h"
+#include "lshpack.h"
 #include "lsquic_str.h"
 #include "lsquic_qtags.h"
-#include "lsquic_handshake.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_headers_stream.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_reader.h"
@@ -51,26 +61,23 @@
 #include "lsquic_spi.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_version.h"
-#include "lsquic_hash.h"
 #include "lsquic_headers.h"
 #include "lsquic_handshake.h"
 
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_ver_neg.h"
+#include "lsquic_mini_conn.h"
 #include "lsquic_full_conn.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
-#define LSQUIC_LOG_CONN_ID conn->fc_conn.cn_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->fc_conn)
 #include "lsquic_logger.h"
 
 enum { STREAM_IF_STD, STREAM_IF_HSK, STREAM_IF_HDR, N_STREAM_IFS };
 
-#define MAX_ANY_PACKETS_SINCE_LAST_ACK  20
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
 #define ACK_TIMEOUT                     25000
-#define TIME_BETWEEN_PINGS              15000000
-#define IDLE_TIMEOUT                    30000000
 
 /* IMPORTANT: Keep values of FC_SERVER and FC_HTTP same as LSENG_SERVER
  * and LSENG_HTTP.
@@ -103,6 +110,7 @@ enum full_conn_flags {
     FC_HAVE_SAVED_ACK = (1 <<22),
     FC_ABORT_COMPLAINED
                       = (1 <<23),
+    FC_GOT_SREJ       = (1 <<24),   /* Don't schedule ACK alarm */
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -115,7 +123,7 @@ enum full_conn_flags {
 #if KEEP_CLOSED_STREAM_HISTORY
 struct stream_history
 {
-    uint32_t            shist_stream_id;
+    lsquic_stream_id_t  shist_stream_id;
     enum stream_flags   shist_stream_flags;
     unsigned char       shist_hist_buf[1 << SM_HIST_BITS];
 };
@@ -148,13 +156,14 @@ struct recent_packets
 struct stream_id_to_reset
 {
     STAILQ_ENTRY(stream_id_to_reset)    sitr_next;
-    uint32_t                            sitr_stream_id;
+    lsquic_stream_id_t                  sitr_stream_id;
 };
 
 
 struct full_conn
 {
     struct lsquic_conn           fc_conn;
+    struct conn_cid_elem         fc_cces[2];
     struct lsquic_rechist        fc_rechist;
     struct {
         const struct lsquic_stream_if   *stream_if;
@@ -164,7 +173,7 @@ struct full_conn
     struct lsquic_send_ctl       fc_send_ctl;
     struct lsquic_conn_public    fc_pub;
     lsquic_alarmset_t            fc_alset;
-    lsquic_set32_t               fc_closed_stream_ids[2];
+    lsquic_set64_t               fc_closed_stream_ids[2];
     const struct lsquic_engine_settings
                                 *fc_settings;
     struct lsquic_engine_public *fc_enpub;
@@ -178,18 +187,17 @@ struct full_conn
         unsigned    max_stream_send;
     }                            fc_cfg;
     enum full_conn_flags         fc_flags;
-    /* Number of packets received since last ACK sent: */
-    unsigned                     fc_n_slack_all;
     /* Number ackable packets received since last ACK was sent: */
     unsigned                     fc_n_slack_akbl;
     unsigned                     fc_n_delayed_streams;
     unsigned                     fc_n_cons_unretx;
-    uint32_t                     fc_last_stream_id;
-    uint32_t                     fc_max_peer_stream_id;
-    uint32_t                     fc_goaway_stream_id;
+    lsquic_stream_id_t           fc_last_stream_id;
+    lsquic_stream_id_t           fc_max_peer_stream_id;
+    lsquic_stream_id_t           fc_goaway_stream_id;
     struct ver_neg               fc_ver_neg;
     union {
         struct client_hsk_ctx    client;
+        struct server_hsk_ctx    server;
     }                            fc_hsk_ctx;
 #if LSQUIC_CONN_STATS
     struct conn_stats            fc_stats;
@@ -209,7 +217,10 @@ struct full_conn
                                  fc_stream_ids_to_reset;
     struct short_ack_info        fc_saved_ack_info;
     lsquic_time_t                fc_saved_ack_received;
+    struct network_path          fc_path;
 };
+
+static const struct ver_neg server_ver_neg;
 
 
 #define MAX_ERRMSG 256
@@ -234,19 +245,20 @@ struct full_conn
     ABORT_WITH_FLAG(conn, LSQ_LOG_WARN, FC_ERROR, __VA_ARGS__)
 
 static void
-idle_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+idle_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static void
-ping_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+ping_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static void
-handshake_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+handshake_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static void
-ack_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+ack_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static lsquic_stream_t *
-new_stream (struct full_conn *conn, uint32_t stream_id, enum stream_ctor_flags);
+new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
+            enum stream_ctor_flags);
 
 static void
 reset_ack_state (struct full_conn *conn);
@@ -282,7 +294,7 @@ save_stream_history (struct full_conn *conn, const lsquic_stream_t *stream)
 
 
 static const struct stream_history *
-find_stream_history (const struct full_conn *conn, uint32_t stream_id)
+find_stream_history (const struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     const struct stream_history *shist;
     const struct stream_history *const shist_end =
@@ -309,7 +321,6 @@ recent_packet_hist_new (struct full_conn *conn, unsigned out,
     conn->fc_recent_packets[out].els[idx].time = time;
 }
 
-
 static void
 recent_packet_hist_frames (struct full_conn *conn, unsigned out,
                                                 enum quic_ft_bit frame_types)
@@ -318,8 +329,6 @@ recent_packet_hist_frames (struct full_conn *conn, unsigned out,
     idx = (conn->fc_recent_packets[out].idx - 1) % KEEP_PACKET_HISTORY;
     conn->fc_recent_packets[out].els[idx].frame_types |= frame_types;
 }
-
-
 #else
 #define recent_packet_hist_new(conn, out, time)
 #define recent_packet_hist_frames(conn, out, frames)
@@ -356,8 +365,8 @@ calc_mem_used (const struct full_conn *conn)
     size += lsquic_send_ctl_mem_used(&conn->fc_send_ctl);
     size += lsquic_hash_mem_used(conn->fc_pub.all_streams);
     size += lsquic_malo_mem_used(conn->fc_pub.packet_out_malo);
-    if (conn->fc_pub.hs)
-        size += lsquic_headers_stream_mem_used(conn->fc_pub.hs);
+    if (conn->fc_pub.u.gquic.hs)
+        size += lsquic_headers_stream_mem_used(conn->fc_pub.u.gquic.hs);
 
     for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
                                  el = lsquic_hash_next(conn->fc_pub.all_streams))
@@ -365,7 +374,7 @@ calc_mem_used (const struct full_conn *conn)
         stream = lsquic_hashelem_getdata(el);
         size += lsquic_stream_mem_used(stream);
     }
-    size += conn->fc_conn.cn_esf->esf_mem_used(conn->fc_conn.cn_enc_session);
+    size += conn->fc_conn.cn_esf.g->esf_mem_used(conn->fc_conn.cn_enc_session);
 
     return size;
 }
@@ -398,8 +407,11 @@ init_ver_neg (struct full_conn *conn, unsigned versions,
 /* If peer supplies odd values, we abort the connection immediately rather
  * that wait for it to finish "naturally" due to inability to send things.
  */
-static void
-conn_on_peer_config (struct full_conn *conn, unsigned peer_cfcw,
+#ifdef NDEBUG
+static
+#endif
+void
+lsquic_full_conn_on_peer_config (struct full_conn *conn, unsigned peer_cfcw,
                      unsigned peer_sfcw, unsigned max_streams_out)
 {
     lsquic_stream_t *stream;
@@ -425,7 +437,7 @@ conn_on_peer_config (struct full_conn *conn, unsigned peer_cfcw,
         stream = lsquic_hashelem_getdata(el);
         if (0 != lsquic_stream_set_max_send_off(stream, peer_sfcw))
         {
-            ABORT_ERROR("cannot set peer-supplied SFCW=%u on stream %u",
+            ABORT_ERROR("cannot set peer-supplied SFCW=%u on stream %"PRIu64,
                 peer_sfcw, stream->id);
             return;
         }
@@ -440,7 +452,7 @@ send_smhl (const struct full_conn *conn)
 {
     uint32_t smhl;
     return conn->fc_conn.cn_enc_session
-        && 0 == conn->fc_conn.cn_esf->esf_get_peer_setting(
+        && 0 == conn->fc_conn.cn_esf.g->esf_get_peer_setting(
                             conn->fc_conn.cn_enc_session, QTAG_SMHL, &smhl)
         && 1 == smhl;
 }
@@ -473,7 +485,7 @@ maybe_send_settings (struct full_conn *conn)
 
     if (n_settings)
     {
-        if (0 != lsquic_headers_stream_send_settings(conn->fc_pub.hs,
+        if (0 != lsquic_headers_stream_send_settings(conn->fc_pub.u.gquic.hs,
                                                         settings, n_settings))
             ABORT_ERROR("could not send settings");
     }
@@ -502,28 +514,43 @@ apply_peer_settings (struct full_conn *conn)
         return 0;
 #endif
 
-    for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
-        if (0 != conn->fc_conn.cn_esf->esf_get_peer_setting(
-                    conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
+#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
+    if (conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
+    {   /* Magically figure out peer's settings */
+        if (conn->fc_flags & FC_SERVER)
         {
-            LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
-            return -1;
+            cfcw = LSQUIC_DF_CFCW_CLIENT;
+            sfcw = LSQUIC_DF_SFCW_CLIENT;
+            mids = 100;
         }
+        else
+        {
+            cfcw = LSQUIC_DF_CFCW_SERVER;
+            sfcw = LSQUIC_DF_SFCW_SERVER;
+            mids = 100;
+        }
+    }
+    else
+#endif
+        for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
+            if (0 != conn->fc_conn.cn_esf.g->esf_get_peer_setting(
+                        conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
+            {
+                LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
+                return -1;
+            }
 
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
         cfcw, sfcw, mids);
-    conn_on_peer_config(conn, cfcw, sfcw, mids);
+    lsquic_full_conn_on_peer_config(conn, cfcw, sfcw, mids);
     return 0;
 }
-
 
 static const struct conn_iface *full_conn_iface_ptr;
 
 static struct full_conn *
 new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
-                 const struct lsquic_stream_if *stream_if,
-                 void *stream_if_ctx, unsigned flags,
-                 unsigned short max_packet_size)
+                 unsigned flags)
 {
     struct full_conn *conn;
     lsquic_stream_t *headers_stream;
@@ -535,8 +562,10 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     if (!conn)
         return NULL;
     headers_stream = NULL;
+    conn->fc_conn.cn_if = full_conn_iface_ptr;
+    conn->fc_conn.cn_cces = conn->fc_cces;
+    conn->fc_conn.cn_cces_mask = 1;
     conn->fc_conn.cn_cid = cid;
-    conn->fc_conn.cn_pack_size = max_packet_size;
     conn->fc_flags = flags;
     conn->fc_enpub = enpub;
     conn->fc_pub.enpub = enpub;
@@ -548,8 +577,9 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
 #endif
     conn->fc_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
-    conn->fc_stream_ifs[STREAM_IF_STD].stream_if     = stream_if;
-    conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx = stream_if_ctx;
+    conn->fc_pub.path = &conn->fc_path;
+    conn->fc_stream_ifs[STREAM_IF_STD].stream_if     = enpub->enp_stream_if;
+    conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx = enpub->enp_stream_if_ctx;
     conn->fc_settings = &enpub->enp_settings;
     /* Calculate maximum number of incoming streams using the same mechanism
      * and parameters as found in Chrome:
@@ -574,47 +604,48 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     TAILQ_INIT(&conn->fc_pub.service_streams);
     STAILQ_INIT(&conn->fc_stream_ids_to_reset);
     lsquic_conn_cap_init(&conn->fc_pub.conn_cap, LSQUIC_MIN_FCW);
-    lsquic_alarmset_init(&conn->fc_alset, cid);
+    lsquic_alarmset_init(&conn->fc_alset, &conn->fc_conn);
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_IDLE, idle_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_ACK, ack_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_ACK_APP, ack_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_PING, ping_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
-    lsquic_set32_init(&conn->fc_closed_stream_ids[0]);
-    lsquic_set32_init(&conn->fc_closed_stream_ids[1]);
+    lsquic_set64_init(&conn->fc_closed_stream_ids[0]);
+    lsquic_set64_init(&conn->fc_closed_stream_ids[1]);
     lsquic_cfcw_init(&conn->fc_pub.cfcw, &conn->fc_pub, conn->fc_settings->es_cfcw);
     lsquic_send_ctl_init(&conn->fc_send_ctl, &conn->fc_alset, conn->fc_enpub,
-                 &conn->fc_ver_neg, &conn->fc_pub, conn->fc_conn.cn_pack_size);
+                     flags & FC_SERVER ? &server_ver_neg : &conn->fc_ver_neg,
+                     &conn->fc_pub, 0);
 
     conn->fc_pub.all_streams = lsquic_hash_create();
     if (!conn->fc_pub.all_streams)
         goto cleanup_on_error;
-    lsquic_rechist_init(&conn->fc_rechist, cid);
+    lsquic_rechist_init(&conn->fc_rechist, &conn->fc_conn, 0);
     if (conn->fc_flags & FC_HTTP)
     {
-        conn->fc_pub.hs = lsquic_headers_stream_new(
+        conn->fc_pub.u.gquic.hs = lsquic_headers_stream_new(
             !!(conn->fc_flags & FC_SERVER), conn->fc_enpub,
                                                      headers_callbacks_ptr,
 #if LSQUIC_CONN_STATS
                                                     &conn->fc_stats,
 #endif
                                                      conn);
-        if (!conn->fc_pub.hs)
+        if (!conn->fc_pub.u.gquic.hs)
             goto cleanup_on_error;
         conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = lsquic_headers_stream_if;
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = conn->fc_pub.hs;
-        headers_stream = new_stream(conn, LSQUIC_STREAM_HEADERS,
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = conn->fc_pub.u.gquic.hs;
+        headers_stream = new_stream(conn, LSQUIC_GQUIC_STREAM_HEADERS,
                                     SCF_CALL_ON_NEW);
         if (!headers_stream)
             goto cleanup_on_error;
     }
     else
     {
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = stream_if;
-        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = stream_if_ctx;
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = enpub->enp_stream_if;
+        conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = enpub->enp_stream_if_ctx;
     }
     if (conn->fc_settings->es_support_push)
         conn->fc_flags |= FC_SUPPORT_PUSH;
-    conn->fc_conn.cn_if = full_conn_iface_ptr;
+    conn->fc_conn.cn_n_cces = sizeof(conn->fc_cces) / sizeof(conn->fc_cces[0]);
     return conn;
 
   cleanup_on_error:
@@ -625,8 +656,8 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     lsquic_rechist_cleanup(&conn->fc_rechist);
     if (conn->fc_flags & FC_HTTP)
     {
-        if (conn->fc_pub.hs)
-            lsquic_headers_stream_destroy(conn->fc_pub.hs);
+        if (conn->fc_pub.u.gquic.hs)
+            lsquic_headers_stream_destroy(conn->fc_pub.u.gquic.hs);
         if (headers_stream)
             lsquic_stream_destroy(headers_stream);
     }
@@ -639,16 +670,16 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
 
 
 struct lsquic_conn *
-full_conn_client_new (struct lsquic_engine_public *enpub,
-                      const struct lsquic_stream_if *stream_if,
-                      void *stream_if_ctx, unsigned flags,
+lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
+                      unsigned flags,
                       const char *hostname, unsigned short max_packet_size,
+                      int is_ipv4,
                       const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct full_conn *conn;
     enum lsquic_version version, zero_rtt_version;
     lsquic_cid_t cid;
-    const struct enc_session_funcs *esf;
+    const struct enc_session_funcs_gquic *esf_g;
 
     version = highest_bit_set(enpub->enp_settings.es_versions);
     if (zero_rtt)
@@ -658,15 +689,23 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
             ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
             version = zero_rtt_version;
     }
-    esf = select_esf_by_ver(version);
-    cid = esf->esf_generate_cid();
-    conn = new_conn_common(cid, enpub, stream_if, stream_if_ctx, flags,
-                                                            max_packet_size);
+    esf_g = select_esf_gquic_by_ver(version);
+    lsquic_generate_cid_gquic(&cid);
+    if (!max_packet_size)
+    {
+        if (is_ipv4)
+            max_packet_size = GQUIC_MAX_IPv4_PACKET_SZ;
+        else
+            max_packet_size = GQUIC_MAX_IPv6_PACKET_SZ;
+    }
+    conn = new_conn_common(cid, enpub, flags);
     if (!conn)
         return NULL;
-    conn->fc_conn.cn_esf = esf;
+    conn->fc_path.np_pack_size = max_packet_size;
+    conn->fc_conn.cn_esf_c = select_esf_common_by_ver(version);
+    conn->fc_conn.cn_esf.g = esf_g;
     conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf->esf_create_client(hostname, cid, conn->fc_enpub,
+        conn->fc_conn.cn_esf.g->esf_create_client(hostname, cid, conn->fc_enpub,
                                                     zero_rtt, zero_rtt_len);
     if (!conn->fc_conn.cn_enc_session)
     {
@@ -676,9 +715,9 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     }
 
     if (conn->fc_flags & FC_HTTP)
-        conn->fc_last_stream_id = LSQUIC_STREAM_HEADERS;   /* Client goes 5, 7, 9.... */
+        conn->fc_last_stream_id = LSQUIC_GQUIC_STREAM_HEADERS;   /* Client goes 5, 7, 9.... */
     else
-        conn->fc_last_stream_id = LSQUIC_STREAM_HANDSHAKE;
+        conn->fc_last_stream_id = LSQUIC_GQUIC_STREAM_HANDSHAKE;
     conn->fc_hsk_ctx.client.lconn   = &conn->fc_conn;
     conn->fc_hsk_ctx.client.mm      = &enpub->enp_mm;
     conn->fc_hsk_ctx.client.ver_neg = &conn->fc_ver_neg;
@@ -689,7 +728,7 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
-    if (!new_stream(conn, LSQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW))
+    if (!new_stream(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW))
     {
         LSQ_WARN("could not create handshake stream: %s", strerror(errno));
         conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
@@ -697,18 +736,210 @@ full_conn_client_new (struct lsquic_engine_public *enpub,
     }
     conn->fc_flags |= FC_CREATED_OK;
     LSQ_INFO("Created new client connection");
-    EV_LOG_CONN_EVENT(cid, "created full connection");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "created full connection");
     return &conn->fc_conn;
 }
 
 
-void
-full_conn_client_call_on_new (struct lsquic_conn *lconn)
+static void
+full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     assert(conn->fc_flags & FC_CREATED_OK);
     conn->fc_conn_ctx = conn->fc_stream_ifs[STREAM_IF_STD].stream_if
         ->on_new_conn(conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx, lconn);
+}
+
+
+/* This function is special in that it peeks into fc_send_ctl.  Other functions
+ * should not do that.
+ */
+struct lsquic_conn *
+lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
+                      unsigned flags, lsquic_conn_t *lconn_mini)
+{
+    struct full_conn *conn;
+    struct mini_conn *mc;
+    lsquic_conn_t *lconn_full;
+    lsquic_packet_in_t *packet_in;
+    lsquic_packet_out_t *packet_out;
+    lsquic_stream_t *hsk_stream;
+    lsquic_packno_t next_packno;
+    mconn_packno_set_t received;
+    unsigned n;
+    uint32_t tcid0_val;
+    int have_errors = 0, tcid0;
+    int have_outgoing_ack = 0;
+
+    mc = (struct mini_conn *) lconn_mini;
+    conn = new_conn_common(lconn_mini->cn_cid, enpub, flags);
+    if (!conn)
+        return NULL;
+    lconn_full = &conn->fc_conn;
+    conn->fc_last_stream_id = 0;   /* Server goes 2, 4, 6.... */
+    if (conn->fc_flags & FC_HTTP)
+        conn->fc_max_peer_stream_id = LSQUIC_GQUIC_STREAM_HEADERS;
+    else
+        conn->fc_max_peer_stream_id = LSQUIC_GQUIC_STREAM_HANDSHAKE;
+    conn->fc_stream_ifs[STREAM_IF_HSK]
+                .stream_if     = &lsquic_server_hsk_stream_if;
+    conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.server;
+    conn->fc_ver_neg.vn_ver   = lconn_mini->cn_version;
+    conn->fc_conn.cn_version  = lconn_mini->cn_version;
+    conn->fc_conn.cn_pf       = lconn_mini->cn_pf;
+    conn->fc_conn.cn_esf_c    = lconn_mini->cn_esf_c;
+    conn->fc_conn.cn_esf.g    = lconn_mini->cn_esf.g;
+    conn->fc_conn.cn_flags |= LSCONN_VER_SET | LSCONN_SERVER;
+    conn->fc_pub.rtt_stats = mc->mc_rtt_stats;
+
+    conn->fc_hsk_ctx.server.lconn = lconn_full;
+    conn->fc_hsk_ctx.server.enpub = enpub;
+
+    /* Adjust offsets in the HANDSHAKE stream: */
+    hsk_stream = new_stream(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW);
+    if (!hsk_stream)
+    {
+        LSQ_DEBUG("could not create handshake stream: %s", strerror(errno));
+        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
+        return NULL;
+    }
+    hsk_stream->tosend_off  = mc->mc_write_off;
+    hsk_stream->read_offset = mc->mc_read_off;
+    if (0 != lsquic_stream_update_sfcw(hsk_stream, mc->mc_write_off))
+    {
+        LSQ_WARN("Invalid write offset %u", mc->mc_write_off);
+        ++have_errors;
+    }
+
+    assert(lconn_full->cn_enc_session == NULL);
+    lconn_full->cn_enc_session = lconn_mini->cn_enc_session;
+    lconn_mini->cn_enc_session = NULL;
+
+    lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
+    conn->fc_send_ctl.sc_cur_packno = mc->mc_cur_packno;
+
+    /* Remove those that still exist from the set: they will be marked as
+     * received during regular processing in ci_packet_in() later on.
+     */
+    received = mc->mc_received_packnos;
+    TAILQ_FOREACH(packet_in, &mc->mc_packets_in, pi_next)
+        received &= ~MCONN_PACKET_MASK(packet_in->pi_packno);
+
+    for (n = 0; received; ++n)
+    {
+        if (received & (1U << n))
+            /* Setting `now' to zero is OK here, as we should have had at
+             * least one other packet above.
+             */
+            lsquic_rechist_received(&conn->fc_rechist, n + 1, 0);
+        received &= ~(1U << n);
+    }
+
+    /* Mini connection sends out packets 1, 2, 3... and so on.  It deletes
+     * packets that have been successfully sent and acked or those that have
+     * been lost.  We take ownership of all packets in mc_packets_out; those
+     * that are not on the list are recorded in fc_send_ctl.sc_senhist.
+     */
+    next_packno = 0;
+    while ((packet_out = TAILQ_FIRST(&mc->mc_packets_out)))
+    {
+        TAILQ_REMOVE(&mc->mc_packets_out, packet_out, po_next);
+
+        /* Holes in the sequence signify ACKed or lost packets */
+        ++next_packno;
+        for ( ; next_packno < packet_out->po_packno; ++next_packno)
+            lsquic_senhist_add(&conn->fc_send_ctl.sc_senhist, next_packno);
+
+        packet_out->po_path = &conn->fc_path;
+        if (mc->mc_sent_packnos & MCONN_PACKET_MASK(packet_out->po_packno))
+        {
+            LSQ_DEBUG("got sent packet_out %"PRIu64" from mini",
+                                                   packet_out->po_packno);
+            if (0 != lsquic_send_ctl_sent_packet(&conn->fc_send_ctl,
+                                                 packet_out)
+                && !have_errors /* Warn once */)
+            {
+                ++have_errors;
+                LSQ_WARN("could not add packet %"PRIu64" to sent set: %s",
+                    packet_out->po_packno, strerror(errno));
+            }
+        }
+        else
+        {
+            LSQ_DEBUG("got unsent packet_out %"PRIu64" from mini (will send)",
+                                                   packet_out->po_packno);
+            lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
+            have_outgoing_ack |= packet_out->po_frame_types &
+                                                (1 << QUIC_FRAME_ACK);
+        }
+    }
+
+    assert(lconn_mini->cn_flags & LSCONN_HANDSHAKE_DONE);
+    lconn_full->cn_flags |= LSCONN_HANDSHAKE_DONE;
+#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
+    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
+        lconn_full->cn_flags |= LSCONN_NO_CRYPTO;
+#endif
+
+    lconn_full->cn_flags |= lconn_mini->cn_flags &
+        LSCONN_PEER_GOING_AWAY /* We are OK with fc_goaway_stream_id = 0 */;
+    conn->fc_path = mc->mc_path;
+
+    if (0 == apply_peer_settings(conn))
+    {
+        if (conn->fc_flags & FC_HTTP)
+            maybe_send_settings(conn);
+    }
+    else
+        ++have_errors;
+
+    if (0 == have_errors)
+    {
+        tcid0 = conn->fc_settings->es_support_tcid0
+             && 0 == conn->fc_conn.cn_esf.g->esf_get_peer_setting(
+                        conn->fc_conn.cn_enc_session, QTAG_TCID, &tcid0_val)
+             && 0 == tcid0_val;
+        lsquic_send_ctl_set_tcid0(&conn->fc_send_ctl, tcid0);
+        if (tcid0)
+            conn->fc_conn.cn_flags |= LSCONN_TCID0;
+        conn->fc_flags |= FC_CREATED_OK|FC_FIRST_TICK;
+        if (conn->fc_conn.cn_version >= LSQVER_046
+                || conn->fc_conn.cn_esf.g->esf_get_peer_option(
+                                    conn->fc_conn.cn_enc_session, QTAG_NSTP))
+        {
+            conn->fc_flags |= FC_NSTP;
+            lsquic_send_ctl_turn_nstp_on(&conn->fc_send_ctl);
+        }
+        LSQ_DEBUG("Calling on_new_conn callback");
+        conn->fc_conn_ctx = enpub->enp_stream_if->on_new_conn(
+                                    enpub->enp_stream_if_ctx, &conn->fc_conn);
+        /* Now that user code knows about this connection, process incoming
+         * packets, if any.
+         */
+        while ((packet_in = TAILQ_FIRST(&mc->mc_packets_in)))
+        {
+            TAILQ_REMOVE(&mc->mc_packets_in, packet_in, pi_next);
+            packet_in->pi_flags |= PI_FROM_MINI;
+            conn->fc_conn.cn_if->ci_packet_in(&conn->fc_conn, packet_in);
+            lsquic_packet_in_put(conn->fc_pub.mm, packet_in);
+        }
+        /* At this point we may have errors, but we promote it anyway: this is
+         * so that CONNECTION_CLOSE frame can be generated and sent out.
+         */
+        if (have_outgoing_ack)
+            reset_ack_state(conn);
+        lsquic_alarmset_set(&conn->fc_alset, AL_IDLE,
+                    lsquic_time_now() + conn->fc_settings->es_idle_conn_to);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "created full connection");
+        LSQ_INFO("Created new server connection");
+        return &conn->fc_conn;
+    }
+    else
+    {
+        LSQ_DEBUG("hit errors creating connection, return NULL");
+        conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
+        return NULL;
+    }
 }
 
 
@@ -776,7 +1007,7 @@ collect_stream_counts (const struct full_conn *conn, int peer,
         {
             ++counts[SCNT_PEER];
             counts[SCNT_CLOSED] += lsquic_stream_is_closed(stream);
-            counts[SCNT_RESET] += lsquic_stream_is_reset(stream);
+            counts[SCNT_RESET] += !!lsquic_stream_is_reset(stream);
             counts[SCNT_RES_UNCLO] += lsquic_stream_is_reset(stream)
                                         && !lsquic_stream_is_closed(stream);
         }
@@ -794,8 +1025,8 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
 
     LSQ_DEBUG("destroy connection");
     conn->fc_flags |= FC_CLOSING;
-    lsquic_set32_cleanup(&conn->fc_closed_stream_ids[0]);
-    lsquic_set32_cleanup(&conn->fc_closed_stream_ids[1]);
+    lsquic_set64_cleanup(&conn->fc_closed_stream_ids[0]);
+    lsquic_set64_cleanup(&conn->fc_closed_stream_ids[1]);
     while ((el = lsquic_hash_first(conn->fc_pub.all_streams)))
     {
         stream = lsquic_hashelem_getdata(el);
@@ -806,13 +1037,13 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
     if (conn->fc_flags & FC_CREATED_OK)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if
                     ->on_conn_closed(&conn->fc_conn);
-    if (conn->fc_pub.hs)
-        lsquic_headers_stream_destroy(conn->fc_pub.hs);
+    if (conn->fc_pub.u.gquic.hs)
+        lsquic_headers_stream_destroy(conn->fc_pub.u.gquic.hs);
 
     lsquic_send_ctl_cleanup(&conn->fc_send_ctl);
     lsquic_rechist_cleanup(&conn->fc_rechist);
     if (conn->fc_conn.cn_enc_session)
-        conn->fc_conn.cn_esf->esf_destroy(conn->fc_conn.cn_enc_session);
+        conn->fc_conn.cn_esf.g->esf_destroy(conn->fc_conn.cn_enc_session);
     lsquic_malo_destroy(conn->fc_pub.packet_out_malo);
 #if LSQUIC_CONN_STATS
     LSQ_NOTICE("# ticks: %lu", conn->fc_stats.n_ticks);
@@ -839,37 +1070,38 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
 
 
 static void
-conn_mark_stream_closed (struct full_conn *conn, uint32_t stream_id)
+conn_mark_stream_closed (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {   /* Because stream IDs are distributed unevenly -- there is a set of odd
      * stream IDs and a set of even stream IDs -- it is more efficient to
      * maintain two sets of closed stream IDs.
      */
     int idx = stream_id & 1;
     stream_id >>= 1;
-    if (0 != lsquic_set32_add(&conn->fc_closed_stream_ids[idx], stream_id))
+    if (0 != lsquic_set64_add(&conn->fc_closed_stream_ids[idx], stream_id))
         ABORT_ERROR("could not add element to set: %s", strerror(errno));
 }
 
 
 static int
-conn_is_stream_closed (struct full_conn *conn, uint32_t stream_id)
+conn_is_stream_closed (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     int idx = stream_id & 1;
     stream_id >>= 1;
-    return lsquic_set32_has(&conn->fc_closed_stream_ids[idx], stream_id);
+    return lsquic_set64_has(&conn->fc_closed_stream_ids[idx], stream_id);
 }
 
 
 static void
 set_ack_timer (struct full_conn *conn, lsquic_time_t now)
 {
-    lsquic_alarmset_set(&conn->fc_alset, AL_ACK, now + ACK_TIMEOUT);
+    lsquic_alarmset_set(&conn->fc_alset, AL_ACK_APP, now + ACK_TIMEOUT);
     LSQ_DEBUG("ACK alarm set to %"PRIu64, now + ACK_TIMEOUT);
 }
 
 
 static void
-ack_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
+ack_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+                                                        lsquic_time_t now)
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("ACK timer expired (%"PRIu64" < %"PRIu64"): ACK queued",
@@ -882,17 +1114,15 @@ static void
 try_queueing_ack (struct full_conn *conn, int was_missing, lsquic_time_t now)
 {
     if (conn->fc_n_slack_akbl >= MAX_RETR_PACKETS_SINCE_LAST_ACK ||
-        (conn->fc_conn.cn_version < LSQVER_039 /* Since Q039 do not ack ACKs */
-            && conn->fc_n_slack_all >= MAX_ANY_PACKETS_SINCE_LAST_ACK) ||
         ((conn->fc_flags & FC_ACK_HAD_MISS) && was_missing)      ||
         lsquic_send_ctl_n_stop_waiting(&conn->fc_send_ctl) > 1)
     {
-        lsquic_alarmset_unset(&conn->fc_alset, AL_ACK);
+        lsquic_alarmset_unset(&conn->fc_alset, AL_ACK_APP);
         lsquic_send_ctl_sanity_check(&conn->fc_send_ctl);
         conn->fc_flags |= FC_ACK_QUEUED;
-        LSQ_DEBUG("ACK queued: ackable: %u; all: %u; had_miss: %d; "
+        LSQ_DEBUG("ACK queued: ackable: %u; had_miss: %d; "
             "was_missing: %d; n_stop_waiting: %u",
-            conn->fc_n_slack_akbl, conn->fc_n_slack_all,
+            conn->fc_n_slack_akbl,
             !!(conn->fc_flags & FC_ACK_HAD_MISS), was_missing,
             lsquic_send_ctl_n_stop_waiting(&conn->fc_send_ctl));
     }
@@ -904,11 +1134,10 @@ try_queueing_ack (struct full_conn *conn, int was_missing, lsquic_time_t now)
 static void
 reset_ack_state (struct full_conn *conn)
 {
-    conn->fc_n_slack_all  = 0;
     conn->fc_n_slack_akbl = 0;
     lsquic_send_ctl_n_stop_waiting_reset(&conn->fc_send_ctl);
     conn->fc_flags &= ~FC_ACK_QUEUED;
-    lsquic_alarmset_unset(&conn->fc_alset, AL_ACK);
+    lsquic_alarmset_unset(&conn->fc_alset, AL_ACK_APP);
     lsquic_send_ctl_sanity_check(&conn->fc_send_ctl);
     LSQ_DEBUG("ACK state reset");
 }
@@ -949,8 +1178,6 @@ verify_ack_frame (struct full_conn *conn, const unsigned char *buf, int bufsz)
     assert(i == ack_info->n_ranges);
     LSQ_DEBUG("Sent ACK frame %s", ack_buf);
 }
-
-
 #endif
 
 
@@ -969,7 +1196,8 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
             (gaf_rechist_first_f)        lsquic_rechist_first,
             (gaf_rechist_next_f)         lsquic_rechist_next,
             (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-            &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed);
+            &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed,
+            NULL);
     if (w < 0) {
         ABORT_ERROR("generating ACK frame failed: %d", errno);
         return;
@@ -980,7 +1208,8 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->fc_conn.cn_pf,
                         packet_out->po_data + packet_out->po_data_sz, w);
     verify_ack_frame(conn, packet_out->po_data + packet_out->po_data_sz, w);
-    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl, packet_out->po_ack2ed);
+    lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl, PNS_APP,
+                                                    packet_out->po_ack2ed);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
@@ -989,8 +1218,7 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     else
         conn->fc_flags &= ~FC_ACK_HAD_MISS;
     LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
-    if (conn->fc_conn.cn_version >= LSQVER_039 &&
-            conn->fc_n_cons_unretx >= 20 &&
+    if (conn->fc_n_cons_unretx >= 20 &&
                 !lsquic_send_ctl_have_outgoing_retx_frames(&conn->fc_send_ctl))
     {
         LSQ_DEBUG("schedule WINDOW_UPDATE frame after %u non-retx "
@@ -1002,34 +1230,36 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
 
 
 static lsquic_stream_t *
-new_stream_ext (struct full_conn *conn, uint32_t stream_id, int if_idx,
+new_stream_ext (struct full_conn *conn, lsquic_stream_id_t stream_id, int if_idx,
                 enum stream_ctor_flags stream_ctor_flags)
 {
     struct lsquic_stream *stream;
 
-    stream = lsquic_stream_new_ext(stream_id, &conn->fc_pub,
+    stream = lsquic_stream_new(stream_id, &conn->fc_pub,
         conn->fc_stream_ifs[if_idx].stream_if,
         conn->fc_stream_ifs[if_idx].stream_if_ctx, conn->fc_settings->es_sfcw,
-        conn->fc_cfg.max_stream_send, stream_ctor_flags);
+        stream_id == LSQUIC_GQUIC_STREAM_HANDSHAKE
+                                ? 16 * 1024 : conn->fc_cfg.max_stream_send,
+        stream_ctor_flags);
     if (stream)
-        lsquic_hash_insert(conn->fc_pub.all_streams, &stream->id, sizeof(stream->id),
-                                                                        stream);
+        lsquic_hash_insert(conn->fc_pub.all_streams, &stream->id,
+                            sizeof(stream->id), stream, &stream->sm_hash_el);
     return stream;
 }
 
 
 static lsquic_stream_t *
-new_stream (struct full_conn *conn, uint32_t stream_id,
+new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
             enum stream_ctor_flags flags)
 {
     int idx;
     switch (stream_id)
     {
-    case LSQUIC_STREAM_HANDSHAKE:
+    case LSQUIC_GQUIC_STREAM_HANDSHAKE:
         idx = STREAM_IF_HSK;
         flags |= SCF_DI_AUTOSWITCH|SCF_CRITICAL;
         break;
-    case LSQUIC_STREAM_HEADERS:
+    case LSQUIC_GQUIC_STREAM_HEADERS:
         idx = STREAM_IF_HDR;
         flags |= SCF_DI_AUTOSWITCH|SCF_CRITICAL;
         if (!(conn->fc_flags & FC_HTTP) &&
@@ -1039,6 +1269,8 @@ new_stream (struct full_conn *conn, uint32_t stream_id,
     default:
         idx = STREAM_IF_STD;
         flags |= SCF_DI_AUTOSWITCH;
+        if (conn->fc_pub.u.gquic.hs)
+            flags |= SCF_HTTP;
         if (conn->fc_enpub->enp_settings.es_rw_once)
             flags |= SCF_DISP_RW_ONCE;
         break;
@@ -1047,7 +1279,7 @@ new_stream (struct full_conn *conn, uint32_t stream_id,
 }
 
 
-static uint32_t
+static lsquic_stream_id_t
 generate_stream_id (struct full_conn *conn)
 {
     conn->fc_last_stream_id += 2;
@@ -1055,16 +1287,16 @@ generate_stream_id (struct full_conn *conn)
 }
 
 
-unsigned
-lsquic_conn_n_pending_streams (const lsquic_conn_t *lconn)
+static unsigned
+full_conn_ci_n_pending_streams (const struct lsquic_conn *lconn)
 {
-    struct full_conn *conn = (struct full_conn *) lconn;
+    const struct full_conn *conn = (const struct full_conn *) lconn;
     return conn->fc_n_delayed_streams;
 }
 
 
-unsigned
-lsquic_conn_cancel_pending_streams (lsquic_conn_t *lconn, unsigned n)
+static unsigned
+full_conn_ci_cancel_pending_streams (struct lsquic_conn *lconn, unsigned n)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     if (n > conn->fc_n_delayed_streams)
@@ -1083,8 +1315,8 @@ either_side_going_away (const struct full_conn *conn)
 }
 
 
-unsigned
-lsquic_conn_n_avail_streams (const lsquic_conn_t *lconn)
+static unsigned
+full_conn_ci_n_avail_streams (const lsquic_conn_t *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     unsigned stream_count = count_streams(conn, 0);
@@ -1094,11 +1326,11 @@ lsquic_conn_n_avail_streams (const lsquic_conn_t *lconn)
 }
 
 
-void
-lsquic_conn_make_stream (lsquic_conn_t *lconn)
+static void
+full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    if (lsquic_conn_n_avail_streams(lconn) > 0)
+    if (full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (!new_stream(conn, generate_stream_id(conn), SCF_CALL_ON_NEW))
             ABORT_ERROR("could not create new stream: %s", strerror(errno));
@@ -1116,7 +1348,7 @@ lsquic_conn_make_stream (lsquic_conn_t *lconn)
 
 
 static lsquic_stream_t *
-find_stream_by_id (struct full_conn *conn, uint32_t stream_id)
+find_stream_by_id (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     struct lsquic_hash_elem *el;
     el = lsquic_hash_find(conn->fc_pub.all_streams, &stream_id, sizeof(stream_id));
@@ -1127,19 +1359,51 @@ find_stream_by_id (struct full_conn *conn, uint32_t stream_id)
 }
 
 
-lsquic_stream_t *
-lsquic_conn_get_stream_by_id (lsquic_conn_t *lconn, uint32_t stream_id)
+static struct lsquic_stream *
+full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
+                               lsquic_stream_id_t stream_id)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     return find_stream_by_id(conn, stream_id);
 }
 
 
-lsquic_engine_t *
-lsquic_conn_get_engine (lsquic_conn_t *lconn)
+static struct lsquic_engine *
+full_conn_ci_get_engine (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     return conn->fc_enpub->enp_engine;
+}
+
+
+static struct network_path *
+full_conn_ci_get_path (struct lsquic_conn *lconn, const struct sockaddr *sa)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+
+    return &conn->fc_path;
+}
+
+
+static unsigned char
+full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
+            const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+
+    if (NP_IS_IPv6(&conn->fc_path) != (AF_INET6 == peer_sa->sa_family))
+        lsquic_send_ctl_return_enc_data(&conn->fc_send_ctl);
+
+    size_t len = peer_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+                                                : sizeof(struct sockaddr_in6);
+
+    memcpy(conn->fc_path.np_peer_addr, peer_sa, len);
+
+    len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+                                                : sizeof(struct sockaddr_in6);
+    memcpy(conn->fc_path.np_local_addr, local_sa, len);
+    conn->fc_path.np_peer_ctx = peer_ctx;
+    return 0;
 }
 
 
@@ -1157,15 +1421,9 @@ static unsigned
 process_padding_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                        const unsigned char *p, size_t len)
 {
-    if (conn->fc_conn.cn_version >= LSQVER_039)
-        return (unsigned) count_zero_bytes(p, len);
-    if (lsquic_is_zero(p, len))
-    {
-        EV_LOG_PADDING_FRAME_IN(LSQUIC_LOG_CONN_ID, len);
-        return (unsigned) len;
-    }
-    else
-        return 0;
+    len = (size_t) count_zero_bytes(p, len);
+    EV_LOG_PADDING_FRAME_IN(LSQUIC_LOG_CONN_ID, len);
+    return len;
 }
 
 
@@ -1182,7 +1440,7 @@ process_ping_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 
 
 static int
-is_peer_initiated (const struct full_conn *conn, uint32_t stream_id)
+is_peer_initiated (const struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     unsigned is_server = !!(conn->fc_flags & FC_SERVER);
     int peer_initiated = (stream_id & 1) == is_server;
@@ -1191,7 +1449,7 @@ is_peer_initiated (const struct full_conn *conn, uint32_t stream_id)
 
 
 static void
-maybe_schedule_reset_for_stream (struct full_conn *conn, uint32_t stream_id)
+maybe_schedule_reset_for_stream (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     struct stream_id_to_reset *sitr;
 
@@ -1217,6 +1475,20 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     enum enc_level enc_level;
     int parsed_len;
 
+#ifndef LSQUIC_REDO_FAILED_INSERTION
+#define LSQUIC_REDO_FAILED_INSERTION 1
+#endif
+#if LSQUIC_REDO_FAILED_INSERTION
+    enum lsq_log_level saved_levels[3];
+#if defined(__GNUC__) && !defined(__clang__)
+    /* gcc complains about this -- incorrectly -- in optimized mode */
+    saved_levels[0] = 0;
+    saved_levels[1] = 0;
+    saved_levels[2] = 0;
+#endif
+    int again = 0;
+  redo:
+#endif
     stream_frame = lsquic_malo_get(conn->fc_pub.mm->malo.stream_frame);
     if (!stream_frame)
     {
@@ -1231,19 +1503,22 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         return 0;
     }
     EV_LOG_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame);
-    LSQ_DEBUG("Got stream frame for stream #%u", stream_frame->stream_id);
+    LSQ_DEBUG("Got stream frame for stream #%"PRIu64, stream_frame->stream_id);
 #if LSQUIC_CONN_STATS
     ++conn->fc_stats.in.stream_frames;
     conn->fc_stats.in.stream_data_sz += stream_frame->data_frame.df_size;
 #endif
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
-    if (stream_frame->stream_id != LSQUIC_STREAM_HANDSHAKE
+    if (stream_frame->stream_id != LSQUIC_GQUIC_STREAM_HANDSHAKE
+#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
+        && !(conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
+#endif
         && enc_level != ENC_LEV_FORW
         && enc_level != ENC_LEV_INIT)
     {
         lsquic_malo_put(stream_frame);
-        ABORT_ERROR("received unencrypted data for stream %u",
+        ABORT_ERROR("received unencrypted data for stream %"PRIu64,
                     stream_frame->stream_id);
         return 0;
     }
@@ -1260,7 +1535,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     {
         if (lsquic_stream_is_reset(stream))
         {
-            LSQ_DEBUG("stream %u is reset, ignore frame", stream->id);
+            LSQ_DEBUG("stream %"PRIu64" is reset, ignore frame", stream->id);
             lsquic_malo_put(stream_frame);
             return parsed_len;
         }
@@ -1269,7 +1544,8 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     {
         if (conn_is_stream_closed(conn, stream_frame->stream_id))
         {
-            LSQ_DEBUG("drop frame for closed stream %u", stream_frame->stream_id);
+            LSQ_DEBUG("drop frame for closed stream %"PRIu64,
+                                                stream_frame->stream_id);
             lsquic_malo_put(stream_frame);
             return parsed_len;
         }
@@ -1296,7 +1572,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
             if ((conn->fc_flags & FC_GOING_AWAY) &&
                 stream_frame->stream_id > conn->fc_max_peer_stream_id)
             {
-                LSQ_DEBUG("going away: reset new incoming stream %"PRIu32,
+                LSQ_DEBUG("going away: reset new incoming stream %"PRIu64,
                                                     stream_frame->stream_id);
                 maybe_schedule_reset_for_stream(conn, stream_frame->stream_id);
                 lsquic_malo_put(stream_frame);
@@ -1324,11 +1600,33 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     if (0 != lsquic_stream_frame_in(stream, stream_frame))
     {
         ABORT_ERROR("cannot insert stream frame");
+#if LSQUIC_REDO_FAILED_INSERTION
+        if (again++)
+        {
+            lsq_log_levels[LSQLM_STREAM] = saved_levels[0];
+            lsq_log_levels[LSQLM_DI]     = saved_levels[1];
+            lsq_log_levels[LSQLM_CONN]   = saved_levels[2];
+        }
+        else if (!(LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_STREAM)
+                && LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_DI)
+                && LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_CONN)))
+        {
+            saved_levels[0] = lsq_log_levels[LSQLM_STREAM];
+            saved_levels[1] = lsq_log_levels[LSQLM_DI];
+            saved_levels[2] = lsq_log_levels[LSQLM_CONN];
+            lsq_log_levels[LSQLM_STREAM] = LSQ_LOG_DEBUG;
+            lsq_log_levels[LSQLM_DI]     = LSQ_LOG_DEBUG;
+            lsq_log_levels[LSQLM_CONN]   = LSQ_LOG_DEBUG;
+            lsquic_stream_dump_state(stream);
+            LSQ_DEBUG("inserting frame again, this time with debug logging");
+            goto redo;
+        }
+#endif
         return 0;
     }
 
-    if (stream->id == LSQUIC_STREAM_HANDSHAKE
-        && (stream->stream_flags & STREAM_WANT_READ)
+    if (stream->id == LSQUIC_GQUIC_STREAM_HANDSHAKE
+        && (stream->sm_qflags & SMQF_WANT_READ)
         && !(conn->fc_flags & FC_SERVER)
         && !(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
     {   /* To enable decryption, process handshake stream as soon as its
@@ -1382,7 +1680,8 @@ static unsigned
 process_goaway_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                             const unsigned char *p, size_t len)
 {
-    uint32_t error_code, stream_id;
+    lsquic_stream_id_t stream_id;
+    uint32_t error_code;
     uint16_t reason_length;
     const char *reason;
     const int parsed_len = conn->fc_conn.cn_pf->pf_parse_goaway_frame(p, len,
@@ -1391,8 +1690,9 @@ process_goaway_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         return 0;
     EV_LOG_GOAWAY_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code, stream_id,
         reason_length, reason);
-    LSQ_DEBUG("received GOAWAY frame, last good stream ID: %u, error code: 0x%X,"
-        " reason: `%.*s'", stream_id, error_code, reason_length, reason);
+    LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64
+        ", error code: 0x%X, reason: `%.*s'", stream_id, error_code,
+        reason_length, reason);
     if (0 == (conn->fc_conn.cn_flags & LSCONN_PEER_GOING_AWAY))
     {
         conn->fc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
@@ -1425,7 +1725,7 @@ log_invalid_ack_frame (struct full_conn *conn, const unsigned char *p,
     {
         lsquic_senhist_tostr(&conn->fc_send_ctl.sc_senhist, buf, 0x1000);
         LSQ_WARN("send history: %s", buf);
-        hexdump(p, parsed_len, buf, 0x1000);
+        lsquic_hexdump(p, parsed_len, buf, 0x1000);
         LSQ_WARN("raw ACK frame:\n%s", buf);
         free(buf);
     }
@@ -1445,17 +1745,18 @@ log_invalid_ack_frame (struct full_conn *conn, const unsigned char *p,
 
 static int
 process_ack (struct full_conn *conn, struct ack_info *acki,
-             lsquic_time_t received)
+             lsquic_time_t received, lsquic_time_t now)
 {
 #if LSQUIC_CONN_STATS
     ++conn->fc_stats.in.n_acks_proc;
 #endif
     LSQ_DEBUG("Processing ACK");
-    if (0 == lsquic_send_ctl_got_ack(&conn->fc_send_ctl, acki, received))
+    if (0 == lsquic_send_ctl_got_ack(&conn->fc_send_ctl, acki, received, now))
     {
-        if (lsquic_send_ctl_largest_ack2ed(&conn->fc_send_ctl))
+        if (lsquic_send_ctl_largest_ack2ed(&conn->fc_send_ctl, PNS_APP))
             lsquic_rechist_stop_wait(&conn->fc_rechist,
-                lsquic_send_ctl_largest_ack2ed(&conn->fc_send_ctl) + 1);
+                lsquic_send_ctl_largest_ack2ed(&conn->fc_send_ctl, PNS_APP)
+                                                                        + 1);
         return 0;
     }
     else
@@ -1467,7 +1768,8 @@ process_ack (struct full_conn *conn, struct ack_info *acki,
 
 
 static int
-process_saved_ack (struct full_conn *conn, int restore_parsed_ack)
+process_saved_ack (struct full_conn *conn, int restore_parsed_ack,
+                                                        lsquic_time_t now)
 {
     struct ack_info *const acki = conn->fc_pub.mm->acki;
     struct lsquic_packno_range range;
@@ -1491,12 +1793,13 @@ process_saved_ack (struct full_conn *conn, int restore_parsed_ack)
         range        = acki->ranges[0];
     }
 
+    acki->pns          = PNS_APP;
     acki->n_ranges     = 1;
     acki->n_timestamps = conn->fc_saved_ack_info.sai_n_timestamps;
     acki->lack_delta   = conn->fc_saved_ack_info.sai_lack_delta;
     acki->ranges[0]    = conn->fc_saved_ack_info.sai_range;
 
-    retval = process_ack(conn, acki, conn->fc_saved_ack_received);
+    retval = process_ack(conn, acki, conn->fc_saved_ack_received, now);
 
     if (restore_parsed_ack)
     {
@@ -1567,21 +1870,28 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 {
     struct ack_info *const new_acki = conn->fc_pub.mm->acki;
     int parsed_len;
+    lsquic_time_t warn_time;
 
 #if LSQUIC_CONN_STATS
     ++conn->fc_stats.in.n_acks;
 #endif
 
-    parsed_len = conn->fc_conn.cn_pf->pf_parse_ack_frame(p, len, new_acki);
+    parsed_len = conn->fc_conn.cn_pf->pf_parse_ack_frame(p, len, new_acki, 0);
     if (parsed_len < 0)
         goto err;
 
+    if (empty_ack_frame(new_acki))
+    {
+        LSQ_DEBUG("Ignore empty ACK frame");
+        return parsed_len;
+    }
     if (packet_in->pi_packno <= conn->fc_max_ack_packno)
     {
         LSQ_DEBUG("Ignore old ack (max %"PRIu64")", conn->fc_max_ack_packno);
         return parsed_len;
     }
 
+    new_acki->pns = PNS_APP;
     EV_LOG_ACK_FRAME_IN(LSQUIC_LOG_CONN_ID, new_acki);
     conn->fc_max_ack_packno = packet_in->pi_packno;
 
@@ -1608,9 +1918,10 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                 ;
             }
             else
-                process_saved_ack(conn, 1);
+                process_saved_ack(conn, 1, packet_in->pi_received);
             conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received))
+            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
+                                                        packet_in->pi_received))
                 goto err;
             break;
         case (0 << 1) | (1 << 0):
@@ -1623,7 +1934,7 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
             }
             else
             {
-                process_saved_ack(conn, 1);
+                process_saved_ack(conn, 1, packet_in->pi_received);
                 conn->fc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
                 conn->fc_saved_ack_info.sai_range        = new_acki->ranges[0];
             }
@@ -1632,7 +1943,8 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
             break;
         case (1 << 1) | (0 << 0):
             conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received))
+            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
+                                                    packet_in->pi_received))
                 goto err;
             break;
         case (1 << 1) | (1 << 0):
@@ -1651,13 +1963,21 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         conn->fc_saved_ack_received              = packet_in->pi_received;
         conn->fc_flags |= FC_HAVE_SAVED_ACK;
     }
-    else if (0 != process_ack(conn, new_acki, packet_in->pi_received))
+    else if (0 != process_ack(conn, new_acki, packet_in->pi_received,
+                                                    packet_in->pi_received))
         goto err;
 
     return parsed_len;
 
   err:
-    log_invalid_ack_frame(conn, p, parsed_len, new_acki);
+    warn_time = lsquic_time_now();
+    if (0 == conn->fc_enpub->enp_last_warning[WT_ACKPARSE_FULL]
+        || conn->fc_enpub->enp_last_warning[WT_ACKPARSE_FULL]
+                + WARNING_INTERVAL < warn_time)
+    {
+        conn->fc_enpub->enp_last_warning[WT_ACKPARSE_FULL] = warn_time;
+        log_invalid_ack_frame(conn, p, parsed_len, new_acki);
+    }
     return 0;
 }
 
@@ -1721,13 +2041,22 @@ static unsigned
 process_blocked_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                             const unsigned char *p, size_t len)
 {
-    uint32_t stream_id;
+    lsquic_stream_id_t stream_id;
+    struct lsquic_stream *stream;
     const int parsed_len = conn->fc_conn.cn_pf->pf_parse_blocked_frame(p, len,
                                                                     &stream_id);
     if (parsed_len < 0)
         return 0;
     EV_LOG_BLOCKED_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_id);
-    LSQ_DEBUG("Peer reports stream %u as blocked", stream_id);
+    LSQ_DEBUG("Peer reports stream %"PRIu64" as blocked", stream_id);
+    if (stream_id)
+    {
+        stream = find_stream_by_id(conn, stream_id);
+        if (stream)
+            lsquic_stream_peer_blocked_gquic(stream);
+    }
+    else
+        conn->fc_flags |= FC_SEND_WUF;
     return parsed_len;
 }
 
@@ -1738,18 +2067,18 @@ process_connection_close_frame (struct full_conn *conn, lsquic_packet_in_t *pack
 {
     lsquic_stream_t *stream;
     struct lsquic_hash_elem *el;
-    uint32_t error_code;
+    uint64_t error_code;
     uint16_t reason_len;
     uint8_t reason_off;
     int parsed_len;
 
     parsed_len = conn->fc_conn.cn_pf->pf_parse_connect_close_frame(p, len,
-                                        &error_code, &reason_len, &reason_off);
+                                NULL, &error_code, &reason_len, &reason_off);
     if (parsed_len < 0)
         return 0;
     EV_LOG_CONNECTION_CLOSE_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code,
                             (int) reason_len, (const char *) p + reason_off);
-    LSQ_INFO("Received CONNECTION_CLOSE frame (code: %u; reason: %.*s)",
+    LSQ_INFO("Received CONNECTION_CLOSE frame (code: %"PRIu64"; reason: %.*s)",
                 error_code, (int) reason_len, (const char *) p + reason_off);
     conn->fc_flags |= FC_RECV_CLOSE;
     if (!(conn->fc_flags & FC_CLOSING))
@@ -1770,8 +2099,8 @@ static unsigned
 process_rst_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                             const unsigned char *p, size_t len)
 {
-    uint32_t stream_id, error_code;
-    uint64_t offset;
+    lsquic_stream_id_t stream_id;
+    uint64_t offset, error_code;
     lsquic_stream_t *stream;
     const int parsed_len = conn->fc_conn.cn_pf->pf_parse_rst_frame(p, len,
                                             &stream_id, &offset, &error_code);
@@ -1780,7 +2109,7 @@ process_rst_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 
     EV_LOG_RST_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_id, offset,
                                                                 error_code);
-    LSQ_DEBUG("Got RST_STREAM; stream: %u; offset: 0x%"PRIX64, stream_id,
+    LSQ_DEBUG("Got RST_STREAM; stream: %"PRIu64"; offset: 0x%"PRIX64, stream_id,
                                                                     offset);
     if (0 == stream_id)
     {   /* Follow reference implementation and ignore this apparently
@@ -1789,10 +2118,9 @@ process_rst_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         return parsed_len;
     }
 
-    if (LSQUIC_STREAM_HANDSHAKE == stream_id ||
-        ((conn->fc_flags & FC_HTTP) && LSQUIC_STREAM_HEADERS == stream_id))
+    if (lsquic_stream_id_is_critical(conn->fc_flags & FC_HTTP, stream_id))
     {
-        ABORT_ERROR("received reset on static stream %u", stream_id);
+        ABORT_ERROR("received reset on static stream %"PRIu64, stream_id);
         return 0;
     }
 
@@ -1801,12 +2129,12 @@ process_rst_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     {
         if (conn_is_stream_closed(conn, stream_id))
         {
-            LSQ_DEBUG("got reset frame for closed stream %u", stream_id);
+            LSQ_DEBUG("got reset frame for closed stream %"PRIu64, stream_id);
             return parsed_len;
         }
         if (!is_peer_initiated(conn, stream_id))
         {
-            ABORT_ERROR("received reset for never-initiated stream %u",
+            ABORT_ERROR("received reset for never-initiated stream %"PRIu64,
                                                                     stream_id);
             return 0;
         }
@@ -1833,7 +2161,7 @@ static unsigned
 process_window_update_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                              const unsigned char *p, size_t len)
 {
-    uint32_t stream_id;
+    lsquic_stream_id_t stream_id;
     uint64_t offset;
     const int parsed_len =
                 conn->fc_conn.cn_pf->pf_parse_window_update_frame(p, len,
@@ -1846,13 +2174,13 @@ process_window_update_frame (struct full_conn *conn, lsquic_packet_in_t *packet_
         lsquic_stream_t *stream = find_stream_by_id(conn, stream_id);
         if (stream)
         {
-            LSQ_DEBUG("Got window update frame, stream: %u; offset: 0x%"PRIX64,
-                                                            stream_id, offset);
+            LSQ_DEBUG("Got window update frame, stream: %"PRIu64
+                      "; offset: 0x%"PRIX64, stream_id, offset);
             lsquic_stream_window_update(stream, offset);
         }
         else    /* Perhaps a result of lost packets? */
-            LSQ_DEBUG("Got window update frame for non-existing stream %u "
-                                 "(offset: 0x%"PRIX64")", stream_id, offset);
+            LSQ_DEBUG("Got window update frame for non-existing stream %"PRIu64
+                                 " (offset: 0x%"PRIX64")", stream_id, offset);
     }
     else if (offset > conn->fc_pub.conn_cap.cc_max)
     {
@@ -1920,7 +2248,7 @@ process_ver_neg_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         {
             versions |= 1 << version;
             LSQ_DEBUG("server supports version %s", lsquic_ver2str[version]);
-            EV_LOG_VER_NEG(conn->fc_conn.cn_cid,
+            EV_LOG_VER_NEG(LSQUIC_LOG_CONN_ID,
                                         "supports", lsquic_ver2str[version]);
         }
     }
@@ -1963,11 +2291,22 @@ reconstruct_packet_number (struct full_conn *conn, lsquic_packet_in_t *packet_in
 }
 
 
-static int
+static enum dec_packin
 conn_decrypt_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
-    return lsquic_conn_decrypt_packet(&conn->fc_conn, conn->fc_enpub,
-                                                                packet_in);
+#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
+    if (conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
+    {
+        (void) lsquic_conn_copy_and_release_pi_data(&conn->fc_conn,
+                                                conn->fc_enpub, packet_in);
+        packet_in->pi_flags |= PI_DECRYPTED;
+        return DECPI_OK;
+    }
+    else
+#endif
+        return conn->fc_conn.cn_esf_c->esf_decrypt_packet(
+                    conn->fc_conn.cn_enc_session, conn->fc_enpub,
+                    &conn->fc_conn, packet_in);
 }
 
 
@@ -1999,7 +2338,7 @@ conn_is_stateless_reset (const struct full_conn *conn,
                                     const struct lsquic_packet_in *packet_in)
 {
     return packet_in->pi_data_sz > SRST_LENGTH
-        && 0 == conn->fc_conn.cn_esf->esf_verify_reset_token(
+        && 0 == conn->fc_conn.cn_esf_c->esf_verify_reset_token(
                     conn->fc_conn.cn_enc_session,
                     packet_in->pi_data + packet_in->pi_data_sz - SRST_LENGTH,
                     SRST_LENGTH);
@@ -2025,7 +2364,7 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
      * history and subsequent good packet won't be marked as a duplicate.
      */
     if (0 == (packet_in->pi_flags & PI_DECRYPTED) &&
-        0 != conn_decrypt_packet(conn, packet_in))
+        DECPI_OK != conn_decrypt_packet(conn, packet_in))
     {
         if (conn_is_stateless_reset(conn, packet_in))
         {
@@ -2048,15 +2387,25 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
     switch (st) {
     case REC_ST_OK:
         parse_regular_packet(conn, packet_in);
-        if (0 == (conn->fc_flags & FC_ACK_QUEUED))
+        if (0 == (conn->fc_flags & (FC_ACK_QUEUED|FC_GOT_SREJ)))
         {
             frame_types = packet_in->pi_frame_types;
+            if ((conn->fc_flags & FC_GOING_AWAY)
+                && lsquic_hash_count(conn->fc_pub.all_streams) < 3)
+            {
+                /* Ignore PING frames if we are going away and there are no
+                 * active streams.  (HANDSHAKE and HEADERS streams are the
+                 * two streams that are always in the all_streams hash).
+                 */
+                frame_types &= ~(1 << QUIC_FRAME_PING);
+            }
             was_missing = packet_in->pi_packno !=
                             lsquic_rechist_largest_packno(&conn->fc_rechist);
-            conn->fc_n_slack_all  += 1;
-            conn->fc_n_slack_akbl += !!(frame_types & QFRAME_ACKABLE_MASK);
+            conn->fc_n_slack_akbl += !!(frame_types & GQUIC_FRAME_ACKABLE_MASK);
             try_queueing_ack(conn, was_missing, packet_in->pi_received);
         }
+        else if (conn->fc_flags & FC_GOT_SREJ)
+            conn->fc_flags &= ~FC_GOT_SREJ;
         return 0;
     case REC_ST_DUP:
 #if LSQUIC_CONN_STATS
@@ -2077,6 +2426,11 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 }
 
 
+/* TODO: Possible optimization: in server mode, we do not perform version
+ * negotiation.  We can use different functions in client mode (this
+ * function) and server mode (a different, faster function that ignores
+ * version flags).
+ */
 static int
 process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
@@ -2100,20 +2454,17 @@ process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
             conn->fc_ver_neg.vn_tag = NULL;
             conn->fc_conn.cn_version = conn->fc_ver_neg.vn_ver;
             conn->fc_conn.cn_flags |= LSCONN_VER_SET;
-            if (conn->fc_conn.cn_version >= LSQVER_039)
+            assert(!(conn->fc_flags & FC_NSTP)); /* This bit off at start */
+            if (conn->fc_conn.cn_version >= LSQVER_046
+                                    || conn->fc_settings->es_support_nstp)
             {
-                assert(!(conn->fc_flags & FC_NSTP)); /* This bit off at start */
-                if (conn->fc_conn.cn_version >= LSQVER_044
-                                        || conn->fc_settings->es_support_nstp)
-                {
-                    conn->fc_flags |= FC_NSTP;
-                    lsquic_send_ctl_turn_nstp_on(&conn->fc_send_ctl);
-                }
+                conn->fc_flags |= FC_NSTP;
+                lsquic_send_ctl_turn_nstp_on(&conn->fc_send_ctl);
             }
             LSQ_DEBUG("end of version negotiation: agreed upon %s",
                                     lsquic_ver2str[conn->fc_ver_neg.vn_ver]);
             lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
-            EV_LOG_VER_NEG(conn->fc_conn.cn_cid,
+            EV_LOG_VER_NEG(LSQUIC_LOG_CONN_ID,
                             "agreed", lsquic_ver2str[conn->fc_ver_neg.vn_ver]);
         }
         return process_regular_packet(conn, packet_in);
@@ -2143,7 +2494,8 @@ process_incoming_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 
 
 static void
-idle_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
+idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+                                                            lsquic_time_t now)
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("connection timed out");
@@ -2152,7 +2504,8 @@ idle_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
 
 
 static void
-handshake_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
+handshake_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now)
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("connection timed out: handshake timed out");
@@ -2161,7 +2514,8 @@ handshake_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
 
 
 static void
-ping_alarm_expired (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
+ping_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+                                                            lsquic_time_t now)
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("Ping alarm rang: schedule PING frame to be generated");
@@ -2175,9 +2529,9 @@ get_writeable_packet (struct full_conn *conn, unsigned need_at_least)
     lsquic_packet_out_t *packet_out;
     int is_err;
 
-    assert(need_at_least <= QUIC_MAX_PAYLOAD_SZ);
+    assert(need_at_least <= GQUIC_MAX_PAYLOAD_SZ);
     packet_out = lsquic_send_ctl_get_writeable_packet(&conn->fc_send_ctl,
-                                                    need_at_least, &is_err);
+                            PNS_APP, need_at_least, &conn->fc_path, 0, &is_err);
     if (!packet_out && is_err)
         ABORT_ERROR("cannot allocate packet: %s", strerror(errno));
     return packet_out;
@@ -2187,7 +2541,7 @@ get_writeable_packet (struct full_conn *conn, unsigned need_at_least)
 static int
 generate_wuf_stream (struct full_conn *conn, lsquic_stream_t *stream)
 {
-    lsquic_packet_out_t *packet_out = get_writeable_packet(conn, QUIC_WUF_SZ);
+    lsquic_packet_out_t *packet_out = get_writeable_packet(conn, GQUIC_WUF_SZ);
     if (!packet_out)
         return 0;
     const uint64_t recv_off = lsquic_stream_fc_recv_off(stream);
@@ -2200,7 +2554,10 @@ generate_wuf_stream (struct full_conn *conn, lsquic_stream_t *stream)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_WINDOW_UPDATE;
-    LSQ_DEBUG("wrote WUF: stream %u; offset 0x%"PRIX64, stream->id, recv_off);
+    LSQ_DEBUG("wrote WUF: stream %"PRIu64"; offset 0x%"PRIX64, stream->id,
+                                                                    recv_off);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+        "wrote WUF: stream %"PRIu64"; offset 0x%"PRIX64, stream->id, recv_off);
     return 1;
 }
 
@@ -2209,7 +2566,7 @@ static void
 generate_wuf_conn (struct full_conn *conn)
 {
     assert(conn->fc_flags & FC_SEND_WUF);
-    lsquic_packet_out_t *packet_out = get_writeable_packet(conn, QUIC_WUF_SZ);
+    lsquic_packet_out_t *packet_out = get_writeable_packet(conn, GQUIC_WUF_SZ);
     if (!packet_out)
         return;
     const uint64_t recv_off = lsquic_cfcw_get_fc_recv_off(&conn->fc_pub.cfcw);
@@ -2228,11 +2585,39 @@ generate_wuf_conn (struct full_conn *conn)
 
 
 static void
+maybe_close_conn (struct full_conn *conn)
+{
+#ifndef NDEBUG
+    struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+#endif
+
+    if ((conn->fc_flags & (FC_CLOSING|FC_GOAWAY_SENT|FC_SERVER))
+                                            == (FC_GOAWAY_SENT|FC_SERVER)
+        && lsquic_hash_count(conn->fc_pub.all_streams) == 2)
+    {
+#ifndef NDEBUG
+        for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
+                             el = lsquic_hash_next(conn->fc_pub.all_streams))
+        {
+            stream = lsquic_hashelem_getdata(el);
+            assert(LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id
+                  || LSQUIC_GQUIC_STREAM_HEADERS == stream->id);
+        }
+#endif
+        conn->fc_flags |= FC_RECV_CLOSE;    /* Fake -- trigger "ok to close" */
+        conn->fc_flags |= FC_CLOSING;
+        LSQ_DEBUG("closing connection: GOAWAY sent and no responses remain");
+    }
+}
+
+
+static void
 generate_goaway_frame (struct full_conn *conn)
 {
     int reason_len = 0;
     lsquic_packet_out_t *packet_out =
-        get_writeable_packet(conn, QUIC_GOAWAY_FRAME_SZ + reason_len);
+        get_writeable_packet(conn, GQUIC_GOAWAY_FRAME_SZ + reason_len);
     if (!packet_out)
         return;
     int sz = conn->fc_conn.cn_pf->pf_gen_goaway_frame(
@@ -2247,7 +2632,9 @@ generate_goaway_frame (struct full_conn *conn)
     packet_out->po_frame_types |= 1 << QUIC_FRAME_GOAWAY;
     conn->fc_flags &= ~FC_SEND_GOAWAY;
     conn->fc_flags |=  FC_GOAWAY_SENT;
-    LSQ_DEBUG("wrote GOAWAY frame: stream id: %u", conn->fc_max_peer_stream_id);
+    LSQ_DEBUG("wrote GOAWAY frame: stream id: %"PRIu64,
+                                                conn->fc_max_peer_stream_id);
+    maybe_close_conn(conn);
 }
 
 
@@ -2256,7 +2643,8 @@ generate_connection_close_packet (struct full_conn *conn)
 {
     lsquic_packet_out_t *packet_out;
 
-    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0);
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0, PNS_APP,
+                                                                &conn->fc_path);
     if (!packet_out)
     {
         ABORT_ERROR("cannot allocate packet: %s", strerror(errno));
@@ -2265,7 +2653,7 @@ generate_connection_close_packet (struct full_conn *conn)
 
     lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
     int sz = conn->fc_conn.cn_pf->pf_gen_connect_close_frame(packet_out->po_data + packet_out->po_data_sz,
-                     lsquic_packet_out_avail(packet_out), 16 /* PEER_GOING_AWAY */,
+                     lsquic_packet_out_avail(packet_out), 0, 16 /* PEER_GOING_AWAY */,
                      NULL, 0);
     if (sz < 0) {
         ABORT_ERROR("generate_connection_close_packet failed");
@@ -2278,10 +2666,10 @@ generate_connection_close_packet (struct full_conn *conn)
 
 
 static int
-generate_blocked_frame (struct full_conn *conn, uint32_t stream_id)
+generate_blocked_frame (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     lsquic_packet_out_t *packet_out =
-                            get_writeable_packet(conn, QUIC_BLOCKED_FRAME_SZ);
+                            get_writeable_packet(conn, GQUIC_BLOCKED_FRAME_SZ);
     if (!packet_out)
         return 0;
     int sz = conn->fc_conn.cn_pf->pf_gen_blocked_frame(
@@ -2293,7 +2681,7 @@ generate_blocked_frame (struct full_conn *conn, uint32_t stream_id)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_BLOCKED;
-    LSQ_DEBUG("wrote blocked frame: stream %u", stream_id);
+    LSQ_DEBUG("wrote blocked frame: stream %"PRIu64, stream_id);
     return 1;
 }
 
@@ -2317,7 +2705,7 @@ generate_rst_stream_frame (struct full_conn *conn, lsquic_stream_t *stream)
     lsquic_packet_out_t *packet_out;
     int sz, s;
 
-    packet_out = get_writeable_packet(conn, QUIC_RST_STREAM_SZ);
+    packet_out = get_writeable_packet(conn, GQUIC_RST_STREAM_SZ);
     if (!packet_out)
         return 0;
     /* TODO Possible optimization: instead of using stream->tosend_off as the
@@ -2344,8 +2732,8 @@ generate_rst_stream_frame (struct full_conn *conn, lsquic_stream_t *stream)
         return 0;
     }
     lsquic_stream_rst_frame_sent(stream);
-    LSQ_DEBUG("wrote RST: stream %u; offset 0x%"PRIX64"; error code 0x%X",
-                        stream->id, stream->tosend_off, stream->error_code);
+    LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset 0x%"PRIX64"; error code "
+              "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
     return 1;
 }
 
@@ -2429,11 +2817,11 @@ static int
 process_stream_ready_to_send (struct full_conn *conn, lsquic_stream_t *stream)
 {
     int r = 1;
-    if (stream->stream_flags & STREAM_SEND_WUF)
+    if (stream->sm_qflags & SMQF_SEND_WUF)
         r &= generate_wuf_stream(conn, stream);
-    if (stream->stream_flags & STREAM_SEND_BLOCKED)
+    if (stream->sm_qflags & SMQF_SEND_BLOCKED)
         r &= generate_stream_blocked_frame(conn, stream);
-    if (stream->stream_flags & STREAM_SEND_RST)
+    if (stream->sm_qflags & SMQF_SEND_RST)
         r &= generate_rst_stream_frame(conn, stream);
     return r;
 }
@@ -2450,7 +2838,7 @@ process_streams_ready_to_send (struct full_conn *conn)
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.sending_streams),
         TAILQ_LAST(&conn->fc_pub.sending_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        STREAM_SENDING_FLAGS, conn->fc_conn.cn_cid, "send", NULL, NULL);
+        SMQF_SENDING_FLAGS, &conn->fc_conn, "send", NULL, NULL);
 
     for (stream = lsquic_spi_first(&spi); stream;
                                             stream = lsquic_spi_next(&spi))
@@ -2461,12 +2849,12 @@ process_streams_ready_to_send (struct full_conn *conn)
 
 /* Return true if packetized, false otherwise */
 static int
-packetize_standalone_stream_reset (struct full_conn *conn, uint32_t stream_id)
+packetize_standalone_stream_reset (struct full_conn *conn, lsquic_stream_id_t stream_id)
 {
     lsquic_packet_out_t *packet_out;
     int sz;
 
-    packet_out = get_writeable_packet(conn, QUIC_RST_STREAM_SZ);
+    packet_out = get_writeable_packet(conn, GQUIC_RST_STREAM_SZ);
     if (!packet_out)
         return 0;
 
@@ -2480,7 +2868,7 @@ packetize_standalone_stream_reset (struct full_conn *conn, uint32_t stream_id)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
-    LSQ_DEBUG("generated standalone RST_STREAM frame for stream %"PRIu32,
+    LSQ_DEBUG("generated standalone RST_STREAM frame for stream %"PRIu64,
                                                                     stream_id);
     return 1;
 }
@@ -2562,18 +2950,18 @@ service_streams (struct full_conn *conn)
     for (stream = TAILQ_FIRST(&conn->fc_pub.service_streams); stream; stream = next)
     {
         next = TAILQ_NEXT(stream, next_service_stream);
-        if (stream->stream_flags & STREAM_ABORT_CONN)
+        if (stream->sm_qflags & SMQF_ABORT_CONN)
             /* No need to unset this flag or remove this stream: the connection
              * is about to be aborted.
              */
-            ABORT_ERROR("aborted due to error in stream %"PRIu32, stream->id);
-        if (stream->stream_flags & STREAM_CALL_ONCLOSE)
+            ABORT_ERROR("aborted due to error in stream %"PRIu64, stream->id);
+        if (stream->sm_qflags & SMQF_CALL_ONCLOSE)
         {
             lsquic_stream_call_on_close(stream);
             closed_some |= is_our_stream(conn, stream);
             conn_mark_stream_closed(conn, stream->id);
         }
-        if (stream->stream_flags & STREAM_FREE_STREAM)
+        if (stream->sm_qflags & SMQF_FREE_STREAM)
         {
             TAILQ_REMOVE(&conn->fc_pub.service_streams, stream, next_service_stream);
             el = lsquic_hash_find(conn->fc_pub.all_streams, &stream->id, sizeof(stream->id));
@@ -2585,6 +2973,7 @@ service_streams (struct full_conn *conn)
     }
 
     if (either_side_going_away(conn))
+    {
         while (conn->fc_n_delayed_streams)
         {
             --conn->fc_n_delayed_streams;
@@ -2592,9 +2981,31 @@ service_streams (struct full_conn *conn)
             (void) conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_new_stream(
                 conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx, NULL);
         }
+        maybe_close_conn(conn);
+    }
     else
         if (closed_some && conn->fc_n_delayed_streams)
             create_delayed_streams(conn);
+}
+
+
+struct filter_stream_ctx
+{
+    struct full_conn    *conn;
+    uint32_t             last_stream_id,
+                         max_peer_stream_id;
+};
+
+
+static int
+filter_out_old_streams (void *ctx, lsquic_stream_t *stream)
+{
+    struct filter_stream_ctx *const fctx = ctx;
+    return ((!((stream->id ^ fctx->last_stream_id)     & 1) &&
+                                   stream->id > fctx->last_stream_id)
+           ||
+            (!((stream->id ^ fctx->max_peer_stream_id) & 1) &&
+                                   stream->id > fctx->max_peer_stream_id));
 }
 
 
@@ -2602,31 +3013,52 @@ static void
 process_streams_read_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
-    enum stream_flags service_flags;
+    struct filter_stream_ctx fctx;
+    enum stream_q_flags q_flags;
     int needs_service;
     struct stream_prio_iter spi;
 
     if (TAILQ_EMPTY(&conn->fc_pub.read_streams))
         return;
 
+    fctx.last_stream_id     = conn->fc_last_stream_id;
+    fctx.max_peer_stream_id = conn->fc_max_peer_stream_id;
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.read_streams),
         TAILQ_LAST(&conn->fc_pub.read_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
-        STREAM_WANT_READ, conn->fc_conn.cn_cid, "read", NULL, NULL);
+        SMQF_WANT_READ, &conn->fc_conn, "read", NULL, NULL);
 
     needs_service = 0;
     for (stream = lsquic_spi_first(&spi); stream;
                                             stream = lsquic_spi_next(&spi))
     {
-        service_flags = stream->stream_flags & STREAM_SERVICE_FLAGS;
+        q_flags = stream->sm_qflags & SMQF_SERVICE_FLAGS;
         lsquic_stream_dispatch_read_events(stream);
-        needs_service |= service_flags
-                                ^ (stream->stream_flags & STREAM_SERVICE_FLAGS);
+        needs_service |= q_flags ^ (stream->sm_qflags & SMQF_SERVICE_FLAGS);
     }
 
     if (needs_service)
         service_streams(conn);
 
+    /* If new streams were created as result of the read dispatching above,
+     * process these new streams.  This logic is only applicable to in the
+     * server mode, as a client that creates a stream from an on_read() event
+     * is not likely to want to *read* from it immediately.
+     */
+    if ((conn->fc_flags & FC_SERVER) &&
+        (fctx.last_stream_id     < conn->fc_last_stream_id ||
+         fctx.max_peer_stream_id < conn->fc_max_peer_stream_id))
+    {
+        fctx.conn = conn;
+        lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.read_streams),
+            TAILQ_LAST(&conn->fc_pub.read_streams, lsquic_streams_tailq),
+            (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
+            SMQF_WANT_READ, &conn->fc_conn, "read-new",
+            filter_out_old_streams, &fctx);
+        for (stream = lsquic_spi_first(&spi); stream;
+                                                stream = lsquic_spi_next(&spi))
+            lsquic_stream_dispatch_read_events(stream);
+    }
 }
 
 
@@ -2637,7 +3069,7 @@ maybe_conn_flush_headers_stream (struct full_conn *conn)
 
     if (conn->fc_flags & FC_HTTP)
     {
-        stream = lsquic_headers_stream_get_stream(conn->fc_pub.hs);
+        stream = lsquic_headers_stream_get_stream(conn->fc_pub.u.gquic.hs);
         if (lsquic_stream_has_data_to_flush(stream))
             (void) lsquic_stream_flush(stream);
     }
@@ -2653,7 +3085,7 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.write_streams),
         TAILQ_LAST(&conn->fc_pub.write_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        STREAM_WANT_WRITE|STREAM_WANT_FLUSH, conn->fc_conn.cn_cid,
+        SMQF_WANT_WRITE|SMQF_WANT_FLUSH, &conn->fc_conn,
         high_prio ? "write-high" : "write-low", NULL, NULL);
 
     if (high_prio)
@@ -2663,7 +3095,7 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
 
     for (stream = lsquic_spi_first(&spi); stream && write_is_possible(conn);
                                             stream = lsquic_spi_next(&spi))
-        if (stream->stream_flags & STREAM_WRITE_Q_FLAGS)
+        if (stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
             lsquic_stream_dispatch_write_events(stream);
 
     maybe_conn_flush_headers_stream(conn);
@@ -2675,7 +3107,7 @@ process_hsk_stream_read_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
-        if (LSQUIC_STREAM_HANDSHAKE == stream->id)
+        if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id)
         {
             lsquic_stream_dispatch_read_events(stream);
             break;
@@ -2688,7 +3120,7 @@ process_hsk_stream_write_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     TAILQ_FOREACH(stream, &conn->fc_pub.write_streams, next_write_stream)
-        if (LSQUIC_STREAM_HANDSHAKE == stream->id)
+        if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id)
         {
             lsquic_stream_dispatch_write_events(stream);
             break;
@@ -2701,7 +3133,8 @@ generate_ack_frame (struct full_conn *conn)
 {
     lsquic_packet_out_t *packet_out;
 
-    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0);
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0, PNS_APP,
+                                                                &conn->fc_path);
     if (packet_out)
     {
         lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
@@ -2747,7 +3180,8 @@ immediate_close (struct full_conn *conn)
     if ((conn->fc_flags & FC_TIMED_OUT) && conn->fc_settings->es_silent_close)
         return TICK_CLOSE;
 
-    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0);
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl, 0, PNS_APP,
+                                                                &conn->fc_path);
     if (!packet_out)
     {
         LSQ_WARN("cannot allocate packet: %s", strerror(errno));
@@ -2784,7 +3218,7 @@ immediate_close (struct full_conn *conn)
     lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
     sz = conn->fc_conn.cn_pf->pf_gen_connect_close_frame(
                      packet_out->po_data + packet_out->po_data_sz,
-                     lsquic_packet_out_avail(packet_out), error_code,
+                     lsquic_packet_out_avail(packet_out), 0, error_code,
                      error_reason, error_reason ? strlen(error_reason) : 0);
     if (sz < 0) {
         LSQ_WARN("%s failed", __func__);
@@ -2802,7 +3236,8 @@ write_is_possible (struct full_conn *conn)
 {
     const lsquic_packet_out_t *packet_out;
 
-    packet_out = lsquic_send_ctl_last_scheduled(&conn->fc_send_ctl);
+    packet_out = lsquic_send_ctl_last_scheduled(&conn->fc_send_ctl, PNS_APP,
+                                                        &conn->fc_path, 0);
     return (packet_out && lsquic_packet_out_avail(packet_out) > 10)
         || lsquic_send_ctl_can_send(&conn->fc_send_ctl);
 }
@@ -2874,11 +3309,11 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (conn->fc_flags & FC_HAVE_SAVED_ACK)
     {
         (void) /* If there is an error, we'll fail shortly */
-            process_saved_ack(conn, 0);
+            process_saved_ack(conn, 0, now);
         conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
     }
 
-    lsquic_send_ctl_tick(&conn->fc_send_ctl, now);
+    lsquic_send_ctl_tick_in(&conn->fc_send_ctl, now);
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
     CLOSE_IF_NECESSARY();
 
@@ -2940,7 +3375,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
                 generate_stop_waiting_frame(conn);
                 CLOSE_IF_NECESSARY();
             }
-            lsquic_send_ctl_ack_to_front(&conn->fc_send_ctl);
+            lsquic_send_ctl_ack_to_front(&conn->fc_send_ctl, 1);
         }
     }
 
@@ -2987,10 +3422,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 
     if (conn->fc_conn.cn_flags & LSCONN_SEND_BLOCKED)
     {
+        RETURN_IF_OUT_OF_PACKETS();
         if (generate_blocked_frame(conn, 0))
             conn->fc_conn.cn_flags &= ~LSCONN_SEND_BLOCKED;
-        else
-            RETURN_IF_OUT_OF_PACKETS();
     }
 
     if (!STAILQ_EMPTY(&conn->fc_stream_ids_to_reset))
@@ -3007,7 +3441,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
     if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) &&
-        !conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+        !conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
                                                 conn->fc_conn.cn_enc_session))
     {
         process_hsk_stream_write_events(conn);
@@ -3039,10 +3473,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
   end_write:
 
   skip_write:
-    RETURN_IF_OUT_OF_PACKETS();
-
     if ((conn->fc_flags & FC_CLOSING) && conn_ok_to_close(conn))
     {
+        RETURN_IF_OUT_OF_PACKETS();
         LSQ_DEBUG("connection is OK to close");
         /* This is normal termination sequence.
          *
@@ -3066,6 +3499,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     {
         if (conn->fc_flags & FC_SEND_PING)
         {
+            RETURN_IF_OUT_OF_PACKETS();
             conn->fc_flags &= ~FC_SEND_PING;
             generate_ping_frame(conn);
             CLOSE_IF_NECESSARY();
@@ -3077,24 +3511,21 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
             goto end;
         }
     }
-    else if (!(conn->fc_flags & FC_SERVER))
+    else if (conn->fc_settings->es_ping_period)
     {
         lsquic_alarmset_unset(&conn->fc_alset, AL_PING);
         lsquic_send_ctl_sanity_check(&conn->fc_send_ctl);
         conn->fc_flags &= ~FC_SEND_PING;   /* It may have rung */
     }
 
-    now = lsquic_time_now();
-    lsquic_alarmset_set(&conn->fc_alset, AL_IDLE,
-                                now + conn->fc_settings->es_idle_conn_to);
-
     /* From the spec:
      *  " The PING frame should be used to keep a connection alive when
      *  " a stream is open.
      */
-    if (0 == (conn->fc_flags & FC_SERVER) &&
-                                        lsquic_hash_count(conn->fc_pub.all_streams) > 0)
-        lsquic_alarmset_set(&conn->fc_alset, AL_PING, now + TIME_BETWEEN_PINGS);
+    if (conn->fc_settings->es_ping_period
+                            && lsquic_hash_count(conn->fc_pub.all_streams) > 0)
+        lsquic_alarmset_set(&conn->fc_alset, AL_PING,
+                    now + conn->fc_settings->es_ping_period * 1000 * 1000);
 
     tick |= TICK_SEND;
 
@@ -3104,6 +3535,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 
   close_end:
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
+    lsquic_send_ctl_tick_out(&conn->fc_send_ctl);
     return tick;
 }
 
@@ -3125,10 +3557,10 @@ full_conn_ci_packet_in (lsquic_conn_t *lconn, lsquic_packet_in_t *packet_in)
 
 
 static lsquic_packet_out_t *
-full_conn_ci_next_packet_to_send (lsquic_conn_t *lconn)
+full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    return lsquic_send_ctl_next_packet_to_send(&conn->fc_send_ctl);
+    return lsquic_send_ctl_next_packet_to_send(&conn->fc_send_ctl, 0);
 }
 
 
@@ -3141,15 +3573,11 @@ full_conn_ci_packet_sent (lsquic_conn_t *lconn, lsquic_packet_out_t *packet_out)
     recent_packet_hist_new(conn, 1, packet_out->po_sent);
     recent_packet_hist_frames(conn, 1, packet_out->po_frame_types);
 
-    if (packet_out->po_frame_types & QFRAME_RETRANSMITTABLE_MASK)
-    {
+    if (packet_out->po_frame_types & GQUIC_FRAME_RETRANSMITTABLE_MASK)
         conn->fc_n_cons_unretx = 0;
-        lsquic_alarmset_set(&conn->fc_alset, AL_IDLE,
-                    packet_out->po_sent + conn->fc_settings->es_idle_conn_to);
-    }
     else
         ++conn->fc_n_cons_unretx;
-    s = lsquic_send_ctl_sent_packet(&conn->fc_send_ctl, packet_out, 1);
+    s = lsquic_send_ctl_sent_packet(&conn->fc_send_ctl, packet_out);
     if (s != 0)
         ABORT_ERROR("sent packet failed: %s", strerror(errno));
 #if LSQUIC_CONN_STATS
@@ -3174,6 +3602,7 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
     switch (status)
     {
+        case LSQ_HSK_0RTT_FAIL:
         case LSQ_HSK_FAIL:
             conn->fc_flags |= FC_HSK_FAILED;
             break;
@@ -3192,11 +3621,18 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn,
                                                                         status);
+    if ((status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK)
+        && conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
+    {
+        conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
+            conn->fc_conn.cn_enc_session, &conn->fc_conn,
+            conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
+    }
 }
 
 
-void
-lsquic_conn_abort (lsquic_conn_t *lconn)
+static void
+full_conn_ci_abort (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     LSQ_INFO("User aborted connection");
@@ -3204,8 +3640,30 @@ lsquic_conn_abort (lsquic_conn_t *lconn)
 }
 
 
-void
-lsquic_conn_close (lsquic_conn_t *lconn)
+static void
+full_conn_ci_internal_error (struct lsquic_conn *lconn,
+                                                    const char *format, ...)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    LSQ_INFO("Internal error reported");
+    conn->fc_flags |= FC_ERROR;
+}
+
+
+/* This function should not be called, as this is specific to IETF QUIC */
+static void
+full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
+                                unsigned error_code, const char *fmt, ...)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    assert(0);
+    LSQ_WARN("(GQUIC) abort error is called unexpectedly");
+    conn->fc_flags |= FC_ERROR;
+}
+
+
+static void
+full_conn_ci_close (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     lsquic_stream_t *stream;
@@ -3226,8 +3684,8 @@ lsquic_conn_close (lsquic_conn_t *lconn)
 }
 
 
-void
-lsquic_conn_going_away (lsquic_conn_t *lconn)
+static void
+full_conn_ci_going_away (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     if (!(conn->fc_flags & (FC_CLOSING|FC_GOING_AWAY)))
@@ -3236,7 +3694,10 @@ lsquic_conn_going_away (lsquic_conn_t *lconn)
         assert(!(conn->fc_flags & FC_SEND_GOAWAY));
         conn->fc_flags |= FC_GOING_AWAY;
         if (!(conn->fc_flags & FC_GOAWAY_SENT))
+        {
             conn->fc_flags |= FC_SEND_GOAWAY;
+            lsquic_engine_add_conn_to_tickable(conn->fc_enpub, lconn);
+        }
     }
 }
 
@@ -3249,9 +3710,9 @@ lsquic_conn_going_away (lsquic_conn_t *lconn)
 __attribute__((nonnull(4)))
 #endif
 static lsquic_stream_t *
-find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
-                                 enum stream_ctor_flags stream_ctor_flags,
-                                 const char *what)
+find_stream_on_non_stream_frame (struct full_conn *conn,
+        lsquic_stream_id_t stream_id, enum stream_ctor_flags stream_ctor_flags,
+        const char *what)
 {
     lsquic_stream_t *stream;
     unsigned in_count;
@@ -3262,7 +3723,7 @@ find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
 
     if (conn_is_stream_closed(conn, stream_id))
     {
-        LSQ_DEBUG("drop incoming %s for closed stream %u", what, stream_id);
+        LSQ_DEBUG("drop incoming %s for closed stream %"PRIu64, what, stream_id);
         return NULL;
     }
 
@@ -3285,7 +3746,7 @@ find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
         {
             unsigned counts[N_SCNTS];
             collect_stream_counts(conn, 1, counts);
-            ABORT_WARN("incoming %s for stream %u would exceed "
+            ABORT_WARN("incoming %s for stream %"PRIu64" would exceed "
                 "limit: %u.  all: %u; peer: %u; closed: %u; reset: %u; reset "
                 "and not closed: %u",
                 what, stream_id, conn->fc_cfg.max_streams_in, counts[SCNT_ALL],
@@ -3298,7 +3759,7 @@ find_stream_on_non_stream_frame (struct full_conn *conn, uint32_t stream_id,
         stream_id > conn->fc_max_peer_stream_id)
     {
         maybe_schedule_reset_for_stream(conn, stream_id);
-        LSQ_DEBUG("going away: reset new incoming stream %u", stream_id);
+        LSQ_DEBUG("going away: reset new incoming stream %"PRIu64, stream_id);
         return NULL;
     }
 
@@ -3324,7 +3785,7 @@ headers_stream_on_conn_error (void *ctx)
 
 
 static void
-headers_stream_on_stream_error (void *ctx, uint32_t stream_id)
+headers_stream_on_stream_error (void *ctx, lsquic_stream_id_t stream_id)
 {
     struct full_conn *conn = ctx;
     lsquic_stream_t *stream;
@@ -3333,7 +3794,7 @@ headers_stream_on_stream_error (void *ctx, uint32_t stream_id)
                                              "error");
     if (stream)
     {
-        LSQ_DEBUG("resetting stream %u due to error", stream_id);
+        LSQ_DEBUG("resetting stream %"PRIu64" due to error", stream_id);
         /* We use code 1, which is QUIC_INTERNAL_ERROR (see
          * [draft-hamilton-quic-transport-protocol-01], Section 10), for all
          * errors.  There does not seem to be a good reason to figure out
@@ -3369,7 +3830,7 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
     struct full_conn *conn = ctx;
     lsquic_stream_t *stream;
 
-    LSQ_DEBUG("incoming headers for stream %u", uh->uh_stream_id);
+    LSQ_DEBUG("incoming headers for stream %"PRIu64, uh->uh_stream_id);
 
     stream = find_stream_on_non_stream_frame(conn, uh->uh_stream_id, 0,
                                              "headers");
@@ -3384,7 +3845,8 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
     if (0 != lsquic_stream_uh_in(stream, uh))
     {
-        ABORT_ERROR("stream %u refused incoming headers", uh->uh_stream_id);
+        ABORT_ERROR("stream %"PRIu64" refused incoming headers",
+                                                        uh->uh_stream_id);
         goto free_uh;
     }
 
@@ -3408,13 +3870,13 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
 
     assert(!(conn->fc_flags & FC_SERVER));
 
-    LSQ_DEBUG("push promise for stream %u in response to %u",
+    LSQ_DEBUG("push promise for stream %"PRIu64" in response to %"PRIu64,
                                     uh->uh_oth_stream_id, uh->uh_stream_id);
 
     if (0 == (uh->uh_stream_id & 1)     ||
         0 != (uh->uh_oth_stream_id & 1))
     {
-        ABORT_ERROR("invalid push promise stream IDs: %u, %u",
+        ABORT_ERROR("invalid push promise stream IDs: %"PRIu64", %"PRIu64,
                                     uh->uh_oth_stream_id, uh->uh_stream_id);
         goto free_uh;
     }
@@ -3422,7 +3884,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     if (!(conn_is_stream_closed(conn, uh->uh_stream_id) ||
           find_stream_by_id(conn, uh->uh_stream_id)))
     {
-        ABORT_ERROR("invalid push promise original stream ID %u never "
+        ABORT_ERROR("invalid push promise original stream ID %"PRIu64" never "
                     "initiated", uh->uh_stream_id);
         goto free_uh;
     }
@@ -3430,7 +3892,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     if (conn_is_stream_closed(conn, uh->uh_oth_stream_id) ||
         find_stream_by_id(conn, uh->uh_oth_stream_id))
     {
-        ABORT_ERROR("invalid promised stream ID %u already used",
+        ABORT_ERROR("invalid promised stream ID %"PRIu64" already used",
                                                         uh->uh_oth_stream_id);
         goto free_uh;
     }
@@ -3455,13 +3917,13 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-headers_stream_on_priority (void *ctx, uint32_t stream_id, int exclusive,
-                            uint32_t dep_stream_id, unsigned weight)
+headers_stream_on_priority (void *ctx, lsquic_stream_id_t stream_id,
+            int exclusive, lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
     struct full_conn *conn = ctx;
     lsquic_stream_t *stream;
-    LSQ_DEBUG("got priority frame for stream %u: (ex: %d; dep stream: %u; "
-                  "weight: %u)", stream_id, exclusive, dep_stream_id, weight);
+    LSQ_DEBUG("got priority frame for stream %"PRIu64": (ex: %d; dep stream: "
+        "%"PRIu64"; weight: %u)", stream_id, exclusive, dep_stream_id, weight);
     stream = find_stream_on_non_stream_frame(conn, stream_id, SCF_CALL_ON_NEW,
                                              "priority");
     if (stream)
@@ -3469,29 +3931,227 @@ headers_stream_on_priority (void *ctx, uint32_t stream_id, int exclusive,
 }
 
 
-int lsquic_conn_is_push_enabled(lsquic_conn_t *c)
+
+#define STRLEN(s) (sizeof(s) - 1)
+
+static struct uncompressed_headers *
+synthesize_push_request (struct full_conn *conn, void *hset,
+         const struct iovec* path, const struct iovec* host,
+         const lsquic_http_headers_t *headers,
+         lsquic_stream_id_t pushed_stream_id, const lsquic_stream_t *dep_stream)
 {
-    return ((struct full_conn *)c)->fc_flags & FC_SUPPORT_PUSH;
+    struct uncompressed_headers *uh;
+    struct http1x_ctor_ctx ctor_ctx;
+    void *hsi_ctx;
+    unsigned idx, i, n_headers;
+    const lsquic_http_header_t *header;
+    enum lsquic_header_status st;
+    lsquic_http_header_t pseudo_headers[4];
+    lsquic_http_headers_t all_headers[2];
+
+    if (!hset)
+    {
+        if (conn->fc_enpub->enp_hsi_if == lsquic_http1x_if)
+        {
+            ctor_ctx = (struct http1x_ctor_ctx)
+            {
+                .conn      = &conn->fc_conn,
+                .is_server = 1,
+                .max_headers_sz = MAX_HTTP1X_HEADERS_SIZE,
+            };
+            hsi_ctx = &ctor_ctx;
+        }
+        else
+            hsi_ctx = conn->fc_enpub->enp_hsi_ctx;
+
+        hset = conn->fc_enpub->enp_hsi_if->hsi_create_header_set(hsi_ctx, 1);
+        if (!hset)
+        {
+            LSQ_INFO("header set ctor failure");
+            return NULL;
+        }
+
+        pseudo_headers[0].name. iov_base    = ":method";
+        pseudo_headers[0].name. iov_len     = 7;
+        pseudo_headers[0].value.iov_base    = "GET";
+        pseudo_headers[0].value.iov_len     = 3;
+        pseudo_headers[1].name .iov_base    = ":path";
+        pseudo_headers[1].name .iov_len     = 5;
+        pseudo_headers[1].value             = *path;
+        pseudo_headers[2].name .iov_base    = ":authority";
+        pseudo_headers[2].name .iov_len     = 10;
+        pseudo_headers[2].value             = *host;
+        pseudo_headers[3].name. iov_base    = ":scheme";
+        pseudo_headers[3].name. iov_len     = 7;
+        pseudo_headers[3].value.iov_base    = "https";
+        pseudo_headers[3].value.iov_len     = 5;
+
+        all_headers[0].headers = pseudo_headers;
+        all_headers[0].count   = sizeof(pseudo_headers)
+                                                / sizeof(pseudo_headers[0]);
+        if (headers)
+        {
+            all_headers[1]     = *headers;
+            n_headers = 2;
+        }
+        else
+            n_headers = 1;
+
+        for (i = 0; i < n_headers; ++i)
+            for (header = all_headers[i].headers;
+                    header < all_headers[i].headers + all_headers[i].count;
+                        ++header)
+            {
+                idx = lshpack_enc_get_stx_tab_id(header->name.iov_base,
+                                header->name.iov_len, header->value.iov_base,
+                                header->value.iov_len);
+                st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, idx,
+                                header->name.iov_base, header->name.iov_len,
+                                header->value.iov_base, header->value.iov_len);
+                if (st)
+                    goto err;
+            }
+
+        st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, 0, 0, 0,
+                                                            0, 0);
+        if (st)
+            goto err;
+    }
+
+    uh = malloc(sizeof(*uh));
+    if (!uh)
+    {
+        st = LSQUIC_HDR_ERR_NOMEM;
+        goto err;
+    }
+
+    uh->uh_stream_id     = pushed_stream_id;
+    uh->uh_oth_stream_id = 0;   /* We don't do dependencies */
+    uh->uh_weight        = lsquic_stream_priority(dep_stream) / 2 + 1;
+    uh->uh_exclusive     = 0;
+    uh->uh_flags         = UH_FIN;
+    if (lsquic_http1x_if == conn->fc_enpub->enp_hsi_if)
+        uh->uh_flags    |= UH_H1H;
+    uh->uh_hset          = hset;
+
+    return uh;
+
+  err:
+    LSQ_INFO("%s: error %u", __func__, st);
+    return NULL;
 }
 
 
-lsquic_conn_ctx_t *
-lsquic_conn_get_ctx (const lsquic_conn_t *lconn)
+static int
+full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    return conn->fc_flags & FC_SUPPORT_PUSH;
+}
+
+
+static int
+full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
+    struct lsquic_stream *dep_stream, const struct iovec *path,
+    const struct iovec *host, const struct lsquic_http_headers *headers)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    lsquic_stream_t *pushed_stream;
+    struct uncompressed_headers *uh;    /* We synthesize the request */
+    lsquic_stream_id_t stream_id;
+    int hit_limit;
+
+    if ((conn->fc_flags & (FC_SERVER|FC_HTTP)) != (FC_SERVER|FC_HTTP))
+    {
+        LSQ_ERROR("must be server in HTTP mode to push streams");
+        return -1;
+    }
+
+    if (lsquic_stream_is_pushed(dep_stream))
+    {
+        LSQ_WARN("cannot push stream dependent on another pushed stream "
+                 "(%"PRIu64")", dep_stream->id);
+        return -1;
+    }
+
+    if (!(conn->fc_flags & FC_SUPPORT_PUSH))
+    {
+        LSQ_INFO("server push support is disabled");
+        return 1;
+    }
+
+    hit_limit = 0;
+    if (either_side_going_away(conn) ||
+        (hit_limit = 1, count_streams(conn, 0) >= conn->fc_cfg.max_streams_out))
+    {
+        LSQ_DEBUG("cannot create pushed stream: %s", hit_limit ?
+            "hit connection limit" : "connection is going away");
+        return 1;
+    }
+
+    stream_id = generate_stream_id(conn);
+    uh = synthesize_push_request(conn, hset, path, host, headers, stream_id,
+                                                                dep_stream);
+    if (!uh)
+    {
+        ABORT_ERROR("memory allocation failure");
+        return -1;
+    }
+
+    pushed_stream = new_stream(conn, stream_id, SCF_CALL_ON_NEW);
+    if (!pushed_stream)
+    {
+        LSQ_WARN("cannot create stream: %s", strerror(errno));
+        free(uh);
+        return -1;
+    }
+
+    if (0 != lsquic_stream_uh_in(pushed_stream, uh))
+    {
+        LSQ_WARN("stream barfed when fed synthetic request");
+        free(uh);
+        return -1;
+    }
+
+    if (0 != lsquic_headers_stream_push_promise(conn->fc_pub.u.gquic.hs, dep_stream->id,
+                                        pushed_stream->id, path, host, headers))
+    {
+        /* Since the failure to write to HEADERS stream results in aborting
+         * the connection, we do not bother rolling back.
+         */
+        LSQ_ERROR("could not send push promise");
+        return -1;
+    }
+
+    return 0;
+}
+
+
+static void
+full_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
+{
+    assert(0);
+}
+
+
+static struct lsquic_conn_ctx *
+full_conn_ci_get_ctx (const struct lsquic_conn *lconn)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     return conn->fc_conn_ctx;
 }
 
 
-void lsquic_conn_set_ctx (lsquic_conn_t *lconn, lsquic_conn_ctx_t *ctx)
+static void
+full_conn_ci_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     conn->fc_conn_ctx = ctx;
 }
 
 
-enum LSQUIC_CONN_STATUS
-lsquic_conn_status (lsquic_conn_t *lconn, char *errbuf, size_t bufsz)
+static enum LSQUIC_CONN_STATUS
+full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     size_t n;
@@ -3546,42 +4206,46 @@ static int
 full_conn_ci_is_tickable (lsquic_conn_t *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    const struct lsquic_stream *stream;
+    struct lsquic_stream *stream;
 
     if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
         return 1;
 
     if ((conn->fc_enpub->enp_flags & ENPUB_CAN_SEND)
-        && lsquic_send_ctl_can_send(&conn->fc_send_ctl)
         && (should_generate_ack(conn) ||
             !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {
         if (conn->fc_flags & (FC_SEND_GOAWAY|FC_SEND_STOP_WAITING
-                             |FC_SEND_PING|FC_SEND_WUF))
-            return 1;
+                             |FC_SEND_PING|FC_SEND_WUF|FC_CLOSING))
+            goto check_can_send;
         if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
-            return 1;
+            goto check_can_send;
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
-            return 1;
+            goto check_can_send;
         if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) ||
-            conn->fc_conn.cn_esf->esf_is_zero_rtt_enabled(
+            conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
                                                 conn->fc_conn.cn_enc_session))
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
                 if (lsquic_stream_write_avail(stream))
-                    return 1;
+                    goto check_can_send;
         }
         else
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
-                if (LSQUIC_STREAM_HANDSHAKE == stream->id
+                if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id
                                     && lsquic_stream_write_avail(stream))
-                    return 1;
+                    goto check_can_send;
         }
+        goto check_readable_streams;
+  check_can_send:
+        if (lsquic_send_ctl_can_send(&conn->fc_send_ctl))
+            return 1;
     }
 
+  check_readable_streams:
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
         if (lsquic_stream_readable(stream))
             return 1;
@@ -3594,10 +4258,18 @@ static lsquic_time_t
 full_conn_ci_next_tick_time (lsquic_conn_t *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    lsquic_time_t alarm_time, pacer_time;
+    lsquic_time_t alarm_time, pacer_time, now;
 
     alarm_time = lsquic_alarmset_mintime(&conn->fc_alset);
     pacer_time = lsquic_send_ctl_next_pacer_time(&conn->fc_send_ctl);
+
+    if (pacer_time && LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    {
+        now = lsquic_time_now();
+        if (pacer_time < now)
+            LSQ_DEBUG("%s: pacer is %"PRIu64" usec in the past", __func__,
+                                                            now - pacer_time);
+    }
 
     if (alarm_time && pacer_time)
     {
@@ -3613,6 +4285,78 @@ full_conn_ci_next_tick_time (lsquic_conn_t *lconn)
 }
 
 
+int
+lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    const unsigned cce_idx = lconn->cn_cur_cce_idx;
+    struct conn_cid_elem *const cce = &lconn->cn_cces[ cce_idx ];
+    struct lsquic_stream *stream;
+    enum lsquic_version version;
+
+    if (lconn->cn_esf_c->esf_is_zero_rtt_enabled(conn->fc_conn.cn_enc_session))
+    {
+        /* We need to do this because we do not clean up any data that may
+         * have been already sent.  This is left an optimization for the
+         * future.
+         */
+        LSQ_DEBUG("received SREJ when 0RTT was on: fail handshake and let "
+            "caller retry");
+        full_conn_ci_hsk_done(lconn, LSQ_HSK_0RTT_FAIL);
+        return -1;
+    }
+
+    LSQ_DEBUG("reinitialize CID and other state due to SREJ");
+
+    /* Generate new CID and update connections hash */
+    if (cce->cce_hash_el.qhe_flags & QHE_HASHED)
+    {
+        lsquic_engine_retire_cid(conn->fc_enpub, lconn, cce_idx,
+                                        0 /* OK to omit the `now' value */);
+        lconn->cn_cces_mask |= 1 << cce_idx;
+        lsquic_generate_cid_gquic(&cce->cce_cid);
+        if (0 != lsquic_engine_add_cid(conn->fc_enpub, lconn, cce_idx))
+            return -1;
+    }
+    else
+    {
+        LSQ_DEBUG("not hashed by CID, no need to reinsert");
+        lsquic_generate_cid_gquic(&cce->cce_cid);
+    }
+    lconn->cn_esf.g->esf_reset_cid(lconn->cn_enc_session, &cce->cce_cid);
+
+    /* Reset version negotiation */
+    version = highest_bit_set(conn->fc_settings->es_versions);
+    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
+
+    /* Reset receive history */
+    lsquic_rechist_cleanup(&conn->fc_rechist);
+    lsquic_rechist_init(&conn->fc_rechist, &conn->fc_conn, 0);
+
+    /* Reset send controller state */
+    lsquic_send_ctl_cleanup(&conn->fc_send_ctl);
+    lsquic_send_ctl_init(&conn->fc_send_ctl, &conn->fc_alset, conn->fc_enpub,
+                     &conn->fc_ver_neg, &conn->fc_pub, 0);
+
+    /* Reset handshake stream state */
+    stream = find_stream_by_id(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE);
+    if (!stream)
+        return -1;
+    stream->n_unacked = 0;
+    stream->tosend_off = 0;
+    stream->read_offset = 0;
+    stream->fc.sf_read_off = 0;
+    stream->fc.sf_max_recv_off = 0;
+
+    lsquic_alarmset_unset(&conn->fc_alset, AL_RETX_APP);
+    lsquic_alarmset_unset(&conn->fc_alset, AL_ACK_APP);
+    conn->fc_flags &= ~(FC_ACK_QUEUED|FC_ACK_HAD_MISS|FC_NSTP);
+    conn->fc_flags |= FC_GOT_SREJ;
+
+    return 0;
+}
+
+
 #if LSQUIC_CONN_STATS
 static const struct conn_stats *
 full_conn_ci_get_stats (struct lsquic_conn *lconn)
@@ -3620,8 +4364,6 @@ full_conn_ci_get_stats (struct lsquic_conn *lconn)
     struct full_conn *conn = (struct full_conn *) lconn;
     return &conn->fc_stats;
 }
-
-
 #endif
 
 
@@ -3638,20 +4380,46 @@ static const struct headers_stream_callbacks headers_callbacks =
 static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_callbacks;
 
 static const struct conn_iface full_conn_iface = {
+    .ci_abort                =  full_conn_ci_abort,
+    .ci_abort_error          =  full_conn_ci_abort_error,
     .ci_can_write_ack        =  full_conn_ci_can_write_ack,
+    .ci_cancel_pending_streams
+                             =  full_conn_ci_cancel_pending_streams,
+    .ci_client_call_on_new   =  full_conn_ci_client_call_on_new,
+    .ci_close                =  full_conn_ci_close,
     .ci_destroy              =  full_conn_ci_destroy,
+    .ci_get_ctx              =  full_conn_ci_get_ctx,
+    .ci_get_engine           =  full_conn_ci_get_engine,
+    .ci_get_path             =  full_conn_ci_get_path,
+    .ci_get_stream_by_id     =  full_conn_ci_get_stream_by_id,
 #if LSQUIC_CONN_STATS
     .ci_get_stats            =  full_conn_ci_get_stats,
 #endif
+    .ci_going_away           =  full_conn_ci_going_away,
     .ci_hsk_done             =  full_conn_ci_hsk_done,
+    .ci_internal_error       =  full_conn_ci_internal_error,
+    .ci_is_push_enabled      =  full_conn_ci_is_push_enabled,
     .ci_is_tickable          =  full_conn_ci_is_tickable,
+    .ci_make_stream          =  full_conn_ci_make_stream,
+    .ci_n_avail_streams      =  full_conn_ci_n_avail_streams,
+    .ci_n_pending_streams    =  full_conn_ci_n_pending_streams,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,
     .ci_next_tick_time       =  full_conn_ci_next_tick_time,
     .ci_packet_in            =  full_conn_ci_packet_in,
     .ci_packet_not_sent      =  full_conn_ci_packet_not_sent,
     .ci_packet_sent          =  full_conn_ci_packet_sent,
+    .ci_record_addrs         =  full_conn_ci_record_addrs,
+    /* gQUIC connection does not need this functionality because it only
+     * uses one CID and it's liveness is updated automatically by the
+     * caller when packets come in.
+     */
+    .ci_report_live          =  NULL,
+    .ci_set_ctx              =  full_conn_ci_set_ctx,
+    .ci_status               =  full_conn_ci_status,
     .ci_tick                 =  full_conn_ci_tick,
     .ci_write_ack            =  full_conn_ci_write_ack,
+    .ci_push_stream          =  full_conn_ci_push_stream,
+    .ci_tls_alert            =  full_conn_ci_tls_alert,
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;

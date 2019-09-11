@@ -9,7 +9,6 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 
 

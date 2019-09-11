@@ -18,6 +18,9 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_rtt.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
@@ -243,6 +246,22 @@ static const struct nocopy_test tests[] =
         .read_until     = 0,
         .data_frame     = F(100, 100, 1),
         .ins            = INS_FRAME_OK,     /* Ignore another error */
+    },
+
+    {   .lineno         = __LINE__,
+        .n_init_frames  = 2,
+        .initial_frames = { F(0, 60, 0), F(60, 60, 0), },
+        .read_until     = 120,
+        .data_frame     = F(0, 180, 0),
+        .ins            = INS_FRAME_OVERLAP,
+    },
+
+    {   .lineno         = __LINE__,
+        .n_init_frames  = 3,
+        .initial_frames = { F(0, 60, 0), F(60, 60, 0), F(180, 60, 0), },
+        .read_until     = 120,
+        .data_frame     = F(0, 180, 0),
+        .ins            = INS_FRAME_OVERLAP,
     },
 
 };

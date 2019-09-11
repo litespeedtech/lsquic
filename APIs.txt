@@ -99,6 +99,9 @@ struct lsquic_engine_settings and struct lsquic_stream_if, as well as:
     - Interface for sending outgoing packets, ea_packets_out
     - Interface for allocating memory for outgoing packet buffers
       (optional).
+    - Interface for share memory hash, ea_shi
+    - Optional interface for reporting connections whose handshake
+      did not complete (ea_bad_handshake)
 
 ea_packets_out is a pointer to a function of type lsquic_packets_out_f.
 The engine calls this function when it is appropriate to send out packets
