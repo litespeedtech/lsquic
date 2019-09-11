@@ -1,0 +1,73 @@
+commit 46f967bfe44a80bb4bc0e7e9d4b03de3f91d03fb
+Author: Dmitri Tikhonov <dtikhonov@litespeedtech.com>
+Date:   Fri Feb 22 11:51:21 2019 -0500
+
+    Add support for QUIC's use of max_early_data_size
+    
+    The server MUST set this value to 0xFFFFFFFF in NewSessionTicket,
+    while the client should be able to examine it in order to verify
+    this requirement.
+
+diff --git a/include/openssl/ssl.h b/include/openssl/ssl.h
+index 59b9eac..2e6cefb 100644
+--- a/include/openssl/ssl.h
++++ b/include/openssl/ssl.h
+@@ -1744,6 +1744,11 @@ OPENSSL_EXPORT int SSL_SESSION_set_ticket(SSL_SESSION *session,
+ OPENSSL_EXPORT uint32_t
+ SSL_SESSION_get_ticket_lifetime_hint(const SSL_SESSION *session);
+ 
++// SSL_SESSION_get_max_early_data_size returns ticket max early data size of
++// |session| in bytes or zero if none was set.
++OPENSSL_EXPORT uint32_t
++SSL_SESSION_get_max_early_data_size(const SSL_SESSION *session);
++
+ // SSL_SESSION_get0_cipher returns the cipher negotiated by the connection which
+ // established |session|.
+ //
+diff --git a/ssl/internal.h b/ssl/internal.h
+index 1116bad..98dcfa3 100644
+--- a/ssl/internal.h
++++ b/ssl/internal.h
+@@ -2506,6 +2506,10 @@ struct SSL_CONFIG {
+ // kMaxEarlyDataSkipped in tls_record.c, which is measured in ciphertext.
+ static const size_t kMaxEarlyDataAccepted = 14336;
+ 
++// kQUICMaxEarlyData is the value to which the max_early_data_size field
++// in a NewSessionTicket must be set when sent by a QUIC server.
++static const uint32_t kQUICMaxEarlyData = 0xffffffffu;
++
+ UniquePtr<CERT> ssl_cert_dup(CERT *cert);
+ void ssl_cert_clear_certs(CERT *cert);
+ bool ssl_set_cert(CERT *cert, UniquePtr<CRYPTO_BUFFER> buffer);
+diff --git a/ssl/ssl_session.cc b/ssl/ssl_session.cc
+index 927dd1b..cd5b5bb 100644
+--- a/ssl/ssl_session.cc
++++ b/ssl/ssl_session.cc
+@@ -1025,6 +1025,10 @@ uint32_t SSL_SESSION_get_ticket_lifetime_hint(const SSL_SESSION *session) {
+   return session->ticket_lifetime_hint;
+ }
+ 
++uint32_t SSL_SESSION_get_max_early_data_size(const SSL_SESSION *session) {
++  return session->ticket_max_early_data;
++}
++
+ const SSL_CIPHER *SSL_SESSION_get0_cipher(const SSL_SESSION *session) {
+   return session->cipher;
+ }
+diff --git a/ssl/tls13_server.cc b/ssl/tls13_server.cc
+index 562fecb..4edd0ef 100644
+--- a/ssl/tls13_server.cc
++++ b/ssl/tls13_server.cc
+@@ -179,7 +179,11 @@ static bool add_new_session_tickets(SSL_HANDSHAKE *hs, bool *out_sent_tickets) {
+     }
+     session->ticket_age_add_valid = true;
+     if (ssl->enable_early_data) {
+-      session->ticket_max_early_data = kMaxEarlyDataAccepted;
++      if (ssl->quic_method == nullptr) {
++        session->ticket_max_early_data = kMaxEarlyDataAccepted;
++      } else {
++        session->ticket_max_early_data = kQUICMaxEarlyData;
++      }
+     }
+ 
+     static_assert(kNumTickets < 256, "Too many tickets");
