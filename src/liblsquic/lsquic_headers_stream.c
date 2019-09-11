@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,8 @@
 #define MAX_HEADER_TABLE_SIZE (512 * 1024)
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HEADERS
-#define LSQUIC_LOG_CONN_ID lsquic_conn_id(lsquic_stream_conn(hs->hs_stream))
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(\
+                                        lsquic_stream_conn(hs->hs_stream))
 #include "lsquic_logger.h"
 
 static const struct frame_reader_callbacks *frame_callbacks_ptr;
@@ -85,6 +87,7 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
         return NULL;
     }
+    (void) lshpack_enc_use_hist(&hs->hs_henc, 1);
     hs->hs_flags |= HS_HENC_INITED;
     hs->hs_stream = stream;
     LSQ_DEBUG("stream created");
@@ -103,7 +106,7 @@ headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         return NULL;
     }
     hs->hs_fw = lsquic_frame_writer_new(&hs->hs_enpub->enp_mm, stream, 0,
-            &hs->hs_henc, lsquic_stream_write,
+            &hs->hs_henc, lsquic_stream_writef,
 #if LSQUIC_CONN_STATS
             hs->hs_conn_stats,
 #endif
@@ -161,8 +164,8 @@ headers_on_close (lsquic_stream_t *stream, struct lsquic_stream_ctx *ctx)
 
 int
 lsquic_headers_stream_send_headers (struct headers_stream *hs,
-    uint32_t stream_id, const struct lsquic_http_headers *headers, int eos,
-    unsigned weight)
+    lsquic_stream_id_t stream_id, const struct lsquic_http_headers *headers,
+    int eos, unsigned weight)
 {
     LSQ_DEBUG("received compressed headers to send");
     int s;
@@ -181,7 +184,8 @@ lsquic_headers_stream_send_headers (struct headers_stream *hs,
 
 int
 lsquic_headers_stream_send_priority (struct headers_stream *hs,
-    uint32_t stream_id, int exclusive, uint32_t dep_stream_id, unsigned weight)
+        lsquic_stream_id_t stream_id, int exclusive,
+        lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
     LSQ_DEBUG("received priority to send");
     int s;
@@ -272,8 +276,8 @@ headers_on_push_promise (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-headers_on_priority (void *ctx, uint32_t stream_id, int exclusive,
-                     uint32_t dep_stream_id, unsigned weight)
+headers_on_priority (void *ctx, lsquic_stream_id_t stream_id, int exclusive,
+                     lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
     struct headers_stream *hs = ctx;
     hs->hs_callbacks->hsc_on_priority(hs->hs_cb_ctx, stream_id, exclusive,
@@ -282,7 +286,8 @@ headers_on_priority (void *ctx, uint32_t stream_id, int exclusive,
 
 
 static void
-headers_on_error (void *ctx, uint32_t stream_id, enum frame_reader_error err)
+headers_on_error (void *ctx, lsquic_stream_id_t stream_id,
+                                            enum frame_reader_error err)
 {
     struct headers_stream *hs = ctx;
     switch (err)
@@ -290,6 +295,7 @@ headers_on_error (void *ctx, uint32_t stream_id, enum frame_reader_error err)
     case FR_ERR_DUPLICATE_PSEH:
     case FR_ERR_INCOMPL_REQ_PSEH:
     case FR_ERR_UNNEC_REQ_PSEH:
+    case FR_ERR_BAD_REQ_HEADER:
     case FR_ERR_INCOMPL_RESP_PSEH:
     case FR_ERR_UNNEC_RESP_PSEH:
     case FR_ERR_UNKNOWN_PSEH:
@@ -299,7 +305,8 @@ headers_on_error (void *ctx, uint32_t stream_id, enum frame_reader_error err)
     case FR_ERR_DECOMPRESS:
     case FR_ERR_HEADERS_TOO_LARGE:
     case FR_ERR_SELF_DEP_STREAM:
-        LSQ_INFO("error %u is a stream error (stream %u)", err, stream_id);
+        LSQ_INFO("error %u is a stream error (stream %"PRIu64")", err,
+                                                                    stream_id);
         hs->hs_callbacks->hsc_on_stream_error(hs->hs_cb_ctx, stream_id);
         break;
     case FR_ERR_INVALID_FRAME_SIZE:
@@ -308,7 +315,8 @@ headers_on_error (void *ctx, uint32_t stream_id, enum frame_reader_error err)
     case FR_ERR_ZERO_STREAM_ID:
     case FR_ERR_NOMEM:
     case FR_ERR_EXPECTED_CONTIN:
-        LSQ_INFO("error %u is a connection error (stream %u)", err, stream_id);
+        LSQ_INFO("error %u is a connection error (stream %"PRIu64")", err,
+                                                                    stream_id);
         hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
         break;
     }
@@ -376,10 +384,12 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
 
 int
 lsquic_headers_stream_push_promise (struct headers_stream *hs,
-                        uint32_t stream_id, uint32_t promised_stream_id,
-                        const struct iovec *path, const struct iovec *host,
-                        const struct lsquic_http_headers *headers)
+        lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
+        const struct iovec *path, const struct iovec *host,
+        const struct lsquic_http_headers *headers)
 {
+    uint32_t stream_id = stream_id64;
+    uint32_t promised_stream_id = promised_stream_id64;
     int s;
     LSQ_DEBUG("promising stream %u in response to stream %u",
                                             promised_stream_id, stream_id);

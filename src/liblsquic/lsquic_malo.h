@@ -6,6 +6,10 @@
 #ifndef LSQUIC_MALO_H
 #define LSQUIC_MALO_H 1
 
+#ifndef LSQUIC_USE_POOLS
+#define LSQUIC_USE_POOLS 1
+#endif
+
 struct malo;
 
 /* Create a malo allocator for objects of size `obj_size'. */
@@ -24,6 +28,10 @@ lsquic_malo_put (void *obj);
 void
 lsquic_malo_destroy (struct malo *);
 
+/* This iterator is slow.  It is only used in unit tests for verification.
+ *
+ * If you to iterate over all elements allocated in a pool, keep track yourself.
+ */
 /* The iterator is built-in.  Usage:
  * void *obj;
  * for (obj = lsquic_malo_first(obj); obj; lsquic_malo_next(obj))

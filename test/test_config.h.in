@@ -1,10 +1,22 @@
 #ifndef LSQUIC_CONFIG_H
 #define LSQUIC_CONFIG_H
 
+#cmakedefine HAVE_SENDMMSG 1
+#cmakedefine HAVE_RECVMMSG 1
+#cmakedefine HAVE_OPEN_MEMSTREAM 1
 #cmakedefine HAVE_IP_DONTFRAG 1
 #cmakedefine HAVE_IP_MTU_DISCOVER 1
 #cmakedefine HAVE_REGEX 1
 
 #define LSQUIC_DONTFRAG_SUPPORTED (HAVE_IP_DONTFRAG || HAVE_IP_MTU_DISCOVER)
+
+/* TODO: presumably it's the same on FreeBSD, test it.
+ * See https://github.com/quicwg/base-drafts/wiki/ECN-in-QUIC
+ */
+#if __linux__ || defined(__FreeBSD__)
+#define ECN_SUPPORTED 1
+#else
+#define ECN_SUPPORTED 0
+#endif
 
 #endif

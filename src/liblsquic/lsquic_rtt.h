@@ -11,6 +11,7 @@
 struct lsquic_rtt_stats {
     lsquic_time_t   srtt;
     lsquic_time_t   rttvar;
+    lsquic_time_t   min_rtt;
 };
 
 
@@ -22,5 +23,7 @@ lsquic_rtt_stats_update (struct lsquic_rtt_stats *, lsquic_time_t send_delta,
 #define lsquic_rtt_stats_get_srtt(stats) ((stats)->srtt)
 
 #define lsquic_rtt_stats_get_rttvar(stats) ((stats)->rttvar)
+
+#define lsquic_rtt_stats_get_min_rtt(stats) (+(stats)->min_rtt)
 
 #endif

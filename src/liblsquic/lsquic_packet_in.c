@@ -52,3 +52,12 @@ lsquic_packet_in_mem_used (const struct lsquic_packet_in *packet_in)
 
     return size;
 }
+
+
+void
+lsquic_scid_from_packet_in (const struct lsquic_packet_in *packet_in,
+                                                            lsquic_cid_t *scid)
+{
+    scid->len = packet_in->pi_scid_len;
+    memcpy(scid->idbuf, packet_in->pi_data + packet_in->pi_scid_off, scid->len);
+}

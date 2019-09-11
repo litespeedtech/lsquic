@@ -9,7 +9,6 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 
 static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
@@ -19,13 +18,13 @@ static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
 struct wuf_test {
     unsigned char   buf[0x10];
     size_t          buf_len;
-    uint32_t        stream_id;
+    lsquic_stream_id_t        stream_id;
 };
 
 static const struct wuf_test wuf_tests[] = {
     {
         .buf            = { 0x05, 0x00, 0x67, 0x45, 0x34, },
-        .buf_len        = QUIC_BLOCKED_FRAME_SZ,
+        .buf_len        = GQUIC_BLOCKED_FRAME_SZ,
         .stream_id      = 0x674534,
     },
 
@@ -39,9 +38,9 @@ run_parse_tests (void)
     const struct wuf_test *test;
     for (test = wuf_tests; test->buf[0]; ++test)
     {
-        uint32_t stream_id = ~0;
+        lsquic_stream_id_t stream_id = ~0;
         int sz = pf->pf_parse_blocked_frame(test->buf, test->buf_len, &stream_id);
-        assert(sz == QUIC_BLOCKED_FRAME_SZ);
+        assert(sz == GQUIC_BLOCKED_FRAME_SZ);
         assert(stream_id == test->stream_id);
     }
 }
@@ -55,7 +54,7 @@ run_gen_tests (void)
     {
         unsigned char buf[0x100];
         int sz = pf->pf_gen_blocked_frame(buf, test->buf_len, test->stream_id);
-        assert(sz == QUIC_BLOCKED_FRAME_SZ);
+        assert(sz == GQUIC_BLOCKED_FRAME_SZ);
         assert(0 == memcmp(buf, test->buf, sz));
     }
 }

@@ -15,6 +15,7 @@
 struct widget
 {
     unsigned long   key;
+    struct lsquic_hash_elem hash_el;
     char            data[30];
 };
 
@@ -43,7 +44,7 @@ main (int argc, char **argv)
         sprintf(widget->data, "%lu", widget->key);
         el = lsquic_hash_find(hash, &widget->key, sizeof(widget->key));
         assert(!el);
-        el = lsquic_hash_insert(hash, &widget->key, sizeof(widget->key), widget);
+        el = lsquic_hash_insert(hash, &widget->key, sizeof(widget->key), widget, &widget->hash_el);
         assert(el);
     }
 

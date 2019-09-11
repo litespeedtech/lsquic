@@ -2,8 +2,6 @@
 #ifndef LSQUIC_HEADERS_H
 #define LSQUIC_HEADERS_H 1
 
-#include <stdint.h>
-
 /* When ea_hsi_if is not specified, the headers are converted to a C string
  * that contains HTTP/1.x-like header structure.
  */
@@ -23,8 +21,8 @@ struct http1x_headers
  */
 struct uncompressed_headers
 {
-    uint32_t               uh_stream_id;
-    uint32_t               uh_oth_stream_id; /* For HEADERS frame, the ID of the
+    lsquic_stream_id_t     uh_stream_id;
+    lsquic_stream_id_t     uh_oth_stream_id; /* For HEADERS frame, the ID of the
                                               * stream that this stream depends
                                               * on.  (Zero means unset.) For
                                               * PUSH_PROMISE, the promised stream

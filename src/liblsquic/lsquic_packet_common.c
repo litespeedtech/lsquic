@@ -3,10 +3,14 @@
  * lsquic_packet_common.c -- some common packet-related routines
  */
 
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <time.h>
 
+#include "lsquic.h"
+#include "lsquic_types.h"
 #include "lsquic_logger.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_packet_common.h"
 
 
@@ -43,52 +47,6 @@ lsquic_frame_types_to_str (char *buf, size_t bufsz,
 }
 
 
-enum packno_bits
-calc_packno_bits (lsquic_packno_t packno, lsquic_packno_t least_unacked,
-                  uint64_t n_in_flight)
-{
-    uint64_t delta;
-    unsigned bits;
-
-    delta = packno - least_unacked;
-    if (n_in_flight > delta)
-        delta = n_in_flight;
-
-    delta *= 4;
-    bits = (delta > (1ULL <<  8))
-         + (delta > (1ULL << 16))
-         + (delta > (1ULL << 32));
-
-    return bits;
-}
-
-
-lsquic_packno_t
-restore_packno (lsquic_packno_t cur_packno,
-                unsigned len,
-                lsquic_packno_t max_packno)
-{
-    lsquic_packno_t candidates[3], epoch_delta;
-    int64_t diffs[3];
-    unsigned min;
-
-    epoch_delta = 1ULL << (len << 3);
-    candidates[1] = (max_packno & ~(epoch_delta - 1)) + cur_packno;
-    candidates[0] = candidates[1] - epoch_delta;
-    candidates[2] = candidates[1] + epoch_delta;
-
-    diffs[0] = llabs((int64_t) candidates[0] - (int64_t) max_packno);
-    diffs[1] = llabs((int64_t) candidates[1] - (int64_t) max_packno);
-    diffs[2] = llabs((int64_t) candidates[2] - (int64_t) max_packno);
-
-    min = diffs[1] < diffs[0];
-    if (diffs[2] < diffs[min])
-        min = 2;
-
-    return candidates[min];
-}
-
-
 const char *const lsquic_hety2str[] =
 {
     [HETY_NOT_SET]      = "Short",
@@ -97,4 +55,34 @@ const char *const lsquic_hety2str[] =
     [HETY_RETRY]        = "Retry",
     [HETY_HANDSHAKE]    = "Handshake",
     [HETY_0RTT]         = "0-RTT",
+};
+
+
+/* [draft-ietf-quic-tls-14], Section 4 */
+const enum packnum_space lsquic_hety2pns[] =
+{
+    [HETY_NOT_SET]      = PNS_APP,
+    [HETY_VERNEG]       = 0,
+    [HETY_INITIAL]      = PNS_INIT,
+    [HETY_RETRY]        = 0,
+    [HETY_HANDSHAKE]    = PNS_HSK,
+    [HETY_0RTT]         = PNS_APP,
+};
+
+
+/* [draft-ietf-quic-tls-14], Section 4 */
+const enum packnum_space lsquic_enclev2pns[] =
+{
+    [ENC_LEV_CLEAR]      = PNS_INIT,
+    [ENC_LEV_INIT]       = PNS_HSK,
+    [ENC_LEV_EARLY]      = PNS_APP,
+    [ENC_LEV_FORW]       = PNS_APP,
+};
+
+
+const char *const lsquic_pns2str[] =
+{
+    [PNS_INIT]  = "Init PNS",
+    [PNS_HSK]   = "Handshake PNS",
+    [PNS_APP]   = "App PNS",
 };

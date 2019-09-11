@@ -62,11 +62,11 @@ EventData
 */
 
 void
-lsquic_qlog_create_connection (lsquic_cid_t, const struct sockaddr *,
+lsquic_qlog_create_connection (const lsquic_cid_t *, const struct sockaddr *,
                                                     const struct sockaddr *);
 
 void
-lsquic_qlog_packet_rx (lsquic_cid_t cid, const struct lsquic_packet_in *,
+lsquic_qlog_packet_rx (const lsquic_cid_t * cid, const struct lsquic_packet_in *,
                                                 const unsigned char *, size_t);
 
 #define QLOG_PACKET_RX(...) do {                                            \
@@ -75,15 +75,15 @@ lsquic_qlog_packet_rx (lsquic_cid_t cid, const struct lsquic_packet_in *,
 } while (0)
 
 void
-lsquic_qlog_hsk_completed (lsquic_cid_t);
+lsquic_qlog_hsk_completed (const lsquic_cid_t *);
 
 void
-lsquic_qlog_zero_rtt (lsquic_cid_t);
+lsquic_qlog_zero_rtt (const lsquic_cid_t *);
 
 void
-lsquic_qlog_check_certs (lsquic_cid_t, const lsquic_str_t **, size_t);
+lsquic_qlog_check_certs (const lsquic_cid_t *, const lsquic_str_t **, size_t);
 
 void
-lsquic_qlog_version_negotiation (lsquic_cid_t, const char *, const char *);
+lsquic_qlog_version_negotiation (const lsquic_cid_t *, const char *, const char *);
 
 #endif

@@ -10,7 +10,11 @@
 #include "lsquic_conn_flow.h"
 #include "lsquic_types.h"
 #include "lsquic_rtt.h"
+#include "lsquic_varint.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_mm.h"
@@ -20,14 +24,14 @@
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_SFCW
-#define LSQUIC_LOG_CONN_ID fc->sf_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(fc->sf_conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID fc->sf_stream_id
 #include "lsquic_logger.h"
 
 void
 lsquic_sfcw_init (struct lsquic_sfcw *fc, unsigned max_recv_window,
                   struct lsquic_cfcw *cfcw, struct lsquic_conn_public *cpub,
-                  unsigned stream_id)
+                  lsquic_stream_id_t stream_id)
 {
     memset(fc, 0, sizeof(*fc));
     fc->sf_max_recv_win = max_recv_window;

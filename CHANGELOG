@@ -1,3 +1,8 @@
+2019-09-11
+    - 2.2.0
+    - [FEATURE] Server code is included in the library
+    - [FEATURE] IETF QUIC and HTTP/3 Support (ID-22)
+
 2019-05-13
     - 1.21.2
     - [OPTIMIZATION] HPACK: use history to improve compression performance

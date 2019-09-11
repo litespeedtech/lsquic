@@ -122,6 +122,7 @@ lsquic_str_copy (lsquic_str_t *lstr_dst, const lsquic_str_t *lstr_src)
 
     copy = malloc(lstr_src->len + 1);
     if (!copy)
+    /* Keeping the original behavior: */
         return NULL;
 
     memcpy(copy, lstr_src->str, lstr_src->len);

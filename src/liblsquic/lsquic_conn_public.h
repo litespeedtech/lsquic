@@ -19,6 +19,10 @@ struct lsquic_send_ctl;
 #if LSQUIC_CONN_STATS
 struct conn_stats;
 #endif
+struct qpack_enc_hdl;
+struct qpack_dec_hdl;
+struct h3_prio_tree;
+struct network_path;
 
 struct lsquic_conn_public {
     struct lsquic_streams_tailq     sending_streams,    /* Send RST_STREAM, BLOCKED, and WUF frames */
@@ -33,11 +37,25 @@ struct lsquic_conn_public {
     struct malo                    *packet_out_malo;
     struct lsquic_conn             *lconn;
     struct lsquic_mm               *mm;
-    struct headers_stream          *hs;
+    union {
+        struct {
+            struct headers_stream  *hs;
+        }                       gquic;
+        struct {
+            struct qpack_enc_hdl *qeh;
+            struct qpack_dec_hdl *qdh;
+            struct h3_prio_tree  *prio_tree;
+            struct lsquic_hash   *promises;
+        }                       ietf;
+    }                               u;
+    enum {
+        CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
+    }                               cp_flags;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;
 #endif
+    const struct network_path      *path;
 };
 
 #endif

@@ -12,20 +12,8 @@
 #include <vc_compat.h>
 #endif
 
-#include "lsquic_malo.h"
 #include "lsquic_hash.h"
 #include "lsquic_xxhash.h"
-
-struct lsquic_hash_elem
-{
-    TAILQ_ENTRY(lsquic_hash_elem)
-                    qhe_next_bucket,
-                    qhe_next_all;
-    const void     *qhe_key_data;
-    unsigned        qhe_key_len;
-    void           *qhe_value;
-    unsigned        qhe_hash_val;
-};
 
 TAILQ_HEAD(hels_head, lsquic_hash_elem);
 
@@ -36,7 +24,6 @@ struct lsquic_hash
 {
     struct hels_head        *qh_buckets,
                              qh_all;
-    struct malo             *qh_malo_els;
     struct lsquic_hash_elem *qh_iter_next;
     unsigned                 qh_count;
     unsigned                 qh_nbits;
@@ -48,7 +35,6 @@ lsquic_hash_create (void)
 {
     struct hels_head *buckets;
     struct lsquic_hash *hash;
-    struct malo *malo;
     unsigned nbits = 2;
     unsigned i;
 
@@ -63,21 +49,12 @@ lsquic_hash_create (void)
         return NULL;
     }
 
-    malo = lsquic_malo_create(sizeof(struct lsquic_hash_elem));
-    if (!malo)
-    {
-        free(hash);
-        free(buckets);
-        return NULL;
-    }
-
     for (i = 0; i < N_BUCKETS(nbits); ++i)
         TAILQ_INIT(&buckets[i]);
 
     TAILQ_INIT(&hash->qh_all);
     hash->qh_buckets   = buckets;
     hash->qh_nbits     = nbits;
-    hash->qh_malo_els  = malo;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
     return hash;
@@ -87,7 +64,6 @@ lsquic_hash_create (void)
 void
 lsquic_hash_destroy (struct lsquic_hash *hash)
 {
-    lsquic_malo_destroy(hash->qh_malo_els);
     free(hash->qh_buckets);
     free(hash);
 }
@@ -129,21 +105,16 @@ lsquic_hash_grow (struct lsquic_hash *hash)
 
 struct lsquic_hash_elem *
 lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
-                                            unsigned key_sz, void *data)
+                    unsigned key_sz, void *value, struct lsquic_hash_elem *el)
 {
     unsigned buckno, hash_val;
-    struct lsquic_hash_elem *el;
 
-    el = lsquic_malo_get(hash->qh_malo_els);
-    if (!el)
+    if (el->qhe_flags & QHE_HASHED)
         return NULL;
 
     if (hash->qh_count >= N_BUCKETS(hash->qh_nbits) / 2 &&
                                             0 != lsquic_hash_grow(hash))
-    {
-        lsquic_malo_put(el);
         return NULL;
-    }
 
     hash_val = XXH64(key, key_sz, (uintptr_t) hash);
     buckno = BUCKNO(hash->qh_nbits, hash_val);
@@ -151,8 +122,9 @@ lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
     TAILQ_INSERT_TAIL(&hash->qh_buckets[buckno], el, qhe_next_bucket);
     el->qhe_key_data = key;
     el->qhe_key_len  = key_sz;
-    el->qhe_value    = data;
+    el->qhe_value    = value;
     el->qhe_hash_val = hash_val;
+    el->qhe_flags |= QHE_HASHED;
     ++hash->qh_count;
     return el;
 }
@@ -178,22 +150,18 @@ lsquic_hash_find (struct lsquic_hash *hash, const void *key, unsigned key_sz)
 }
 
 
-void *
-lsquic_hashelem_getdata (const struct lsquic_hash_elem *el)
-{
-    return el->qhe_value;
-}
-
-
 void
 lsquic_hash_erase (struct lsquic_hash *hash, struct lsquic_hash_elem *el)
 {
     unsigned buckno;
 
+    assert(el->qhe_flags & QHE_HASHED);
     buckno = BUCKNO(hash->qh_nbits, el->qhe_hash_val);
+    if (hash->qh_iter_next == el)
+        hash->qh_iter_next = TAILQ_NEXT(el, qhe_next_all);
     TAILQ_REMOVE(&hash->qh_buckets[buckno], el, qhe_next_bucket);
     TAILQ_REMOVE(&hash->qh_all, el, qhe_next_all);
-    lsquic_malo_put(el);
+    el->qhe_flags &= ~QHE_HASHED;
     --hash->qh_count;
 }
 
@@ -235,6 +203,5 @@ size_t
 lsquic_hash_mem_used (const struct lsquic_hash *hash)
 {
     return sizeof(*hash)
-         + N_BUCKETS(hash->qh_nbits) * sizeof(hash->qh_buckets[0])
-         + lsquic_malo_mem_used(hash->qh_malo_els);
+         + N_BUCKETS(hash->qh_nbits) * sizeof(hash->qh_buckets[0]);
 }

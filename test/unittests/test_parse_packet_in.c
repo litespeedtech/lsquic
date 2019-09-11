@@ -28,7 +28,7 @@ struct parse_packet_in_test
     /* Output */
     int                 ppit_retval;
     int                 ppit_pi_flags;
-    lsquic_cid_t        ppit_conn_id;
+    uint64_t            ppit_conn_id;
     lsquic_packno_t     ppit_packno;
     unsigned short      ppit_header_sz;
     unsigned short      ppit_data_sz;
@@ -38,295 +38,6 @@ struct parse_packet_in_test
 
 
 static const struct parse_packet_in_test tests[] = {
-    /* Little-endian tests */
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 1 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x73,
-        .ppit_header_sz  = 1 + 8 + 4 + 1,
-        .ppit_data_sz    = 1 + 8 + 4 + 1 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            0x10 /* 2-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73, 0x64,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 2 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x6473,
-        .ppit_header_sz  = 1 + 8 + 4 + 2,
-        .ppit_data_sz    = 1 + 8 + 4 + 2 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            0x20 /* 4-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73, 0x64, 0x55, 0x46,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 4 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x46556473,
-        .ppit_header_sz  = 1 + 8 + 4 + 4,
-        .ppit_data_sz    = 1 + 8 + 4 + 4 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            0x30 /* 6-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73, 0x64, 0x55, 0x46, 0x37, 0x28,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 6 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x283746556473,
-        .ppit_header_sz  = 1 + 8 + 4 + 6,
-        .ppit_data_sz    = 1 + 8 + 4 + 6 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,    /* Same as above minus connection ID */
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 0 + 4 + 1 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = 0,
-        .ppit_conn_id    = 0,
-        .ppit_packno     = 0x73,
-        .ppit_header_sz  = 1 + 0 + 4 + 1,
-        .ppit_data_sz    = 1 + 0 + 4 + 1 + 7,
-        .ppit_quic_ver   = 1 + 0,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,    /* Same as above minus version */
-        .ppit_buf        = {
-        /* Flags: */        0,
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 0 + 0 + 1 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = 0,
-        .ppit_conn_id    = 0,
-        .ppit_packno     = 0x73,
-        .ppit_header_sz  = 1 + 0 + 0 + 1,
-        .ppit_data_sz    = 1 + 0 + 0 + 1 + 7,
-        .ppit_quic_ver   = 0,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = -1,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_NONCE|
-                            0x10 /* 2-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Nonce: */        000, 001, 002, 003, 004, 005, 006, 007,
-                            010, 011, 012, 013, 014, 015, 016, 017,
-                            020, 021, 022, 023, 024, 025, 026, 027,
-                            030, 031, 032, 033, 034, 035, 036, 037,
-        /* Packet #: */     0x73, 0x64,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 32+ 2 + 7,
-        .ppit_is_server  = 0,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x6473,
-        .ppit_header_sz  = 1 + 8 + 32+ 2,
-        .ppit_data_sz    = 1 + 8 + 32+ 2 + 7,
-        .ppit_quic_ver   = 0,
-        .ppit_nonce      = 1 + 8,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_NONCE|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Nonce: */        000, 001, 002, 003, 004, 005, 006, 007,
-                            010, 011, 012, 013, 014, 015, 016, 017,
-                            020, 021, 022, 023, 024, 025, 026, 027,
-                            030, 031, 032, 033, 034, 035, 036, 037,
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 32+ 1 + 7,
-        .ppit_is_server  = 0,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x73,
-        .ppit_header_sz  = 1 + 8 + 32+ 1,
-        .ppit_data_sz    = 1 + 8 + 32+ 1 + 7,
-        .ppit_quic_ver   = 0,
-        .ppit_nonce      = 1 + 8,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            0x20 /* 4-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_NONCE|  /* Nonce flag is ignored by server */
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73, 0x64, 0x55, 0x46,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 4 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x46556473,
-        .ppit_header_sz  = 1 + 8 + 4 + 4,
-        .ppit_data_sz    = 1 + 8 + 4 + 4 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            PACKET_PUBLIC_FLAGS_NONCE|  /* Nonce flag is ignored by server */
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 1 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x73,
-        .ppit_header_sz  = 1 + 8 + 4 + 1,
-        .ppit_data_sz    = 1 + 8 + 4 + 1 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            0x30 /* 6-byte packet number */|
-                            PACKET_PUBLIC_FLAGS_NONCE|  /* Nonce flag is ignored by server */
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Version: */      'Q', '0', '3', '5',
-        /* Packet #: */     0x73, 0x64, 0x55, 0x46, 0x37, 0x28,
-        /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
-        },
-        .ppit_bufsz      = 1 + 8 + 4 + 6 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0x283746556473,
-        .ppit_header_sz  = 1 + 8 + 4 + 6,
-        .ppit_data_sz    = 1 + 8 + 4 + 6 + 7,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
-    {   .ppit_lineno     = __LINE__,
-        .ppit_buf        = {
-        /* Flags: */        PACKET_PUBLIC_FLAGS_VERSION|
-                            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-        /* CID: */          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55,
-        /* Versions: */     'Q', '0', '3', '5',
-                            'Q', '0', '3', '4',
-        },
-        .ppit_bufsz      = 1 + 8 + 8,
-        .ppit_is_server  = 0,
-        .ppit_version    = LSQVER_035,
-        .ppit_retval     = 0,
-        .ppit_pi_flags   = PI_CONN_ID,
-        .ppit_conn_id    = 0x5500000000000000,
-        .ppit_packno     = 0,
-        .ppit_header_sz  = 1 + 8 + 8,
-        .ppit_data_sz    = 1 + 8 + 8,
-        .ppit_quic_ver   = 1 + 8,
-        .ppit_nonce      = 0,
-    },
-
     /*
      * BIG-ENDIAN TESTS:
      */
@@ -620,44 +331,48 @@ static const struct parse_packet_in_test tests[] = {
 
     {   .ppit_lineno     = __LINE__,
         .ppit_buf        = {
-        /* Flags: */        0x30,
+        /* Flags: */        0x40,
         /* CID: */          0x01, 0x02, 0x03, 0x04, 0x50, 0x60, 0x70, 0x80,
         /* Packet number: */0x9B,
         /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
         },
-        .ppit_bufsz      = 1 + 8 + 1 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_044,
+        .ppit_version    = LSQVER_046,
         .ppit_retval     = 0,
+        .ppit_is_server  = 1,
         .ppit_pi_flags   = PI_CONN_ID,
         .ppit_conn_id    = 0x8070605004030201,
         .ppit_packno     = 0x9B,
         .ppit_header_sz  = 1 + 8 + 1,
         .ppit_data_sz    = 1 + 8 + 1 + 7,
+        .ppit_bufsz      = 1 + 8 + 1 + 7,
         .ppit_quic_ver   = 0,
         .ppit_nonce      = 0,
     },
 
     {   .ppit_lineno     = __LINE__,
         .ppit_buf        = {
-        /* Flags: */        0x32,
+        /* Flags: */        0x43,
         /* CID: */          0x01, 0x02, 0x03, 0x04, 0x50, 0x60, 0x70, 0x80,
         /* Packet number: */0x9B, 0x03, 0x02, 0x01,
         /* Payload: */      'P', 'A', 'Y', 'L', 'O', 'A', 'D',
         },
-        .ppit_bufsz      = 1 + 8 + 4 + 7,
-        .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_044,
+        .ppit_version    = LSQVER_046,
         .ppit_retval     = 0,
+        .ppit_packno     = 0x9B030201,
+        .ppit_is_server  = 1,
+        .ppit_header_sz  = 1 + 8 + 4,
+        .ppit_bufsz      = 1 + 8 + 4 + 7,
+        .ppit_data_sz    = 1 + 8 + 4 + 7,
         .ppit_pi_flags   = PI_CONN_ID,
         .ppit_conn_id    = 0x8070605004030201,
-        .ppit_packno     = 0x9B030201,
-        .ppit_header_sz  = 1 + 8 + 4,
-        .ppit_data_sz    = 1 + 8 + 4 + 7,
         .ppit_quic_ver   = 0,
         .ppit_nonce      = 0,
     },
 
+    /* TODO: check invalid type in finish() -- convert the latter to return
+     * status instead of being void function.
+     */
+#if 0
     {   .ppit_lineno     = __LINE__,
         .ppit_buf        = {
         /* Flags: */        0x30
@@ -671,11 +386,12 @@ static const struct parse_packet_in_test tests[] = {
         .ppit_version    = LSQVER_044,
         .ppit_retval     = -1,
     },
+#endif
 
     {   .ppit_lineno     = __LINE__,
         .ppit_buf        = {
-        /* Type: */         0xFF    /* Initial */,
-        /* Version: */      'Q', '0', '4', '4',
+        /* Type: */         0x83    /* Initial */,
+        /* Version: */      'Q', '0', '4', '6',
         /* DCIL/SCIL: */    0x5 /* DCIL */ << 4 | 0x0 /* SCIL */,
         /* CID: */          0x01, 0x02, 0x03, 0x04, 0x50, 0x60, 0x70, 0x80,
         /* Packet number: */0x21, 0x22, 0x23, 0x34,
@@ -683,7 +399,7 @@ static const struct parse_packet_in_test tests[] = {
         },
         .ppit_bufsz      = 1 + 4 + 1 + 8 + 4 + 7,
         .ppit_is_server  = 1,
-        .ppit_version    = LSQVER_044,
+        .ppit_version    = LSQVER_046,
         .ppit_retval     = 0,
         .ppit_pi_flags   = PI_CONN_ID,
         .ppit_conn_id    = 0x8070605004030201,
@@ -705,7 +421,7 @@ run_ppi_test (struct lsquic_mm *mm, const struct parse_packet_in_test *ppit)
     struct packin_parse_state ppstate;
     
     packet_in = lsquic_mm_get_packet_in(mm);
-    packet_in->pi_data = lsquic_mm_get_1370(mm);
+    packet_in->pi_data = lsquic_mm_get_packet_in_buf(mm, 1370);
     packet_in->pi_flags |= PI_OWN_DATA;
     memcpy(packet_in->pi_data, ppit->ppit_buf, ppit->ppit_bufsz);
 
@@ -721,15 +437,19 @@ run_ppi_test (struct lsquic_mm *mm, const struct parse_packet_in_test *ppit)
              * connection ID.
              */
             !(!(ppit->ppit_pi_flags & PI_CONN_ID)
-                                    && ppit->ppit_version < LSQVER_044))
-        s = lsquic_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
-                                            ppit->ppit_is_server, &ppstate);
-    else if (ppit->ppit_version < LSQVER_044)
-        s = lsquic_gquic_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
-                                            ppit->ppit_is_server, &ppstate);
+                                    && ppit->ppit_version < LSQVER_046))
+        s = lsquic_parse_packet_in_server_begin(packet_in, ppit->ppit_bufsz,
+                                            ppit->ppit_is_server, 8, &ppstate);
     else
-        s = lsquic_iquic_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
-                                            ppit->ppit_is_server, &ppstate);
+    if (ppit->ppit_version < LSQVER_046)
+        s = lsquic_gquic_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
+            ppit->ppit_is_server, -1 /* GQUIC does not use it */, &ppstate);
+    else if (ppit->ppit_version == LSQVER_046)
+        s = lsquic_Q046_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
+                                            ppit->ppit_is_server, 8, &ppstate);
+    else
+        s = lsquic_ietf_v1_parse_packet_in_begin(packet_in, ppit->ppit_bufsz,
+                                            ppit->ppit_is_server, 8, &ppstate);
 
     assert(s == ppit->ppit_retval);
     if (0 == s)
@@ -752,8 +472,16 @@ run_ppi_test (struct lsquic_mm *mm, const struct parse_packet_in_test *ppit)
 
     if (0 == s)
     {
+        if (ppit->ppit_conn_id)
+        {
+            lsquic_cid_t cid;
+            memset(&cid, 0, sizeof(cid));
+            cid.len = sizeof(ppit->ppit_conn_id);;
+            memcpy(cid.idbuf, &ppit->ppit_conn_id, sizeof(ppit->ppit_conn_id));
+            assert(LSQUIC_CIDS_EQ(&packet_in->pi_conn_id, &cid));
+        }
+
         assert((packet_in->pi_flags & PI_CONN_ID) == (ppit->ppit_pi_flags & PI_CONN_ID));
-        assert(packet_in->pi_conn_id    == ppit->ppit_conn_id);
         assert(packet_in->pi_packno     == ppit->ppit_packno);
         assert(packet_in->pi_header_sz  == ppit->ppit_header_sz);
         assert(packet_in->pi_data_sz    == ppit->ppit_data_sz);

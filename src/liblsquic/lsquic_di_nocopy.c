@@ -57,6 +57,9 @@
 #include "lsquic_packet_in.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_mm.h"
 #include "lsquic_malo.h"
@@ -66,7 +69,7 @@
 
 
 #define LSQUIC_LOGGER_MODULE LSQLM_DI
-#define LSQUIC_LOG_CONN_ID ncdi->ncdi_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ncdi->ncdi_conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID ncdi->ncdi_stream_id
 #include "lsquic_logger.h"
 
@@ -103,7 +106,7 @@ struct nocopy_data_in
     struct lsquic_conn_public  *ncdi_conn_pub;
     uint64_t                    ncdi_byteage;
     uint64_t                    ncdi_fin_off;
-    uint32_t                    ncdi_stream_id;
+    lsquic_stream_id_t          ncdi_stream_id;
     unsigned                    ncdi_n_frames;
     unsigned                    ncdi_n_holes;
     unsigned                    ncdi_cons_far;
@@ -125,7 +128,8 @@ static const struct data_in_iface *di_if_nocopy_ptr;
 
 
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
+data_in_nocopy_new (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id)
 {
     struct nocopy_data_in *ncdi;
 
@@ -164,12 +168,6 @@ nocopy_di_destroy (struct data_in *data_in)
 }
 
 
-#define DF_OFF(frame) (frame)->data_frame.df_offset
-#define DF_FIN(frame) (frame)->data_frame.df_fin
-#define DF_SIZE(frame) (frame)->data_frame.df_size
-#define DF_END(frame) (DF_OFF(frame) + DF_SIZE(frame))
-
-
 #if LSQUIC_EXTRA_CHECKS
 static int
 frame_list_is_sane (const struct nocopy_data_in *ncdi)
@@ -186,8 +184,6 @@ frame_list_is_sane (const struct nocopy_data_in *ncdi)
     }
     return ordered && !overlaps;
 }
-
-
 #define CHECK_ORDER(ncdi) assert(frame_list_is_sane(ncdi))
 #else
 #define CHECK_ORDER(ncdi)
@@ -280,6 +276,8 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
                          && read_offset == ncdi->ncdi_fin_off))
                 return INS_FRAME_DUP                            | CASE('G');
         }
+        else if (read_offset > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP                            | CASE('N');
         goto list_was_empty;
     case 3:     /* Both left and right neighbors */
     case 2:     /* Only left neighbor (prev_frame) */
@@ -299,6 +297,8 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
     case 1:     /* Only right neighbor (next_frame) */
         if (DF_END(new_frame) > DF_OFF(next_frame))
             return INS_FRAME_OVERLAP                            | CASE('K');
+        else if (read_offset > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP                            | CASE('O');
         break;
     }
 
@@ -512,13 +512,47 @@ nocopy_di_mem_used (struct data_in *data_in)
 }
 
 
+static void
+nocopy_di_dump_state (struct data_in *data_in)
+{
+    struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
+    const struct stream_frame *frame;
+
+    LSQ_DEBUG("nocopy state: frames: %u; holes: %u; cons_far: %u",
+        ncdi->ncdi_n_frames, ncdi->ncdi_n_holes, ncdi->ncdi_cons_far);
+    TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
+        LSQ_DEBUG("frame: off: %"PRIu64"; read_off: %"PRIu16"; size: %"PRIu16
+            "; fin: %d", DF_OFF(frame), frame->data_frame.df_read_off,
+            DF_SIZE(frame), DF_FIN(frame));
+}
+
+
+static uint64_t
+nocopy_di_readable_bytes (struct data_in *data_in, uint64_t read_offset)
+{
+    const struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
+    const struct stream_frame *frame;
+    uint64_t starting_offset;
+
+    starting_offset = read_offset;
+    TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
+        if (DF_ROFF(frame) == read_offset)
+            read_offset += DF_END(frame) - DF_ROFF(frame);
+
+    return read_offset - starting_offset;
+}
+
+
 static const struct data_in_iface di_if_nocopy = {
     .di_destroy      = nocopy_di_destroy,
+    .di_dump_state   = nocopy_di_dump_state,
     .di_empty        = nocopy_di_empty,
     .di_frame_done   = nocopy_di_frame_done,
     .di_get_frame    = nocopy_di_get_frame,
     .di_insert_frame = nocopy_di_insert_frame,
     .di_mem_used     = nocopy_di_mem_used,
+    .di_readable_bytes
+                     = nocopy_di_readable_bytes,
     .di_switch_impl  = nocopy_di_switch_impl,
 };
 

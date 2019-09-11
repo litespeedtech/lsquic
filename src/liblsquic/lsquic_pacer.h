@@ -2,9 +2,12 @@
 #ifndef LSQUIC_PACER_H
 #define LSQUIC_PACER_H 1
 
+struct lsquic_conn;
+
 struct pacer
 {
-    lsquic_cid_t    pa_cid;             /* Used for logging */
+    const struct lsquic_conn
+                   *pa_conn;             /* Used for logging */
     lsquic_time_t   pa_next_sched;
     lsquic_time_t   pa_last_delayed;
     lsquic_time_t   pa_now;
@@ -14,8 +17,10 @@ struct pacer
     unsigned        pa_clock_granularity;
 
     unsigned        pa_burst_tokens;
+    unsigned        pa_n_scheduled;     /* Within single tick */
     enum {
         PA_LAST_SCHED_DELAYED   = (1 << 0),
+        PA_DELAYED_ON_TICK_IN   = (1 << 1),
     }               pa_flags;
 #ifndef NDEBUG
     struct {
@@ -28,13 +33,17 @@ struct pacer
 typedef lsquic_time_t (*tx_time_f)(void *ctx);
 
 void
-pacer_init (struct pacer *, lsquic_cid_t, unsigned clock_granularity);
+pacer_init (struct pacer *, const struct lsquic_conn *,
+                                            unsigned clock_granularity);
 
 void
 pacer_cleanup (struct pacer *);
 
 void
-pacer_tick (struct pacer *, lsquic_time_t);
+pacer_tick_in (struct pacer *, lsquic_time_t);
+
+void
+pacer_tick_out (struct pacer *);
 
 int
 pacer_can_schedule (struct pacer *, unsigned n_in_flight);

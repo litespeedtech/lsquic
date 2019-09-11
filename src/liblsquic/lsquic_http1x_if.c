@@ -11,7 +11,7 @@
 #include "lshpack.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HTTP1X
-#define LSQUIC_LOG_CONN_ID hwc->hwc_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(hwc->hwc_conn)
 #include "lsquic_logger.h"
 
 enum pseudo_header
@@ -36,7 +36,7 @@ enum pseudo_header
 
 struct header_writer_ctx
 {
-    lsquic_cid_t                 hwc_cid;
+    const struct lsquic_conn    *hwc_conn;
     char                        *buf;
     char                        *cookie_val;
     unsigned                     cookie_sz, cookie_nalloc;
@@ -75,7 +75,7 @@ h1h_create_header_set (void *ctx, int is_push_promise)
     if (is_push_promise)
         hwc->hwc_flags |= HWC_PUSH_PROMISE;
     hwc->max_headers_sz = hcc->max_headers_sz;
-    hwc->hwc_cid = hcc->cid;
+    hwc->hwc_conn = hcc->conn;
     return &hwc->hwc_h1h;
 }
 
