@@ -80,6 +80,8 @@ SET(lsquic_STAT_SRCS
     lsquic_version.c
 )
 
+set_source_files_properties(ls-qpack/lsqpack.c PROPERTIES COMPILE_FLAGS -Wno-uninitialized)
+
 include_directories(ls-qpack)
 
 IF(PROJECT_NAME STREQUAL "openlitespeed")
