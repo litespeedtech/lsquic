@@ -165,12 +165,6 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
                         |LSCONN_ATTQ)
 
 
-struct cert_susp_head
-{
-    TAILQ_HEAD(, lsquic_conn)   csh_conns;
-    struct lsquic_hash_elem     csh_hash_el;
-    char                        csh_sni[0];
-};
 
 
 struct cid_update_batch
@@ -237,7 +231,6 @@ struct lsquic_engine
     lsquic_time_t                      deadline;
     lsquic_time_t                      resume_sending_at;
     unsigned                           mini_conns_count;
-    struct lsquic_hash                *suspended_sni_heads;
     struct lsquic_purga               *purga;
 #if LSQUIC_CONN_STATS
     struct {
@@ -581,7 +574,6 @@ lsquic_engine_new (unsigned flags,
     engine->attq = attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
-    engine->suspended_sni_heads = lsquic_hash_create();
     if (engine->pub.enp_settings.es_honor_prst)
     {
         engine->pub.enp_srst_hash = lsquic_hash_create();
@@ -659,20 +651,6 @@ shrink_batch_size (struct lsquic_engine *engine)
 }
 
 
-static void
-delete_susp_head (struct lsquic_engine *engine, struct cert_susp_head *head)
-{
-    struct lsquic_hash_elem *el;
-
-    el = lsquic_hash_find(engine->suspended_sni_heads, head->csh_sni,
-                          strlen(head->csh_sni));
-    assert(el);
-    assert(head == lsquic_hashelem_getdata(el));
-    lsquic_hash_erase(engine->suspended_sni_heads, el);
-    free(head);
-}
-
-
 struct cce_cid_iter
 {
     const struct lsquic_conn   *conn;
@@ -744,14 +722,6 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
     lsquic_time_t drain_time;
     struct purga_el *puel;
 
-    if (conn->cn_cert_susp_head)
-    {
-        TAILQ_REMOVE(&conn->cn_cert_susp_head->csh_conns, conn,
-                     cn_next_susp_cert);
-        if (TAILQ_EMPTY(&conn->cn_cert_susp_head->csh_conns))
-            delete_susp_head(engine, conn->cn_cert_susp_head);
-        conn->cn_cert_susp_head = NULL;
-    }
     engine->mini_conns_count -= !!(conn->cn_flags & LSCONN_MINI);
     if (engine->purga
         /* Blacklist all CIDs except for promoted mini connections */
@@ -1411,7 +1381,6 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
     if (engine->flags & ENG_LOSE_PACKETS)
         regfree(&engine->lose_packets_re);
 #endif
-    lsquic_hash_destroy(engine->suspended_sni_heads);
     if (engine->pub.enp_tokgen)
         lsquic_tg_destroy(engine->pub.enp_tokgen);
 #if LSQUIC_CONN_STATS

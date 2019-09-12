@@ -1,3 +1,11 @@
+2019-09-12
+    - 2.3.0
+    - [FEATURE] BBR congestion control is on by default
+    - [BUGFIX] BBR app-limited logic
+    - [BUGFIX] Fix uninitialized warnings in IETF
+    - [BUGFIX] Update ls-qpack to v0.9.14
+    - [CLEANUP] Code cleanup
+
 2019-09-11
     - 2.2.0
     - [FEATURE] Server code is included in the library

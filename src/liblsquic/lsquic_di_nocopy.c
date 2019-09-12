@@ -551,6 +551,7 @@ static const struct data_in_iface di_if_nocopy = {
     .di_get_frame    = nocopy_di_get_frame,
     .di_insert_frame = nocopy_di_insert_frame,
     .di_mem_used     = nocopy_di_mem_used,
+    .di_own_on_ok    = 1,
     .di_readable_bytes
                      = nocopy_di_readable_bytes,
     .di_switch_impl  = nocopy_di_switch_impl,

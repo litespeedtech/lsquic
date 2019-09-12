@@ -1426,16 +1426,18 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 {
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     struct lsquic_packet_out *packet_out;
+    size_t len;
 
     if (NP_IS_IPv6(&conn->imc_path) != (AF_INET6 == peer_sa->sa_family))
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
             if ((packet_out->po_flags & (PO_SENT|PO_ENCRYPTED)) == PO_ENCRYPTED)
                 imico_return_enc_data(conn, packet_out);
 
-    memcpy(conn->imc_path.np_peer_addr, peer_sa,
-                                        sizeof(conn->imc_path.np_peer_addr));
-    memcpy(conn->imc_path.np_local_addr, local_sa,
-                                        sizeof(conn->imc_path.np_local_addr));
+    len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+                                                : sizeof(struct sockaddr_in6);
+
+    memcpy(conn->imc_path.np_peer_addr, peer_sa, len);
+    memcpy(conn->imc_path.np_local_addr, local_sa, len);
     conn->imc_path.np_peer_ctx = peer_ctx;
     return 0;
 }

@@ -42,7 +42,7 @@ struct cong_ctl_if
     /* Optional method */
     void
     (*cci_sent) (void *cong_ctl, struct lsquic_packet_out *,
-                                                        uint64_t in_flight);
+                                        uint64_t in_flight, int app_limited);
 
     /* Optional method */
     void

@@ -42,6 +42,7 @@ enum send_ctl_flags {
     SC_LOST_ACK_HSK = SC_LOST_ACK_INIT << PNS_HSK,
     SC_LOST_ACK_APP = SC_LOST_ACK_INIT << PNS_APP,
     SC_1RTT_ACKED   =  1 << 11,
+    SC_APP_LIMITED  =  1 << 12,
 };
 
 typedef struct lsquic_send_ctl {
@@ -255,6 +256,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
         (ctl)->sc_flags |= SC_SCHED_TICK;                   \
         pacer_tick_in(&(ctl)->sc_pacer, now);               \
     }                                                       \
+    (ctl)->sc_flags &= ~SC_APP_LIMITED;                     \
 } while (0)
 
 #define lsquic_send_ctl_tick_out(ctl) do {                  \
@@ -352,5 +354,9 @@ void
 lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *);
 
 #define lsquic_send_ctl_1rtt_acked(ctl) ((ctl)->sc_flags & SC_1RTT_ACKED)
+
+void
+lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
+                                            const struct network_path *);
 
 #endif

@@ -3470,6 +3470,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->fc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
+    lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
+
   end_write:
 
   skip_write:

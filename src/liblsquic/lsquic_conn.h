@@ -242,8 +242,6 @@ struct conn_iface
     (*ci_get_log_cid) (const struct lsquic_conn *);
 };
 
-struct cert_susp_head;
-
 #define LSCONN_CCE_BITS 3
 #define LSCONN_MAX_CCES (1 << LSCONN_CCE_BITS)
 
@@ -292,7 +290,6 @@ struct lsquic_conn
     const struct conn_iface     *cn_if;
     const struct parse_funcs    *cn_pf;
     struct attq_elem            *cn_attq_elem;
-    struct cert_susp_head        *cn_cert_susp_head;
     lsquic_time_t                cn_last_sent;
     lsquic_time_t                cn_last_ticked;
     struct conn_cid_elem        *cn_cces;   /* At least one is available */

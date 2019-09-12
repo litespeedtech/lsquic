@@ -96,6 +96,7 @@ static const struct data_in_iface di_if_error = {
     .di_get_frame    = error_di_get_frame,
     .di_insert_frame = error_di_insert_frame,
     .di_mem_used     = error_di_mem_used,
+    .di_own_on_ok    = 0,   /* Never returns INS_FRAME_OK, but anyway */
     .di_readable_bytes
                      = error_di_readable_bytes,
     .di_switch_impl  = error_di_switch_impl,

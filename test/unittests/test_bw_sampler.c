@@ -412,8 +412,8 @@ test_not_congestion_controlled (void)
         {
             sample = sampler_test_ack_packet(&stest, packets[i]);
             assert(sample);
-            lsquic_malo_put(sample);
             assert(expected_bw == BW_VALUE(&sample->bandwidth));
+            lsquic_malo_put(sample);
         }
         stest.time += time_between_packets;
     }
@@ -436,6 +436,7 @@ test_compressed_ack (void)
     const lsquic_time_t time_between_packets = ms(1),
                         ridiculously_small_time_delta = us(20);
     uint64_t expected_bw = FromKBytesPerSecond(kRegularPacketSize);
+    uint64_t bw;
     unsigned i;
     struct bw_sample *sample;
     struct lsquic_packet_out *packets[41];
@@ -453,10 +454,11 @@ test_compressed_ack (void)
         sample = sampler_test_ack_packet(&stest, packets[i]);
         assert(sample);
         stest.time += ridiculously_small_time_delta;
+        bw = BW_VALUE(&sample->bandwidth);
         lsquic_malo_put(sample);
     }
 
-    assert(BW_VALUE(&sample->bandwidth) == expected_bw);
+    assert(bw == expected_bw);
     assert(lsquic_bw_sampler_entry_count(&stest.sampler) == 0);
     assert(stest.bytes_in_flight == 0);
 

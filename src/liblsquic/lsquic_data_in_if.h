@@ -64,6 +64,13 @@ struct data_in_iface
     /* Return number of bytes readable starting at offset `read_offset' */
     uint64_t
     (*di_readable_bytes) (struct data_in *, uint64_t read_offset);
+
+    /* If set, this means that when di_insert_frame() returns INS_FRAME_OK,
+     * the data_in handler has taken ownership of the frame.  Otherwise, it
+     * is up to the caller to free it.
+     */
+    const int
+    di_own_on_ok;
 };
 
 

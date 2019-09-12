@@ -440,7 +440,8 @@ hash_di_insert_frame (struct data_in *data_in,
     ins = data_in_hash_insert_data_frame(data_in, data_frame, read_offset);
     assert(ins != INS_FRAME_OVERLAP);
     lsquic_packet_in_put(hdi->hdi_conn_pub->mm, new_frame->packet_in);
-    lsquic_malo_put(new_frame);
+    if (ins != INS_FRAME_OK)
+        lsquic_malo_put(new_frame);
     return ins;
 }
 
@@ -678,6 +679,7 @@ static const struct data_in_iface di_if_hash = {
     .di_get_frame    = hash_di_get_frame,
     .di_insert_frame = hash_di_insert_frame,
     .di_mem_used     = hash_di_mem_used,
+    .di_own_on_ok    = 0,
     .di_readable_bytes
                      = hash_di_readable_bytes,
     .di_switch_impl  = hash_di_switch_impl,

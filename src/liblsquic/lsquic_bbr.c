@@ -282,15 +282,21 @@ is_pipe_sufficiently_full (struct lsquic_bbr *bbr, uint64_t bytes_in_flight)
 }
 
 
-/* See BbrSender::OnApplicationLimited */
 static void
-lsquic_bbr_was_quiet (void *cong_ctl, lsquic_time_t now,
-                                                    uint64_t bytes_in_flight)
+lsquic_bbr_was_quiet (void *cong_ctl, lsquic_time_t now, uint64_t in_flight)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
+    LSQ_DEBUG("was quiet");         /* Do nothing */
+}
+
+
+/* See BbrSender::OnApplicationLimited */
+static void
+bbr_app_limited (struct lsquic_bbr *bbr, uint64_t bytes_in_flight)
+{
     uint64_t cwnd;
 
-    cwnd = lsquic_bbr_get_cwnd(cong_ctl);
+    cwnd = lsquic_bbr_get_cwnd(bbr);
     if (bytes_in_flight >= cwnd)
         return;
     if ((bbr->bbr_flags & BBR_FLAG_FLEXIBLE_APP_LIMITED)
@@ -328,7 +334,7 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
 static void
 lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
-                                                        uint64_t in_flight)
+                                        uint64_t in_flight, int app_limited)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
@@ -340,6 +346,9 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
      * increasing.
      */
     bbr->bbr_last_sent_packno = packet_out->po_packno;
+
+    if (app_limited)
+        bbr_app_limited(bbr, in_flight);
 }
 
 

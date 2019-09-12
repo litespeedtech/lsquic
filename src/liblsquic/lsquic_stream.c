@@ -846,7 +846,7 @@ int
 lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
 {
     uint64_t max_off;
-    int got_next_offset;
+    int got_next_offset, rv, free_frame;
     enum ins_frame ins_frame;
 
     assert(frame->packet_in);
@@ -871,9 +871,11 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         /* Update maximum offset in the flow controller and check for flow
          * control violation:
          */
+        rv = -1;
+        free_frame = !stream->data_in->di_if->di_own_on_ok;
         max_off = frame->data_frame.df_offset + frame->data_frame.df_size;
         if (0 != lsquic_stream_update_sfcw(stream, max_off))
-            return -1;
+            goto end_ok;
         if (frame->data_frame.df_fin)
         {
             SM_HISTORY_APPEND(stream, SHE_FIN_IN);
@@ -889,13 +891,17 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
             if (!stream->data_in)
             {
                 stream->data_in = data_in_error_new();
-                return -1;
+                goto end_ok;
             }
         }
         if (got_next_offset)
             /* Checking the offset saves di_get_frame() call */
             maybe_conn_to_tickable_if_readable(stream);
-        return 0;
+        rv = 0;
+  end_ok:
+        if (free_frame)
+            lsquic_malo_put(frame);
+        return rv;
     }
     else if (INS_FRAME_DUP == ins_frame)
     {

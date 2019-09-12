@@ -591,7 +591,8 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     ++ctl->sc_stats.n_total_sent;
 #endif
     if (ctl->sc_ci->cci_sent)
-        ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_n_in_flight_all);
+        ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_n_in_flight_all,
+                                            ctl->sc_flags & SC_APP_LIMITED);
     lsquic_send_ctl_sanity_check(ctl);
     return 0;
 }
@@ -1288,6 +1289,38 @@ lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
     }
     else
         return n_out < ctl->sc_ci->cci_get_cwnd(CGP(ctl));
+}
+
+
+/* Like lsquic_send_ctl_can_send(), but no mods */
+static int
+send_ctl_could_send (const struct lsquic_send_ctl *ctl)
+{
+    uint64_t cwnd;
+    unsigned n_out;
+
+    if ((ctl->sc_flags & SC_PACE) && pacer_delayed(&ctl->sc_pacer))
+        return 0;
+
+    cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
+    n_out = send_ctl_all_bytes_out(ctl);
+    return n_out < cwnd;
+}
+
+
+void
+lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
+                                            const struct network_path *path)
+{
+    const struct lsquic_packet_out *packet_out;
+
+    packet_out = lsquic_send_ctl_last_scheduled(ctl, PNS_APP, path, 0);
+    if ((packet_out && lsquic_packet_out_avail(packet_out) > 10)
+                                                || send_ctl_could_send(ctl))
+    {
+        LSQ_DEBUG("app-limited");
+        ctl->sc_flags |= SC_APP_LIMITED;
+    }
 }
 
 

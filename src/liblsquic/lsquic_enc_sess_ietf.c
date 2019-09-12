@@ -1625,7 +1625,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     size_t out_sz, dst_sz;
     int header_sz;
     int ipv6;
-    unsigned packno_off, packno_len, sample_off, cliser;
+    unsigned packno_off, packno_len, cliser;
     enum packnum_space pns;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
@@ -1739,8 +1739,10 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     assert(out_sz == dst_sz - header_sz);
 
     lconn->cn_pf->pf_packno_info(lconn, packet_out, &packno_off, &packno_len);
-    sample_off = packno_off + 4;
+#ifndef NDEBUG
+    const unsigned sample_off = packno_off + 4;
     assert(sample_off + IQUIC_TAG_LEN <= dst_sz);
+#endif
     apply_hp(enc_sess, hp, cliser, dst, packno_off, packno_len);
 
     packet_out->po_enc_data    = dst;
@@ -1876,6 +1878,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     }
     else
     {
+        key_phase = 0;
         assert(enc_sess->esi_hsk_pairs);
         pair = &enc_sess->esi_hsk_pairs[ enc_level ];
         crypto_ctx = &pair->ykp_ctx[ cliser ];
@@ -1976,6 +1979,9 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     pns = lsquic_enclev2pns[enc_level];
     if (packet_in->pi_packno > enc_sess->esi_max_packno[pns])
         enc_sess->esi_max_packno[pns] = packet_in->pi_packno;
+    /* XXX Compiler complains that `pair' may be uninitialized here, but this
+     * variable is set in `if (crypto_ctx == &crypto_ctx_buf)' above.
+     */
     if (is_valid_packno(pair->ykp_thresh)
                                 && packet_in->pi_packno > pair->ykp_thresh)
         pair->ykp_thresh = packet_in->pi_packno;
