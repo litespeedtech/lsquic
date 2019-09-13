@@ -151,7 +151,7 @@ static const struct conn_iface our_conn_if =
 
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
-                unsigned initial_stream_window)
+        unsigned initial_stream_window, enum stream_ctor_flags addl_ctor_flags)
 {
     int s;
     memset(tobjs, 0, sizeof(*tobjs));
@@ -182,7 +182,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = NULL;
-    tobjs->ctor_flags = SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_IETF|SCF_HTTP;
+    tobjs->ctor_flags = SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_HTTP
+                      |addl_ctor_flags;
     if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
     {
         lsquic_qeh_init(&tobjs->qeh, &tobjs->lconn);
@@ -233,7 +234,7 @@ lsquic_qeh_write_headers (struct qpack_enc_hdl *qeh,
     const struct lsquic_http_headers *headers, unsigned char *buf,
     size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset)
 {
-    memset(buf, 0xC5, *prefix_sz + *headers_sz);
+    memset(buf - *prefix_sz, 0xC5, *prefix_sz + *headers_sz);
     *prefix_sz = test_vals.prefix_sz;
     *headers_sz = test_vals.headers_sz;
     *completion_offset = test_vals.completion_offset;
@@ -263,7 +264,7 @@ test_flushes_and_closes (void)
     /* For our tests purposes, we treat headers as an opaque object */
     struct lsquic_http_headers *headers = (void *) 1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
 
     stream = new_stream(&tobjs, 0, 0x1000);
     test_vals.status = QWH_FULL;
@@ -352,7 +353,7 @@ test_headers_wantwrite_restoration (const int want_write)
     /* For our tests purposes, we treat headers as an opaque object */
     struct lsquic_http_headers *headers = (void *) 1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
 
     /* Mock server side stream cycle */
 
@@ -445,7 +446,7 @@ test_pp_wantwrite_restoration (const int want_write)
     s_call_wantwrite_in_ctor = 1;
     s_wantwrite_arg = want_write;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
 
     /* Mock server side stream cycle */
 
@@ -485,6 +486,7 @@ test_pp_wantwrite_restoration (const int want_write)
     assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state == PPWS_DONE); /* Done! */
     assert(want_write == s_onwrite_called); /* Restored: and on_write called */
 
+    lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
     s_call_wantwrite_in_ctor = 0;
     s_wantwrite_arg = 0;
@@ -554,10 +556,7 @@ test_read_headers (int ietf, int use_hset)
     void *hset;
     unsigned char buf[1];
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
-    tobjs.ctor_flags &= ~SCF_IETF;
-    if (ietf)
-        tobjs.ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x1000, ietf ? SCF_IETF : 0);
 
     stream = new_stream(&tobjs, 0, 0x1000);
     frame = new_frame_in(&tobjs, 0, 35, 1);

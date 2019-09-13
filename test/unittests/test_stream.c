@@ -372,9 +372,10 @@ deinit_test_objs (struct test_objs *tobjs)
     lsquic_malo_destroy(tobjs->conn_pub.packet_out_malo);
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
     if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
+    {
         lsquic_qeh_cleanup(&tobjs->qeh);
-    if (tobjs->ctor_flags & SCF_IETF)
         lsquic_prio_tree_destroy(tobjs->conn_pub.u.ietf.prio_tree);
+    }
 }
 
 

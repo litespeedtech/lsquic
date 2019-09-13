@@ -599,6 +599,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         stream_hq_frame_put(stream, shf);
     destroy_uh(stream);
     free(stream->sm_buf);
+    free(stream->sm_header_block);
     LSQ_DEBUG("destroyed stream");
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);

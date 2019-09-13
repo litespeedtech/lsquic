@@ -1224,6 +1224,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     }
     if (ctl->sc_flags & SC_PACE)
         pacer_cleanup(&ctl->sc_pacer);
+    ctl->sc_ci->cci_cleanup(CGP(ctl));
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
         ctl->sc_stats.n_total_sent, ctl->sc_stats.n_resent,

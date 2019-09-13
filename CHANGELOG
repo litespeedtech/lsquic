@@ -1,3 +1,8 @@
+2019-09-13
+    - 2.3.1
+    - [BUGFIX] Fix memory leaks
+    - [BUGFIX] Fix unit tests
+
 2019-09-12
     - 2.3.0
     - [FEATURE] BBR congestion control is on by default

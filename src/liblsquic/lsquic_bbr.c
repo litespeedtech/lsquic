@@ -1030,6 +1030,7 @@ lsquic_bbr_cleanup (void *cong_ctl)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
+    lsquic_bw_sampler_cleanup(&bbr->bbr_bw_sampler);
     LSQ_DEBUG("cleanup");
 }
 
