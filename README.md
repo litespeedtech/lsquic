@@ -48,7 +48,21 @@ cd boringssl
 
 You may need to install pre-requisites like zlib and libevent.
 
-2. Compile the library
+2. Use specific BoringSSL version
+
+```
+git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
+```
+
+3. Patch the library
+
+This patch is required for IETF QUIC support.
+
+```
+patch -p1 -i ../patches/boringssl-meds.patch
+```
+
+4. Compile the library
 
 ```
 cmake . &&  make
