@@ -112,14 +112,24 @@ make test
 
 Building with Docker
 ---------
-The library and http_client example can be built with Docker.
+The library and the example client and server can be built with Docker.
+
+Initialize Git submodules:
+```
+cd lsquic
+git submodule init
+git submodule update
+```
+
+Build the Docker image:
 ```
 docker build -t lsquic .
 ```
 
-Then you can use the http_client example from the command line.
+Then you can use the examples from the command line.  For example:
 ```
-docker run -it --rm lsquic http_client -H www.google.com -s 74.125.22.106:443 -p /
+sudo docker run -it --rm lsquic http_client -s www.google.com  -p / -o version=Q046
+sudo docker run -p 12345:12345/udp -v /path/to/certs:/mnt/certs -it --rm lsquic http_server -c www.example.com,/mnt/certs/chain,/mnt/certs/key
 ```
 
 Platforms

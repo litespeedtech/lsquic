@@ -12,21 +12,18 @@ RUN add-apt-repository ppa:gophers/archive && \
 RUN mkdir /src
 WORKDIR /src
 
+RUN mkdir /src/lsquic
+COPY ./ /src/lsquic/
+
 RUN git clone https://boringssl.googlesource.com/boringssl && \
     cd boringssl && \
-    git checkout chromium-stable && \
+    git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093 && \
+    patch -p1 -i /src/lsquic/patches/boringssl-meds.patch && \
     cmake . && \
-    make && \
-    BORINGSSL_SOURCE=$PWD && \
-    cd /usr/local/lib && \
-    cp $BORINGSSL_SOURCE/ssl/libssl.a . && \
-    cp $BORINGSSL_SOURCE/crypto/libcrypto.a .
-
-RUN mkdir /src/lsquic-client
-COPY ./ /src/lsquic-client/
-RUN cd /src/lsquic-client && \
-    cmake -DBORINGSSL_INCLUDE=/src/boringssl/include \
-          -DBORINGSSL_LIB=/usr/local/lib . && \
     make
 
-RUN cd lsquic-client && make test && cp http_client /usr/bin/
+RUN cd /src/lsquic && \
+    cmake -DBORINGSSL_DIR=/src/boringssl . && \
+    make
+
+RUN cd lsquic && make test && cp http_client /usr/bin/ && cp http_server /usr/bin
