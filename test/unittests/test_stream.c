@@ -50,7 +50,6 @@
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
-#include "lsquic_h3_prio.h"
 
 static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_039);
 
@@ -326,7 +325,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_version = tobjs->lconn.cn_pf == &lsquic_parse_funcs_ietf_v1 ?
-        LSQVER_ID22 : LSQVER_043;
+        LSQVER_ID23 : LSQVER_043;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
     network_path.np_pack_size = 1370;
     tobjs->lconn.cn_if = &our_conn_if;
@@ -358,8 +357,6 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
         assert(0 == s);
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
-        tobjs->conn_pub.u.ietf.prio_tree
-                                = lsquic_prio_tree_new(&tobjs->lconn, 0);
     }
 }
 
@@ -374,7 +371,6 @@ deinit_test_objs (struct test_objs *tobjs)
     if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
     {
         lsquic_qeh_cleanup(&tobjs->qeh);
-        lsquic_prio_tree_destroy(tobjs->conn_pub.u.ietf.prio_tree);
     }
 }
 
@@ -2168,7 +2164,7 @@ test_changing_pack_size (void)
     enum lsquic_version versions_to_test[3] =
     {
         LSQVER_046,
-        LSQVER_ID22,
+        LSQVER_ID23,
     };
 
     for (i = 0; i < 3; i++)
@@ -3097,7 +3093,7 @@ main (int argc, char **argv)
 
     /* Redo some tests using crypto streams and frames */
     g_use_crypto_ctor = 1;
-    g_pf = select_pf_by_ver(LSQVER_ID22);
+    g_pf = select_pf_by_ver(LSQVER_ID23);
     main_test_packetization();
 
     return 0;

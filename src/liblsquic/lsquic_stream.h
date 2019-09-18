@@ -165,8 +165,6 @@ enum stream_q_flags
     SMQF_ABORT_CONN   = 1 << 8,     /* Unrecoverable error occurred */
 
     SMQF_QPACK_DEC    = 1 << 9,     /* QPACK decoder is holding a reference to this stream */
-
-    SMQF_H3_PRIO      = 1 <<10,     /* Referenced from HTTP/3 priority tree */
 };
 
 
@@ -233,7 +231,6 @@ struct lsquic_stream
     enum stream_b_flags             sm_bflags;
     enum stream_q_flags             sm_qflags;
     unsigned                        n_unacked;
-    unsigned                        sm_h3_prio_idx;
 
     const struct lsquic_stream_if  *stream_if;
     struct lsquic_stream_ctx       *st_ctx;

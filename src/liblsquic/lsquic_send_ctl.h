@@ -43,6 +43,7 @@ enum send_ctl_flags {
     SC_LOST_ACK_APP = SC_LOST_ACK_INIT << PNS_APP,
     SC_1RTT_ACKED   =  1 << 11,
     SC_APP_LIMITED  =  1 << 12,
+    SC_ECN          =  1 << 13,
 };
 
 typedef struct lsquic_send_ctl {

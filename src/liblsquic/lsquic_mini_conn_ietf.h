@@ -53,6 +53,7 @@ struct ietf_mini_conn
         IMC_ABORT_ISAPP         = 1 << 15,
         IMC_BAD_TRANS_PARAMS    = 1 << 16,
         IMC_ADDR_VALIDATED      = 1 << 17,
+        IMC_HSK_PACKET_SENT     = 1 << 18,
     }                               imc_flags;
     struct mini_crypto_stream       imc_streams[N_ENC_LEVS];
     void                           *imc_stream_ps[N_ENC_LEVS];
@@ -72,6 +73,12 @@ struct ietf_mini_conn
     unsigned                        imc_bytes_out;
     unsigned char                   imc_next_packno;
     unsigned char                   imc_hsk_count;
+    /* We don't send more than eight in the first flight, and so it's OK to
+     * use uint8_t.  This value is also used as a boolean: when ECN black
+     * hole is detected, it is set to zero to indicate that black hole
+     * detection is no longer active.
+     */
+    uint8_t                         imc_ecn_packnos;
     uint8_t                         imc_ack_exp;
     uint8_t                         imc_ecn_counts_in[N_PNS][4];
     uint8_t                         imc_ecn_counts_out[N_PNS][4];
@@ -85,4 +92,6 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *,
                const struct lsquic_packet_in *,
                enum lsquic_version, int is_ipv4, const struct lsquic_cid *);
 
+int
+lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *);
 #endif

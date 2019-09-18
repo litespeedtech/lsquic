@@ -64,7 +64,6 @@
 #include "lsquic_qdec_hdl.h"
 #include "lsquic_qenc_hdl.h"
 #include "lsquic_byteswap.h"
-#include "lsquic_h3_prio.h"
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 
@@ -355,19 +354,6 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->sm_onnew_arg = stream_if_ctx;
     stream->sm_write_avail = stream_write_avail;
 
-    if ((ctor_flags & (SCF_IETF|SCF_CRITICAL)) == SCF_IETF)
-    {
-        if (0 == lsquic_prio_tree_add_stream(conn_pub->u.ietf.prio_tree,
-                                                    stream, H3ET_ROOT, 0, 0))
-            stream->sm_qflags |= SMQF_H3_PRIO;
-        else
-        {
-            stream->data_in->di_if->di_destroy(stream->data_in);
-            free(stream);
-            return NULL;
-        }
-    }
-
     STAILQ_INIT(&stream->sm_hq_frames);
 
     stream->sm_bflags |= ctor_flags & ((1 << (N_SMBF_FLAGS - 1)) - 1);
@@ -571,9 +557,6 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         TAILQ_REMOVE(&stream->conn_pub->service_streams, stream, next_service_stream);
     if (stream->sm_qflags & SMQF_QPACK_DEC)
         lsquic_qdh_unref_stream(stream->conn_pub->u.ietf.qdh, stream);
-    if (stream->sm_qflags & SMQF_H3_PRIO)
-        lsquic_prio_tree_remove_stream(stream->conn_pub->u.ietf.prio_tree,
-            stream, lsquic_time_now() /* XXX: do we have to call this? */);
     drop_buffered_data(stream);
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
@@ -3881,7 +3864,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
                 LSQ_INFO("unexpected HTTP/3 frame sequence: %o",
                     filter->hqfi_hist_buf);
-                lconn->cn_if->ci_abort_error(lconn, 1, HEC_UNEXPECTED_FRAME,
+                lconn->cn_if->ci_abort_error(lconn, 1, HEC_FRAME_UNEXPECTED,
                     "unexpected HTTP/3 frame sequence on stream %"PRIu64,
                     stream->id);
                 goto end;
@@ -3905,7 +3888,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     lconn = stream->conn_pub->lconn;
                     if (stream->sm_bflags & SMBF_SERVER)
                         lconn->cn_if->ci_abort_error(lconn, 1,
-                            HEC_UNEXPECTED_FRAME, "Received PUSH_PROMISE frame "
+                            HEC_FRAME_UNEXPECTED, "Received PUSH_PROMISE frame "
                             "on stream %"PRIu64" (clients are not supposed to "
                             "send those)", stream->id);
                     else
@@ -3913,7 +3896,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                          * push.
                          */
                         lconn->cn_if->ci_abort_error(lconn, 1,
-                            HEC_UNEXPECTED_FRAME, /* TODO: in ID-21 ID_ERROR? */
+                            HEC_FRAME_UNEXPECTED,
                             "Received PUSH_PROMISE frame (not supported)"
                             "on stream %"PRIu64, stream->id);
                     goto end;
@@ -3927,7 +3910,6 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 case HQFT_GOAWAY:
                 case HQFT_HEADERS:
                 case HQFT_MAX_PUSH_ID:
-                case HQFT_PRIORITY:
                 case HQFT_PUSH_PROMISE:
                 case HQFT_SETTINGS:
                     filter->hqfi_flags |= HQFI_FLAG_ERROR;

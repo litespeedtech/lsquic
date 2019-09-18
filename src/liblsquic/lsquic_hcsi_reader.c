@@ -43,7 +43,6 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
     const unsigned char *const end = p + bufsz;
 
     const unsigned char *orig_p;
-    enum h3_prio_frame_read_status prio_status;
     uint64_t len;
     int s;
 
@@ -74,9 +73,6 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                     reader->hr_cb->on_settings_frame(reader->hr_ctx);
                     reader->hr_state = HR_READ_FRAME_BEGIN;
                 }
-                break;
-            case HQFT_PRIORITY:
-                reader->hr_state = HR_READ_PRIORITY_BEGIN;
                 break;
             case HQFT_GOAWAY:
                 reader->hr_state = HR_READ_VARINT;
@@ -118,7 +114,7 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                 if (reader->hr_nread != reader->hr_frame_length)
                 {
                     reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
-                        HEC_MALFORMED_FRAME + reader->hr_frame_type,
+                        HEC_FRAME_ERROR,
                         "Frame length does not match actual payload length");
                     reader->hr_state = HR_ERROR;
                     return -1;
@@ -166,8 +162,7 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             if (reader->hr_nread > reader->hr_frame_length)
             {
                 reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
-                    HEC_MALFORMED_FRAME + HQFT_SETTINGS,
-                    "SETTING frame contents too long");
+                    HEC_FRAME_ERROR, "SETTING frame contents too long");
                 reader->hr_state = HR_ERROR;
                 return -1;
             }
@@ -183,31 +178,6 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             }
             else
                 reader->hr_state = HR_READ_SETTING_BEGIN;
-            break;
-        case HR_READ_PRIORITY_BEGIN:
-            reader->hr_u.prio.h3pfrs_state = 0;
-            reader->hr_nread = 0;
-            reader->hr_state = HR_READ_PRIORITY_CONTINUE;
-            /* fall-through */
-        case HR_READ_PRIORITY_CONTINUE:
-            orig_p = p;
-            prio_status = lsquic_h3_prio_frame_read(&p, end - p,
-                                                        &reader->hr_u.prio);
-            reader->hr_nread += p - orig_p;
-            if (prio_status == H3PFR_STATUS_DONE)
-            {
-                if (reader->hr_nread != reader->hr_frame_length)
-                {
-                    reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
-                        HEC_MALFORMED_FRAME + HQFT_PRIORITY, "PRIORITY frame "
-                        "contents size does not match frame length");
-                    reader->hr_state = HR_ERROR;
-                    return -1;
-                }
-                reader->hr_state = HR_READ_FRAME_BEGIN;
-                reader->hr_cb->on_priority(reader->hr_ctx,
-                                                    &reader->hr_u.prio.h3pfrs_prio);
-            }
             break;
         default:
             assert(0);

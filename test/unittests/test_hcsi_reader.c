@@ -31,71 +31,6 @@ static const struct test tests[] =
     {
         __LINE__,
         {
-            0x02,
-            0x05,
-            /* The `1' used to be the `exclusive' flag.  It is left here to
-             * test that the frame reader ignores these Emtpy bits.
-             */
-            (H3PET_REQ_STREAM << HQ_PT_SHIFT) | (H3DET_PLACEHOLDER << HQ_DT_SHIFT) | 1,
-            0x03,
-            0x40, 0x33,
-            0x77,
-        },
-        7,
-        0,
-        "on_priority: request stream #3 depends on placeholder #51; weight: 120\n",
-    },
-
-    {
-        __LINE__,
-        {
-            0x02,
-            0x03,
-            (H3PET_REQ_STREAM << HQ_PT_SHIFT) | (H3DET_ROOT << HQ_DT_SHIFT),
-            0x03,
-            0x77,
-        },
-        5,
-        0,
-        "on_priority: request stream #3 depends on root; weight: 120\n",
-    },
-
-    {
-        __LINE__,
-        {
-            0x02,
-            0x04,
-            /* The `1' used to be the `exclusive' flag.  It is left here to
-             * test that the frame reader ignores these Emtpy bits.
-             */
-            (H3PET_CUR_STREAM << HQ_PT_SHIFT) | (H3DET_PLACEHOLDER << HQ_DT_SHIFT),
-            0x40, 0x33,
-            0x77,
-        },
-        6,
-        0,
-        "on_priority: current stream depends on placeholder #51; weight: 120\n",
-    },
-
-    {
-        __LINE__,
-        {
-            0x02,
-            0x02,
-            /* The `1' used to be the `exclusive' flag.  It is left here to
-             * test that the frame reader ignores these Emtpy bits.
-             */
-            (H3PET_CUR_STREAM << HQ_PT_SHIFT) | (H3DET_ROOT << HQ_DT_SHIFT),
-            0x77,
-        },
-        4,
-        0,
-        "on_priority: current stream depends on root; weight: 120\n",
-    },
-
-    {
-        __LINE__,
-        {
             0x03,
             0x04,
             0x80, 0x12, 0x34, 0x45,
@@ -162,41 +97,6 @@ static const struct test tests[] =
 
 
 static void
-on_priority (void *ctx, const struct hq_priority *priority)
-{
-    switch (((priority->hqp_prio_type == H3PET_CUR_STREAM) << 1)
-           | (priority->hqp_dep_type  == H3DET_ROOT))
-    {
-    case 0:
-        fprintf(ctx, "%s: %s #%"PRIu64" depends on %s #%"PRIu64"; "
-            "weight: %u\n", __func__,
-            lsquic_h3pet2str[priority->hqp_prio_type], priority->hqp_prio_id,
-            lsquic_h3det2str[priority->hqp_dep_type], priority->hqp_dep_id,
-            HQP_WEIGHT(priority));
-        break;
-    case 1:
-        fprintf(ctx, "%s: %s #%"PRIu64" depends on root; "
-            "weight: %u\n", __func__,
-            lsquic_h3pet2str[priority->hqp_prio_type], priority->hqp_prio_id,
-            HQP_WEIGHT(priority));
-        break;
-    case 2:
-        fprintf(ctx, "%s: current stream depends on %s #%"PRIu64"; "
-            "weight: %u\n", __func__,
-            lsquic_h3det2str[priority->hqp_dep_type], priority->hqp_dep_id,
-            HQP_WEIGHT(priority));
-        break;
-    default:
-        assert(0);
-    case 3:
-        fprintf(ctx, "%s: current stream depends on root; "
-            "weight: %u\n", __func__,
-            HQP_WEIGHT(priority));
-        break;
-    }
-}
-
-static void
 on_cancel_push (void *ctx, uint64_t push_id)
 {
     fprintf(ctx, "%s: %"PRIu64"\n", __func__, push_id);
@@ -234,7 +134,6 @@ on_unexpected_frame (void *ctx, uint64_t frame_type)
 
 static const struct hcsi_callbacks callbacks =
 {
-    .on_priority            = on_priority,
     .on_cancel_push         = on_cancel_push,
     .on_max_push_id         = on_max_push_id,
     .on_settings_frame      = on_settings_frame,

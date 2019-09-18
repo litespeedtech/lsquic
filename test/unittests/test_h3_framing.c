@@ -55,9 +55,8 @@
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
-#include "lsquic_h3_prio.h"
 
-static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_ID22);
+static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_ID23);
 
 struct test_ctl_settings
 {
@@ -298,7 +297,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     memset(tobjs, 0, sizeof(*tobjs));
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = g_pf;
-    tobjs->lconn.cn_version = LSQVER_ID22;
+    tobjs->lconn.cn_version = LSQVER_ID23;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     network_path.np_pack_size = packet_sz;
     tobjs->lconn.cn_if = &our_conn_if;
@@ -331,9 +330,6 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         assert(0 == s);
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
     }
-    if (tobjs->ctor_flags & SCF_IETF)
-        tobjs->conn_pub.u.ietf.prio_tree
-                                = lsquic_prio_tree_new(&tobjs->lconn, 0);
 }
 
 
@@ -346,8 +342,6 @@ deinit_test_objs (struct test_objs *tobjs)
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
     if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
         lsquic_qeh_cleanup(&tobjs->qeh);
-    if (tobjs->ctor_flags & SCF_IETF)
-        lsquic_prio_tree_destroy(tobjs->conn_pub.u.ietf.prio_tree);
 }
 
 

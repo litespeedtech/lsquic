@@ -97,7 +97,7 @@ static const struct trapa_test tests[] =
             .tp_flags = TRAPA_SERVER,
             .tp_init_max_data = 0x123456,
             .tp_init_max_stream_data_bidi_local = 0xABCDEF88,
-            .tp_disable_migration = 1,
+            .tp_disable_active_migration = 1,
             .tp_max_packet_size = 0x333,
         },
         .enc_len = 32,
@@ -156,7 +156,7 @@ params_are_equal (const struct transport_params *a,
 #define MCMP(f) 0 == memcmp(&a->f, &b->f, sizeof(a->f))
     return a->tp_flags == b->tp_flags
         && MCMP(tp_numerics_u)
-        && a->tp_disable_migration == b->tp_disable_migration
+        && a->tp_disable_active_migration == b->tp_disable_active_migration
         && MCMP(tp_stateless_reset_token)
         && MCMP(tp_preferred_address.ipv4_addr)
         && MCMP(tp_preferred_address.ipv6_addr)

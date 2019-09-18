@@ -21,7 +21,6 @@ struct conn_stats;
 #endif
 struct qpack_enc_hdl;
 struct qpack_dec_hdl;
-struct h3_prio_tree;
 struct network_path;
 
 struct lsquic_conn_public {
@@ -44,7 +43,6 @@ struct lsquic_conn_public {
         struct {
             struct qpack_enc_hdl *qeh;
             struct qpack_dec_hdl *qdh;
-            struct h3_prio_tree  *prio_tree;
             struct lsquic_hash   *promises;
         }                       ietf;
     }                               u;

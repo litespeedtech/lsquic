@@ -273,3 +273,9 @@ More Compilation Options
     this flag is specified, sending of packets will randomly fail, about
     one out of every 10 attempts.  Set environment variable
     LSQUIC_RANDOM_SEND_FAILURE to change this frequency.
+
+-DLSQUIC_ECN_BLACK_HOLE=1
+
+    When compiled with this flag, setting environment variable
+    LSQUIC_ECN_BLACK_HOLE to 1 will emulate ECN black hole: all received
+    packets with ECN markings are dropped on the floor.

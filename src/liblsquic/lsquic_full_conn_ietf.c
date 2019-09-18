@@ -61,7 +61,7 @@
 #include "lsquic_mini_conn_ietf.h"
 #include "lsquic_tokgen.h"
 #include "lsquic_full_conn.h"
-#include "lsquic_h3_prio.h"
+#include "lsquic_spi.h"
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_headers.h"
@@ -70,7 +70,6 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
 
-#define MAX_ANY_PACKETS_SINCE_LAST_ACK  20
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
 #define ACK_TIMEOUT                    (TP_DEF_MAX_ACK_DELAY * 1000)
 #define INITIAL_CHAL_TIMEOUT            25000
@@ -873,7 +872,7 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
 
 static int
 ietf_full_conn_init (struct ietf_full_conn *conn,
-           struct lsquic_engine_public *enpub, unsigned flags)
+           struct lsquic_engine_public *enpub, unsigned flags, int ecn)
 {
     conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
     if (enpub->enp_settings.es_scid_len)
@@ -907,21 +906,16 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], &conn->ifc_conn, 1);
     lsquic_send_ctl_init(&conn->ifc_send_ctl, &conn->ifc_alset, enpub,
         flags & IFC_SERVER ? &server_ver_neg : &conn->ifc_u.cli.ifcli_ver_neg,
-        &conn->ifc_pub, SC_IETF|SC_NSTP);
+        &conn->ifc_pub, SC_IETF|SC_NSTP|(ecn ? SC_ECN : 0));
     lsquic_cfcw_init(&conn->ifc_pub.cfcw, &conn->ifc_pub,
                                                 conn->ifc_settings->es_cfcw);
     conn->ifc_pub.all_streams = lsquic_hash_create();
     if (!conn->ifc_pub.all_streams)
-        goto err0;
-    conn->ifc_pub.u.ietf.prio_tree = lsquic_prio_tree_new(&conn->ifc_conn,
-            flags & IFC_SERVER ? conn->ifc_settings->es_h3_placeholders : 0);
-    if (!conn->ifc_pub.u.ietf.prio_tree)
-        goto err1;
+        return -1;
     conn->ifc_pub.u.ietf.qeh = &conn->ifc_qeh;
     conn->ifc_pub.u.ietf.qdh = &conn->ifc_qdh;
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
-    conn->ifc_peer_hq_settings.num_placeholders      = conn->ifc_settings->es_h3_placeholders;
     conn->ifc_peer_hq_settings.max_header_list_size  = HQ_DF_MAX_HEADER_LIST_SIZE;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
 
@@ -936,11 +930,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_idle_to = enpub->enp_settings.es_idle_timeout * 1000 * 1000;
     conn->ifc_ping_period = enpub->enp_settings.es_ping_period * 1000 * 1000;
     return 0;
-
-  err1:
-    lsquic_hash_destroy(conn->ifc_pub.all_streams);
-  err0:
-    return -1;
 }
 
 
@@ -990,7 +979,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     }
     conn->ifc_paths[0].cop_path.np_pack_size = max_packet_size;
 
-    if (0 != ietf_full_conn_init(conn, enpub, flags))
+    if (0 != ietf_full_conn_init(conn, enpub, flags,
+                                                enpub->enp_settings.es_ecn))
     {
         free(conn);
         return NULL;
@@ -1139,7 +1129,8 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF | LSCONN_SERVER;
 
-    if (0 != ietf_full_conn_init(conn, enpub, flags))
+    if (0 != ietf_full_conn_init(conn, enpub, flags,
+                                        lsquic_mini_conn_ietf_ecn_ok(imc)))
     {
         free(conn);
         return NULL;
@@ -2197,16 +2188,18 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
 static void
 process_streams_ready_to_send (struct ietf_full_conn *conn)
 {
-    lsquic_stream_t *stream;
+    struct lsquic_stream *stream;
+    struct stream_prio_iter spi;
 
     assert(!TAILQ_EMPTY(&conn->ifc_pub.sending_streams));
 
-    lsquic_prio_tree_iter_reset(conn->ifc_pub.u.ietf.prio_tree, "send");
-    TAILQ_FOREACH(stream, &conn->ifc_pub.sending_streams, next_send_stream)
-        lsquic_prio_tree_iter_add(conn->ifc_pub.u.ietf.prio_tree, stream);
+    lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.sending_streams),
+        TAILQ_LAST(&conn->ifc_pub.sending_streams, lsquic_streams_tailq),
+        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
+        SMQF_SENDING_FLAGS, &conn->ifc_conn, "send", NULL, NULL);
 
-    while ((stream = lsquic_prio_tree_iter_next(
-                                        conn->ifc_pub.u.ietf.prio_tree)))
+    for (stream = lsquic_spi_first(&spi); stream;
+                                            stream = lsquic_spi_next(&spi))
         if (!process_stream_ready_to_send(conn, stream))
             break;
 }
@@ -2375,8 +2368,6 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
     if (conn->ifc_flags & IFC_CREATED_OK)
         conn->ifc_enpub->enp_stream_if->on_conn_closed(&conn->ifc_conn);
-    if (conn->ifc_pub.u.ietf.prio_tree)
-        lsquic_prio_tree_destroy(conn->ifc_pub.u.ietf.prio_tree);
     if (conn->ifc_conn.cn_enc_session)
         conn->ifc_conn.cn_esf.i->esfi_destroy(conn->ifc_conn.cn_enc_session);
     while (!STAILQ_EMPTY(&conn->ifc_stream_ids_to_ss))
@@ -2533,7 +2524,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
         struct sockaddr_in6 v6;
     } sockaddr;
 
-    if (params->tp_disable_migration)
+    if (params->tp_disable_active_migration)
     {
         LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
         retire_cid_from_tp(conn, params);
@@ -3337,39 +3328,32 @@ static void
 process_streams_read_events (struct ietf_full_conn *conn)
 {
     struct lsquic_stream *stream;
-    int have_streams, iters;
+    int iters;
     enum stream_q_flags q_flags, needs_service;
+    struct stream_prio_iter spi;
     static const char *const labels[2] = { "read-0", "read-1", };
+
+    if (TAILQ_EMPTY(&conn->ifc_pub.read_streams))
+        return;
 
     conn->ifc_pub.cp_flags &= ~CP_STREAM_UNBLOCKED;
     iters = 0;
     do
     {
-        have_streams = 0;
-        TAILQ_FOREACH(stream, &conn->ifc_pub.read_streams, next_read_stream)
-            if (lsquic_stream_readable(stream))
-            {
-                if (!have_streams)
-                {
-                    ++have_streams;
-                    lsquic_prio_tree_iter_reset(conn->ifc_pub.u.ietf.prio_tree,
-                                                                labels[iters]);
-                }
-                lsquic_prio_tree_iter_add(conn->ifc_pub.u.ietf.prio_tree,
-                                                                    stream);
-            }
-
-        if (!have_streams)
-            break;
+        lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.read_streams),
+            TAILQ_LAST(&conn->ifc_pub.read_streams, lsquic_streams_tailq),
+            (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
+            SMQF_WANT_READ, &conn->ifc_conn, labels[iters], NULL, NULL);
 
         needs_service = 0;
-        while ((stream = lsquic_prio_tree_iter_next(
-                                        conn->ifc_pub.u.ietf.prio_tree)))
+        for (stream = lsquic_spi_first(&spi); stream;
+                                                stream = lsquic_spi_next(&spi))
         {
             q_flags = stream->sm_qflags & SMQF_SERVICE_FLAGS;
             lsquic_stream_dispatch_read_events(stream);
             needs_service |= q_flags ^ (stream->sm_qflags & SMQF_SERVICE_FLAGS);
         }
+
         if (needs_service)
             service_streams(conn);
     }
@@ -3435,31 +3419,25 @@ write_is_possible (struct ietf_full_conn *conn)
 }
 
 
-/* Write events are dispatched in two steps.  First, only the high-priority
- * streams are processed.  High-priority streams are critical streams plus
- * one non-critical streams with the highest priority.  In the second step,
- * all other streams are processed.
- */
 static void
-process_streams_write_events (struct ietf_full_conn *conn, int high_prio,
-                                const struct lsquic_stream **highest_non_crit)
+process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 {
     struct lsquic_stream *stream;
-    struct h3_prio_tree *const prio_tree = conn->ifc_pub.u.ietf.prio_tree;
+    struct stream_prio_iter spi;
+
+    lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.write_streams),
+        TAILQ_LAST(&conn->ifc_pub.write_streams, lsquic_streams_tailq),
+        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
+        SMQF_WANT_WRITE|SMQF_WANT_FLUSH, &conn->ifc_conn,
+        high_prio ? "write-high" : "write-low", NULL, NULL);
 
     if (high_prio)
-        *highest_non_crit = lsquic_prio_tree_highest_non_crit(prio_tree);
-    lsquic_prio_tree_iter_reset(prio_tree, high_prio ? "write-high" :
-                                                                "write-low");
-    TAILQ_FOREACH(stream, &conn->ifc_pub.write_streams, next_write_stream)
-        if (high_prio ==
-                (stream == *highest_non_crit ||
-                                        lsquic_stream_is_critical(stream)))
-            lsquic_prio_tree_iter_add(prio_tree, stream);
+        lsquic_spi_drop_non_high(&spi);
+    else
+        lsquic_spi_drop_high(&spi);
 
-
-    while ((stream = lsquic_prio_tree_iter_next(
-                                        conn->ifc_pub.u.ietf.prio_tree)))
+    for (stream = lsquic_spi_first(&spi); stream && write_is_possible(conn);
+                                            stream = lsquic_spi_next(&spi))
         if (stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
             lsquic_stream_dispatch_write_events(stream);
 
@@ -3920,6 +3898,9 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
     assert(conn->ifc_cur_path_id != path_id);
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "switched paths");
+    /* TODO: reset cwnd and RTT estimate.
+     *      See [draft-ietf-quic-transport-23] Section 9.4.
+     */
     lsquic_send_ctl_repath(&conn->ifc_send_ctl,
         CUR_NPATH(conn), &conn->ifc_paths[path_id].cop_path);
     maybe_retire_dcid(conn, &CUR_NPATH(conn)->np_dcid);
@@ -5550,6 +5531,7 @@ process_regular_packet (struct ietf_full_conn *conn,
         switch (dec_packin)
         {
         case DECPI_BADCRYPT:
+        case DECPI_TOO_SHORT:
             if (conn->ifc_enpub->enp_settings.es_honor_prst
                 /* In server mode, even if we do support stateless reset packets,
                  * they are handled in lsquic_engine.c.  No need to have this
@@ -5562,21 +5544,20 @@ process_regular_packet (struct ietf_full_conn *conn,
                 conn->ifc_flags |= IFC_GOT_PRST;
                 return -1;
             }
-            else
+            else if (dec_packin == DECPI_BADCRYPT)
             {
                 LSQ_INFO("could not decrypt packet (type %s)",
                                     lsquic_hety2str[packet_in->pi_header_type]);
                 return 0;
             }
+            else
+            {
+                LSQ_INFO("packet is too short to be decrypted");
+                return 0;
+            }
         case DECPI_NOT_YET:
             return 0;
         case DECPI_NOMEM:
-            return 0;
-        case DECPI_TOO_SHORT:
-            /* We should not hit this path: packets that are too short should
-             * not be parsed correctly.
-             */
-            LSQ_INFO("packet is too short to be decrypted");
             return 0;
         case DECPI_VIOLATION:
             ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
@@ -5853,7 +5834,6 @@ static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    const struct lsquic_stream *highest_non_crit;
     int have_delayed_packets, s;
     enum tick_st tick = 0;
     unsigned n;
@@ -6014,7 +5994,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
     {
-        process_streams_write_events(conn, 1, &highest_non_crit);
+        process_streams_write_events(conn, 1);
         if (!write_is_possible(conn))
             goto end_write;
     }
@@ -6025,7 +6005,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         goto end_write;
 
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
-        process_streams_write_events(conn, 0, &highest_non_crit);
+        process_streams_write_events(conn, 0);
 
     lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
@@ -6449,59 +6429,6 @@ static const struct conn_iface *ietf_full_conn_iface_ptr =
 
 
 static void
-on_priority (void *ctx, const struct hq_priority *priority)
-{
-    struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_UNEXPECTED_FRAME,
-                                    "server should not send PRIORITY frames");
-}
-
-
-static void
-on_priority_server (void *ctx, const struct hq_priority *priority)
-{
-    struct ietf_full_conn *const conn = ctx;
-    enum h3_elem_type child_type, parent_type;
-    int s;
-
-    LSQ_DEBUG("%s: %s #%"PRIu64" depends on %s #%"PRIu64"; "
-        "weight: %u", __func__,
-        lsquic_h3pet2str[priority->hqp_prio_type], priority->hqp_prio_id,
-        lsquic_h3det2str[priority->hqp_dep_type], priority->hqp_dep_id,
-        HQP_WEIGHT(priority));
-
-    switch (priority->hqp_dep_type)
-    {
-        case H3DET_REQ_STREAM:  parent_type = H3ET_REQ_STREAM;  break;
-        case H3DET_PUSH_STREAM: parent_type = H3ET_PUSH_STREAM; break;
-        case H3DET_PLACEHOLDER: parent_type = H3ET_PLACEHOLDER; break;
-        default:                parent_type = H3ET_ROOT;        break;
-    }
-
-    switch (priority->hqp_prio_type)
-    {
-        case H3PET_REQ_STREAM:   child_type = H3ET_REQ_STREAM;  break;
-        case H3PET_PUSH_STREAM:  child_type = H3ET_PUSH_STREAM; break;
-        case H3PET_PLACEHOLDER:  child_type = H3ET_PLACEHOLDER; break;
-        default:
-            ABORT_QUIETLY(1, HEC_MALFORMED_FRAME + HQFT_PRIORITY,
-                "Priority frame on control stream specified current stream "
-                                                            "prioritized type");
-            return;
-    }
-
-    s = lsquic_prio_tree_set_rel(conn->ifc_pub.u.ietf.prio_tree, child_type,
-                    priority->hqp_prio_id, priority->hqp_weight, parent_type,
-                    priority->hqp_dep_id);
-    /* TODO: differentiate between internal and protocol errors -- perhaps
-     * via a special callback to be called in prio_tree.
-     */
-    if (s != 0)
-        ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR, "error setting priority");
-}
-
-
-static void
 on_cancel_push (void *ctx, uint64_t push_id)
 {
     struct ietf_full_conn *const conn = ctx;
@@ -6514,7 +6441,7 @@ static void
 on_max_push_id_client (void *ctx, uint64_t push_id)
 {
     struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_WRONG_STREAM, "client does not expect the server "
+    ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "client does not expect the server "
         "to send MAX_PUSH_ID frame");
 }
 
@@ -6586,19 +6513,6 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         LSQ_DEBUG("Peer's SETTINGS_QPACK_BLOCKED_STREAMS=%"PRIu64, value);
         conn->ifc_peer_hq_settings.qpack_blocked_streams = value;
         break;
-    case HQSID_NUM_PLACEHOLDERS:
-        LSQ_DEBUG("Peer's SETTINGS_NUM_PLACEHOLDERS=%"PRIu64, value);
-        if (conn->ifc_flags & IFC_SERVER)
-            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-                                            "HTTP_WRONG_SETTING_DIRECTION");
-        else
-        {
-            conn->ifc_peer_hq_settings.num_placeholders
-                = MIN(value, conn->ifc_settings->es_h3_placeholders);
-            lsquic_prio_tree_set_ph(conn->ifc_pub.u.ietf.prio_tree,
-                                conn->ifc_peer_hq_settings.num_placeholders);
-        }
-        break;
     case HQSID_QPACK_MAX_TABLE_CAPACITY:
         LSQ_DEBUG("Peer's SETTINGS_QPACK_MAX_TABLE_CAPACITY=%"PRIu64, value);
         conn->ifc_peer_hq_settings.header_table_size = value;
@@ -6620,7 +6534,7 @@ static void
 on_goaway_server (void *ctx, uint64_t stream_id)
 {
     struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_UNEXPECTED_FRAME,
+    ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED,
                                     "client should not send GOAWAY frames");
 }
 
@@ -6636,7 +6550,7 @@ on_goaway (void *ctx, uint64_t stream_id)
     sit = stream_id & SIT_MASK;
     if (sit != SIT_BIDI_CLIENT)
     {
-        ABORT_QUIETLY(1, HEC_MALFORMED_FRAME,
+        ABORT_QUIETLY(1, HEC_ID_ERROR,
                             "stream ID %"PRIu64" in GOAWAY frame", stream_id);
         return;
     }
@@ -6669,14 +6583,13 @@ static void
 on_unexpected_frame (void *ctx, uint64_t frame_type)
 {
     struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_WRONG_STREAM, "Frame type %"PRIu64" is not allowed "
-        "on the control stream", frame_type);
+    ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "Frame type %"PRIu64" is not "
+        "allowed on the control stream", frame_type);
 }
 
 
 static const struct hcsi_callbacks hcsi_callbacks_server =
 {
-    .on_priority            = on_priority_server,
     .on_cancel_push         = on_cancel_push,
     .on_max_push_id         = on_max_push_id,
     .on_settings_frame      = on_settings_frame,
@@ -6687,7 +6600,6 @@ static const struct hcsi_callbacks hcsi_callbacks_server =
 
 static const struct hcsi_callbacks hcsi_callbacks =
 {
-    .on_priority            = on_priority,
     .on_cancel_push         = on_cancel_push,
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
@@ -6815,8 +6727,10 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
         }
         else
         {
-            ABORT_WARN("Incoming QPACK encoder stream already exists");
-            /* TODO: special error code? */
+            ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR,
+                "Incoming QPACK encoder stream %"PRIu64" already exists: "
+                "cannot create second stream %"PRIu64,
+                conn->ifc_qdh.qdh_enc_sm_in->id, stream->id);
             lsquic_stream_close(stream);
         }
         break;
@@ -6830,8 +6744,10 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
         }
         else
         {
-            ABORT_WARN("Incoming QPACK decoder stream already exists");
-            /* TODO: special error code? */
+            ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR,
+                "Incoming QPACK decoder stream %"PRIu64" already exists: "
+                "cannot create second stream %"PRIu64,
+                conn->ifc_qeh.qeh_dec_sm_in->id, stream->id);
             lsquic_stream_close(stream);
         }
         break;

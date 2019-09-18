@@ -1,3 +1,7 @@
+2019-09-18
+    - 2.4.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 23 support
+
 2019-09-13
     - 2.3.1
     - [BUGFIX] Fix memory leaks

@@ -2,9 +2,9 @@
 #ifndef LSQUIC_HKDF_H
 #define LSQUIC_HKDF_H 1
 
-/* [draft-ietf-quic-tls-22] Section 5.2 */
-#define HSK_SALT_BUF "\x7f\xbc\xdb\x0e\x7c\x66\xbb\xe9\x19\x3a" \
-                     "\x96\xcd\x21\x51\x9e\xbd\x7a\x02\x64\x4a"
+/* [draft-ietf-quic-tls-23] Section 5.2 */
+#define HSK_SALT_BUF "\xc3\xee\xf7\x12\xc7\x2e\xbb\x5a\x11\xa7" \
+                     "\xd2\x43\x2b\xb4\x63\x65\xbe\xf9\xf5\x02"
 #define HSK_SALT ((unsigned char *) HSK_SALT_BUF)
 #define HSK_SALT_SZ (sizeof(HSK_SALT_BUF) - 1)
 

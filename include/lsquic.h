@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 3
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_MINOR_VERSION 4
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -125,9 +125,9 @@ enum lsquic_version
 #endif
 
     /**
-     * IETF QUIC Draft-22
+     * IETF QUIC Draft-23
      */
-    LSQVER_ID22,
+    LSQVER_ID23,
 
     /**
      * Special version to trigger version negotiation.
@@ -139,7 +139,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 39, 43, 46, and IETF Draft-22
+ * We currently support versions 39, 43, 46, and IETF Draft-23
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -156,9 +156,9 @@ enum lsquic_version
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS ((1 << LSQVER_039) | (1 << LSQVER_043))
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID22) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID22) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {
@@ -358,14 +358,8 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_QPACK_ENC_MAX_BLOCKED 100
 #define LSQUIC_DF_QPACK_ENC_MAX_SIZE 4096
 
-/** ECN is enabled by default */
-#define LSQUIC_DF_ECN 1
-
-/**
- * The default number of the priority placeholders is higher than the
- * recommended value of 16 to give the clients even more freedom.
- */
-#define LSQUIC_DF_H3_PLACEHOLDERS 50
+/** ECN is disabled by default */
+#define LSQUIC_DF_ECN 0
 
 /** Allow migration by default */
 #define LSQUIC_DF_ALLOW_MIGRATION 1
@@ -728,13 +722,6 @@ struct lsquic_engine_settings {
      * The default is @ref LSQUIC_DF_ECN
      */
     int             es_ecn;
-
-    /**
-     * Number of HTTP/3 priorify placeholders.
-     *
-     * The default is @ref LSQUIC_DF_H3_PLACEHOLDERS
-     */
-    unsigned        es_h3_placeholders;
 
     /**
      * Allow peer to migrate connection.

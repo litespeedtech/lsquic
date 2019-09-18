@@ -25,6 +25,10 @@ struct lsquic_hash_elem
 struct lsquic_hash *
 lsquic_hash_create (void);
 
+struct lsquic_hash *
+lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
+                    unsigned (*hash)(const void *, size_t, unsigned seed));
+
 void
 lsquic_hash_destroy (struct lsquic_hash *);
 

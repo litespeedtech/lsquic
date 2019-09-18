@@ -576,6 +576,17 @@ read_one_packet (struct read_iter *iter)
         , &packs_in->ecn[iter->ri_idx]
 #endif
     );
+#if LSQUIC_ECN_BLACK_HOLE && ECN_SUPPORTED
+    {
+        const char *s;
+        s = getenv("LSQUIC_ECN_BLACK_HOLE");
+        if (s && atoi(s) && packs_in->ecn[iter->ri_idx])
+        {
+            LSQ_NOTICE("ECN blackhole: drop packet");
+            return ROP_OK;
+        }
+    }
+#endif
 #if __linux__
     if (sport->drop_init)
     {
@@ -1789,11 +1800,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
         }
         break;
     case 15:
-        if (0 == strncmp(name, "h3_placeholders", 15))
-        {
-            settings->es_h3_placeholders = atoi(val);
-            return 0;
-        }
         if (0 == strncmp(name, "allow_migration", 15))
         {
             settings->es_allow_migration = atoi(val);

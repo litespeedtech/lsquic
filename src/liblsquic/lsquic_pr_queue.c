@@ -34,11 +34,13 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_sizes.h"
 #include "lsquic_handshake.h"
+#include "lsquic_xxhash.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PRQ
 #include "lsquic_logger.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 
 static const struct conn_iface evanescent_conn_iface;
@@ -46,14 +48,15 @@ static const struct conn_iface evanescent_conn_iface;
 
 struct packet_req
 {
-    STAILQ_ENTRY(packet_req)    pr_next;
+    struct lsquic_hash_elem     pr_hash_el;
     lsquic_cid_t                pr_scid;
     lsquic_cid_t                pr_dcid;
     enum packet_req_type        pr_type;
-    enum {
+    enum pr_flags {
         PR_GQUIC    = 1 << 0,
     }                           pr_flags;
     enum lsquic_version         pr_version;
+    unsigned                    pr_rst_sz;
     struct network_path         pr_path;
 };
 
@@ -79,10 +82,10 @@ struct pr_queue
 {
     TAILQ_HEAD(, lsquic_conn)   prq_free_conns,
                                 prq_returned_conns;
-    STAILQ_HEAD(, packet_req)   prq_reqs_queue;
     struct malo                *prq_reqs_pool;
     const struct lsquic_engine_public
                                *prq_enpub;
+    struct lsquic_hash         *prq_reqs_hash;
     unsigned                    prq_max_reqs;
     unsigned                    prq_nreqs;
     unsigned                    prq_max_conns;
@@ -103,6 +106,30 @@ struct pr_queue
 };
 
 
+static int
+comp_reqs (const void *s1, const void *s2, size_t n)
+{
+    const struct packet_req *a, *b;
+
+    a = s1;
+    b = s2;
+    if (a->pr_type == b->pr_type && LSQUIC_CIDS_EQ(&a->pr_dcid, &b->pr_dcid))
+        return 0;
+    else
+        return -1;
+}
+
+
+static unsigned
+hash_req (const void *p, size_t len, unsigned seed)
+{
+    const struct packet_req *req;
+
+    req = p;
+    return XXH32(req->pr_dcid.idbuf, req->pr_dcid.len, seed);
+}
+
+
 struct pr_queue *
 prq_create (unsigned max_elems, unsigned max_conns,
                         const struct lsquic_engine_public *enpub)
@@ -110,6 +137,7 @@ prq_create (unsigned max_elems, unsigned max_conns,
     const struct parse_funcs *pf;
     struct pr_queue *prq;
     struct malo *malo;
+    struct lsquic_hash *hash;
     unsigned verneg_g_sz;
     ssize_t prst_g_sz;
     int len;
@@ -121,11 +149,19 @@ prq_create (unsigned max_elems, unsigned max_conns,
         goto err0;
     }
 
+
+    hash = lsquic_hash_create_ext(comp_reqs, hash_req);
+    if (!hash)
+    {
+        LSQ_WARN("cannot create hash");
+        goto err1;
+    }
+
     prq = malloc(sizeof(*prq));
     if (!prq)
     {
         LSQ_WARN("malloc failed: %s", strerror(errno));
-        goto err1;
+        goto err2;
     }
 
     const lsquic_cid_t cid = { .len = 8, };
@@ -137,7 +173,7 @@ prq_create (unsigned max_elems, unsigned max_conns,
     if (len <= 0)
     {
         LSQ_ERROR("cannot generate version negotiation packet");
-        goto err2;
+        goto err3;
     }
     verneg_g_sz = (unsigned) len;
 
@@ -146,12 +182,12 @@ prq_create (unsigned max_elems, unsigned max_conns,
     if (prst_g_sz < 0)
     {
         LSQ_ERROR("cannot generate public reset packet");
-        goto err2;
+        goto err3;
     }
 
     TAILQ_INIT(&prq->prq_free_conns);
     TAILQ_INIT(&prq->prq_returned_conns);
-    STAILQ_INIT(&prq->prq_reqs_queue);
+    prq->prq_reqs_hash = hash;
     prq->prq_reqs_pool = malo;
     prq->prq_max_reqs = max_elems;
     prq->prq_nreqs = 0;
@@ -165,8 +201,10 @@ prq_create (unsigned max_elems, unsigned max_conns,
 
     return prq;
 
-  err2:
+  err3:
     free(prq);
+  err2:
+    lsquic_hash_destroy(hash);
   err1:
     lsquic_malo_destroy(malo);
   err0:
@@ -185,6 +223,7 @@ prq_destroy (struct pr_queue *prq)
         TAILQ_REMOVE(&prq->prq_free_conns, conn, cn_next_pr);
         free(conn);
     }
+    lsquic_hash_destroy(prq->prq_reqs_hash);
     lsquic_malo_destroy(prq->prq_reqs_pool);
     free(prq);
 }
@@ -223,6 +262,45 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
 {
     struct packet_req *req;
     lsquic_ver_tag_t ver_tag;
+    enum lsquic_version version;
+    enum pr_flags flags;
+    unsigned max, size;
+
+    if (packet_in->pi_flags & PI_GQUIC)
+        flags = PR_GQUIC;
+    else
+        flags = 0;
+
+    if (packet_in->pi_quic_ver)
+    {
+        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
+                                                            sizeof(ver_tag));
+        version = lsquic_tag2ver(ver_tag);
+    }
+    else /* Got to set it to something sensible... */
+        version = LSQVER_ID23;
+
+    if (type == PACKET_REQ_PUBRES && !(flags & PR_GQUIC))
+    {
+        if (packet_in->pi_data_sz <= IQUIC_MIN_SRST_SIZE)
+        {
+            LSQ_DEBUGC("not scheduling public reset: incoming packet for CID "
+                "%"CID_FMT" too small: %hu bytes",
+                CID_BITS(&packet_in->pi_dcid), packet_in->pi_data_sz);
+            return -1;
+        }
+        /* Use a random stateless reset size */
+        max = MIN(IQUIC_MAX_SRST_SIZE, packet_in->pi_data_sz - 1u);
+        if (max > IQUIC_MIN_SRST_SIZE)
+            size = IQUIC_MIN_SRST_SIZE + rand() % (max - IQUIC_MIN_SRST_SIZE);
+        else
+            size = IQUIC_MIN_SRST_SIZE;
+        LSQ_DEBUGC("selected %u-byte reset size for CID %"CID_FMT
+            " (range is [%u, %u])", size, CID_BITS(&packet_in->pi_dcid),
+            IQUIC_MIN_SRST_SIZE, max);
+    }
+    else
+        size = 0;
 
     req = get_req(prq);
     if (!req)
@@ -231,25 +309,34 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         return -1;
     }
 
-    STAILQ_INSERT_TAIL(&prq->prq_reqs_queue, req, pr_next);
-
     req->pr_type     = type;
-    req->pr_flags    = packet_in->pi_flags & PI_GQUIC ? PR_GQUIC : 0;
-    lsquic_scid_from_packet_in(packet_in, &req->pr_scid);
     req->pr_dcid     = packet_in->pi_dcid;
+    if (lsquic_hash_find(prq->prq_reqs_hash, req, sizeof(req)))
+    {
+        LSQ_DEBUG("request for this DCID and type already exists");
+        put_req(prq, req);
+        return -1;
+    }
+
+    req->pr_hash_el.qhe_flags = 0;
+    if (!lsquic_hash_insert(prq->prq_reqs_hash, req, sizeof(req),
+                                                    req, &req->pr_hash_el))
+    {
+        LSQ_DEBUG("could not insert req into hash");
+        put_req(prq, req);
+        return -1;
+    }
+
+    req->pr_flags    = flags;
+    req->pr_rst_sz   = size;
+    req->pr_version  = version;
+    lsquic_scid_from_packet_in(packet_in, &req->pr_scid);
     req->pr_path.np_peer_ctx = peer_ctx;
     memcpy(NP_LOCAL_SA(&req->pr_path), local_addr,
                                             sizeof(req->pr_path.np_local_addr));
     memcpy(NP_PEER_SA(&req->pr_path), peer_addr,
                                             sizeof(req->pr_path.np_peer_addr));
-    if (packet_in->pi_quic_ver)
-    {
-        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
-                                                            sizeof(ver_tag));
-        req->pr_version = lsquic_tag2ver(ver_tag);
-    }
-    else /* Got to set it to something sensible... */
-        req->pr_version = LSQVER_ID22;
+
     LSQ_DEBUGC("scheduled %s packet for connection %"CID_FMT,
                             lsquic_preqt2str[type], CID_BITS(&req->pr_dcid));
     return 0;
@@ -316,6 +403,7 @@ prq_next_conn (struct pr_queue *prq)
 {
     struct evanescent_conn *evconn;
     struct lsquic_conn *lconn;
+    struct lsquic_hash_elem *el;
     struct packet_req *req;
     struct lsquic_packet_out *packet_out;
     int (*gen_verneg) (unsigned char *, size_t, const lsquic_cid_t *,
@@ -329,14 +417,15 @@ prq_next_conn (struct pr_queue *prq)
         return lconn;
     }
 
-    req = STAILQ_FIRST(&prq->prq_reqs_queue);
-    if (!req)           /* Nothing is queued */
+    el = lsquic_hash_first(prq->prq_reqs_hash);
+    if (!el)           /* Nothing is queued */
         return NULL;
 
     evconn = get_evconn(prq);
     if (!evconn)         /* Reached limit or malloc failed */
         return NULL;
 
+    req = lsquic_hashelem_getdata(el);
     packet_out = &evconn->evc_packet_out;
     switch ((req->pr_type << 29) | req->pr_flags)
     {
@@ -370,16 +459,16 @@ prq_next_conn (struct pr_queue *prq)
         break;
     default:
         packet_out->po_flags &= ~PO_VERNEG;
-        packet_out->po_data_sz = IQUIC_MIN_SRST_SIZE;
-        RAND_bytes(packet_out->po_data, IQUIC_MIN_SRST_RANDOM_BYTES);
+        packet_out->po_data_sz = req->pr_rst_sz;
+        RAND_bytes(packet_out->po_data, req->pr_rst_sz - IQUIC_SRESET_TOKEN_SZ);
         packet_out->po_data[0] &= ~0x80;
         packet_out->po_data[0] |=  0x40;
         lsquic_tg_generate_sreset(prq->prq_enpub->enp_tokgen, &req->pr_dcid,
-            packet_out->po_data + IQUIC_MIN_SRST_RANDOM_BYTES);
+            packet_out->po_data + req->pr_rst_sz - IQUIC_SRESET_TOKEN_SZ);
         break;
     }
 
-    STAILQ_REMOVE_HEAD(&prq->prq_reqs_queue, pr_next);
+    lsquic_hash_erase(prq->prq_reqs_hash, el);
     evconn->evc_req = req;
 
     lconn= &evconn->evc_conn;
@@ -394,7 +483,7 @@ prq_next_conn (struct pr_queue *prq)
 int
 prq_have_pending (const struct pr_queue *prq)
 {
-    return !STAILQ_EMPTY(&prq->prq_reqs_queue);
+    return lsquic_hash_count(prq->prq_reqs_hash) > 0;
 }
 
 

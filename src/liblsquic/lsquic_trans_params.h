@@ -21,7 +21,7 @@ enum transport_param_id
     TPI_INIT_MAX_STREAMS_UNI              =  9,
     TPI_ACK_DELAY_EXPONENT                =  10,
     TPI_MAX_ACK_DELAY                     =  11,
-    TPI_DISABLE_MIGRATION                 =  12,
+    TPI_DISABLE_ACTIVE_MIGRATION          =  12,
     TPI_PREFERRED_ADDRESS                 =  13,
     TPI_ACTIVE_CONNECTION_ID_LIMIT        =  14,
 #define MAX_TPI TPI_ACTIVE_CONNECTION_ID_LIMIT
@@ -85,7 +85,7 @@ struct transport_params
 #define tp_max_ack_delay tp_numerics_u.s.max_ack_delay
 #define tp_active_connection_id_limit tp_numerics_u.s.active_connection_id_limit
 
-    signed char tp_disable_migration;
+    signed char tp_disable_active_migration;
     uint8_t     tp_stateless_reset_token[IQUIC_SRESET_TOKEN_SZ];
     struct {
         uint8_t         ipv4_addr[4];
@@ -103,7 +103,7 @@ struct transport_params
 #define TP_DEF_INIT_MAX_STREAMS_UNI 0
 #define TP_DEF_INIT_MAX_STREAMS_BIDI 0
 #define TP_DEF_INIT_MAX_DATA 0
-#define TP_DEF_DISABLE_MIGRATION 0
+#define TP_DEF_DISABLE_ACTIVE_MIGRATION 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_BIDI_LOCAL 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_UNI 0
@@ -123,7 +123,7 @@ struct transport_params
     .tp_init_max_streams_bidi             =  TP_DEF_INIT_MAX_STREAMS_BIDI,            \
     .tp_init_max_streams_uni              =  TP_DEF_INIT_MAX_STREAMS_UNI,             \
     .tp_init_max_data                     =  TP_DEF_INIT_MAX_DATA,                    \
-    .tp_disable_migration                 =  TP_DEF_DISABLE_MIGRATION,                \
+    .tp_disable_active_migration          =  TP_DEF_DISABLE_ACTIVE_MIGRATION,         \
     .tp_init_max_stream_data_bidi_local   =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_LOCAL,  \
     .tp_init_max_stream_data_bidi_remote  =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE, \
     .tp_init_max_stream_data_uni          =  TP_DEF_INIT_MAX_STREAM_DATA_UNI

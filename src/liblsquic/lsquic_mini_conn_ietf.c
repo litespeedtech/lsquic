@@ -63,11 +63,41 @@ imico_destroy_packet (struct ietf_mini_conn *conn,
 }
 
 
+int
+lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *conn)
+{
+    packno_set_t acked;
+
+    /* First flight has only Initial and Handshake packets */
+    acked = conn->imc_acked_packnos[PNS_INIT]
+          | conn->imc_acked_packnos[PNS_HSK]
+          ;
+    return 0 != (conn->imc_ecn_packnos & acked);
+}
+
+
+#define imico_ecn_ok lsquic_mini_conn_ietf_ecn_ok
+
+
+static enum ecn
+imico_get_ecn (struct ietf_mini_conn *conn)
+{
+    if (!conn->imc_enpub->enp_settings.es_ecn)
+        return ECN_NOT_ECT;
+    else if (!conn->imc_sent_packnos /* We set ECT0 in first flight */
+                                                    || imico_ecn_ok(conn))
+        return ECN_ECT0;
+    else
+        return ECN_NOT_ECT;
+}
+
+
 static struct lsquic_packet_out *
 imico_get_packet_out (struct ietf_mini_conn *conn,
                                     enum header_type header_type, size_t need)
 {
     struct lsquic_packet_out *packet_out;
+    enum ecn ecn;
 
     if (need)
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
@@ -94,8 +124,8 @@ imico_get_packet_out (struct ietf_mini_conn *conn,
     packet_out->po_packno = conn->imc_next_packno++;
     packet_out->po_flags |= PO_MINI;
     lsquic_packet_out_set_pns(packet_out, lsquic_hety2pns[header_type]);
-    if (conn->imc_enpub->enp_settings.es_ecn)
-        packet_out->po_lflags |= ECN_ECT0 << POECN_SHIFT;
+    ecn = imico_get_ecn(conn);
+    packet_out->po_lflags |= ecn << POECN_SHIFT;
     TAILQ_INSERT_TAIL(&conn->imc_packets_out, packet_out, po_next);
     packet_out->po_loss_chain = packet_out;
     return packet_out;
@@ -903,6 +933,11 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     enum dec_packin dec_packin;
     enum packnum_space pns;
 
+    if (conn->imc_flags & IMC_ERROR)
+    {
+        LSQ_DEBUG("ignore incoming packet: connection is in error state");
+        return;
+    }
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
     if (pns == PNS_INIT && (conn->imc_flags & IMC_IGNORE_INIT))
@@ -957,11 +992,15 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
             packet_in->pi_packno > highest_bit_set(conn->imc_recvd_packnos[pns]))
         conn->imc_largest_recvd[pns] = packet_in->pi_received;
     conn->imc_recvd_packnos[pns] |= 1ULL << packet_in->pi_packno;
-    conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
 
     if (0 != imico_parse_regular_packet(conn, packet_in))
+    {
+        LSQ_DEBUG("connection is now in error state");
         conn->imc_flags |= IMC_ERROR;
+        return;
+    }
 
+    conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
     ++conn->imc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
     conn->imc_incoming_ecn <<= 1;
     conn->imc_incoming_ecn |= lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
@@ -974,6 +1013,8 @@ ietf_mini_conn_ci_packet_sent (struct lsquic_conn *lconn,
 {
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     conn->imc_sent_packnos |= 1ULL << packet_out->po_packno;
+    conn->imc_ecn_packnos |= !!lsquic_packet_out_ecn(packet_out)
+                                                    << packet_out->po_packno;
 #if 0
     if (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
     {
@@ -983,6 +1024,8 @@ ietf_mini_conn_ci_packet_sent (struct lsquic_conn *lconn,
 #endif
     ++conn->imc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
                               [ lsquic_packet_out_ecn(packet_out) ];
+    if (packet_out->po_header_type == HETY_HANDSHAKE)
+        conn->imc_flags |= IMC_HSK_PACKET_SENT;
     LSQ_DEBUG("%s: packet %"PRIu64" sent", __func__, packet_out->po_packno);
 }
 
@@ -1028,6 +1071,7 @@ imico_repackage_packet (struct ietf_mini_conn *conn,
         "resending as packet %"PRIu64, oldno, packno);
     packet_out->po_packno = packno;
     packet_out->po_flags &= ~PO_SENT;
+    lsquic_packet_out_set_ecn(packet_out, imico_get_ecn(conn));
     if (packet_out->po_flags & PO_ENCRYPTED)
         imico_return_enc_data(conn, packet_out);
     TAILQ_INSERT_TAIL(&conn->imc_packets_out, packet_out, po_next);
@@ -1245,19 +1289,12 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     enum header_type header_type;
-    enum packnum_space pns;
+    enum packnum_space pns, pns_max;
     unsigned error_code;
     const char *reason;
     size_t need;
     int sz, rlen, is_app;
     char reason_buf[0x20];
-
-    pns = (conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3;
-    header_type = pns2hety[pns];
-    need = 30;  /* Guess */ /* TODO: calculate, don't guess */
-    packet_out = imico_get_packet_out(conn, header_type, need);
-    if (!packet_out)
-        return;
 
     if (conn->imc_flags & IMC_ABORT_ERROR)
     {
@@ -1302,18 +1339,59 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
         rlen = 0;
     }
 
-    sz = conn->imc_conn.cn_pf->pf_gen_connect_close_frame(
-             packet_out->po_data + packet_out->po_data_sz,
-             lsquic_packet_out_avail(packet_out), is_app, error_code, reason,
-             rlen);
-    if (sz >= 0)
+
+/* [draft-ietf-quic-transport-23] Section 12.2:
+ *
+ " A client will always know whether the server has Handshake keys (see
+ " Section 17.2.2.1), but it is possible that a server does not know
+ " whether the client has Handshake keys.  Under these circumstances, a
+ " server SHOULD send a CONNECTION_CLOSE frame in both Handshake and
+ " Initial packets to ensure that at least one of them is processable by
+ " the client.
+ */
+
+    pns = (conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3;
+    switch ((!!(conn->imc_flags & IMC_HSK_PACKET_SENT) << 1)
+                | (pns == PNS_HSK) /* Handshake packet received */)
     {
-        packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
-        packet_out->po_data_sz += sz;
-        LSQ_DEBUG("generated CONNECTION_CLOSE frame");
+    case (0 << 1) | 0:
+        pns = PNS_INIT;
+        pns_max = PNS_INIT;
+        break;
+    case (1 << 1) | 0:
+        pns = PNS_INIT;
+        pns_max = PNS_HSK;
+        break;
+    default:
+        pns = PNS_HSK;
+        pns_max = PNS_HSK;
+        break;
     }
-    else
-        LSQ_WARN("could not generate CONNECTION_CLOSE frame");
+
+    LSQ_DEBUG("will generate %u CONNECTION_CLOSE frame%.*s",
+        pns_max - pns + 1, pns_max > pns, "s");
+    do
+    {
+        header_type = pns2hety[pns];
+        need = 30;  /* Guess */ /* TODO: calculate, don't guess */
+        packet_out = imico_get_packet_out(conn, header_type, need);
+        if (!packet_out)
+            return;
+        sz = conn->imc_conn.cn_pf->pf_gen_connect_close_frame(
+                 packet_out->po_data + packet_out->po_data_sz,
+                 lsquic_packet_out_avail(packet_out), is_app, error_code, reason,
+                 rlen);
+        if (sz >= 0)
+        {
+            packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
+            packet_out->po_data_sz += sz;
+            LSQ_DEBUG("generated CONNECTION_CLOSE frame");
+        }
+        else
+            LSQ_WARN("could not generate CONNECTION_CLOSE frame");
+        ++pns;
+    }
+    while (pns <= pns_max);
 }
 
 

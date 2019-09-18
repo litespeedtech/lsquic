@@ -44,7 +44,6 @@ SET(TESTS
     frame_writer
     goaway_gquic_be
     h3_framing
-    h3_prio
     hcsi_reader
     hkdf
     lsquic_hash
@@ -52,7 +51,6 @@ SET(TESTS
     packno_len
     parse
     parse_packet_in
-    parse_prio
     purga
     qlog
     quic_be_floats

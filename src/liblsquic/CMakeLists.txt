@@ -28,14 +28,12 @@ SET(lsquic_STAT_SRCS
     lsquic_full_conn.c
     lsquic_full_conn_ietf.c
     lsquic_global.c
-    lsquic_h3_prio.c
     lsquic_handshake.c
     lsquic_hash.c
     lsquic_hcsi_reader.c
     lsquic_hcso_writer.c
     lsquic_headers_stream.c
     lsquic_hkdf.c
-    lsquic_hq.c
     lsquic_hspack_valid.c
     lsquic_http1x_if.c
     lsquic_logger.c

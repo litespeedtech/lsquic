@@ -130,7 +130,7 @@ lsquic_tp_encode (const struct transport_params *params,
             }
         }
 
-    if (params->tp_disable_migration != TP_DEF_DISABLE_MIGRATION)
+    if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
         need += 4 + 0;
 
     if (need > bufsz || need > UINT16_MAX)
@@ -240,10 +240,10 @@ lsquic_tp_encode (const struct transport_params *params,
                                     sizeof(params->tp_preferred_address.srst));
                 }
                 break;
-            case TPI_DISABLE_MIGRATION:
-                if (params->tp_disable_migration != TP_DEF_DISABLE_MIGRATION)
+            case TPI_DISABLE_ACTIVE_MIGRATION:
+                if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
                 {
-                    WRITE_UINT_TO_P(TPI_DISABLE_MIGRATION, 16);
+                    WRITE_UINT_TO_P(TPI_DISABLE_ACTIVE_MIGRATION, 16);
                     WRITE_UINT_TO_P(0, 16);
                 }
                 break;
@@ -360,9 +360,9 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         {
             switch (param_id)
             {
-            case TPI_DISABLE_MIGRATION:
+            case TPI_DISABLE_ACTIVE_MIGRATION:
                 EXPECT_LEN(0);
-                params->tp_disable_migration = 1;
+                params->tp_disable_active_migration = 1;
                 break;
             case TPI_STATELESS_RESET_TOKEN:
                 /* Client MUST not include reset token,
@@ -476,7 +476,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
     WRITE_ONE_PARAM(max_packet_size, "%"PRIu64);
     WRITE_ONE_PARAM(ack_delay_exponent, "%"PRIu64);
     WRITE_ONE_PARAM(active_connection_id_limit, "%"PRIu64);
-    WRITE_ONE_PARAM(disable_migration, "%hhd");
+    WRITE_ONE_PARAM(disable_active_migration, "%hhd");
 #undef SEMICOLON
 #define SEMICOLON ""
     WRITE_ONE_PARAM(max_ack_delay, "%"PRIu64);

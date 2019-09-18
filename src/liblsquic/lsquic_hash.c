@@ -25,13 +25,16 @@ struct lsquic_hash
     struct hels_head        *qh_buckets,
                              qh_all;
     struct lsquic_hash_elem *qh_iter_next;
+    int                    (*qh_cmp)(const void *, const void *, size_t);
+    unsigned               (*qh_hash)(const void *, size_t, unsigned seed);
     unsigned                 qh_count;
     unsigned                 qh_nbits;
 };
 
 
 struct lsquic_hash *
-lsquic_hash_create (void)
+lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
+                    unsigned (*hashf)(const void *, size_t, unsigned seed))
 {
     struct hels_head *buckets;
     struct lsquic_hash *hash;
@@ -53,11 +56,20 @@ lsquic_hash_create (void)
         TAILQ_INIT(&buckets[i]);
 
     TAILQ_INIT(&hash->qh_all);
+    hash->qh_cmp       = cmp;
+    hash->qh_hash      = hashf;
     hash->qh_buckets   = buckets;
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
     return hash;
+}
+
+
+struct lsquic_hash *
+lsquic_hash_create (void)
+{
+    return lsquic_hash_create_ext(memcmp, XXH32);
 }
 
 
@@ -116,7 +128,7 @@ lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
                                             0 != lsquic_hash_grow(hash))
         return NULL;
 
-    hash_val = XXH64(key, key_sz, (uintptr_t) hash);
+    hash_val = hash->qh_hash(key, key_sz, (uintptr_t) hash);
     buckno = BUCKNO(hash->qh_nbits, hash_val);
     TAILQ_INSERT_TAIL(&hash->qh_all, el, qhe_next_all);
     TAILQ_INSERT_TAIL(&hash->qh_buckets[buckno], el, qhe_next_bucket);
@@ -136,12 +148,12 @@ lsquic_hash_find (struct lsquic_hash *hash, const void *key, unsigned key_sz)
     unsigned buckno, hash_val;
     struct lsquic_hash_elem *el;
 
-    hash_val = XXH64(key, key_sz, (uintptr_t) hash);
+    hash_val = hash->qh_hash(key, key_sz, (uintptr_t) hash);
     buckno = BUCKNO(hash->qh_nbits, hash_val);
     TAILQ_FOREACH(el, &hash->qh_buckets[buckno], qhe_next_bucket)
         if (hash_val == el->qhe_hash_val &&
             key_sz   == el->qhe_key_len &&
-            0 == memcmp(key, el->qhe_key_data, key_sz))
+            0 == hash->qh_cmp(key, el->qhe_key_data, key_sz))
         {
             return el;
         }

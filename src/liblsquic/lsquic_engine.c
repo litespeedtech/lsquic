@@ -74,7 +74,6 @@
 #include "lsquic_min_heap.h"
 #include "lsquic_http1x_if.h"
 #include "lsquic_parse_common.h"
-#include "lsquic_h3_prio.h"
 #include "lsquic_handshake.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
@@ -320,7 +319,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_qpack_dec_max_blocked = LSQUIC_DF_QPACK_DEC_MAX_BLOCKED;
     settings->es_qpack_enc_max_size = LSQUIC_DF_QPACK_ENC_MAX_SIZE;
     settings->es_qpack_enc_max_blocked = LSQUIC_DF_QPACK_ENC_MAX_BLOCKED;
-    settings->es_h3_placeholders = LSQUIC_DF_H3_PLACEHOLDERS;
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
 }
 
@@ -331,8 +329,6 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                               unsigned flags,
                               char *err_buf, size_t err_buf_sz)
 {
-    unsigned sum;
-
     if (settings->es_cfcw < LSQUIC_MIN_FCW ||
         settings->es_sfcw < LSQUIC_MIN_FCW)
     {
@@ -381,19 +377,6 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             snprintf(err_buf, err_buf_sz, "Source connection ID cannot be %u "
                         "bytes long; it must be between 4 and 18.",
                         settings->es_scid_len);
-        return -1;
-    }
-
-    sum = settings->es_init_max_streams_bidi
-        + settings->es_init_max_streams_uni
-        + settings->es_h3_placeholders;
-    if (sum > H3_PRIO_MAX_ELEMS)
-    {
-        if (err_buf)
-            snprintf(err_buf, err_buf_sz, "Combined number of streams and "
-                "placeholders (%u) is greater than the maximum supported "
-                "number of elements in the HTTP/3 priority tree (%u)",
-                sum, H3_PRIO_MAX_ELEMS);
         return -1;
     }
 
@@ -955,8 +938,7 @@ schedule_req_packet (struct lsquic_engine *engine, enum packet_req_type type,
         LSQ_DEBUGC("scheduled %s packet for cid %"CID_FMT,
                     lsquic_preqt2str[type], CID_BITS(&packet_in->pi_conn_id));
     else
-        LSQ_DEBUG("cannot schedule %s packet: out of packet request objects",
-                    lsquic_preqt2str[type]);
+        LSQ_DEBUG("cannot schedule %s packet", lsquic_preqt2str[type]);
 }
 
 

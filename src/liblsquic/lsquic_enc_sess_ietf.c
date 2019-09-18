@@ -78,8 +78,8 @@ static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
 } s_alpns[] = {
-    {   LSQVER_ID22, (unsigned char *) "\x05h3-22",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-22",     },
+    {   LSQVER_ID23, (unsigned char *) "\x05h3-23",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-23",     },
 };
 
 struct enc_sess_iquic;
@@ -520,7 +520,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         - 1 /* One slot is used by peer's SCID */
         - !!(params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
     if (!settings->es_allow_migration)
-        params.tp_disable_migration = 1;
+        params.tp_disable_active_migration = 1;
 
     len = lsquic_tp_encode(&params, buf, bufsz);
     if (len >= 0)

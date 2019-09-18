@@ -131,10 +131,10 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     const unsigned frame_size_len = 2;
 #endif
     unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
-        /* There are maximum four settings that need to be written out and
+        /* There are maximum three settings that need to be written out and
          * each value can be encoded in maximum 8 bytes:
          */
-        + 4 * (
+        + 3 * (
 #ifdef NDEBUG
             1   /* Each setting needs 1-byte varint number, */
 #else
@@ -145,18 +145,6 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     p = buf;
     *p++ = HQFT_SETTINGS;
     p += frame_size_len;
-
-    if (is_server)
-        if (settings->es_h3_placeholders != HQ_DF_NUM_PLACEHOLDERS)
-        {
-            /* Write out SETTINGS_NUM_PLACEHOLDERS */
-            bits = hcso_setting_type2bits(writer, HQSID_NUM_PLACEHOLDERS);
-            vint_write(p, HQSID_NUM_PLACEHOLDERS, bits, 1 << bits);
-            p += 1 << bits;
-            bits = vint_val2bits(settings->es_h3_placeholders);
-            vint_write(p, settings->es_h3_placeholders, bits, 1 << bits);
-            p += 1 << bits;
-        }
 
     if (settings->es_max_header_list_size != HQ_DF_MAX_HEADER_LIST_SIZE)
     {

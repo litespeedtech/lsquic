@@ -11,7 +11,6 @@ struct lsquic_conn;
 
 struct hcsi_callbacks
 {
-    void    (*on_priority)(void *ctx, const struct hq_priority *);
     void    (*on_cancel_push)(void *ctx, uint64_t push_id);
     void    (*on_max_push_id)(void *ctx, uint64_t push_id);
     /* Gets called at the *end* of the SETTING frame */
@@ -30,8 +29,6 @@ struct hcsi_reader
         HR_SKIPPING,
         HR_READ_SETTING_BEGIN,
         HR_READ_SETTING_CONTINUE,
-        HR_READ_PRIORITY_BEGIN,
-        HR_READ_PRIORITY_CONTINUE,
         HR_READ_VARINT,
         HR_READ_VARINT_CONTINUE,
         HR_ERROR,
@@ -43,7 +40,6 @@ struct hcsi_reader
     {
         struct varint_read_state            vint_state;
         struct varint_read2_state           vint2_state;
-        struct h3_prio_frame_read_state     prio;
     }                               hr_u;
     const struct hcsi_callbacks    *hr_cb;
     void                           *hr_ctx;

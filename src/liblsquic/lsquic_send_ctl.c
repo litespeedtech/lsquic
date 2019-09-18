@@ -40,7 +40,6 @@
 #include "lsquic_conn_public.h"
 #include "lsquic_cong_ctl.h"
 #include "lsquic_enc_sess.h"
-#include "lsquic_h3_prio.h"
 #include "lsquic_hash.h"
 #include "lsquic_malo.h"
 
@@ -312,12 +311,12 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     ctl->sc_alset = alset;
     ctl->sc_ver_neg = ver_neg;
     ctl->sc_conn_pub = conn_pub;
-    assert(!(flags & ~(SC_IETF|SC_NSTP)));
+    assert(!(flags & ~(SC_IETF|SC_NSTP|SC_ECN)));
     ctl->sc_flags = flags;
     send_ctl_pick_initial_packno(ctl);
     if (enpub->enp_settings.es_pace_packets)
         ctl->sc_flags |= SC_PACE;
-    if ((flags & SC_IETF) && enpub->enp_settings.es_ecn)
+    if (flags & SC_ECN)
         ctl->sc_ecn = ECN_ECT0;
     else
         ctl->sc_ecn = ECN_NOT_ECT;
@@ -772,6 +771,16 @@ send_ctl_handle_lost_packet (lsquic_send_ctl_t *ctl,
 
     if (ctl->sc_ci->cci_lost)
         ctl->sc_ci->cci_lost(CGP(ctl), packet_out, packet_sz);
+
+    /* This is a client-only check, server check happens in mini conn */
+    if (send_ctl_ecn_on(ctl)
+            && 0 == ctl->sc_ecn_total_acked[PNS_INIT]
+                && HETY_INITIAL == packet_out->po_header_type
+                    && 3 == packet_out->po_packno)
+    {
+        LSQ_DEBUG("possible ECN black hole during handshake, disable ECN");
+        ctl->sc_ecn = ECN_NOT_ECT;
+    }
 
     if (packet_out->po_frame_types & ctl->sc_retx_frames)
     {
@@ -1840,6 +1849,7 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     packet_out->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
     assert(packet_out->po_frame_types);
     packet_out->po_packno = packno;
+    lsquic_packet_out_set_ecn(packet_out, ctl->sc_ecn);
 
     if (ctl->sc_ver_neg->vn_tag)
     {
@@ -2150,9 +2160,14 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *ctl)
 }
 
 
-static enum buf_packet_type
-send_ctl_determine_gquic_bpt (struct lsquic_send_ctl *ctl,
-                                        const struct lsquic_stream *stream)
+#ifdef NDEBUG
+static
+#elif __GNUC__
+__attribute__((weak))
+#endif
+enum buf_packet_type
+lsquic_send_ctl_determine_bpt (lsquic_send_ctl_t *ctl,
+                                            const lsquic_stream_t *stream)
 {
     const lsquic_stream_t *other_stream;
     struct lsquic_hash_elem *el;
@@ -2170,35 +2185,6 @@ send_ctl_determine_gquic_bpt (struct lsquic_send_ctl *ctl,
             return BPT_OTHER_PRIO;
     }
     return BPT_HIGHEST_PRIO;
-}
-
-
-static enum buf_packet_type
-send_ctl_determine_ietf_bpt (struct lsquic_send_ctl *ctl,
-                                        const struct lsquic_stream *stream)
-{
-    if (lsquic_stream_is_critical(stream)
-            || stream == lsquic_prio_tree_highest_non_crit(
-                                    ctl->sc_conn_pub->u.ietf.prio_tree))
-        return BPT_HIGHEST_PRIO;
-    else
-        return BPT_OTHER_PRIO;
-}
-
-
-#ifdef NDEBUG
-static
-#elif __GNUC__
-__attribute__((weak))
-#endif
-enum buf_packet_type
-lsquic_send_ctl_determine_bpt (lsquic_send_ctl_t *ctl,
-                                            const lsquic_stream_t *stream)
-{
-    if (ctl->sc_flags & SC_IETF)
-        return send_ctl_determine_ietf_bpt(ctl, stream);
-    else
-        return send_ctl_determine_gquic_bpt(ctl, stream);
 }
 
 

@@ -18,7 +18,6 @@ enum trans_error_code
     TEC_TRANSPORT_PARAMETER_ERROR  =  0x8,
     TEC_VERSION_NEGOTIATION_ERROR  =  0x9,
     TEC_PROTOCOL_VIOLATION         =  0xA,
-    TEC_INVALID_MIGRATION          =  0xC,
     TEC_CRYPTO_BUFFER_EXCEEDED     =  0xD,
 };
 
