@@ -92,10 +92,10 @@ ELSE()
 ENDIF()
 
 ADD_CUSTOM_COMMAND(
-    OUTPUT ${PROJECT_SOURCE_DIR}/src/liblsquic/lsquic_versions_to_string.c
-    COMMAND ${PROJECT_SOURCE_DIR}/src/liblsquic/gen-verstrs
-    ARGS ${PROJECT_SOURCE_DIR}/include/lsquic.h ${PROJECT_SOURCE_DIR}/src/liblsquic/lsquic_versions_to_string.c
-    DEPENDS ./gen-verstrs ${PROJECT_SOURCE_DIR}/include/lsquic.h
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs
+    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
+    DEPENDS ./gen-verstrs ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
 SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} lsquic_versions_to_string.c)
 
