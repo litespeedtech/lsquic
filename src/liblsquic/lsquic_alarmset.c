@@ -47,6 +47,7 @@ static const char *const lsquic_alid2str[] =
     [AL_CID_THROT]  =  "CID_THROT",
     [AL_PATH_CHAL_0] = "PATH_CHAL_0",
     [AL_PATH_CHAL_1] = "PATH_CHAL_1",
+    [AL_SESS_TICKET] = "SESS_TICKET",
 };
 
 

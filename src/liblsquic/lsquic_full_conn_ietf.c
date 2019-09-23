@@ -123,6 +123,7 @@ enum ifull_conn_flags
     IFC_GOAWAY_CLOSE  = 1 << 23,
     IFC_FIRST_TICK    = 1 << 24,
     IFC_IGNORE_HSK    = 1 << 25,
+    IFC_PROC_CRYPTO   = 1 << 26,
 };
 
 
@@ -359,9 +360,9 @@ struct ietf_full_conn
     unsigned                    ifc_last_retire_prior_to;
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
-    struct lsquic_stream       *ifc_crypto_streams[N_ENC_LEVS];
     union {
         struct {
+            struct lsquic_stream   *crypto_streams[N_ENC_LEVS];
             struct ver_neg
                         ifcli_ver_neg;
             uint64_t    ifcli_max_push_id;
@@ -1035,8 +1036,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
             conn->ifc_conn.cn_esf.i->esfi_create_client(hostname,
                 conn->ifc_enpub, &conn->ifc_conn, CUR_DCID(conn),
                 &conn->ifc_u.cli.ifcli_ver_neg,
-                (void **) conn->ifc_crypto_streams, &crypto_stream_if,
-                zero_rtt, zero_rtt_sz);
+                (void **) conn->ifc_u.cli.crypto_streams, &crypto_stream_if,
+                zero_rtt, zero_rtt_sz, &conn->ifc_alset);
     if (!conn->ifc_conn.cn_enc_session)
     {
         /* TODO: free other stuff */
@@ -1044,17 +1045,17 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
         return NULL;
     }
 
-    conn->ifc_crypto_streams[ENC_LEV_CLEAR] = lsquic_stream_new_crypto(
+    conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = lsquic_stream_new_crypto(
         ENC_LEV_CLEAR, &conn->ifc_pub, &lsquic_cry_sm_if,
         conn->ifc_conn.cn_enc_session,
         SCF_IETF|SCF_DI_AUTOSWITCH|SCF_CALL_ON_NEW|SCF_CRITICAL);
-    if (!conn->ifc_crypto_streams[ENC_LEV_CLEAR])
+    if (!conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
     {
         /* TODO: free other stuff */
         free(conn);
         return NULL;
     }
-    if (!lsquic_stream_get_ctx(conn->ifc_crypto_streams[ENC_LEV_CLEAR]))
+    if (!lsquic_stream_get_ctx(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]))
     {
         /* TODO: free other stuff */
         free(conn);
@@ -1065,9 +1066,10 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (!conn->ifc_pub.packet_out_malo)
     {
         free(conn);
-        lsquic_stream_destroy(conn->ifc_crypto_streams[ENC_LEV_CLEAR]);
+        lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
         return NULL;
     }
+    conn->ifc_flags |= IFC_PROC_CRYPTO;
 
     LSQ_DEBUG("negotiating version %s",
                         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
@@ -2323,6 +2325,32 @@ ietf_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
 
 
 static void
+drop_crypto_streams (struct ietf_full_conn *conn)
+{
+    struct lsquic_stream **streamp;
+    unsigned count;
+
+    if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
+        return;
+
+    conn->ifc_flags &= ~IFC_PROC_CRYPTO;
+
+    count = 0;
+    for (streamp = conn->ifc_u.cli.crypto_streams; streamp <
+            conn->ifc_u.cli.crypto_streams + sizeof(conn->ifc_u.cli.crypto_streams)
+                    / sizeof(conn->ifc_u.cli.crypto_streams[0]); ++streamp)
+        if (*streamp)
+        {
+            lsquic_stream_force_finish(*streamp);
+            *streamp = NULL;
+            ++count;
+        }
+
+    LSQ_DEBUG("dropped %u crypto stream%.*s", count, count != 1, "s");
+}
+
+
+static void
 ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
@@ -2332,11 +2360,15 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     struct lsquic_hash_elem *el;
     unsigned i;
 
-    for (streamp = conn->ifc_crypto_streams; streamp <
-            conn->ifc_crypto_streams + sizeof(conn->ifc_crypto_streams)
-                    / sizeof(conn->ifc_crypto_streams[0]); ++streamp)
-        if (*streamp)
-            lsquic_stream_destroy(*streamp);
+    if (!(conn->ifc_flags & IFC_SERVER))
+    {
+        for (streamp = conn->ifc_u.cli.crypto_streams; streamp <
+                conn->ifc_u.cli.crypto_streams
+                    + sizeof(conn->ifc_u.cli.crypto_streams)
+                        / sizeof(conn->ifc_u.cli.crypto_streams[0]); ++streamp)
+            if (*streamp)
+                lsquic_stream_destroy(*streamp);
+    }
     while ((el = lsquic_hash_first(conn->ifc_pub.all_streams)))
     {
         stream = lsquic_hashelem_getdata(el);
@@ -3366,9 +3398,10 @@ process_crypto_stream_read_events (struct ietf_full_conn *conn)
 {
     struct lsquic_stream **stream;
 
-    for (stream = conn->ifc_crypto_streams; stream <
-            conn->ifc_crypto_streams + sizeof(conn->ifc_crypto_streams)
-                    / sizeof(conn->ifc_crypto_streams[0]); ++stream)
+    assert(!(conn->ifc_flags & IFC_SERVER));
+    for (stream = conn->ifc_u.cli.crypto_streams; stream <
+            conn->ifc_u.cli.crypto_streams + sizeof(conn->ifc_u.cli.crypto_streams)
+                    / sizeof(conn->ifc_u.cli.crypto_streams[0]); ++stream)
         if (*stream && (*stream)->sm_qflags & SMQF_WANT_READ)
             lsquic_stream_dispatch_read_events(*stream);
 }
@@ -3379,9 +3412,10 @@ process_crypto_stream_write_events (struct ietf_full_conn *conn)
 {
     struct lsquic_stream **stream;
 
-    for (stream = conn->ifc_crypto_streams; stream <
-            conn->ifc_crypto_streams + sizeof(conn->ifc_crypto_streams)
-                    / sizeof(conn->ifc_crypto_streams[0]); ++stream)
+    assert(!(conn->ifc_flags & IFC_SERVER));
+    for (stream = conn->ifc_u.cli.crypto_streams; stream <
+            conn->ifc_u.cli.crypto_streams + sizeof(conn->ifc_u.cli.crypto_streams)
+                    / sizeof(conn->ifc_u.cli.crypto_streams[0]); ++stream)
         if (*stream && (*stream)->sm_qflags & SMQF_WRITE_Q_FLAGS)
             lsquic_stream_dispatch_write_events(*stream);
 }
@@ -4260,9 +4294,8 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
 }
 
 
-/* Ignore CRYPTO frames in server mode */
 static unsigned
-process_crypto_frame_server (struct ietf_full_conn *conn,
+discard_crypto_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame stream_frame;
@@ -4271,20 +4304,29 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_crypto_frame(p, len,
                                                                 &stream_frame);
     if (parsed_len > 0)
+    {
+        LSQ_DEBUG("discard %d-byte CRYPTO frame", parsed_len);
         return (unsigned) parsed_len;
+    }
     else
         return 0;
 }
 
 
 static unsigned
-process_crypto_frame_client (struct ietf_full_conn *conn,
+process_crypto_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame *stream_frame;
     struct lsquic_stream *stream;
     enum enc_level enc_level;
     int parsed_len;
+
+    /* Ignore CRYPTO frames in server mode and in client mode after SSL object
+     * is gone.
+     */
+    if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
+        return discard_crypto_frame(conn, packet_in, p, len);
 
     stream_frame = lsquic_malo_get(conn->ifc_pub.mm->malo.stream_frame);
     if (!stream_frame)
@@ -4317,8 +4359,9 @@ process_crypto_frame_client (struct ietf_full_conn *conn,
         return parsed_len;
     }
 
-    if (conn->ifc_crypto_streams[enc_level])
-        stream = conn->ifc_crypto_streams[enc_level];
+    assert(!(conn->ifc_flags & IFC_SERVER));
+    if (conn->ifc_u.cli.crypto_streams[enc_level])
+        stream = conn->ifc_u.cli.crypto_streams[enc_level];
     else
     {
         stream = lsquic_stream_new_crypto(enc_level, &conn->ifc_pub,
@@ -4330,7 +4373,7 @@ process_crypto_frame_client (struct ietf_full_conn *conn,
             ABORT_WARN("cannot create crypto stream for level %u", enc_level);
             return 0;
         }
-        conn->ifc_crypto_streams[enc_level] = stream;
+        conn->ifc_u.cli.crypto_streams[enc_level] = stream;
         (void) lsquic_stream_wantread(stream, 1);
     }
 
@@ -4354,17 +4397,6 @@ process_crypto_frame_client (struct ietf_full_conn *conn,
     }
 
     return parsed_len;
-}
-
-
-static unsigned
-process_crypto_frame (struct ietf_full_conn *conn,
-    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
-{
-    if (conn->ifc_flags & IFC_SERVER)
-        return process_crypto_frame_server(conn, packet_in, p, len);
-    else
-        return process_crypto_frame_client(conn, packet_in, p, len);
 }
 
 
@@ -5419,11 +5451,12 @@ ignore_init (struct ietf_full_conn *conn)
     lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + PNS_INIT);
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_INIT);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_INIT]);
-    if (conn->ifc_crypto_streams[ENC_LEV_CLEAR])
-    {
-        lsquic_stream_destroy(conn->ifc_crypto_streams[ENC_LEV_CLEAR]);
-        conn->ifc_crypto_streams[ENC_LEV_CLEAR] = NULL;
-    }
+    if (!(conn->ifc_flags & IFC_SERVER))
+        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
+        {
+            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
+            conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = NULL;
+        }
 }
 
 
@@ -5436,11 +5469,12 @@ ignore_hsk (struct ietf_full_conn *conn)
     lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_HSK);
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_HSK);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_HSK]);
-    if (conn->ifc_crypto_streams[ENC_LEV_INIT])
-    {
-        lsquic_stream_destroy(conn->ifc_crypto_streams[ENC_LEV_INIT]);
-        conn->ifc_crypto_streams[ENC_LEV_INIT] = NULL;
-    }
+    if (!(conn->ifc_flags & IFC_SERVER))
+        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT])
+        {
+            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]);
+            conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT] = NULL;
+        }
 }
 
 
@@ -6385,6 +6419,14 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 }
 
 
+static void
+ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    drop_crypto_streams(conn);
+}
+
+
 static const struct conn_iface ietf_full_conn_iface = {
     .ci_abort                =  ietf_full_conn_ci_abort,
     .ci_abort_error          =  ietf_full_conn_ci_abort_error,
@@ -6395,6 +6437,7 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_close                =  ietf_full_conn_ci_close,
     .ci_destroy              =  ietf_full_conn_ci_destroy,
     .ci_drain_time           =  ietf_full_conn_ci_drain_time,
+    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams,
     .ci_get_ctx              =  ietf_full_conn_ci_get_ctx,
     .ci_get_engine           =  ietf_full_conn_ci_get_engine,
     .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid,
@@ -6763,10 +6806,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
             maybe_schedule_ss_for_stream(conn, stream->id,
                                                         HEC_REQUEST_CANCELLED);
         }
-        if (stream->sm_hash_el.qhe_flags & QHE_HASHED)
-            lsquic_hash_erase(conn->ifc_pub.all_streams, &stream->sm_hash_el);
-        assert((stream->sm_qflags & SMQF_WANT_READ) == SMQF_WANT_READ);
-        lsquic_stream_destroy(stream);
+        lsquic_stream_close(stream);
         break;
     default:
         LSQ_DEBUG("unknown unidirectional stream %"PRIu64 " of type %"PRIu64
@@ -6779,10 +6819,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
          */
         maybe_schedule_ss_for_stream(conn, stream->id,
                                                     HEC_STREAM_CREATION_ERROR);
-        if (stream->sm_hash_el.qhe_flags & QHE_HASHED)
-            lsquic_hash_erase(conn->ifc_pub.all_streams, &stream->sm_hash_el);
-        assert((stream->sm_qflags & SMQF_WANT_READ) == SMQF_WANT_READ);
-        lsquic_stream_destroy(stream);
+        lsquic_stream_close(stream);
         break;
     }
 }

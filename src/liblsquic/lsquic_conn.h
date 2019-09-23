@@ -240,6 +240,10 @@ struct conn_iface
 
     const lsquic_cid_t *
     (*ci_get_log_cid) (const struct lsquic_conn *);
+
+    /* Optional method.  Only used by the IETF client code. */
+    void
+    (*ci_drop_crypto_streams) (struct lsquic_conn *);
 };
 
 #define LSCONN_CCE_BITS 3

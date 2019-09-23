@@ -393,19 +393,31 @@ packetization_write_as_much_as_you_can (lsquic_stream_t *stream,
                                          lsquic_stream_ctx_t *ctx)
 {
     struct packetization_test_stream_ctx *const pack_ctx = (void *) ctx;
-    unsigned n_to_write;
+    unsigned n_to_write, n_sched;
     ssize_t n_written;
+    size_t avail;
     int s;
 
     while (pack_ctx->off < pack_ctx->len)
     {
         n_to_write = calc_n_to_write(pack_ctx->write_size);
+        n_sched = lsquic_send_ctl_n_scheduled(stream->conn_pub->send_ctl);
         if (n_to_write > pack_ctx->len - pack_ctx->off)
             n_to_write = pack_ctx->len - pack_ctx->off;
         n_written = lsquic_stream_write(stream, pack_ctx->buf + pack_ctx->off,
                                         n_to_write);
         if (n_written == 0)
+        {
+            if (n_to_write && SSHS_BEGIN == stream->sm_send_headers_state
+                    && lsquic_send_ctl_can_send(stream->conn_pub->send_ctl))
+            {
+                avail = lsquic_stream_write_avail(stream);
+                assert(avail == 0
+                    || lsquic_send_ctl_n_scheduled(
+                                    stream->conn_pub->send_ctl) > n_sched);
+            }
             break;
+        }
         pack_ctx->off += n_written;
         if (pack_ctx->flush_after_each_write)
         {
@@ -425,16 +437,27 @@ packetization_perform_one_write (lsquic_stream_t *stream,
                                          lsquic_stream_ctx_t *ctx)
 {
     struct packetization_test_stream_ctx *const pack_ctx = (void *) ctx;
-    unsigned n_to_write;
+    unsigned n_to_write, n_sched;
     ssize_t n_written;
+    size_t avail;
     int s;
 
     n_to_write = calc_n_to_write(pack_ctx->write_size);
     if (n_to_write > pack_ctx->len - pack_ctx->off)
         n_to_write = pack_ctx->len - pack_ctx->off;
+    n_sched = lsquic_send_ctl_n_scheduled(stream->conn_pub->send_ctl);
     n_written = lsquic_stream_write(stream, pack_ctx->buf + pack_ctx->off,
                                     n_to_write);
     assert(n_written >= 0);
+    if (n_written == 0 && SSHS_BEGIN == stream->sm_send_headers_state
+            && n_to_write
+            && lsquic_send_ctl_can_send(stream->conn_pub->send_ctl))
+    {
+        avail = lsquic_stream_write_avail(stream);
+        assert(avail == 0
+            || lsquic_send_ctl_n_scheduled(
+                            stream->conn_pub->send_ctl) > n_sched);
+    }
     pack_ctx->off += n_written;
     if (pack_ctx->flush_after_each_write)
     {

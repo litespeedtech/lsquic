@@ -584,4 +584,7 @@ lsquic_stream_duplicate_push (struct lsquic_stream *, uint64_t push_id);
 int
 lsquic_stream_push_promise (struct lsquic_stream *, struct push_promise *);
 
+void
+lsquic_stream_force_finish (struct lsquic_stream *);
+
 #endif

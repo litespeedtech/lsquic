@@ -1,3 +1,13 @@
+2019-09-23
+    - 2.4.2
+    - [BUGFIX] H3 framing: fix zero-byte write when space is available
+    - [BUGFIX] Don't send STREAM frame when incoming unidirectgional stream
+      is closed
+    - [BUGFIX] Cancel all pending writes by stream reset by a GOAWAY
+    - [BUGFIX] Fix use-after-free in IETF full conn
+    - [OPTIMIZATION] Wait for session tickets for two seconds and then drop
+      SSL object and crypto streams.
+
 2019-09-18
     - 2.4.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 23 support
