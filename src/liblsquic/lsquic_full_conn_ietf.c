@@ -1037,7 +1037,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                 conn->ifc_enpub, &conn->ifc_conn, CUR_DCID(conn),
                 &conn->ifc_u.cli.ifcli_ver_neg,
                 (void **) conn->ifc_u.cli.crypto_streams, &crypto_stream_if,
-                zero_rtt, zero_rtt_sz, &conn->ifc_alset);
+                zero_rtt, zero_rtt_sz, &conn->ifc_alset,
+                conn->ifc_max_streams_in[SD_UNI]);
     if (!conn->ifc_conn.cn_enc_session)
     {
         /* TODO: free other stuff */

@@ -272,6 +272,7 @@ struct enc_sess_iquic
                          esi_peer_tp;
     struct lsquic_alarmset
                         *esi_alset;
+    unsigned             esi_max_streams_uni;
 };
 
 
@@ -516,7 +517,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     params.tp_init_max_stream_data_uni
                             = settings->es_init_max_stream_data_uni;
     params.tp_init_max_streams_uni
-                            = settings->es_init_max_streams_uni;
+                            = enc_sess->esi_max_streams_uni;
     params.tp_init_max_streams_bidi
                             = settings->es_init_max_streams_bidi;
     params.tp_ack_delay_exponent
@@ -660,7 +661,7 @@ iquic_esfi_create_client (const char *hostname,
             const lsquic_cid_t *dcid, const struct ver_neg *ver_neg,
             void *crypto_streams[4], const struct crypto_stream_if *cryst_if,
             const unsigned char *zero_rtt, size_t zero_rtt_sz,
-            struct lsquic_alarmset *alset)
+            struct lsquic_alarmset *alset, unsigned max_streams_uni)
 {
     struct enc_sess_iquic *enc_sess;
 
@@ -735,6 +736,8 @@ iquic_esfi_create_client (const char *hostname,
     lsquic_alarmset_init_alarm(enc_sess->esi_alset, AL_SESS_TICKET,
                                             no_sess_ticket, enc_sess);
 
+    enc_sess->esi_max_streams_uni = max_streams_uni;
+
     return enc_sess;
 }
 
@@ -799,6 +802,9 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
         free(enc_sess);
         return NULL;
     }
+
+    enc_sess->esi_max_streams_uni
+        = enpub->enp_settings.es_init_max_streams_uni;
 
     return enc_sess;
 }
@@ -1141,6 +1147,7 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
     size_t ticket_sz;
     lsquic_ver_tag_t tag;
     const uint8_t *trapa_buf;
+    SSL_CTX *ssl_ctx;
     size_t trapa_sz, buf_sz;
 
     enc_sess = SSL_get_ex_data(ssl, s_idx);
@@ -1148,8 +1155,18 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
 
     max_early_data_size = SSL_SESSION_get_max_early_data_size(session);
     if (0xFFFFFFFFu != max_early_data_size)
-        LSQ_WARN("max_early_data_size=0x%X, protocol violation",
+    {
+        /* See [draft-ietf-quic-tls-23], Section 4.5 */
+        LSQ_INFO("max_early_data_size=0x%X, protocol violation",
                                                         max_early_data_size);
+        enc_sess->esi_conn->cn_if->ci_abort_error(enc_sess->esi_conn, 0,
+            TEC_PROTOCOL_VIOLATION, "max_early_data_size is set to %u "
+                "instead of 0xFFFFFFFF as mandated by standard",
+                max_early_data_size);
+        ssl_ctx = SSL_get_SSL_CTX(ssl);
+        SSL_CTX_sess_set_new_cb(ssl_ctx, NULL);
+        return 0;
+    }
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &trapa_buf,
                                                                 &trapa_sz);

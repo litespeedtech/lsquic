@@ -16,9 +16,13 @@ while (<HEADER>) {
         if (/^\s*(LSQVER_0*(\d+)),\s*$/ && $1 ne 'LSQVER_098') {
             push @enums, $1;
             push @versions, $2;
+            push @all_versions, $1;
+            push @all_alpns, "h3-Q0$2";
         }
-        if (/^\s*LSQVER_ID(\d+)\b/) {
-            push @draft_versions, $1;
+        if (/^\s*(LSQVER_ID(\d+))\b/) {
+            push @draft_versions, $2;
+            push @all_versions, $1;
+            push @all_alpns, "h3-$2";
         }
     }
 }
@@ -74,31 +78,34 @@ lsquic_get_alt_svc_versions (unsigned versions)
 C_CODE
 
 
-$draft_version_count = @draft_versions;
-$draft_version_count_and_null = $draft_version_count + 1;
+$all_version_count_and_null = scalar(@all_versions) + 1;
 
 print OUT <<"C_CODE";
 static const struct {
     unsigned    versions;
-    const char *h3_alpns[$draft_version_count_and_null];
+    const char *h3_alpns[$all_version_count_and_null];
 } vers_2_h3_alnps[] = {
+    { 0, { NULL }},
 C_CODE
 
-for ($i = 0; $i < (1 << @draft_versions); ++$i)
+for ($i = 0; $i < (1 << @all_versions); ++$i)
 {
-    my @vers;
-    for ($j = 0; $j < @draft_versions; ++$j)
+    my (@vers, @alpns);
+    for ($j = 0; $j < @all_versions; ++$j)
     {
         if ($i & (1 << $j))
         {
-            push @vers, $draft_versions[$j];
+            push @vers, $all_versions[$j];
+            push @alpns, $all_alpns[$j];
         }
     }
-    print OUT "   {", join("|", 0, map "(1<<LSQVER_ID$_)", @vers), ", ",
-        "{ ", join(", ", map "\"h3-$_\"", @vers), @vers ? ", " : "", "NULL }},\n";
+    if (@vers) {
+        print OUT "    {", join("|", map "(1<<$_)", @vers), ", ",
+            "{ ", join(", ", (map qq("$_"), @alpns), "NULL"), " }},\n";
+    }
 }
 
-$draft_versions = join("|", map "(1<<LSQVER_ID$_)", @draft_versions);
+$all_versions = join "|", map "(1<<$_)", @all_versions;
 
 print OUT <<"C_CODE";
 };
@@ -108,7 +115,7 @@ lsquic_get_h3_alpns (unsigned versions)
 {
     unsigned i;
 
-    versions &= $draft_versions;
+    versions &= ($all_versions);
 
     for (i = 0; i < sizeof(vers_2_h3_alnps) / sizeof(vers_2_h3_alnps[0]); ++i)
         if (versions == vers_2_h3_alnps[i].versions)
@@ -118,5 +125,6 @@ lsquic_get_h3_alpns (unsigned versions)
     return vers_2_h3_alnps[0].h3_alpns;
 }
 C_CODE
+
 
 close OUT;
