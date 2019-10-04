@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +7,7 @@
 
 #include "lsquic.h"
 
+#include "lsquic_packet_common.h"
 #include "lsquic_alarmset.h"
 
 
@@ -19,7 +20,8 @@ static struct cb_ctx {
 
 
 static void
-alarm_cb (void *ctx, lsquic_time_t expiry, lsquic_time_t now)
+alarm_cb (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+                                                            lsquic_time_t now)
 {
     struct cb_ctx *cb_ctx = ctx;
     assert(cb_ctx == &global_ctx);

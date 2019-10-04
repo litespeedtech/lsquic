@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_ev_log.h -- Event logger
  */
@@ -7,6 +7,7 @@
 #define LSQUIC_EV_LOG_H 1
 
 #include "lsquic_int_types.h"
+#include "lsquic_qlog.h"
 
 struct ack_info;
 struct http_prio_frame;
@@ -31,7 +32,7 @@ struct uncompressed_headers;
 } while (0)
 
 void
-lsquic_ev_log_packet_in (lsquic_cid_t, const struct lsquic_packet_in *);
+lsquic_ev_log_packet_in (const lsquic_cid_t *, const struct lsquic_packet_in *);
 
 #define EV_LOG_PACKET_IN(...) do {                                          \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -39,7 +40,7 @@ lsquic_ev_log_packet_in (lsquic_cid_t, const struct lsquic_packet_in *);
 } while (0)
 
 void
-lsquic_ev_log_ack_frame_in (lsquic_cid_t, const struct ack_info *);
+lsquic_ev_log_ack_frame_in (const lsquic_cid_t *, const struct ack_info *);
 
 #define EV_LOG_ACK_FRAME_IN(...) do {                                       \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -47,7 +48,8 @@ lsquic_ev_log_ack_frame_in (lsquic_cid_t, const struct ack_info *);
 } while (0)
 
 void
-lsquic_ev_log_stream_frame_in (lsquic_cid_t, const struct stream_frame *);
+lsquic_ev_log_stream_frame_in (const lsquic_cid_t *,
+                                                const struct stream_frame *);
 
 #define EV_LOG_STREAM_FRAME_IN(...) do {                                    \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -55,7 +57,16 @@ lsquic_ev_log_stream_frame_in (lsquic_cid_t, const struct stream_frame *);
 } while (0)
 
 void
-lsquic_ev_log_window_update_frame_in (lsquic_cid_t, uint32_t stream_id,
+lsquic_ev_log_crypto_frame_in (const lsquic_cid_t *,
+                            const struct stream_frame *, unsigned enc_level);
+
+#define EV_LOG_CRYPTO_FRAME_IN(...) do {                                    \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_crypto_frame_in(__VA_ARGS__);                         \
+} while (0)
+
+void
+lsquic_ev_log_window_update_frame_in (const lsquic_cid_t *, lsquic_stream_id_t,
                                                             uint64_t offset);
 
 #define EV_LOG_WINDOW_UPDATE_FRAME_IN(...) do {                             \
@@ -64,7 +75,7 @@ lsquic_ev_log_window_update_frame_in (lsquic_cid_t, uint32_t stream_id,
 } while (0)
 
 void
-lsquic_ev_log_blocked_frame_in (lsquic_cid_t, uint32_t stream_id);
+lsquic_ev_log_blocked_frame_in (const lsquic_cid_t *, lsquic_stream_id_t);
 
 #define EV_LOG_BLOCKED_FRAME_IN(...) do {                                   \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -72,7 +83,7 @@ lsquic_ev_log_blocked_frame_in (lsquic_cid_t, uint32_t stream_id);
 } while (0)
 
 void
-lsquic_ev_log_stop_waiting_frame_in (lsquic_cid_t, lsquic_packno_t);
+lsquic_ev_log_stop_waiting_frame_in (const lsquic_cid_t *, lsquic_packno_t);
 
 #define EV_LOG_STOP_WAITING_FRAME_IN(...) do {                              \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -80,8 +91,8 @@ lsquic_ev_log_stop_waiting_frame_in (lsquic_cid_t, lsquic_packno_t);
 } while (0)
 
 void
-lsquic_ev_log_connection_close_frame_in (lsquic_cid_t, uint32_t error_code,
-                                        int reason_len, const char *reason);
+lsquic_ev_log_connection_close_frame_in (const lsquic_cid_t *,
+                    uint64_t error_code, int reason_len, const char *reason);
 
 #define EV_LOG_CONNECTION_CLOSE_FRAME_IN(...) do {                          \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -89,8 +100,8 @@ lsquic_ev_log_connection_close_frame_in (lsquic_cid_t, uint32_t error_code,
 } while (0)
 
 void
-lsquic_ev_log_goaway_frame_in (lsquic_cid_t, uint32_t error_code,
-                uint32_t stream_id, int reason_len, const char *reason);
+lsquic_ev_log_goaway_frame_in (const lsquic_cid_t *, uint32_t error_code,
+                lsquic_stream_id_t, int reason_len, const char *reason);
 
 #define EV_LOG_GOAWAY_FRAME_IN(...) do {                                    \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -98,8 +109,8 @@ lsquic_ev_log_goaway_frame_in (lsquic_cid_t, uint32_t error_code,
 } while (0)
 
 void
-lsquic_ev_log_rst_stream_frame_in (lsquic_cid_t, uint32_t stream_id,
-                                        uint64_t offset, uint32_t error_code);
+lsquic_ev_log_rst_stream_frame_in (const lsquic_cid_t *, lsquic_stream_id_t,
+                                        uint64_t offset, uint64_t error_code);
 
 #define EV_LOG_RST_STREAM_FRAME_IN(...) do {                                \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -107,7 +118,16 @@ lsquic_ev_log_rst_stream_frame_in (lsquic_cid_t, uint32_t stream_id,
 } while (0)
 
 void
-lsquic_ev_log_padding_frame_in (lsquic_cid_t, size_t len);
+lsquic_ev_log_stop_sending_frame_in (const lsquic_cid_t *,lsquic_stream_id_t,
+                                                        uint64_t error_code);
+
+#define EV_LOG_STOP_SENDING_FRAME_IN(...) do {                              \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_stop_sending_frame_in(__VA_ARGS__);                   \
+} while (0)
+
+void
+lsquic_ev_log_padding_frame_in (const lsquic_cid_t *, size_t len);
 
 #define EV_LOG_PADDING_FRAME_IN(...) do {                                   \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -115,7 +135,7 @@ lsquic_ev_log_padding_frame_in (lsquic_cid_t, size_t len);
 } while (0)
 
 void
-lsquic_ev_log_ping_frame_in (lsquic_cid_t);
+lsquic_ev_log_ping_frame_in (const lsquic_cid_t *);
 
 #define EV_LOG_PING_FRAME_IN(...) do {                                      \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -123,7 +143,8 @@ lsquic_ev_log_ping_frame_in (lsquic_cid_t);
 } while (0)
 
 void
-lsquic_ev_log_packet_created (lsquic_cid_t, const struct lsquic_packet_out *);
+lsquic_ev_log_packet_created (const lsquic_cid_t *,
+                                            const struct lsquic_packet_out *);
 
 #define EV_LOG_PACKET_CREATED(...) do {                                     \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -131,7 +152,8 @@ lsquic_ev_log_packet_created (lsquic_cid_t, const struct lsquic_packet_out *);
 } while (0)
 
 void
-lsquic_ev_log_packet_sent (lsquic_cid_t, const struct lsquic_packet_out *);
+lsquic_ev_log_packet_sent (const lsquic_cid_t *,
+                                            const struct lsquic_packet_out *);
 
 #define EV_LOG_PACKET_SENT(...) do {                                        \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -139,7 +161,8 @@ lsquic_ev_log_packet_sent (lsquic_cid_t, const struct lsquic_packet_out *);
 } while (0)
 
 void
-lsquic_ev_log_packet_not_sent (lsquic_cid_t, const struct lsquic_packet_out *);
+lsquic_ev_log_packet_not_sent (const lsquic_cid_t *,
+                                            const struct lsquic_packet_out *);
 
 #define EV_LOG_PACKET_NOT_SENT(...) do {                                    \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -147,7 +170,7 @@ lsquic_ev_log_packet_not_sent (lsquic_cid_t, const struct lsquic_packet_out *);
 } while (0)
 
 void
-lsquic_ev_log_http_headers_in (lsquic_cid_t, int is_server,
+lsquic_ev_log_http_headers_in (const lsquic_cid_t *, int is_server,
                                         const struct uncompressed_headers *);
 
 #define EV_LOG_HTTP_HEADERS_IN(...) do {                                    \
@@ -156,7 +179,8 @@ lsquic_ev_log_http_headers_in (lsquic_cid_t, int is_server,
 } while (0)
 
 void
-lsquic_ev_log_action_stream_frame (lsquic_cid_t, const struct parse_funcs *pf,
+lsquic_ev_log_action_stream_frame (const lsquic_cid_t *,
+                       const struct parse_funcs *pf,
                        const unsigned char *, size_t len, const char *action);
 
 #define EV_LOG_GENERATED_STREAM_FRAME(...) do {                             \
@@ -170,8 +194,18 @@ lsquic_ev_log_action_stream_frame (lsquic_cid_t, const struct parse_funcs *pf,
 } while (0)
 
 void
-lsquic_ev_log_generated_ack_frame (lsquic_cid_t, const struct parse_funcs *,
-                                            const unsigned char *, size_t len);
+lsquic_ev_log_generated_crypto_frame (const lsquic_cid_t *,
+                       const struct parse_funcs *pf,
+                       const unsigned char *, size_t len);
+
+#define EV_LOG_GENERATED_CRYPTO_FRAME(...) do {                             \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_crypto_frame(__VA_ARGS__);                  \
+} while (0)
+
+void
+lsquic_ev_log_generated_ack_frame (const lsquic_cid_t *,
+                const struct parse_funcs *, const unsigned char *, size_t len);
 
 #define EV_LOG_GENERATED_ACK_FRAME(...) do {                                \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -179,7 +213,44 @@ lsquic_ev_log_generated_ack_frame (lsquic_cid_t, const struct parse_funcs *,
 } while (0)
 
 void
-lsquic_ev_log_generated_stop_waiting_frame (lsquic_cid_t, lsquic_packno_t);
+lsquic_ev_log_generated_new_token_frame (const lsquic_cid_t *,
+                const struct parse_funcs *, const unsigned char *, size_t len);
+
+#define EV_LOG_GENERATED_NEW_TOKEN_FRAME(...) do {                          \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_new_token_frame(__VA_ARGS__);               \
+} while (0)
+
+void
+lsquic_ev_log_generated_path_chal_frame (const lsquic_cid_t *,
+                const struct parse_funcs *, const unsigned char *, size_t len);
+
+#define EV_LOG_GENERATED_PATH_CHAL_FRAME(...) do {                          \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_path_chal_frame(__VA_ARGS__);               \
+} while (0)
+
+void
+lsquic_ev_log_generated_path_resp_frame (const lsquic_cid_t *,
+                const struct parse_funcs *, const unsigned char *, size_t len);
+
+#define EV_LOG_GENERATED_PATH_RESP_FRAME(...) do {                          \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_path_resp_frame(__VA_ARGS__);               \
+} while (0)
+
+void
+lsquic_ev_log_generated_new_connection_id_frame (const lsquic_cid_t *,
+                const struct parse_funcs *, const unsigned char *, size_t len);
+
+#define EV_LOG_GENERATED_NEW_CONNECTION_ID_FRAME(...) do {                  \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_new_connection_id_frame(__VA_ARGS__);       \
+} while (0)
+
+void
+lsquic_ev_log_generated_stop_waiting_frame (const lsquic_cid_t *,
+                                                            lsquic_packno_t);
 
 #define EV_LOG_GENERATED_STOP_WAITING_FRAME(...) do {                       \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
@@ -187,7 +258,16 @@ lsquic_ev_log_generated_stop_waiting_frame (lsquic_cid_t, lsquic_packno_t);
 } while (0)
 
 void
-lsquic_ev_log_generated_http_headers (lsquic_cid_t, uint32_t stream_id,
+lsquic_ev_log_generated_stop_sending_frame (const lsquic_cid_t *,
+                                                lsquic_stream_id_t, uint16_t);
+
+#define EV_LOG_GENERATED_STOP_SENDING_FRAME(...) do {                       \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_generated_stop_sending_frame(__VA_ARGS__);            \
+} while (0)
+
+void
+lsquic_ev_log_generated_http_headers (const lsquic_cid_t *, lsquic_stream_id_t,
                             int is_server, const struct http_prio_frame *,
                             const struct lsquic_http_headers *);
 
@@ -198,14 +278,66 @@ lsquic_ev_log_generated_http_headers (lsquic_cid_t, uint32_t stream_id,
 } while (0)
 
 void
-lsquic_ev_log_generated_http_push_promise (lsquic_cid_t, uint32_t stream_id,
-                            uint32_t promised_stream_id,
-                            const struct lsquic_http_headers *headers,
-                            const struct lsquic_http_headers *extra_headers);
+lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *,
+        lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
+        const struct lsquic_http_headers *headers,
+        const struct lsquic_http_headers *extra_headers);
 
 #define EV_LOG_GENERATED_HTTP_PUSH_PROMISE(...) do {                        \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
         lsquic_ev_log_generated_http_push_promise(__VA_ARGS__);             \
+} while (0)
+
+void
+lsquic_ev_log_create_connection (const lsquic_cid_t *, const struct sockaddr *,
+                                                    const struct sockaddr *);
+
+#define EV_LOG_CREATE_CONN(...) do {                                        \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_create_connection(__VA_ARGS__);                       \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_create_connection(__VA_ARGS__);                         \
+} while (0)
+
+void
+lsquic_ev_log_hsk_completed (const lsquic_cid_t *);
+
+#define EV_LOG_HSK_COMPLETED(...) do {                                      \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_hsk_completed(__VA_ARGS__);                           \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_hsk_completed(__VA_ARGS__);                             \
+} while (0)
+
+
+void
+lsquic_ev_log_zero_rtt (const lsquic_cid_t *);
+
+#define EV_LOG_ZERO_RTT(...) do {                                           \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_zero_rtt(__VA_ARGS__);                                \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_zero_rtt(__VA_ARGS__);                                  \
+} while (0)
+
+void
+lsquic_ev_log_check_certs (const lsquic_cid_t *, const lsquic_str_t **, size_t);
+
+#define EV_LOG_CHECK_CERTS(...) do {                                        \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_check_certs(__VA_ARGS__);                             \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_check_certs(__VA_ARGS__);                               \
+} while (0)
+
+void
+lsquic_ev_log_version_negotiation (const lsquic_cid_t *, const char *, const char *);
+
+#define EV_LOG_VER_NEG(...) do {                                            \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_version_negotiation(__VA_ARGS__);                     \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_version_negotiation(__VA_ARGS__);                       \
 } while (0)
 
 #endif

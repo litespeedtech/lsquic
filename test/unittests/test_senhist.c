@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +7,7 @@
 
 #include "lsquic_int_types.h"
 #include "lsquic_senhist.h"
+#include "lsquic_types.h"
 #include "lsquic_logger.h"
 
 
@@ -20,7 +21,7 @@ main (void)
     };
     lsquic_packno_t packno;
 
-    lsquic_senhist_init(&hist);
+    lsquic_senhist_init(&hist, 0);
 
     assert(0 == lsquic_senhist_largest(&hist));
 

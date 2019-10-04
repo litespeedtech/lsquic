@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_attq.c -- Advisory Tick Time Queue
  *
@@ -13,12 +13,14 @@
 #ifdef WIN32
 #include <vc_compat.h>
 #endif
+#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_attq.h"
 #include "lsquic_malo.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 
 
@@ -26,7 +28,6 @@ struct attq
 {
     struct malo        *aq_elem_malo;
     struct attq_elem  **aq_heap;
-    lsquic_time_t       aq_min;
     unsigned            aq_nelem;
     unsigned            aq_nalloc;
 };
@@ -89,17 +90,6 @@ attq_verify (struct attq *q)
 #else
 #define attq_verify(q)
 #endif
-
-
-int
-attq_maybe_add (struct attq *q, struct lsquic_conn *conn,
-                                            lsquic_time_t advisory_time)
-{
-    if (advisory_time < q->aq_min)
-        return 1;
-    else
-        return attq_add(q, conn, advisory_time);
-}
 
 
 static void
@@ -224,7 +214,6 @@ attq_remove (struct attq *q, struct lsquic_conn *conn)
     assert(conn->cn_attq_elem == el);
 
     conn->cn_attq_elem = NULL;
-    lsquic_malo_put(el);
 
     q->aq_heap[ idx ] = q->aq_heap[ --q->aq_nelem ];
     q->aq_heap[ idx ]->ae_heap_idx = idx;
@@ -241,6 +230,7 @@ attq_remove (struct attq *q, struct lsquic_conn *conn)
     }
     else if (q->aq_nelem > 1 && idx < q->aq_nelem)
         attq_heapify(q, idx);
+    lsquic_malo_put(el);
     attq_verify(q);
 }
 
@@ -272,14 +262,4 @@ attq_next_time (struct attq *q)
         return &q->aq_heap[0]->ae_adv_time;
     else
         return NULL;
-}
-
-
-lsquic_time_t
-attq_set_min (struct attq *q, lsquic_time_t new_min)
-{
-    lsquic_time_t prev_value;
-    prev_value = q->aq_min;
-    q->aq_min = new_min;
-    return prev_value;
 }

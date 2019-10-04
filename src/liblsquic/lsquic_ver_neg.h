@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_VER_NEG_H
 #define LSQUIC_VER_NEG_H
 
@@ -7,7 +7,8 @@
  */
 struct ver_neg {
     unsigned            vn_supp;    /* Remaining options, including `vn_ver' */
-    enum lsquic_version vn_ver;     /* If client, current version sent to server;
+    enum lsquic_version vn_ver;     /* If client, current version sent to server
+                                     * (zero_rtt version or highest supported);
                                      * if server, this is set to negotiated version.
                                      */
     enum ver_neg_state {

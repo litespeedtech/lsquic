@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,6 +12,7 @@
 #include "lsquic.h"
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 #include "lsquic_conn_hash.h"
 #include "lsquic_mm.h"
@@ -25,7 +26,8 @@ get_new_lsquic_conn (struct malo *malo)
 {
     struct lsquic_conn *lconn = lsquic_malo_get(malo);
     memset(lconn, 0, sizeof(*lconn));
-    lconn->cn_cid = (uintptr_t) lconn;
+    memcpy(lconn->cn_cid.idbuf, &lconn, sizeof(lconn));
+    lconn->cn_cid.len = sizeof(lconn);
     return lconn;
 }
 
@@ -48,40 +50,31 @@ main (int argc, char **argv)
     lsquic_set_log_level("info");
 
     malo = lsquic_malo_create(sizeof(*lconn));
-    s = conn_hash_init(&conn_hash, nelems);
+    s = conn_hash_init(&conn_hash, 0);
     assert(0 == s);
 
     for (n = 0; n < nelems; ++n)
     {
         lconn = get_new_lsquic_conn(malo);
         lconn->cn_if = (void *) (uintptr_t) n;              /* This will be used for verification later the test */
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
+        find_lsconn = conn_hash_find_by_cid(&conn_hash, &lconn->cn_cid);
         assert(!find_lsconn);
         s = conn_hash_add(&conn_hash, lconn);
         assert(0 == s);
+        lconn->cn_flags = 1;    /* In hash */
     }
 
     assert(nelems == conn_hash_count(&conn_hash));
 
-    {
-        lconn = get_new_lsquic_conn(malo);
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
-        assert(!find_lsconn);
-        s = conn_hash_add(&conn_hash, lconn);
-        assert(-1 == s);
-        lsquic_malo_put(lconn);
-    }
-
-    for (n = 0, lconn = conn_hash_first(&conn_hash); lconn; ++n, lconn = conn_hash_next(&conn_hash))
-        assert(n == (uintptr_t) lconn->cn_if);
-
     for (lconn = lsquic_malo_first(malo); lconn;
              lconn = lsquic_malo_next(malo))
     {
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
+        assert(lconn->cn_flags == 1);
+        find_lsconn = conn_hash_find_by_cid(&conn_hash, &lconn->cn_cid);
         assert(find_lsconn == lconn);
         conn_hash_remove(&conn_hash, lconn);
-        find_lsconn = conn_hash_find(&conn_hash, lconn->cn_cid);
+        lconn->cn_flags = 0;
+        find_lsconn = conn_hash_find_by_cid(&conn_hash, &lconn->cn_cid);
         assert(!find_lsconn);
     }
 

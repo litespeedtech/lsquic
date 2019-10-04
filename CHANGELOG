@@ -1,3 +1,495 @@
+2019-09-30
+    - 2.4.3
+    - Add GQUIC versions to the list of h3 ALPNs for Alt-Svc header.
+      For example, h3-Q043.  Chrome will switch to using this format at
+      some point in the future.
+    - [BUGFIX] Send correct value in max_streams_uni transport param
+    - [SPEC] Abort IETF QUIC connection if max_early_data_size is not set
+      to 0xFFFFFFFF
+
+2019-09-23
+    - 2.4.2
+    - [BUGFIX] H3 framing: fix zero-byte write when space is available
+    - [BUGFIX] Don't send STREAM frame when incoming unidirectgional stream
+      is closed
+    - [BUGFIX] Cancel all pending writes by stream reset by a GOAWAY
+    - [BUGFIX] Fix use-after-free in IETF full conn
+    - [OPTIMIZATION] Wait for session tickets for two seconds and then drop
+      SSL object and crypto streams.
+
+2019-09-18
+    - 2.4.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 23 support
+
+2019-09-13
+    - 2.3.1
+    - [BUGFIX] Fix memory leaks
+    - [BUGFIX] Fix unit tests
+
+2019-09-12
+    - 2.3.0
+    - [FEATURE] BBR congestion control is on by default
+    - [BUGFIX] BBR app-limited logic
+    - [BUGFIX] Fix uninitialized warnings in IETF
+    - [BUGFIX] Update ls-qpack to v0.9.14
+    - [CLEANUP] Code cleanup
+
+2019-09-11
+    - 2.2.0
+    - [FEATURE] Server code is included in the library
+    - [FEATURE] IETF QUIC and HTTP/3 Support (ID-22)
+
+2019-05-13
+    - 1.21.2
+    - [OPTIMIZATION] HPACK: use history to improve compression performance
+
+2019-05-06
+    - 1.21.1
+    - [BUGFIX] If FIN or RST not received, don't delay stream destruction.
+    - [OPTIMIZATION] Speed up HPACK encoder by using same hash value to
+      search static and dynamic tables.
+
+2019-04-12
+    - 1.21.0
+    - [FEATURE] Add qlog log module.
+
+2019-04-01
+    - 1.20.0
+    - [FEATURE] Add support for Q046.
+
+2019-03-19
+    - 1.19.6
+    - [BUGFIX] Ensure that Largest Observed does not decrease in ACKs we
+      send.  ACK frames placed in packets in buffered queues (optimization
+      introduced in 1.17.15) can be preceded by an ACK frame generated later.
+      In this case, the older ACK frame should not be sent out, as Chromium-
+      based servers flags decrease in the ACK frame's Largest Observed value
+      as an error.
+
+2019-03-05
+    - 1.19.5
+    - [BUGFIX] Use correct public key from PUBS based on KEXS index.
+    - [BUGFIX] Check flags before dispatching writes, avoiding assert.
+    - [BUGFIX] Set :scheme to "https" (instead of "HTTP").
+
+2019-02-25
+    - 1.19.4
+    - [BUGFIX] Check buffer bounds when looking up version in 0-RTT blob.
+    - [BUGFIX] http_client: don't fetch 0-rtt info if handshake failed.
+    - Log number of pacer calls at DEBUG, rather than NOTICE, level.
+
+2019-02-18
+    - 1.19.3
+    - [BUGFIX] Q044: don't encode packet number in 6 bytes.  Six-byte
+      packet number encoding does not exist in Q044.  This fixes a
+      regression introduced in '[BUGFIX] Buffered packets can contain
+      ACK frames' -- we need to keep QUIC version in mind when selecting
+      the longest possible packet number encoding used for the buffered
+      packet that carries the ACK.
+    - [BUGFIX] Do not increase CWND when timeout occurs.
+    - http_client: support setting handshake timeout on command line.
+      Use -o handshake_to=timeout.
+    - http_client: use -k to connect UDP socket to pick up ICMP errors.
+    - http_client: allow pathless mode, when only handshake is performed
+      without issuing any requests.  This can be done by simply not
+      specifying a -p flag on the command line.
+
+2019-02-11
+    - 1.19.2
+    - [BUGFIX] Begin negotiation with version provided in 0-RTT info.
+    - [BUGFIX] Version checking in zero_rtt deserialize function.
+
+2019-02-04
+    - 1.19.1
+    - [BUGFIX] Fix Windows build.
+
+2019-02-04
+    - 1.19.0
+    - [FEATURE, API Change] 0-RTT support.  Add function to export 0-RTT
+      information; it can be supplied to a subsequent connect() call.
+    - [FEATURE] Add -0 flag to http_client to exercise 0-RTT support.
+    - [BUGFIX] Resuscitate the Windows build.
+    - [BUGFIX] Send HTTP settings (max header list size) if necessary.
+    - [BUGFIX] Buffered packets can contain ACK frames.
+    - [BUGFIX] Make packet writeable once all STREAM frames are elided.
+    - [BUGFIX] Fix potential null dereference when realloc fails.
+    - cmake: simplify build configuration.
+
+2019-01-28
+    - 1.18.0
+    - [API Change] Can specify clock granularity in engine settings.
+    - [BUGFIX] Pacer uses fixed clock granularity.  Since the change on
+      2018-04-09, it is not necessary to try to approximate the next tick
+      time in the pacer: it can use fix clock granularity specified by
+      the user.
+    - [BUGFIX] Do not tick constantly before handshake is done.
+    - [BUGFIX] Do not exit tick prematurely: reuse packet with ACK.  Even
+      if we cannot allocate *more* packets, we could still be able to write
+      to one already allocated.
+    - [BUGFIX] Do not schedule pacer if there are no lost packets.
+
+2019-01-17
+    - 1.17.15
+    - [BUGFIX] http_client: make sure only one read per on_read() callback
+      is performed in the header conversion bypass (-B) mode.
+    - http_client: with -E, assign random priority when stream is created.
+    - [OPTIMIZATION] On immediate write, place an ACK frame into the first
+      buffered packet if an ACK is queued.  This reduces the number of
+      standalone ACK packets.
+    - [OPTIMIZATION] Allow placing more than one STREAM frame from the same
+      stream into an outgoing packet.  This change minimizes the number of
+      buffered packets required to store several small HTTP messages by
+      virtue of allowing more than one STREAM frame from HEADERS stream in
+      the same packet.
+    - [OPTIMIZATION] Flush headers when writing to buffered packets.  This
+      causes the headers to be written to the same buffered packet queue,
+      thereby improving packet utilization, especially for small HTTP
+      messages.
+
+2019-01-16
+    - 1.17.14
+    - [FEATURE] http_client can now collect stats: time to connect, TTFB,
+      time to download, requests per seconds, and bandwidth.  See -t flag.
+    - [BUGFIX] http_client: -B, -K, and -r can be used at the same time.
+    - [BUGFIX] http_client: do not display cert chain before each request.
+      Now this is only done once per connection, if the handshake is
+      successful and -a option is given.
+    - [BUGFIX] Do not wait to dispatch on_close() after reading.  If a
+      stream is scheduled to be closed after on_read() callback returns,
+      close it immediately instead of waiting until the end of the tick.
+      If client creates new request from on_close() event, they will be
+      processed in the same tick instead of waiting for the next one.
+    - [BUGFIX] HEADERS stream is critical: always treat it with highest
+      priority.
+
+2019-01-10
+    - 1.17.12
+    - [FEATURE] http_client can now issue parallel requests in the context
+      of a single connection.  See -w option.
+
+2019-01-03
+    - 1.17.11
+    - Fix strict aliasing warning in optimized compilation.
+
+2018-12-27
+    - 1.17.10
+    - Fix the example program to be able to use parallel connections
+      again.  (See the -n argument.)
+
+2018-12-18
+    - 1.17.9
+    - [BUGFIX] Engine: reduce minimum batch size from 256 to 4
+
+2018-12-10
+    - 1.17.8
+    - [BUGFIX] Fix compilation on FreeBSD and 32-bit Linux
+
+2018-12-03
+    - 1.17.7
+    - [BUGFIX] Do not unset PING alarm before ringing expired alarms.
+      This prevented PING from ever being sent.
+
+2018-11-29
+    - 1.17.6
+    - Add failsafe: resume sending packets after some time
+
+      The change puts a 1-second limit on the amount of time the engine
+      will not send packets after some packets are delayed.  This makes
+      the library robust in case the user does not unblock the engine
+      explicitly using lsquic_engine_send_unsent_packets() call.
+
+    - [BUGFIX] Handle corner cases in send controller when packets are
+      a) delayed or b) dropped during repackaging.
+    - [BUGFIX] Memory leak: destroy buffered packets during controller
+      cleanup.
+
+2018-11-16
+    - 1.17.3
+    - [BUGFIX] Do not send STOP_WAITING frames when using Q044
+
+2018-10-19
+    - 1.17.2
+    - [BUGFIX] Memory leak in test_frame_rw unit test.
+    - [BUGFIX] Parsing packets with short IETF header: do not overwrite
+      flags.  (Only a problem in unit tests -- benign otherwise.)
+
+2018-10-16
+    - 1.17.0
+    - [API Change] Packet out Memory Interface (PMI) update:
+      - Split PMI pool return into pmi_release and pmi_return
+      - PMI callbacks take peer_ctx and is_ipv6 arguments
+    - [BUGFIX] Fix use-after-free when certificate is updated
+    - Silence gcc warning in optimized mode by performing useless
+      initialization
+    - cmake: use the standard variable CMAKE_BUILD_TYPE instead of
+      DEVEL_MODE
+
+2018-10-03
+    - 1.16.0
+    - [API Change] Add lsquic_conn_n_avail_streams()
+    - [BUGFIX] only dispatch crypto stream read events if WANT_READ is on
+
+2018-09-27
+    - 1.15.0
+    - [API Change] Add LSCONN_ST_PEER_GOING_AWAY to the list of conn statuses
+    - [BUGFIX] free uncompressed headers correctly when error occurs
+
+2018-09-12
+    - 1.14.3
+    - [BUGFIX] Do not abort conn on STREAM frame for a reset stream
+    - [BUGFIX] Drop packets that would become empty due to repackaging.
+      Packets on the scheduled queue may be marked for repackaging.
+      Frames such as ACK frame that are never resent are removed from
+      repackaged packets.  We must check that the newly repackaged packet
+      would not be empty.  If it would be, it is destroyed instead and
+      the next packet on the scheduled queue is used.  Note that this
+      change only affects the logic to return the next packet to be sent.
+      Lost packets that are being rescheduled are already processed in
+      this fashion.
+    - Byteswap CID before logging it - this makes it match Chrome CIDs.
+      (Except Q035, which is the last little-endian GQUIC version we
+      support.)
+
+2018-09-06
+    - 1.14.0
+    - [API Change] Disable packet sending if full batch cannot be sent
+      If lsquic_packets_out_f() cannot send the whole batch, disable
+      packet sending until lsquic_engine_send_unsent_packets() is called.
+    - [BUGFIX] Handle case when STREAM frame does not fit.
+    - [BUGFIX] Always allow incoming STREAM frames to overlap.  Peers
+      may send overlapping STREAM frames even if using versions older
+      than Q043.
+    - Custom header set fixes:
+      - set "FIN reached" flag when custom header with FIN flag is
+        claimed;
+      - do not return custom header set for a reset stream.
+
+2018-08-27
+
+    - 1.13.0
+    - [FEATURE, API Change] Add ability to create custom header set
+      objects via callbacks.  This avoids reading and re-parsing
+      headers from the stream.
+
+2018-08-27
+
+    - 1.12.4
+    - Fix memory leak when engine is destroyed
+    - Fix memory leak in http_client
+    - Fix gcc warning in unit tests
+
+2018-08-22
+
+    - 1.12.3
+    - [BUGFIX] Fix duplicate STREAM frame detection
+
+2018-08-20
+
+    - 1.12.2
+    - [BUGFIX] Update count of scheduled bytes when adjusting size of
+      an already-scheduled packet.
+    - Emit info instead of warning messages when stream is used in
+      unexpected ways.
+
+2018-08-17
+
+    - 1.12.0
+    - [FEATURE, API Change] Add support for certificate verification
+
+2018-08-16
+
+    - 1.11.1
+    - [BUGFIX] Fix STOP_WAITING frame processing in the new Q044 code
+
+2018-08-15
+
+    - 1.11.0
+    - [FEATURE] Add support for Q044.
+
+2018-08-09
+
+    - 1.10.2
+    - [BUGFIX] Don't go over limit when creating delayed streams
+
+2018-07-10
+
+    - 1.10.1
+    - [BUGFIX]  process connections after each batch of packets is read
+      This avoids a problem of accumulating a very large list of packets
+      (possible when speeds are high and socket's receive buffer is large)
+      and processing it all at once.
+    - If glibc is older than 2.17, link with rt.  This is necessary for
+      clock_getres(2).
+    - Add version macros to lsquic.h; remove unnecessary includes.
+
+2018-06-13
+
+    - [BUGFIX] allow multiple parallel connections by default
+
+      Use the original method of tracking connections by CIDs by default.
+      If zero-sized CID support is turned on, connections are tracked by
+      the address.  A new connection is not created if another connection
+      is using the same network address
+
+2018-05-30
+
+    - [FEATURE, API CHANGE] Support zero-sized CIDs in received packets
+
+2018-05-24
+
+    - Close connection properly when packet encryption fails
+
+2018-05-23
+
+    - [BUGFIX] Do not produce packet sequence gaps due to delayed packets
+
+2018-05-21
+
+    - [API Change] Add optional callback to call when handshake is done
+    - [API Change, BUGFIX] After send failure, wait until transport available
+
+2018-05-18
+
+    - [API] Expose useful lsquic_ver2str[] in lsquic.h
+    - [BUGFIX] Do not produce packet sequence gaps due to STREAM frame elision
+    - Improve checks of number of incoming streams limit and associated
+      error reporting.
+    - [BUGFIX] Command-line option `-6` now works correctly.
+
+2018-05-16
+
+    - [FEATURE] DNS resolution
+    - [BUGFIX] Frame insertion mis-ID as overlap instead of dup
+    - http_client: fix priority range generated by -E flag
+
+2018-05-09
+
+    - [FEATURE] Add support for Q043.
+    - Support for versions Q037, Q038, Q041, and Q042 has been removed.
+    - Fix typo in debug message.
+    - Fix code indentation.
+    - Add /* fallthru */ comment to stop newer gcc from complaining.
+    - Logger: fix compilation of optimized Windows build.
+
+2018-05-04
+
+    - [FEATURE] Add support for Q042.
+    - Remove comment: MSPC is obsolete (no code changes)
+    - Prog: use lsquic_str2ver() when processing -o version flag
+    - Remove unused CTIM and SRBF transport parameters
+    - Disable QUIC versions Q037 and Q038 by default
+    - Fix Windows compilation by including compat header file in
+      lshpack.c
+    - Address warnings produced by newer versions of gcc
+    - Future-proof: turn off -Werror
+
+2018-05-02
+
+    - [BUGFIX] Make lsquic_conn_quic_version() available
+    - Switch to using ls-hpack 1.1
+    - [BUGFIX] Do not ignore stream resets after receiving FIN
+
+2018-04-27
+
+    - HPACK: do not allow header block to end with table size update.
+
+2018-04-25
+
+    - [BUGFIX] Do not create gap in sent packnos when squeezing delayed
+      packets.
+    - [BUGFIX] sendctl checks for all unacked bytes, not just retx bytes.
+    - [BUGFIX] connections with blocked scheduled packets are not tickable
+      for sending.
+    - [BUGFIX] Conn is tickable if it wants to send a connection-level
+      frame.
+
+2018-04-23
+
+    - Fix busy loop: tickable must make progress.  When connection is
+      self-reporting as tickable, it must make progress when ticked.  There
+      are two issues:
+        1. If there are buffered packets, the connection is only tickable if
+           they can be sent out.
+        2. A connection is tickable if there are streams on the servicing
+           queue.  When the tick occurs, we must service the stream
+           independent of whether any packets are sent.
+    - Fix assertion in pacer which can be incorrect under some
+      conditions.
+    - cmake: do not turn on address sanitizer if in Travis.
+
+2018-04-20
+
+    - [BUGFIX] Fix bug in lsquic_engine_connect() exposed by yesterday's
+      changes.
+
+2018-04-19
+
+    - [BUGFIX] Add connection to Tickable Queue on stream write
+    - cmake: use MSVC variable instead of trying to detect
+    - engine: improve connection incref/decref logging
+    - stream: don't ignore errors that may occur on triggered flush
+    - connection: remove obsolete method
+    - engine: indicate connection as tickable if previous call went
+      over threshold
+
+2018-04-09
+
+    [API Change, OPTIMIZATION] Only process conns that need to be processed
+
+    The API is simplified: do not expose the user code to several
+    queues.  A "connection queue" is now an internal concept.
+    The user processes connections using the single function
+    lsquic_engine_process_conns().  When this function is called,
+    only those connections are processed that need to be processed.
+    A connection needs to be processed when:
+
+        1. New incoming packets have been fed to the connection.
+        2. User wants to read from a stream that is readable.
+        3. User wants to write to a stream that is writeable.
+        4. There are buffered packets that can be sent out.  (This
+           means that the user wrote to a stream outside of the
+           lsquic library callback.)
+        5. A control frame (such as BLOCKED) needs to be sent out.
+        6. A stream needs to be serviced or delayed stream needs to
+           be created.
+        7. An alarm rings.
+        8. Pacer timer expires.
+
+    To achieve this, the library places the connections into two
+    priority queues (min heaps):
+
+        1. Tickable Queue; and
+        2. Advisory Tick Time queue (ATTQ).
+
+    Each time lsquic_engine_process_conns() is called, the Tickable
+    Queue is emptied.  After the connections have been ticked, they are
+    queried again: if a connection is not being closed, it is placed
+    either in the Tickable Queue if it is ready to be ticked again or
+    it is placed in the Advisory Tick Time Queue.  It is assumed that
+    a connection always has at least one timer set (the idle alarm).
+
+    The connections in the Tickable Queue are arranged in the least
+    recently ticked order.  This lets connections that have been quiet
+    longer to get their packets scheduled first.
+
+    This change means that the library no longer needs to be ticked
+    periodically.  The user code can query the library when is the
+    next tick event and schedule it exactly.  When connections are
+    processed, only the tickable connections are processed, not *all*
+    the connections.  When there are no tick events, it means that no
+    timer event is necessary -- only the file descriptor READ event
+    is active.
+
+    The following are improvements and simplifications that have
+    been triggered:
+
+        - Queue of connections with incoming packets is gone.
+        - "Pending Read/Write Events" Queue is gone (along with its
+          history and progress checks).  This queue has become the
+          Tickable Queue.
+        - The connection hash no longer needs to track the connection
+          insertion order.
+
 2018-04-02
 
     - [FEATURE] Windows support

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_rtt.c -- RTT calculation
  */
@@ -33,9 +33,12 @@ lsquic_rtt_stats_update (struct lsquic_rtt_stats *stats,
                                                             >> BETA_SHIFT;
         stats->srtt -= stats->srtt >> ALPHA_SHIFT;
         stats->srtt += send_delta >> ALPHA_SHIFT;
+        if (send_delta < stats->min_rtt)
+            stats->min_rtt = send_delta;
     } else {
         /* First measurement */
         stats->srtt   = send_delta;
         stats->rttvar = send_delta >> 1;
+        stats->min_rtt = send_delta;
     }
 }

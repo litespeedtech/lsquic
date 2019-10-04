@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_frame_writer.c -- write frames to HEADERS stream.
  *
@@ -18,57 +18,34 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include "lsquic_arr.h"
-#include "lsquic_hpack_enc.h"
+#include "lshpack.h"
 #include "lsquic_mm.h"
 #include "lsquic.h"
+#include "lsquic_int_types.h"
+#include "lsquic_hash.h"
+#include "lsquic_conn.h"
 
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_common.h"
+#include "lsquic_frab_list.h"
 #include "lsquic_ev_log.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_FRAME_WRITER
-#define LSQUIC_LOG_CONN_ID lsquic_conn_id(lsquic_stream_conn(fw->fw_stream))
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(\
+                                        lsquic_stream_conn(fw->fw_stream))
 #include "lsquic_logger.h"
-
-#ifndef LSQUIC_FRAB_SZ
-#   define LSQUIC_FRAB_SZ 0x1000
-#endif
-
-struct frame_buf
-{
-    TAILQ_ENTRY(frame_buf)      frab_next;
-    unsigned short              frab_size,
-                                frab_off;
-    unsigned char               frab_buf[
-                                    LSQUIC_FRAB_SZ
-                                  - sizeof(TAILQ_ENTRY(frame_buf))
-                                  - sizeof(unsigned short) * 2
-                                ];
-};
-
-#define frab_left_to_read(f) ((f)->frab_size - (f)->frab_off)
-#define frab_left_to_write(f) ((unsigned short) sizeof((f)->frab_buf) - (f)->frab_size)
-#define frab_write_to(f) ((f)->frab_buf + (f)->frab_size)
-
-#define MAX_HEADERS_SIZE (64 * 1024)
-
-/* Make sure that frab_buf is at least five bytes long, otherwise a frame
- * won't fit into two adjacent frabs.
- */
-typedef char three_byte_frab_buf[(sizeof(((struct frame_buf *)0)->frab_buf) >= 5) ?1 : - 1];
-
-
-TAILQ_HEAD(frame_buf_head, frame_buf);
 
 
 struct lsquic_frame_writer
 {
     struct lsquic_stream       *fw_stream;
-    fw_write_f                  fw_write;
+    fw_writef_f                 fw_writef;
     struct lsquic_mm           *fw_mm;
-    struct lsquic_henc         *fw_henc;
-    struct frame_buf_head       fw_frabs;
+    struct lshpack_enc         *fw_henc;
+#if LSQUIC_CONN_STATS
+    struct conn_stats          *fw_conn_stats;
+#endif
+    struct frab_list            fw_fral;
     unsigned                    fw_max_frame_sz;
     uint32_t                    fw_max_header_list_sz;  /* 0 means unlimited */
     enum {
@@ -86,9 +63,19 @@ struct lsquic_frame_writer
 #define ABS_MIN_FRAME_SIZE MAX(SETTINGS_FRAME_SZ, \
                                             sizeof(struct http_prio_frame))
 
+static void *
+fw_alloc (void *ctx, size_t size)
+{
+    return lsquic_mm_get_4k(ctx);
+}
+
+
 struct lsquic_frame_writer *
 lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
-     unsigned max_frame_sz, struct lsquic_henc *henc, fw_write_f write,
+     unsigned max_frame_sz, struct lshpack_enc *henc, fw_writef_f writef,
+#if LSQUIC_CONN_STATS
+     struct conn_stats *conn_stats,
+#endif
      int is_server)
 {
     struct lsquic_frame_writer *fw;
@@ -119,14 +106,18 @@ lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
     fw->fw_mm           = mm;
     fw->fw_henc         = henc;
     fw->fw_stream       = stream;
-    fw->fw_write        = write;
+    fw->fw_writef       = writef;
     fw->fw_max_frame_sz = max_frame_sz;
     fw->fw_max_header_list_sz = 0;
     if (is_server)
         fw->fw_flags    = FW_SERVER;
     else
         fw->fw_flags    = 0;
-    TAILQ_INIT(&fw->fw_frabs);
+#if LSQUIC_CONN_STATS
+    fw->fw_conn_stats   = conn_stats;
+#endif
+    lsquic_frab_list_init(&fw->fw_fral, 0x1000, fw_alloc,
+        (void (*)(void *, void *)) lsquic_mm_put_4k, mm);
     return fw;
 }
 
@@ -134,99 +125,34 @@ lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
 void
 lsquic_frame_writer_destroy (struct lsquic_frame_writer *fw)
 {
-    struct frame_buf *frab;
-    while ((frab = TAILQ_FIRST(&fw->fw_frabs)))
-    {
-        TAILQ_REMOVE(&fw->fw_frabs, frab, frab_next);
-        lsquic_mm_put_4k(fw->fw_mm, frab);
-    }
+    lsquic_frab_list_cleanup(&fw->fw_fral);
     free(fw);
-}
-
-
-static struct frame_buf *
-fw_get_frab (struct lsquic_frame_writer *fw)
-{
-    struct frame_buf *frab;
-    frab = lsquic_mm_get_4k(fw->fw_mm);
-    if (frab)
-        memset(frab, 0, offsetof(struct frame_buf, frab_buf));
-    return frab;
-}
-
-
-static void
-fw_put_frab (struct lsquic_frame_writer *fw, struct frame_buf *frab)
-{
-    TAILQ_REMOVE(&fw->fw_frabs, frab, frab_next);
-    lsquic_mm_put_4k(fw->fw_mm, frab);
-}
-
-
-static int
-fw_write_to_frab (struct lsquic_frame_writer *fw, const void *buf, size_t bufsz)
-{
-    const unsigned char *p = buf;
-    const unsigned char *const end = p + bufsz;
-    struct frame_buf *frab;
-    unsigned ntowrite;
-
-    while (p < end)
-    {
-        frab = TAILQ_LAST(&fw->fw_frabs, frame_buf_head);
-        if (!(frab && (ntowrite = frab_left_to_write(frab)) > 0))
-        {
-            frab = fw_get_frab(fw);
-            if (!frab)
-                return -1;
-            TAILQ_INSERT_TAIL(&fw->fw_frabs, frab, frab_next);
-            ntowrite = frab_left_to_write(frab);
-        }
-        if (ntowrite > bufsz)
-            ntowrite = bufsz;
-        memcpy(frab_write_to(frab), p, ntowrite);
-        p += ntowrite;
-        bufsz -= ntowrite;
-        frab->frab_size += ntowrite;
-    }
-
-    return 0;
 }
 
 
 int
 lsquic_frame_writer_have_leftovers (const struct lsquic_frame_writer *fw)
 {
-    return !TAILQ_EMPTY(&fw->fw_frabs);
+    return !lsquic_frab_list_empty(&fw->fw_fral);
 }
 
 
 int
 lsquic_frame_writer_flush (struct lsquic_frame_writer *fw)
 {
-    struct frame_buf *frab;
+    struct lsquic_reader reader = {
+        .lsqr_read  = lsquic_frab_list_read,
+        .lsqr_size  = lsquic_frab_list_size,
+        .lsqr_ctx   = &fw->fw_fral,
+    };
+    ssize_t nw;
 
-    while ((frab = TAILQ_FIRST(&fw->fw_frabs)))
-    {
-        size_t ntowrite = frab_left_to_read(frab);
-        ssize_t nw = fw->fw_write(fw->fw_stream,
-                            frab->frab_buf + frab->frab_off, ntowrite);
-        if (nw > 0)
-        {
-            frab->frab_off += nw;
-            if (frab->frab_off == frab->frab_size)
-            {
-                TAILQ_REMOVE(&fw->fw_frabs, frab, frab_next);
-                fw_put_frab(fw, frab);
-            }
-        }
-        else if (nw == 0)
-            break;
-        else
-            return -1;
-    }
+    nw = fw->fw_writef(fw->fw_stream, &reader);
 
-    return 0;
+    if (nw >= 0)
+        return 0;
+    else
+        return -1;
 }
 
 
@@ -241,7 +167,8 @@ struct header_framer_ctx
     unsigned    hfc_max_frame_sz;   /* Maximum frame size.  We always fill it. */
     unsigned    hfc_cur_sz;         /* Number of bytes in the current frame. */
     unsigned    hfc_n_frames;       /* Number of frames written. */
-    uint32_t    hfc_stream_id;      /* Stream ID */
+    lsquic_stream_id_t
+                hfc_stream_id;      /* Stream ID */
     enum http_frame_header_flags
                 hfc_first_flags;
     enum http_frame_type
@@ -251,8 +178,8 @@ struct header_framer_ctx
 
 static void
 hfc_init (struct header_framer_ctx *hfc, struct lsquic_frame_writer *fw,
-          unsigned max_frame_sz, enum http_frame_type frame_type,
-          uint32_t stream_id, enum http_frame_header_flags first_flags)
+      unsigned max_frame_sz, enum http_frame_type frame_type,
+      lsquic_stream_id_t stream_id, enum http_frame_header_flags first_flags)
 {
     memset(hfc, 0, sizeof(*hfc));
     hfc->hfc_fw           = fw;
@@ -267,7 +194,7 @@ hfc_init (struct header_framer_ctx *hfc, struct lsquic_frame_writer *fw,
 static void
 hfc_save_ptr (struct header_framer_ctx *hfc)
 {
-    hfc->hfc_header_ptr.frab = TAILQ_LAST(&hfc->hfc_fw->fw_frabs, frame_buf_head);
+    hfc->hfc_header_ptr.frab = TAILQ_LAST(&hfc->hfc_fw->fw_fral.fl_frabs, frame_buf_head);
     hfc->hfc_header_ptr.off = hfc->hfc_header_ptr.frab->frab_size;
 }
 
@@ -331,7 +258,7 @@ hfc_write (struct header_framer_ctx *hfc, const void *buf, size_t sz)
         {
             if (hfc->hfc_n_frames > 0)
                 hfc_terminate_frame(hfc, 0);
-            s = fw_write_to_frab(hfc->hfc_fw, "123456789",
+            s = lsquic_frab_list_write(&hfc->hfc_fw->fw_fral, "123456789",
                                         sizeof(struct http_frame_header));
             if (s < 0)
                 return s;
@@ -345,7 +272,7 @@ hfc_write (struct header_framer_ctx *hfc, const void *buf, size_t sz)
             avail = sz;
         if (avail)
         {
-            s = fw_write_to_frab(hfc->hfc_fw, p, avail);
+            s = lsquic_frab_list_write(&hfc->hfc_fw->fw_fral, p, avail);
             if (s < 0)
                 return s;
             hfc->hfc_cur_sz += avail;
@@ -394,8 +321,8 @@ have_oversize_strings (const struct lsquic_http_headers *headers)
     int i, have;
     for (i = 0, have = 0; i < headers->count; ++i)
     {
-        have |= headers->headers[i].name.iov_len  > HPACK_MAX_STRLEN;
-        have |= headers->headers[i].value.iov_len > HPACK_MAX_STRLEN;
+        have |= headers->headers[i].name.iov_len  > LSHPACK_MAX_STRLEN;
+        have |= headers->headers[i].value.iov_len > LSHPACK_MAX_STRLEN;
     }
     return have;
 }
@@ -410,14 +337,22 @@ check_headers_size (const struct lsquic_frame_writer *fw,
     headers_sz = calc_headers_size(headers);
     if (extra_headers)
         headers_sz += calc_headers_size(extra_headers);
-    if (headers_sz > fw->fw_max_header_list_sz)
+
+    if (headers_sz <= fw->fw_max_header_list_sz)
+        return 0;
+    else if (fw->fw_flags & FW_SERVER)
+    {
+        LSQ_INFO("Sending headers larger (%u bytes) than max allowed (%u)",
+            headers_sz, fw->fw_max_header_list_sz);
+        return 0;
+    }
+    else
     {
         LSQ_INFO("Headers size %u is larger than max allowed (%u)",
             headers_sz, fw->fw_max_header_list_sz);
         errno = EMSGSIZE;
         return -1;
     }
-    return 0;
 }
 
 
@@ -452,20 +387,25 @@ write_headers (struct lsquic_frame_writer *fw,
 
     for (i = 0; i < headers->count; ++i)
     {
-        end = lsquic_henc_encode(fw->fw_henc, buf, buf + buf_sz,
-            headers->headers[i].name.iov_base, headers->headers[i].name.iov_len,
-            headers->headers[i].value.iov_base, headers->headers[i].value.iov_len, 0);
+        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz,
+                                 LSHPACK_HDR_UNKNOWN,
+                                 (const lshpack_header_t *)&headers->headers[i],
+                                 0);
         if (end > buf)
         {
             s = hfc_write(hfc, buf, end - buf);
             if (s < 0)
                 return s;
+#if LSQUIC_CONN_STATS
+            fw->fw_conn_stats->out.headers_uncomp +=
+                headers->headers[i].name.iov_len
+                    + headers->headers[i].value.iov_len;
+            fw->fw_conn_stats->out.headers_comp += end - buf;
+#endif
         }
         else
         {
-            LSQ_WARN("error encoding header");
-            errno = EBADMSG;
-            return -1;
+            /* Ignore errors, matching HTTP2 behavior in our server code */
         }
     }
 
@@ -475,7 +415,7 @@ write_headers (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
-                                   uint32_t stream_id,
+                                   lsquic_stream_id_t stream_id,
                                    const struct lsquic_http_headers *headers,
                                    int eos, unsigned weight)
 {
@@ -536,10 +476,12 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
-                           uint32_t stream_id, uint32_t promised_stream_id,
-                           const struct iovec *path, const struct iovec *host,
-                           const struct lsquic_http_headers *extra_headers)
+    lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
+    const struct iovec *path, const struct iovec *host,
+    const struct lsquic_http_headers *extra_headers)
 {
+    uint32_t stream_id = stream_id64;
+    uint32_t promised_stream_id = promised_stream_id64;
     struct header_framer_ctx hfc;
     struct http_push_promise_frame push_frame;
     lsquic_http_header_t mpas_headers[4];
@@ -642,7 +584,7 @@ write_settings (struct lsquic_frame_writer *fw,
     fh.hfh_length[1] = payload_length >> 8;
     fh.hfh_length[2] = payload_length;
 
-    s = fw_write_to_frab(fw, &fh, sizeof(fh));
+    s = lsquic_frab_list_write(&fw->fw_fral, &fh, sizeof(fh));
     if (s != 0)
         return s;
 
@@ -650,8 +592,8 @@ write_settings (struct lsquic_frame_writer *fw,
     {
         id  = htons(settings->id);
         val = htonl(settings->value);
-        if (0 != (s = fw_write_to_frab(fw, &id, sizeof(id))) ||
-            0 != (s = fw_write_to_frab(fw, &val, sizeof(val))))
+        if (0 != (s = lsquic_frab_list_write(&fw->fw_fral, &id, sizeof(id))) ||
+            0 != (s = lsquic_frab_list_write(&fw->fw_fral, &val, sizeof(val))))
             return s;
         EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "wrote HTTP SETTINGS frame: "
             "%s=%"PRIu32, lsquic_http_setting_id2str(settings->id),
@@ -662,7 +604,6 @@ write_settings (struct lsquic_frame_writer *fw,
 
     return 0;
 }
-
 
 int
 lsquic_frame_writer_write_settings (struct lsquic_frame_writer *fw,
@@ -694,9 +635,11 @@ lsquic_frame_writer_write_settings (struct lsquic_frame_writer *fw,
 
 int
 lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
-            uint32_t stream_id, int exclusive, uint32_t stream_dep_id,
-            unsigned weight)
+        lsquic_stream_id_t stream_id64, int exclusive,
+        lsquic_stream_id_t stream_dep_id64, unsigned weight)
 {
+    uint32_t stream_id = stream_id64;
+    uint32_t stream_dep_id = stream_dep_id64;
     unsigned char buf[ sizeof(struct http_frame_header) +
                                         sizeof(struct http_prio_frame) ];
     struct http_frame_header *fh         = (void *) &buf[0];
@@ -724,7 +667,7 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
     memcpy(prio_frame->hpf_stream_id, &stream_id, 4);
     prio_frame->hpf_weight = weight - 1;
 
-    s = fw_write_to_frab(fw, buf, sizeof(buf));
+    s = lsquic_frab_list_write(&fw->fw_fral, buf, sizeof(buf));
     if (s != 0)
         return s;
 
@@ -739,14 +682,11 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *fw,
 size_t
 lsquic_frame_writer_mem_used (const struct lsquic_frame_writer *fw)
 {
-    const struct frame_buf *frab;
     size_t size;
 
-    size = sizeof(*fw);
-    TAILQ_FOREACH(frab, &fw->fw_frabs, frab_next)
-        size += sizeof(*frab);
+    size = sizeof(*fw)
+         + lsquic_frab_list_mem_used(&fw->fw_fral)
+         - sizeof(fw->fw_fral);
 
     return size;
 }
-
-

@@ -1,26 +1,40 @@
-# Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
 LSQUIC Examples
 ===============
 
-test/http_client.c demonstrates how to use HTTP features of QUIC.
+LSQUIC comes with several examples of how the library is used.
+
+The client and server programs described below are built on a common
+framework and share many options.
+
+HTTP client and server
+----------------------
+
+See test/http_{client,server}.c
+
+This pair of programs is to demonstrate how to use HTTP features of QUIC.
+HTTP server is interoperable with proto-quic's quic_client.
 
 Usage Examples
 --------------
 
 Fetch Google's home page:
 
-    ./http_client -H www.google.com -s 74.125.22.106:443 -p /
+    ./http_client -s www.google.com -p /
 
-    or even
+The default port number is 443, but it can be specified after colon
+using the -s flag.  The value of the `host' header as well as the SNI
+value defaults to the host part of the -s option.  -H option can be
+used to override it.  For example:
 
-    ./http_client -H www.google.co.uk -s 2a00:1450:4009:80c::2003:443 -p /
+    ./http_client -H www.youtube.com -s www.google.com:443 -p / -M HEAD
 
-In the example above, -H specifies the domain; it is also used as the value
-of SNI paramater in the handshake.
+The host part can be an IP address.  Both IPv4 and IPv6 are supported.
+See ./http_client -h for a (long) list of different flags.
 
 POST a file to calculate its CRC32 checksum:
 
-    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+    ./http_client -H www.litespeedtech.com -s 443 \
                         -p /cgi-bin/crc32.cgi -P file-256M -M POST
 
     HTTP/1.1 200 OK
@@ -44,7 +58,7 @@ On the command line, I do
 
 To submit several requests concurrently, one can use -n and -r options:
 
-    ./http_client -H www.litespeedtech.com -s 127.0.0.1:443 \
+    ./http_client -H www.litespeedtech.com -s 443 \
                 -p /cgi-bin/crc32.cgi -P file-256M -M POST -n 3 -r 10
 
 This will open three parallel connections which will make ten POST
@@ -62,10 +76,41 @@ To perform load testing, it is good to mix sending and receiving data:
 If you don't want to create a hundred 256-megabyte out-get.* files, use -K
 flag to discard output.
 
+Testing Large Packet Sizes
+---------------------------------
+
+IETF QUIC supports all valid UDP packet sizes. This section outlines the
+environment setup and testing parameters necessary to test this feature.
+
+Compilation
+    - Make sure to compile the library in DEBUG mode so that the NDEBUG
+      define is off.
+    - Build both the http_client and http_server test programs.
+
+Running Instructions
+    - On the server side, define the environment variable
+      LSQUIC_CN_PACK_SIZE and set it to the intended packet size.
+      Valid sizes are up to 65507 (IPv4).
+    - Use the -W flag for http_client and http_server for the ability
+      to send packets of large size.
+    - On the client side, use the -z flag to specify the maximum size
+      of packet that the client will accept.
+
+Example Usage
+    ./http_client -p /file-1M -H www.litespeedtech.com -s 192.168.0.85:5443
+        -o version=FF000014 -z 65507 -W
+    ./http_server -c www.litespeedtech.com,certschain,privkey
+        -s 0.0.0.0:5443 -W
+
+Additional Notes
+    Since this feature does not have MTU discovery enabled at the time of
+    writing, make sure to use client and server machines that share a path
+    with the intended MTU.
+
 Control QUIC Settings via -o Flag
 ---------------------------------
 
-Most of the settings in struct lsquic_engine_settings can be controlled
+Most of the settings in struct squic_engine_settings can be controlled
 via -o flag.  With exception of es_versions, which is a bit mask, other
 es_* options can be mapped to corresponding -o value via s/^es_//:
 
@@ -74,12 +119,62 @@ es_* options can be mapped to corresponding -o value via s/^es_//:
 
 And so on.
 
+For example, to test version negotiation:
+
+    ./http_server -c www.litespeedtech.com,certschain,privkey \
+        -o version=Q035 -L debug 2>server.out &
+    ./http_client -H www.litespeedtech.com -p Makefile -L debug 2>client.out
+
+Above, the client will start with the default, which is the highest supported
+QUIC version, which the server should negotiate down.  You should see it from
+the log files.
+
 The code to set options via -o flag lives in set_engine_option().  It is good
 to update this function at the same time as member fields are added to struct
 lsquic_engine_settings.
 
 Control LSQUIC Behavior via Environment Variables
 -------------------------------------------------
+
+LSQUIC_PACKET_OUT_LIMIT
+
+    If set, the value of this environment variable is the maximum number
+    of packets that can be sent out in one shot.  The limit is in the test
+    program framework's ea_packets_out() callback.
+
+    It is not applicable when sendmmsg(2) is used.
+
+    Note 1: sendmmsg can be enabled using -g option, if available for your
+            platform.
+
+    Note 2: see -m option for a related packet-out limitation.
+
+LSQUIC_DISABLE_HANDSHAKE
+
+    If set (to anything, not any particular value), the QUIC handshake is
+    disabled and packets are not encrypted.  This can be useful to:
+        a) profile functions in LSQUIC without accounting for crypto stuff,
+           which tends to dwarf everything else;
+        b) see bytes in the clear on the wire; and
+        c) compare throughput performance to TCP without crypto.
+
+    This functionality is compiled in if the somewhat-awkwardly named
+    LSQUIC_ENABLE_HANDSHAKE_DISABLE is set to 1.  By default, it is enabled
+    in debug builds and disabled in optimized builds.
+
+LSQUIC_LOSE_PACKETS_RE
+
+    If set, this regular expression specifies the numbers of packets which
+    the sender will lose on purpose.  For example:
+
+        export LSQUIC_LOSE_PACKETS_RE='^(3|5|10)$'
+
+    The act of losing a packet is performed by changing its payload to
+    zero-filled buffer of the same size, which is almost as good as
+    not sending anything.  The latter is difficult to implement without
+    negatively affecting the regular code flow.
+
+    Only available in debug builds.
 
 LSQUIC_PACER_INTERTICK
 
@@ -94,6 +189,28 @@ LSQUIC_CUBIC_SAMPLING_RATE
 
     Only available in debug builds.
 
+LSQUIC_RANDOM_SEND_FAILURE
+
+    Frequency with which sending of packets fails: one out of this many
+    times on average.
+
+    Only available when compiled with -DLSQUIC_RANDOM_SEND_FAILURE=1
+
+LSQUIC_LOG_SECRETS
+
+    If set to true value, crypto secrets will be logged.  Applies to
+    IETF QUIC only.
+
+LSQUIC_COALESCE
+
+    If set to false, packets are not coalesced.  Defaults to true.
+
+LSQUIC_USE_POOLS
+
+    If set to false, all memory pooling code is replaced with calls to
+    malloc() and free().  This facilitates debugging memory issues.
+    The default is true.
+
 Control Network-Related Stuff
 -----------------------------
 
@@ -106,18 +223,25 @@ Control Network-Related Stuff
                    sndbuf=12345    # Sets SO_SNDBUF
                    rcvbuf=12345    # Sets SO_RCVBUF
 
+   -g          Use sendmmsg() to send packets.  This is only compiled in
+               if available.
+
 More Compilation Options
 ------------------------
 
--DFULL_CONN_STATS=1
+-DLSQUIC_ENABLE_HANDSHAKE_DISABLE=1
 
-    Track some statistics about full connection -- packets in, sent, delayed,
+    Support disabling of handshake.  See above.
+
+-DLSQUIC_CONN_STATS=1
+
+    Track some statistics about connections -- packets in, sent, delayed,
     stream payload per packet size ratio, and some others -- and print them
     at NOTICE level when connection is destroyed.
 
-    This is useful when performing network testing and especially analyzing
-    the effects of changing send buffer size (see -S sndbuf= in the previous
-    section).
+    Cumulative connections statistics are printed by the engine when it is
+    destroyed if lsquic_engine_api.ea_stats_fh is set.  The HTTP client
+    programs sets it when -t or -T command-line option is used.
 
 -DLSQUIC_PACKINTS_SANITY_CHECK=1
 
@@ -130,6 +254,11 @@ More Compilation Options
     Turn off statistics collection performed by the send controller: number
     of packets sent, resent, and delayed.
 
+-DLOG_PACKET_CHECKSUM=1
+
+    When turned on, CRC32 checksum of each sent and received packet is
+    logged as an event.
+
 -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_WARN
 
     If you want to go even faster: compile out some log levels entirely.
@@ -138,3 +267,15 @@ More Compilation Options
 
     Add relatively expensive run-time sanity checks
 
+-DLSQUIC_RANDOM_SEND_FAILURE=1
+
+    Simulate failure to send packets to test send resumption logic.  When
+    this flag is specified, sending of packets will randomly fail, about
+    one out of every 10 attempts.  Set environment variable
+    LSQUIC_RANDOM_SEND_FAILURE to change this frequency.
+
+-DLSQUIC_ECN_BLACK_HOLE=1
+
+    When compiled with this flag, setting environment variable
+    LSQUIC_ECN_BLACK_HOLE to 1 will emulate ECN black hole: all received
+    packets with ECN markings are dropped on the floor.

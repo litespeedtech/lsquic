@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_data_in_if.h -- DATA in interface
  */
@@ -18,6 +18,7 @@ enum ins_frame
     INS_FRAME_OK,
     INS_FRAME_ERR,
     INS_FRAME_DUP,
+    INS_FRAME_OVERLAP,
 };
 
 
@@ -29,8 +30,14 @@ struct data_in_iface
     int
     (*di_empty) (struct data_in *);
 
-    /* The caller releases control of stream frame.  Do not reference it
-     * after the call.
+    /* When INS_FRAME_OK, INS_FRAME_ERR, or INS_FRAME_DUP is returned, the
+     * caller releases control of stream frame.  Do not reference it after
+     * the call.
+     *
+     * When INS_FRAME_OVERLAP is returned the caller has a choice to switch
+     * to implementation that supports overlaps and try to insert the frame
+     * again or to treat this as an error.  Either way, the caller retains
+     * control of the frame.
      */
     enum ins_frame
     (*di_insert_frame) (struct data_in *, struct stream_frame *,
@@ -50,6 +57,20 @@ struct data_in_iface
 
     size_t
     (*di_mem_used) (struct data_in *);
+
+    void
+    (*di_dump_state) (struct data_in *);
+
+    /* Return number of bytes readable starting at offset `read_offset' */
+    uint64_t
+    (*di_readable_bytes) (struct data_in *, uint64_t read_offset);
+
+    /* If set, this means that when di_insert_frame() returns INS_FRAME_OK,
+     * the data_in handler has taken ownership of the frame.  Otherwise, it
+     * is up to the caller to free it.
+     */
+    const int
+    di_own_on_ok;
 };
 
 
@@ -67,11 +88,17 @@ struct data_in
 };
 
 
+/* This implementation does not support overlapping frame and may return
+ * INS_FRAME_OVERLAP.
+ */
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *, uint32_t stream_id);
+data_in_nocopy_new (struct lsquic_conn_public *, lsquic_stream_id_t);
 
+/* This implementation supports overlapping frames and will never return
+ * INS_FRAME_OVERLAP.
+ */
 struct data_in *
-data_in_hash_new (struct lsquic_conn_public *, uint32_t stream_id,
+data_in_hash_new (struct lsquic_conn_public *, lsquic_stream_id_t,
                   uint64_t byteage);
 
 enum ins_frame

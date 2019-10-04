@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_version.h -- version manipulation routines
  */
@@ -17,6 +17,6 @@ lsquic_tag2ver (uint32_t ver_tag);
 extern const char *const lsquic_ver2str[];
 
 int
-gen_ver_tags (unsigned char *buf, size_t bufsz, unsigned versions);
+lsquic_gen_ver_tags (unsigned char *buf, size_t bufsz, unsigned versions);
 
 #endif

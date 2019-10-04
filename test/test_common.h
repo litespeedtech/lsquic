@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Test client's and server's common components.
  */
@@ -7,7 +7,7 @@
 #define TEST_COMMON_H 1
 
 #if __linux__
-#   include <linux/if.h>  /* For IFNAMSIZ */
+#   include <net/if.h>  /* For IFNAMSIZ */
 #endif
 
 struct lsquic_engine;
@@ -28,6 +28,7 @@ enum sport_flags
     SPORT_SET_SNDBUF        = (1 << 1), /* SO_SNDBUF */
     SPORT_SET_RCVBUF        = (1 << 2), /* SO_RCVBUF */
     SPORT_SERVER            = (1 << 3),
+    SPORT_CONNECT           = (1 << 4),
 };
 
 struct service_port {
@@ -47,11 +48,14 @@ struct service_port {
     void                      *conn_ctx;
     char                       host[80];
     struct sockaddr_storage    sas;
+    struct sockaddr_storage    sp_local_addr;
     struct packets_in         *packs_in;
     enum sport_flags           sp_flags;
     int                        sp_sndbuf;   /* If SPORT_SET_SNDBUF is set */
     int                        sp_rcvbuf;   /* If SPORT_SET_RCVBUF is set */
     struct prog               *sp_prog;
+    unsigned char             *sp_token_buf;
+    size_t                     sp_token_sz;
 };
 
 TAILQ_HEAD(sport_head, service_port);
@@ -74,6 +78,9 @@ int
 sport_packets_out (void *ctx, const struct lsquic_out_spec *, unsigned count);
 
 int
+sport_set_token (struct service_port *, const char *);
+
+int
 set_engine_option (struct lsquic_engine_settings *,
                    int *version_cleared, const char *name_value);
 
@@ -90,13 +97,16 @@ void
 pba_init (struct packout_buf_allocator *, unsigned max);
 
 void *
-pba_allocate (void *packout_buf_allocator, size_t);
+pba_allocate (void *packout_buf_allocator, void*, unsigned short, char);
 
 void
-pba_release (void *packout_buf_allocator, void *obj);
+pba_release (void *packout_buf_allocator, void *, void *obj, char);
 
 void
 pba_cleanup (struct packout_buf_allocator *);
+
+void
+print_conn_info (const struct lsquic_conn *conn);
 
 size_t
 test_reader_size (void *void_ctx);

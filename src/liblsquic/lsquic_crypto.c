@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <string.h>
 
@@ -17,7 +17,6 @@
 
 #include "lsquic_types.h"
 #include "lsquic_crypto.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 #include "lsquic_util.h"
 #include "lsquic_str.h"
@@ -81,17 +80,6 @@ void fnv1a_inc(uint128 *hash, const uint8_t *data, int len)
     }
 }
 
-uint128 fnv1a_128_2(const uint8_t * data1, int len1, const uint8_t *data2, int len2)
-{
-    uint128 hash;
-    memcpy(&hash, &s_init_hash, 16);
-    
-    fnv1a_inc(&hash, data1, len1);
-    if (data2)
-        fnv1a_inc(&hash, data2, len2);
-    return hash;
-}
-
 uint128 fnv1a_128_3(const uint8_t *data1, int len1,
                       const uint8_t *data2, int len2,
                       const uint8_t *data3, int len3)
@@ -103,12 +91,6 @@ uint128 fnv1a_128_3(const uint8_t *data1, int len1,
     fnv1a_inc(&hash, data2, len2);
     fnv1a_inc(&hash, data3, len3);
     return hash;
-}
-
-void fnv1a_128_2_s(const uint8_t * data1, int len1, const uint8_t * data2, int len2, uint8_t  *md)
-{
-    uint128 hash = fnv1a_128_2(data1, len1, data2, len2);
-    memcpy(md, (void *)&hash, 16);
 }
 
 /* HS_PKT_HASH_LENGTH bytes of md */
@@ -167,16 +149,6 @@ void fnv1a_inc(uint128 *hash, const uint8_t * data, int len)
 }
 
 
-uint128 fnv1a_128_2(const uint8_t * data1, int len1, const uint8_t * data2, int len2)
-{
-    uint128 hash = {UINT64_C(7809847782465536322), UINT64_C(7113472399480571277)};
-    fnv1a_inc(&hash, data1, len1);
-    if (data2)
-        fnv1a_inc(&hash, data2, len2);
-    return hash;
-}
-
-
 uint128 fnv1a_128_3(const uint8_t * data1, int len1,
                       const uint8_t * data2, int len2,
                       const uint8_t * data3, int len3)
@@ -189,13 +161,6 @@ uint128 fnv1a_128_3(const uint8_t * data1, int len1,
 }
 
 
-void fnv1a_128_2_s(const uint8_t * data1, int len1, const uint8_t * data2, int len2, uint8_t  *md)
-{
-    uint128 hash = fnv1a_128_2(data1, len1, data2, len2);
-    memcpy(md, (void *)&hash.lo_, 8);
-    memcpy(md + 8, (void *)&hash.hi_, 8);
-}
-
 /* HS_PKT_HASH_LENGTH bytes of md */
 void serialize_fnv128_short(uint128 v, uint8_t *md)
 {
@@ -206,55 +171,8 @@ void serialize_fnv128_short(uint128 v, uint8_t *md)
 
 #endif
 
-uint128 fnv1a_128(const uint8_t * data, int len)
-{
-    return fnv1a_128_2(data, len , NULL, 0);
-}
 
-
-void fnv1a_128_s(const uint8_t * data, int len, uint8_t  *md)
-{
-    fnv1a_128_2_s(data, len, NULL, 0, md);
-}
-
-
-/* packet data = header + MD + payload */
-/* return 0 if OK */
-int verify_hs_pkt(const uint8_t *pkg_data, size_t header_len, size_t pkg_len)
-{
-    uint8_t md[HS_PKT_HASH_LENGTH];
-    uint128 hash;
-    if (pkg_len < header_len + HS_PKT_HASH_LENGTH)
-        return -1;
-    
-    hash = fnv1a_128_2(pkg_data, header_len, pkg_data + header_len + HS_PKT_HASH_LENGTH,
-                       pkg_len - header_len - HS_PKT_HASH_LENGTH);
-    serialize_fnv128_short(hash, md);
-    return memcmp(md, pkg_data + header_len, HS_PKT_HASH_LENGTH);
-}
-
-/* packet data = header + MD + payload, update the MD part */
-int update_hs_pkt_hash(uint8_t *pkg_data, int header_len, int pkg_len)
-{
-    uint8_t md[HS_PKT_HASH_LENGTH];
-    uint128 hash;
-    if (pkg_len < header_len + HS_PKT_HASH_LENGTH)
-        return -1;
-    
-    hash = fnv1a_128_2(pkg_data, header_len, pkg_data + header_len + HS_PKT_HASH_LENGTH,
-                       pkg_len - header_len - HS_PKT_HASH_LENGTH);
-    serialize_fnv128_short(hash, md);
-    memcpy(pkg_data + header_len, md, HS_PKT_HASH_LENGTH);
-    return 0;
-}
-
-int get_hs_pkt_hash_len()
-{
-    return HS_PKT_HASH_LENGTH;
-}
-
-
-void sha256(const uint8_t *buf, int len, uint8_t *h)
+static void sha256(const uint8_t *buf, int len, uint8_t *h)
 {
     SHA256_CTX ctx;
     SHA256_Init(&ctx);
@@ -499,17 +417,6 @@ int aes_aead_dec(EVP_AEAD_CTX *key,
     }
 }
 
-/* aes 128, 16 bytes */
-int aes_get_key_length()
-{
-    return 16;
-}
-
-void gen_nonce_s(char *buf, int length)
-{
-    rand_bytes(buf, length);
-}
-
 /* 32 bytes client nonce with 4 bytes tm, 8 bytes orbit */
 void gen_nonce_c(unsigned char *buf, uint64_t orbit)
 {
@@ -558,17 +465,6 @@ X509 *bio_to_crt(const void *buf, int len, int type)
 }
 
 
-int read_rsa_priv_key(const uint8_t *buf, int len, EVP_PKEY *pkey)
-{
-    
-    RSA *rsa = RSA_private_key_from_bytes(buf, len);
-    if (!rsa)
-        return -1;
-
-    return EVP_PKEY_assign_RSA(pkey, rsa);
-}
-
-
 int gen_prof(const uint8_t *chlo_data, size_t chlo_data_len,
              const uint8_t *scfg_data, uint32_t scfg_data_len,
              const EVP_PKEY *priv_key, uint8_t *buf, size_t *buf_len)
@@ -605,14 +501,6 @@ int gen_prof(const uint8_t *chlo_data, size_t chlo_data_len,
         EVP_DigestSignFinal(&sign_context, buf, buf_len);
     
     EVP_MD_CTX_cleanup(&sign_context);
-    return 0;
-}
-
-
-int verify_cert(const char *buf, int len)
-{
-    //X509_verify_cert();
-    
     return 0;
 }
 

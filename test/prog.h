@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * prog.h -- common setup and options for QUIC program
  */
@@ -6,10 +6,13 @@
 #ifndef PROG_H
 #define PROG_H 1
 
+#include "test_config.h"
+
 struct event;
 struct event_base;
 struct lsquic_hash;
 struct sport_head;
+struct ssl_ctx_st;
 
 struct prog
 {
@@ -19,17 +22,36 @@ struct prog
     unsigned                        prog_engine_flags;
     struct service_port             prog_dummy_sport;   /* Use for options */
     unsigned                        prog_packout_max;
-#define PROG_DEFAULT_PERIOD_USEC                (10 * 1000) /* 10 ms default */
-    unsigned                        prog_period_usec;
     unsigned short                  prog_max_packet_size;
     int                             prog_version_cleared;
+    unsigned long                   prog_read_count;
+#if HAVE_SENDMMSG
+    int                             prog_use_sendmmsg;
+#endif
+#if HAVE_RECVMMSG
+    int                             prog_use_recvmmsg;
+#endif
+    int                             prog_use_stock_pmi;
     struct event_base              *prog_eb;
     struct event                   *prog_timer,
-                                   *prog_onetimer,
+                                   *prog_send,
                                    *prog_usr1;
+    struct event                   *prog_usr2;
+    struct ssl_ctx_st              *prog_ssl_ctx;
+    struct lsquic_hash             *prog_certs;
+    struct event                   *prog_event_sni;
+    char                           *prog_susp_sni;
     struct sport_head              *prog_sports;
     struct lsquic_engine           *prog_engine;
     const char                     *prog_hostname;
+    int                             prog_ipver;     /* 0, 4, or 6 */
+    const char                     *prog_keylog_dir;
+    enum {
+        PROG_FLAG_COOLDOWN  = 1 << 0,
+#if LSQUIC_PREFERRED_ADDR
+        PROG_SEARCH_ADDRS   = 1 << 1,
+#endif
+    }                               prog_flags;
 };
 
 void
@@ -41,6 +63,11 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #else
 #   define SENDMMSG_FLAG ""
 #endif
+#if HAVE_RECVMMSG
+#   define RECVMMSG_FLAG "j"
+#else
+#   define RECVMMSG_FLAG ""
+#endif
 
 #if LSQUIC_DONTFRAG_SUPPORTED
 #   define IP_DONTFRAG_FLAG "D"
@@ -48,7 +75,8 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #   define IP_DONTFRAG_FLAG ""
 #endif
 
-#define PROG_OPTS "i:m:c:y:L:l:o:H:s:S:Y:z:" SENDMMSG_FLAG IP_DONTFRAG_FLAG
+#define PROG_OPTS "i:km:c:y:L:l:o:H:s:S:Y:z:G:W" RECVMMSG_FLAG SENDMMSG_FLAG \
+                                                            IP_DONTFRAG_FLAG
 
 /* Returns:
  *  0   Applied
@@ -74,15 +102,18 @@ int
 prog_prep (struct prog *);
 
 int
-prog_connect (struct prog *);
+prog_connect (struct prog *, unsigned char *, size_t);
 
 void
 prog_print_common_options (const struct prog *, FILE *);
 
-void
-prog_maybe_set_onetimer (struct prog *);
-
 int
 prog_is_stopped (void);
+
+void
+prog_process_conns (struct prog *);
+
+void
+prog_sport_cant_send (struct prog *, int fd);
 
 #endif

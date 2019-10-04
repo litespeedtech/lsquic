@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,7 +9,6 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 
 static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
@@ -119,11 +118,11 @@ run_parse_tests (void)
     const struct conn_close_parse_test *test;
     for (test = parse_tests; test->buf[0]; ++test)
     {
-        uint32_t error_code = ~0;
+        uint64_t error_code = ~0;
         uint16_t reason_len = ~0;
         uint8_t reason_off = ~0;
         int sz = pf->pf_parse_connect_close_frame(test->buf, test->buf_len,
-                                        &error_code, &reason_len, &reason_off);
+                                NULL, &error_code, &reason_len, &reason_off);
         assert(sz == test->retval);
         if (0 == sz)
         {
@@ -143,7 +142,7 @@ run_gen_tests (void)
     {
         unsigned char buf[0x100];
         int sz = pf->pf_gen_connect_close_frame(buf, sizeof(buf),
-                    test->error_code, test->reason,
+                    0, test->error_code, test->reason,
                     test->reason ? strlen(test->reason) : 0);
         assert(sz == test->retval);
         if (0 == sz)

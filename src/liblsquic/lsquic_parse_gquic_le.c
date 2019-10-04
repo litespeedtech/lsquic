@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_parse_gquic_le.c -- Parsing functions specific to little-endian
  *                              (Q038 and lower) GQUIC.
@@ -20,7 +20,9 @@
 #include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_in.h"
+#include "lsquic_packet_out.h"
 #include "lsquic_parse.h"
+#include "lsquic_parse_common.h"
 #include "lsquic_rechist.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
@@ -28,6 +30,7 @@
 #include "lsquic_malo.h"
 #include "lsquic_version.h"
 #include "lsquic.h"
+#include "lsquic_conn.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PARSE
 #include "lsquic_logger.h"
@@ -118,41 +121,23 @@ gquic_le_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
 
 
 static int
-gquic_le_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz, uint64_t conn_id,
-                  unsigned version_bitmask)
-{
-    int sz;
-    unsigned char *p = buf;
-    unsigned char *const pend = p + bufsz;
-
-    CHECK_SPACE(1, p, pend);
-    *p = PACKET_PUBLIC_FLAGS_VERSION | PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID;
-    ++p;
-
-    CHECK_SPACE(8, p, pend);
-    memcpy(p, &conn_id, 8);
-    p += 8;
-
-    sz = gen_ver_tags(p, pend - p, version_bitmask);
-    if (sz < 0)
-        return -1;
-
-    return p + sz - buf;
-}
-
-
-static int
-gquic_le_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_t *conn_id,
-                    const lsquic_ver_tag_t *ver, const unsigned char *nonce,
-                    lsquic_packno_t packno, enum lsquic_packno_bits bits)
+gquic_le_gen_reg_pkt_header (const struct lsquic_conn *lconn,
+            const struct lsquic_packet_out *packet_out, unsigned char *buf,
+                                                                size_t bufsz)
 {
     unsigned packnum_len, header_len;
     unsigned char *p;
+    enum packno_bits bits;
 
-    packnum_len = packno_bits2len(bits);
+    bits = lsquic_packet_out_packno_bits(packet_out);
+    packnum_len = gquic_packno_bits2len(bits);
 
-    header_len = 1 + (!!conn_id << 3) + (!!ver << 2) + ((!!nonce) << 5)
-               + packnum_len;
+    header_len = 1
+               + (!!(packet_out->po_flags & PO_CONN_ID) << 3)
+               + (!!(packet_out->po_flags & PO_VERSION) << 2)
+               + (!!(packet_out->po_flags & PO_NONCE)   << 5)
+               + packnum_len
+               ;
     if (header_len > bufsz)
     {
         errno = ENOBUFS;
@@ -161,32 +146,32 @@ gquic_le_gen_reg_pkt_header (unsigned char *buf, size_t bufsz, const lsquic_cid_
 
     p =  buf;
 
-    *p = (!!conn_id << 3)
+    *p = (!!(packet_out->po_flags & PO_CONN_ID) << 3)
        | (bits << 4)
-       | ((!!nonce) << 2)
-       | !!ver;
+       | ((!!(packet_out->po_flags & PO_NONCE)) << 2)
+       | !!(packet_out->po_flags & PO_VERSION);
     ++p;
 
-    if (conn_id)
+    if (packet_out->po_flags & PO_CONN_ID)
     {
-        memcpy(p, conn_id , sizeof(*conn_id));
-        p += sizeof(*conn_id);
+        memcpy(p, &lconn->cn_cid, sizeof(lconn->cn_cid));
+        p += sizeof(lconn->cn_cid);
     }
 
-    if (ver)
+    if (packet_out->po_flags & PO_VERSION)
     {
-        memcpy(p, ver, 4);
+        memcpy(p, &packet_out->po_ver_tag, 4);
         p += 4;
     }
     
-    if (nonce)
+    if (packet_out->po_flags & PO_NONCE)
     {
-        memcpy(p, nonce , 32);
+        memcpy(p, packet_out->po_nonce, 32);
         p += 32;
     }
     
     /* ENDIAN */
-    memcpy(p, &packno, packnum_len);
+    memcpy(p, &packet_out->po_packno, packnum_len);
     p += packnum_len;
 
     assert(p - buf == (intptr_t) header_len);
@@ -232,7 +217,7 @@ gquic_le_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_i
         dlen = (size < n_avail) << 1;
         n_avail -= dlen;
 
-        CHECK_SPACE(1 + olen + slen + dlen +
+        CHECK_STREAM_SPACE(1 + olen + slen + dlen +
             + 1 /* We need to write at least 1 byte */, buf, buf + buf_len);
 
         memcpy(p, &stream_id, slen);
@@ -253,7 +238,7 @@ gquic_le_gen_stream_frame (unsigned char *buf, size_t buf_len, uint32_t stream_i
     else
     {
         dlen = 2;
-        CHECK_SPACE(1 + slen + olen + 2, buf, buf + buf_len);
+        CHECK_STREAM_SPACE(1 + slen + olen + 2, buf, buf + buf_len);
         memcpy(p, &stream_id, slen);
         p += slen;
         memcpy(p, &offset, olen);
@@ -435,11 +420,11 @@ gquic_le_parse_ack_frame (const unsigned char *buf, size_t buf_len, ack_info_t *
 
 static int
 gquic_le_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
-                lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                lsquic_packno_t cur_packno, enum packno_bits bits,
                 lsquic_packno_t least_unacked_packno)
 {
     lsquic_packno_t delta;
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
 
     if (buf_len >= 1 + packnum_len)
     {
@@ -455,11 +440,11 @@ gquic_le_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
 
 static int
 gquic_le_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
-                 lsquic_packno_t cur_packno, enum lsquic_packno_bits bits,
+                 lsquic_packno_t cur_packno, enum packno_bits bits,
                  lsquic_packno_t *least_unacked)
 {
     lsquic_packno_t delta;
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
 
     if (buf_len >= 1 + packnum_len)
     {
@@ -474,9 +459,9 @@ gquic_le_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
 
 
 static int
-gquic_le_skip_stop_waiting_frame (size_t buf_len, enum lsquic_packno_bits bits)
+gquic_le_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits)
 {
-    unsigned packnum_len = packno_bits2len(bits);
+    unsigned packnum_len = gquic_packno_bits2len(bits);
     if (buf_len >= 1 + packnum_len)
         return 1 + packnum_len;
     else
@@ -832,12 +817,10 @@ gquic_le_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
 const struct parse_funcs lsquic_parse_funcs_gquic_le =
 {
-    .pf_gen_ver_nego_pkt              =  gquic_le_gen_ver_nego_pkt,
     .pf_gen_reg_pkt_header            =  gquic_le_gen_reg_pkt_header,
     .pf_parse_packet_in_finish        =  gquic_le_parse_packet_in_finish,
     .pf_gen_stream_frame              =  gquic_le_gen_stream_frame,
     .pf_calc_stream_frame_header_sz   =  calc_stream_frame_header_sz_gquic,
-    .pf_parse_stream_frame_header_sz  =  parse_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  gquic_le_parse_stream_frame,
     .pf_parse_ack_frame               =  gquic_le_parse_ack_frame,
     .pf_gen_ack_frame                 =  gquic_le_gen_ack_frame,
@@ -861,4 +844,8 @@ const struct parse_funcs lsquic_parse_funcs_gquic_le =
 #endif
     .pf_parse_frame_type              =  parse_frame_type_gquic_Q035_thru_Q039,
     .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q039,
+    .pf_packout_size                  =  lsquic_gquic_packout_size,
+    .pf_packout_header_size           =  lsquic_gquic_packout_header_size,
+    .pf_calc_packno_bits              =  lsquic_gquic_calc_packno_bits,
+    .pf_packno_bits2len               =  lsquic_gquic_packno_bits2len,
 };

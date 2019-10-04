@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_di_nocopy.c -- The "no-copy" data in stream.
  *
@@ -57,6 +57,9 @@
 #include "lsquic_packet_in.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_mm.h"
 #include "lsquic_malo.h"
@@ -66,7 +69,7 @@
 
 
 #define LSQUIC_LOGGER_MODULE LSQLM_DI
-#define LSQUIC_LOG_CONN_ID ncdi->ncdi_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ncdi->ncdi_conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID ncdi->ncdi_stream_id
 #include "lsquic_logger.h"
 
@@ -102,10 +105,15 @@ struct nocopy_data_in
     struct data_in              ncdi_data_in;
     struct lsquic_conn_public  *ncdi_conn_pub;
     uint64_t                    ncdi_byteage;
-    uint32_t                    ncdi_stream_id;
+    uint64_t                    ncdi_fin_off;
+    lsquic_stream_id_t          ncdi_stream_id;
     unsigned                    ncdi_n_frames;
     unsigned                    ncdi_n_holes;
     unsigned                    ncdi_cons_far;
+    enum {
+        NCDI_FIN_SET        = 1 << 0,
+        NCDI_FIN_REACHED    = 1 << 1,
+    }                           ncdi_flags;
 };
 
 
@@ -120,7 +128,8 @@ static const struct data_in_iface *di_if_nocopy_ptr;
 
 
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
+data_in_nocopy_new (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id)
 {
     struct nocopy_data_in *ncdi;
 
@@ -137,6 +146,9 @@ data_in_nocopy_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id)
     ncdi->ncdi_n_frames         = 0;
     ncdi->ncdi_n_holes          = 0;
     ncdi->ncdi_cons_far         = 0;
+    ncdi->ncdi_fin_off          = 0;
+    ncdi->ncdi_flags            = 0;
+    LSQ_DEBUG("initialized");
     return &ncdi->ncdi_data_in;
 }
 
@@ -156,53 +168,78 @@ nocopy_di_destroy (struct data_in *data_in)
 }
 
 
-#if 1
-#define CHECK_ORDER(ncdi)
-#else
+#if LSQUIC_EXTRA_CHECKS
 static int
-ordered (const struct nocopy_data_in *ncdi)
+frame_list_is_sane (const struct nocopy_data_in *ncdi)
 {
     const stream_frame_t *frame;
-    uint64_t off = 0;
-    int ordered = 1;
+    uint64_t prev_off = 0, prev_end = 0;
+    int ordered = 1, overlaps = 0;
     TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
     {
-        ordered &= off <= frame->data_frame.df_offset;
-        off = frame->data_frame.df_offset;
+        ordered &= prev_off <= DF_OFF(frame);
+        overlaps |= prev_end > DF_OFF(frame);
+        prev_off = DF_OFF(frame);
+        prev_end = DF_END(frame);
     }
-    return ordered;
+    return ordered && !overlaps;
 }
-#define CHECK_ORDER(ncdi) assert(ordered(ncdi))
+#define CHECK_ORDER(ncdi) assert(frame_list_is_sane(ncdi))
+#else
+#define CHECK_ORDER(ncdi)
 #endif
 
 
-/* To reduce the number of conditionals, logical operators have been replaced
- * with arithmetic operators.  Return value is an integer in range [0, 3].
- * Bit 0 is set due to FIN in previous frame.  If bit 1 is set, it means that
- * it's a dup.
+#define CASE(letter) ((int) (letter) << 8)
+
+/* Not all errors are picked up by this function, as it is expensive (and
+ * potentially error-prone) to check for all possible error conditions.
+ * It an error be misclassified as an overlap or dup, in the worst case
+ * we end up with an application error instead of protocol violation.
  */
 static int
 insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
                                     uint64_t read_offset, unsigned *p_n_frames)
 {
-    int ins;
-    unsigned count;
     stream_frame_t *prev_frame, *next_frame;
+    unsigned count;
+
+    if (read_offset > DF_END(new_frame))
+    {
+        if (DF_FIN(new_frame))
+            return INS_FRAME_ERR                                | CASE('A');
+        else
+            return INS_FRAME_DUP                                | CASE('B');
+    }
+
+    if (ncdi->ncdi_flags & NCDI_FIN_SET)
+    {
+        if (DF_FIN(new_frame) && DF_END(new_frame) != ncdi->ncdi_fin_off)
+            return INS_FRAME_ERR                                | CASE('C');
+        if (DF_END(new_frame) > ncdi->ncdi_fin_off)
+            return INS_FRAME_ERR                                | CASE('D');
+        if (read_offset == DF_END(new_frame))
+            return INS_FRAME_DUP                                | CASE('M');
+    }
+    else
+    {
+        if (read_offset == DF_END(new_frame) && !DF_FIN(new_frame))
+            return INS_FRAME_DUP                                | CASE('L');
+    }
 
     /* Find position in the list, going backwards.  We go backwards because
      * that is the most likely scenario.
      */
     next_frame = TAILQ_LAST(&ncdi->ncdi_frames_in, stream_frames_tailq);
-    if (next_frame && new_frame->data_frame.df_offset < next_frame->data_frame.df_offset)
+    if (next_frame && DF_OFF(new_frame) < DF_OFF(next_frame))
     {
         count = 1;
         prev_frame = TAILQ_PREV(next_frame, stream_frames_tailq, next_frame);
-        for ( ; prev_frame &&
-                    new_frame->data_frame.df_offset < next_frame->data_frame.df_offset;
+        for ( ; prev_frame && DF_OFF(new_frame) < DF_OFF(next_frame);
                 next_frame = prev_frame,
                     prev_frame = TAILQ_PREV(prev_frame, stream_frames_tailq, next_frame))
         {
-            if (new_frame->data_frame.df_offset >= prev_frame->data_frame.df_offset)
+            if (DF_OFF(new_frame) >= DF_OFF(prev_frame))
                 break;
             ++count;
         }
@@ -213,69 +250,90 @@ insert_frame (struct nocopy_data_in *ncdi, struct stream_frame *new_frame,
         prev_frame = NULL;
     }
 
-    if (!prev_frame && next_frame && new_frame->data_frame.df_offset >=
-                                            next_frame->data_frame.df_offset)
+    if (!prev_frame && next_frame && DF_OFF(new_frame) >= DF_OFF(next_frame))
     {
         prev_frame = next_frame;
         next_frame = TAILQ_NEXT(next_frame, next_frame);
     }
 
-    /* Perform checks */
-    if (prev_frame)
-        ins =
-          (((prev_frame->data_frame.df_offset == new_frame->data_frame.df_offset) &
-            (prev_frame->data_frame.df_size   == new_frame->data_frame.df_size)   &
-            (prev_frame->data_frame.df_fin    == new_frame->data_frame.df_fin)) << 1)   /* Duplicate */
-          | prev_frame->data_frame.df_fin                                               /* FIN in the middle or dup */
-          | (prev_frame->data_frame.df_offset + prev_frame->data_frame.df_size
-                                            > new_frame->data_frame.df_offset)          /* Overlap */
-        ;
-    else
-        ins = 0;
-
-    if (next_frame)
-        ins |=
-          (((next_frame->data_frame.df_offset == new_frame->data_frame.df_offset) &
-            (next_frame->data_frame.df_size   == new_frame->data_frame.df_size)   &
-            (next_frame->data_frame.df_fin    == new_frame->data_frame.df_fin)) << 1)   /* Duplicate */
-          | (new_frame->data_frame.df_offset < read_offset) << 1                        /* Duplicate */
-          | new_frame->data_frame.df_fin                                                /* FIN in the middle or dup */
-          | (new_frame->data_frame.df_offset + new_frame->data_frame.df_size
-                                            > next_frame->data_frame.df_offset)         /* Overlap */
-        ;
-    else
-        ins |=
-            (new_frame->data_frame.df_offset < read_offset) << 1                        /* Duplicate */
-        ;
-
-    if (ins)
-        return ins;
+    const int select = !!prev_frame << 1 | !!next_frame;
+    switch (select)
+    {
+    default:    /* No neighbors */
+        if (read_offset == DF_END(new_frame))
+        {
+            if (DF_SIZE(new_frame))
+            {
+                if (DF_FIN(new_frame)
+                    && !((ncdi->ncdi_flags & NCDI_FIN_REACHED)
+                            && read_offset == ncdi->ncdi_fin_off))
+                    return INS_FRAME_OVERLAP                    | CASE('E');
+                else
+                    return INS_FRAME_DUP                        | CASE('F');
+            }
+            else if (!DF_FIN(new_frame)
+                     || ((ncdi->ncdi_flags & NCDI_FIN_REACHED)
+                         && read_offset == ncdi->ncdi_fin_off))
+                return INS_FRAME_DUP                            | CASE('G');
+        }
+        else if (read_offset > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP                            | CASE('N');
+        goto list_was_empty;
+    case 3:     /* Both left and right neighbors */
+    case 2:     /* Only left neighbor (prev_frame) */
+        if (DF_OFF(prev_frame) == DF_OFF(new_frame)
+            && DF_SIZE(prev_frame) == DF_SIZE(new_frame))
+        {
+            if (!DF_FIN(prev_frame) && DF_FIN(new_frame))
+                return INS_FRAME_OVERLAP                        | CASE('H');
+            else
+                return INS_FRAME_DUP                            | CASE('I');
+        }
+        if (DF_END(prev_frame) > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP                            | CASE('J');
+        if (select == 2)
+            goto have_prev;
+        /* Fall-through */
+    case 1:     /* Only right neighbor (next_frame) */
+        if (DF_END(new_frame) > DF_OFF(next_frame))
+            return INS_FRAME_OVERLAP                            | CASE('K');
+        else if (read_offset > DF_OFF(new_frame))
+            return INS_FRAME_OVERLAP                            | CASE('O');
+        break;
+    }
 
     if (prev_frame)
     {
+  have_prev:
         TAILQ_INSERT_AFTER(&ncdi->ncdi_frames_in, prev_frame, new_frame, next_frame);
-        ncdi->ncdi_n_holes += prev_frame->data_frame.df_offset +
-                    prev_frame->data_frame.df_size != new_frame->data_frame.df_offset;
+        ncdi->ncdi_n_holes += DF_END(prev_frame) != DF_OFF(new_frame);
         if (next_frame)
         {
-            ncdi->ncdi_n_holes += new_frame->data_frame.df_offset +
-                    new_frame->data_frame.df_size != next_frame->data_frame.df_offset;
+            ncdi->ncdi_n_holes += DF_END(new_frame) != DF_OFF(next_frame);
             --ncdi->ncdi_n_holes;
         }
     }
     else
     {
-        ncdi->ncdi_n_holes += next_frame && new_frame->data_frame.df_offset +
-                    new_frame->data_frame.df_size != next_frame->data_frame.df_offset;
+        ncdi->ncdi_n_holes += next_frame
+                           && DF_END(new_frame) != DF_OFF(next_frame);
+  list_was_empty:
         TAILQ_INSERT_HEAD(&ncdi->ncdi_frames_in, new_frame, next_frame);
     }
     CHECK_ORDER(ncdi);
 
+    if (DF_FIN(new_frame))
+    {
+        ncdi->ncdi_flags |= NCDI_FIN_SET;
+        ncdi->ncdi_fin_off = DF_END(new_frame);
+        LSQ_DEBUG("FIN set at %"PRIu64, DF_END(new_frame));
+    }
+
     ++ncdi->ncdi_n_frames;
-    ncdi->ncdi_byteage += new_frame->data_frame.df_size;
+    ncdi->ncdi_byteage += DF_SIZE(new_frame);
     *p_n_frames = count;
 
-    return 0;
+    return INS_FRAME_OK                                         | CASE('Z');
 }
 
 
@@ -321,27 +379,30 @@ nocopy_di_insert_frame (struct data_in *data_in,
 {
     struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
     unsigned count;
-    int ins;
+    enum ins_frame ins;
+    int ins_case;
 
     assert(0 == (new_frame->data_frame.df_fin & ~1));
-    ins = insert_frame(ncdi, new_frame, read_offset, &count);
+    ins_case = insert_frame(ncdi, new_frame, read_offset, &count);
+    ins = ins_case & 0xFF;
+    ins_case >>= 8;
+    LSQ_DEBUG("%s: ins: %d (case '%c')", __func__, ins, (char) ins_case);
     switch (ins)
     {
-    case 0:
+    case INS_FRAME_OK:
         if (check_efficiency(ncdi, count))
             set_eff_alert(ncdi);
-        return INS_FRAME_OK;
-    case 2:
-    case 3:
+        break;
+    case INS_FRAME_DUP:
+    case INS_FRAME_ERR:
         lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, new_frame->packet_in);
         lsquic_malo_put(new_frame);
-        return INS_FRAME_DUP;
+        break;
     default:
-        assert(1 == ins);
-        lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, new_frame->packet_in);
-        lsquic_malo_put(new_frame);
-        return INS_FRAME_ERR;
+        break;
     }
+
+    return ins;
 }
 
 
@@ -352,9 +413,17 @@ nocopy_di_get_frame (struct data_in *data_in, uint64_t read_offset)
     struct stream_frame *frame = TAILQ_FIRST(&ncdi->ncdi_frames_in);
     if (frame && frame->data_frame.df_offset +
                                 frame->data_frame.df_read_off == read_offset)
+    {
+        LSQ_DEBUG("get_frame: frame (off: %"PRIu64", size: %u, fin: %d), at "
+            "read offset %"PRIu64, DF_OFF(frame), DF_SIZE(frame), DF_FIN(frame),
+            read_offset);
         return &frame->data_frame;
+    }
     else
+    {
+        LSQ_DEBUG("get_frame: no frame at read offset %"PRIu64, read_offset);
         return NULL;
+    }
 }
 
 
@@ -370,6 +439,13 @@ nocopy_di_frame_done (struct data_in *data_in, struct data_frame *data_frame)
                     frame->data_frame.df_size != first->data_frame.df_offset;
     --ncdi->ncdi_n_frames;
     ncdi->ncdi_byteage -= frame->data_frame.df_size;
+    if (DF_FIN(frame))
+    {
+        ncdi->ncdi_flags |= NCDI_FIN_REACHED;
+        LSQ_DEBUG("FIN has been reached at offset %"PRIu64, DF_END(frame));
+    }
+    LSQ_DEBUG("frame (off: %"PRIu64", size: %u, fin: %d) done",
+                                DF_OFF(frame), DF_SIZE(frame), DF_FIN(frame));
     lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, frame->packet_in);
     lsquic_malo_put(frame);
 }
@@ -435,13 +511,49 @@ nocopy_di_mem_used (struct data_in *data_in)
     return size;
 }
 
+
+static void
+nocopy_di_dump_state (struct data_in *data_in)
+{
+    struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
+    const struct stream_frame *frame;
+
+    LSQ_DEBUG("nocopy state: frames: %u; holes: %u; cons_far: %u",
+        ncdi->ncdi_n_frames, ncdi->ncdi_n_holes, ncdi->ncdi_cons_far);
+    TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
+        LSQ_DEBUG("frame: off: %"PRIu64"; read_off: %"PRIu16"; size: %"PRIu16
+            "; fin: %d", DF_OFF(frame), frame->data_frame.df_read_off,
+            DF_SIZE(frame), DF_FIN(frame));
+}
+
+
+static uint64_t
+nocopy_di_readable_bytes (struct data_in *data_in, uint64_t read_offset)
+{
+    const struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
+    const struct stream_frame *frame;
+    uint64_t starting_offset;
+
+    starting_offset = read_offset;
+    TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
+        if (DF_ROFF(frame) == read_offset)
+            read_offset += DF_END(frame) - DF_ROFF(frame);
+
+    return read_offset - starting_offset;
+}
+
+
 static const struct data_in_iface di_if_nocopy = {
     .di_destroy      = nocopy_di_destroy,
+    .di_dump_state   = nocopy_di_dump_state,
     .di_empty        = nocopy_di_empty,
     .di_frame_done   = nocopy_di_frame_done,
     .di_get_frame    = nocopy_di_get_frame,
     .di_insert_frame = nocopy_di_insert_frame,
     .di_mem_used     = nocopy_di_mem_used,
+    .di_own_on_ok    = 1,
+    .di_readable_bytes
+                     = nocopy_di_readable_bytes,
     .di_switch_impl  = nocopy_di_switch_impl,
 };
 

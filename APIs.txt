@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
 LSQUIC APIs
 ===========
 
@@ -99,6 +99,9 @@ struct lsquic_engine_settings and struct lsquic_stream_if, as well as:
     - Interface for sending outgoing packets, ea_packets_out
     - Interface for allocating memory for outgoing packet buffers
       (optional).
+    - Interface for share memory hash, ea_shi
+    - Optional interface for reporting connections whose handshake
+      did not complete (ea_bad_handshake)
 
 ea_packets_out is a pointer to a function of type lsquic_packets_out_f.
 The engine calls this function when it is appropriate to send out packets
@@ -127,44 +130,35 @@ drive QUIC connections:
        ea_packets_out callback.
 
 
-Connection Queues
------------------
+Connection Management
+---------------------
 
-Each connection lives in one or more queues.  These are:
+A connections needs to be processed once in a while.  It needs to be
+processed when one of the following is true:
 
-    - "All" queue.  This is not really a queue, but rather a hash where
-      connections can be looked up by ID.  It is possible for a connection
-      to exist *outside* of this queue: this happens when the connection is
-      closed, but still has packets to send.  In this case, the connection
-      is present in
-    - Outgoing queue.  This queue contains connections which have packets
-      to send.  The connection in this queue are ordered by priority: the
-      connection that has gone longest without sending is first.
-    - Incoming queue.  This queue contains connections that have incoming
-      packets.
-    - Pending RW Events queue.  (See Connection Read-Write Events).
-    - Advisory Tick Time queue.  This queue is used when packet pacing is
-      turned on (see es_pace_packets option).
+    - There are incoming packets;
+    - A stream is both readable by the user code and the user code wants
+      to read from it;
+    - A stream is both writeable by the user code and the user code wants
+      to write to it;
+    - User has written to stream outside of on_write() callbacks (that is
+      allowed) and now there are packets ready to be sent;
+    - A timer (pacer, retransmission, idle, etc) has expired;
+    - A control frame needs to be sent out;
+    - A stream needs to be serviced or created.
 
-Each of these queues can be processed by a specialized function.  They are,
-respectively:
+Each of these use cases is handled by a single function:
 
-    - lsquic_engine_proc_all()
-    - lsquic_engine_send_unsent_packets()
-    - lsquic_engine_process_conns_with_incoming()
-    - lsquic_engine_process_conns_with_pend_rw()
-    - lsquic_engine_process_conns_to_tick()
+    lsquic_engine_process_conns()
 
-Processing, or "ticking," a connection removes it from Incoming, Pending
-RW Events, and Advisory Tick Time queues.  The connection gets placed
-onto these queues as necessary.
+The connections to which the conditions above apply are processed (or
+"ticked") in the least recently ticked order.  After calling this function,
+you can see when is the next time a connection needs to be processed using
 
-A simple approach is to
-    - Read packets from socket, give it to the engine using
-      lsquic_engine_packet_in(), and call
-      lsquic_engine_process_conns_with_incoming(); and
-    - Call lsquic_engine_proc_all() every few dozen milliseconds.
+    lsquic_engine_earliest_adv_tick()
 
+Based on this value, next event can be scheduled (in the event loop of
+your choice).
 
 Connection
 ----------
@@ -235,12 +229,3 @@ Versions
 
 QUIC version are listed in enum lsquic_version.  To specify a list of
 versions, they are usually placed in a bitmask, e.g. es_versions.
-
-
-Connection Read-Write Events
-----------------------------
-
-TODO.
-
-(Do not worry about it if you are not writing to streams outside
-of on_write() callback.)

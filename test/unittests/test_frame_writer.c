@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -10,10 +10,21 @@
 #include <sys/queue.h>
 
 #include "lsquic.h"
-#include "lsquic_hpack_enc.h"
+#include "lshpack.h"
 #include "lsquic_mm.h"
+#include "lsquic_int_types.h"
+#include "lsquic_hash.h"
+#include "lsquic_conn.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
+#if LSQUIC_CONN_STATS
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
+#endif
+
+#if LSQUIC_CONN_STATS
+static struct conn_stats s_conn_stats;
+#endif
 
 
 static struct {
@@ -33,15 +44,18 @@ static struct {
 
 
 static ssize_t
-output_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+output_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 {
+    size_t sz;
+
+    sz = reader->lsqr_size(reader->lsqr_ctx);
     if (output.max - output.sz < sz)
     {
         errno = ENOBUFS;
         return -1;
     }
 
-    memcpy(output.buf + output.sz, buf, sz);
+    sz = reader->lsqr_read(reader->lsqr_ctx, output.buf + output.sz, sz);
     output.sz += sz;
 
     return sz;
@@ -54,26 +68,34 @@ output_write (struct lsquic_stream *stream, const void *buf, size_t sz)
 static void
 test_max_frame_size (void)
 {
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     struct lsquic_mm mm;
     struct lsquic_frame_writer *fw;
     unsigned max_size;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
 
     for (max_size = 1; max_size < 6 /* one settings frame */; ++max_size)
     {
         fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc,
-                                     output_write, 0);
+                                     output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                     0);
         assert(!fw);
     }
 
-    fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, max_size, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                0);
     assert(fw);
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 
@@ -81,14 +103,18 @@ test_max_frame_size (void)
 static void
 test_one_header (void)
 {
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     struct lsquic_frame_writer *fw;
     int s;
     struct lsquic_mm mm;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                0);
     reset_output(0);
 
     struct lsquic_http_header header_arr[] =
@@ -131,7 +157,7 @@ test_one_header (void)
                     sizeof(struct http_prio_frame), "\x48\x82\x64\x02", 4));
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 
@@ -139,16 +165,21 @@ test_one_header (void)
 static void
 test_oversize_header (void)
 {
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     struct lsquic_frame_writer *fw;
     int s;
     struct lsquic_mm mm;
     const size_t big_len = 100 * 1000;
     char *value;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                0);
+    lsquic_frame_writer_max_header_list_size(fw, 1 << 16);
     reset_output(0);
 
     value = malloc(big_len);
@@ -170,7 +201,7 @@ test_oversize_header (void)
     assert(-1 == s);
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
     free(value);
 }
@@ -180,13 +211,17 @@ static void
 test_continuations (void)
 {
     struct lsquic_frame_writer *fw;
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     int s;
     struct lsquic_mm mm;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 6, &henc, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                 &s_conn_stats,
+#endif
+                                0);
     reset_output(0);
 
 /*
@@ -258,7 +293,7 @@ perl tools/henc.pl :status 302 x-some-header some-value | hexdump -C
     assert(0 == memcmp(output.buf + 60, expected_buf + 60, 14));
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 
@@ -271,7 +306,11 @@ test_settings_short (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 7, NULL, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 7, NULL, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                0);
 
     {
         reset_output(0);
@@ -315,7 +354,11 @@ test_settings_normal (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0, NULL, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0, NULL, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                    0);
 
     {
         reset_output(0);
@@ -347,20 +390,16 @@ test_settings_normal (void)
 }
 
 
-/* Gotta override these so that LSQUIC_LOG_CONN_ID in lsquic_frame_writer.c
- * works.
- */
-lsquic_cid_t
-lsquic_conn_id (const lsquic_conn_t *lconn)
-{
-    return 0;
-}
+static struct lsquic_conn my_conn = LSCONN_INITIALIZER_CIDLEN(my_conn, 8);
 
 
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
-    return NULL;
+    return &my_conn;
 }
 
 
@@ -372,7 +411,11 @@ test_priority (void)
     struct lsquic_mm mm;
 
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 6, NULL, output_write, 0);
+    fw = lsquic_frame_writer_new(&mm, NULL, 6, NULL, output_write,
+#if LSQUIC_CONN_STATS
+                                 &s_conn_stats,
+#endif
+                                0);
 
     s = lsquic_frame_writer_write_priority(fw, 3, 0, 1UL << 31, 256);
     assert(s < 0);  /* Invalid dependency stream ID */
@@ -426,12 +469,16 @@ test_errors (void)
 {
     struct lsquic_frame_writer *fw;
     struct lsquic_mm mm;
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     int s;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 1);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                1);
     reset_output(0);
 
     {
@@ -461,12 +508,12 @@ test_errors (void)
         };
         lsquic_frame_writer_max_header_list_size(fw, 40);
         s = lsquic_frame_writer_write_headers(fw, 12345, &headers, 0, 80);
-        assert(-1 == s);
-        assert(EMSGSIZE == errno);
+        /* Server ignores SETTINGS_MAX_HEADER_LIST_SIZE setting */
+        assert(s == 0);
     }
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 
@@ -474,14 +521,18 @@ test_errors (void)
 static void
 test_push_promise (void)
 {
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     struct lsquic_frame_writer *fw;
     int s;
     struct lsquic_mm mm;
 
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write, 1);
+    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
+#if LSQUIC_CONN_STATS
+                                     &s_conn_stats,
+#endif
+                                1);
     reset_output(0);
 
 /*
@@ -543,7 +594,7 @@ perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :sc
                                                 sizeof(exp_headers)));
 
     lsquic_frame_writer_destroy(fw);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 

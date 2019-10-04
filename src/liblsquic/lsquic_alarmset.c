@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_alarmset.c -- A set of alarms
  */
@@ -7,17 +7,18 @@
 #include <string.h>
 
 #include "lsquic_types.h"
+#include "lsquic_packet_common.h"
 #include "lsquic_alarmset.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ALARMSET
-#define LSQUIC_LOG_CONN_ID alset->as_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(alset->as_conn)
 #include "lsquic_logger.h"
 
 
 void
-lsquic_alarmset_init (lsquic_alarmset_t *alset, lsquic_cid_t cid)
+lsquic_alarmset_init (lsquic_alarmset_t *alset, const struct lsquic_conn *conn)
 {
-    alset->as_cid       = cid;
+    alset->as_conn      = conn;
     alset->as_armed_set = 0;
 }
 
@@ -29,6 +30,25 @@ lsquic_alarmset_init_alarm (lsquic_alarmset_t *alset, enum alarm_id al_id,
     alset->as_alarms[ al_id ].callback = callback;
     alset->as_alarms[ al_id ].cb_ctx   = cb_ctx;
 }
+
+
+static const char *const lsquic_alid2str[] =
+{
+    [AL_HANDSHAKE]  =  "HANDSHAKE",
+    [AL_RETX_INIT]  =  "RETX_INIT",
+    [AL_RETX_HSK]   =  "RETX_HSK",
+    [AL_RETX_APP]   =  "RETX_APP",
+    [AL_PING]       =  "PING",
+    [AL_IDLE]       =  "IDLE",
+    [AL_ACK_INIT]   =  "ACK_INIT",
+    [AL_ACK_HSK]    =  "ACK_HSK",
+    [AL_ACK_APP]    =  "ACK_APP",
+    [AL_RET_CIDS]   =  "RET_CIDS",
+    [AL_CID_THROT]  =  "CID_THROT",
+    [AL_PATH_CHAL_0] = "PATH_CHAL_0",
+    [AL_PATH_CHAL_1] = "PATH_CHAL_1",
+    [AL_SESS_TICKET] = "SESS_TICKET",
+};
 
 
 void
@@ -45,10 +65,32 @@ lsquic_alarmset_ring_expired (lsquic_alarmset_t *alset, lsquic_time_t now)
             if (alset->as_expiry[al_id] < now)
             {
                 alset->as_armed_set &= ~(1 << al_id);
-                LSQ_INFO("ring expired alarm %d", al_id);
-                alset->as_alarms[al_id].callback(
+                LSQ_INFO("ring expired %s alarm", lsquic_alid2str[al_id]);
+                alset->as_alarms[al_id].callback(al_id,
                                 alset->as_alarms[al_id].cb_ctx,
                                 alset->as_expiry[al_id], now);
             }
         }
+}
+
+
+lsquic_time_t
+lsquic_alarmset_mintime (const lsquic_alarmset_t *alset)
+{
+    lsquic_time_t expiry;
+    enum alarm_id al_id;
+
+    if (alset->as_armed_set)
+    {
+        expiry = UINT64_MAX;
+        for (al_id = 0; al_id < MAX_LSQUIC_ALARMS; ++al_id)
+            if ((alset->as_armed_set & (1 << al_id))
+                                && alset->as_expiry[al_id] < expiry)
+            {
+                expiry = alset->as_expiry[al_id];
+            }
+        return expiry;
+    }
+    else
+        return 0;
 }

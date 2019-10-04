@@ -1,12 +1,17 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #ifndef WIN32
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <signal.h>
 #endif
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/queue.h>
 #ifndef WIN32
 #include <unistd.h>
@@ -19,21 +24,26 @@
 
 #include <lsquic.h>
 
+#include <openssl/ssl.h>
+
 #include "../src/liblsquic/lsquic_hash.h"
+#include "../src/liblsquic/lsquic_int_types.h"
+#include "../src/liblsquic/lsquic_util.h"
 #include "../src/liblsquic/lsquic_logger.h"
 
 #include "test_config.h"
+#include "test_cert.h"
 #include "test_common.h"
 #include "prog.h"
 
 static int prog_stopped;
 
-static void
-prog_set_onetimer (struct prog *prog, unsigned usec);
+static SSL_CTX * get_ssl_ctx (void *);
 
 static const struct lsquic_packout_mem_if pmi = {
     .pmi_allocate = pba_allocate,
     .pmi_release  = pba_release,
+    .pmi_return   = pba_release,
 };
 
 
@@ -47,6 +57,11 @@ prog_init (struct prog *prog, unsigned flags,
     prog->prog_engine_flags = flags;
     prog->prog_sports       = sports;
     lsquic_engine_init_settings(&prog->prog_settings, flags);
+#if ECN_SUPPORTED
+    prog->prog_settings.es_ecn      = LSQUIC_DF_ECN;
+#else
+    prog->prog_settings.es_ecn      = 0;
+#endif
 
     prog->prog_api.ea_settings      = &prog->prog_settings;
     prog->prog_api.ea_stream_if     = stream_if;
@@ -56,6 +71,11 @@ prog_init (struct prog *prog, unsigned flags,
                                     = prog;
     prog->prog_api.ea_pmi           = &pmi;
     prog->prog_api.ea_pmi_ctx       = &prog->prog_pba;
+    prog->prog_api.ea_get_ssl_ctx   = get_ssl_ctx;
+#if LSQUIC_PREFERRED_ADDR
+    if (getenv("LSQUIC_PREFERRED_ADDR4") || getenv("LSQUIC_PREFERRED_ADDR6"))
+        prog->prog_flags |= PROG_SEARCH_ADDRS;
+#endif
 
     /* Non prog-specific initialization: */
     lsquic_global_init(flags & LSENG_SERVER ? LSQUIC_GLOBAL_SERVER :
@@ -85,14 +105,27 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
-"   -s SVCPORT  Service port.  Takes on the form of IPv4:port or\n"
-"                 IPv6:port.  For example:\n"
-"                   127.0.0.1:12345\n"
-"                   ::1:12345\n"
+#if HAVE_REGEX
+"   -s SVCPORT  Service port.  Takes on the form of host:port, host,\n"
+"                 or port.  If host is not an IPv4 or IPv6 address, it is\n"
+"                 resolved.  If host is not set, the value of SNI is\n"
+"                 used (see the -H flag).  If port is not set, the default\n"
+"                 is 443.\n"
+#else
+"   -s SVCPORT  Service port.  Takes on the form of host:port or host.\n"
+"                 If host is not an IPv4 or IPv6 address, it is resolved.\n"
+"                 If port is not set, the default is 443.\n"
+#endif
+"                 Examples:\n"
+"                     127.0.0.1:12345\n"
+"                     ::1:443\n"
+"                     example.com\n"
+"                     example.com:8443\n"
+#if HAVE_REGEX
+"                     8443\n"
+#endif
 "                 If no -s option is given, 0.0.0.0:12345 address\n"
 "                 is used.\n"
-"   -i USEC     Library will `tick' every USEC microseconds.  The default\n"
-"                 is %u\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Set `do not fragment' flag on outgoing UDP packets\n"
 #endif
@@ -122,15 +155,37 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "   -S opt=val  Socket options.  Supported options:\n"
 "                   sndbuf=12345    # Sets SO_SNDBUF\n"
 "                   rcvbuf=12345    # Sets SO_RCVBUF\n"
-        , PROG_DEFAULT_PERIOD_USEC
+"   -W          Use stock PMI (malloc & free)\n"
     );
 
+#if HAVE_SENDMMSG
+    fprintf(out,
+"   -g          Use sendmmsg() to send packets.\n"
+    );
+#endif
+#if HAVE_RECVMMSG
+    fprintf(out,
+"   -j          Use recvmmsg() to receive packets.\n"
+    );
+#endif
 
+    if (prog->prog_engine_flags & LSENG_SERVER)
+        fprintf(out,
+"   -c CERTSPEC Service specification.  The specification is three values\n"
+"                 separated by commas.  The values are:\n"
+"                   * Domain name\n"
+"                   * File containing cert in PEM format\n"
+"                   * File containing private key in DER or PEM format\n"
+"                 Example:\n"
+"                   -c www.example.com,/tmp/cert.pem,/tmp/key.pkcs8\n"
+        );
+    else
     {
         if (prog->prog_engine_flags & LSENG_HTTP)
             fprintf(out,
-"   -H host     Value of `host' HTTP header.  Defaults to `localhost'.  This\n"
-"                 is also used as SNI.\n"
+"   -H host     Value of `host' HTTP header.  This is also used as SNI\n"
+"                 in Client Hello.  This option is used to override the\n"
+"                 `host' part of the address specified using -s flag.\n"
             );
         else
             fprintf(out,
@@ -138,7 +193,19 @@ prog_print_common_options (const struct prog *prog, FILE *out)
             );
     }
 
+#ifndef WIN32
+    fprintf(out,
+"   -G dir      SSL keys will be logged to files in this directory.\n"
+    );
+#endif
 
+
+    fprintf(out,
+"   -k          Connect UDP socket.  Only meant to be used with clients\n"
+"                 to pick up ICMP errors.\n"
+"   -i USECS    Clock granularity in microseconds.  Defaults to %u.\n",
+        LSQUIC_DF_CLOCK_GRANULARITY
+    );
     fprintf(out,
 "   -h          Print this help screen and exit\n"
     );
@@ -148,11 +215,11 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 int
 prog_set_opt (struct prog *prog, int opt, const char *arg)
 {
+    struct stat st;
+    int s;
+
     switch (opt)
     {
-    case 'i':
-        prog->prog_period_usec = atoi(arg);
-        return 0;
 #if LSQUIC_DONTFRAG_SUPPORTED
     case 'D':
         {
@@ -163,12 +230,34 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         }
         return 0;
 #endif
+#if HAVE_SENDMMSG
+    case 'g':
+        prog->prog_use_sendmmsg = 1;
+        return 0;
+#endif
+#if HAVE_RECVMMSG
+    case 'j':
+        prog->prog_use_recvmmsg = 1;
+        return 0;
+#endif
     case 'm':
         prog->prog_packout_max = atoi(arg);
         return 0;
     case 'z':
         prog->prog_max_packet_size = atoi(arg);
         return 0;
+    case 'W':
+        prog->prog_use_stock_pmi = 1;
+        return 0;
+    case 'c':
+        if (prog->prog_engine_flags & LSENG_SERVER)
+        {
+            if (!prog->prog_certs)
+                prog->prog_certs = lsquic_hash_create();
+            return load_cert(prog->prog_certs, arg);
+        }
+        else
+            return -1;
     case 'H':
         if (prog->prog_engine_flags & LSENG_SERVER)
             return -1;
@@ -184,6 +273,9 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
     case 'o':
         return set_engine_option(&prog->prog_settings,
                                             &prog->prog_version_cleared, arg);
+    case 'i':
+        prog->prog_settings.es_clock_granularity = atoi(arg);
+        return 0;
     case 's':
         if (0 == (prog->prog_engine_flags & LSENG_SERVER) &&
                                             !TAILQ_EMPTY(prog->prog_sports))
@@ -223,6 +315,40 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
                 return -1;
             }
         }
+    case 'k':
+        {
+            struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
+            if (!sport)
+                sport = &prog->prog_dummy_sport;
+            sport->sp_flags |= SPORT_CONNECT;
+        }
+        return 0;
+    case 'G':
+#ifndef WIN32
+        if (0 == stat(optarg, &st))
+        {
+            if (!S_ISDIR(st.st_mode))
+            {
+                LSQ_ERROR("%s is not a directory", optarg);
+                return -1;
+            }
+        }
+        else
+        {
+            s = mkdir(optarg, 0700);
+            if (s != 0)
+            {
+                LSQ_ERROR("cannot create directory %s: %s", optarg,
+                                                        strerror(errno));
+                return -1;
+            }
+        }
+        prog->prog_keylog_dir = optarg;
+        return 0;
+#else
+        LSQ_ERROR("key logging is not supported on Windows");
+        return -1;
+#endif
     default:
         return 1;
     }
@@ -237,17 +363,20 @@ prog_eb (struct prog *prog)
 
 
 int
-prog_connect (struct prog *prog)
+prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     struct service_port *sport;
 
     sport = TAILQ_FIRST(prog->prog_sports);
     if (NULL == lsquic_engine_connect(prog->prog_engine,
+                    (struct sockaddr *) &sport->sp_local_addr,
                     (struct sockaddr *) &sport->sas, sport, NULL,
                     prog->prog_hostname ? prog->prog_hostname : sport->host,
-                    prog->prog_max_packet_size))
+                    prog->prog_max_packet_size, zero_rtt, zero_rtt_len,
+                    sport->sp_token_buf, sport->sp_token_sz))
         return -1;
 
+    prog_process_conns(prog);
     return 0;
 }
 
@@ -265,10 +394,38 @@ prog_init_client (struct prog *prog)
 }
 
 
+static SSL_CTX *
+get_ssl_ctx (void *peer_ctx)
+{
+    const struct service_port *const sport = peer_ctx;
+    return sport->sp_prog->prog_ssl_ctx;
+}
+
+
 static int
 prog_init_server (struct prog *prog)
 {
     struct service_port *sport;
+    unsigned char ticket_keys[48];
+
+    prog->prog_ssl_ctx = SSL_CTX_new(TLS_method());
+    if (prog->prog_ssl_ctx)
+    {
+        SSL_CTX_set_min_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
+        SSL_CTX_set_max_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
+        SSL_CTX_set_default_verify_paths(prog->prog_ssl_ctx);
+
+        /* This is obviously test code: the key is just an array of NUL bytes */
+        memset(ticket_keys, 0, sizeof(ticket_keys));
+        if (1 != SSL_CTX_set_tlsext_ticket_keys(prog->prog_ssl_ctx,
+                                            ticket_keys, sizeof(ticket_keys)))
+        {
+            LSQ_ERROR("SSL_CTX_set_tlsext_ticket_keys failed");
+            return -1;
+        }
+    }
+    else
+        LSQ_WARN("cannot create SSL context");
 
     TAILQ_FOREACH(sport, prog->prog_sports, next_sport)
         if (0 != sport_init_server(sport, prog->prog_engine, prog->prog_eb))
@@ -278,30 +435,31 @@ prog_init_server (struct prog *prog)
 }
 
 
-static void
-drop_onetimer (struct prog *prog)
-{
-    if (prog->prog_onetimer)
-    {
-        event_del(prog->prog_onetimer);
-        event_free(prog->prog_onetimer);
-        prog->prog_onetimer = NULL;
-    }
-}
-
-
 void
-prog_maybe_set_onetimer (struct prog *prog)
+prog_process_conns (struct prog *prog)
 {
     int diff;
+    struct timeval timeout;
+
+    lsquic_engine_process_conns(prog->prog_engine);
 
     if (lsquic_engine_earliest_adv_tick(prog->prog_engine, &diff))
     {
-        if (diff > 0)
-            prog_set_onetimer(prog, (unsigned) diff);
+        if (diff < 0
+                || (unsigned) diff < prog->prog_settings.es_clock_granularity)
+        {
+            timeout.tv_sec  = 0;
+            timeout.tv_usec = prog->prog_settings.es_clock_granularity;
+        }
+        else
+        {
+            timeout.tv_sec = (unsigned) diff / 1000000;
+            timeout.tv_usec = (unsigned) diff % 1000000;
+        }
+
+        if (!prog_is_stopped())
+            event_add(prog->prog_timer, &timeout);
     }
-    else
-        drop_onetimer(prog);
 }
 
 
@@ -309,33 +467,8 @@ static void
 prog_timer_handler (int fd, short what, void *arg)
 {
     struct prog *const prog = arg;
-    lsquic_engine_proc_all(prog->prog_engine);
-    prog_maybe_set_onetimer(prog);
-}
-
-
-static void
-prog_onetimer_handler (int fd, short what, void *arg)
-{
-    struct prog *const prog = arg;
-    lsquic_engine_process_conns_to_tick(prog->prog_engine);
-    prog_maybe_set_onetimer(prog);
-}
-
-
-static void
-prog_set_onetimer (struct prog *prog, unsigned usec)
-{
-    struct timeval timeout;
-
-    drop_onetimer(prog);
-    if (usec < 4000)
-        usec = 4000;
-    timeout.tv_sec  = 0;
-    timeout.tv_usec = usec;
-    prog->prog_onetimer = event_new(prog->prog_eb, -1, EV_TIMEOUT,
-                                        prog_onetimer_handler, prog);
-    event_add(prog->prog_onetimer, &timeout);
+    if (!prog_is_stopped())
+        prog_process_conns(prog);
 }
 
 
@@ -347,21 +480,28 @@ prog_usr1_handler (int fd, short what, void *arg)
 }
 
 
+static void
+prog_usr2_handler (int fd, short what, void *arg)
+{
+    struct prog *const prog = arg;
+
+    LSQ_NOTICE("Got SIGUSR2, cool down engine");
+    prog->prog_flags |= PROG_FLAG_COOLDOWN;
+    lsquic_engine_cooldown(prog->prog_engine);
+}
+
+
 int
 prog_run (struct prog *prog)
 {
-    struct timeval timeout;
-    timeout.tv_sec  = 0;
-    timeout.tv_usec = prog->prog_period_usec;
-    prog->prog_timer = event_new(prog->prog_eb, -1, EV_PERSIST,
-                                        prog_timer_handler, prog);
-    event_add(prog->prog_timer, &timeout);
 #ifndef WIN32
     prog->prog_usr1 = evsignal_new(prog->prog_eb, SIGUSR1,
                                                     prog_usr1_handler, prog);
     evsignal_add(prog->prog_usr1, NULL);
+    prog->prog_usr2 = evsignal_new(prog->prog_eb, SIGUSR2,
+                                                    prog_usr2_handler, prog);
+    evsignal_add(prog->prog_usr2, NULL);
 #endif
-
 
     event_base_loop(prog->prog_eb, 0);
 
@@ -374,7 +514,12 @@ prog_cleanup (struct prog *prog)
 {
     lsquic_engine_destroy(prog->prog_engine);
     event_base_free(prog->prog_eb);
-    pba_cleanup(&prog->prog_pba);
+    if (!prog->prog_use_stock_pmi)
+        pba_cleanup(&prog->prog_pba);
+    if (prog->prog_ssl_ctx)
+        SSL_CTX_free(prog->prog_ssl_ctx);
+    if (prog->prog_certs)
+        delete_certs(prog->prog_certs);
     lsquic_global_cleanup();
 }
 
@@ -392,7 +537,6 @@ prog_stop (struct prog *prog)
         sport_destroy(sport);
     }
 
-    drop_onetimer(prog);
     if (prog->prog_timer)
     {
         event_del(prog->prog_timer);
@@ -405,7 +549,69 @@ prog_stop (struct prog *prog)
         event_free(prog->prog_usr1);
         prog->prog_usr1 = NULL;
     }
+    if (prog->prog_usr2)
+    {
+        event_del(prog->prog_usr2);
+        event_free(prog->prog_usr2);
+        prog->prog_usr2 = NULL;
+    }
 }
+
+
+static void *
+keylog_open (void *ctx, lsquic_conn_t *conn)
+{
+    const struct prog *const prog = ctx;
+    const lsquic_cid_t *cid;
+    FILE *fh;
+    int sz;
+    char id_str[MAX_CID_LEN * 2 + 1];
+    char path[PATH_MAX];
+
+    cid = lsquic_conn_id(conn);
+    lsquic_hexstr(cid->idbuf, cid->len, id_str, sizeof(id_str));
+    sz = snprintf(path, sizeof(path), "%s/%s.keys", prog->prog_keylog_dir,
+                                                                    id_str);
+    if ((size_t) sz >= sizeof(path))
+    {
+        LSQ_WARN("%s: file too long", __func__);
+        return NULL;
+    }
+    fh = fopen(path, "w");
+    if (!fh)
+        LSQ_WARN("could not open %s for writing: %s", path, strerror(errno));
+    return fh;
+}
+
+
+static void
+keylog_log_line (void *handle, const char *line)
+{
+    size_t len;
+
+    len = strlen(line);
+    if (len < sizeof("QUIC_") - 1 || strncmp(line, "QUIC_", 5))
+        fputs("QUIC_", handle);
+    fputs(line, handle);
+    fputs("\n", handle);
+    fflush(handle);
+}
+
+
+static void
+keylog_close (void *handle)
+{
+    fclose(handle);
+}
+
+
+static const struct lsquic_keylog_if keylog_if =
+{
+    .kli_open       = keylog_open,
+    .kli_log_line   = keylog_log_line,
+    .kli_close      = keylog_close,
+};
+
 
 
 int
@@ -414,10 +620,11 @@ prog_prep (struct prog *prog)
     int s;
     char err_buf[100];
 
-    if (0 == prog->prog_period_usec)
-        prog->prog_period_usec = PROG_DEFAULT_PERIOD_USEC;
-    if (prog->prog_settings.es_proc_time_thresh == LSQUIC_DF_PROC_TIME_THRESH)
-        prog->prog_settings.es_proc_time_thresh = prog->prog_period_usec;
+    if (prog->prog_keylog_dir)
+    {
+        prog->prog_api.ea_keylog_if = &keylog_if;
+        prog->prog_api.ea_keylog_ctx = prog;
+    }
 
     if (0 != lsquic_engine_check_settings(prog->prog_api.ea_settings,
                         prog->prog_engine_flags, err_buf, sizeof(err_buf)))
@@ -426,21 +633,38 @@ prog_prep (struct prog *prog)
         return -1;
     }
 
-    pba_init(&prog->prog_pba, prog->prog_packout_max);
+    if (!prog->prog_use_stock_pmi)
+        pba_init(&prog->prog_pba, prog->prog_packout_max);
+    else
+    {
+        prog->prog_api.ea_pmi = NULL;
+        prog->prog_api.ea_pmi_ctx = NULL;
+    }
 
     if (TAILQ_EMPTY(prog->prog_sports))
     {
-        s = prog_add_sport(prog, "0.0.0.0:12345");
+        if (prog->prog_hostname)
+            s = prog_add_sport(prog, prog->prog_hostname);
+        else
+            s = prog_add_sport(prog, "0.0.0.0:12345");
         if (0 != s)
             return -1;
     }
 
+    if (prog->prog_certs)
+    {
+    prog->prog_api.ea_lookup_cert = lookup_cert;
+    prog->prog_api.ea_cert_lu_ctx = prog->prog_certs;
+    }
 
     prog->prog_eb = event_base_new();
     prog->prog_engine = lsquic_engine_new(prog->prog_engine_flags,
                                                             &prog->prog_api);
     if (!prog->prog_engine)
         return -1;
+
+    prog->prog_timer = event_new(prog->prog_eb, -1, 0,
+                                        prog_timer_handler, prog);
 
     if (prog->prog_engine_flags & LSENG_SERVER)
         s = prog_init_server(prog);
@@ -461,3 +685,24 @@ prog_is_stopped (void)
 }
 
 
+static void
+send_unsent (evutil_socket_t fd, short what, void *arg)
+{
+    struct prog *const prog = arg;
+    assert(prog->prog_send);
+    event_del(prog->prog_send);
+    event_free(prog->prog_send);
+    prog->prog_send = NULL;
+    LSQ_DEBUG("on_write event fires");
+    lsquic_engine_send_unsent_packets(prog->prog_engine);
+}
+
+
+void
+prog_sport_cant_send (struct prog *prog, int fd)
+{
+    assert(!prog->prog_send);
+    LSQ_DEBUG("cannot send: register on_write event");
+    prog->prog_send = event_new(prog->prog_eb, fd, EV_WRITE, send_unsent, prog);
+    event_add(prog->prog_send, NULL);
+}

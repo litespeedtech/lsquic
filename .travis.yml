@@ -1,0 +1,37 @@
+language: c
+matrix:
+    include:
+        - name: Linux (gcc)
+          os: linux
+          compiler: gcc
+          addons:
+            apt:
+                packages:
+                - libevent-dev
+        - name: Linux (clang)
+          os: linux
+          compiler: clang
+          addons:
+            apt:
+                packages:
+                - libevent-dev
+        - name: macOS
+          os: osx
+sudo: false
+before_script:
+    - git clone https://boringssl.googlesource.com/boringssl
+    - cd boringssl
+    # This is so that both GQUIC and IETF branches build.  Just picking
+    # a known good revision:
+    - git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
+    - patch -p1 -i ../patches/boringssl-meds.patch
+    - cmake .
+    - make
+    - cd -
+    - git submodule init
+    - git submodule update
+    - cmake -DBORINGSSL_DIR=$PWD/boringssl .
+script:
+    # Now build lsquic-client
+    - make
+    - make test

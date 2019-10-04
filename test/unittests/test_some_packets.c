@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Tests in this file have been migrated out of maintest.c */
 /* TODO: fix warnings */
 
@@ -10,16 +10,18 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_in.h"
 
 struct lsquic_stream_if;
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 lsquic_stream_t *
 lsquic_stream_new_ext (uint32_t id,
@@ -62,6 +64,7 @@ lsquic_stream_tosend_sz (const lsquic_stream_t *stream)
 
 static int make_complex_packet(unsigned char *pkt_buf, int max_buf_len)
 {
+#if 0       /* What is this function testing?  Seems useless. */
     unsigned char *p = pkt_buf;
     unsigned char *const pend  = p + 1500;
     lsquic_stream_t *stream = lsquic_stream_new(12345, NULL, NULL, NULL, 0, 0);
@@ -90,6 +93,8 @@ static int make_complex_packet(unsigned char *pkt_buf, int max_buf_len)
     free(stream);
 
     return p - pkt_buf;
+#endif
+    return 0;
 }
 
 

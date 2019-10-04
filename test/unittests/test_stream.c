@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -16,12 +16,15 @@
 
 #include "lsquic.h"
 
-#include "lsquic_alarmset.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_alarmset.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_conn_flow.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_types.h"
 #include "lsquic_malo.h"
@@ -34,11 +37,23 @@
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
 #include "lsquic_senhist.h"
+#include "lsquic_bw_sampler.h"
+#include "lsquic_minmax.h"
+#include "lsquic_bbr.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
+#include "lsquic_enc_sess.h"
+#include "lsqpack.h"
+#include "lsquic_frab_list.h"
+#include "lsquic_qenc_hdl.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_data_in_if.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_039);
+
+static int g_use_crypto_ctor;
 
 struct test_ctl_settings
 {
@@ -47,7 +62,7 @@ struct test_ctl_settings
     int     tcs_can_send;
     enum buf_packet_type
             tcs_bp_type;
-    enum lsquic_packno_bits
+    enum packno_bits
             tcs_guess_packno_bits,
             tcs_calc_packno_bits;
 };
@@ -68,8 +83,8 @@ init_test_ctl_settings (struct test_ctl_settings *settings)
     settings->tcs_have_delayed_packets = 0;
     settings->tcs_can_send             = 1;
     settings->tcs_bp_type              = BPT_HIGHEST_PRIO;
-    settings->tcs_guess_packno_bits    = PACKNO_LEN_2;
-    settings->tcs_calc_packno_bits     = PACKNO_LEN_2;
+    settings->tcs_guess_packno_bits    = GQUIC_PACKNO_LEN_2;
+    settings->tcs_calc_packno_bits     = GQUIC_PACKNO_LEN_2;
 }
 
 
@@ -83,7 +98,7 @@ apply_test_ctl_settings (const struct test_ctl_settings *settings)
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_calc_packno_bits (struct lsquic_send_ctl *ctl)
 {
     return g_ctl_settings.tcs_calc_packno_bits;
@@ -111,7 +126,7 @@ lsquic_send_ctl_can_send (struct lsquic_send_ctl *ctl)
 }
 
 
-enum lsquic_packno_bits
+enum packno_bits
 lsquic_send_ctl_guess_packno_bits (struct lsquic_send_ctl *ctl)
 {
     return g_ctl_settings.tcs_guess_packno_bits;
@@ -128,8 +143,8 @@ lsquic_send_ctl_determine_bpt (struct lsquic_send_ctl *ctl,
 
 /* This function is only here to avoid crash in the test: */
 void
-lsquic_engine_add_conn_to_pend_rw (struct lsquic_engine_public *enpub,
-                                lsquic_conn_t *conn, enum rw_reason reason)
+lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
+                                    lsquic_conn_t *conn)
 {
 }
 
@@ -172,7 +187,7 @@ static void
 ack_packet (lsquic_send_ctl_t *send_ctl, lsquic_packno_t packno)
 {
     struct lsquic_packet_out *packet_out;
-    TAILQ_FOREACH(packet_out, &send_ctl->sc_unacked_packets, po_next)
+    TAILQ_FOREACH(packet_out, &send_ctl->sc_unacked_packets[PNS_APP], po_next)
         if (packet_out->po_packno == packno)
         {
             lsquic_packet_out_ack_streams(packet_out);
@@ -183,7 +198,7 @@ ack_packet (lsquic_send_ctl_t *send_ctl, lsquic_packno_t packno)
 
 
 static size_t
-read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
+read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t stream_id,
     unsigned char *const begin, size_t bufsz, uint64_t first_offset, int *p_fin,
     int fullcheck)
 {
@@ -194,7 +209,13 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
     struct packet_out_srec_iter posi;
     struct lsquic_packet_out *packet_out;
     struct stream_frame frame;
+    enum quic_frame_type expected_type;
     int len, fin = 0;
+
+    if (g_use_crypto_ctor)
+        expected_type = QUIC_FRAME_CRYPTO;
+    else
+        expected_type = QUIC_FRAME_STREAM;
 
     TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
         for (srec = posi_first(&posi, packet_out); srec;
@@ -202,7 +223,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
         {
             if (fullcheck)
             {
-                assert(srec->sr_frame_types & (1 << QUIC_FRAME_STREAM));
+                assert(srec->sr_frame_type == expected_type);
                 if (packet_out->po_packno != 1)
                 {
                     /* First packet may contain two stream frames, do not
@@ -216,14 +237,21 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, uint32_t stream_id,
                     }
                 }
             }
-            if ((srec->sr_frame_types & (1 << QUIC_FRAME_STREAM)) &&
+            if (srec->sr_frame_type == expected_type &&
                                             srec->sr_stream->id == stream_id)
             {
                 assert(!fin);
-                len = pf_local->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
-                    packet_out->po_data_sz - srec->sr_off, &frame);
+                if (QUIC_FRAME_STREAM == expected_type)
+                    len = pf_local->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
+                        packet_out->po_data_sz - srec->sr_off, &frame);
+                else
+                    len = pf_local->pf_parse_crypto_frame(packet_out->po_data + srec->sr_off,
+                        packet_out->po_data_sz - srec->sr_off, &frame);
                 assert(len > 0);
-                assert(frame.stream_id == srec->sr_stream->id);
+                if (QUIC_FRAME_STREAM == expected_type)
+                    assert(frame.stream_id == srec->sr_stream->id);
+                else
+                    assert(frame.stream_id == ~0ULL);
                 /* Otherwise not enough to copy to: */
                 assert(end - p >= frame.data_frame.df_size);
                 /* Checks offset ordering: */
@@ -261,16 +289,46 @@ struct test_objs {
                               stream_if;
     unsigned                  initial_stream_window;
     enum stream_ctor_flags    ctor_flags;
+    struct qpack_enc_hdl      qeh;
+};
+
+
+static int
+unit_test_doesnt_write_ack (struct lsquic_conn *lconn)
+{
+    return 0;
+}
+
+
+static struct network_path network_path;
+
+static struct network_path *
+get_network_path (struct lsquic_conn *lconn, const struct sockaddr *sa)
+{
+    return &network_path;
+}
+
+
+static const struct conn_iface our_conn_if =
+{
+    .ci_can_write_ack = unit_test_doesnt_write_ack,
+    .ci_get_path      = get_network_path,
 };
 
 
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
-                unsigned initial_stream_window)
+                unsigned initial_stream_window, const struct parse_funcs *pf)
 {
+    int s;
     memset(tobjs, 0, sizeof(*tobjs));
-    tobjs->lconn.cn_pf = pf;
-    tobjs->lconn.cn_pack_size = 1370;
+    LSCONN_INITIALIZE(&tobjs->lconn);
+    tobjs->lconn.cn_pf = pf ? pf : g_pf;
+    tobjs->lconn.cn_version = tobjs->lconn.cn_pf == &lsquic_parse_funcs_ietf_v1 ?
+        LSQVER_ID23 : LSQVER_043;
+    tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
+    network_path.np_pack_size = 1370;
+    tobjs->lconn.cn_if = &our_conn_if;
     lsquic_mm_init(&tobjs->eng_pub.enp_mm);
     TAILQ_INIT(&tobjs->conn_pub.sending_streams);
     TAILQ_INIT(&tobjs->conn_pub.read_streams);
@@ -286,12 +344,20 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.send_ctl = &tobjs->send_ctl;
     tobjs->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
+    tobjs->conn_pub.path = &network_path;
     tobjs->initial_stream_window = initial_stream_window;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
-        &tobjs->ver_neg, &tobjs->conn_pub, tobjs->lconn.cn_pack_size);
+        &tobjs->ver_neg, &tobjs->conn_pub, 0);
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = &test_ctx;
     tobjs->ctor_flags = stream_ctor_flags;
+    if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
+    {
+        lsquic_qeh_init(&tobjs->qeh, &tobjs->lconn);
+        s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
+        assert(0 == s);
+        tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
+    }
 }
 
 
@@ -302,6 +368,10 @@ deinit_test_objs (struct test_objs *tobjs)
     lsquic_send_ctl_cleanup(&tobjs->send_ctl);
     lsquic_malo_destroy(tobjs->conn_pub.packet_out_malo);
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
+    if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
+    {
+        lsquic_qeh_cleanup(&tobjs->qeh);
+    }
 }
 
 
@@ -323,7 +393,7 @@ new_frame_in_ext (struct test_objs *tobjs, size_t off, size_t sz, int fin,
         packet_in->pi_data = (void *) data;
     else
     {
-        packet_in->pi_data = lsquic_mm_get_1370(&tobjs->eng_pub.enp_mm);
+        packet_in->pi_data = lsquic_mm_get_packet_in_buf(&tobjs->eng_pub.enp_mm, 1370);
         packet_in->pi_flags |= PI_OWN_DATA;
         memset(packet_in->pi_data, 'A', sz);
     }
@@ -356,16 +426,21 @@ new_frame_in (struct test_objs *tobjs, size_t off, size_t sz, int fin)
 static lsquic_stream_t *
 new_stream_ext (struct test_objs *tobjs, unsigned stream_id, uint64_t send_off)
 {
-    return lsquic_stream_new_ext(stream_id, &tobjs->conn_pub, tobjs->stream_if,
-        tobjs->stream_if_ctx, tobjs->initial_stream_window, send_off,
-        tobjs->ctor_flags);
+    if (g_use_crypto_ctor)
+        return lsquic_stream_new_crypto(stream_id, &tobjs->conn_pub,
+            tobjs->stream_if, tobjs->stream_if_ctx,
+            tobjs->ctor_flags | SCF_CRITICAL);
+    else
+        return lsquic_stream_new(stream_id, &tobjs->conn_pub, tobjs->stream_if,
+            tobjs->stream_if_ctx, tobjs->initial_stream_window, send_off,
+            tobjs->ctor_flags);
 }
 
 
 static lsquic_stream_t *
 new_stream (struct test_objs *tobjs, unsigned stream_id)
 {
-    return new_stream_ext(tobjs, stream_id, 0);
+    return new_stream_ext(tobjs, stream_id, 16 * 1024);
 }
 
 
@@ -379,14 +454,14 @@ run_frame_ordering_test (uint64_t run_id /* This is used to make it easier to se
 
     struct test_objs tobjs;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     lsquic_stream_t *stream = new_stream(&tobjs, 123);
     struct lsquic_mm *const mm = &tobjs.eng_pub.enp_mm;
     struct malo *const frame_malo = mm->malo.stream_frame;
 
     lsquic_packet_in_t *packet_in = lsquic_mm_get_packet_in(mm);
-    packet_in->pi_data = lsquic_mm_get_1370(mm);
+    packet_in->pi_data = lsquic_mm_get_packet_in_buf(mm, 1370);
     packet_in->pi_flags |= PI_OWN_DATA;
     assert(idx_sz <= 10);
     memcpy(packet_in->pi_data, "0123456789", 10);
@@ -479,7 +554,8 @@ test_loc_FIN_rem_FIN (struct test_objs *tobjs)
     char buf_out[0x100];
     unsigned char buf[0x100];
     ssize_t n;
-    int s, fin;;
+    int s, fin;
+    enum stream_state_sending sss;
 
     init_buf(buf_out, sizeof(buf_out));
 
@@ -498,8 +574,8 @@ test_loc_FIN_rem_FIN (struct test_objs *tobjs)
     assert(!fin);
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     s = lsquic_stream_shutdown(stream, 1);
     assert(s == 0);
@@ -510,10 +586,12 @@ test_loc_FIN_rem_FIN (struct test_objs *tobjs)
                                                 sizeof(buf), 100, &fin, 0);
     assert(0 == n);
     assert(fin);
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_DATA_SENT == sss);
 
     /* Pretend we sent out this packet as well: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));  /* No need to close stream yet */
 
@@ -534,12 +612,12 @@ test_loc_FIN_rem_FIN (struct test_objs *tobjs)
     s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                == (STREAM_CALL_ONCLOSE));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE));
     ack_packet(&tobjs->send_ctl, 1);
     ack_packet(&tobjs->send_ctl, 2);
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                == (STREAM_CALL_ONCLOSE|STREAM_FREE_STREAM));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM));
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_DATA_RECVD == sss);
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -596,8 +674,8 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
     assert(!fin);
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));  /* No need to close stream yet */
 
@@ -607,8 +685,7 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
 
     /* Now we can call on_close: */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_CALL_ONCLOSE);
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE);
 
     n = read_from_scheduled_packets(&tobjs->send_ctl, stream->id, buf,
                                                 sizeof(buf), 100, &fin, 0);
@@ -616,21 +693,19 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
     assert(fin);
 
     /* Pretend we sent out this packet as well: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     /* Cannot free stream yet: packets have not been acked */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_CALL_ONCLOSE);
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE);
 
     ack_packet(&tobjs->send_ctl, 1);
     ack_packet(&tobjs->send_ctl, 2);
 
     /* Now we can free the stream: */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                == (STREAM_CALL_ONCLOSE|STREAM_FREE_STREAM));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM));
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -642,6 +717,57 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
 
 /* Server: we read data and close the read side before reading FIN, which
  * DOES NOT result in stream being reset.
+ */
+static void
+test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    char buf[0x100];
+    ssize_t n;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+
+    s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
+    assert(0 == s);
+
+    n = lsquic_stream_read(stream, buf, 60);
+    assert(60 == n);
+
+    s = lsquic_stream_shutdown(stream, 0);
+    assert(0 == s);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(!((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE));
+
+    n = lsquic_stream_read(stream, buf, 60);
+    assert(n == -1);    /* Cannot read from closed stream */
+
+    /* Close write side */
+    s = lsquic_stream_shutdown(stream, 1);
+    assert(0 == s);
+
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl)); /* Shutdown performs a flush */
+
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE);
+
+    s = lsquic_stream_rst_in(stream, 100, 1);
+    assert(0 == s);
+
+    assert(stream->sm_qflags & SMQF_FREE_STREAM);
+
+    lsquic_stream_destroy(stream);
+    /* This simply checks that the stream got removed from the queue: */
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+
+    assert(100 == tobjs->conn_pub.cfcw.cf_max_recv_off);
+    assert(100 == tobjs->conn_pub.cfcw.cf_read_off);
+}
+
+
+/* Server: we read data and close the read side before reading FIN.  No
+ * FIN or RST arrive from peer.  This should still place the stream on
+ * the "streams to be freed" list.
  */
 static void
 test_rem_data_loc_close (struct test_objs *tobjs)
@@ -662,8 +788,7 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert(!((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_CALL_ONCLOSE));
+    assert(!(stream->sm_qflags & SMQF_CALL_ONCLOSE));
 
     n = lsquic_stream_read(stream, buf, 60);
     assert(n == -1);    /* Cannot read from closed stream */
@@ -675,11 +800,11 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl)); /* Shutdown performs a flush */
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                            == STREAM_CALL_ONCLOSE);
+    assert(stream->sm_qflags & SMQF_CALL_ONCLOSE);
 
-    s = lsquic_stream_rst_in(stream, 100, 1);
-    assert(0 == s);
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));
+    lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
+    assert(stream->sm_qflags & SMQF_FREE_STREAM);
 
     lsquic_stream_destroy(stream);
     /* This simply checks that the stream got removed from the queue: */
@@ -688,7 +813,6 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     assert(100 == tobjs->conn_pub.cfcw.cf_max_recv_off);
     assert(100 == tobjs->conn_pub.cfcw.cf_read_off);
 }
-
 
 
 /* Client: we send some data and FIN, but remote end sends some data and
@@ -722,8 +846,8 @@ test_loc_FIN_rem_RST (struct test_objs *tobjs)
     assert(!fin);
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     s = lsquic_stream_shutdown(stream, 1);
     assert(s == 0);
@@ -736,8 +860,8 @@ test_loc_FIN_rem_RST (struct test_objs *tobjs)
     assert(fin);
 
     /* Pretend we sent out this packet as well: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));  /* No need to close stream yet */
 
@@ -751,7 +875,7 @@ test_loc_FIN_rem_RST (struct test_objs *tobjs)
 
     /* The stream is not yet done: the user code has not closed it yet */
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert(0 == (stream->stream_flags & (STREAM_SERVICE_FLAGS)));
+    assert(0 == (stream->sm_qflags & (SMQF_SERVICE_FLAGS)));
     assert(0 == (stream->stream_flags & STREAM_U_READ_DONE));
 
     s = lsquic_stream_read(stream, buf, sizeof(buf));
@@ -760,15 +884,13 @@ test_loc_FIN_rem_RST (struct test_objs *tobjs)
     assert(0 == s);     /* Stream closed successfully */
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                == (STREAM_CALL_ONCLOSE));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE));
 
     ack_packet(&tobjs->send_ctl, 1);
     ack_packet(&tobjs->send_ctl, 2);
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & (STREAM_SERVICE_FLAGS))
-                                == (STREAM_CALL_ONCLOSE|STREAM_FREE_STREAM));
+    assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM));
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -808,8 +930,8 @@ test_loc_data_rem_RST (struct test_objs *tobjs)
     assert(!fin);
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
     assert(0 == s);
@@ -819,12 +941,11 @@ test_loc_data_rem_RST (struct test_objs *tobjs)
     ack_packet(&tobjs->send_ctl, 1);
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
-    assert((stream->stream_flags & STREAM_SENDING_FLAGS)
-                                            == STREAM_SEND_RST);
+    assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
 
     /* Not yet closed: error needs to be collected */
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert(0 == (stream->stream_flags & STREAM_SERVICE_FLAGS));
+    assert(0 == (stream->sm_qflags & SMQF_SERVICE_FLAGS));
 
     n = lsquic_stream_write(stream, buf, 100);
     assert(-1 == n);    /* Error collected */
@@ -832,16 +953,14 @@ test_loc_data_rem_RST (struct test_objs *tobjs)
     assert(0 == s);     /* Stream successfully closed */
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & STREAM_SERVICE_FLAGS)
-                                        == STREAM_CALL_ONCLOSE);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_CALL_ONCLOSE);
 
     lsquic_stream_rst_frame_sent(stream);
     lsquic_stream_call_on_close(stream);
 
     assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & STREAM_SERVICE_FLAGS)
-                                        == STREAM_FREE_STREAM);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_FREE_STREAM);
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -862,6 +981,7 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     unsigned char buf[0x100];
     size_t n;
     int s, fin;
+    enum stream_state_sending sss;
 
     init_buf(buf_out, sizeof(buf_out));
 
@@ -881,31 +1001,42 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     assert(!fin);
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
 
     assert(1 == stream->n_unacked);
     ack_packet(&tobjs->send_ctl, 1);
     assert(0 == stream->n_unacked);
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_SEND == sss);
 
     lsquic_stream_reset(stream, 0);
+    ++stream->n_unacked;    /* Fake sending of packet with RST_STREAM */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
-    assert((stream->stream_flags & STREAM_SENDING_FLAGS)
-                                            == STREAM_SEND_RST);
+    assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_SEND == sss);    /* Reset hasn't been packetized yet */
 
     s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 90, 1));
     assert(s == 0);
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & STREAM_SERVICE_FLAGS)
-                                        == STREAM_CALL_ONCLOSE);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_CALL_ONCLOSE);
 
     lsquic_stream_rst_frame_sent(stream);
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_RESET_SENT == sss);
+
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_RESET_SENT == sss);
+    lsquic_stream_acked(stream, QUIC_FRAME_RST_STREAM); /* Fake ack of RST_STREAM packet */
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_RESET_RECVD == sss);
+
     lsquic_stream_call_on_close(stream);
 
     assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert((stream->stream_flags & STREAM_SERVICE_FLAGS)
-                                        == STREAM_FREE_STREAM);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_FREE_STREAM);
 
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -913,6 +1044,148 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     assert(90 == tobjs->conn_pub.cfcw.cf_max_recv_off);
     assert(90 == tobjs->conn_pub.cfcw.cf_read_off);
 }
+
+
+/* Test that when stream frame is elided and the packet is dropped,
+ * the send controller produces a gapless sequence.
+ *
+ * Case "middle": 3 packets with STREAM frames for streams A, B, and A.
+ *          Stream B is reset.  We should get a gapless sequence
+ *          of packets 1, 2.
+ */
+static void
+test_gapless_elision_middle (struct test_objs *tobjs)
+{
+    lsquic_stream_t *streamA, *streamB;
+    unsigned char buf[0x1000], buf_out[0x1000];
+    size_t n, thresh, written_to_A = 0;
+    int s, fin;
+    lsquic_packet_out_t *packet_out;
+
+    streamA = new_stream(tobjs, 345);
+    streamB = new_stream(tobjs, 347);
+
+    init_buf(buf_out, sizeof(buf_out));
+    thresh = lsquic_stream_flush_threshold(streamA, 0);
+    n = lsquic_stream_write(streamA, buf_out, thresh);
+    assert(n == thresh);
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    thresh = lsquic_stream_flush_threshold(streamB, 0);
+    n = lsquic_stream_write(streamB, buf_out, thresh);
+    assert(n == thresh);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    thresh = lsquic_stream_flush_threshold(streamA, 0);
+    n = lsquic_stream_write(streamA, buf_out + written_to_A, thresh);
+    assert(n == thresh);
+    assert(3 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    /* Verify contents of A: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    /* Now reset stream A: */
+    s = lsquic_stream_rst_in(streamB, 0, 0);
+    assert(s == 0);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    /* Verify A again: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(packet_out->po_packno == 1);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(packet_out->po_packno == 2);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(!packet_out);
+
+    /* Now we can call on_close: */
+    lsquic_stream_destroy(streamA);
+    lsquic_stream_destroy(streamB);
+}
+
+
+/* Test that when stream frame is elided and the packet is dropped,
+ * the send controller produces a gapless sequence.
+ *
+ * Case "beginnig": 3 packets with STREAM frames for streams B, A, and A.
+ *          Stream B is reset.  We should get a gapless sequence
+ *          of packets 1, 2.
+ */
+static void
+test_gapless_elision_beginning (struct test_objs *tobjs)
+{
+    lsquic_stream_t *streamA, *streamB;
+    unsigned char buf[0x1000], buf_out[0x1000];
+    size_t n, thresh, written_to_A = 0;
+    int s, fin;
+    lsquic_packet_out_t *packet_out;
+
+    streamA = new_stream(tobjs, 345);
+    streamB = new_stream(tobjs, 347);
+
+    init_buf(buf_out, sizeof(buf_out));
+
+    thresh = lsquic_stream_flush_threshold(streamB, 0);
+    n = lsquic_stream_write(streamB, buf_out, thresh);
+    assert(n == thresh);
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    thresh = lsquic_stream_flush_threshold(streamA, 0);
+    n = lsquic_stream_write(streamA, buf_out, thresh);
+    assert(n == thresh);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    thresh = lsquic_stream_flush_threshold(streamA, 0);
+    n = lsquic_stream_write(streamA, buf_out + written_to_A, thresh);
+    assert(n == thresh);
+    assert(3 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    written_to_A += n;
+
+    /* Verify contents of A: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    /* Now reset stream A: */
+    s = lsquic_stream_rst_in(streamB, 0, 0);
+    assert(s == 0);
+    assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    /* Verify A again: */
+    n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(n == written_to_A);
+    assert(0 == memcmp(buf, buf_out, written_to_A));
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(packet_out->po_packno == 1);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(packet_out->po_packno == 2);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
+
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    assert(!packet_out);
+
+    /* Now we can call on_close: */
+    lsquic_stream_destroy(streamA);
+    lsquic_stream_destroy(streamB);
+}
+
 
 
 /* Write data to the stream, but do not flush: connection cap take a hit.
@@ -983,7 +1256,7 @@ test_unlimited_stream_flush_data (struct test_objs *tobjs)
     const struct lsquic_conn_cap *const cap = &tobjs->conn_pub.conn_cap;
 
     assert(0x4000 == lsquic_conn_cap_avail(cap));   /* Self-check */
-    stream = new_stream(tobjs, LSQUIC_STREAM_HANDSHAKE);
+    stream = new_stream(tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
     n = lsquic_stream_write(stream, buf, 100);
     assert(n == 100);
 
@@ -1041,17 +1314,20 @@ test_termination (void)
     void (*const test_funcs[])(struct test_objs *) = {
         test_loc_FIN_rem_FIN,
         test_rem_FIN_loc_FIN,
+        test_rem_data_loc_close_and_rst_in,
         test_rem_data_loc_close,
         test_loc_FIN_rem_RST,
         test_loc_data_rem_RST,
         test_loc_RST_rem_FIN,
+        test_gapless_elision_beginning,
+        test_gapless_elision_middle,
     };
 
     for (i = 0; i < sizeof(test_funcs) / sizeof(test_funcs[0]); ++i)
     {
         init_test_ctl_settings(&g_ctl_settings);
         g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-        init_test_objs(&tobjs, 0x4000, 0x4000);
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
         test_funcs[i](&tobjs);
         deinit_test_objs(&tobjs);
     }
@@ -1073,7 +1349,7 @@ test_flushing (void)
 
     for (i = 0; i < sizeof(test_funcs) / sizeof(test_funcs[0]); ++i)
     {
-        init_test_objs(&tobjs, 0x4000, 0x4000);
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
         test_funcs[i](&tobjs);
         deinit_test_objs(&tobjs);
     }
@@ -1149,7 +1425,7 @@ test_writev (void)
 
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
     {
-        init_test_objs(&tobjs, UINT_MAX, UINT_MAX);
+        init_test_objs(&tobjs, UINT_MAX, UINT_MAX, NULL);
         stream = new_stream(&tobjs, 12345);
         n = lsquic_stream_writev(stream, tests[i].iov, tests[i].count);
         assert(0x4000 == n);
@@ -1173,7 +1449,7 @@ test_prio_conversion (void)
     unsigned prio;
     int s;
 
-    init_test_objs(&tobjs, UINT_MAX, UINT_MAX);
+    init_test_objs(&tobjs, UINT_MAX, UINT_MAX, NULL);
     stream = new_stream(&tobjs, 123);
 
     s = lsquic_stream_set_priority(stream, -2);
@@ -1204,34 +1480,45 @@ test_read_in_middle (void)
     const char data[] = "AAABBBCCC";
     struct test_objs tobjs;
     stream_frame_t *frame;
+    uint64_t n_readable;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     lsquic_stream_t *stream = new_stream(&tobjs, 123);
 
     frame = new_frame_in_ext(&tobjs, 0, 3, 0, &data[0]);
     s = lsquic_stream_frame_in(stream, frame);
     assert(0 == s);
+    n_readable = stream->data_in->di_if->di_readable_bytes(stream->data_in, 0);
+    assert(3 == n_readable);
 
     /* Hole */
 
     frame = new_frame_in_ext(&tobjs, 6, 3, 0, &data[6]);
     s = lsquic_stream_frame_in(stream, frame);
     assert(0 == s);
+    n_readable = stream->data_in->di_if->di_readable_bytes(stream->data_in, 0);
+    assert(3 == n_readable);
 
     /* Read up to hole */
 
     nw = lsquic_stream_read(stream, buf, sizeof(buf));
     assert(3 == nw);
     assert(0 == memcmp(buf, "AAA", 3));
+    n_readable = stream->data_in->di_if->di_readable_bytes(stream->data_in, 3);
+    assert(0 == n_readable);
 
     frame = new_frame_in_ext(&tobjs, 3, 3, 0, &data[3]);
     s = lsquic_stream_frame_in(stream, frame);
     assert(0 == s);
+    n_readable = stream->data_in->di_if->di_readable_bytes(stream->data_in, 3);
+    assert(6 == n_readable);
 
     nw = lsquic_stream_read(stream, buf, sizeof(buf));
     assert(6 == nw);
     assert(0 == memcmp(buf, "BBBCCC", 6));
+    n_readable = stream->data_in->di_if->di_readable_bytes(stream->data_in, 9);
+    assert(0 == n_readable);
 
     lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
@@ -1248,12 +1535,12 @@ test_conn_unlimited (void)
     struct test_objs tobjs;
     lsquic_stream_t *header_stream, *data_stream;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
     unsigned char *const data = calloc(1, 0x4000);
 
     /* Test 1: first write headers, then data stream */
-    header_stream = new_stream(&tobjs, LSQUIC_STREAM_HANDSHAKE);
+    header_stream = new_stream(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
     data_stream = new_stream(&tobjs, 123);
     nw = lsquic_stream_write(header_stream, data, 98);
     assert(98 == nw);
@@ -1265,7 +1552,7 @@ test_conn_unlimited (void)
     lsquic_stream_destroy(data_stream);
 
     /* Test 2: first write data, then headers stream */
-    header_stream = new_stream(&tobjs, LSQUIC_STREAM_HANDSHAKE);
+    header_stream = new_stream(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
     data_stream = new_stream(&tobjs, 123);
     lsquic_conn_cap_init(&tobjs.conn_pub.conn_cap, 0x4000);
     nw = lsquic_stream_write(data_stream, data, 0x4000);
@@ -1294,10 +1581,13 @@ test_reading_from_stream2 (void)
     stream_frame_t *frame;
     ssize_t nw;
     int s;
+    enum stream_state_receiving ssr;
     const char data[] = "1234567890";
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     stream = new_stream(&tobjs, 123);
+    ssr = lsquic_stream_receiving_state(stream);
+    assert(SSR_RECV == ssr);
 
     frame = new_frame_in_ext(&tobjs, 0, 6, 0, &data[0]);
     s = lsquic_stream_frame_in(stream, frame);
@@ -1317,20 +1607,28 @@ test_reading_from_stream2 (void)
     {
         int dup;
         unsigned offset, length;
-        for (offset = 0; offset < 9; ++offset)
+        for (offset = 0; offset < 7; ++offset)
         {
-            for (length = 1; length < 10; ++length)
+            for (length = 1; length <= sizeof(data) - 1 - offset; ++length)
             {
                 dup = (offset == 0 && length == 6)
                    || (offset == 6 && length == 4);
-                frame = new_frame_in(&tobjs, offset, length, 0);
+                frame = new_frame_in_ext(&tobjs, offset, length, 0, data + offset);
                 s = lsquic_stream_frame_in(stream, frame);
                 if (dup)
                     assert(("Dup OK", 0 == s));
                 else
-                    assert(("Invalid frame: overlap", -1 == s));
+                    assert(("Overlap OK", 0 == s));
             }
         }
+    }
+
+    {
+        uint64_t n_readable;
+
+        n_readable = stream->data_in->di_if
+                                    ->di_readable_bytes(stream->data_in, 0);
+        assert(10 == n_readable);
     }
 
     nw = lsquic_stream_read(stream, buf, 8);
@@ -1385,6 +1683,8 @@ test_reading_from_stream2 (void)
                                    */);
     s = lsquic_stream_frame_in(stream, frame);
     assert(("Inserted frame #3", 0 == s));
+    ssr = lsquic_stream_receiving_state(stream);
+    assert(SSR_DATA_RECVD == ssr);
 
     /* Invalid frame: writing after FIN */
     frame = new_frame_in(&tobjs, 10, 2, 0);
@@ -1401,8 +1701,315 @@ test_reading_from_stream2 (void)
 
     nw = lsquic_stream_read(stream, buf, 1);
     assert(("Read 0 bytes (at EOR)", 0 == nw));
+    ssr = lsquic_stream_receiving_state(stream);
+    assert(SSR_DATA_READ == ssr);
 
     lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+/* This tests stream overlap support */
+static void
+test_overlaps (void)
+{
+    struct test_objs tobjs;
+    char buf[0x1000];
+    lsquic_stream_t *stream;
+    stream_frame_t *frame;
+    int s;
+    const char data[] = "1234567890";
+
+    struct frame_spec
+    {
+        unsigned    off;
+        unsigned    len;
+        signed char fin;
+    };
+
+    struct frame_step
+    {
+        struct frame_spec   frame_spec;
+        int                 insert_res;     /* Expected result */
+    };
+
+    struct overlap_test
+    {
+        int                 line;           /* Test identifier */
+        struct frame_step   steps[10];      /* Sequence of steps */
+        unsigned            n_steps;
+        const unsigned char buf[20];        /* Expected result of read */
+        ssize_t             sz;             /* Expected size of first read */
+        ssize_t             second_read;    /* Expected size of second read:
+                                             *   0 means EOS (FIN).
+                                             */
+    };
+
+    static const struct overlap_test tests[] =
+    {
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 0, .len = 10, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 1,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = -1,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 0, .len = 5, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 10, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 2,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = -1,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 1, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 2, .fin = 0, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 2, .len = 6, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 4,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                {
+                    .frame_spec = { .off = 1, .len = 9, .fin = 1, },
+                    .insert_res = 0,
+                },
+                {
+                    .frame_spec = { .off = 0, .len = 2, .fin = 0, },
+                    .insert_res = 0,
+                },
+            },
+            .n_steps = 2,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+        {
+            .line   = __LINE__,
+            .steps  =
+            {
+                { .frame_spec = { .off = 1, .len = 6, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 2, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 8, .len = 2, .fin = 1, }, .insert_res = 0, },
+                { .frame_spec = { .off = 3, .len = 2, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 4, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 5, .len = 2, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 6, .len = 1, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 7, .len = 3, .fin = 0, }, .insert_res = 0, },
+                { .frame_spec = { .off = 9, .len = 1, .fin = 1, }, .insert_res = 0, },
+                { .frame_spec = { .off = 0, .len = 2, .fin = 0, }, .insert_res = 0, },
+            },
+            .n_steps = 10,
+            .buf = "0123456789",
+            .sz = 10,
+            .second_read = 0,
+        },
+
+    };
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+
+    const struct overlap_test *test;
+    for (test = tests; test < tests + sizeof(tests) / sizeof(tests[0]); ++test)
+    {
+        LSQ_NOTICE("executing stream overlap test, line %d", test->line);
+        stream = new_stream(&tobjs, test->line);
+
+        const struct frame_step *step;
+        for (step = test->steps; step < test->steps + test->n_steps; ++step)
+        {
+            frame = new_frame_in_ext(&tobjs, step->frame_spec.off,
+                step->frame_spec.len, step->frame_spec.fin,
+                &data[step->frame_spec.off]);
+            s = lsquic_stream_frame_in(stream, frame);
+            assert(s == step->insert_res);
+        }
+
+        ssize_t nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == test->sz);
+        assert(0 == memcmp(data, buf, test->sz));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == test->second_read);
+        if (nread < 0)
+            assert(EWOULDBLOCK == errno);
+
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        LSQ_NOTICE("Special test on line %d", __LINE__);
+        stream = new_stream(&tobjs, __LINE__);
+        frame = new_frame_in_ext(&tobjs, 0, 5, 0, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        ssize_t nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 5);
+        assert(0 == memcmp(data, buf, 5));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread < 0);
+        assert(EWOULDBLOCK == errno);
+        /* Test that a frame with FIN that ends before the read offset
+         * results in an error.
+         */
+        frame = new_frame_in_ext(&tobjs, 0, 3, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s < 0);
+        /* This frame should be a DUP: the next read should still return -1.
+         */
+        frame = new_frame_in_ext(&tobjs, 3, 2, 0, &data[3]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread < 0);
+        assert(EWOULDBLOCK == errno);
+        /* This frame should be an overlap: FIN should register and
+         * the next read should return 0.
+         */
+        frame = new_frame_in_ext(&tobjs, 0, 5, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 0);
+        lsquic_stream_destroy(stream);
+    }
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_insert_edge_cases (void)
+{
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    stream_frame_t *frame;
+    int s;
+    ssize_t nread;
+    const char data[] = "1234567890";
+    enum stream_state_receiving ssr;
+    unsigned buf[0x1000];
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        ssr = lsquic_stream_receiving_state(stream);
+        assert(SSR_DATA_RECVD == ssr);
+        /* Invalid frame: different FIN location */
+        frame = new_frame_in_ext(&tobjs, 3, 2, 1, &data[3]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Invalid frame: different FIN location", -1 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 0, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(6 == nread);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 0, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate frame", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == -1 && errno == EWOULDBLOCK);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Frame OK", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 0); /* Hit EOF */
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate FIN frame", 0 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Frame OK", 0 == s));
+        ssr = lsquic_stream_receiving_state(stream);
+        assert(SSR_SIZE_KNOWN == ssr);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 0, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(6 == nread);
+        frame = new_frame_in_ext(&tobjs, 6, 0, 0, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate frame", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 0); /* Hit EOF */
+        frame = new_frame_in_ext(&tobjs, 6, 0, 1, &data[6]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Duplicate FIN frame", 0 == s));
+        lsquic_stream_destroy(stream);
+    }
+
+    {
+        stream = new_stream(&tobjs, 123);
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted frame #1", 0 == s));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(6 == nread);
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(0 == nread); /* Hit EOF */
+        frame = new_frame_in_ext(&tobjs, 0, 6, 1, &data[0]);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(("Inserted duplicate frame", 0 == s));
+        lsquic_stream_destroy(stream);
+    }
+
     deinit_test_objs(&tobjs);
 }
 
@@ -1421,7 +2028,7 @@ test_writing_to_stream_schedule_stream_packets_immediately (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
@@ -1448,8 +2055,8 @@ test_writing_to_stream_schedule_stream_packets_immediately (void)
     assert(("9 bytes written correctly", nw == 9));
     s = lsquic_stream_flush(stream);
     assert(0 == s);
-    assert(("packetized -- 2 packets now",
-                        2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("packetized -- still 1 packet",
+                        1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
 
     assert(("connection cap is reduced by 23 bytes",
                     lsquic_conn_cap_avail(conn_cap) == 0x4000 - 23));
@@ -1489,7 +2096,7 @@ test_writing_to_stream_outside_callback (void)
     const struct buf_packet_q *const bpq =
             &tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type];
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream(&tobjs, 123);
     assert(("Stream initialized", stream));
@@ -1511,7 +2118,7 @@ test_writing_to_stream_outside_callback (void)
     assert(("9 bytes written correctly", nw == 9));
     s = lsquic_stream_flush(stream);
     assert(0 == s);
-    assert(("packetized -- 2 packets now", 2 == bpq->bpq_count));
+    assert(("packetized -- still 1 packet", 1 == bpq->bpq_count));
 
     assert(("connection cap is reduced by 23 bytes",
                     lsquic_conn_cap_avail(conn_cap) == 0x4000 - 23));
@@ -1520,8 +2127,8 @@ test_writing_to_stream_outside_callback (void)
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
     lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
-    assert(("packetized -- 2 packets now",
-                        2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("packetized -- 1 packet",
+                        1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
 
     nw = read_from_scheduled_packets(&tobjs.send_ctl, stream->id, buf,
                                                     sizeof(buf), 0, NULL, 0);
@@ -1541,6 +2148,92 @@ test_writing_to_stream_outside_callback (void)
 }
 
 
+static void
+test_changing_pack_size (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    struct lsquic_conn *lconn = &tobjs.lconn;
+    struct lsquic_stream *stream;
+    int s, i;
+    unsigned char buf[0x2000];
+    size_t len;
+
+    init_buf(buf, sizeof(buf));
+
+    enum lsquic_version versions_to_test[3] =
+    {
+        LSQVER_046,
+        LSQVER_ID23,
+    };
+
+    for (i = 0; i < 3; i++)
+    {
+        g_pf = select_pf_by_ver(versions_to_test[i]);
+
+        init_test_ctl_settings(&g_ctl_settings);
+        g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+        g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+        const struct buf_packet_q *const bpq =
+                &tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type];
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+        n_closed = 0;
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+        {
+            tobjs.ctor_flags |= SCF_IETF;
+            lconn->cn_flags |= LSCONN_IETF;
+            network_path.np_pack_size = 4096;
+        }
+        stream = new_stream(&tobjs, 5);
+        assert(("Stream initialized", stream));
+        const struct test_ctx *const test_ctx_local = tobjs.stream_if_ctx;
+        assert(("on_new_stream called correctly", stream == test_ctx_local->stream));
+
+        len = ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS) ? 2048 : 1024;
+        nw = lsquic_stream_write(stream, buf, len);
+        assert(("n bytes written correctly", (size_t)nw == len));
+
+        assert(("not packetized", 0 == bpq->bpq_count));
+
+        /* IETF: shrink packet size before a flush */
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+            network_path.np_pack_size = 1370;
+
+        s = lsquic_stream_flush(stream);
+        assert(0 == s);
+
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+            assert(("packetized -- 2 packets", 2 == bpq->bpq_count));
+        else
+            assert(("packetized -- 1 packets", 1 == bpq->bpq_count));
+
+        /* IETF: expand packet size before a write */
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+            network_path.np_pack_size = 4096;
+
+        len = ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS) ? 2048 : 1024;
+        nw = lsquic_stream_write(stream, buf, len);
+        assert(("n bytes written correctly", (size_t)nw == len));
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+            assert(("packetized -- 3 packets", 3 == bpq->bpq_count));
+        else
+            assert(("packetized -- 1 packets", 1 == bpq->bpq_count));
+
+        s = lsquic_stream_flush(stream);
+        assert(0 == s);
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+            assert(("packetized -- 3 packets", 3 == bpq->bpq_count));
+        else
+            assert(("packetized -- 2 packets", 2 == bpq->bpq_count));
+
+        lsquic_stream_destroy(stream);
+        assert(("on_close called", 1 == n_closed));
+        deinit_test_objs(&tobjs);
+    }
+    g_pf = select_pf_by_ver(LSQVER_039);
+}
+
+
 /* Test window update logic, connection-limited */
 static void
 test_window_update1 (void)
@@ -1556,7 +2249,7 @@ test_window_update1 (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
     stream = new_stream_ext(&tobjs, 123, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
@@ -1573,8 +2266,8 @@ test_window_update1 (void)
     assert(0 == memcmp(buf, "123", 3));
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
 
     lsquic_stream_window_update(stream, 20);
     nw = lsquic_stream_write(stream, "4567890", 7);
@@ -1612,9 +2305,9 @@ test_bad_packbits_guess_2 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
     streams[1] = new_stream(&tobjs, 7);
     streams[2] = new_stream(&tobjs, 9);
@@ -1645,7 +2338,7 @@ test_bad_packbits_guess_2 (void)
     assert(1 == streams[2]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_6;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_6;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -1667,16 +2360,16 @@ test_bad_packbits_guess_2 (void)
     assert(0 == memcmp(buf + 1337, buf_out, 1));
 
     /* Verify packets */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
 
     assert(1 == streams[0]->n_unacked);
     assert(1 == streams[1]->n_unacked);
@@ -1715,9 +2408,9 @@ test_bad_packbits_guess_3 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
 
     nw = lsquic_stream_write(streams[0], buf,
@@ -1736,7 +2429,7 @@ test_bad_packbits_guess_3 (void)
     assert(1 == streams[0]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_4;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_4;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -1749,16 +2442,16 @@ test_bad_packbits_guess_3 (void)
     assert(0 == memcmp(buf, buf_out, 1343));
 
     /* Verify packets */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_4);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_4);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
 
     assert(2 == streams[0]->n_unacked);
     ack_packet(&tobjs.send_ctl, 1);
@@ -1811,6 +2504,7 @@ packetization_write_as_much_as_you_can (lsquic_stream_t *stream,
     struct packetization_test_stream_ctx *const pack_ctx = (void *) ctx;
     unsigned n_to_write;
     ssize_t n_written;
+    int s;
 
     while (pack_ctx->off < pack_ctx->len)
     {
@@ -1825,6 +2519,8 @@ packetization_write_as_much_as_you_can (lsquic_stream_t *stream,
         pack_ctx->off += n_written;
     }
 
+    s = lsquic_stream_flush(stream);
+    assert(s == 0);
     lsquic_stream_wantwrite(stream, 0);
 }
 
@@ -1871,6 +2567,7 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
     struct lsquic_stream *streams[2];
     size_t nw;
     int fin;
+    unsigned stream_ids[2];
     unsigned char buf[0x8000];
     unsigned char buf_out[0x8000];
 
@@ -1889,7 +2586,7 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
 
     init_test_objs(&tobjs,
         /* Test limits a bit while we are at it: */
-        sizeof(buf) - 1, sizeof(buf) - 1);
+        sizeof(buf) - 1, sizeof(buf) - 1, NULL);
     tobjs.stream_if_ctx = &packet_stream_ctx;
 
     if (schedule_stream_packets_immediately)
@@ -1908,8 +2605,19 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
          */
         tobjs.stream_if = &packetization_inside_many_stream_if;
 
-    streams[0] = new_stream(&tobjs, 7);
-    streams[1] = new_stream_ext(&tobjs, 5, sizeof(buf) - 1);
+    if (g_use_crypto_ctor)
+    {
+        stream_ids[0] = ENC_LEV_CLEAR;
+        stream_ids[1] = ENC_LEV_INIT;
+    }
+    else
+    {
+        stream_ids[0] = 7;
+        stream_ids[1] = 5;
+    }
+
+    streams[0] = new_stream(&tobjs, stream_ids[0]);
+    streams[1] = new_stream_ext(&tobjs, stream_ids[1], sizeof(buf) - 1);
 
     if (first_stream_sz)
     {
@@ -1918,7 +2626,10 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
     }
 
     if (schedule_stream_packets_immediately)
+    {
         lsquic_stream_dispatch_write_events(streams[1]);
+        lsquic_stream_flush(streams[1]);
+    }
     else
     {
         packetization_write_as_much_as_you_can(streams[1],
@@ -1928,14 +2639,94 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
         g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
     }
 
-    assert(packet_stream_ctx.off == packet_stream_ctx.len - first_stream_sz - 1);
+    if (!g_use_crypto_ctor)
+        assert(packet_stream_ctx.off == packet_stream_ctx.len - first_stream_sz - 1);
 
     /* Verify written data: */
     nw = read_from_scheduled_packets(&tobjs.send_ctl, streams[1]->id, buf_out,
                                      sizeof(buf_out), 0, &fin, 1);
-    assert(nw == sizeof(buf) - first_stream_sz - 1);
+    if (!g_use_crypto_ctor)
+    {
+        assert(nw == sizeof(buf) - first_stream_sz - 1);
+        assert(!fin);
+        assert(0 == memcmp(buf, buf_out, sizeof(buf) - first_stream_sz - 1));
+    }
+    else
+    {
+        assert(0x4000 == nw);
+        assert(0 == memcmp(buf, buf_out, nw));
+    }
+
+    lsquic_stream_destroy(streams[0]);
+    lsquic_stream_destroy(streams[1]);
+    deinit_test_objs(&tobjs);
+}
+
+
+/* Test condition when the room necessary to write a STREAM frame to a packet
+ * is miscalculated and a brand-new packet has to be allocated.
+ *
+ * This does not affect IETF QUIC because the STREAM frame uses varint data
+ * length representation and thus uses just a single byte to represent the
+ * length of a 1-byte stream data chunk.
+ */
+static void
+test_cant_fit_frame (const struct parse_funcs *pf)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *streams[2];
+    struct lsquic_packet_out *packet_out;
+    size_t pad_len, rem, nr;
+    int fin, s;
+    const char dude[] = "Dude, where is my car?!";
+    unsigned char buf_out[100];
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    init_test_objs(&tobjs, 0x8000, 0x8000, pf);
+
+    streams[0] = new_stream(&tobjs, 5);
+    streams[1] = new_stream(&tobjs, 7);
+
+    /* Allocate a packet and pad it so just a few bytes remain to trigger
+     * the condition we're after.
+     */
+    lsquic_stream_write(streams[0], dude, sizeof(dude) - 1);
+    lsquic_stream_flush(streams[0]);
+
+    rem = pf->pf_calc_stream_frame_header_sz(streams[1]->id, 0, 1)
+        + 1 /* We'll write one byte */
+        + 1 /* This triggers the refit condition */
+        ;
+
+    packet_out = TAILQ_FIRST(&tobjs.send_ctl.sc_buffered_packets[0].bpq_packets);
+    assert(NULL == TAILQ_NEXT(packet_out, po_next));
+    pad_len = packet_out->po_n_alloc - packet_out->po_data_sz - rem;
+    memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_len);
+    packet_out->po_data_sz += pad_len;
+
+    lsquic_stream_write(streams[1], "A", 1);
+    s = lsquic_stream_flush(streams[1]);
+    assert(0 == s);
+    /* Allocated another packet */
+    assert(TAILQ_NEXT(packet_out, po_next));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl, BPT_HIGHEST_PRIO);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    /* Verify written data: */
+    nr = read_from_scheduled_packets(&tobjs.send_ctl, streams[0]->id, buf_out,
+                                     sizeof(buf_out), 0, &fin, 1);
+    assert(nr == sizeof(dude) - 1);
     assert(!fin);
-    assert(0 == memcmp(buf, buf_out, sizeof(buf) - first_stream_sz - 1));
+    assert(0 == memcmp(dude, buf_out, sizeof(dude) - 1));
+    nr = read_from_scheduled_packets(&tobjs.send_ctl, streams[1]->id, buf_out,
+                                     sizeof(buf_out), 0, &fin, 1);
+    assert(nr == 1);
+    assert(!fin);
+    assert(buf_out[0] == 'A');
 
     lsquic_stream_destroy(streams[0]);
     lsquic_stream_destroy(streams[1]);
@@ -1955,9 +2746,9 @@ test_window_update2 (void)
     struct lsquic_conn_cap *const conn_cap = &tobjs.conn_pub.conn_cap;
     unsigned char buf[0x1000];
 
-    init_test_objs(&tobjs, 0x4000, 0x4000);
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
-    stream = new_stream_ext(&tobjs, LSQUIC_STREAM_HANDSHAKE, 3);
+    stream = new_stream_ext(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     lsquic_stream_flush(stream);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));
@@ -1965,15 +2756,15 @@ test_window_update2 (void)
     assert(0 == s);
     assert(("cc_tosend is not updated when not limited by connection",
                                             0 == conn_cap->cc_sent));
-    assert(stream->stream_flags & STREAM_SEND_BLOCKED);
+    assert(stream->sm_qflags & SMQF_SEND_BLOCKED);
     nw = read_from_scheduled_packets(&tobjs.send_ctl, stream->id, buf,
                                                     sizeof(buf), 0, NULL, 0);
     assert(nw == 3);
     assert(0 == memcmp(buf, "123", 3));
 
     /* Pretend we sent out a packet: */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
 
     lsquic_stream_window_update(stream, 20);
     nw = lsquic_stream_write(stream, "4567890", 7);
@@ -2007,7 +2798,7 @@ test_blocked_flags (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 3, 3);
+    init_test_objs(&tobjs, 3, 3, NULL);
     stream = new_stream_ext(&tobjs, 123, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));
@@ -2018,7 +2809,7 @@ test_blocked_flags (void)
     assert(0 == s);
     assert(("cc_tosend is updated when limited by connection",
                                             3 == conn_cap->cc_sent));
-    assert(stream->stream_flags & STREAM_SEND_BLOCKED);
+    assert(stream->sm_qflags & SMQF_SEND_BLOCKED);
     assert(3 == stream->blocked_off);
     assert(tobjs.lconn.cn_flags & LSCONN_SEND_BLOCKED);
     assert(3 == conn_cap->cc_blocked);
@@ -2035,17 +2826,22 @@ test_forced_flush_when_conn_blocked (void)
     struct test_objs tobjs;
     struct lsquic_stream *stream;
     struct lsquic_conn_cap *const conn_cap = &tobjs.conn_pub.conn_cap;
+    enum stream_state_sending sss;
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 3, 0x1000);
+    init_test_objs(&tobjs, 3, 0x1000, NULL);
     stream = new_stream(&tobjs, 123);
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_READY == sss);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));
     assert(("cc_tosend is updated immediately",
                                             3 == conn_cap->cc_sent));
     assert(1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)); /* Flush occurred */
+    sss = lsquic_stream_sending_state(stream);
+    assert(SSS_SEND == sss);
     assert(tobjs.lconn.cn_flags & LSCONN_SEND_BLOCKED);
     assert(3 == conn_cap->cc_blocked);
 
@@ -2056,7 +2852,7 @@ test_forced_flush_when_conn_blocked (void)
 
 static int
 my_gen_stream_frame_err (unsigned char *buf, size_t bufsz,
-                         uint32_t stream_id, uint64_t offset,
+                         lsquic_stream_id_t stream_id, uint64_t offset,
                          int fin, size_t size, gsf_read_f read,
                          void *stream)
 {
@@ -2076,7 +2872,7 @@ test_conn_abort (void)
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     my_pf = *tobjs.lconn.cn_pf;
     my_pf.pf_gen_stream_frame = my_gen_stream_frame_err;
     tobjs.lconn.cn_pf = &my_pf;
@@ -2086,7 +2882,7 @@ test_conn_abort (void)
     assert(10 == nw);   /* No error yet */
     s = lsquic_stream_flush(stream);
     assert(s < 0);
-    assert(stream->stream_flags & STREAM_ABORT_CONN);
+    assert(stream->sm_qflags & SMQF_ABORT_CONN);
     assert(!TAILQ_EMPTY(&tobjs.conn_pub.service_streams));
 
     lsquic_stream_destroy(stream);
@@ -2112,9 +2908,9 @@ test_bad_packbits_guess_1 (void)
 
     init_test_ctl_settings(&g_ctl_settings);
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
-    g_ctl_settings.tcs_guess_packno_bits = PACKNO_LEN_1;
+    g_ctl_settings.tcs_guess_packno_bits = GQUIC_PACKNO_LEN_1;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000);
+    init_test_objs(&tobjs, 0x1000, 0x1000, NULL);
     streams[0] = new_stream(&tobjs, 5);
     streams[1] = new_stream(&tobjs, 7);
     streams[2] = new_stream(&tobjs, 9);
@@ -2145,7 +2941,7 @@ test_bad_packbits_guess_1 (void)
     assert(1 == streams[2]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = PACKNO_LEN_6;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_6;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -2167,16 +2963,16 @@ test_bad_packbits_guess_1 (void)
     assert(0 == memcmp(buf + 1337, buf_out, 1));
 
     /* Verify packets */
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
-    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl);
-    assert(lsquic_packet_out_packno_bits(packet_out) == PACKNO_LEN_6);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
-    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out, 1);
+    lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
 
     assert(1 == streams[0]->n_unacked);
     assert(1 == streams[1]->n_unacked);
@@ -2194,6 +2990,35 @@ test_bad_packbits_guess_1 (void)
     lsquic_stream_destroy(streams[1]);
     lsquic_stream_destroy(streams[2]);
     deinit_test_objs(&tobjs);
+}
+
+
+static void
+main_test_packetization (void)
+{
+    const unsigned fp_sizes[] = { 0, 10, 100, 501, 1290, };
+    unsigned i;
+    for (i = 0; i < sizeof(fp_sizes) / sizeof(fp_sizes[0]); ++i)
+    {
+        int once;
+        unsigned write_size;
+        if (!g_use_crypto_ctor) /* No buffered packets for CRYPTO frames */
+        {
+            for (write_size = 1; write_size < GQUIC_MAX_PACKET_SZ; ++write_size)
+                test_packetization(0, 0, write_size, fp_sizes[i]);
+            srand(7891);
+            for (write_size = 1; write_size < GQUIC_MAX_PACKET_SZ * 10; ++write_size)
+                test_packetization(0, 0, RANDOM_WRITE_SIZE, fp_sizes[i]);
+        }
+        for (once = 0; once < 2; ++once)
+        {
+            for (write_size = 1; write_size < GQUIC_MAX_PACKET_SZ; ++write_size)
+                test_packetization(1, once, write_size, fp_sizes[i]);
+            srand(7891);
+            for (write_size = 1; write_size < GQUIC_MAX_PACKET_SZ * 10; ++write_size)
+                test_packetization(1, once, RANDOM_WRITE_SIZE, fp_sizes[i]);
+        }
+    }
 }
 
 
@@ -2215,6 +3040,7 @@ main (int argc, char **argv)
             stream_ctor_flags |= SCF_USE_DI_HASH;
             break;
         case 'l':
+            lsquic_log_to_fstream(stderr, 0);
             lsquic_logger_lopt(optarg);
             break;
         default:
@@ -2226,11 +3052,14 @@ main (int argc, char **argv)
 
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
+    test_changing_pack_size();
     test_window_update1();
     test_window_update2();
     test_forced_flush_when_conn_blocked();
     test_blocked_flags();
     test_reading_from_stream2();
+    test_overlaps();
+    test_insert_edge_cases();
 
     {
         int idx[6];
@@ -2255,26 +3084,17 @@ main (int argc, char **argv)
     test_bad_packbits_guess_2();
     test_bad_packbits_guess_3();
 
-    const unsigned fp_sizes[] = { 0, 10, 100, 501, 1290, };
-    unsigned i;
-    for (i = 0; i < sizeof(fp_sizes) / sizeof(fp_sizes[0]); ++i)
-    {
-        int once;
-        unsigned write_size;
-        for (write_size = 1; write_size < QUIC_MAX_PACKET_SZ; ++write_size)
-            test_packetization(0, 0, write_size, fp_sizes[i]);
-        srand(7891);
-        for (write_size = 1; write_size < QUIC_MAX_PACKET_SZ * 10; ++write_size)
-            test_packetization(0, 0, RANDOM_WRITE_SIZE, fp_sizes[i]);
-        for (once = 0; once < 2; ++once)
-        {
-            for (write_size = 1; write_size < QUIC_MAX_PACKET_SZ; ++write_size)
-                test_packetization(1, once, write_size, fp_sizes[i]);
-            srand(7891);
-            for (write_size = 1; write_size < QUIC_MAX_PACKET_SZ * 10; ++write_size)
-                test_packetization(1, once, RANDOM_WRITE_SIZE, fp_sizes[i]);
-        }
-    }
+    main_test_packetization();
+
+    enum lsquic_version ver;
+    for (ver = 0; ver < N_LSQVER; ++ver)
+        if (!((1 << ver) & LSQUIC_IETF_VERSIONS))
+            test_cant_fit_frame(select_pf_by_ver(ver));
+
+    /* Redo some tests using crypto streams and frames */
+    g_use_crypto_ctor = 1;
+    g_pf = select_pf_by_ver(LSQVER_ID23);
+    main_test_packetization();
 
     return 0;
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_di_hash.c -- Copy incoming data into a hash
  *
@@ -12,6 +12,7 @@
 
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -26,6 +27,10 @@
 #include "lsquic_packet_in.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_varint.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_mm.h"
 #include "lsquic_malo.h"
@@ -35,7 +40,7 @@
 
 
 #define LSQUIC_LOGGER_MODULE LSQLM_DI
-#define LSQUIC_LOG_CONN_ID hdi->hdi_conn_pub->lconn->cn_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(hdi->hdi_conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID hdi->hdi_stream_id
 #include "lsquic_logger.h"
 
@@ -72,7 +77,7 @@ struct hash_data_in
     struct dblock_head         *hdi_buckets;
     struct data_block          *hdi_last_block;
     struct data_frame           hdi_data_frame;
-    uint32_t                    hdi_stream_id;
+    lsquic_stream_id_t          hdi_stream_id;
     unsigned                    hdi_count;
     unsigned                    hdi_nbits;
     enum {
@@ -110,8 +115,8 @@ my_log2 /* silly name to suppress compiler warning */ (unsigned sz)
 
 
 struct data_in *
-data_in_hash_new (struct lsquic_conn_public *conn_pub, uint32_t stream_id,
-                  uint64_t byteage)
+data_in_hash_new (struct lsquic_conn_public *conn_pub,
+                        lsquic_stream_id_t stream_id, uint64_t byteage)
 {
     struct hash_data_in *hdi;
     unsigned n;
@@ -277,6 +282,7 @@ block_write (struct data_block *block, unsigned block_off,
     unsigned set, bit, n_full_sets, n;
     uint64_t mask;
 
+    assert(block_off < DB_DATA_SIZE);
     if (data_sz > DB_DATA_SIZE - block_off)
         data_sz = DB_DATA_SIZE - block_off;
 
@@ -285,7 +291,7 @@ block_write (struct data_block *block, unsigned block_off,
     set = block_off >> 6;
     bit = block_off & 0x3F;
 
-    assert(set <= N_DB_SETS);
+    assert(set < N_DB_SETS);
 
     if (bit)
     {
@@ -355,7 +361,12 @@ data_in_hash_insert_data_frame (struct data_in *data_in,
     unsigned size, nw;
 
     if (data_frame->df_offset + data_frame->df_size < read_offset)
-        return INS_FRAME_DUP;
+    {
+        if (data_frame->df_fin)
+            return INS_FRAME_ERR;
+        else
+            return INS_FRAME_DUP;
+    }
 
     if ((hdi->hdi_flags & HDI_FIN) &&
          (
@@ -427,8 +438,10 @@ hash_di_insert_frame (struct data_in *data_in,
     enum ins_frame ins;
 
     ins = data_in_hash_insert_data_frame(data_in, data_frame, read_offset);
+    assert(ins != INS_FRAME_OVERLAP);
     lsquic_packet_in_put(hdi->hdi_conn_pub->mm, new_frame->packet_in);
-    lsquic_malo_put(new_frame);
+    if (ins != INS_FRAME_OK)
+        lsquic_malo_put(new_frame);
     return ins;
 }
 
@@ -628,13 +641,47 @@ hash_di_mem_used (struct data_in *data_in)
 }
 
 
+static void
+hash_di_dump_state (struct data_in *data_in)
+{
+    const struct hash_data_in *const hdi = HDI_PTR(data_in);
+    const struct data_block *block;
+    unsigned n;
+
+    LSQ_DEBUG("hash state: flags: %X; fin off: %"PRIu64"; count: %u",
+        hdi->hdi_flags, hdi->hdi_fin_off, hdi->hdi_count);
+    for (n = 0; n < N_BUCKETS(hdi->hdi_nbits); ++n)
+        TAILQ_FOREACH(block, &hdi->hdi_buckets[n], db_next)
+            LSQ_DEBUG("block: off: %"PRIu64, block->db_off);
+}
+
+
+static uint64_t
+hash_di_readable_bytes (struct data_in *data_in, uint64_t read_offset)
+{
+    const struct data_frame *data_frame;
+    uint64_t starting_offset;
+
+    starting_offset = read_offset;
+    while (data_frame = hash_di_get_frame(data_in, read_offset),
+                data_frame && data_frame->df_size - data_frame->df_read_off)
+        read_offset += data_frame->df_size - data_frame->df_read_off;
+
+    return read_offset - starting_offset;
+}
+
+
 static const struct data_in_iface di_if_hash = {
     .di_destroy      = hash_di_destroy,
+    .di_dump_state   = hash_di_dump_state,
     .di_empty        = hash_di_empty,
     .di_frame_done   = hash_di_frame_done,
     .di_get_frame    = hash_di_get_frame,
     .di_insert_frame = hash_di_insert_frame,
     .di_mem_used     = hash_di_mem_used,
+    .di_own_on_ok    = 0,
+    .di_readable_bytes
+                     = hash_di_readable_bytes,
     .di_switch_impl  = hash_di_switch_impl,
 };
 

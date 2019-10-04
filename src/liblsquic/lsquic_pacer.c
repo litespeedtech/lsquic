@@ -1,10 +1,7 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <inttypes.h>
 #include <stdint.h>
-#ifndef NDEBUG
-#include <stdlib.h>     /* getenv */
-#endif
 #include <string.h>
 #ifdef WIN32
 #include <vc_compat.h>
@@ -14,11 +11,12 @@
 #include "lsquic_int_types.h"
 #include "lsquic_pacer.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_util.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PACER
-#define LSQUIC_LOG_CONN_ID pacer->pa_cid
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(pacer->pa_conn)
 #include "lsquic_logger.h"
 
 #ifndef MAX
@@ -27,20 +25,13 @@
 
 
 void
-pacer_init (struct pacer *pacer, lsquic_cid_t cid, unsigned max_intertick)
+pacer_init (struct pacer *pacer, const struct lsquic_conn *conn,
+                                                unsigned clock_granularity)
 {
     memset(pacer, 0, sizeof(*pacer));
     pacer->pa_burst_tokens = 10;
-    pacer->pa_cid = cid;
-    pacer->pa_max_intertick = max_intertick;
-#ifndef NDEBUG
-    const char *val;
-    if ((val = getenv("LSQUIC_PACER_INTERTICK")))
-    {
-        pacer->pa_flags |= PA_CONSTANT_INTERTICK;
-        pacer->pa_intertick_avg = atoi(val);
-    }
-#endif
+    pacer->pa_conn = conn;
+    pacer->pa_clock_granularity = clock_granularity;
 }
 
 
@@ -48,7 +39,7 @@ void
 pacer_cleanup (struct pacer *pacer)
 {
 #ifndef NDEBUG
-    LSQ_NOTICE("scheduled calls: %u", pacer->pa_stats.n_scheduled);
+    LSQ_DEBUG("scheduled calls: %u", pacer->pa_stats.n_scheduled);
 #endif
 }
 
@@ -63,6 +54,7 @@ pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
 #ifndef NDEBUG
     ++pacer->pa_stats.n_scheduled;
 #endif
+    ++pacer->pa_n_scheduled;
 
     if (n_in_flight == 0 && !in_recovery)
     {
@@ -101,7 +93,7 @@ pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
         pacer->pa_next_sched = MAX(pacer->pa_next_sched + delay,
                                                     sched_time + delay);
     LSQ_DEBUG("next_sched is set to %"PRIu64" usec from now",
-                                pacer->pa_next_sched - lsquic_time_now());
+                                pacer->pa_next_sched - pacer->pa_now);
 }
 
 
@@ -113,13 +105,6 @@ pacer_loss_event (struct pacer *pacer)
 }
 
 
-static unsigned
-clock_granularity (const struct pacer *pacer)
-{
-    return pacer->pa_intertick_avg;
-}
-
-
 int
 pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 {
@@ -127,7 +112,7 @@ pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 
     if (pacer->pa_burst_tokens > 0 || n_in_flight == 0)
         can = 1;
-    else if (pacer->pa_next_sched > pacer->pa_now + clock_granularity(pacer))
+    else if (pacer->pa_next_sched > pacer->pa_now + pacer->pa_clock_granularity)
     {
         pacer->pa_flags |= PA_LAST_SCHED_DELAYED;
         can = 0;
@@ -140,52 +125,26 @@ pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 }
 
 
-#define ALPHA_SHIFT 3
-#define BETA_SHIFT  2
-
-static void
-update_avg_intertick (struct pacer *pacer, unsigned intertick)
+void
+pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
 {
-    unsigned diff;
-
-#ifndef NDEBUG
-    if (pacer->pa_flags & PA_CONSTANT_INTERTICK)
-        return;
-#endif
-
-    if (pacer->pa_intertick_avg)
-    {
-        if (intertick > pacer->pa_intertick_avg)
-            diff = intertick - pacer->pa_intertick_avg;
-        else
-            diff = pacer->pa_intertick_avg - intertick;
-        pacer->pa_intertick_var -= pacer->pa_intertick_var >> BETA_SHIFT;
-        pacer->pa_intertick_var += diff >> BETA_SHIFT;
-        pacer->pa_intertick_avg -= pacer->pa_intertick_avg >> ALPHA_SHIFT;
-        pacer->pa_intertick_avg += intertick >> ALPHA_SHIFT;
-    }
-    else
-    {
-        pacer->pa_intertick_avg = intertick;
-        pacer->pa_intertick_var = intertick >> 1;
-    }
+    assert(now >= pacer->pa_now);
+    pacer->pa_now = now;
+    if (pacer->pa_flags & PA_LAST_SCHED_DELAYED)
+        pacer->pa_flags |= PA_DELAYED_ON_TICK_IN;
+    pacer->pa_n_scheduled = 0;
 }
 
 
 void
-pacer_tick (struct pacer *pacer, lsquic_time_t now)
+pacer_tick_out (struct pacer *pacer)
 {
-    unsigned intertick;
-
-    assert(now > pacer->pa_now);
-    if (pacer->pa_now)
+    if ((pacer->pa_flags & PA_DELAYED_ON_TICK_IN)
+            && pacer->pa_n_scheduled == 0
+                && pacer->pa_now > pacer->pa_next_sched)
     {
-        assert(now - pacer->pa_now < (1ULL << sizeof(unsigned) * 8));
-        intertick = now - pacer->pa_now;
-        LSQ_DEBUG("intertick estimate: %u; real value: %u; error: %d",
-            clock_granularity(pacer), intertick,
-            (int) clock_granularity(pacer) - (int) intertick);
-        update_avg_intertick(pacer, intertick);
+        LSQ_DEBUG("tick passed without scheduled packets: reset delayed flag");
+        pacer->pa_flags &= ~PA_LAST_SCHED_DELAYED;
     }
-    pacer->pa_now = now;
+    pacer->pa_flags &= ~PA_DELAYED_ON_TICK_IN;
 }

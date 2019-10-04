@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Write several things to HEADERS stream and check the results.  What
  * varies is the amount of bytes that are written to stream every time.
@@ -21,12 +21,16 @@
 #include <sys/queue.h>
 
 #include "lsquic.h"
-#include "lsquic_hpack_enc.h"
+#include "lshpack.h"
 #include "lsquic_logger.h"
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_reader.h"
+#if LSQUIC_CONN_STATS
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
+#endif
 
 
 struct lsquic_stream
@@ -66,8 +70,11 @@ stream_destroy (struct lsquic_stream *stream)
 
 
 static ssize_t
-stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+stream_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 {
+    size_t sz;
+
+    sz = reader->lsqr_size(reader->lsqr_ctx);
     if (sz > stream->sm_max_write)
         sz = stream->sm_max_write;
     if (stream->sm_write_off + sz > stream->sm_buf_sz)
@@ -79,7 +86,8 @@ stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
         stream->sm_buf = realloc(stream->sm_buf, stream->sm_buf_sz);
     }
 
-    memcpy(stream->sm_buf + stream->sm_write_off, buf, sz);
+    sz = reader->lsqr_read(reader->lsqr_ctx,
+                                    stream->sm_buf + stream->sm_write_off, sz);
     stream->sm_write_off += sz;
 
     return sz;
@@ -95,14 +103,23 @@ test_chop (unsigned max_write_sz)
     struct lsquic_frame_writer *fw;
     struct lsquic_stream *stream;
     struct lsquic_mm mm;
-    struct lsquic_henc henc;
+    struct lshpack_enc henc;
     int s;
 
+#if LSQUIC_CONN_STATS
+    struct conn_stats conn_stats;
+    memset(&conn_stats, 0, sizeof(conn_stats));
+#endif
+
     lsquic_mm_init(&mm);
-    lsquic_henc_init(&henc);
+    lshpack_enc_init(&henc);
     stream = stream_new(max_write_sz);
 
-    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write, 0);
+    fw = lsquic_frame_writer_new(&mm, stream, 0, &henc, stream_write,
+#if LSQUIC_CONN_STATS
+                                 &conn_stats,
+#endif
+                                0);
 
     struct lsquic_http_header header_arr[] =
     {
@@ -161,7 +178,7 @@ test_chop (unsigned max_write_sz)
 
     lsquic_frame_writer_destroy(fw);
     stream_destroy(stream);
-    lsquic_henc_cleanup(&henc);
+    lshpack_enc_cleanup(&henc);
     lsquic_mm_cleanup(&mm);
 }
 

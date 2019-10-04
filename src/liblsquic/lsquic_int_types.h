@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_INT_TYPES_H
 #define LSQUIC_INT_TYPES_H 1
 
@@ -17,6 +17,15 @@ typedef uint32_t lsquic_ver_tag_t;  /* Opaque 4-byte value */
  */
 struct lsquic_packno_range {
     lsquic_packno_t low, high;
+};
+
+/* RFC 3168 */
+enum ecn
+{
+    ECN_NOT_ECT = 0,
+    ECN_ECT1    = 1,
+    ECN_ECT0    = 2,
+    ECN_CE      = 3,
 };
 
 #endif

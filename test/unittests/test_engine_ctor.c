@@ -1,6 +1,7 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "lsquic.h"
 
@@ -15,12 +16,10 @@ main (void)
 
     lsquic_engine_init_settings(&settings, flags);
 
-    struct lsquic_engine_api api = {
-        &settings,
-        NULL, NULL,     /* stream if and ctx */
-        (void *) (uintptr_t) 1, NULL,     /* packets out and ctx */
-        NULL, NULL,     /* packout mem interface and ctx */
-    };
+    struct lsquic_engine_api api;
+    memset(&api, 0, sizeof(api));
+    api.ea_settings = &settings;
+    api.ea_packets_out = (void *) (uintptr_t) 1;
 
     engine = lsquic_engine_new(flags, &api);
     assert(engine);
@@ -34,5 +33,3 @@ main (void)
 
     return 0;
 }
-
-

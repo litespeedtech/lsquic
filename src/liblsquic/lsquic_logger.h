@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_logger.h -- logging functions and macros.
  *
@@ -61,15 +61,31 @@ enum lsquic_logger_module {
     LSQLM_CRYPTO,
     LSQLM_HANDSHAKE,
     LSQLM_HSK_ADAPTER,
+    LSQLM_BBR,
     LSQLM_CUBIC,
     LSQLM_HEADERS,
     LSQLM_FRAME_WRITER,
     LSQLM_FRAME_READER,
-    LSQLM_CONN_HASH,
+    LSQLM_MINI_CONN,
+    LSQLM_TOKGEN,
     LSQLM_ENG_HIST,
     LSQLM_SPI,
     LSQLM_DI,
+    LSQLM_PRQ,
     LSQLM_PACER,
+    LSQLM_MIN_HEAP,
+    LSQLM_HTTP1X,
+    LSQLM_QLOG,
+    LSQLM_TRAPA,
+    LSQLM_PURGA,
+    LSQLM_HCSI_READER,
+    LSQLM_HCSO_WRITER,
+    LSQLM_QENC_HDL,
+    LSQLM_QDEC_HDL,
+    LSQLM_QPACK_ENC,
+    LSQLM_QPACK_DEC,
+    LSQLM_PRIO,
+    LSQLM_BW_SAMPLER,
     N_LSQUIC_LOGGER_MODULES
 };
 
@@ -85,6 +101,8 @@ extern const char *const lsq_loglevel2str[N_LSQUIC_LOG_LEVELS];
     level <= LSQUIC_LOWEST_LOG_LEVEL && level <= lsq_log_levels[module])
 
 #define LSQ_LOG_ENABLED(level) LSQ_LOG_ENABLED_EXT(level, LSQUIC_LOGGER_MODULE)
+
+struct lsquic_cid;
 
 /* The functions that perform actual logging are void.  This is an
  * optimization.  In majority of cases the calls will succeed; even if
@@ -105,8 +123,8 @@ extern const char *const lsq_loglevel2str[N_LSQUIC_LOG_LEVELS];
 
 void
 lsquic_logger_log3 (enum lsq_log_level, enum lsquic_logger_module,
-                    uint64_t conn_id, uint32_t stream_id,
-                    const char *format, ...)
+                    const struct lsquic_cid *conn_id,
+                    lsquic_stream_id_t stream_id, const char *format, ...)
 #if __GNUC__
             __attribute__((format(printf, 5, 6)))
 #endif
@@ -114,12 +132,13 @@ lsquic_logger_log3 (enum lsq_log_level, enum lsquic_logger_module,
 #   define LSQ_LOG3(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log3(level, LSQUIC_LOGGER_MODULE,                  \
-                     LSQUIC_LOG_CONN_ID, LSQUIC_LOG_STREAM_ID, __VA_ARGS__); \
+                    LSQUIC_LOG_CONN_ID, LSQUIC_LOG_STREAM_ID, __VA_ARGS__);  \
     } while (0)
+
 
 void
 lsquic_logger_log2 (enum lsq_log_level, enum lsquic_logger_module,
-                    uint64_t conn_id, const char *format, ...)
+                    const struct lsquic_cid *conn_id, const char *format, ...)
 #if __GNUC__
             __attribute__((format(printf, 4, 5)))
 #endif
@@ -127,7 +146,15 @@ lsquic_logger_log2 (enum lsq_log_level, enum lsquic_logger_module,
 #   define LSQ_LOG2(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log2(level, LSQUIC_LOGGER_MODULE,                  \
-                                        LSQUIC_LOG_CONN_ID, __VA_ARGS__);    \
+                                       LSQUIC_LOG_CONN_ID, __VA_ARGS__);     \
+    } while (0)
+#   define LSQ_LOG2C(level, ...) do {                                        \
+        if (LSQ_LOG_ENABLED(level))                                          \
+        {                                                                    \
+            char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
+            lsquic_logger_log2(level, LSQUIC_LOGGER_MODULE,                  \
+                                       LSQUIC_LOG_CONN_ID, __VA_ARGS__);     \
+        }                                                                    \
     } while (0)
 
 void
@@ -141,6 +168,13 @@ lsquic_logger_log1 (enum lsq_log_level, enum lsquic_logger_module,
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE, __VA_ARGS__);    \
     } while (0)
+#   define LSQ_LOG1C(level, ...) do {                                        \
+        if (LSQ_LOG_ENABLED(level))                                          \
+        {                                                                    \
+            char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
+            lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE, __VA_ARGS__);    \
+        }                                                                    \
+    } while (0)
 
 void
 lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
@@ -152,6 +186,13 @@ lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log0(level, __VA_ARGS__);                          \
     } while (0)
+#   define LSQ_LOG0C(level, ...) do {                                        \
+        if (LSQ_LOG_ENABLED(level))                                          \
+        {                                                                    \
+            char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
+            lsquic_logger_log0(level, __VA_ARGS__);                          \
+        }                                                                    \
+    } while (0)
 
 #if defined(LSQUIC_LOGGER_MODULE)
 #if defined(LSQUIC_LOG_CONN_ID)
@@ -159,12 +200,15 @@ lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
 #       define LSQ_LOG LSQ_LOG3
 #else
 #       define LSQ_LOG LSQ_LOG2
+#       define LSQ_LOGC LSQ_LOG2C
 #endif
 #else
 #       define LSQ_LOG LSQ_LOG1
+#       define LSQ_LOGC LSQ_LOG1C
 #endif
 #else
 #       define LSQ_LOG LSQ_LOG0
+#       define LSQ_LOGC LSQ_LOG0C
 #       define LSQUIC_LOGGER_MODULE LSQLM_NOMODULE
 #endif
 
@@ -176,6 +220,15 @@ lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
 #define LSQ_NOTICE(...)  LSQ_LOG(LSQ_LOG_NOTICE, __VA_ARGS__)
 #define LSQ_INFO(...)    LSQ_LOG(LSQ_LOG_INFO,   __VA_ARGS__)
 #define LSQ_EMERG(...)   LSQ_LOG(LSQ_LOG_EMERG,  __VA_ARGS__)
+
+#define LSQ_DEBUGC(...)   LSQ_LOGC(LSQ_LOG_DEBUG,  __VA_ARGS__)
+#define LSQ_WARNC(...)    LSQ_LOGC(LSQ_LOG_WARN,   __VA_ARGS__)
+#define LSQ_ALERTC(...)   LSQ_LOGC(LSQ_LOG_ALERT,  __VA_ARGS__)
+#define LSQ_CRITC(...)    LSQ_LOGC(LSQ_LOG_CRIT,   __VA_ARGS__)
+#define LSQ_ERRORC(...)   LSQ_LOGC(LSQ_LOG_ERROR,  __VA_ARGS__)
+#define LSQ_NOTICEC(...)  LSQ_LOGC(LSQ_LOG_NOTICE, __VA_ARGS__)
+#define LSQ_INFOC(...)    LSQ_LOGC(LSQ_LOG_INFO,   __VA_ARGS__)
+#define LSQ_EMERGC(...)   LSQ_LOGC(LSQ_LOG_EMERG,  __VA_ARGS__)
 
 /* Shorthand for printing to file streams using internal lsquic_logger_if
  */
@@ -193,6 +246,17 @@ lsquic_str_to_log_level (const char *);
  */
 int
 lsquic_logger_lopt (const char *optarg);
+
+#define CID_FMT ".*s"
+
+#define CID_BITS(cid) 2 * (int) (cid)->len, \
+                                    (lsquic_cid2str(cid, cidbuf_), cidbuf_)
+
+void
+lsquic_cid2str (const struct lsquic_cid *, char *out);
+
+const struct lsquic_cid *
+lsquic_conn_log_cid (const struct lsquic_conn *);
 
 #ifdef __cplusplus
 }

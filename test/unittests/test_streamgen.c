@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,9 +10,11 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
-#include "lsquic_alarmset.h"
 #include "lsquic_parse.h"
 #include "lsquic_sfcw.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
 #include "lsquic_stream.h"
 
 struct test {
@@ -40,238 +42,6 @@ struct test {
 
 
 static const struct test tests[] = {
-    /*
-     * Little-endian:
-     */
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 1, },
-        .offset     = 0x0807060504030201UL,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x40 | 0x20 | 0x1C | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,   /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 8 + 2 + 10,
-        .min_sz     = 1 + 2 + 8 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0x0807060504030201UL,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x20 | 0x1C | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,   /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 8 + 2 + 10,
-        .min_sz     = 1 + 2 + 8 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 1, 0, },
-        .offset     = 0x0807060504030201UL,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x40 | 0x20 | 0x1C | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,   /* Offset */
-          0x00, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 8 + 2,
-        .min_sz     = 1 + 2 + 8 + 2,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 1, 0, },
-        .offset     = 0x0807060504030201UL,
-        .stream_id  = 0x21,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x40 | 0x20 | 0x1C | 0x00,
-          0x21,                                             /* Stream ID */
-          0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,   /* Offset */
-          0x00, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 1 + 8 + 2,
-        .min_sz     = 1 + 1 + 8 + 2,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0x77,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x20 | 0x04 | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x77, 0x00,                                       /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 2 + 2 + 10,
-        .min_sz     = 1 + 2 + 2 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0x0,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x20 | 0x00 | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-                                                            /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 0 + 2 + 10,
-        .min_sz     = 1 + 2 + 0 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 1, },
-        .offset     = 0x0,
-        .stream_id  = 0x210,
-        .data_sz    = 1,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x40 | 0x20 | 0x00 | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-                                                            /* Offset */
-          0x01, 0x00,                                       /* Data length */
-          '0',
-        },
-        .len        = 1 + 2 + 0 + 2 + 1,
-        .min_sz     = 1 + 2 + 0 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFF,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x20 | 0x08 | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0xFF, 0xFF, 0xFF,                                 /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 3 + 2 + 10,
-        .min_sz     = 1 + 2 + 3 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFF + 1,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x20 | 0x0C | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x00, 0x00, 0x00, 0x01,                           /* Offset */
-          0x0A, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 4 + 2 + 10,
-        .min_sz     = 1 + 2 + 4 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFF + 1,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 10,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x00 | 0x00 | 0x0C | 0x01,
-          0x10, 0x02,                                       /* Stream ID */
-          0x00, 0x00, 0x00, 0x01,                           /* Offset */
-          '0', '1', '2',
-        },
-        .len        = 1 + 2 + 4 + 0 + 3,
-        .min_sz     = 1 + 2 + 4 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_037),
-        .fin        = { 1, 0, },
-        .offset     = 0xB4,
-        .stream_id  = 0x01,
-        .data_sz    = 0,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  1      f      d      ooo    ss            1fdoooss */
-      /*  TYPE   FIN    DLEN   OLEN   SLEN  */
-        { 0x80 | 0x40 | 0x20 | 0x04 | 0x00,
-          0x01,                                             /* Stream ID */
-          0xB4, 0x00,                                       /* Offset */
-          0x00, 0x00,                                       /* Data length */
-        },
-        .len        = 6,
-        .min_sz     = 6,
-    },
-
     /*
      * Big-endian:
      */
@@ -505,10 +275,11 @@ static const struct test tests[] = {
     },
 
     /*
-     * IETF:
+     * IETF QUIC Internet-Draft 17:
      */
+
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
+        .pf         = select_pf_by_ver(LSQVER_ID23),
         .fin        = { 0, 1, },
         .offset     = 0x0807060504030201UL,
         .stream_id  = 0x210,
@@ -516,224 +287,109 @@ static const struct test tests[] = {
         .data       = "0123456789",
         .avail      = 0x100,
         .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 1 << 5 | 1 << 3 | 3 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
-          0x00, 0x0A,                                       /* Data length */
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 1<<2 | 1<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x0A,                                             /* Data length */
           '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
         },
-        .len        = 1 + 2 + 8 + 2 + 10,
+        .len        = 1 + 2 + 8 + 1 + 10,
         .min_sz     = 1 + 2 + 8 + 0 + 1,
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
+        .pf         = select_pf_by_ver(LSQVER_ID23),
         .fin        = { 0, 0, },
-        .offset     = 0x0807060504030201UL,
+        .offset     = 0,
         .stream_id  = 0x210,
         .data_sz    = 10,
         .data       = "0123456789",
         .avail      = 0x100,
         .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 3 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
-          0x00, 0x0A,                                       /* Data length */
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 0<<2 | 1<<1 | 0<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0x0A,                                             /* Data length */
           '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
         },
-        .len        = 1 + 2 + 8 + 2 + 10,
-        .min_sz     = 1 + 2 + 8 + 0 + 1,
+        .len        = 1 + 2 + 0 + 1 + 10,
+        .min_sz     = 1 + 2 + 0 + 0 + 1,
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 1, 0, },
-        .offset     = 0x0807060504030201UL,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 1 << 5 | 1 << 3 | 3 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
-          0x00, 0x00,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 8 + 2,
-        .min_sz     = 1 + 2 + 8 + 2,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 1, 0, },
-        .offset     = 0x0807060504030201UL,
+        .pf         = select_pf_by_ver(LSQVER_ID23),
+        .fin        = { 0, 0, },
+        .offset     = 0,
         .stream_id  = 0x21,
         .data_sz    = 10,
         .data       = "0123456789",
-        .avail      = 0x100,
+        .avail      = 12,
         .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 1 << 5 | 0 << 3 | 3 << 1 | 1,
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 0<<2 | 0<<1 | 0<<0,
           0x21,                                             /* Stream ID */
-          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
-          0x00, 0x00,                                       /* Data length */
           '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
         },
-        .len        = 1 + 1 + 8 + 2,
-        .min_sz     = 1 + 1 + 8 + 2,
+        .len        = 1 + 1 + 0 + 0 + 10,
+        .min_sz     = 1 + 1 + 0 + 0 + 1,
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
+        .pf         = select_pf_by_ver(LSQVER_ID23),
         .fin        = { 0, 0, },
-        .offset     = 0x77,
+        .offset     = 0x0807060504030201UL,
         .stream_id  = 0x210,
         .data_sz    = 10,
         .data       = "0123456789",
         .avail      = 0x100,
         .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 1 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x00, 0x77,                                       /* Offset */
-          0x00, 0x0A,                                       /* Data length */
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 1<<2 | 1<<1 | 0<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x0A,                                             /* Data length */
           '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
         },
-        .len        = 1 + 2 + 2 + 2 + 10,
-        .min_sz     = 1 + 2 + 2 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 0, 0, },
-        .offset     = 0x0,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 0 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-                                                            /* Offset */
-          0x00, 0x0A,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 0 + 2 + 10,
-        .min_sz     = 1 + 2 + 0 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 0, 1, },
-        .offset     = 0x0,
-        .stream_id  = 0x210,
-        .data_sz    = 1,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 1 << 5 | 1 << 3 | 0 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-                                                            /* Offset */
-          0x00, 0x01,                                       /* Data length */
-          '0',
-        },
-        .len        = 1 + 2 + 0 + 2 + 1,
-        .min_sz     = 1 + 2 + 0 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFF,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 2 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x00, 0xFF, 0xFF, 0xFF,                           /* Offset */
-          0x00, 0x0A,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 4 + 2 + 10,
-        .min_sz     = 1 + 2 + 4 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFFFFULL + 1,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 0x100,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 3 << 1 | 1,
-          0x02, 0x10,                                       /* Stream ID */
-          0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,   /* Offset */
-          0x00, 0x0A,                                       /* Data length */
-          '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        },
-        .len        = 1 + 2 + 8 + 2 + 10,
+        .len        = 1 + 2 + 8 + 1 + 10,
         .min_sz     = 1 + 2 + 8 + 0 + 1,
     },
 
     {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
-        .fin        = { 0, 0, },
-        .offset     = 0xFFFFFFFFULL + 1,
-        .stream_id  = 0x210,
-        .data_sz    = 10,
-        .data       = "0123456789",
-        .avail      = 14,
-        .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 0 << 5 | 1 << 3 | 3 << 1 | 0,
-          0x02, 0x10,                                       /* Stream ID */
-          0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,   /* Offset */
-          '0', '1', '2',
-        },
-        .len        = 1 + 2 + 8 + 0 + 3,
-        .min_sz     = 1 + 2 + 8 + 0 + 1,
-    },
-
-    {   .lineno     = __LINE__,
-        .pf         = select_pf_by_ver(LSQVER_041),
+        .pf         = select_pf_by_ver(LSQVER_ID23),
         .fin        = { 1, 0, },
-        .offset     = 0xB4,
-        .stream_id  = 0x01,
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
+        .data_sz    = 0,
+        .data       = "0123456789",
+        .avail      = 11,
+        .out        =
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 1<<2 | 0<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+        },
+        .len        = 1 + 2 + 8,
+        .min_sz     = 1 + 2 + 8,
+    },
+
+    {   .lineno     = __LINE__,
+        .pf         = select_pf_by_ver(LSQVER_ID23),
+        .fin        = { 1, 0, },
+        .offset     = 0x0807060504030201UL,
+        .stream_id  = 0x210,
         .data_sz    = 0,
         .data       = "0123456789",
         .avail      = 0x100,
         .out        =
-      /*  11     F        SS       OO       D            11FSSOOD */
-      /*  TYPE   FIN      SLEN     OLEN     DLEN  */
-        { 0xC0 | 1 << 5 | 0 << 3 | 1 << 1 | 1,
-          0x01,                                             /* Stream ID */
-          0x00, 0xB4,                                       /* Offset */
-          0x00, 0x00,                                       /* Data length */
+      /*  TYPE   OFF    DLEN   FIN  */
+        { 0x08 | 1<<2 | 1<<1 | 1<<0,
+          0x42, 0x10,                                       /* Stream ID */
+          0xC8, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Offset */
+          0x00,                                             /* Data length */
         },
-        .len        = 6,
-        .min_sz     = 6,
+        .len        = 1 + 2 + 8 + 1,
+        .min_sz     = 1 + 2 + 8,
     },
 
 };
@@ -801,7 +457,7 @@ run_test (int i)
             len = test->pf->pf_gen_stream_frame(out, min, test->stream_id,
                         test_ctx.test->offset, stream_tosend_fin(&test_ctx),
                         stream_tosend_size(&test_ctx), stream_tosend_read, &test_ctx);
-            assert(-1 == len);
+            assert(len < 0);
         }
 
         /* Test that it succeeds now: */

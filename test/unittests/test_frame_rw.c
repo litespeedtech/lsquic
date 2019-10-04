@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Generate a few thousand headers, frame them using frame writer, read them
  * using frame reader, parse them, and compare with the original list: the
@@ -17,18 +17,24 @@
 #include <string.h>
 #ifndef WIN32
 #include <unistd.h>
+#else
+#include "getopt.h"
 #endif
 #include <sys/queue.h>
 
 #include "lsquic.h"
-#include "lsquic_arr.h"
-#include "lsquic_hpack_enc.h"
-#include "lsquic_hpack_dec.h"
+#include "lshpack.h"
 #include "lsquic_logger.h"
 #include "lsquic_mm.h"
 #include "lsquic_frame_common.h"
 #include "lsquic_frame_writer.h"
 #include "lsquic_frame_reader.h"
+#include "lsquic_headers.h"
+#include "lsquic_http1x_if.h"
+#if LSQUIC_CONN_STATS
+#include "lsquic_int_types.h"
+#include "lsquic_conn.h"
+#endif
 
 
 struct lsquic_stream
@@ -42,13 +48,21 @@ struct lsquic_stream
 };
 
 
-lsquic_cid_t
+static const lsquic_cid_t my_cid = { .len = 8, };
+
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
+const lsquic_cid_t *
 lsquic_conn_id (const lsquic_conn_t *lconn)
 {
-    return 0;
+    return &my_cid;
 }
 
 
+#if !defined(NDEBUG) && __GNUC__
+__attribute__((weak))
+#endif
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
@@ -82,8 +96,11 @@ stream_destroy (struct lsquic_stream *stream)
 
 
 static ssize_t
-stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
+stream_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 {
+    size_t sz;
+
+    sz = reader->lsqr_size(reader->lsqr_ctx);
     if (stream->sm_sz + sz > stream->sm_buf_sz)
     {
         if (stream->sm_sz + sz < stream->sm_buf_sz * 2)
@@ -93,7 +110,8 @@ stream_write (struct lsquic_stream *stream, const void *buf, size_t sz)
         stream->sm_buf = realloc(stream->sm_buf, stream->sm_buf_sz);
     }
 
-    memcpy(stream->sm_buf + stream->sm_sz, buf, sz);
+    sz = reader->lsqr_read(reader->lsqr_ctx,
+                                        stream->sm_buf + stream->sm_sz, sz);
     stream->sm_sz += sz;
 
     return sz;
@@ -124,7 +142,8 @@ on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-on_error (void *ctx, uint32_t stream_id, enum frame_reader_error error)
+on_error (void *ctx, lsquic_stream_id_t stream_id,
+                                            enum frame_reader_error error)
 {
     assert(0);
 }
@@ -142,11 +161,14 @@ static struct lsquic_http_header header_arr[N_HEADERS];
 static void
 compare_headers (struct uncompressed_headers *uh)
 {
+    struct http1x_headers *h1h;
     char line[0x100], *s;
     FILE *in;
     unsigned i;
 
-    in = fmemopen(uh->uh_headers, uh->uh_size, "r");
+    assert(uh->uh_flags & UH_H1H);
+    h1h = uh->uh_hset;
+    in = fmemopen(h1h->h1h_buf, h1h->h1h_size, "r");
     for (i = 0; i < N_HEADERS; ++i)
     {
         s = fgets(line, sizeof(line), in);
@@ -186,18 +208,26 @@ test_rw (unsigned max_frame_sz)
     struct lsquic_stream *stream;
     struct uncompressed_headers *uh;
     struct lsquic_mm mm;
-    struct lsquic_henc henc;
-    struct lsquic_hdec hdec;
+    struct lshpack_enc henc;
+    struct lshpack_dec hdec;
     int s;
+#if LSQUIC_CONN_STATS
+    struct conn_stats conn_stats;
+    memset(&conn_stats, 0, sizeof(conn_stats));
+#endif
 
     lsquic_mm_init(&mm);
-    lsquic_henc_init(&henc);
-    lsquic_hdec_init(&hdec);
+    lshpack_enc_init(&henc);
+    lshpack_dec_init(&hdec);
     stream = stream_new();
     stream->sm_max_sz = 1;
 
     fw = lsquic_frame_writer_new(&mm, stream, max_frame_sz, &henc,
-                                 stream_write, 0);
+                                 stream_write,
+#if LSQUIC_CONN_STATS
+                                 &conn_stats,
+#endif
+                                 0);
 
     struct lsquic_http_headers headers = {
         .count   = N_HEADERS,
@@ -213,7 +243,11 @@ test_rw (unsigned max_frame_sz)
         stream->sm_off = 0;
 
         fr = lsquic_frame_reader_new(0, 0, &mm, stream, read_from_stream, &hdec,
-                                                    &frame_callbacks, &uh);
+                                &frame_callbacks, &uh,
+#if LSQUIC_CONN_STATS
+                                &conn_stats,
+#endif
+                                lsquic_http1x_if, NULL);
         do
         {
             s = lsquic_frame_reader_read(fr);
@@ -227,6 +261,7 @@ test_rw (unsigned max_frame_sz)
         compare_headers(uh);
 
         lsquic_frame_reader_destroy(fr);
+        lsquic_http1x_if->hsi_discard_header_set(uh->uh_hset);
         free(uh);
 
         assert(stream->sm_max_req_sz >= sizeof(struct http_frame_header));
@@ -236,8 +271,8 @@ test_rw (unsigned max_frame_sz)
 
     lsquic_frame_writer_destroy(fw);
     stream_destroy(stream);
-    lsquic_henc_cleanup(&henc);
-    lsquic_hdec_cleanup(&hdec);
+    lshpack_enc_cleanup(&henc);
+    lshpack_dec_cleanup(&hdec);
     lsquic_mm_cleanup(&mm);
 }
 

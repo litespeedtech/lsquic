@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,7 +13,7 @@
 #include "lsquic_parse.h"
 
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_037);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_035);
 
 struct float_test {
     uint64_t    long_time;

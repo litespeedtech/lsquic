@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <string.h>
 
 #include "lsquic.h"
@@ -8,11 +8,14 @@
 
 static const unsigned char version_tags[N_LSQVER][4] =
 {
-    [LSQVER_035] = { 'Q', '0', '3', '5', },
-    [LSQVER_037] = { 'Q', '0', '3', '7', },
-    [LSQVER_038] = { 'Q', '0', '3', '8', },
     [LSQVER_039] = { 'Q', '0', '3', '9', },
-    [LSQVER_041] = { 'Q', '0', '4', '1', },
+    [LSQVER_043] = { 'Q', '0', '4', '3', },
+    [LSQVER_046] = { 'Q', '0', '4', '6', },
+#if LSQUIC_USE_Q098
+    [LSQVER_098] = { 'Q', '0', '9', '8', },
+#endif
+    [LSQVER_ID23] = { 0xFF, 0, 0, 23, },
+    [LSQVER_VERNEG] = { 0xFA, 0xFA, 0xFA, 0xFA, },
 };
 
 
@@ -41,9 +44,22 @@ lsquic_tag2ver (uint32_t ver_tag)
 }
 
 
+const char *const lsquic_ver2str[N_LSQVER] = {
+    [LSQVER_039] = "Q039",
+    [LSQVER_043] = "Q043",
+    [LSQVER_046] = "Q046",
+#if LSQUIC_USE_Q098
+    [LSQVER_098] = "Q098",
+#endif
+    [LSQVER_ID23] = "FF000017",
+    [LSQVER_VERNEG] = "FAFAFAFA",
+};
+
+
 enum lsquic_version
 lsquic_str2ver (const char *str, size_t len)
 {
+    enum lsquic_version ver;
     uint32_t tag;
 
     if (len == sizeof(tag) && 'Q' == str[0])
@@ -51,22 +67,20 @@ lsquic_str2ver (const char *str, size_t len)
         memcpy(&tag, str, sizeof(tag));
         return lsquic_tag2ver(tag);
     }
-    else
-        return -1;
+
+    for (ver = 0; ver < N_LSQVER; ++ver)
+        if (strlen(lsquic_ver2str[ver]) == len
+            && strncasecmp(lsquic_ver2str[ver], str, len) == 0)
+        {
+            return ver;
+        }
+
+    return -1;
 }
 
 
-const char *const lsquic_ver2str[N_LSQVER] = {
-    [LSQVER_035] = "Q035",
-    [LSQVER_037] = "Q037",
-    [LSQVER_038] = "Q038",
-    [LSQVER_039] = "Q039",
-    [LSQVER_041] = "Q041",
-};
-
-
 int
-gen_ver_tags (unsigned char *buf, size_t bufsz, unsigned version_bitmask)
+lsquic_gen_ver_tags (unsigned char *buf, size_t bufsz, unsigned version_bitmask)
 {
     unsigned n;
     lsquic_ver_tag_t tag;

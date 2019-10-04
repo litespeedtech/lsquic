@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2018 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * This is not really a test: this program prints out cwnd histogram
  * for visual inspection.
@@ -17,8 +17,12 @@
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
+#include "lsquic_cong_ctl.h"
+#include "lsquic_packet_common.h"
+#include "lsquic_packet_out.h"
 #include "lsquic_cubic.h"
 
+static const struct cong_ctl_if *const cci = &lsquic_cong_cubic_if;
 
 #define MS(n) ((n) * 1000)  /* MS: Milliseconds */
 
@@ -47,7 +51,7 @@ struct rec
                                     sizeof(recs[0]));   \
     }                                                   \
     recs[i].event = ev;                                 \
-    recs[i].cwnd  = lsquic_cubic_get_cwnd(&cubic);      \
+    recs[i].cwnd  = cci->cci_get_cwnd(&cubic);      \
     if (max_cwnd < recs[i].cwnd)                        \
         max_cwnd = recs[i].cwnd;                        \
 } while (0)
@@ -68,10 +72,12 @@ main (int argc, char **argv)
     struct winsize winsize;
 #endif
     enum cubic_flags flags;
+    struct lsquic_packet_out packet_out;
 
-    lsquic_cubic_init(&cubic, 0);
+    cci->cci_init(&cubic, 0, 0);
     max_cwnd = 0;
     i = 0;
+    memset(&packet_out, 0, sizeof(packet_out));
 
     while (-1 != (opt = getopt(argc, argv, "s:u:r:f:l:A:L:T:")))
     {
@@ -85,7 +91,7 @@ main (int argc, char **argv)
             break;
         case 'f':
             flags = atoi(optarg);
-            lsquic_cubic_init_ext(&cubic, 0, flags);
+            lsquic_cubic_set_flags(&cubic, flags);
             break;
         case 'l':
             app_limited = atoi(optarg);
@@ -94,7 +100,8 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_ack(&cubic, MS(unit * i), MS(rtt_ms), app_limited, 1370);
+                packet_out.po_sent = MS(unit * i) - MS(rtt_ms);
+                cci->cci_ack(&cubic, &packet_out, 1370, MS(unit * i), app_limited);
                 REC(EV_ACK);
             }
             break;
@@ -102,7 +109,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_loss(&cubic);
+                cci->cci_loss(&cubic);
                 REC(EV_LOSS);
             }
             break;
@@ -110,7 +117,7 @@ main (int argc, char **argv)
             n = i + atoi(optarg);
             for ( ; i < n; ++i)
             {
-                lsquic_cubic_timeout(&cubic);
+                cci->cci_timeout(&cubic);
                 REC(EV_TIMEOUT);
             }
             break;
