@@ -20,6 +20,8 @@ ENDIF()
 
 MESSAGE(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
+
 
 IF (NOT MSVC)
 
@@ -35,6 +37,11 @@ IF(CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9.3)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-missing-field-initializers")
 ENDIF()
 
+IF(LSQUIC_FIU)
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
+    SET(LIBS ${LIBS} fiu)
+ENDIF()
+
 IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Werror")
@@ -42,11 +49,8 @@ IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
                         NOT "$ENV{TRAVIS}" MATCHES "^true$")
         SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fsanitize=address")
     ENDIF()
-    # Uncomment to enable fault injection testing via libfiu:
-    #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
     # Uncomment to enable cleartext protocol mode (no crypto):
     #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_ENABLE_HANDSHAKE_DISABLE=1")
-    #SET(LIBS ${LIBS} fiu)
 ELSE()
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O3 -g0")
     # Comment out the following line to compile out debug messages:
@@ -187,7 +191,7 @@ ENDIF()
 IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
     FIND_LIBRARY(EVENT_LIB event)
 ELSE()
-    FIND_LIBRARY(EVENT_LIB libevent.a)
+    FIND_LIBRARY(EVENT_LIB libevent.a libevent.so)
 ENDIF()
 IF(EVENT_LIB)
     MESSAGE(STATUS "Found event: ${EVENT_LIB}")

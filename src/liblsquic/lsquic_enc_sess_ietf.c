@@ -1154,8 +1154,13 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
     assert(enc_sess->esi_enpub->enp_stream_if->on_zero_rtt_info);
 
     max_early_data_size = SSL_SESSION_get_max_early_data_size(session);
-    if (0xFFFFFFFFu != max_early_data_size)
+    if (max_early_data_size && 0xFFFFFFFFu != max_early_data_size)
     {
+        /* XXX We do not catch the case when early_data extension is present
+         * and max_early_data_size is set to zero, which is an invalid value.
+         * This is because there is no way to check this using existing
+         * BoringSSL APIs.
+         */
         /* See [draft-ietf-quic-tls-23], Section 4.5 */
         LSQ_INFO("max_early_data_size=0x%X, protocol violation",
                                                         max_early_data_size);

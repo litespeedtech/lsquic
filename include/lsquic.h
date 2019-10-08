@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 4
-#define LSQUIC_PATCH_VERSION 3
+#define LSQUIC_PATCH_VERSION 4
 
 /**
  * Engine flags:
@@ -1504,6 +1504,10 @@ lsquic_conn_crypto_cipher (const lsquic_conn_t *c);
 /** Translate string QUIC version to LSQUIC QUIC version representation */
 enum lsquic_version
 lsquic_str2ver (const char *str, size_t len);
+
+/** Translate ALPN (e.g. "h3", "h3-23", "h3-Q046") to LSQUIC enum */
+enum lsquic_version
+lsquic_alpn2ver (const char *alpn, size_t len);
 
 /**
  * This function closes all mini connections and marks all full connection

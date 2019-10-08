@@ -37,6 +37,7 @@ print OUT <<C_CODE;
  */
 
 #include <assert.h>
+#include <string.h>
 
 #include "lsquic.h"
 
@@ -126,5 +127,38 @@ lsquic_get_h3_alpns (unsigned versions)
 }
 C_CODE
 
+
+print OUT <<'C_CODE';
+
+enum lsquic_version
+lsquic_alpn2ver (const char *alpn, size_t len)
+{
+    static const struct el {
+        size_t len;
+        char alpn[10];
+        enum lsquic_version version;
+    } map[] = {
+C_CODE
+
+for ($i = 0; $i < @versions; ++$i) {
+    print OUT "        {sizeof(\"h3-Q0$versions[$i]\")-1,\"h3-Q0$versions[$i]\", $enums[$i]},\n";
+}
+
+for ($i = 0; $i < @draft_versions; ++$i) {
+    print OUT "        {sizeof(\"h3-$draft_versions[$i]\")-1,\"h3-$draft_versions[$i]\", LSQVER_ID$draft_versions[$i]},\n";
+}
+
+print OUT <<'C_CODE';
+    };
+    const struct el *el;
+
+    if (alpn)
+        for (el = map; el < map + sizeof(map) / sizeof(map[0]); ++el)
+            if (el->len == len && 0 == strncmp(el->alpn, alpn, len))
+                return el->version;
+
+    return -1;
+}
+C_CODE
 
 close OUT;

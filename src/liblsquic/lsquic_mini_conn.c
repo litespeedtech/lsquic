@@ -342,6 +342,24 @@ process_blocked_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
 }
 
 
+static mconn_packno_set_t
+drop_packets_out (struct mini_conn *mc)
+{
+    struct lsquic_packet_out *packet_out;
+    mconn_packno_set_t in_flight = 0;
+
+    while ((packet_out = TAILQ_FIRST(&mc->mc_packets_out)))
+    {
+        TAILQ_REMOVE(&mc->mc_packets_out, packet_out, po_next);
+        if (packet_out->po_flags & PO_SENT)
+            in_flight |= MCONN_PACKET_MASK(packet_out->po_packno);
+        mini_destroy_packet(mc, packet_out);
+    }
+
+    return in_flight;
+}
+
+
 static unsigned
 process_connection_close_frame (struct mini_conn *mc,
         lsquic_packet_in_t *packet_in, const unsigned char *p, size_t len)
@@ -350,6 +368,8 @@ process_connection_close_frame (struct mini_conn *mc,
     uint16_t reason_len;
     uint8_t reason_off;
     int parsed_len;
+
+    (void) drop_packets_out(mc);
     parsed_len = mc->mc_conn.cn_pf->pf_parse_connect_close_frame(p, len,
                             NULL, &error_code, &reason_len, &reason_off);
     if (parsed_len < 0)
@@ -1700,8 +1720,7 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
     assert(!(lconn->cn_flags & LSCONN_HASHED));
     struct mini_conn *mc = (struct mini_conn *) lconn;
     lsquic_packet_in_t *packet_in;
-    lsquic_packet_out_t *packet_out;
-    mconn_packno_set_t still_deferred = 0, in_flight = 0;
+    mconn_packno_set_t still_deferred = 0, in_flight;
     enum lsq_log_level log_level;
 #if LSQUIC_RECORD_INORD_HIST
     char inord_str[0x100];
@@ -1717,13 +1736,10 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
         still_deferred |= MCONN_PACKET_MASK(packet_in->pi_packno);
         lsquic_packet_in_put(&mc->mc_enpub->enp_mm, packet_in);
     }
-    while ((packet_out = TAILQ_FIRST(&mc->mc_packets_out)))
-    {
-        TAILQ_REMOVE(&mc->mc_packets_out, packet_out, po_next);
-        if (packet_out->po_flags & PO_SENT)
-            in_flight |= MCONN_PACKET_MASK(packet_out->po_packno);
-        mini_destroy_packet(mc, packet_out);
-    }
+    if (TAILQ_EMPTY(&mc->mc_packets_out))
+        in_flight = ~0ull;  /* Indicates that packets were dropped before */
+    else
+        in_flight = drop_packets_out(mc);
     if (mc->mc_conn.cn_enc_session)
         mc->mc_conn.cn_esf.g->esf_destroy(mc->mc_conn.cn_enc_session);
     log_level = warning_is_warranted(mc) ? LSQ_LOG_WARN : LSQ_LOG_DEBUG;

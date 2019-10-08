@@ -870,6 +870,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     uint64_t max_off;
     int got_next_offset, rv, free_frame;
     enum ins_frame ins_frame;
+    struct lsquic_conn *lconn;
 
     assert(frame->packet_in);
 
@@ -882,6 +883,18 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     {
         lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
         lsquic_malo_put(frame);
+        return -1;
+    }
+
+    if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_FIN_RECVD)
+            && stream->sm_fin_off != DF_END(frame))
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
+            "new final size %"PRIu64" from STREAM frame (id: %"PRIu64") does "
+            "not match previous final size %"PRIu64, DF_END(frame),
+            stream->id, stream->sm_fin_off);
         return -1;
     }
 
@@ -981,6 +994,19 @@ int
 lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
                       uint64_t error_code)
 {
+    struct lsquic_conn *lconn;
+
+    if ((stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_FIN_RECVD)
+            && stream->sm_fin_off != offset)
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
+            "final size %"PRIu64" from RESET_STREAM frame (id: %"PRIu64") "
+            "does not match previous final size %"PRIu64, offset,
+            stream->id, stream->sm_fin_off);
+        return -1;
+    }
 
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
@@ -2502,12 +2528,18 @@ stream_activate_hq_frame (struct lsquic_stream *stream, uint64_t off,
     shf->shf_flags     |= flags;
     shf->shf_frame_type = frame_type;
     if (shf->shf_flags & SHF_FIXED_SIZE)
+    {
         shf->shf_frame_size = size;
+        LSQ_DEBUG("activated fixed-size HQ frame of type 0x%X at offset "
+            "%"PRIu64", size %zu", shf->shf_frame_type, shf->shf_off, size);
+    }
     else
     {
         shf->shf_frame_ptr  = NULL;
         if (size >= (1 << 6))
             shf->shf_flags |= SHF_TWO_BYTES;
+        LSQ_DEBUG("activated variable-size HQ frame of type 0x%X at offset "
+            "%"PRIu64, shf->shf_frame_type, shf->shf_off);
     }
 
     return shf;
@@ -2528,7 +2560,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
     while (p < end)
     {
         shf = find_cur_hq_frame(stream);
-        if (!shf)
+        if (shf)
+            LSQ_DEBUG("found current HQ frame of type 0x%X at offset %"PRIu64,
+                                            shf->shf_frame_type, shf->shf_off);
+        else
         {
             rem = frame_std_gen_size(ctx);
             if (rem)
@@ -2537,7 +2572,11 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                     rem = (1 << 14) - 1;
                 shf = stream_activate_hq_frame(stream,
                                     stream->sm_payload, HQFT_DATA, 0, rem);
-                /* XXX malloc can fail */
+                if (!shf)
+                {
+                    /* TODO: abort connection?  Handle failure somehow */
+                    break;
+                }
             }
             else
                 break;
@@ -2548,7 +2587,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
         {
             frame_sz = stream_hq_frame_size(shf);
             if (frame_sz > (uintptr_t) (end - p))
+            {
+                stream_hq_frame_put(stream, shf);
                 break;
+            }
             LSQ_DEBUG("insert %zu-byte HQ frame of type 0x%X at payload "
                 "offset %"PRIu64" (actual offset %"PRIu64")", frame_sz,
                 shf->shf_frame_type, stream->sm_payload, stream->tosend_off);
@@ -2705,32 +2747,43 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     struct lsquic_send_ctl *const send_ctl = stream->conn_pub->send_ctl;
     unsigned stream_header_sz, need_at_least;
     struct lsquic_packet_out *packet_out;
+    struct lsquic_stream *headers_stream;
     int len;
 
-    if (!(stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags &
-                    (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
-                                                        == STREAM_HEADERS_SENT
-        && lsquic_send_ctl_buffered_and_same_prio_as_headers(send_ctl, stream))
+    if ((stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
+                                                        == STREAM_HEADERS_SENT)
     {
-        /* TODO: make this logic work for IETF streams as well XXX */
-        struct lsquic_stream *const headers_stream
-                = lsquic_headers_stream_get_stream(stream->conn_pub->u.gquic.hs);
-        if (lsquic_stream_has_data_to_flush(headers_stream))
+        /* Optimization idea: the QPACK encoder stream needs only be flushed
+         * if the headers in this stream are dependent on the buffered encoder
+         * stream bytes.  Knowing this would require changes to ls-qpack.  For
+         * this reason, we don't perform this check and just flush it.
+         */
+        if (stream->sm_bflags & SMBF_IETF)
+            headers_stream = stream->conn_pub->u.ietf.qeh->qeh_enc_sm_out;
+        else
+            headers_stream =
+                lsquic_headers_stream_get_stream(stream->conn_pub->u.gquic.hs);
+        if (headers_stream && lsquic_stream_has_data_to_flush(headers_stream))
         {
-            LSQ_DEBUG("flushing headers stream before potential write to a "
-                                                            "buffered packet");
+            LSQ_DEBUG("flushing headers stream before packetizing stream data");
             (void) lsquic_stream_flush(headers_stream);
         }
-        else
-            /* Some other stream must have flushed it: this means our headers
-             * are flushed.
-             */
-            stream->stream_flags |= STREAM_HDRS_FLUSHED;
+        /* If there is nothing to flush, some other stream must have flushed it:
+         * this means our headers are flushed.  Either way, only do this once.
+         */
+        stream->stream_flags |= STREAM_HDRS_FLUSHED;
     }
 
     stream_header_sz = stream->sm_frame_header_sz(stream, size);
-    need_at_least = stream_header_sz + (size > 0);
+    need_at_least = stream_header_sz;
+    if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
+                                       == (SMBF_IETF|SMBF_USE_HEADERS))
+    {
+        if (size > 0)
+            need_at_least += 3;     /* Enough room for HTTP/3 frame */
+    }
+    else
+        need_at_least += size > 0;
   get_packet:
     packet_out = lsquic_send_ctl_get_packet_for_stream(send_ctl,
                                 need_at_least, stream->conn_pub->path, stream);
@@ -2826,13 +2879,14 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
 
     if (shf->shf_flags & SHF_FIXED_SIZE)
     {
-        stream_hq_frame_put(stream, shf);
+        if (shf->shf_off + shf->shf_frame_size <= stream->sm_payload)
+            stream_hq_frame_put(stream, shf);
         return;
     }
 
     bits = (shf->shf_flags & SHF_TWO_BYTES) > 0;
     size = stream->sm_payload + stream->sm_n_buffered - shf->shf_off;
-    if (size && size <= VINT_MAX_B(bits))
+    if (size && size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
     {
         if (0 == stream->sm_n_buffered)
             LSQ_DEBUG("close HQ frame type 0x%X of size %"PRIu64,
@@ -2849,6 +2903,14 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
             shf->shf_frame_size = size;
             shf->shf_flags |= SHF_FIXED_SIZE;
         }
+    }
+    else if (!shf->shf_frame_ptr)
+    {
+        LSQ_WARN("dangling HTTP/3 frame");
+        stream->conn_pub->lconn->cn_if->ci_internal_error(
+            stream->conn_pub->lconn, "dangling HTTP/3 frame on stream %"PRIu64,
+                stream->id);
+        stream_hq_frame_put(stream, shf);
     }
     else if (!size)
     {

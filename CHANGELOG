@@ -1,3 +1,21 @@
+2019-10-08
+    - 2.4.4
+    - [API] Add lsquic_alpn2ver() to aid parsing Alt-Svc header.
+    - [BUGFIX] NULL dereference when H3 frame header would be split.
+    - [BUGFIX] Do not close fixed-size H3 frame prematurely.
+    - [BUGFIX] Allow PING frames in IETF mini conn.
+    - [BUGFIX] Mini conns: don't send any packets after receiving
+      CONNECTION_CLOSE.
+    - [BUGFIX] Client migration: reserve slot for DCID from transport params.
+    - [BUGFIX] Allow max_early_data_size=0 -- early_data might not be there.
+    - [BUGFIX] Use an invalid stream number to reset BPT cache (zero is now a
+      valid stream number).
+    - [SPEC] Use FINAL_SIZE_ERROR when FIN mismatch is detected.
+    - [OPTIMIZATION] Closed connection only gets one chance to send packets.
+    - [OPTIMIZATION] Flush headers stream before packetizing stream data.
+    - [OPTIMIZATION] process QPACK encoder STREAM frames immediately.
+    - Update ls-qpack to v0.10.1.
+
 2019-09-30
     - 2.4.3
     - Add GQUIC versions to the list of h3 ALPNs for Alt-Svc header.
