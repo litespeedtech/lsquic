@@ -19,13 +19,13 @@ matrix:
           os: osx
 sudo: false
 before_install:
-    - [ $TRAVIS_OS_NAME = linux ] && sudo add-apt-repository -y ppa:longsleep/golang-backports
-    - [ $TRAVIS_OS_NAME = linux ] && sudo apt-get update
-    - [ $TRAVIS_OS_NAME = linux ] && sudo apt-get install golang-1.13-go
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo add-apt-repository -y ppa:longsleep/golang-backports; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get update; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get install golang-1.13-go; fi
 install:
-    - [ $TRAVIS_OS_NAME = linux ] && export PATH=/usr/lib/go-1.13/bin:$PATH
-    - [ $TRAVIS_OS_NAME = linux ] && export GOPATH=/usr/lib/go-1.13:$GOPATH
-    - [ $TRAVIS_OS_NAME = linux ] && export GOROOT=/usr/lib/go-1.13
+    - if [ $TRAVIS_OS_NAME = linux ]; then export PATH=/usr/lib/go-1.13/bin:$PATH; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then export GOPATH=/usr/lib/go-1.13:$GOPATH; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then export GOROOT=/usr/lib/go-1.13; fi
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
     - cd boringssl
