@@ -25,6 +25,7 @@ before_install:
 install:
     - export PATH=/usr/lib/go-1.13/bin:$PATH
     - export GOPATH=/usr/lib/go-1.13:$GOPATH
+    - export GOROOT=/usr/lib/go-1.13
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
     - cd boringssl
