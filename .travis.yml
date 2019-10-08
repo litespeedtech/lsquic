@@ -3,6 +3,8 @@ matrix:
     include:
         - name: Linux (gcc)
           os: linux
+          dist: xenial
+          go: 1.13.x
           compiler: gcc
           addons:
             apt:
