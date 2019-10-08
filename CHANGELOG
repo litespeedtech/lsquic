@@ -1,4 +1,11 @@
 2019-10-08
+    - 2.4.5
+    - [OPTIMIZATION]: flush encoder stream only when necessary.
+    - [BUGFIX] Use ls-qpack v0.10.2 for new API -- and for a bug fix.
+    - [BUGFIX] Typo in IETF conn SETTINGS writer.
+    - Use latest BoringSSL.
+
+2019-10-08
     - 2.4.4
     - [API] Add lsquic_alpn2ver() to aid parsing Alt-Svc header.
     - [BUGFIX] NULL dereference when H3 frame header would be split.

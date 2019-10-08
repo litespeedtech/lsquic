@@ -2753,13 +2753,13 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     if ((stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
                                                         == STREAM_HEADERS_SENT)
     {
-        /* Optimization idea: the QPACK encoder stream needs only be flushed
-         * if the headers in this stream are dependent on the buffered encoder
-         * stream bytes.  Knowing this would require changes to ls-qpack.  For
-         * this reason, we don't perform this check and just flush it.
-         */
         if (stream->sm_bflags & SMBF_IETF)
-            headers_stream = stream->conn_pub->u.ietf.qeh->qeh_enc_sm_out;
+        {
+            if (stream->stream_flags & STREAM_ENCODER_DEP)
+                headers_stream = stream->conn_pub->u.ietf.qeh->qeh_enc_sm_out;
+            else
+                headers_stream = NULL;
+        }
         else
             headers_stream =
                 lsquic_headers_stream_get_stream(stream->conn_pub->u.gquic.hs);
@@ -3326,6 +3326,7 @@ send_headers_ietf (struct lsquic_stream *stream,
     unsigned bits;
     ssize_t nw;
     unsigned char *header_block;
+    enum lsqpack_enc_header_flags hflags;
     unsigned char buf[max_push_size + max_prefix_size + MAX_HEADERS_SIZE];
 
     stream->stream_flags &= ~STREAM_PUSHING;
@@ -3338,7 +3339,7 @@ send_headers_ietf (struct lsquic_stream *stream,
     headers_sz = sizeof(buf) - max_prefix_size - max_push_size;
     qwh = lsquic_qeh_write_headers(stream->conn_pub->u.ietf.qeh, stream->id, 0,
                 headers, buf + max_push_size + max_prefix_size, &prefix_sz,
-                &headers_sz, &stream->sm_hb_compl);
+                &headers_sz, &stream->sm_hb_compl, &hflags);
 
     if (!(qwh == QWH_FULL || qwh == QWH_PARTIAL))
     {
@@ -3348,6 +3349,9 @@ send_headers_ietf (struct lsquic_stream *stream,
             LSQ_WARN("internal error encoding and sending HTTP headers");
         return -1;
     }
+
+    if (hflags & LSQECH_REF_NEW_ENTRIES)
+        stream->stream_flags |= STREAM_ENCODER_DEP;
 
     if (stream->sm_promise)
     {

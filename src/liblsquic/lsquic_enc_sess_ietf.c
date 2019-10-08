@@ -1141,37 +1141,16 @@ static int
 iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
 {
     struct enc_sess_iquic *enc_sess;
-    uint32_t max_early_data_size, num;
+    uint32_t num;
     unsigned char *p, *buf;
     uint8_t *ticket_buf;
     size_t ticket_sz;
     lsquic_ver_tag_t tag;
     const uint8_t *trapa_buf;
-    SSL_CTX *ssl_ctx;
     size_t trapa_sz, buf_sz;
 
     enc_sess = SSL_get_ex_data(ssl, s_idx);
     assert(enc_sess->esi_enpub->enp_stream_if->on_zero_rtt_info);
-
-    max_early_data_size = SSL_SESSION_get_max_early_data_size(session);
-    if (max_early_data_size && 0xFFFFFFFFu != max_early_data_size)
-    {
-        /* XXX We do not catch the case when early_data extension is present
-         * and max_early_data_size is set to zero, which is an invalid value.
-         * This is because there is no way to check this using existing
-         * BoringSSL APIs.
-         */
-        /* See [draft-ietf-quic-tls-23], Section 4.5 */
-        LSQ_INFO("max_early_data_size=0x%X, protocol violation",
-                                                        max_early_data_size);
-        enc_sess->esi_conn->cn_if->ci_abort_error(enc_sess->esi_conn, 0,
-            TEC_PROTOCOL_VIOLATION, "max_early_data_size is set to %u "
-                "instead of 0xFFFFFFFF as mandated by standard",
-                max_early_data_size);
-        ssl_ctx = SSL_get_SSL_CTX(ssl);
-        SSL_CTX_sess_set_new_cb(ssl_ctx, NULL);
-        return 0;
-    }
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &trapa_buf,
                                                                 &trapa_sz);
@@ -1513,7 +1492,6 @@ iquic_esfi_handshake (struct enc_sess_iquic *enc_sess)
         case SSL_ERROR_WANT_WRITE:
             LSQ_DEBUG("retry write");
             return IHS_WANT_WRITE;
-        case SSL_EARLY_DATA_REJECTED:   /* XXX should this be included here? */
         case SSL_ERROR_EARLY_DATA_REJECTED:
             LSQ_DEBUG("early data rejected");
             hsk_status = LSQ_HSK_0RTT_FAIL;

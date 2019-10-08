@@ -3028,7 +3028,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
             }
         }
     prefix_sz = lsqpack_enc_end_header(&conn->ifc_qeh.qeh_encoder,
-                                                discard, sizeof(discard));
+                                            discard, sizeof(discard), NULL);
     if (!(prefix_sz == 2 && discard[0] == 0 && discard[1] == 0))
     {
         LSQ_WARN("stream push: unexpected prefix values %zd, %hhu, %hhu",
