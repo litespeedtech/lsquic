@@ -21,7 +21,8 @@ sudo: false
 before_install:
     - sudo add-apt-repository -y ppa:longsleep/golang-backports
     - sudo apt-get update
-    - sudo apt-get install golang-go
+    - sudo apt-get remove golang-go
+    - sudo apt-get install golang-1.13-go
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
     - cd boringssl
