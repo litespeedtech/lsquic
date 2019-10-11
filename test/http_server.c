@@ -954,7 +954,7 @@ send_headers2 (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h,
         },
         {
             .name  = { .iov_base = "server",    .iov_len = 6, },
-            .value = { .iov_base = "LiteSpeed", .iov_len = 9, },
+            .value = { .iov_base = LITESPEED_ID, .iov_len = sizeof(LITESPEED_ID) - 1, },
         },
         {
             .name  = { .iov_base = "content-type", .iov_len = 12, },

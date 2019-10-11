@@ -205,6 +205,10 @@ enum stream_history_event
     SHE_CLOSE              =  'X',
     SHE_DELAY_SW           =  'y',
     SHE_FORCE_FINISH       =  'Z',
+    SHE_WANTREAD_NO        =  '0',  /* "YES" must be one more than "NO" */
+    SHE_WANTREAD_YES       =  '1',
+    SHE_WANTWRITE_NO       =  '2',
+    SHE_WANTWRITE_YES      =  '3',
 };
 
 static void
@@ -1741,6 +1745,7 @@ stream_wantwrite (struct lsquic_stream *stream, int new_val)
 int
 lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
 {
+    SM_HISTORY_APPEND(stream, SHE_WANTREAD_NO + !!is_want);
     if (!(stream->stream_flags & STREAM_U_READ_DONE))
     {
         if (is_want)
@@ -1762,6 +1767,7 @@ lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 
     is_want = !!is_want;
 
+    SM_HISTORY_APPEND(stream, SHE_WANTWRITE_NO + is_want);
     if (0 == (stream->stream_flags & STREAM_U_WRITE_DONE)
                             && SSHS_BEGIN == stream->sm_send_headers_state)
     {

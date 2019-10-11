@@ -252,6 +252,7 @@ attq_count_before (struct attq *q, lsquic_time_t cutoff)
             return total_count;
     }
     assert(0);
+    return total_count;
 }
 
 

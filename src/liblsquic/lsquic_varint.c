@@ -54,7 +54,6 @@ lsquic_varint_read (const unsigned char *p, const unsigned char *end,
         *valp = val;
         return 8;
     }
-    assert(0);
 }
 
 

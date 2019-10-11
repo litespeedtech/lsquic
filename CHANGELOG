@@ -1,3 +1,9 @@
+2019-10-11
+    - 2.4.6
+    - Minor code cleanup and logging improvements.
+    - Server and client programs: include library version (e.g. 2.4.6)
+      into `server' and `user-agent' headers.
+
 2019-10-08
     - 2.4.5
     - [OPTIMIZATION]: flush encoder stream only when necessary.

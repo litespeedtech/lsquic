@@ -1213,8 +1213,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                                                 = imc->imc_largest_recvd[pns];
     }
 
-    /* TODO: Transfer incoming packets. */
-
     /* Mini connection sends out packets 0, 1, 2... and so on.  It deletes
      * packets that have been successfully sent and acked or those that have
      * been lost.  We take ownership of all packets in mc_packets_out; those

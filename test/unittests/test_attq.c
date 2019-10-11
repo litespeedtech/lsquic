@@ -79,6 +79,12 @@ test_attq_ordering (enum sort_action sa)
 
     q = attq_create();
 
+    for (i = 0; i < sizeof(curiosity); ++i)
+    {
+        unsigned count_before = attq_count_before(q, curiosity[i]);
+        assert(count_before == 0);
+    }
+
     conns = calloc(sizeof(curiosity), sizeof(conns[0]));
     for (i = 0; i < sizeof(curiosity); ++i)
     {

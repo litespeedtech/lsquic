@@ -4211,19 +4211,32 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
     struct lsquic_stream *stream;
 
     if (!TAILQ_EMPTY(&conn->fc_pub.service_streams))
+    {
+        LSQ_DEBUG("tickable: there are streams to be serviced");
         return 1;
+    }
 
     if ((conn->fc_enpub->enp_flags & ENPUB_CAN_SEND)
         && (should_generate_ack(conn) ||
             !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {
-        if (conn->fc_flags & (FC_SEND_GOAWAY|FC_SEND_STOP_WAITING
-                             |FC_SEND_PING|FC_SEND_WUF|FC_CLOSING))
+        const enum full_conn_flags send_flags = FC_SEND_GOAWAY
+                |FC_SEND_STOP_WAITING|FC_SEND_PING|FC_SEND_WUF|FC_CLOSING;
+        if (conn->fc_flags & send_flags)
+        {
+            LSQ_DEBUG("tickable: flags: 0x%X", conn->fc_flags & send_flags);
             goto check_can_send;
+        }
         if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
+        {
+            LSQ_DEBUG("tickable: has buffered packets");
             goto check_can_send;
+        }
         if (!TAILQ_EMPTY(&conn->fc_pub.sending_streams))
+        {
+            LSQ_DEBUG("tickable: there are sending streams");
             goto check_can_send;
+        }
         if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) ||
             conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
                                                 conn->fc_conn.cn_enc_session))
@@ -4231,7 +4244,11 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
                 if (lsquic_stream_write_avail(stream))
+                {
+                    LSQ_DEBUG("tickable: stream %"PRIu64" can be written to",
+                        stream->id);
                     goto check_can_send;
+                }
         }
         else
         {
@@ -4239,7 +4256,11 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
                                                         next_write_stream)
                 if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id
                                     && lsquic_stream_write_avail(stream))
+                {
+                    LSQ_DEBUG("tickable: stream %"PRIu64" can be written to",
+                        stream->id);
                     goto check_can_send;
+                }
         }
         goto check_readable_streams;
   check_can_send:
@@ -4250,8 +4271,13 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
   check_readable_streams:
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
         if (lsquic_stream_readable(stream))
+        {
+            LSQ_DEBUG("tickable: stream %"PRIu64" can be read from",
+                stream->id);
             return 1;
+        }
 
+    LSQ_DEBUG("not tickable");
     return 0;
 }
 
