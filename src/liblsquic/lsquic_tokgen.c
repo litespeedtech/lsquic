@@ -1,11 +1,16 @@
 /* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
+#ifndef WIN32
 #include <netinet/in.h>
+#include <sys/socket.h>
+#else
+#include <vc_compat.h>
+#endif
+
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/socket.h>
 #include <time.h>
 
 #include <openssl/aead.h>

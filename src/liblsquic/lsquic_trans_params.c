@@ -10,8 +10,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef WIN32
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_byteswap.h"
 #include "lsquic_int_types.h"

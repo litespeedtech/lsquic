@@ -342,7 +342,7 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
      *  0x2     LEN
      *  0x1     FIN
      */
-    unsigned sbits, obits, dbits;
+    unsigned sbits = 0, obits = 0, dbits = 0;
     unsigned slen, olen, dlen;
     unsigned char *p = buf + 1;
 

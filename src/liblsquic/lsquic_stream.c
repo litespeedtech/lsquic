@@ -3067,9 +3067,9 @@ update_buffered_hq_frames (struct lsquic_stream *stream, size_t len,
                                                                 size_t avail)
 {
     struct stream_hq_frame *shf;
-    uint64_t cur_off, end;
+    uint64_t cur_off, end = 0;
     size_t frame_sz;
-    unsigned extendable;
+    unsigned extendable = 0;
 
     cur_off = stream->sm_payload + stream->sm_n_buffered;
     STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
@@ -3333,7 +3333,11 @@ send_headers_ietf (struct lsquic_stream *stream,
     ssize_t nw;
     unsigned char *header_block;
     enum lsqpack_enc_header_flags hflags;
+#if !_MSC_VER
     unsigned char buf[max_push_size + max_prefix_size + MAX_HEADERS_SIZE];
+#else
+    unsigned char *buf = alloca(max_push_size + max_prefix_size + MAX_HEADERS_SIZE);
+#endif
 
     stream->stream_flags &= ~STREAM_PUSHING;
     stream->stream_flags |= STREAM_NOPUSH;
@@ -4371,7 +4375,7 @@ dp_reader_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct lsquic_stream *const stream = lsqr_ctx;
     unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = (unsigned char*)buf + count;
     size_t len;
 
     len = MIN((size_t) (stream->sm_dup_push_len - stream->sm_dup_push_off),
@@ -4493,7 +4497,7 @@ pp_reader_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct push_promise *const promise = lsqr_ctx;
     unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = (unsigned char*) buf + count;
     size_t len;
 
     while (dst < end)
