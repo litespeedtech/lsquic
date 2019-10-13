@@ -18,13 +18,20 @@ matrix:
         - name: macOS
           os: osx
 sudo: false
+before_install:
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo add-apt-repository -y ppa:longsleep/golang-backports; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get update; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then sudo apt-get install golang-1.13-go; fi
+install:
+    - if [ $TRAVIS_OS_NAME = linux ]; then export PATH=/usr/lib/go-1.13/bin:$PATH; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then export GOPATH=/usr/lib/go-1.13:$GOPATH; fi
+    - if [ $TRAVIS_OS_NAME = linux ]; then export GOROOT=/usr/lib/go-1.13; fi
 before_script:
     - git clone https://boringssl.googlesource.com/boringssl
     - cd boringssl
     # This is so that both GQUIC and IETF branches build.  Just picking
     # a known good revision:
-    - git checkout 32e59d2d3264e4e104b355ef73663b8b79ac4093
-    - patch -p1 -i ../patches/boringssl-meds.patch
+    - git checkout 49de1fc2910524c888866c7e2b0db1ba8af2a530
     - cmake .
     - make
     - cd -

@@ -799,6 +799,42 @@ imico_process_ack_frame (IMICO_PROC_FRAME_ARGS)
 
 
 static unsigned
+imico_process_ping_frame (IMICO_PROC_FRAME_ARGS)
+{
+    LSQ_DEBUG("got a PING frame, do nothing");
+    return 1;
+}
+
+
+static unsigned
+imico_process_connection_close_frame (IMICO_PROC_FRAME_ARGS)
+{
+    struct lsquic_packet_out *packet_out;
+    uint64_t error_code;
+    uint16_t reason_len;
+    uint8_t reason_off;
+    int parsed_len, app_error;
+
+    while ((packet_out = TAILQ_FIRST(&conn->imc_packets_out)))
+    {
+        TAILQ_REMOVE(&conn->imc_packets_out, packet_out, po_next);
+        imico_destroy_packet(conn, packet_out);
+    }
+    conn->imc_flags |= IMC_CLOSE_RECVD;
+    parsed_len = conn->imc_conn.cn_pf->pf_parse_connect_close_frame(p, len,
+                            &app_error, &error_code, &reason_len, &reason_off);
+    if (parsed_len < 0)
+        return 0;
+    EV_LOG_CONNECTION_CLOSE_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code,
+                            (int) reason_len, (const char *) p + reason_off);
+    LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
+            "reason: %.*s)", app_error ? "application" : "transport",
+                error_code, (int) reason_len, (const char *) p + reason_off);
+    return 0;   /* This shuts down the connection */
+}
+
+
+static unsigned
 imico_process_invalid_frame (IMICO_PROC_FRAME_ARGS)
 {
     LSQ_DEBUG("invalid frame %u (%s)", p[0],
@@ -814,15 +850,15 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     [QUIC_FRAME_STREAM]             =  imico_process_stream_frame,
     [QUIC_FRAME_CRYPTO]             =  imico_process_crypto_frame,
     [QUIC_FRAME_ACK]                =  imico_process_ack_frame,
+    [QUIC_FRAME_PING]               =  imico_process_ping_frame,
+    [QUIC_FRAME_CONNECTION_CLOSE]   =  imico_process_connection_close_frame,
     /* XXX: Some of them are invalid, while others are unexpected.  We treat
      * them the same: handshake cannot proceed.
      */
     [QUIC_FRAME_RST_STREAM]         =  imico_process_invalid_frame,
-    [QUIC_FRAME_CONNECTION_CLOSE]   =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_DATA]           =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_STREAM_DATA]    =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_STREAMS]        =  imico_process_invalid_frame,
-    [QUIC_FRAME_PING]               =  imico_process_invalid_frame,
     [QUIC_FRAME_BLOCKED]            =  imico_process_invalid_frame,
     [QUIC_FRAME_STREAM_BLOCKED]     =  imico_process_invalid_frame,
     [QUIC_FRAME_STREAMS_BLOCKED]    =  imico_process_invalid_frame,
@@ -1422,7 +1458,8 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     if (conn->imc_flags & IMC_ERROR)
     {
-        imico_generate_conn_close(conn);
+        if (!(conn->imc_flags & IMC_CLOSE_RECVD))
+            imico_generate_conn_close(conn);
         tick |= TICK_CLOSE;
     }
     else if (conn->imc_flags & IMC_HSK_OK)

@@ -1533,6 +1533,7 @@ main (int argc, char **argv)
 #if LSQUIC_CONN_STATS
     prog.prog_api.ea_stats_fh = stats_fh;
 #endif
+    prog.prog_settings.es_ua = LITESPEED_ID;
 
     if (client_ctx.qif_file)
     {

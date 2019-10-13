@@ -345,6 +345,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
                                 sizeof(ctl->sc_buffered_packets[0]); ++i)
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
     ctl->sc_max_packno_bits = PACKNO_BITS_2; /* Safe value before verneg */
+    ctl->sc_cached_bpt.stream_id = UINT64_MAX;
 }
 
 
@@ -2344,16 +2345,6 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
         return send_ctl_get_buffered_packet(ctl, packet_type, need_at_least,
                                             path, stream);
     }
-}
-
-
-
-int
-lsquic_send_ctl_buffered_and_same_prio_as_headers (struct lsquic_send_ctl *ctl,
-                                            const struct lsquic_stream *stream)
-{
-    return !lsquic_send_ctl_schedule_stream_packets_immediately(ctl)
-        && BPT_HIGHEST_PRIO == send_ctl_lookup_bpt(ctl, stream);
 }
 
 

@@ -226,12 +226,15 @@ enum qwh_status
 lsquic_qeh_write_headers (struct qpack_enc_hdl *qeh,
     lsquic_stream_id_t stream_id, unsigned seqno,
     const struct lsquic_http_headers *headers, unsigned char *buf,
-    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset)
+    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset,
+    enum lsqpack_enc_header_flags *hflags)
 {
     memset(buf - *prefix_sz, 0xC5, *prefix_sz + *headers_sz);
     *prefix_sz = test_vals.prefix_sz;
     *headers_sz = test_vals.headers_sz;
     *completion_offset = test_vals.completion_offset;
+    if (hflags)
+        *hflags = 0;
     return test_vals.status;
 }
 

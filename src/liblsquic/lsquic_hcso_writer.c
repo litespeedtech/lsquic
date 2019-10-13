@@ -174,7 +174,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         bits = hcso_setting_type2bits(writer, HQSID_QPACK_BLOCKED_STREAMS);
         vint_write(p, HQSID_QPACK_BLOCKED_STREAMS, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(settings->es_qpack_dec_max_size);
+        bits = vint_val2bits(settings->es_qpack_dec_max_blocked);
         vint_write(p, settings->es_qpack_dec_max_blocked, bits, 1 << bits);
         p += 1 << bits;
     }

@@ -322,7 +322,7 @@ static enum qwh_status
 qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     unsigned seqno, const struct lsquic_http_headers *headers,
     unsigned char *buf, size_t *prefix_sz, size_t *headers_sz,
-    uint64_t *completion_offset)
+    uint64_t *completion_offset, enum lsqpack_enc_header_flags *hflags)
 {
     unsigned char *p = buf;
     unsigned char *const end = buf + *headers_sz;
@@ -410,7 +410,8 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         }
     }
 
-    nw = lsqpack_enc_end_header(&qeh->qeh_encoder, buf - *prefix_sz, *prefix_sz);
+    nw = lsqpack_enc_end_header(&qeh->qeh_encoder, buf - *prefix_sz,
+                                                        *prefix_sz, hflags);
     if (nw <= 0)
     {
         LSQ_WARN("could not end header: %zd", nw);
@@ -450,11 +451,12 @@ enum qwh_status
 lsquic_qeh_write_headers (struct qpack_enc_hdl *qeh,
     lsquic_stream_id_t stream_id, unsigned seqno,
     const struct lsquic_http_headers *headers, unsigned char *buf,
-    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset)
+    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset,
+    enum lsqpack_enc_header_flags *hflags)
 {
     if (qeh->qeh_flags & QEH_INITIALIZED)
         return qeh_write_headers(qeh, stream_id, seqno, headers, buf,
-                                    prefix_sz, headers_sz, completion_offset);
+                        prefix_sz, headers_sz, completion_offset, hflags);
     else
         return QWH_ERR;
 }

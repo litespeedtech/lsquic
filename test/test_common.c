@@ -1677,7 +1677,13 @@ set_engine_option (struct lsquic_engine_settings *settings,
                 *version_cleared = 1;
                 settings->es_versions = 0;
             }
-            const enum lsquic_version ver = lsquic_str2ver(val, strlen(val));
+            enum lsquic_version ver = lsquic_str2ver(val, strlen(val));
+            if (ver < N_LSQVER)
+            {
+                settings->es_versions |= 1 << ver;
+                return 0;
+            }
+            ver = lsquic_alpn2ver(val, strlen(val));
             if (ver < N_LSQVER)
             {
                 settings->es_versions |= 1 << ver;

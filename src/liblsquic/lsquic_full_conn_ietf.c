@@ -1213,8 +1213,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                                                 = imc->imc_largest_recvd[pns];
     }
 
-    /* TODO: Transfer incoming packets. */
-
     /* Mini connection sends out packets 0, 1, 2... and so on.  It deletes
      * packets that have been successfully sent and acked or those that have
      * been lost.  We take ownership of all packets in mc_packets_out; those
@@ -3028,7 +3026,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
             }
         }
     prefix_sz = lsqpack_enc_end_header(&conn->ifc_qeh.qeh_encoder,
-                                                discard, sizeof(discard));
+                                            discard, sizeof(discard), NULL);
     if (!(prefix_sz == 2 && discard[0] == 0 && discard[1] == 0))
     {
         LSQ_WARN("stream push: unexpected prefix values %zd, %hhu, %hhu",
@@ -4507,6 +4505,12 @@ process_stream_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
+    /* Don't wait for the regular on_read dispatch in order to save an
+     * unnecessary blocked/unblocked sequence.
+     */
+    if ((conn->ifc_flags & IFC_HTTP) && conn->ifc_qdh.qdh_enc_sm_in == stream)
+        lsquic_stream_dispatch_read_events(conn->ifc_qdh.qdh_enc_sm_in);
+
     return parsed_len;
 }
 
@@ -4809,6 +4813,30 @@ retire_dcids_prior_to (struct ietf_full_conn *conn, unsigned retire_prior_to)
 }
 
 
+/* We need to be able to allocate a DCE slot to begin migration or to retire
+ * the DCID in transport parameters.
+ */
+static int
+must_reserve_one_dce_slot (struct ietf_full_conn *conn)
+{
+    struct lsquic_conn *const lconn = &conn->ifc_conn;
+    const struct transport_params *params;
+
+    if (conn->ifc_flags & IFC_SERVER)
+        return 0;
+
+    if (lsquic_send_ctl_1rtt_acked(&conn->ifc_send_ctl))
+        return 0;
+
+    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                        lconn->cn_enc_session);
+    if (params) /* Just in case */
+        return !!(params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
+    else
+        return 0;
+}
+
+
 static unsigned
 process_new_connection_id_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
@@ -4883,6 +4911,16 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
 
     if (dce)
     {
+        if (must_reserve_one_dce_slot(conn))
+        {
+            for (el = dce + 1; el < DCES_END(conn) && *el; ++el)
+                ;
+            if (el == DCES_END(conn))
+            {
+                action_str = "Ignored (last slot reserved for migration)";
+                goto end;
+            }
+        }
         *dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
         if (*dce)
         {
@@ -4901,6 +4939,7 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
     else
         action_str = "Ignored (no slots available)";
 
+  end:
     LSQ_DEBUGC("Got new connection ID from peer: seq=%"PRIu64"; "
         "cid: %"CID_FMT".  %s.", seqno, CID_BITS(&cid), action_str);
     return parsed_len;

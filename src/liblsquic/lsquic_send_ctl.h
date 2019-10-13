@@ -282,7 +282,7 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
  || TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets  ))
 
 #define lsquic_send_ctl_invalidate_bpt_cache(ctl) do {      \
-    (ctl)->sc_cached_bpt.stream_id = 0;                     \
+    (ctl)->sc_cached_bpt.stream_id = UINT64_MAX;            \
 } while (0)
 
 #ifndef NDEBUG
@@ -327,11 +327,6 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
 
 int
 lsquic_send_ctl_sched_is_blocked (struct lsquic_send_ctl *);
-
-int
-
-lsquic_send_ctl_buffered_and_same_prio_as_headers (struct lsquic_send_ctl *,
-                                                const struct lsquic_stream *);
 
 void
 lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *);

@@ -197,7 +197,7 @@ enum stream_flags {
     STREAM_UNUSED10     = 1 << 10,  /* Unused */
     STREAM_HEADERS_SENT = 1 << 11,
     STREAM_HAVE_UH      = 1 << 12,  /* Have uncompressed headers */
-    STREAM_UNUSED13     = 1 << 13,  /* Unused */
+    STREAM_ENCODER_DEP  = 1 << 13,  /* Encoder dependency: flush (IETF only) */
     STREAM_HEAD_IN_FIN  = 1 << 14,  /* Incoming headers has FIN bit set */
     STREAM_FRAMES_ELIDED= 1 << 15,
     STREAM_FORCE_FINISH = 1 << 16,  /* Replaces FIN sent and received */

@@ -58,7 +58,8 @@ enum qwh_status {
 enum qwh_status
 lsquic_qeh_write_headers (struct qpack_enc_hdl *, lsquic_stream_id_t stream_id,
     unsigned seqno, const struct lsquic_http_headers *, unsigned char *buf,
-    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset);
+    size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset,
+    enum lsqpack_enc_header_flags *hflags);
 
 uint64_t
 lsquic_qeh_enc_off (struct qpack_enc_hdl *);

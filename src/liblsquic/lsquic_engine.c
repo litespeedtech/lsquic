@@ -1922,7 +1922,10 @@ coi_reheap (struct conns_out_iter *iter, lsquic_engine_t *engine)
     {
         TAILQ_REMOVE(&iter->coi_active_list, conn, cn_next_out);
         conn->cn_flags &= ~LSCONN_COI_ACTIVE;
-        lsquic_mh_insert(iter->coi_heap, conn, conn->cn_last_sent);
+        if ((conn->cn_flags & CONN_REF_FLAGS) != LSCONN_HAS_OUTGOING)
+            lsquic_mh_insert(iter->coi_heap, conn, conn->cn_last_sent);
+        else    /* Closed connection gets one shot at sending packets */
+            (void) engine_decref_conn(engine, conn, LSCONN_HAS_OUTGOING);
     }
     while ((conn = TAILQ_FIRST(&iter->coi_inactive_list)))
     {
