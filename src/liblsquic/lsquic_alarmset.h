@@ -94,6 +94,8 @@ void
 lsquic_alarmset_ring_expired (lsquic_alarmset_t *, lsquic_time_t now);
 
 lsquic_time_t
-lsquic_alarmset_mintime (const lsquic_alarmset_t *);
+lsquic_alarmset_mintime (const lsquic_alarmset_t *, enum alarm_id *);
+
+extern const char *const lsquic_alid2str[];
 
 #endif

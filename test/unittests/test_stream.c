@@ -2014,6 +2014,33 @@ test_insert_edge_cases (void)
 }
 
 
+/* When HTTP stream is closed unexpectedly, send a reset instead of creating
+ * an empty STREAM frame with a FIN bit set.
+ */
+static void
+test_unexpected_http_close (void)
+{
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    int s;
+
+    stream_ctor_flags |= SCF_HTTP;
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+
+    stream = new_stream(&tobjs, 123);
+    assert(stream->sm_bflags & SMBF_USE_HEADERS);   /* Self-check */
+    s = lsquic_stream_close(stream);
+    assert(s == 0);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(stream->sm_qflags & SMQF_CALL_ONCLOSE);
+    assert(!lsquic_send_ctl_has_buffered(&tobjs.send_ctl));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_HTTP;
+}
+
+
 static void
 test_writing_to_stream_schedule_stream_packets_immediately (void)
 {
@@ -3060,6 +3087,7 @@ main (int argc, char **argv)
     test_reading_from_stream2();
     test_overlaps();
     test_insert_edge_cases();
+    test_unexpected_http_close();
 
     {
         int idx[6];

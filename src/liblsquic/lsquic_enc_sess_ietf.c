@@ -2138,6 +2138,14 @@ iquic_esf_alg_keysize (enc_session_t *enc_session_p)
 }
 
 
+static int
+iquic_esf_zero_rtt_enabled (enc_session_t *enc_session_p)
+{
+    struct enc_sess_iquic *const enc_sess = enc_session_p;
+    return enc_sess->esi_zero_rtt_buf != NULL;
+}
+
+
 int
 iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
         const lsquic_cid_t *old_dcid, const lsquic_cid_t *new_dcid)
@@ -2204,6 +2212,7 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1 =
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,
     .esf_alg_keysize     = iquic_esf_alg_keysize,
+    .esf_is_zero_rtt_enabled = iquic_esf_zero_rtt_enabled,
 };
 
 

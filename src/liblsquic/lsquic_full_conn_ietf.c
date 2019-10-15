@@ -17,6 +17,7 @@
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
+#include "lsquic_attq.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_ietf.h"
 #include "lsquic_packet_in.h"
@@ -1301,7 +1302,8 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
 
 static int
-should_generate_ack (struct ietf_full_conn *conn)
+should_generate_ack (struct ietf_full_conn *conn,
+                                            enum ifull_conn_flags ack_queued)
 {
     unsigned lost_acks;
 
@@ -1312,7 +1314,7 @@ should_generate_ack (struct ietf_full_conn *conn)
     if (lost_acks)
         conn->ifc_flags |= lost_acks << IFCBIT_ACK_QUED_SHIFT;
 
-    return (conn->ifc_flags & IFC_ACK_QUEUED) != 0;
+    return (conn->ifc_flags & ack_queued) != 0;
 }
 
 
@@ -1320,7 +1322,7 @@ static int
 ietf_full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    return should_generate_ack(conn);
+    return should_generate_ack(conn, IFC_ACK_QUED_APP);
 }
 
 
@@ -3226,7 +3228,7 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
     }
 
     if ((conn->ifc_enpub->enp_flags & ENPUB_CAN_SEND)
-        && (should_generate_ack(conn) ||
+        && (should_generate_ack(conn, IFC_ACK_QUEUED) ||
             !lsquic_send_ctl_sched_is_blocked(&conn->ifc_send_ctl)))
     {
         /* XXX What about queued ACKs: why check but not make tickable? */
@@ -3235,7 +3237,9 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
             LSQ_DEBUG("tickable: send flags: 0x%X", conn->ifc_send_flags);
             goto check_can_send;
         }
-        if (lsquic_send_ctl_has_buffered(&conn->ifc_send_ctl))
+        if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE ?
+                lsquic_send_ctl_has_buffered(&conn->ifc_send_ctl) :
+                lsquic_send_ctl_has_buffered_high(&conn->ifc_send_ctl))
         {
             LSQ_DEBUG("tickable: has buffered packets");
             goto check_can_send;
@@ -3683,12 +3687,13 @@ ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 
 
 static lsquic_time_t
-ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn)
+ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     lsquic_time_t alarm_time, pacer_time, now;
+    enum alarm_id al_id;
 
-    alarm_time = lsquic_alarmset_mintime(&conn->ifc_alset);
+    alarm_time = lsquic_alarmset_mintime(&conn->ifc_alset, &al_id);
     pacer_time = lsquic_send_ctl_next_pacer_time(&conn->ifc_send_ctl);
 
     if (pacer_time && LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
@@ -3702,14 +3707,28 @@ ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn)
     if (alarm_time && pacer_time)
     {
         if (alarm_time < pacer_time)
+        {
+            *why = N_AEWS + al_id;
             return alarm_time;
+        }
         else
+        {
+            *why = AEW_PACER;
             return pacer_time;
+        }
     }
     else if (alarm_time)
+    {
+        *why = N_AEWS + al_id;
         return alarm_time;
-    else
+    }
+    else if (pacer_time)
+    {
+        *why = AEW_PACER;
         return pacer_time;
+    }
+    else
+        return 0;
 }
 
 
@@ -5981,7 +6000,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         have_delayed_packets =
             lsquic_send_ctl_maybe_squeeze_sched(&conn->ifc_send_ctl);
 
-    if (should_generate_ack(conn))
+    if (should_generate_ack(conn, IFC_ACK_QUEUED))
     {
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->ifc_send_ctl);
@@ -6263,12 +6282,21 @@ ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *lconn)
 }
 
 
+static int
+handshake_done_or_doing_zero_rtt (const struct ietf_full_conn *conn)
+{
+    return (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        || conn->ifc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
+                                                conn->ifc_conn.cn_enc_session);
+}
+
+
 static void
 ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
 
-    if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
+    if (handshake_done_or_doing_zero_rtt(conn)
         && ietf_full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (0 != create_bidi_stream_out(conn))
