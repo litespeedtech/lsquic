@@ -1536,7 +1536,13 @@ stream_shutdown_write (lsquic_stream_t *stream)
                 && !stream_is_incoming_unidir(stream)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
     {
-        if (stream->sm_n_buffered == 0)
+        if ((stream->sm_bflags & SMBF_USE_HEADERS)
+                && !(stream->stream_flags & STREAM_HEADERS_SENT))
+        {
+            LSQ_DEBUG("headers not sent, send a reset");
+            lsquic_stream_reset(stream, 0);
+        }
+        else if (stream->sm_n_buffered == 0)
         {
             if (0 == lsquic_send_ctl_turn_on_fin(stream->conn_pub->send_ctl,
                                                  stream))

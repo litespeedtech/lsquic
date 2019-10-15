@@ -50,6 +50,8 @@
 #include "lsquic_rechist.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_qtags.h"
+#include "lsquic_attq.h"
+#include "lsquic_alarmset.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_MINI_CONN
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&mc->mc_conn)
@@ -1892,7 +1894,7 @@ mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
 
 
 static lsquic_time_t
-mini_conn_ci_next_tick_time (struct lsquic_conn *lconn)
+mini_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
 {
     struct mini_conn *mc = (struct mini_conn *) lconn;
     lsquic_packet_out_t *packet_out;
@@ -1905,11 +1907,18 @@ mini_conn_ci_next_tick_time (struct lsquic_conn *lconn)
         {
             retx_time = packet_out->po_sent + calc_retx_timeout(mc);
             if (retx_time < exp_time)
+            {
+                *why = N_AEWS + AL_RETX_HSK;
                 return retx_time;
+            }
             else
+            {
+                *why = AEW_MINI_EXPIRE;
                 return exp_time;
+            }
         }
 
+    *why = AEW_MINI_EXPIRE;
     return exp_time;
 }
 

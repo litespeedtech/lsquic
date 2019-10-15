@@ -29,6 +29,8 @@ lsquic_mh_insert (struct min_heap *, struct lsquic_conn *conn, uint64_t val);
 struct lsquic_conn *
 lsquic_mh_pop (struct min_heap *);
 
+#define lsquic_mh_peek(heap) ((heap)->mh_elems[0].mhe_conn)
+
 #define lsquic_mh_count(heap) (+(heap)->mh_nelem)
 
 #define lsquic_mh_nalloc(heap) (+(heap)->mh_nalloc)

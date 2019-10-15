@@ -32,6 +32,8 @@
 #include "lsquic_trans_params.h"
 #include "lsquic_ietf.h"
 #include "lsquic_packet_ietf.h"
+#include "lsquic_attq.h"
+#include "lsquic_alarmset.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_MINI_CONN
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->imc_conn)
@@ -532,7 +534,7 @@ imico_calc_retx_timeout (const struct ietf_mini_conn *conn)
 
 
 static lsquic_time_t
-ietf_mini_conn_ci_next_tick_time (struct lsquic_conn *lconn)
+ietf_mini_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
 {
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     const struct lsquic_packet_out *packet_out;
@@ -546,11 +548,18 @@ ietf_mini_conn_ci_next_tick_time (struct lsquic_conn *lconn)
         {
             retx_time = packet_out->po_sent + imico_calc_retx_timeout(conn);
             if (retx_time < exp_time)
+            {
+                *why = N_AEWS + AL_RETX_HSK;
                 return retx_time;
+            }
             else
+            {
+                *why = AEW_MINI_EXPIRE;
                 return exp_time;
+            }
         }
 
+    *why = AEW_MINI_EXPIRE;
     return exp_time;
 }
 
