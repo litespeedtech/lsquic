@@ -84,4 +84,4 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_versions_to_string.c
 
 lsquic_versions_to_string.c: gen-verstrs
-	$(top_srcdir)/src/liblsquic/gen-verstrs $(top_srcdir)/include/lsquic.h lsquic_versions_to_string.c
+	$(top_srcdir)/src/liblsquic/gen-verstrs.pl $(top_srcdir)/include/lsquic.h lsquic_versions_to_string.c
