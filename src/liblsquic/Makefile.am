@@ -80,7 +80,8 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_trans_params.c \
     lsquic_util.c \
     lsquic_varint.c \
-    lsquic_version.c
+    lsquic_version.c \
+    lsquic_versions_to_string.c
 
 lsquic_versions_to_string.c: gen-verstrs
 	$(top_srcdir)/src/liblsquic/gen-verstrs $(top_srcdir)/include/lsquic.h lsquic_versions_to_string.c
