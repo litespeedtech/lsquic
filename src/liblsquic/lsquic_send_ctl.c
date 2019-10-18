@@ -42,6 +42,7 @@
 #include "lsquic_enc_sess.h"
 #include "lsquic_hash.h"
 #include "lsquic_malo.h"
+#include "lsquic_attq.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_SENDCTL
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ctl->sc_conn_pub->lconn)
@@ -1294,7 +1295,8 @@ lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
         {
             ctl->sc_flags &= ~SC_SCHED_TICK;
             lsquic_engine_add_conn_to_attq(ctl->sc_enpub,
-                    ctl->sc_conn_pub->lconn, pacer_next_sched(&ctl->sc_pacer));
+                    ctl->sc_conn_pub->lconn, pacer_next_sched(&ctl->sc_pacer),
+                    AEW_PACER);
         }
         return 0;
     }

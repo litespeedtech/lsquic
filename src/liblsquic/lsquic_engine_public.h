@@ -72,7 +72,7 @@ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *,
  */
 void
 lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
-                                            lsquic_conn_t *, lsquic_time_t);
+                                lsquic_conn_t *, lsquic_time_t, unsigned why);
 
 void
 lsquic_engine_retire_cid (struct lsquic_engine_public *,

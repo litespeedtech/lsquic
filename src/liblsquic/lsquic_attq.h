@@ -18,6 +18,15 @@ struct attq_elem
     struct lsquic_conn  *ae_conn;
     lsquic_time_t        ae_adv_time;
     unsigned             ae_heap_idx;
+    /* The "why" describes why the connection is in the Advisory Tick Time
+     * Queue.  Values past the range describe different alarm types (see
+     * enum alarm_id).
+     */
+    enum ae_why {
+        AEW_PACER,
+        AEW_MINI_EXPIRE,
+        N_AEWS
+    }                    ae_why;
 };
 
 
@@ -29,7 +38,8 @@ attq_destroy (struct attq *);
 
 /* Return 0 on success, -1 on failure (malloc) */
 int
-attq_add (struct attq *, struct lsquic_conn *, lsquic_time_t advisory_time);
+attq_add (struct attq *, struct lsquic_conn *, lsquic_time_t advisory_time,
+                enum ae_why);
 
 void
 attq_remove (struct attq *, struct lsquic_conn *);
@@ -40,7 +50,10 @@ attq_pop (struct attq *, lsquic_time_t cutoff);
 unsigned
 attq_count_before (struct attq *, lsquic_time_t cutoff);
 
-const lsquic_time_t *
-attq_next_time (struct attq *);
+const struct attq_elem *
+attq_next (struct attq *);
+
+const char *
+lsquic_attq_why2str (enum ae_why);
 
 #endif

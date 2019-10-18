@@ -63,6 +63,7 @@
 #include "lsquic_version.h"
 #include "lsquic_headers.h"
 #include "lsquic_handshake.h"
+#include "lsquic_attq.h"
 
 #include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
@@ -1326,11 +1327,21 @@ full_conn_ci_n_avail_streams (const lsquic_conn_t *lconn)
 }
 
 
+static int
+handshake_done_or_doing_zero_rtt (const struct full_conn *conn)
+{
+    return (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        || conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
+                                                conn->fc_conn.cn_enc_session);
+}
+
+
 static void
 full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    if (full_conn_ci_n_avail_streams(lconn) > 0)
+    if (handshake_done_or_doing_zero_rtt(conn)
+                                    && full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (!new_stream(conn, generate_stream_id(conn), SCF_CALL_ON_NEW))
             ABORT_ERROR("could not create new stream: %s", strerror(errno));
@@ -3440,9 +3451,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
-    if (!(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) &&
-        !conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
-                                                conn->fc_conn.cn_enc_session))
+    if (!handshake_done_or_doing_zero_rtt(conn))
     {
         process_hsk_stream_write_events(conn);
         goto end_write;
@@ -3623,12 +3632,14 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn,
                                                                         status);
-    if ((status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK)
-        && conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
+    if (status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK)
     {
-        conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
-            conn->fc_conn.cn_enc_session, &conn->fc_conn,
-            conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
+        if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
+            conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
+                conn->fc_conn.cn_enc_session, &conn->fc_conn,
+                conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
+        if (conn->fc_n_delayed_streams)
+            create_delayed_streams(conn);
     }
 }
 
@@ -4227,7 +4238,8 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             LSQ_DEBUG("tickable: flags: 0x%X", conn->fc_flags & send_flags);
             goto check_can_send;
         }
-        if (lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
+        if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+                && lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
         {
             LSQ_DEBUG("tickable: has buffered packets");
             goto check_can_send;
@@ -4237,9 +4249,7 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             LSQ_DEBUG("tickable: there are sending streams");
             goto check_can_send;
         }
-        if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE) ||
-            conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
-                                                conn->fc_conn.cn_enc_session))
+        if (handshake_done_or_doing_zero_rtt(conn))
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
@@ -4283,12 +4293,13 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
 
 
 static lsquic_time_t
-full_conn_ci_next_tick_time (lsquic_conn_t *lconn)
+full_conn_ci_next_tick_time (lsquic_conn_t *lconn, unsigned *why)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     lsquic_time_t alarm_time, pacer_time, now;
+    enum alarm_id al_id;
 
-    alarm_time = lsquic_alarmset_mintime(&conn->fc_alset);
+    alarm_time = lsquic_alarmset_mintime(&conn->fc_alset, &al_id);
     pacer_time = lsquic_send_ctl_next_pacer_time(&conn->fc_send_ctl);
 
     if (pacer_time && LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
@@ -4302,14 +4313,28 @@ full_conn_ci_next_tick_time (lsquic_conn_t *lconn)
     if (alarm_time && pacer_time)
     {
         if (alarm_time < pacer_time)
+        {
+            *why = N_AEWS + al_id;
             return alarm_time;
+        }
         else
+        {
+            *why = AEW_PACER;
             return pacer_time;
+        }
     }
     else if (alarm_time)
+    {
+        *why = N_AEWS + al_id;
         return alarm_time;
-    else
+    }
+    else if (pacer_time)
+    {
+        *why = AEW_PACER;
         return pacer_time;
+    }
+    else
+        return 0;
 }
 
 

@@ -281,6 +281,9 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
     TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets)  \
  || TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets  ))
 
+#define lsquic_send_ctl_has_buffered_high(ctl) (                            \
+    !TAILQ_EMPTY(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets))
+
 #define lsquic_send_ctl_invalidate_bpt_cache(ctl) do {      \
     (ctl)->sc_cached_bpt.stream_id = UINT64_MAX;            \
 } while (0)

@@ -19,6 +19,8 @@
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_attq.h"
+#include "lsquic_packet_common.h"
+#include "lsquic_alarmset.h"
 #include "lsquic_malo.h"
 #include "lsquic_hash.h"
 #include "lsquic_conn.h"
@@ -107,7 +109,7 @@ attq_swap (struct attq *q, unsigned a, unsigned b)
 
 int
 attq_add (struct attq *q, struct lsquic_conn *conn,
-                                            lsquic_time_t advisory_time)
+                                lsquic_time_t advisory_time, enum ae_why why)
 {
     struct attq_elem *el, **heap;
     unsigned n, i;
@@ -129,6 +131,7 @@ attq_add (struct attq *q, struct lsquic_conn *conn,
     if (!el)
         return -1;
     el->ae_adv_time = advisory_time;
+    el->ae_why = why;
 
     /* The only place linkage between conn and attq_elem occurs: */
     el->ae_conn = conn;
@@ -256,11 +259,29 @@ attq_count_before (struct attq *q, lsquic_time_t cutoff)
 }
 
 
-const lsquic_time_t *
-attq_next_time (struct attq *q)
+const struct attq_elem *
+attq_next (struct attq *q)
 {
     if (q->aq_nelem > 0)
-        return &q->aq_heap[0]->ae_adv_time;
+        return q->aq_heap[0];
     else
         return NULL;
+}
+
+
+const char *
+lsquic_attq_why2str (enum ae_why why)
+{
+    switch (why)
+    {
+    case AEW_PACER:
+        return "PACER";
+    case AEW_MINI_EXPIRE:
+        return "MINI-EXPIRE";
+    default:
+        why -= N_AEWS;
+        if ((unsigned) why < (unsigned) MAX_LSQUIC_ALARMS)
+            return lsquic_alid2str[why];
+        return "UNKNOWN";
+    }
 }

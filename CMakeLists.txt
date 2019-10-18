@@ -200,6 +200,10 @@ ELSE()
 ENDIF()
 
 add_executable(http_server test/http_server.c test/prog.c test/test_common.c test/test_cert.c)
+add_executable(md5_server test/md5_server.c test/prog.c test/test_common.c test/test_cert.c)
+add_executable(md5_client test/md5_client.c test/prog.c test/test_common.c test/test_cert.c)
+add_executable(echo_server test/echo_server.c test/prog.c test/test_common.c test/test_cert.c)
+add_executable(echo_client test/echo_client.c test/prog.c test/test_common.c test/test_cert.c)
 
 
 SET(LIBS lsquic ${EVENT_LIB} ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
@@ -230,6 +234,10 @@ ENDIF()
 
 TARGET_LINK_LIBRARIES(http_client ${LIBS})
 TARGET_LINK_LIBRARIES(http_server ${LIBS})
+TARGET_LINK_LIBRARIES(md5_server  ${LIBS})
+TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
+TARGET_LINK_LIBRARIES(echo_server ${LIBS})
+TARGET_LINK_LIBRARIES(echo_client ${LIBS})
 
 add_subdirectory(src)
 
