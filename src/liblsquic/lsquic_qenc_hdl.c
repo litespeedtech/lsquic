@@ -332,11 +332,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     enum lsqpack_enc_status st;
     int i, s, write_to_stream;
     enum lsqpack_enc_flags enc_flags;
-#ifdef WIN32
-    unsigned char *enc_buf = alloca(qeh->qeh_encoder.qpe_cur_max_capacity * 2 );
-#else
     unsigned char enc_buf[ qeh->qeh_encoder.qpe_cur_max_capacity * 2 ];
-#endif
 
     s = lsqpack_enc_start_header(&qeh->qeh_encoder, stream_id, 0);
     if (s != 0)

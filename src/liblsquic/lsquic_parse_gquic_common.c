@@ -161,10 +161,8 @@ static const unsigned char simple_prst_payload[] = {
 };
 
 
-#ifndef WIN32
 typedef char correct_simple_prst_size[(GQUIC_RESET_SZ ==
                 1 + GQUIC_CID_LEN + sizeof(simple_prst_payload)) - 1];
-#endif
 
 
 ssize_t

@@ -183,7 +183,7 @@ lsquic_hex_encode (const void *src, size_t src_sz, void *dst, size_t dst_sz)
 void
 lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz)
 {
-    static const char b2c[17] = "0123456789ABCDEF";
+    static const char b2c[16] = "0123456789ABCDEF";
     const unsigned char *const end_input = buf + bufsz;
     char *const end_output = out + outsz;
 

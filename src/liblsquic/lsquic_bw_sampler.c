@@ -79,11 +79,11 @@ bw_sampler_abort_conn (struct bw_sampler *sampler)
 }
 
 
-#define BW_WARN_ONCE(msg,...) do {                                           \
+#define BW_WARN_ONCE(msg...) do {                                           \
     if (!(sampler->bws_flags & BWS_WARNED))                                 \
     {                                                                       \
         sampler->bws_flags |= BWS_WARNED;                                   \
-        LSQ_WARN(msg,__VA_ARGS__);                                                      \
+        LSQ_WARN(msg);                                                      \
     }                                                                       \
 } while (0)
 

@@ -2022,7 +2022,6 @@ static const struct conn_iface mini_conn_iface_disable_handshake = {
 };
 #endif
 
-#ifndef WIN32
 typedef char largest_recv_holds_at_least_16_seconds[
     ((1 << (sizeof(((struct mini_conn *) 0)->mc_largest_recv) * 8)) / 1000000
                                                                     >= 16) - 1];
@@ -2030,4 +2029,3 @@ typedef char largest_recv_holds_at_least_16_seconds[
 typedef char max_lifespan_smaller_than_largest_recv[
     ((1 << (sizeof(((struct mini_conn *) 0)->mc_largest_recv) * 8)) >
                                            MAX_MINI_CONN_LIFESPAN_IN_USEC) - 1];
-#endif

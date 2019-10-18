@@ -132,10 +132,10 @@ struct transport_params
 
 int
 lsquic_tp_encode (const struct transport_params *,
-                  unsigned char *const buf, size_t bufsz);
+                  unsigned char *buf, size_t bufsz);
 
 int
-lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
+lsquic_tp_decode (const unsigned char *buf, size_t bufsz,
     /* This argument specifies whose transport parameters we are parsing.  If
      * true, we are parsing parameters sent by the server; if false, we are
      * parsing parameteres sent by the client.

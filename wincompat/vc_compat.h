@@ -1,21 +1,17 @@
 #pragma once
 #include <Windows.h>
 #include <winsock2.h>
-#include <WS2tcpip.h>
-#include <ws2ipdef.h>
-#include <malloc.h>
 typedef SSIZE_T ssize_t;
 struct iovec {
   void  *iov_base;    /* Starting address */
   size_t iov_len;     /* Number of bytes to transfer */
 };
 #define strcasecmp(a,b) _strcmpi(a,b)
-#define strncasecmp(a,b,n) _strnicmp(a,b,n)
 #define strdup _strdup
 
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 
-#pragma warning(disable: 4018 4100 4127 4189 4200 4204 4152 4221 4244 4245 4267 4295 4305 4334 4702 4706 4804 ) 
+#pragma warning(disable: 4018 4100 4127 4189 4200 4204 4152 4221 4244 4245 4267 4334 4702 4706 4804 ) 
                                     /*
                                     4018:signed/unsigned mismatch
                                     4100:unreferenced formal parameter,
@@ -28,8 +24,6 @@ struct iovec {
                                     4244: '+=': conversion from 'int' to 'unsigned short', possible loss of data
                                     4245:'=': conversion from 'int' to 'unsigned int', signed/unsigned mismatch
                                     4267 function': conversion from 'size_t' to 'int', possible loss of data
-                                    4295 : array is too small to include a terminating null character
-                                    4305 '=': truncation from 'double' to 'float'
                                     4334: '<<': result of 32-bit shift implicitly converted to 64 bits (was 64-bit shift intended?)
                                     4702: unreachable code
                                     4706: assignment within conditional expression,

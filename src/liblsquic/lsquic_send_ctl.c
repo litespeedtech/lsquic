@@ -54,7 +54,7 @@
 #define MIN_RTO_DELAY           1000000      /* Microseconds */
 #define N_NACKS_BEFORE_RETX     3
 
-#define CGP(ctl) ((void*) &(ctl)->sc_cong_u)
+#define CGP(ctl) ((struct cong_ctl *) &(ctl)->sc_cong_u)
 
 #define packet_out_total_sz(p) \
                 lsquic_packet_out_total_sz(ctl->sc_conn_pub->lconn, p)
