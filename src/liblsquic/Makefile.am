@@ -1,6 +1,6 @@
 noinst_LIBRARIES = liblsquic.a
 
-AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/ssl/include -I$(top_srcdir)/src -I$(top_srcdir)/src/lsr -I$(top_srcdir)/src/liblsquic/ls-qpack -I$(top_srcdir)/src/spdy/
+AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src -I$(top_srcdir)/src/lsr -I$(top_srcdir)/src/liblsquic/ls-qpack -I$(top_srcdir)/src/spdy/
 
 
 liblsquic_a_METASOURCES = AUTO
@@ -83,5 +83,5 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_version.c \
     lsquic_versions_to_string.c
 
-lsquic_versions_to_string.c: gen-verstrs
+lsquic_versions_to_string.c: gen-verstrs.pl
 	$(top_srcdir)/src/liblsquic/gen-verstrs.pl $(top_srcdir)/include/lsquic.h lsquic_versions_to_string.c
