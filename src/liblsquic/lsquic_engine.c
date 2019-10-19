@@ -1179,7 +1179,7 @@ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
 
 void
 lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
-                                lsquic_conn_t *conn, lsquic_time_t tick_time)
+                    lsquic_conn_t *conn, lsquic_time_t tick_time, unsigned why)
 {
     lsquic_engine_t *const engine = (lsquic_engine_t *) enpub;
     if (conn->cn_flags & LSCONN_TICKABLE)
@@ -1194,11 +1194,11 @@ lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
         if (lsquic_conn_adv_time(conn) != tick_time)
         {
             attq_remove(engine->attq, conn);
-            if (0 != attq_add(engine->attq, conn, tick_time))
+            if (0 != attq_add(engine->attq, conn, tick_time, why))
                 engine_decref_conn(engine, conn, LSCONN_ATTQ);
         }
     }
-    else if (0 == attq_add(engine->attq, conn, tick_time))
+    else if (0 == attq_add(engine->attq, conn, tick_time, why))
         engine_incref_conn(conn, LSCONN_ATTQ);
 }
 
@@ -2355,7 +2355,7 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
 {
     lsquic_conn_t *conn;
     enum tick_st tick_st;
-    unsigned i;
+    unsigned i, why;
     lsquic_time_t next_tick_time;
     struct conns_stailq closed_conns;
     struct conns_tailq ticked_conns;
@@ -2453,10 +2453,10 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         }
         else if (!(conn->cn_flags & LSCONN_ATTQ))
         {
-            next_tick_time = conn->cn_if->ci_next_tick_time(conn);
+            next_tick_time = conn->cn_if->ci_next_tick_time(conn, &why);
             if (next_tick_time)
             {
-                if (0 == attq_add(engine->attq, conn, next_tick_time))
+                if (0 == attq_add(engine->attq, conn, next_tick_time, why))
                     engine_incref_conn(conn, LSCONN_ATTQ);
             }
             else
@@ -2590,38 +2590,80 @@ lsquic_engine_cooldown (lsquic_engine_t *engine)
 int
 lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
-    const lsquic_time_t *next_attq_time;
+    const struct attq_elem *next_attq;
     lsquic_time_t now, next_time;
+    const struct lsquic_conn *conn;
+    const lsquic_cid_t *cid;
+    const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
 
     ENGINE_CALLS_INCR(engine);
 
-    if (((engine->flags & ENG_PAST_DEADLINE)
+    if ((engine->flags & ENG_PAST_DEADLINE)
                                     && lsquic_mh_count(&engine->conns_out))
-        || (engine->pr_queue && prq_have_pending(engine->pr_queue))
-        || lsquic_mh_count(&engine->conns_tickable))
     {
+        conn = lsquic_mh_peek(&engine->conns_out);
+        cid = lsquic_conn_log_cid(conn);
+        LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
+            "and have %u outgoing connection%.*s (%"CID_FMT" first)",
+            lsquic_mh_count(&engine->conns_out),
+            lsquic_mh_count(&engine->conns_out) != 1, "s", CID_BITS(cid));
         *diff = 0;
         return 1;
     }
 
-    next_attq_time = attq_next_time(engine->attq);
+    if (engine->pr_queue && prq_have_pending(engine->pr_queue))
+    {
+        LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
+        *diff = 0;
+        return 1;
+    }
+
+    if (lsquic_mh_count(&engine->conns_tickable))
+    {
+        conn = lsquic_mh_peek(&engine->conns_tickable);
+        cid = lsquic_conn_log_cid(conn);
+        LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
+            "connection%.*s (%"CID_FMT" first)",
+            lsquic_mh_count(&engine->conns_tickable),
+            lsquic_mh_count(&engine->conns_tickable) != 1, "s", CID_BITS(cid));
+        *diff = 0;
+        return 1;
+    }
+
+    next_attq = attq_next(engine->attq);
     if (engine->pub.enp_flags & ENPUB_CAN_SEND)
     {
-        if (next_attq_time)
-            next_time = *next_attq_time;
+        if (next_attq)
+            next_time = next_attq->ae_adv_time;
         else
             return 0;
     }
     else
     {
-        if (next_attq_time)
-            next_time = MIN(*next_attq_time, engine->resume_sending_at);
+        if (next_attq)
+        {
+            next_time = next_attq->ae_adv_time;
+            if (engine->resume_sending_at < next_time)
+            {
+                next_time = engine->resume_sending_at;
+                next_attq = NULL;
+            }
+        }
         else
             next_time = engine->resume_sending_at;
     }
 
     now = lsquic_time_now();
     *diff = (int) ((int64_t) next_time - (int64_t) now);
+    if (next_attq)
+    {
+        cid = lsquic_conn_log_cid(next_attq->ae_conn);
+        LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
+            ": %s", *diff, CID_BITS(cid),
+            lsquic_attq_why2str(next_attq->ae_why));
+    }
+    else
+        LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
     return 1;
 }
 

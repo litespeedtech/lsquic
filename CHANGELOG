@@ -1,3 +1,14 @@
+2019-10-15
+    - 2.4.7
+    - Add echo client and server to the distibution.
+    - Add MD5 client and server to the distibution.
+    - Fix http_client: check command-line arguments better, prevent crash.
+    - Fix IETF conn: can_write_ack() should only care about APP PNS.
+    - Client: delay stream creation until handshake succeds.
+    - Reset HTTP stream whose write end is closed prematurely.
+    - Fix tickable(): mirror behavior of tick() wrt buffered packets.
+    - Log reason why engine is tickable.
+
 2019-10-11
     - 2.4.6
     - Minor code cleanup and logging improvements.

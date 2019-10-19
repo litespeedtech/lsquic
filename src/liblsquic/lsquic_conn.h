@@ -123,7 +123,7 @@ struct conn_iface
     (*ci_is_tickable) (struct lsquic_conn *);
 
     lsquic_time_t
-    (*ci_next_tick_time) (struct lsquic_conn *);
+    (*ci_next_tick_time) (struct lsquic_conn *, unsigned *why);
 
     int
     (*ci_can_write_ack) (struct lsquic_conn *);

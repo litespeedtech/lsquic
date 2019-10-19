@@ -58,8 +58,9 @@ test_attq_ordering (enum sort_action sa)
 {
     struct attq *q;
     struct lsquic_conn *conns, *conn;
+    const struct attq_elem *next_attq;
     lsquic_time_t prev;
-    const lsquic_time_t *t;
+    lsquic_time_t t;
     unsigned i;
     int s;
 
@@ -88,7 +89,7 @@ test_attq_ordering (enum sort_action sa)
     conns = calloc(sizeof(curiosity), sizeof(conns[0]));
     for (i = 0; i < sizeof(curiosity); ++i)
     {
-        s = attq_add(q, &conns[i], (lsquic_time_t) curiosity[i]);
+        s = attq_add(q, &conns[i], (lsquic_time_t) curiosity[i], 0);
         assert(s == 0);
     }
 
@@ -116,17 +117,18 @@ test_attq_ordering (enum sort_action sa)
 
     for (i = 0; i < sizeof(curiosity); ++i)
     {
-        t = attq_next_time(q);
-        assert(t);
+        next_attq = attq_next(q);
+        assert(next_attq);
+        t = next_attq->ae_adv_time;
         if (i > 0)
-            assert(*t >= prev);
-        prev = *t;
+            assert(t >= prev);
+        prev = t;
         conn = attq_pop(q, ~0ULL);
         assert(conn);
     }
 
-    t = attq_next_time(q);
-    assert(!t);
+    next_attq = attq_next(q);
+    assert(!next_attq);
     conn = attq_pop(q, ~0ULL);
     assert(!conn);
 
@@ -145,12 +147,12 @@ test_attq_removal_1 (void)
     q = attq_create();
     conns = calloc(6, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1);
-    attq_add(q, &conns[1], 4);
-    attq_add(q, &conns[2], 2);
-    attq_add(q, &conns[3], 5);
-    attq_add(q, &conns[4], 6);
-    attq_add(q, &conns[5], 3);
+    attq_add(q, &conns[0], 1, 0);
+    attq_add(q, &conns[1], 4, 0);
+    attq_add(q, &conns[2], 2, 0);
+    attq_add(q, &conns[3], 5, 0);
+    attq_add(q, &conns[4], 6, 0);
+    attq_add(q, &conns[5], 3, 0);
 
     attq_remove(q, &conns[3]);
 
@@ -169,15 +171,15 @@ test_attq_removal_2 (void)
     q = attq_create();
     conns = calloc(9, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1);
-    attq_add(q, &conns[1], 5);
-    attq_add(q, &conns[2], 6);
-    attq_add(q, &conns[3], 9);
-    attq_add(q, &conns[4], 11);
-    attq_add(q, &conns[5], 8);
-    attq_add(q, &conns[6], 15);
-    attq_add(q, &conns[7], 17);
-    attq_add(q, &conns[8], 21);
+    attq_add(q, &conns[0], 1, 0);
+    attq_add(q, &conns[1], 5, 0);
+    attq_add(q, &conns[2], 6, 0);
+    attq_add(q, &conns[3], 9, 0);
+    attq_add(q, &conns[4], 11, 0);
+    attq_add(q, &conns[5], 8, 0);
+    attq_add(q, &conns[6], 15, 0);
+    attq_add(q, &conns[7], 17, 0);
+    attq_add(q, &conns[8], 21, 0);
 
     attq_remove(q, &conns[1]);
 
@@ -196,15 +198,15 @@ test_attq_removal_3 (void)
     q = attq_create();
     conns = calloc(9, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1);
-    attq_add(q, &conns[1], 9);
-    attq_add(q, &conns[2], 22);
-    attq_add(q, &conns[3], 17);
-    attq_add(q, &conns[4], 11);
-    attq_add(q, &conns[5], 33);
-    attq_add(q, &conns[6], 27);
-    attq_add(q, &conns[7], 21);
-    attq_add(q, &conns[8], 19);
+    attq_add(q, &conns[0], 1, 0);
+    attq_add(q, &conns[1], 9, 0);
+    attq_add(q, &conns[2], 22, 0);
+    attq_add(q, &conns[3], 17, 0);
+    attq_add(q, &conns[4], 11, 0);
+    attq_add(q, &conns[5], 33, 0);
+    attq_add(q, &conns[6], 27, 0);
+    attq_add(q, &conns[7], 21, 0);
+    attq_add(q, &conns[8], 19, 0);
 
     attq_remove(q, &conns[1]);
 

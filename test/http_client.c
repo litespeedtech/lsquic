@@ -1563,6 +1563,12 @@ main (int argc, char **argv)
         LSQ_ERROR("could not prep");
         exit(EXIT_FAILURE);
     }
+    if (!(client_ctx.hostname || prog.prog_hostname))
+    {
+        fprintf(stderr, "Specify hostname (used for SNI and :authority) via "
+            "-H option\n");
+        exit(EXIT_FAILURE);
+    }
     if (was_empty && token)
         sport_set_token(TAILQ_LAST(&sports, sport_head), token);
 
