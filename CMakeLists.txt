@@ -23,7 +23,14 @@ MESSAGE(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 
 
-IF (NOT MSVC)
+IF (MSVC)
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wno-unknown-argument -Wno-unused-command-line-argument -Wno-reserved-id-macro -Wno-undef -Wno-microsoft-enum-forward-reference \
+											-Wno-implicit-int-conversion -Wno-switch-enum -Wno-nonportable-system-include-path -Wno-covered-switch-default -Wno-documentation-unknown-command \
+											-Wno-documentation -Wno-gnu-redeclared-enum -Wno-cast-qual -Wno-assign-enum -Wno-sign-conversion -wno-shorten-64-to-32 \
+											-Wno-zero-length-array -Wno-comma -Wno-missing-prototypes -Wno-cast-align -Wno-strict-prototypes -Wno-vla -Wno-double-promotion \
+											-Wno-language-extension-token -Wno-embedded-directive -Wno-format-nonliteral \
+											-Wno-shorten-64-to-32")
+ENDIF()
 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter")
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fno-omit-frame-pointer")
@@ -46,6 +53,7 @@ IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Werror")
     IF(CMAKE_C_COMPILER MATCHES "clang" AND
+						NOT MSVC AND 
                         NOT "$ENV{TRAVIS}" MATCHES "^true$")
         SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fsanitize=address")
     ENDIF()
@@ -72,25 +80,26 @@ ELSE()
 ENDIF()
 
 #MSVC
-ELSE()
-SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4214")	# nonstandard extension used: bit field types other than int
-SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
-IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
+IF (MSVC)
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
+MESSAGE(STATUS ${CMAKE_BUILD_TYPE})
+IF(CMAKE_BUILD_TYPE MATCHES "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
-    #SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
-    #SET(LIBS ${LIBS} fiu)
+#    SET (MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DFIU_ENABLE=1")
+   SET(LIBS ${LIBS} fiu)
 ELSE()
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Ox")
     # Comment out the following line to compile out debug messages:
     #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
 ENDIF()
-
+#
 ENDIF() #MSVC
-
+#
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
 
+IF (NOT DEFINED NO_BORING_SSL)
 IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
     FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
                 PATHS ${BORINGSSL_DIR}/include
@@ -152,6 +161,8 @@ ELSE()
 #endif
 
 ENDIF()
+
+ENDIF() #NO BORING SSL
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 INCLUDE_DIRECTORIES(include src/lshpack)

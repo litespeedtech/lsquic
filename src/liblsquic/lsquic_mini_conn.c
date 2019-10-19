@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#include <time.h>
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"

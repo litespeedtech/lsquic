@@ -179,7 +179,7 @@ write_packno (unsigned char *p, lsquic_packno_t packno,
         *p++ = packno;
     }
 
-    return p - begin;
+    return (unsigned)(p - begin);
 }
 
 
@@ -239,7 +239,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
     p += write_packno(p, packet_out->po_packno,
                                     lsquic_packet_out_packno_bits(packet_out));
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -342,7 +342,7 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
      *  0x2     LEN
      *  0x1     FIN
      */
-    unsigned sbits, obits, dbits;
+    unsigned sbits=0, obits=0, dbits=0;
     unsigned slen, olen, dlen;
     unsigned char *p = buf + 1;
 
@@ -369,7 +369,7 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
         unsigned n_avail;
         size_t nr;
 
-        n_avail = buf_len - (p + slen + olen - buf);
+        n_avail = (unsigned)(buf_len - (p + slen + olen - buf));
 
         /* If we cannot fill remaining buffer, we need to include data
          * length.
@@ -426,7 +426,7 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
            | (!!dlen << 1)
            | (!!fin  << 0)
            ;
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -465,7 +465,7 @@ ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
     vint_write(p, nr, dbits, dlen);
     p += dlen + nr;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -524,7 +524,7 @@ ietf_v1_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 
     assert(p <= pend);
 
-    return p + data_sz - (unsigned char *) buf;
+    return (int)(p + data_sz - (unsigned char *) buf);
 }
 
 
@@ -563,7 +563,7 @@ ietf_v1_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
 
     assert(p <= pend);
 
-    return p + data_sz - (unsigned char *) buf;
+    return (int)(p + data_sz - (unsigned char *) buf);
 }
 
 
@@ -635,7 +635,7 @@ ietf_v1_parse_ack_frame (const unsigned char *const buf, size_t buf_len,
     if (i < sizeof(ack->ranges) / sizeof(ack->ranges[0]))
     {
         ack->flags = 0;
-        ack->n_ranges = block_count + 1;
+        ack->n_ranges = (unsigned int)(block_count + 1);
     }
     else
     {
@@ -662,7 +662,7 @@ ietf_v1_parse_ack_frame (const unsigned char *const buf, size_t buf_len,
     ack->n_timestamps = 0;
 #endif
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -704,7 +704,7 @@ ietf_v1_gen_rst_frame (unsigned char *buf, size_t buf_len,
     vint_write(p, final_size, vbits, 1 << vbits);
     p += 1 << vbits;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -739,7 +739,7 @@ ietf_v1_parse_rst_frame (const unsigned char *buf, size_t buf_len,
     *final_size_p = final_size;
     *error_code_p = error_code;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -761,7 +761,7 @@ ietf_v1_parse_stop_sending_frame (const unsigned char *buf, size_t buf_len,
         return r;
     p += r;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -801,7 +801,7 @@ ietf_v1_parse_new_token_frame (const unsigned char *buf, size_t buf_len,
     p += token_size;
     *token_size_p = token_size;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -854,7 +854,7 @@ ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     }
 
     assert((unsigned) (p - buf) == needed);
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -897,7 +897,7 @@ ietf_v1_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
     *app_error_p = app_error;
     *reason_len = len;
     *reason_offset = off;
-    return off + len;
+    return (int)(off + len);
 }
 
 
@@ -1012,7 +1012,7 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     *has_missing = addl_ack_blocks > 0;
     *largest_received = maxno;
-    return p - (unsigned char *) outbuf;
+    return (int)(p - (unsigned char *) outbuf);
 
 #undef CHECKOUT
 #undef AVAIL
@@ -1181,7 +1181,7 @@ ietf_v1_gen_one_varint (unsigned char *buf, size_t len,
     vint_write(p, val, vbits, 1 << vbits);
     p += 1 << vbits;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1283,7 +1283,7 @@ ietf_v1_parse_new_conn_id (const unsigned char *buf, size_t len,
         *reset_token = p;
     p += IQUIC_SRESET_TOKEN_SZ;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1319,7 +1319,7 @@ ietf_v1_gen_two_varints (unsigned char *buf, size_t len,
     vint_write(p, vals[1], vbits[1], 1 << vbits[1]);
     p += 1 << vbits[1];
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1345,7 +1345,7 @@ ietf_v1_parse_two_varints (const unsigned char *buf, size_t len, uint64_t *vals[
         return s;
     p += s;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1489,7 +1489,7 @@ ietf_v1_gen_new_token_frame (unsigned char *buf, size_t buf_sz,
     memcpy(p, token, token_sz);
     p += token_sz;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1531,7 +1531,7 @@ ietf_v1_gen_new_connection_id_frame (unsigned char *buf, size_t buf_sz,
     memcpy(p, token, token_sz);
     p += token_sz;
 
-    return p - buf;
+    return (int)(p - buf);
 }
 
 
@@ -1824,7 +1824,7 @@ lsquic_ietf_v1_parse_packet_in_short_begin (struct lsquic_packet_in *packet_in,
 static int
 popcount (unsigned v)
 {
-    int count, i;
+    unsigned int count, i;
     for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
         if (v & (1 << i))
             ++count;
@@ -1875,7 +1875,7 @@ lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
         return -1;
     assert((unsigned) r == popcount(versions) * 4u);
 
-    return need;
+    return (int)need;
 }
 
 

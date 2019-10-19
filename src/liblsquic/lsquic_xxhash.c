@@ -147,7 +147,9 @@ typedef struct _U64_S
 //***************************************
 // Compiler-specific Functions and Macros
 //***************************************
+#ifndef (_MSC_VER)
 #define GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
+#endif
 
 // Note : although _rotl exists for minGW (GCC under windows), performance seems poor
 #if defined(_MSC_VER)
@@ -537,26 +539,26 @@ typedef struct
 XXH32_state_t *XXH32_createState(void)
 {
     XXH_STATIC_ASSERT(sizeof(XXH32_state_t) >= sizeof(
-                          XXH_istate32_t));   // A compilation error here means XXH32_state_t is not large enough
+                          XXH_istate32_t))   // A compilation error here means XXH32_state_t is not large enough
     return (XXH32_state_t *)XXH_malloc(sizeof(XXH32_state_t));
 }
 XXH_errorcode XXH32_freeState(XXH32_state_t *statePtr)
 {
     XXH_free(statePtr);
     return XXH_OK;
-};
+}
 
 XXH64_state_t *XXH64_createState(void)
 {
     XXH_STATIC_ASSERT(sizeof(XXH64_state_t) >= sizeof(
-                          XXH_istate64_t));   // A compilation error here means XXH64_state_t is not large enough
+                          XXH_istate64_t))   // A compilation error here means XXH64_state_t is not large enough
     return (XXH64_state_t *)XXH_malloc(sizeof(XXH64_state_t));
 }
 XXH_errorcode XXH64_freeState(XXH64_state_t *statePtr)
 {
     XXH_free(statePtr);
     return XXH_OK;
-};
+}
 
 
 /*** Hash feed ***/

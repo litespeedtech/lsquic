@@ -92,7 +92,7 @@ lsquic_qeh_init (struct qpack_enc_hdl *qeh, struct lsquic_conn *conn)
     lsqpack_enc_preinit(&qeh->qeh_encoder, (void *) conn);
     qeh->qeh_flags |= QEH_INITIALIZED;
     qeh->qeh_max_prefix_size =
-                        lsqpack_enc_header_block_prefix_size(&qeh->qeh_encoder);
+                        (unsigned int)lsqpack_enc_header_block_prefix_size(&qeh->qeh_encoder);
     if (qeh->qeh_dec_sm_in)
         lsquic_stream_wantread(qeh->qeh_dec_sm_in, 1);
     LSQ_DEBUG("initialized");
@@ -126,7 +126,7 @@ lsquic_qeh_settings (struct qpack_enc_hdl *qeh, unsigned max_table_size,
     LSQ_DEBUG("%zu-byte post-init TSU", qeh->qeh_tsu_sz);
     qeh->qeh_flags |= QEH_HAVE_SETTINGS;
     qeh->qeh_max_prefix_size =
-                        lsqpack_enc_header_block_prefix_size(&qeh->qeh_encoder);
+                        (unsigned int)lsqpack_enc_header_block_prefix_size(&qeh->qeh_encoder);
     LSQ_DEBUG("have settings: max table size=%u; dyn table size=%u; max risked "
         "streams=%u", max_table_size, dyn_table_size, max_risked_streams);
     if (qeh->qeh_enc_sm_out)

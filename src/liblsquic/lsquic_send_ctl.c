@@ -47,7 +47,7 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ctl->sc_conn_pub->lconn)
 #include "lsquic_logger.h"
 
-#define MAX_RESUBMITTED_ON_RTO  2
+//#define MAX_RESUBMITTED_ON_RTO  2
 #define MAX_RTO_BACKOFFS        10
 #define DEFAULT_RETX_DELAY      500000      /* Microseconds */
 #define MAX_RTO_DELAY           60000000    /* Microseconds */
@@ -873,7 +873,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                     packet_out->po_packno);
             if (packet_out->po_frame_types & ctl->sc_retx_frames)
                 largest_lost_packno = packet_out->po_packno;
-            else { /* don't count it as a loss */; }
+            else { /* don't count it as a loss */ }
             (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
             continue;
         }
@@ -1162,7 +1162,6 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
                 /* Mini connection only ever sends data on stream 1.  There
                  * is nothing to elide: always resend it.
                  */
-                ;
             }
         }
 

@@ -37,8 +37,6 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->imc_conn)
 #include "lsquic_logger.h"
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 static const struct conn_iface mini_conn_ietf_iface;
 

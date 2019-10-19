@@ -1,6 +1,8 @@
 #pragma once
 #include <Windows.h>
 #include <winsock2.h>
+#include <Ws2ipdef.h>
+#include <ws2tcpip.h>
 typedef SSIZE_T ssize_t;
 struct iovec {
   void  *iov_base;    /* Starting address */
@@ -30,3 +32,6 @@ struct iovec {
                                     4804: '-': unsafe use of type 'bool' in operation
                                     */
 
+
+typedef void* EVP_AEAD_CTX;
+int RAND_bytes(unsigned char* buf, int num);

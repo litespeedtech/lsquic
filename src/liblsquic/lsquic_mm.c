@@ -47,7 +47,9 @@
 #define LSQUIC_USE_POOLS 1
 #endif
 
+#ifdef FIU_ENABLE
 #define FAIL_NOMEM do { errno = ENOMEM; return NULL; } while (0)
+#endif
 
 
 struct packet_in_buf

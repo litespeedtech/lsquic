@@ -10,8 +10,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef WIN32
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #include "lsquic_byteswap.h"
 #include "lsquic_int_types.h"
@@ -158,14 +162,6 @@ lsquic_tp_encode (const struct transport_params *params,
 } while (0)
 #endif
 
-#define WRITE_PARAM_TO_P(tpidx, tpval, width) do {                      \
-    WRITE_UINT_TO_P(tpidx, 16);                                         \
-    WRITE_UINT_TO_P(width / 8, 16);                                     \
-    if (width > 8)                                                      \
-        WRITE_UINT_TO_P(tpval, width);                                  \
-    else if (width)                                                     \
-        *p++ = tpval;                                                   \
-} while (0)
 
     WRITE_UINT_TO_P(need - 2 + buf - p, 16);
 

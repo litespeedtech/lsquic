@@ -625,7 +625,7 @@ lsquic_gquic_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     if (sz < 0)
         return -1;
 
-    return p + sz - buf;
+    return (int)(p + sz - buf);
 }
 
 

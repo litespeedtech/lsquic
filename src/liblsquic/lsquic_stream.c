@@ -157,7 +157,7 @@ stream_hq_frame_put (struct lsquic_stream *, struct stream_hq_frame *);
 static size_t
 stream_hq_frame_size (const struct stream_hq_frame *);
 
-const struct stream_filter_if hq_stream_filter_if =
+static const struct stream_filter_if hq_stream_filter_if =
 {
     .sfi_readable   = hq_filter_readable,
     .sfi_filter_df  = hq_filter_df,
@@ -728,7 +728,7 @@ lsquic_stream_readable (struct lsquic_stream *stream)
          */
         ||  lsquic_stream_is_reset(stream)
         /* Type-dependent readability check: */
-        ||  stream->sm_readable(stream);
+        ||  stream->sm_readable(stream)
     ;
 }
 
@@ -2780,7 +2780,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
         stream->stream_flags |= STREAM_HDRS_FLUSHED;
     }
 
-    stream_header_sz = stream->sm_frame_header_sz(stream, size);
+    stream_header_sz = (unsigned int)stream->sm_frame_header_sz(stream, (unsigned int)size);
     need_at_least = stream_header_sz;
     if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
                                        == (SMBF_IETF|SMBF_USE_HEADERS))
@@ -2826,7 +2826,7 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     int len, s;
 
     assert(size > 0);
-    crypto_header_sz = stream->sm_frame_header_sz(stream, size);
+    crypto_header_sz = stream->sm_frame_header_sz(stream, (unsigned int)size);
     need_at_least = crypto_header_sz + 1;
 
     packet_out = lsquic_send_ctl_get_packet_for_crypto(send_ctl,
@@ -3067,9 +3067,9 @@ update_buffered_hq_frames (struct lsquic_stream *stream, size_t len,
                                                                 size_t avail)
 {
     struct stream_hq_frame *shf;
-    uint64_t cur_off, end;
+    uint64_t cur_off, end = 0;
     size_t frame_sz;
-    unsigned extendable;
+    unsigned extendable = 0;
 
     cur_off = stream->sm_payload + stream->sm_n_buffered;
     STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
@@ -4371,7 +4371,7 @@ dp_reader_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct lsquic_stream *const stream = lsqr_ctx;
     unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = (unsigned char*)buf + count;
     size_t len;
 
     len = MIN((size_t) (stream->sm_dup_push_len - stream->sm_dup_push_off),
@@ -4493,7 +4493,7 @@ pp_reader_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct push_promise *const promise = lsqr_ctx;
     unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = (unsigned char*)buf + count;
     size_t len;
 
     while (dst < end)

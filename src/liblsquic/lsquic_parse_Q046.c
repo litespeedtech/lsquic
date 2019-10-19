@@ -82,7 +82,7 @@ write_packno (unsigned char *p, lsquic_packno_t packno, enum packno_bits bits)
         *p++ = packno;
     }
 
-    return p - begin;
+    return (unsigned int)(p - begin);
 }
 
 
@@ -181,7 +181,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
     }
 
     assert(need == (unsigned int)(p - buf));
-    return p - buf;
+    return (int)(p - buf);
 }
 
 

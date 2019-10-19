@@ -14,8 +14,8 @@
 
 /* See RFC 2988 */
 
-#define ALPHA_SHIFT 3   /* Alpha is 1/8 */
-#define BETA_SHIFT  2   /* Beta is 1/4 */
+#define ALPHA_SHIFT 3LL   /* Alpha is 1/8 */
+#define BETA_SHIFT  2LL   /* Beta is 1/4 */
 
 
 void

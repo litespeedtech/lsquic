@@ -210,7 +210,9 @@ allocate_page (struct malo *malo)
 #endif
 
 
+#ifdef FIU_ENABLE
 #define FAIL_NOMEM do { errno = ENOMEM; return NULL; } while (0)
+#endif
 
 /* Get a new object. */
 void *

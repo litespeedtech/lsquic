@@ -10,6 +10,9 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <sys/types.h>
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include <openssl/rand.h>
 
@@ -536,7 +539,7 @@ const enum quic_frame_type lsquic_iquic_byte2type[0x100] =
 static int
 popcount (unsigned v)
 {
-    int count, i;
+    unsigned int count, i;
     for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
         if (v & (1 << i))
             ++count;
@@ -596,7 +599,7 @@ lsquic_Q046_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
         return -1;
     assert((unsigned) r == popcount(versions) * 4u);
 
-    return need;
+    return (int)need;
 }
 
 
