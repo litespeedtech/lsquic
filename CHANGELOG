@@ -1,3 +1,7 @@
+2019-10-21
+    - 2.4.8
+    - [OPTIMIZATION, BUGFIX] Use ls-qpack v0.10.5.
+
 2019-10-15
     - 2.4.7
     - Add echo client and server to the distibution.
