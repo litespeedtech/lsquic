@@ -1028,7 +1028,7 @@ iquic_lookup_cert (SSL *ssl, void *arg)
             SSL_clear_options(enc_sess->esi_ssl,
                                     SSL_get_options(enc_sess->esi_ssl));
             SSL_set_options(enc_sess->esi_ssl,
-                                    SSL_CTX_get_options(ssl_ctx));
+                            SSL_CTX_get_options(ssl_ctx) & ~SSL_OP_NO_TLSv1_3);
             return 1;
         }
         else
@@ -1113,6 +1113,7 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         return -1;
     }
 
+    SSL_clear_options(enc_sess->esi_ssl, SSL_OP_NO_TLSv1_3);
     SSL_set_cert_cb(enc_sess->esi_ssl, iquic_lookup_cert, enc_sess);
     SSL_set_ex_data(enc_sess->esi_ssl, s_idx, enc_sess);
     SSL_set_accept_state(enc_sess->esi_ssl);

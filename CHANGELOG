@@ -1,3 +1,12 @@
+2019-10-24
+    - 2.4.9
+    - [BUGFIX] IETF QUIC server: fix uninitialized variable use.
+    - [BUGFIX] make sure TLSv1.3 is not disabled in SSL object.
+    - [BUGFIX] Use issuer name and serial number to cache certs (SKID
+      values are not unique).
+    - [BUGFIX] Always set the idle alarm in IETF connection so that it
+      can time out.
+
 2019-10-21
     - 2.4.8
     - [OPTIMIZATION, BUGFIX] Use ls-qpack v0.10.5.

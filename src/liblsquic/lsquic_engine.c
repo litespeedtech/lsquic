@@ -79,6 +79,10 @@
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
 
+#ifndef LSQUIC_DEBUG_NEXT_ADV_TICK
+#define LSQUIC_DEBUG_NEXT_ADV_TICK 0
+#endif
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 /* The batch of outgoing packets grows and shrinks dynamically */
@@ -1010,7 +1014,6 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          const struct sockaddr *sa_peer, void *peer_ctx)
 {
     struct lsquic_hash_elem *el;
-    lsquic_cid_t odcid;
     struct purga_el *puel;
     lsquic_conn_t *conn;
 
@@ -1120,7 +1123,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     if ((1 << version) & LSQUIC_IETF_VERSIONS)
     {
         conn = lsquic_mini_conn_ietf_new(&engine->pub, packet_in, version,
-                    sa_peer->sa_family == AF_INET, odcid.len ? &odcid : NULL);
+                    sa_peer->sa_family == AF_INET, NULL);
     }
     else
     {
@@ -2592,40 +2595,48 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
     const struct attq_elem *next_attq;
     lsquic_time_t now, next_time;
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
     const struct lsquic_conn *conn;
     const lsquic_cid_t *cid;
     const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
+#endif
 
     ENGINE_CALLS_INCR(engine);
 
     if ((engine->flags & ENG_PAST_DEADLINE)
                                     && lsquic_mh_count(&engine->conns_out))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_out);
         cid = lsquic_conn_log_cid(conn);
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
             "and have %u outgoing connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_out),
             lsquic_mh_count(&engine->conns_out) != 1, "s", CID_BITS(cid));
+#endif
         *diff = 0;
         return 1;
     }
 
     if (engine->pr_queue && prq_have_pending(engine->pr_queue))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
         LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
+#endif
         *diff = 0;
         return 1;
     }
 
     if (lsquic_mh_count(&engine->conns_tickable))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_tickable);
         cid = lsquic_conn_log_cid(conn);
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
             "connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_tickable),
             lsquic_mh_count(&engine->conns_tickable) != 1, "s", CID_BITS(cid));
+#endif
         *diff = 0;
         return 1;
     }
@@ -2655,6 +2666,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 
     now = lsquic_time_now();
     *diff = (int) ((int64_t) next_time - (int64_t) now);
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
     if (next_attq)
     {
         cid = lsquic_conn_log_cid(next_attq->ae_conn);
@@ -2664,6 +2676,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     }
     else
         LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
+#endif
     return 1;
 }
 

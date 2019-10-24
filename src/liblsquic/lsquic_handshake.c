@@ -20,6 +20,7 @@
 #include <openssl/x509.h>
 #include <openssl/rand.h>
 #include <openssl/nid.h>
+#include <openssl/bn.h>
 #include <zlib.h>
 
 #include "lsquic.h"
@@ -277,15 +278,14 @@ typedef struct cert_item_st
 {
     struct lsquic_str*      crt;
     struct lsquic_hash_elem hash_el;
-    size_t                  skid_len;
-    unsigned char           skid_buf[0];
+    unsigned char           key[0];
 } cert_item_t;
 
 /* server */
-static cert_item_t* s_find_cert(const unsigned char *skid_buf, size_t skid_len);
+static cert_item_t* s_find_cert(const unsigned char *, size_t);
 static void s_free_cert_hash_item(cert_item_t *item);
-static cert_item_t* s_insert_cert(const unsigned char *skid_buf,
-                                size_t skid_len, const struct lsquic_str *crt);
+static cert_item_t* s_insert_cert(const unsigned char *key, size_t key_sz,
+                                                const struct lsquic_str *crt);
 
 static compress_cert_hash_item_t* find_compress_certs(struct lsquic_str *domain);
 static compress_cert_hash_item_t *make_compress_cert_hash_item(struct lsquic_str *domain, struct lsquic_str *crts_compress_buf);
@@ -394,14 +394,14 @@ static int init_hs_hash_tables(int flags)
 
 /* server */
 static cert_item_t *
-s_find_cert (const unsigned char *skid_buf, size_t skid_len)
+s_find_cert (const unsigned char *key, size_t key_sz)
 {
     struct lsquic_hash_elem *el;
 
     if (!s_server_certs)
         return NULL;
 
-    el = lsquic_hash_find(s_server_certs, skid_buf, skid_len);
+    el = lsquic_hash_find(s_server_certs, key, key_sz);
     if (el == NULL)
         return NULL;
 
@@ -460,8 +460,7 @@ s_free_cert_hash_item (cert_item_t *item)
 
 /* server */
 static cert_item_t *
-s_insert_cert (const unsigned char *skid_buf, size_t skid_len,
-                                                    const lsquic_str_t *crt)
+s_insert_cert (const unsigned char *key, size_t key_sz, const lsquic_str_t *crt)
 {
     struct lsquic_hash_elem *el;
     lsquic_str_t *crt_copy;
@@ -471,17 +470,16 @@ s_insert_cert (const unsigned char *skid_buf, size_t skid_len,
     if (!crt_copy)
         return NULL;
 
-    item = calloc(1, sizeof(*item) + skid_len);
+    item = calloc(1, sizeof(*item) + key_sz);
     if (!item)
     {
         lsquic_str_delete(crt_copy);
         return NULL;
     }
 
-    memcpy(item->skid_buf, skid_buf, skid_len);
-    item->skid_len = skid_len;
     item->crt = crt_copy;
-    el = lsquic_hash_insert(s_server_certs, item->skid_buf, item->skid_len,
+    memcpy(item->key, key, key_sz);
+    el = lsquic_hash_insert(s_server_certs, item->key, key_sz,
                                                         item, &item->hash_el);
     if (el)
         return lsquic_hashelem_getdata(el);
@@ -1981,27 +1979,52 @@ gen_shlo_data (uint8_t *buf, size_t buf_len, struct lsquic_enc_session *enc_sess
 }
 
 
-/* We use ASN.1 string instead of the actual value, but it's only two
- * extra bytes of overhead.  We save a call to ASN1_get_object().
+/* Generate key based on issuer and serial number.  The key has the following
+ * structure:
+ *
+ *      size_t          length of issuer.  This field is required to prevent
+ *                        the chance (however remote) that concatenation of
+ *                        the next two fields is ambiguous.
+ *      uint8_t[]       DER-encoded issuer
+ *      uint8_t[]       Serial number represented as sequence of bytes output
+ *                        by BN_bn2bin
+ *
+ * Return size of the key or zero on error.
  */
-static int
-get_skid (X509 *cert, const unsigned char **skid_buf, size_t *skid_len)
+static size_t
+gen_iasn_key (X509 *cert, unsigned char *const out, size_t const sz)
 {
-    ASN1_OCTET_STRING *skid;
-    X509_EXTENSION *ext;
-    int idx;
+    const unsigned char *name_bytes;
+    size_t name_sz;
+    X509_NAME *name;
+    ASN1_INTEGER *sernum;
+    BIGNUM *bn;
+    unsigned bn_sz;
 
-    idx = X509_get_ext_by_NID(cert, NID_subject_key_identifier, -1);
-    ext = X509_get_ext(cert, idx);
-    if (ext)
+    name = X509_get_issuer_name(cert);
+    if (!name)
+        return 0;
+    if (!X509_NAME_get0_der(name, &name_bytes, &name_sz))
+        return 0;
+    sernum = X509_get_serialNumber(cert);
+    if (!sernum)
+        return 0;
+    bn = ASN1_INTEGER_to_BN(sernum, NULL);
+    if (!bn)
+        return 0;
+    bn_sz = BN_num_bytes(bn);
+    if (sizeof(size_t) + name_sz + bn_sz > sz)
     {
-        skid = X509_EXTENSION_get_data(ext);
-        *skid_buf = skid->data;
-        *skid_len = (size_t) skid->length;
+        BN_free(bn);
         return 0;
     }
-    else
-        return -1;
+
+    memcpy(out, &name_sz, sizeof(name_sz));
+    memcpy(out + sizeof(name_sz), name_bytes, name_sz);
+    BN_bn2bin(bn, out + sizeof(name_sz) +  name_sz);
+    BN_free(bn);
+
+    return sizeof(name_sz) + name_sz + bn_sz;
 }
 
 
@@ -2015,8 +2038,8 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
     lsquic_str_t crtstr;
     cert_item_t *item;
     struct ssl_ctx_st *ssl_ctx;
-    const unsigned char *skid_buf;
-    size_t skid_len;
+    size_t key_sz;
+    unsigned char key[0x200];
     
     if (!enc_session->ssl_ctx)
     {
@@ -2033,9 +2056,10 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
         crt = SSL_CTX_get0_certificate(enc_session->ssl_ctx);
         if (!crt)
             return GET_SNI_ERR;
-        if (0 == get_skid(crt, &skid_buf, &skid_len))
+        key_sz = gen_iasn_key(crt, key, sizeof(key));
+        if (key_sz)
         {
-            item = s_find_cert(skid_buf, skid_len);
+            item = s_find_cert(key, key_sz);
             if (item)
                 LSQ_DEBUG("found cert in cache");
             else
@@ -2045,7 +2069,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
                 if (len < 0)
                     return GET_SNI_ERR;
                 lsquic_str_set(&crtstr, (char *) out, len);
-                item = s_insert_cert(skid_buf, skid_len, &crtstr);
+                item = s_insert_cert(key, key_sz, &crtstr);
                 if (item)
                 {
                     OPENSSL_free(out);
@@ -2061,11 +2085,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
         }
         else
         {
-            LSQ_DEBUG("skid not available, make a copy");
-            out = NULL;
-            len = i2d_X509(crt, &out);
-            if (len < 0)
-                return GET_SNI_ERR;
+            LSQ_INFO("cannot generate cert cache key, make copy");
   copy:     enc_session->cert_ptr = lsquic_str_new((char *) out, len);
             OPENSSL_free(out);
             if (!enc_session->cert_ptr)

@@ -945,17 +945,19 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     const struct enc_session_funcs_iquic *esfi;
     struct ietf_full_conn *conn;
     enum lsquic_version ver, zero_rtt_version;
+    lsquic_time_t now;
     unsigned versions;
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
         return NULL;
+    now = lsquic_time_now();
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF;
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);
-    if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, lsquic_time_now()))
+    if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, now))
     {
         free(conn);
         return NULL;
@@ -1022,6 +1024,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (conn->ifc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->ifc_settings->es_handshake_to);
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
     if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
     {
         conn->ifc_u.cli.ifcli_flags |= IFCLI_PUSH_ENABLED;
@@ -1286,6 +1289,8 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     /* TODO: check return valuee */ (void)
     handshake_ok(&conn->ifc_conn);
 
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+                                        imc->imc_created + conn->ifc_idle_to);
     while ((packet_in = TAILQ_FIRST(&imc->imc_app_packets)))
     {
         TAILQ_REMOVE(&imc->imc_app_packets, packet_in, pi_next);
