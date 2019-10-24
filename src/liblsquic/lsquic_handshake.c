@@ -2039,7 +2039,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
     cert_item_t *item;
     struct ssl_ctx_st *ssl_ctx;
     size_t key_sz;
-    unsigned char key[0x200];
+    unsigned char key[0x400];
     
     if (!enc_session->ssl_ctx)
     {
@@ -2086,6 +2086,10 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
         else
         {
             LSQ_INFO("cannot generate cert cache key, make copy");
+            out = NULL;
+            len = i2d_X509(crt, &out);
+            if (len < 0)
+                return GET_SNI_ERR;
   copy:     enc_session->cert_ptr = lsquic_str_new((char *) out, len);
             OPENSSL_free(out);
             if (!enc_session->cert_ptr)
