@@ -219,6 +219,7 @@ struct full_conn
     struct short_ack_info        fc_saved_ack_info;
     lsquic_time_t                fc_saved_ack_received;
     struct network_path          fc_path;
+    unsigned                     fc_orig_versions;      /* Client only */
 };
 
 static const struct ver_neg server_ver_neg;
@@ -672,7 +673,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
 
 struct lsquic_conn *
 lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
-                      unsigned flags,
+                      unsigned versions, unsigned flags,
                       const char *hostname, unsigned short max_packet_size,
                       int is_ipv4,
                       const unsigned char *zero_rtt, size_t zero_rtt_len)
@@ -682,12 +683,13 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     lsquic_cid_t cid;
     const struct enc_session_funcs_gquic *esf_g;
 
-    version = highest_bit_set(enpub->enp_settings.es_versions);
+    versions &= (~LSQUIC_IETF_VERSIONS & LSQUIC_SUPPORTED_VERSIONS);
+    assert(versions);
+    version = highest_bit_set(versions);
     if (zero_rtt)
     {
         zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
-        if (zero_rtt_version < N_LSQVER &&
-            ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
+        if (zero_rtt_version < N_LSQVER && ((1 << zero_rtt_version) & versions))
             version = zero_rtt_version;
     }
     esf_g = select_esf_gquic_by_ver(version);
@@ -725,7 +727,8 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
+    conn->fc_orig_versions = versions;
+    init_ver_neg(conn, versions, &version);
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
@@ -2510,6 +2513,7 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
     conn->fc_flags |= FC_TIMED_OUT;
 }
 
@@ -4379,8 +4383,8 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
     lconn->cn_esf.g->esf_reset_cid(lconn->cn_enc_session, &cce->cce_cid);
 
     /* Reset version negotiation */
-    version = highest_bit_set(conn->fc_settings->es_versions);
-    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
+    version = highest_bit_set(conn->fc_orig_versions);
+    init_ver_neg(conn, conn->fc_orig_versions, &version);
 
     /* Reset receive history */
     lsquic_rechist_cleanup(&conn->fc_rechist);

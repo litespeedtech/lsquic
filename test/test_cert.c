@@ -117,8 +117,6 @@ load_cert (struct lsquic_hash *certs, const char *optarg)
 
   end:
     free(sni);
-    if (f)
-        fclose(f);
     if (rv != 0)
     {   /* Error: free cert and its components */
         if (cert)

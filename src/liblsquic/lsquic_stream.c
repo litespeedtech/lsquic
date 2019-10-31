@@ -678,10 +678,24 @@ lsquic_stream_call_on_close (lsquic_stream_t *stream)
 
 
 static int
+stream_has_frame_at_read_offset (struct lsquic_stream *stream)
+{
+    if (!((stream->stream_flags & STREAM_CACHED_FRAME)
+                    && stream->read_offset == stream->sm_last_frame_off))
+    {
+        stream->sm_has_frame = stream->data_in->di_if->di_get_frame(
+                                stream->data_in, stream->read_offset) != NULL;
+        stream->sm_last_frame_off = stream->read_offset;
+        stream->stream_flags |= STREAM_CACHED_FRAME;
+    }
+    return stream->sm_has_frame;
+}
+
+
+static int
 stream_readable_non_http (struct lsquic_stream *stream)
 {
-    return stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                stream->read_offset) != NULL;
+    return stream_has_frame_at_read_offset(stream);
 }
 
 
@@ -690,8 +704,7 @@ stream_readable_http_gquic (struct lsquic_stream *stream)
 {
     return (stream->stream_flags & STREAM_HAVE_UH)
         && (stream->uh
-            ||  stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                    stream->read_offset));
+            || stream_has_frame_at_read_offset(stream));
 }
 
 
@@ -708,8 +721,7 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
         (stream->sm_sfi->sfi_readable(stream)
             && (/* Running the filter may result in hitting FIN: */
                 (stream->stream_flags & STREAM_FIN_REACHED)
-                || stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                    stream->read_offset)));
+                || stream_has_frame_at_read_offset(stream)));
 }
 
 
@@ -940,6 +952,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
   end_ok:
         if (free_frame)
             lsquic_malo_put(frame);
+        stream->stream_flags &= ~STREAM_CACHED_FRAME;
         return rv;
     }
     else if (INS_FRAME_DUP == ins_frame)
@@ -977,6 +990,7 @@ drop_frames_in (lsquic_stream_t *stream)
          * dropped.
          */
         stream->data_in = data_in_error_new();
+        stream->stream_flags &= ~STREAM_CACHED_FRAME;
     }
 }
 
@@ -1462,7 +1476,7 @@ readv_f (void *ctx_p, const unsigned char *buf, size_t len, int fin)
             if (ctx->iov < ctx->end)
                 ctx->p = ctx->iov->iov_base;
             else
-                ctx->p = NULL;
+                break;
         }
     }
 
@@ -2584,7 +2598,9 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                     rem = (1 << 14) - 1;
                 shf = stream_activate_hq_frame(stream,
                                     stream->sm_payload, HQFT_DATA, 0, rem);
-                if (!shf)
+                if (shf)
+                    goto insert;
+                else
                 {
                     /* TODO: abort connection?  Handle failure somehow */
                     break;
@@ -2593,10 +2609,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
             else
                 break;
         }
-        avail = stream->sm_n_buffered + stream->sm_write_avail(stream);
         if (shf->shf_off == stream->sm_payload
                                         && !(shf->shf_flags & SHF_WRITTEN))
         {
+  insert:
             frame_sz = stream_hq_frame_size(shf);
             if (frame_sz > (uintptr_t) (end - p))
             {
@@ -2634,6 +2650,7 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
         }
         else
         {
+            avail = stream->sm_n_buffered + stream->sm_write_avail(stream);
             len = stream_hq_frame_end(shf) - stream->sm_payload;
             assert(len);
             if (len > (unsigned) (end - p))

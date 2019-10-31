@@ -58,10 +58,12 @@ lsquic_gquic_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
                                const lsquic_cid_t *cid, unsigned versions);
 int
 lsquic_Q046_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
-    const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions);
+    const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions,
+    uint8_t);
 int
 lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
-    const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions);
+    const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions,
+    uint8_t);
 int
 lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     const struct lsquic_engine_public *, const lsquic_cid_t *scid,

@@ -194,7 +194,7 @@ enum stream_flags {
     STREAM_FIN_REACHED  = 1 << 7,   /* User read data up to FIN */
     STREAM_FINISHED     = 1 << 8,   /* Stream is finished */
     STREAM_ONCLOSE_DONE = 1 << 9,   /* on_close has been called */
-    STREAM_UNUSED10     = 1 << 10,  /* Unused */
+    STREAM_CACHED_FRAME = 1 << 10,  /* If set, sm_has_frame can be used */
     STREAM_HEADERS_SENT = 1 << 11,
     STREAM_HAVE_UH      = 1 << 12,  /* Have uncompressed headers */
     STREAM_ENCODER_DEP  = 1 << 13,  /* Encoder dependency: flush (IETF only) */
@@ -310,6 +310,8 @@ struct lsquic_stream
     /* Push promises sent on this stream */
     SLIST_HEAD(, push_promise)      sm_promises;
 
+    uint64_t                        sm_last_frame_off;
+
     /* How much data there is in sm_header_block and how much of it has been
      * sent:
      */
@@ -327,6 +329,7 @@ struct lsquic_stream
         SSHS_HBLOCK_SENDING,/* Sending header block data */
     }                               sm_send_headers_state:8;
     signed char                     sm_saved_want_write;
+    signed char                     sm_has_frame;
 
     unsigned char                   sm_dup_push_off;
     unsigned char                   sm_dup_push_len;

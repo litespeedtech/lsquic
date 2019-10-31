@@ -2892,6 +2892,7 @@ gquic_decrypt_packet (enc_session_t *enc_session_p,
         return DECPI_NOMEM;
     }
 
+    assert(packet_in->pi_data);
     header_len = packet_in->pi_header_sz;
     data_len   = packet_in->pi_data_sz - packet_in->pi_header_sz;
     enc_level = lsquic_enc_session_decrypt(enc_session_p,

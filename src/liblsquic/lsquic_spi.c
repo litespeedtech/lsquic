@@ -46,6 +46,7 @@ add_stream_to_spi (struct stream_prio_iter *iter, lsquic_stream_t *stream)
     }
     TAILQ_INSERT_TAIL(&iter->spi_streams[ stream->sm_priority ],
                                                 stream, next_prio_stream);
+    ++iter->spi_n_added;
 }
 
 
@@ -70,6 +71,7 @@ lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
     iter->spi_cur_prio      = 0;
     iter->spi_prev_stream   = NULL;
     iter->spi_next_stream   = NULL;
+    iter->spi_n_added       = 0;
 
     stream = first;
     count = 0;
@@ -302,11 +304,52 @@ have_non_critical_streams (const struct stream_prio_iter *iter)
 }
 
 
+#if __GNUC__
+#   define popcount __builtin_popcountll
+#else
+static int
+popcount (unsigned long long v)
+{
+    int count, i;
+    for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
+        if (v & (1 << i))
+            ++count;
+    return count;
+}
+
+
+#endif
+
+
+static int
+spi_has_more_than_one_queue (const struct stream_prio_iter *iter)
+{
+    unsigned i;
+    int count;
+
+    if (iter->spi_n_added < 2)
+        return 0;
+
+    count = 0;
+    for (i = 0; i < sizeof(iter->spi_set) / sizeof(iter->spi_set[0]); ++i)
+    {
+        count += popcount(iter->spi_set[i]);
+        if (count > 1)
+            return 1;
+    }
+
+    return 0;
+}
+
+
 static void
 spi_drop_high_or_non_high (struct stream_prio_iter *iter, int drop_high)
 {
     uint64_t new_set[ sizeof(iter->spi_set) / sizeof(iter->spi_set[0]) ];
     unsigned bit, set, n;
+
+    if (!spi_has_more_than_one_queue(iter))
+        return;
 
     memset(new_set, 0, sizeof(new_set));
 

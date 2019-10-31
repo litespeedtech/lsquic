@@ -68,7 +68,7 @@
 #include "lsquic_headers.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
-#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
+#define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
@@ -421,6 +421,9 @@ ignore_hsk (struct ietf_full_conn *);
 static unsigned
 ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
 
+static const lsquic_cid_t *
+ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
+
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -480,6 +483,7 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
     LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
     conn->ifc_flags |= IFC_TIMED_OUT;
 }
 
@@ -937,7 +941,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
 struct lsquic_conn *
 lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
-           unsigned flags,
+           unsigned versions, unsigned flags,
            const char *hostname, unsigned short max_packet_size, int is_ipv4,
            const unsigned char *zero_rtt, size_t zero_rtt_sz,
            const unsigned char *token, size_t token_sz)
@@ -946,7 +950,6 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     struct ietf_full_conn *conn;
     enum lsquic_version ver, zero_rtt_version;
     lsquic_time_t now;
-    unsigned versions;
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
@@ -963,8 +966,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
         return NULL;
     }
 
-    versions = enpub->enp_settings.es_versions & LSQUIC_IETF_VERSIONS;
     assert(versions);
+    versions &= LSQUIC_IETF_VERSIONS;
     ver = highest_bit_set(versions);
     if (zero_rtt)
     {
@@ -1070,8 +1073,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     if (!conn->ifc_pub.packet_out_malo)
     {
-        free(conn);
         lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
+        free(conn);
         return NULL;
     }
     conn->ifc_flags |= IFC_PROC_CRYPTO;
@@ -2420,6 +2423,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
             lsquic_hash_destroy(conn->ifc_pub.u.ietf.promises);
     }
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "full connection destroyed");
     free(conn->ifc_errmsg);
     free(conn);
 }
@@ -3133,6 +3137,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     if (!uh)
     {
         LSQ_WARN("stream push: cannot allocate uh");
+        free(promise);
         lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
         if (own_hset)
             conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
@@ -5392,6 +5397,27 @@ try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
 
 
 static int
+maybe_queue_opp_ack (struct ietf_full_conn *conn)
+{
+    if (/* If there is at least one ackable packet */
+        conn->ifc_n_slack_akbl[PNS_APP] > 0
+        /* ...and there are things to write */
+        && (!TAILQ_EMPTY(&conn->ifc_pub.write_streams) || conn->ifc_send_flags)
+        /* ...and writing is possible */
+        && write_is_possible(conn))
+    {
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
+        lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
+        conn->ifc_flags |= IFC_ACK_QUED_APP;
+        LSQ_DEBUG("%s ACK queued opportunistically", lsquic_pns2str[PNS_APP]);
+        return 1;
+    }
+    else
+        return 0;
+}
+
+
+static int
 process_retry_packet (struct ietf_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
@@ -5750,8 +5776,7 @@ verneg_ok (const struct ietf_full_conn *conn)
 {
     enum lsquic_version ver;
 
-    ver = highest_bit_set(conn->ifc_enpub->enp_settings.es_versions
-                                                & LSQUIC_IETF_VERSIONS);
+    ver = highest_bit_set(conn->ifc_u.cli.ifcli_ver_neg.vn_supp);
     return (1 << ver) & LSQUIC_IETF_DRAFT_VERSIONS;
 }
 
@@ -6005,7 +6030,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         have_delayed_packets =
             lsquic_send_ctl_maybe_squeeze_sched(&conn->ifc_send_ctl);
 
-    if (should_generate_ack(conn, IFC_ACK_QUEUED))
+    if (should_generate_ack(conn, IFC_ACK_QUEUED) ||
+                        (!have_delayed_packets && maybe_queue_opp_ack(conn)))
     {
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->ifc_send_ctl);
@@ -6483,8 +6509,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
     if (first_unvalidated || first_other)
     {
         victim = first_unvalidated ? first_unvalidated : first_other;
-        record_to_path(&first_unvalidated->cop_path, peer_ctx, local_sa,
-                                                                    peer_sa);
+        record_to_path(&victim->cop_path, peer_ctx, local_sa, peer_sa);
         return victim - conn->ifc_paths;
     }
 

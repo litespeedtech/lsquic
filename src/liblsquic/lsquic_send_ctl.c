@@ -2402,7 +2402,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
 
     new_packet_out = send_ctl_allocate_packet(ctl, bits, 0,
                         lsquic_packet_out_pns(packet_out), packet_out->po_path);
-    if (!packet_out)
+    if (!new_packet_out)
         return -1;
 
     if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm, packet_out,

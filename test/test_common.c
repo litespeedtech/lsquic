@@ -1592,15 +1592,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 
     if (n > 0)
         return n;
-    else if (s < 0)
+    else
     {
+        assert(s < 0);
 #if LSQUIC_RANDOM_SEND_FAILURE
   random_send_failure:
 #endif
         return -1;
     }
-    else
-        return 0;
 }
 
 

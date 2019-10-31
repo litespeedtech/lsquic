@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 4
-#define LSQUIC_PATCH_VERSION 10
+#define LSQUIC_MINOR_VERSION 5
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -1026,11 +1026,16 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
 
 /**
  * Create a client connection to peer identified by `peer_ctx'.
+ *
+ * To let the engine specify QUIC version, use N_LSQVER.  If zero-rtt info
+ * is supplied, version is picked from there instead.
+ *
  * If `max_packet_size' is set to zero, it is inferred based on `peer_sa':
  * 1350 for IPv6 and 1370 for IPv4.
  */
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *local_sa,
+lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
+                       const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
                        const char *hostname, unsigned short max_packet_size,

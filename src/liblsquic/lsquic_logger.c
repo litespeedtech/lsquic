@@ -261,10 +261,10 @@ lsquic_logger_log3 (enum lsq_log_level log_level,
     va_list ap;
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
+    va_end(ap);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
-    va_end(ap);
     lb = snprintf(buf + len, max - len, "\n");
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
@@ -303,10 +303,10 @@ lsquic_logger_log2 (enum lsq_log_level log_level,
     va_list ap;
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
+    va_end(ap);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
-    va_end(ap);
     lb = snprintf(buf + len, max - len, "\n");
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
@@ -343,10 +343,10 @@ lsquic_logger_log1 (enum lsq_log_level log_level,
     va_list ap;
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
+    va_end(ap);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
-    va_end(ap);
     lb = snprintf(buf + len, max - len, "\n");
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;

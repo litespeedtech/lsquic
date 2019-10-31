@@ -152,25 +152,31 @@ test_different_priorities (int *priority)
 struct stream_info
 {
     uint32_t        stream_id;
+    enum stream_b_flags bflags;
     unsigned char   prio;
 };
 
 
 const struct stream_info infos1[] = {
-    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    0, },
-    { LSQUIC_GQUIC_STREAM_HEADERS,      0, },
-    { 5,                          0, },
-    { 7,                          1, },
-    { 127,                        200, },
+    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    SMBF_CRITICAL, 0, },
+    { LSQUIC_GQUIC_STREAM_HEADERS,      SMBF_CRITICAL, 0, },
+    { 5,                                0, 0, },
+    { 7,                                0, 1, },
+    { 127,                              0, 200, },
 };
 
 
 const struct stream_info infos2[] = {
-    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    0, },
-    { LSQUIC_GQUIC_STREAM_HEADERS,      0, },
-    { 5,                          4, },
-    { 7,                          1, },
-    { 127,                        200, },
+    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    SMBF_CRITICAL, 0, },
+    { LSQUIC_GQUIC_STREAM_HEADERS,      SMBF_CRITICAL, 0, },
+    { 5,                                0, 4, },
+    { 7,                                0, 1, },
+    { 127,                              0, 200, },
+};
+
+
+const struct stream_info infos3[] = {
+    { 0,    0,  0, },
 };
 
 
@@ -185,6 +191,7 @@ struct drop_test
 static const struct drop_test drop_tests[] = {
     { infos1, 5, 0x7, },
     { infos2, 5, 0x3, },
+    { infos3, 1, 0x0, },
 };
 
 
@@ -203,7 +210,7 @@ test_drop (const struct drop_test *test)
     {
         stream_arr[n].sm_priority = test->infos[n].prio;
         stream_arr[n].id          = test->infos[n].stream_id;
-        stream_arr[n].sm_bflags   = SMBF_USE_HEADERS;
+        stream_arr[n].sm_bflags   = SMBF_USE_HEADERS | test->infos[n].bflags;
     }
 
     for (drop_high = 0; drop_high < 2; ++drop_high)
@@ -227,7 +234,9 @@ test_drop (const struct drop_test *test)
                                             stream = lsquic_spi_next(&spi))
             seen_mask |= 1 << (stream - stream_arr);
 
-        if (drop_high)
+        if (test->n_infos == 1)
+            assert(seen_mask == (1u << test->infos[0].stream_id));
+        else if (drop_high)
             assert((((1 << test->n_infos) - 1) & ~test->high_streams) == seen_mask);
         else
             assert(test->high_streams == seen_mask);

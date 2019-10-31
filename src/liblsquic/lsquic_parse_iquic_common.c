@@ -6,7 +6,6 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
 #include <sys/types.h>
@@ -549,7 +548,8 @@ popcount (unsigned v)
 
 int
 lsquic_Q046_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
-         const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions)
+         const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions,
+         uint8_t rand)
 {
     unsigned slen, dlen;
     size_t need;
@@ -561,7 +561,7 @@ lsquic_Q046_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     if (need > bufsz)
         return -1;
 
-    *buf++ = 0x80 | 0x40 | rand();
+    *buf++ = 0x80 | 0x40 | (rand & 0xF);
     memset(buf, 0, 4);
     buf += 4;
 

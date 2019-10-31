@@ -30,5 +30,5 @@ lsquic_zero_rtt_version (const unsigned char *buf, size_t bufsz)
         return lsquic_tag2ver(tag);
     }
     else
-        return -1;
+        return N_LSQVER;
 }

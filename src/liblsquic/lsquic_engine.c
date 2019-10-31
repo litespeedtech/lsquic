@@ -1462,7 +1462,8 @@ add_conn_to_hash (struct lsquic_engine *engine, struct lsquic_conn *conn,
 
 
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
+lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
+                       const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
                        const char *hostname, unsigned short max_packet_size,
@@ -1470,7 +1471,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
                        const unsigned char *token, size_t token_sz)
 {
     lsquic_conn_t *conn;
-    unsigned flags;
+    unsigned flags, versions;
     int is_ipv4;
 
     ENGINE_IN(engine);
@@ -1492,13 +1493,31 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
         return NULL;
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
     is_ipv4 = peer_sa->sa_family == AF_INET;
-    if (engine->pub.enp_settings.es_versions & LSQUIC_IETF_VERSIONS)
-        conn = lsquic_ietf_full_conn_client_new(&engine->pub,
+    if (zero_rtt && zero_rtt_len)
+    {
+        version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
+        if (version >= N_LSQVER)
+        {
+            LSQ_INFO("zero-rtt version is bad, won't use");
+            zero_rtt = NULL;
+            zero_rtt_len = 0;
+        }
+    }
+    if (version >= N_LSQVER)
+    {
+        if (version > N_LSQVER)
+            LSQ_WARN("invalid version specified, engine will pick");
+        versions = engine->pub.enp_settings.es_versions;
+    }
+    else
+        versions = 1u << version;
+    if (versions & LSQUIC_IETF_VERSIONS)
+        conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
                     flags, hostname, max_packet_size,
                     is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, flags,
-                            hostname, max_packet_size, is_ipv4,
+                            versions, hostname, max_packet_size, is_ipv4,
                             zero_rtt, zero_rtt_len);
     if (!conn)
         goto err;
@@ -1558,13 +1577,12 @@ refflags2str (enum lsquic_conn_flags flags, char s[6])
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
 {
-    const lsquic_cid_t *cid;
     char str[2][7];
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
-    cid = lsquic_conn_log_cid(conn);
-    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(cid),
+    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'",
+                    CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags & ~flag, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
 }
@@ -1574,7 +1592,6 @@ static lsquic_conn_t *
 engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                                         enum lsquic_conn_flags flags)
 {
-    const lsquic_cid_t *cid;
     char str[2][7];
     lsquic_time_t now;
     assert(flags & CONN_REF_FLAGS);
@@ -1584,8 +1601,8 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
         assert(0 == (conn->cn_flags & LSCONN_HASHED));
 #endif
     conn->cn_flags &= ~flags;
-    cid = lsquic_conn_log_cid(conn);
-    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(cid),
+    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'",
+                    CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags | flags, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
@@ -2128,7 +2145,6 @@ send_packets_out (struct lsquic_engine *engine,
                   struct conns_tailq *ticked_conns,
                   struct conns_stailq *closed_conns)
 {
-    const lsquic_cid_t *cid;
     unsigned n, w, n_sent, n_batches_sent;
     lsquic_packet_out_t *packet_out;
     struct lsquic_packet_out **packet;
@@ -2148,14 +2164,13 @@ send_packets_out (struct lsquic_engine *engine,
 
     while ((conn = coi_next(&conns_iter)))
     {
-        cid = lsquic_conn_log_cid(conn);
         packet_out = conn->cn_if->ci_next_packet_to_send(conn, 0);
         if (!packet_out) {
             /* Evanescent connection always has a packet to send: */
             assert(!(conn->cn_flags & LSCONN_EVANESCENT));
             LSQ_DEBUGC("batched all outgoing packets for %s conn %"CID_FMT,
-                (conn->cn_flags & LSCONN_MINI   ? "mini"   :
-                                          "full"), CID_BITS(cid));
+                (conn->cn_flags & LSCONN_MINI   ? "mini" : "full"),
+                CID_BITS(lsquic_conn_log_cid(conn)));
             coi_deactivate(&conns_iter, conn);
             continue;
         }
@@ -2174,7 +2189,7 @@ send_packets_out (struct lsquic_engine *engine,
                 /* This is pretty bad: close connection immediately */
                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
                 LSQ_INFOC("conn %"CID_FMT" has unsendable packets",
-                                                    CID_BITS(cid));
+                                        CID_BITS(lsquic_conn_log_cid(conn)));
                 if (!(conn->cn_flags & LSCONN_EVANESCENT))
                 {
                     if (!(conn->cn_flags & LSCONN_CLOSING))
@@ -2207,7 +2222,7 @@ send_packets_out (struct lsquic_engine *engine,
             }
         }
         LSQ_DEBUGC("batched packet %"PRIu64" for connection %"CID_FMT,
-                                        packet_out->po_packno, CID_BITS(cid));
+                    packet_out->po_packno, CID_BITS(lsquic_conn_log_cid(conn)));
         if (packet_out->po_flags & PO_ENCRYPTED)
         {
             iov->iov_base          = packet_out->po_enc_data;
@@ -2597,7 +2612,6 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     lsquic_time_t now, next_time;
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
     const struct lsquic_conn *conn;
-    const lsquic_cid_t *cid;
     const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
 #endif
 
@@ -2608,11 +2622,11 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_out);
-        cid = lsquic_conn_log_cid(conn);
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
             "and have %u outgoing connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_out),
-            lsquic_mh_count(&engine->conns_out) != 1, "s", CID_BITS(cid));
+            lsquic_mh_count(&engine->conns_out) != 1, "s",
+            CID_BITS(lsquic_conn_log_cid(conn)));
 #endif
         *diff = 0;
         return 1;
@@ -2631,11 +2645,11 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_tickable);
-        cid = lsquic_conn_log_cid(conn);
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
             "connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_tickable),
-            lsquic_mh_count(&engine->conns_tickable) != 1, "s", CID_BITS(cid));
+            lsquic_mh_count(&engine->conns_tickable) != 1, "s",
+            CID_BITS(lsquic_conn_log_cid(conn)));
 #endif
         *diff = 0;
         return 1;
@@ -2668,12 +2682,9 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     *diff = (int) ((int64_t) next_time - (int64_t) now);
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
     if (next_attq)
-    {
-        cid = lsquic_conn_log_cid(next_attq->ae_conn);
         LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
-            ": %s", *diff, CID_BITS(cid),
+            ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
             lsquic_attq_why2str(next_attq->ae_why));
-    }
     else
         LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
 #endif

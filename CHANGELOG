@@ -1,3 +1,12 @@
+2019-10-31
+    - 2.5.0
+    - [API] lsquic_engine_connect() can now be passed QUIC version to use.
+    - [OPTIMIZATION] Queue opportunistic ACKs if there is data to be sent.
+    - [BUGFIX] Don't evict streams from priority iterator if there is
+      only one queue.
+    - [OPTIMIZATION, BUGFIX] Several other optimizations and bug fixes.
+    - Use ls-qpack v0.10.7.
+
 2019-10-24
     - 2.4.10
     - [BUGFIX] IETF QUIC server: fix uninitialized variable use.

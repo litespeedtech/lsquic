@@ -147,7 +147,7 @@ main (int argc, char **argv)
         cid.idbuf[2] = i;
         puel = lsquic_purga_contains(purga, &cid);
         assert(puel && PUTY_CONN_DELETED == puel->puel_type);
-        ~i == puel->puel_time;
+        assert(~i == puel->puel_time);
     }
 
     ++cid.idbuf[1];

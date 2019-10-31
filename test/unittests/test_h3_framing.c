@@ -690,7 +690,7 @@ test_frame_header_split (unsigned n_packets)
 
     struct lsquic_packet_out *const packet_out
         = lsquic_send_ctl_new_packet_out(&tobjs.send_ctl, 0, PNS_APP, &network_path);
-
+    assert(packet_out);
     const size_t pad_size = packet_out->po_n_alloc
                           - 2   /* STREAM header */
                           - 5   /* 3-byte HEADERS frame */

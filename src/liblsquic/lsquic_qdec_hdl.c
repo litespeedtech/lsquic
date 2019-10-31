@@ -410,6 +410,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     }
 
     lsqpack_dec_destroy_header_list(qlist);
+    qlist = NULL;
     st = hset_if->hsi_process_header(hset, 0, 0, 0, 0, 0);
     if (st != LSQUIC_HDR_OK)
         goto err;
@@ -431,7 +432,8 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     return 0;
 
   err:
-    lsqpack_dec_destroy_header_list(qlist);
+    if (qlist)
+        lsqpack_dec_destroy_header_list(qlist);
     hset_if->hsi_discard_header_set(hset);
     free(uh);
     return -1;

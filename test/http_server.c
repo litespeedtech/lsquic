@@ -1168,6 +1168,8 @@ interop_server_hset_add_header (void *hset_p, unsigned name_idx,
         req->qif_str[req->qif_sz + name_len + 1 + value_len] = '\n';
         req->qif_sz += name_len + value_len + 2;
     }
+    else
+        return LSQUIC_HDR_OK;
 
     if (5 == name_len && 0 == strncmp(name, ":path", 5))
     {
