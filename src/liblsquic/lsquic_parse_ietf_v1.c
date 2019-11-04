@@ -1846,7 +1846,7 @@ lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     if (need > bufsz)
         return -1;
 
-    *buf++ = 0x80 | 0x40 | (rand & 0xF);
+    *buf++ = 0x80 | 0x40 | rand;
     memset(buf, 0, 4);
     buf += 4;
 

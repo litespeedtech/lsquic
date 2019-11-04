@@ -491,7 +491,7 @@ prq_next_conn (struct pr_queue *prq)
         len = gen_verneg(packet_out->po_data, max_bufsz(prq),
                     /* Flip SCID/DCID here: */ &req->pr_dcid, &req->pr_scid,
                     prq->prq_enpub->enp_settings.es_versions,
-                    get_rand_nybble(prq));
+                    get_rand_byte(prq));
         if (len > 0)
             packet_out->po_data_sz = len;
         else

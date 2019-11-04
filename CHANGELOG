@@ -1,3 +1,12 @@
+2019-11-04
+    - 2.5.1
+    - [BUGFIX] Fix double-free when emptying a packet number space.
+    - [BUGFIX] http_server: fix md5sum handler: handle EOF correctly.
+    - [BUGFIX] Use random values in bits 4 and 5 of the first byte of
+      verneg packets (regression introduced in 2.5.0).
+    - [OPTIMIZATION] Don't compile in expensive attq checks by default.
+    - [OPTIMIZATION] http_server: compile regexes only once.
+
 2019-10-31
     - 2.5.0
     - [API] lsquic_engine_connect() can now be passed QUIC version to use.

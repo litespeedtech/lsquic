@@ -2636,14 +2636,45 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
     unsigned count, packet_sz;
     struct lsquic_packets_tailq *const *q;
     struct lsquic_packets_tailq *const queues[] = {
-        &ctl->sc_scheduled_packets,
-        &ctl->sc_unacked_packets[pns],
         &ctl->sc_lost_packets,
         &ctl->sc_buffered_packets[0].bpq_packets,
         &ctl->sc_buffered_packets[1].bpq_packets,
     };
 
+    /* Don't bother with chain destruction, as all chains members are always
+     * within the same packet number space
+     */
+
     count = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (pns == lsquic_packet_out_pns(packet_out))
+        {
+            send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
+            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_destroy_packet(ctl, packet_out);
+            ++count;
+        }
+    }
+
+    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_flags & PO_LOSS_REC)
+            TAILQ_REMOVE(&ctl->sc_unacked_packets[pns], packet_out, po_next);
+        else
+        {
+            packet_sz = packet_out_sent_sz(packet_out);
+            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
+            lsquic_packet_out_ack_streams(packet_out);
+        }
+        send_ctl_destroy_packet(ctl, packet_out);
+        ++count;
+    }
+
     for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
         for (packet_out = TAILQ_FIRST(*q); packet_out; packet_out = next)
             {
@@ -2651,16 +2682,6 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
                 if (pns == lsquic_packet_out_pns(packet_out))
                 {
                     TAILQ_REMOVE(*q, packet_out, po_next);
-                    if (*q == &ctl->sc_unacked_packets[pns])
-                    {
-                        if (0 == (packet_out->po_flags & PO_LOSS_REC))
-                        {
-                            packet_sz = packet_out_sent_sz(packet_out);
-                            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
-                            lsquic_packet_out_ack_streams(packet_out);
-                        }
-                        send_ctl_destroy_chain(ctl, packet_out, &next);
-                    }
                     send_ctl_destroy_packet(ctl, packet_out);
                     ++count;
                 }

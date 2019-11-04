@@ -646,11 +646,13 @@ struct req_map
     enum {
         RM_WANTBODY     = 1 << 0,
         RM_REGEX        = 1 << 1,
+        RM_COMPILED     = 1 << 2,
     }                       flags;
+    regex_t                 re;
 };
 
 
-static const struct req_map req_maps[] =
+static struct req_map req_maps[] =
 {
     { GET, "/", IOH_INDEX_HTML, "200", 0, },
     { GET, "/index.html", IOH_INDEX_HTML, "200", 0, },
@@ -670,34 +672,55 @@ static const struct req_map req_maps[] =
 #define MAX_MATCHES 5
 
 
+static void
+init_map_regexes (void)
+{
+    struct req_map *map;
+
+    for (map = req_maps; map < req_maps + sizeof(req_maps)
+                                            / sizeof(req_maps[0]); ++map)
+        if (map->flags & RM_REGEX)
+        {
+#ifndef NDEBUG
+            int s;
+            s =
+#endif
+            regcomp(&map->re, map->path, REG_EXTENDED|REG_ICASE);
+            assert(0 == s);
+            map->flags |= RM_COMPILED;
+        }
+}
+
+
+static void
+free_map_regexes (void)
+{
+    struct req_map *map;
+
+    for (map = req_maps; map < req_maps + sizeof(req_maps)
+                                            / sizeof(req_maps[0]); ++map)
+        if (map->flags & RM_COMPILED)
+        {
+            regfree(&map->re);
+            map->flags &= ~RM_COMPILED;
+        }
+}
+
+
 static const struct req_map *
 find_handler (enum method method, const char *path, regmatch_t *matches)
 {
     const struct req_map *map;
-    regex_t re;
 
     for (map = req_maps; map < req_maps + sizeof(req_maps)
                                             / sizeof(req_maps[0]); ++map)
-        if (method == map->method)
+        if (map->flags & RM_COMPILED)
         {
-            if (map->flags & RM_REGEX)
-            {
-#ifndef NDEBUG
-                int s;
-                s =
-#endif
-                regcomp(&re, map->path, REG_EXTENDED|REG_ICASE);
-                assert(0 == s);
-                if (0 == regexec(&re, path, MAX_MATCHES + 1, matches, 0))
-                {
-                    regfree(&re);
-                    return map;
-                }
-                regfree(&re);
-            }
-            else if (0 == strcasecmp(path, map->path))
+            if (0 == regexec(&map->re, path, MAX_MATCHES + 1, matches, 0))
                 return map;
         }
+        else if (0 == strcasecmp(path, map->path))
+            return map;
 
     return NULL;
 }
@@ -868,6 +891,8 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 LSQ_ERROR("could not read from stream for MD5: %s", strerror(errno));
                 exit(1);
             }
+            if (nw == 0)
+                st_h->interop_u.md5c.done = 1;
             if (st_h->interop_u.md5c.done)
             {
                 MD5_Final(md5sum, &st_h->interop_u.md5c.md5ctx);
@@ -1285,6 +1310,7 @@ main (int argc, char **argv)
     if (!server_ctx.document_root)
     {
         LSQ_NOTICE("Document root is not set: start in Interop Mode");
+        init_map_regexes();
         prog.prog_api.ea_stream_if = &interop_http_server_if;
         prog.prog_api.ea_hsi_if = &header_bypass_api;
         prog.prog_api.ea_hsi_ctx = NULL;
@@ -1300,6 +1326,9 @@ main (int argc, char **argv)
 
     s = prog_run(&prog);
     prog_cleanup(&prog);
+
+    if (!server_ctx.document_root)
+        free_map_regexes();
 
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }
