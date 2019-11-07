@@ -2418,7 +2418,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
     }
     else
     {
-        send_ctl_destroy_packet(ctl, packet_out);
+        send_ctl_destroy_packet(ctl, new_packet_out);
         return -1;
     }
 }

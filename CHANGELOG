@@ -1,3 +1,10 @@
+2019-11-07
+    - 2.5.2
+    - [BUGFIX] argument order to gQUIC client constructor.  Regression
+      introduced in 2.5.0.
+    - [BUGFIX] split buffered packet error recovery: destroy the correct
+      packet.
+
 2019-11-04
     - 2.5.1
     - [BUGFIX] Fix double-free when emptying a packet number space.

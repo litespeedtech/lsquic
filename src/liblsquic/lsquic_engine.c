@@ -1516,8 +1516,8 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
                     flags, hostname, max_packet_size,
                     is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
     else
-        conn = lsquic_gquic_full_conn_client_new(&engine->pub, flags,
-                            versions, hostname, max_packet_size, is_ipv4,
+        conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
+                            flags, hostname, max_packet_size, is_ipv4,
                             zero_rtt, zero_rtt_len);
     if (!conn)
         goto err;
