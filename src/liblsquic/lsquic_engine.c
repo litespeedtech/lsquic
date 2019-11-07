@@ -1234,7 +1234,7 @@ find_conn_by_srst (struct lsquic_engine *engine,
 static int
 process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
        struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
-       const struct sockaddr *sa_peer, void *peer_ctx)
+       const struct sockaddr *sa_peer, void *peer_ctx, int full_udp_packet)
 {
     lsquic_conn_t *conn;
     const unsigned char *packet_in_data;
@@ -1257,6 +1257,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     if (!conn)
     {
         if (engine->pub.enp_settings.es_honor_prst
+                && full_udp_packet
                 && !(packet_in->pi_flags & PI_GQUIC)
                 && engine->pub.enp_srst_hash
                 && (conn = find_conn_by_srst(engine, packet_in)))
@@ -2562,7 +2563,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         packet_in->pi_flags |= (3 & ecn) << PIBIT_ECN_SHIFT;
         eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);
         s = process_packet_in(engine, packet_in, &ppstate, sa_local, sa_peer,
-                                                                    peer_ctx);
+                            peer_ctx, packet_in->pi_data_sz == packet_in_size);
         n_zeroes += s == 0;
     }
     while (0 == s && packet_in_data < packet_end);

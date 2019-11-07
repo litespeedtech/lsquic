@@ -1272,6 +1272,8 @@ ietf_v1_parse_new_conn_id (const unsigned char *buf, size_t len,
         return -1;
 
     cid_len = *p++;
+    if (cid_len == 0 || cid_len > MAX_CID_LEN)
+        return -2;
 
     if ((unsigned) (end - p) < cid_len + IQUIC_SRESET_TOKEN_SZ)
         return -1;

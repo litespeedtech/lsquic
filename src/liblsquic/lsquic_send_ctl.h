@@ -335,8 +335,7 @@ void
 lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *);
 
 int
-lsquic_send_ctl_retry (struct lsquic_send_ctl *, const unsigned char *,
-                                                                size_t, int);
+lsquic_send_ctl_retry (struct lsquic_send_ctl *, const unsigned char *, size_t);
 
 int
 lsquic_send_ctl_set_token (struct lsquic_send_ctl *,

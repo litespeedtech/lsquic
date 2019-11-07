@@ -1654,7 +1654,7 @@ lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *ctl)
 }
 
 
-static void
+static int
 send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -1664,7 +1664,7 @@ send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
     if (!token)
     {
         LSQ_WARN("malloc failed: cannot set initial token");
-        return;
+        return -1;
     }
 
     memcpy(token, ctl->sc_token, ctl->sc_token_sz);
@@ -1672,6 +1672,7 @@ send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
     packet_out->po_token_len = ctl->sc_token_sz;
     packet_out->po_flags |= PO_NONCE;
     LSQ_DEBUG("set initial token on packet");
+    return 0;
 }
 
 
@@ -1706,7 +1707,7 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
         {
             packet_out->po_header_type = HETY_INITIAL;
             if (ctl->sc_token)
-                send_ctl_set_packet_out_token(ctl, packet_out);
+                (void) send_ctl_set_packet_out_token(ctl, packet_out);
         }
         else
             packet_out->po_header_type = HETY_HANDSHAKE;
@@ -2553,23 +2554,35 @@ lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *ctl)
 }
 
 
+static void
+strip_trailing_padding (struct lsquic_packet_out *packet_out)
+{
+    struct packet_out_srec_iter posi;
+    const struct stream_rec *srec;
+    unsigned off;
+
+    off = 0;
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        off = srec->sr_off + srec->sr_len;
+
+    assert(off);
+
+    packet_out->po_data_sz = off;
+    packet_out->po_frame_types &= ~QUIC_FTBIT_PADDING;
+}
+
+
 int
 lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
-                const unsigned char *token, size_t token_sz, int cidlen_diff)
+                                const unsigned char *token, size_t token_sz)
 {
-    struct lsquic_packet_out *packet_out;
+    struct lsquic_packet_out *packet_out, *next, *new_packet_out;
+    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
+    size_t sz;
 
     if (token_sz >= 1ull << (sizeof(packet_out->po_token_len) * 8))
     {
         LSQ_WARN("token size %zu is too long", token_sz);
-        return -1;
-    }
-
-    send_ctl_expire(ctl, PNS_INIT, EXFI_ALL);
-    packet_out = TAILQ_FIRST(&ctl->sc_lost_packets);
-    if (!(packet_out && HETY_INITIAL == packet_out->po_header_type))
-    {
-        LSQ_INFO("cannot find initial packet to add token to");
         return -1;
     }
 
@@ -2580,26 +2593,57 @@ lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
         return -1;
     }
 
+    send_ctl_expire(ctl, PNS_INIT, EXFI_ALL);
+
     if (0 != lsquic_send_ctl_set_token(ctl, token, token_sz))
         return -1;
 
-    if (packet_out->po_nonce)
-        free(packet_out->po_nonce);
-
-    packet_out->po_nonce = malloc(token_sz);
-    if (!packet_out->po_nonce)
+    for (packet_out = TAILQ_FIRST(&ctl->sc_lost_packets); packet_out; packet_out = next)
     {
-        LSQ_WARN("%s: malloc failed", __func__);
-        return -1;
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (HETY_INITIAL != packet_out->po_header_type)
+            continue;
+
+        if (packet_out->po_nonce)
+            free(packet_out->po_nonce);
+
+        if (0 != send_ctl_set_packet_out_token(ctl, packet_out))
+        {
+            LSQ_INFO("cannot set out token on packet");
+            return -1;
+        }
+
+        if (packet_out->po_frame_types & QUIC_FTBIT_PADDING)
+            strip_trailing_padding(packet_out);
+
+        sz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
+        if (sz > 1200)
+        {
+            const enum packno_bits bits = lsquic_send_ctl_calc_packno_bits(ctl);
+            new_packet_out = send_ctl_allocate_packet(ctl, bits, 0, PNS_INIT,
+                                                        packet_out->po_path);
+            if (!new_packet_out)
+                return -1;
+            if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm,
+                            packet_out, new_packet_out,
+                            ctl->sc_conn_pub->lconn->cn_pf, sz - 1200))
+            {
+                LSQ_DEBUG("split lost packet %"PRIu64" into two",
+                                                        packet_out->po_packno);
+                lsquic_packet_out_set_packno_bits(packet_out, bits);
+                TAILQ_INSERT_AFTER(&ctl->sc_lost_packets, packet_out,
+                                    new_packet_out, po_next);
+                return 0;
+            }
+            else
+            {
+                LSQ_DEBUG("could not split lost packet into two");
+                send_ctl_destroy_packet(ctl, new_packet_out);
+                return -1;
+            }
+        }
     }
-    memcpy(packet_out->po_nonce, token, token_sz);
-    packet_out->po_flags |= PO_NONCE;
-    packet_out->po_token_len = token_sz;
-    packet_out->po_data_sz -= token_sz;
-    if (cidlen_diff > 0)
-        packet_out->po_data_sz += cidlen_diff;
-    else if (cidlen_diff < 0)
-        packet_out->po_data_sz -= -cidlen_diff;
+
     return 0;
 }
 

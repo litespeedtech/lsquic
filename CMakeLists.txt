@@ -49,7 +49,8 @@ IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Werror")
     IF(CMAKE_C_COMPILER MATCHES "clang" AND
-                        NOT "$ENV{TRAVIS}" MATCHES "^true$")
+                        NOT "$ENV{TRAVIS}" MATCHES "^true$" AND
+                        NOT "$ENV{EXTRA_CFLAGS}" MATCHES "-fsanitize")
         SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -fsanitize=address")
     ENDIF()
     # Uncomment to enable cleartext protocol mode (no crypto):

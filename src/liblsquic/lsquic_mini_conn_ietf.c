@@ -218,29 +218,127 @@ imico_stream_flush (void *stream)
 }
 
 
+static struct stream_frame *
+imico_find_stream_frame (const struct ietf_mini_conn *conn,
+                                enum enc_level enc_level, unsigned read_off)
+{
+    struct stream_frame *frame;
+
+    if (conn->imc_last_in.frame && enc_level == conn->imc_last_in.enc_level
+            && read_off == DF_ROFF(conn->imc_last_in.frame))
+        return conn->imc_last_in.frame;
+
+    TAILQ_FOREACH(frame, &conn->imc_crypto_frames, next_frame)
+        if (enc_level == frame->stream_id && read_off == DF_ROFF(frame))
+            return frame;
+
+    return NULL;
+}
+
+
+static void
+imico_read_chlo_size (struct ietf_mini_conn *conn, const unsigned char *buf,
+                                                                    size_t sz)
+{
+    const unsigned char *const end = buf + sz;
+
+    assert(conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off < 4);
+    switch (conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off)
+    {
+    case 0:
+        if (buf == end)
+            return;
+        if (*buf != 1)
+        {
+            LSQ_DEBUG("Does not begin with ClientHello");
+            conn->imc_flags |= IMC_ERROR;
+            return;
+        }
+        ++buf;
+        /* fall-through */
+    case 1:
+        if (buf == end)
+            return;
+        if (*buf != 0)
+        {
+            LSQ_DEBUG("ClientHello larger than 16K");
+            conn->imc_flags |= IMC_ERROR;
+            return;
+        }
+        ++buf;
+        /* fall-through */
+    case 2:
+        if (buf == end)
+            return;
+        conn->imc_ch_len = *buf << 8;
+        ++buf;
+        /* fall-through */
+    default:
+        if (buf == end)
+            return;
+        conn->imc_ch_len |= *buf;
+    }
+}
+
+
+static int
+imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
+{
+    return conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off > 3
+        && conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off >= conn->imc_ch_len;
+}
+
+
 static ssize_t
 imico_stream_readf (void *stream,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
     struct mini_crypto_stream *const cryst = stream;
     struct ietf_mini_conn *const conn = cryst_get_conn(cryst);
-    struct stream_frame *frame = conn->imc_last_in.frame;
-    size_t nread;
+    struct stream_frame *frame;
+    const unsigned char *buf;
+    size_t nread, total_read;
+    unsigned avail;
 
-    if (cryst->mcs_enc_level == conn->imc_last_in.enc_level
-            && frame && cryst->mcs_read_off == DF_ROFF(frame))
+    total_read = 0;
+    while ((frame = imico_find_stream_frame(conn, cryst->mcs_enc_level,
+                                                        cryst->mcs_read_off)))
     {
-        nread = readf(ctx, frame->data_frame.df_data
-            + frame->data_frame.df_read_off, DF_SIZE(frame)
-            - frame->data_frame.df_read_off, DF_FIN(frame));
+        avail = DF_SIZE(frame) - frame->data_frame.df_read_off;
+        buf = frame->data_frame.df_data + frame->data_frame.df_read_off;
+        nread = readf(ctx, buf, avail, DF_FIN(frame));
+        if (cryst->mcs_enc_level == ENC_LEV_CLEAR && cryst->mcs_read_off < 4)
+            imico_read_chlo_size(conn, buf, nread);
+        total_read += nread;
         cryst->mcs_read_off += nread;
         frame->data_frame.df_read_off += nread;
         LSQ_DEBUG("read %zu bytes at offset %"PRIu64" on enc level %u", nread,
             DF_ROFF(frame), cryst->mcs_enc_level);
-        return nread;
+        if (DF_END(frame) == DF_ROFF(frame))
+        {
+            if (frame == conn->imc_last_in.frame)
+                conn->imc_last_in.frame = NULL;
+            else
+            {
+                TAILQ_REMOVE(&conn->imc_crypto_frames, frame, next_frame);
+                --conn->imc_n_crypto_frames;
+                conn->imc_crypto_frames_sz -= DF_SIZE(frame);
+                lsquic_packet_in_put(&conn->imc_enpub->enp_mm,
+                                                            frame->packet_in);
+                lsquic_malo_put(frame);
+            }
+        }
+        if (nread < avail)
+            break;
     }
+
+    if (total_read > 0)
+        return total_read;
     else
     {
+        /* CRYPTO streams never end, so zero bytes read always means
+         * EWOULDBLOCK
+         */
         errno = EWOULDBLOCK;
         return -1;
     }
@@ -376,6 +474,9 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_conn.cn_esf_c = select_esf_common_by_ver(version);
     TAILQ_INIT(&conn->imc_packets_out);
     TAILQ_INIT(&conn->imc_app_packets);
+    TAILQ_INIT(&conn->imc_crypto_frames);
+    if (odcid)
+        conn->imc_flags |= IMC_ADDR_VALIDATED;
 
     LSQ_DEBUG("created mini connection object %p; max packet size=%hu",
                                                 conn, conn->imc_path.np_pack_size);
@@ -396,6 +497,7 @@ ietf_mini_conn_ci_destroy (struct lsquic_conn *lconn)
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     struct lsquic_packet_out *packet_out;
     struct lsquic_packet_in *packet_in;
+    struct stream_frame *frame;
 
     while ((packet_out = TAILQ_FIRST(&conn->imc_packets_out)))
     {
@@ -406,6 +508,12 @@ ietf_mini_conn_ci_destroy (struct lsquic_conn *lconn)
     {
         TAILQ_REMOVE(&conn->imc_app_packets, packet_in, pi_next);
         lsquic_packet_in_put(&conn->imc_enpub->enp_mm, packet_in);
+    }
+    while ((frame = TAILQ_FIRST(&conn->imc_crypto_frames)))
+    {
+        TAILQ_REMOVE(&conn->imc_crypto_frames, frame, next_frame);
+        lsquic_packet_in_put(&conn->imc_enpub->enp_mm, frame->packet_in);
+        lsquic_malo_put(frame);
     }
     if (lconn->cn_enc_session)
         lconn->cn_esf.i->esfi_destroy(lconn->cn_enc_session);
@@ -602,6 +710,44 @@ imico_process_stream_frame (IMICO_PROC_FRAME_ARGS)
 }
 
 
+static int
+imico_stash_stream_frame (struct ietf_mini_conn *conn,
+        enum enc_level enc_level, struct lsquic_packet_in *packet_in,
+        const struct stream_frame *frame)
+{
+    struct stream_frame *copy;
+
+    if (conn->imc_n_crypto_frames >= IMICO_MAX_STASHED_FRAMES)
+    {
+        LSQ_INFO("cannot stash more CRYPTO frames, at %hhu already, while max "
+            "is %u", conn->imc_n_crypto_frames, IMICO_MAX_STASHED_FRAMES);
+        return -1;
+    }
+
+    if (conn->imc_crypto_frames_sz + DF_SIZE(frame) > IMICO_MAX_BUFFERED_CRYPTO)
+    {
+        LSQ_INFO("cannot stash more than %u bytes of CRYPTO frames",
+            IMICO_MAX_BUFFERED_CRYPTO);
+        return -1;
+    }
+
+    copy = lsquic_malo_get(conn->imc_enpub->enp_mm.malo.stream_frame);
+    if (!copy)
+    {
+        LSQ_INFO("could not allocate stream frame for stashing");
+        return -1;
+    }
+
+    *copy = *frame;
+    copy->packet_in = lsquic_packet_in_get(packet_in);
+    copy->stream_id = enc_level;
+    TAILQ_INSERT_TAIL(&conn->imc_crypto_frames, copy, next_frame);
+    ++conn->imc_n_crypto_frames;
+    conn->imc_crypto_frames_sz += DF_SIZE(frame);
+    return 0;
+}
+
+
 static unsigned
 imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
 {
@@ -618,11 +764,19 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
     enc_level = lsquic_packet_in_enc_level(packet_in);
     EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame, enc_level);
 
-    if (!(conn->imc_streams[enc_level].mcs_flags & MCS_CREATED)
-            || conn->imc_streams[enc_level].mcs_read_off <
-                    stream_frame.data_frame.df_offset
-                                + stream_frame.data_frame.df_size)
+    if (conn->imc_streams[enc_level].mcs_read_off >= DF_OFF(&stream_frame)
+        && conn->imc_streams[enc_level].mcs_read_off < DF_END(&stream_frame))
         LSQ_DEBUG("Got CRYPTO frame for enc level #%u", enc_level);
+    else if (conn->imc_streams[enc_level].mcs_read_off < DF_OFF(&stream_frame))
+    {
+        LSQ_DEBUG("Can't read CRYPTO frame on enc level #%u at offset %"PRIu64
+            " yet -- stash", enc_level, DF_OFF(&stream_frame));
+        if (0 == imico_stash_stream_frame(conn, enc_level, packet_in,
+                                                                &stream_frame))
+            return parsed_len;
+        else
+            return 0;
+    }
     else
     {
         LSQ_DEBUG("Got duplicate CRYPTO frame for enc level #%u -- ignore",
@@ -657,11 +811,19 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
     imico_dispatch_stream_events(conn);
     conn->imc_last_in.frame = NULL;
 
+    if (DF_ROFF(&stream_frame) < DF_END(&stream_frame))
+    {
+        /* This is an odd condition, but let's handle it just in case */
+        LSQ_DEBUG("New CRYPTO frame on enc level #%u not fully read -- stash",
+            enc_level);
+        if (0 != imico_stash_stream_frame(conn, enc_level, packet_in,
+                                                                &stream_frame))
+            return 0;
+    }
 
-    if (enc_level == ENC_LEV_CLEAR && stream_frame.data_frame.df_offset == 0
-        /* Assume that we have ClientHello at offset zero and that it has
-         * transport parameters.
-         */
+
+    if (enc_level == ENC_LEV_CLEAR
+        && imico_chlo_has_been_consumed(conn)
         && (conn->imc_flags & (IMC_ENC_SESS_INITED|IMC_HAVE_TP))
                                                     == IMC_ENC_SESS_INITED)
     {
@@ -1451,6 +1613,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         LSQ_DEBUG("connection expired: closing");
         return TICK_CLOSE;
     }
+
 
     if (conn->imc_flags &
             (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK|IMC_QUEUED_ACK_APP))

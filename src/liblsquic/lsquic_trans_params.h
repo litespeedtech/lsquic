@@ -51,6 +51,12 @@ enum trapa_flags
     TRAPA_PREFADDR_IPv4 = 1 << 2,   /* Preferred IPv4 address is set */
     TRAPA_PREFADDR_IPv6 = 1 << 3,   /* Preferred IPv6 address is set */
     TRAPA_ORIGINAL_CID  = 1 << 4,   /* Original CID is set */
+#if LSQUIC_TEST_QUANTUM_READINESS
+#define QUANTUM_READY_SZ 1200
+    /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
+#define TPI_QUANTUM_READINESS 3127
+    TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
+#endif
 };
 
 struct transport_params

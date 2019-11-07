@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 5
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 6
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -130,6 +130,11 @@ enum lsquic_version
     LSQVER_ID23,
 
     /**
+     * IETF QUIC Draft-24
+     */
+    LSQVER_ID24,
+
+    /**
      * Special version to trigger version negotiation.
      * [draft-ietf-quic-transport-11], Section 3.
      */
@@ -156,9 +161,11 @@ enum lsquic_version
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS ((1 << LSQVER_039) | (1 << LSQVER_043))
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+                                                    | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+                                                    | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {

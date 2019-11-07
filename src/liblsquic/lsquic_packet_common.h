@@ -209,9 +209,10 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_NEW_TOKEN          \
     |  QUIC_FTBIT_CRYPTO             )
 
-/* [draft-ietf-quic-transport-20] Section 13.1.1 */
+/* [draft-ietf-quic-transport-24] Section 1.2 */
 #define IQUIC_FRAME_ACKABLE_MASK (  \
-    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_ACK|QUIC_FTBIT_PADDING))
+    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_ACK|QUIC_FTBIT_PADDING\
+                                            |QUIC_FTBIT_CONNECTION_CLOSE))
 
 /* [draft-ietf-quic-transport-20], Section 13.2 */
 /* We bend some rules and retransmit BLOCKED, MAX_DATA, MAX_STREAM_DATA,

@@ -79,6 +79,7 @@ static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
 } s_alpns[] = {
+    {   LSQVER_ID24, (unsigned char *) "\x05h3-24",     },
     {   LSQVER_ID23, (unsigned char *) "\x05h3-23",     },
     {   LSQVER_VERNEG, (unsigned char *) "\x05h3-23",     },
 };
@@ -509,6 +510,14 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         }
 #endif
     }
+#if LSQUIC_TEST_QUANTUM_READINESS
+    else
+    {
+        const char *s = getenv("LSQUIC_TEST_QUANTUM_READINESS");
+        if (s && atoi(s))
+            params.tp_flags |= TRAPA_QUANTUM_READY;
+    }
+#endif
     params.tp_init_max_data = settings->es_init_max_data;
     params.tp_init_max_stream_data_bidi_local
                             = settings->es_init_max_stream_data_bidi_local;
@@ -1224,7 +1233,11 @@ init_client (struct enc_sess_iquic *const enc_sess)
     int transpa_len;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 #define hexbuf errbuf   /* This is a dual-purpose buffer */
-    unsigned char trans_params[0x80];
+    unsigned char trans_params[0x80
+#if LSQUIC_TEST_QUANTUM_READINESS
+        + 4 + QUANTUM_READY_SZ
+#endif
+    ];
 
     for (am = s_alpns; am < s_alpns + sizeof(s_alpns)
                                                 / sizeof(s_alpns[0]); ++am)
@@ -1779,6 +1792,22 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
 }
 
 
+static struct ku_label
+{
+    const char *str;
+    uint8_t     len;
+}
+
+
+select_ku_label (const struct enc_sess_iquic *enc_sess)
+{
+    if (enc_sess->esi_conn->cn_version == LSQVER_ID23)
+        return (struct ku_label) { "traffic upd", 11, };
+    else
+        return (struct ku_label) { "quic ku", 7, };
+}
+
+
 static enum dec_packin
 iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         struct lsquic_engine_public *enpub, const struct lsquic_conn *lconn,
@@ -1859,9 +1888,10 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
                 || packet_in->pi_packno
                     > enc_sess->esi_pairs[enc_sess->esi_key_phase].ykp_thresh)
         {
+            const struct ku_label kl = select_ku_label(enc_sess);
             lsquic_qhkdf_expand(enc_sess->esi_md,
                 enc_sess->esi_traffic_secrets[cliser], enc_sess->esi_trasec_sz,
-                "traffic upd", 11, new_secret, enc_sess->esi_trasec_sz);
+                kl.str, kl.len, new_secret, enc_sess->esi_trasec_sz);
             if (enc_sess->esi_flags & ESI_LOG_SECRETS)
                 LSQ_DEBUG("key phase changed to %u, will try decrypting using "
                     "new secret %s", key_phase, HEXSTR(new_secret,
@@ -1959,6 +1989,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     {
         LSQ_DEBUG("decryption in the new key phase %u successful, rotate "
             "keys", key_phase);
+        const struct ku_label kl = select_ku_label(enc_sess);
         pair = &enc_sess->esi_pairs[ key_phase ];
         pair->ykp_thresh = packet_in->pi_packno;
         pair->ykp_ctx[ cliser ] = crypto_ctx_buf;
@@ -1966,7 +1997,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
                                                 enc_sess->esi_trasec_sz);
         lsquic_qhkdf_expand(enc_sess->esi_md,
             enc_sess->esi_traffic_secrets[!cliser], enc_sess->esi_trasec_sz,
-            "traffic upd", 11, new_secret, enc_sess->esi_trasec_sz);
+            kl.str, kl.len, new_secret, enc_sess->esi_trasec_sz);
         memcpy(enc_sess->esi_traffic_secrets[ !cliser ], new_secret,
                                                 enc_sess->esi_trasec_sz);
         s = init_crypto_ctx(&pair->ykp_ctx[ !cliser ], enc_sess->esi_md,

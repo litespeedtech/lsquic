@@ -245,6 +245,11 @@ struct parse_funcs
     (*pf_gen_max_data_frame) (unsigned char *, size_t, uint64_t);
     unsigned
     (*pf_max_data_frame_size) (uint64_t);
+    /*
+     * Returns number of bytes parsed on success or negative value on error:
+     *  -1  Out of input buffer
+     *  -2  Invalid CID length value
+     */
     int
     (*pf_parse_new_conn_id) (const unsigned char *, size_t, uint64_t *,
                         uint64_t *, lsquic_cid_t *, const unsigned char **);

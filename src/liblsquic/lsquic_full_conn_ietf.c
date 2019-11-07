@@ -4792,7 +4792,7 @@ process_max_streams_frame (struct ietf_full_conn *conn,
 
     if (max_stream_id > VINT_MAX_VALUE)
     {
-        ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR,
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
             "MAX_STREAMS: max %s stream ID of %"PRIu64" exceeds maximum "
             "stream ID", sd == SD_BIDI ? "bidi" : "uni", max_stream_id);
         return 0;
@@ -4880,7 +4880,12 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_conn_id(p, len,
                                         &seqno, &retire_prior_to, &cid, &token);
     if (parsed_len < 0)
+    {
+        if (parsed_len == -2)
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+                "NEW_CONNECTION_ID contains invalid CID length");
         return 0;
+    }
 
     if (seqno > UINT32_MAX || retire_prior_to > UINT32_MAX)
     {   /* It is wasteful to use 8-byte integers for these counters, so this
@@ -4893,7 +4898,7 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
 
     if (retire_prior_to > seqno)
     {
-        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
             "NEW_CONNECTION_ID: Retire Prior To=%"PRIu64" is larger then the "
             "Sequence Number=%"PRIu64, retire_prior_to, seqno);
         return 0;
@@ -5044,7 +5049,7 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     {
         if (LSQUIC_CIDS_EQ(&cce->cce_cid, &packet_in->pi_dcid))
         {
-            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "cannot retire CID "
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "cannot retire CID "
                 "seqno=%"PRIu64", for it is used as DCID in the packet", seqno);
             return 0;
         }
@@ -5070,6 +5075,13 @@ process_new_token_frame (struct ietf_full_conn *conn,
                                                                     &token_sz);
     if (parsed_len < 0)
         return 0;
+
+    if (0 == token_sz)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "received an empty "
+            "NEW_TOKEN frame");
+        return 0;
+    }
 
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG)
                             || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
@@ -5129,6 +5141,7 @@ static unsigned
 process_streams_blocked_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
+    lsquic_stream_id_t max_stream_id;
     uint64_t stream_limit;
     enum stream_dir sd;
     int parsed_len;
@@ -5137,6 +5150,15 @@ process_streams_blocked_frame (struct ietf_full_conn *conn,
                                                 len, &sd, &stream_limit);
     if (parsed_len < 0)
         return 0;
+
+    max_stream_id = stream_limit << SIT_SHIFT;
+    if (max_stream_id > VINT_MAX_VALUE)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+            "STREAMS_BLOCKED: max %s stream ID of %"PRIu64" exceeds maximum "
+            "stream ID", sd == SD_BIDI ? "bidi" : "uni", max_stream_id);
+        return 0;
+    }
 
     LSQ_DEBUG("received STREAMS_BLOCKED frame: limited to %"PRIu64
         " %sdirectional stream%.*s", stream_limit, sd == SD_UNI ? "uni" : "bi",
@@ -5257,6 +5279,9 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
     }
     else if (!dcid_changed)
     {
+        /* It is OK to reuse DCID if the peer did not use a new DCID when its
+         * address changed.  See [draft-ietf-quic-transport-24] Section 9.5.
+         */
         path->cop_path.np_dcid = CUR_NPATH(conn)->np_dcid;
         LSQ_DEBUGC("assigned already-used DCID %"CID_FMT" to new path %u, "
             "as incoming DCID did not change",
@@ -5422,7 +5447,6 @@ process_retry_packet (struct ietf_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     lsquic_cid_t scid;
-    int cidlen_diff;
 
     if (conn->ifc_flags & (IFC_SERVER|IFC_RETRIED))
     {
@@ -5439,10 +5463,9 @@ process_retry_packet (struct ietf_full_conn *conn,
         return 0;
     }
 
-    cidlen_diff = (int) CUR_DCID(conn)->len - (int) packet_in->pi_scid_len;
     if (0 != lsquic_send_ctl_retry(&conn->ifc_send_ctl,
                     packet_in->pi_data + packet_in->pi_token,
-                            packet_in->pi_token_size, cidlen_diff))
+                            packet_in->pi_token_size))
         return -1;
 
     lsquic_scid_from_packet_in(packet_in, &scid);
@@ -5700,11 +5723,23 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                     packet_in->pi_received);
     switch (st) {
     case REC_ST_OK:
-        if (!(conn->ifc_flags & (
-                                 IFC_SERVER|
-                                            IFC_DCID_SET))
+        if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET))
                                                 && (packet_in->pi_scid_len))
         {
+            if (CUR_DCID(conn)->len == packet_in->pi_scid_len
+                    && 0 == memcmp(CUR_DCID(conn)->idbuf,
+                            packet_in->pi_data + packet_in->pi_scid_off,
+                            packet_in->pi_scid_len))
+            {
+                /*
+                 * [draft-ietf-quic-transport-24] Section 17.2.5:
+                 " A client MUST discard a Retry packet that contains a Source
+                 " Connection ID field that is identical to the Destination
+                 " Connection ID field of its Initial packet.
+                 */
+                LSQ_DEBUG("server provided same SCID as ODCID: discard packet");
+                return 0;
+            }
             conn->ifc_flags |= IFC_DCID_SET;
             lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
             LSQ_DEBUGC("set DCID to %"CID_FMT,
@@ -5740,10 +5775,14 @@ process_regular_packet (struct ietf_full_conn *conn,
                 frame_types &= ~(1 << QUIC_FRAME_PING);
             }
 #endif
-            was_missing = packet_in->pi_packno !=
+            if (frame_types & IQUIC_FRAME_ACKABLE_MASK)
+            {
+                was_missing = packet_in->pi_packno !=
                         lsquic_rechist_largest_packno(&conn->ifc_rechist[pns]);
-            conn->ifc_n_slack_akbl[pns]
-                                += !!(frame_types & IQUIC_FRAME_ACKABLE_MASK);
+                ++conn->ifc_n_slack_akbl[pns];
+            }
+            else
+                was_missing = 0;
             try_queueing_ack(conn, pns, was_missing, packet_in->pi_received);
         }
         conn->ifc_incoming_ecn <<= 1;

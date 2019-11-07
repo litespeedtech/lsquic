@@ -111,6 +111,10 @@ lsquic_tp_encode (const struct transport_params *params,
         if (params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
             need += 4 + preferred_address_size(params);
     }
+#if LSQUIC_TEST_QUANTUM_READINESS
+    else if (params->tp_flags & TRAPA_QUANTUM_READY)
+        need += 4 + QUANTUM_READY_SZ;
+#endif
 
     for (tpi = 0; tpi <= MAX_TPI; ++tpi)
         if ((NUMERIC_TRANS_PARAMS & (1 << tpi))
@@ -251,6 +255,16 @@ lsquic_tp_encode (const struct transport_params *params,
                 assert(0);
                 return -1;
             }
+
+#if LSQUIC_TEST_QUANTUM_READINESS
+    if (params->tp_flags & TRAPA_QUANTUM_READY)
+    {
+        WRITE_UINT_TO_P(TPI_QUANTUM_READINESS, 16);
+        WRITE_UINT_TO_P(QUANTUM_READY_SZ, 16);
+        memset(p, 'Q', QUANTUM_READY_SZ);
+        p += QUANTUM_READY_SZ;
+    }
+#endif
 
     assert(buf + need == p);
     return (int) (p - buf);

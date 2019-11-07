@@ -267,41 +267,24 @@ put_req (struct pr_queue *prq, struct packet_req *req)
 
 
 int
-prq_new_req (struct pr_queue *prq, enum packet_req_type type,
-         const struct lsquic_packet_in *packet_in, void *peer_ctx,
-         const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
+lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+    unsigned flags, enum lsquic_version version, unsigned short data_sz,
+    const lsquic_cid_t *dcid, const lsquic_cid_t *scid, void *peer_ctx,
+    const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
 {
     struct packet_req *req;
-    lsquic_ver_tag_t ver_tag;
-    enum lsquic_version version;
-    enum pr_flags flags;
     unsigned max, size, rand;
-
-    if (packet_in->pi_flags & PI_GQUIC)
-        flags = PR_GQUIC;
-    else
-        flags = 0;
-
-    if (packet_in->pi_quic_ver)
-    {
-        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
-                                                            sizeof(ver_tag));
-        version = lsquic_tag2ver(ver_tag);
-    }
-    else /* Got to set it to something sensible... */
-        version = LSQVER_ID23;
 
     if (type == PACKET_REQ_PUBRES && !(flags & PR_GQUIC))
     {
-        if (packet_in->pi_data_sz <= IQUIC_MIN_SRST_SIZE)
+        if (data_sz <= IQUIC_MIN_SRST_SIZE)
         {
             LSQ_DEBUGC("not scheduling public reset: incoming packet for CID "
-                "%"CID_FMT" too small: %hu bytes",
-                CID_BITS(&packet_in->pi_dcid), packet_in->pi_data_sz);
+                "%"CID_FMT" too small: %hu bytes", CID_BITS(dcid), data_sz);
             return -1;
         }
         /* Use a random stateless reset size */
-        max = MIN(IQUIC_MAX_SRST_SIZE, packet_in->pi_data_sz - 1u);
+        max = MIN(IQUIC_MAX_SRST_SIZE, data_sz - 1u);
         if (max > IQUIC_MIN_SRST_SIZE)
         {
             rand = get_rand_byte(prq);
@@ -310,7 +293,7 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         else
             size = IQUIC_MIN_SRST_SIZE;
         LSQ_DEBUGC("selected %u-byte reset size for CID %"CID_FMT
-            " (range is [%u, %u])", size, CID_BITS(&packet_in->pi_dcid),
+            " (range is [%u, %u])", size, CID_BITS(dcid),
             IQUIC_MIN_SRST_SIZE, max);
     }
     else
@@ -324,7 +307,7 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     }
 
     req->pr_type     = type;
-    req->pr_dcid     = packet_in->pi_dcid;
+    req->pr_dcid     = *dcid;
     if (lsquic_hash_find(prq->prq_reqs_hash, req, sizeof(req)))
     {
         LSQ_DEBUG("request for this DCID and type already exists");
@@ -344,7 +327,7 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     req->pr_flags    = flags;
     req->pr_rst_sz   = size;
     req->pr_version  = version;
-    lsquic_scid_from_packet_in(packet_in, &req->pr_scid);
+    req->pr_scid     = *scid;
     req->pr_path.np_peer_ctx = peer_ctx;
     memcpy(NP_LOCAL_SA(&req->pr_path), local_addr,
                                             sizeof(req->pr_path.np_local_addr));
@@ -354,6 +337,36 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     LSQ_DEBUGC("scheduled %s packet for connection %"CID_FMT,
                             lsquic_preqt2str[type], CID_BITS(&req->pr_dcid));
     return 0;
+}
+
+
+int
+prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+         const struct lsquic_packet_in *packet_in, void *peer_ctx,
+         const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
+{
+    lsquic_ver_tag_t ver_tag;
+    enum lsquic_version version;
+    enum pr_flags flags;
+    lsquic_cid_t scid;
+
+    if (packet_in->pi_flags & PI_GQUIC)
+        flags = PR_GQUIC;
+    else
+        flags = 0;
+
+    if (packet_in->pi_quic_ver)
+    {
+        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
+                                                            sizeof(ver_tag));
+        version = lsquic_tag2ver(ver_tag);
+    }
+    else /* Got to set it to something sensible... */
+        version = LSQVER_ID24;
+
+    lsquic_scid_from_packet_in(packet_in, &scid);
+    return lsquic_prq_new_req(prq, type, flags, version, packet_in->pi_data_sz,
+                &packet_in->pi_dcid, &scid, peer_ctx, local_addr, peer_addr);
 }
 
 
