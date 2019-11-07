@@ -654,18 +654,18 @@ struct req_map
 
 static struct req_map req_maps[] =
 {
-    { GET, "/", IOH_INDEX_HTML, "200", 0, },
-    { GET, "/index.html", IOH_INDEX_HTML, "200", 0, },
-    { POST, "/cgi-bin/md5sum.cgi", IOH_MD5SUM, "200", RM_WANTBODY, },
-    { POST, "/cgi-bin/verify-headers.cgi", IOH_VER_HEAD, "200", RM_WANTBODY, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
+    { .method = GET, .path = "/", .handler = IOH_INDEX_HTML, .status = "200", .flags = 0, },
+    { .method = GET, .path = "/index.html", .handler = IOH_INDEX_HTML, .status = "200", .flags = 0, },
+    { .method = POST, .path = "/cgi-bin/md5sum.cgi", .handler = IOH_MD5SUM, .status = "200", .flags = RM_WANTBODY, },
+    { .method = POST, .path = "/cgi-bin/verify-headers.cgi", .handler = IOH_VER_HEAD, .status = "200", .flags = RM_WANTBODY, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
 };
 
 
