@@ -81,7 +81,7 @@ static const struct alpn_map {
 } s_alpns[] = {
     {   LSQVER_ID24, (unsigned char *) "\x05h3-24",     },
     {   LSQVER_ID23, (unsigned char *) "\x05h3-23",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-23",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-24",     },
 };
 
 struct enc_sess_iquic;

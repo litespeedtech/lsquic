@@ -2566,9 +2566,13 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
         struct sockaddr_in6 v6;
     } sockaddr;
 
-    if (params->tp_disable_active_migration)
+    if (params->tp_disable_active_migration
+                                || !conn->ifc_settings->es_allow_migration)
     {
-        LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
+        if (params->tp_disable_active_migration)
+            LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
+        else
+            LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
         retire_cid_from_tp(conn, params);
         return 0;
     }

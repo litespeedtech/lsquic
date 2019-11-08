@@ -222,7 +222,7 @@ lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
                                                 packet_out->po_frame_types));
     else
         LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
-            "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu",
+            "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u",
             packet_out->po_packno, lsquic_hety2str[packet_out->po_header_type],
             lsquic_enclev2str[ lsquic_packet_out_enc_level(packet_out) ],
             packet_out->po_enc_data_sz,
@@ -236,7 +236,8 @@ lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
                 /* spin bit value is only valid for short packet headers */
                 lsquic_packet_out_spin_bit(packet_out),
                 lsquic_packet_out_kp(packet_out),
-                packet_out->po_path->np_path_id);
+                packet_out->po_path->np_path_id,
+                (unsigned) packet_out->po_flags);
 }
 
 

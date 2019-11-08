@@ -2605,7 +2605,11 @@ lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
             continue;
 
         if (packet_out->po_nonce)
+        {
             free(packet_out->po_nonce);
+            packet_out->po_nonce = NULL;
+            packet_out->po_flags &= ~PO_NONCE;
+        }
 
         if (0 != send_ctl_set_packet_out_token(ctl, packet_out))
         {
@@ -2624,6 +2628,12 @@ lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
                                                         packet_out->po_path);
             if (!new_packet_out)
                 return -1;
+            if (0 != send_ctl_set_packet_out_token(ctl, new_packet_out))
+            {
+                send_ctl_destroy_packet(ctl, new_packet_out);
+                LSQ_INFO("cannot set out token on packet");
+                return -1;
+            }
             if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm,
                             packet_out, new_packet_out,
                             ctl->sc_conn_pub->lconn->cn_pf, sz - 1200))
@@ -2633,7 +2643,8 @@ lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
                 lsquic_packet_out_set_packno_bits(packet_out, bits);
                 TAILQ_INSERT_AFTER(&ctl->sc_lost_packets, packet_out,
                                     new_packet_out, po_next);
-                return 0;
+                new_packet_out->po_flags |= PO_LOST;
+                packet_out->po_flags &= ~PO_SENT_SZ;
             }
             else
             {

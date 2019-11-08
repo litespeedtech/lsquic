@@ -1,3 +1,10 @@
+2019-11-08
+    - 2.6.1
+    - [BUGFIX] set retry token on all resubmitted packets.
+    - Event log: log sent packet flags.  In particular, this allows one
+      to see whether token was sent.
+    - Don't migrate client if es_allow_migration is false.
+
 2019-11-07
     - 2.6.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 24 support
