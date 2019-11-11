@@ -2943,7 +2943,6 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
     }
     else if (!size)
     {
-        assert(!shf->shf_frame_ptr);
         LSQ_WARN("discard zero-sized HQ frame type 0x%X (off: %"PRIu64")",
                                         shf->shf_frame_type, shf->shf_off);
         stream_hq_frame_put(stream, shf);

@@ -536,11 +536,11 @@ lsquic_engine_new (unsigned flags,
     if (hash_conns_by_addr(engine))
         engine->flags |= ENG_CONNS_BY_ADDR;
     engine->conns_hash = lsquic_hash_create();
+    engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
+    if (!engine->pub.enp_tokgen)
+        return NULL;
     if (flags & ENG_SERVER)
     {
-        engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
-        if (!engine->pub.enp_tokgen)
-            return NULL;
         engine->pr_queue = prq_create(
             10000 /* TODO: make configurable */, MAX_OUT_BATCH_SIZE,
             &engine->pub);

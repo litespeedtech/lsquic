@@ -915,7 +915,7 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     lsquic_packno_t packno_diff, gap, prev_low, maxno, rsize;
     size_t sz;
     const struct lsquic_packno_range *range;
-    unsigned a, b, c, addl_ack_blocks;
+    unsigned a, b, c, addl_ack_blocks, ecn_needs;
     unsigned bits[4];
     enum ecn ecn;
 
@@ -954,6 +954,15 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     CHECKOUT(sz);
 
+    if (ecn_counts)
+    {
+        for (ecn = 1; ecn <= 3; ++ecn)
+            bits[ecn] = vint_val2bits(ecn_counts[ecn]);
+        ecn_needs = (1 << bits[1]) + (1 << bits[2]) + (1 << bits[3]);
+    }
+    else
+        ecn_needs = 0;
+
     *p = 0x02 + !!ecn_counts;
     ++p;
 
@@ -975,13 +984,14 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         rsize = range->high - range->low;
         a = vint_val2bits(gap - 1);
         b = vint_val2bits(rsize);
+        if (ecn_needs + (1 << a) + (1 << b) > AVAIL())
+            break;
         if (addl_ack_blocks == VINT_MAX_ONE_BYTE)
         {
             memmove(block_count_p + 2, block_count_p + 1,
                                                 p - block_count_p - 1);
             ++p;
         }
-        CHECKOUT((1 << a) + (1 << b));
         vint_write(p, gap - 1, a, 1 << a);
         p += 1 << a;
         vint_write(p, rsize, b, 1 << b);
@@ -999,9 +1009,7 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     if (ecn_counts)
     {
-        for (ecn = 1; ecn <= 3; ++ecn)
-            bits[ecn] = vint_val2bits(ecn_counts[ecn]);
-        CHECKOUT((1 << bits[1]) + (1 << bits[2]) + (1 << bits[3]));
+        assert(ecn_needs <= AVAIL());
         for (ecn = 1; ecn <= 3; ++ecn)
         {
             vint_write(p, ecn_counts[ecnmap[ecn]], bits[ecnmap[ecn]], 1 << bits[ecnmap[ecn]]);

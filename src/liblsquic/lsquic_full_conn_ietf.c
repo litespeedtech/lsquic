@@ -1512,11 +1512,8 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         return -1;
     }
 
-    if (conn->ifc_flags & IFC_SERVER)
-        lsquic_tg_generate_sreset(conn->ifc_enpub->enp_tokgen, &cce->cce_cid,
+    lsquic_tg_generate_sreset(conn->ifc_enpub->enp_tokgen, &cce->cce_cid,
                                                                     token_buf);
-    else
-        memset(token_buf, 0, sizeof(token_buf));
 
     if (0 != lsquic_engine_add_cid(conn->ifc_enpub, &conn->ifc_conn,
                                                         cce - conn->ifc_cces))
@@ -4880,6 +4877,7 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
     lsquic_cid_t cid;
     uint64_t seqno, retire_prior_to;
     int parsed_len, update_cur_dcid;
+    char tokstr[IQUIC_SRESET_TOKEN_SZ * 2 + 1];
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_conn_id(p, len,
                                         &seqno, &retire_prior_to, &cid, &token);
@@ -4941,6 +4939,18 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
                 ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
                     "NEW_CONNECTION_ID: received the same CID with sequence "
                     "numbers %u and %"PRIu64, (*el)->de_seqno, seqno);
+                return 0;
+            }
+            else if (((*el)->de_flags & DE_SRST)
+                    && 0 == memcmp((*el)->de_srst, token,
+                                                    IQUIC_SRESET_TOKEN_SZ))
+            {
+                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                    "NEW_CONNECTION_ID: received second instance of reset "
+                    "token %s in seqno %"PRIu64", same as in seqno %u",
+                    (lsquic_hexstr(token, IQUIC_SRESET_TOKEN_SZ, tokstr,
+                                                    sizeof(tokstr)), tokstr),
+                    seqno, (*el)->de_seqno);
                 return 0;
             }
         }
@@ -5458,6 +5468,21 @@ process_retry_packet (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if (CUR_DCID(conn)->len == packet_in->pi_scid_len
+            && 0 == memcmp(CUR_DCID(conn)->idbuf,
+                    packet_in->pi_data + packet_in->pi_scid_off,
+                    packet_in->pi_scid_len))
+    {
+        /*
+         * [draft-ietf-quic-transport-24] Section 17.2.5:
+         " A client MUST discard a Retry packet that contains a Source
+         " Connection ID field that is identical to the Destination
+         " Connection ID field of its Initial packet.
+         */
+        LSQ_DEBUG("server provided same SCID as ODCID: discard packet");
+        return 0;
+    }
+
     if (!(CUR_DCID(conn)->len == packet_in->pi_odcid_len
             && 0 == memcmp(CUR_DCID(conn)->idbuf,
                             packet_in->pi_data + packet_in->pi_odcid,
@@ -5730,20 +5755,6 @@ process_regular_packet (struct ietf_full_conn *conn,
         if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET))
                                                 && (packet_in->pi_scid_len))
         {
-            if (CUR_DCID(conn)->len == packet_in->pi_scid_len
-                    && 0 == memcmp(CUR_DCID(conn)->idbuf,
-                            packet_in->pi_data + packet_in->pi_scid_off,
-                            packet_in->pi_scid_len))
-            {
-                /*
-                 * [draft-ietf-quic-transport-24] Section 17.2.5:
-                 " A client MUST discard a Retry packet that contains a Source
-                 " Connection ID field that is identical to the Destination
-                 " Connection ID field of its Initial packet.
-                 */
-                LSQ_DEBUG("server provided same SCID as ODCID: discard packet");
-                return 0;
-            }
             conn->ifc_flags |= IFC_DCID_SET;
             lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
             LSQ_DEBUGC("set DCID to %"CID_FMT,

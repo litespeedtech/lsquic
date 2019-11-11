@@ -15,8 +15,8 @@ and OpenLiteSpeed.  We think it is free of major problems.  Nevertheless, do
 not hesitate to report bugs back to us.  Even better, send us fixes and
 improvements!
 
-Currently supported QUIC versions are Q039, Q043, Q046, and ID-23.  Support
-for newer versions will be added soon after they are released.
+Currently supported QUIC versions are Q039, Q043, Q046, ID-23, and ID-24.
+Support for newer versions will be added soon after they are released.
 
 Documentation
 -------------

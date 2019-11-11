@@ -1373,17 +1373,14 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                                         &next);
         }
         break;
-    case EXFI_LAST:
+    default:
+        assert(filter == EXFI_LAST);
         packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
         if (packet_out)
             n_resubmitted = send_ctl_handle_lost_packet(ctl, packet_out, NULL);
         else
             n_resubmitted = 0;
         break;
-#ifdef WIN32
-    default:
-        n_resubmitted = 0;
-#endif
     }
 
     LSQ_DEBUG("consider %s packets lost: %d resubmitted",

@@ -2362,19 +2362,9 @@ cry_sm_set_encryption_secret (SSL *ssl, enum ssl_encryption_level_t level,
         return 0;
 
     if (enc_sess->esi_flags & ESI_SERVER)
-    {
-        if (enc_level != ENC_LEV_EARLY)
-            secrets[0] = read_secret, secrets[1] = write_secret;
-        else
-            secrets[1] = read_secret, secrets[0] = write_secret;
-    }
+        secrets[0] = read_secret, secrets[1] = write_secret;
     else
-    {
-        if (enc_level != ENC_LEV_EARLY)
-            secrets[0] = write_secret, secrets[1] = read_secret;
-        else
-            secrets[1] = write_secret, secrets[0] = read_secret;
-    }
+        secrets[0] = write_secret, secrets[1] = read_secret;
 
     if (enc_level < ENC_LEV_FORW)
     {

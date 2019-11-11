@@ -1,3 +1,14 @@
+2019-11-11
+    - 2.6.2
+    - [BUGFIX] SCID!=ODCID rule applies to Retry packets, not regular
+      packets.
+    - [BUGFIX] Zero-RTT: BoringSSL no longer flips read/write secrets.
+    - [BUGFIX] Truncate ACK frame rather instead of aborting IETF
+      connection.
+    - [BUGFIX] Client: don't send duplicate reset tokens.
+    - [BUGFIX] Remove invalid assertion in H3 framing code.
+    - Silence a warning in send ctl by restructuring switch() statement.
+
 2019-11-08
     - 2.6.1
     - [BUGFIX] set retry token on all resubmitted packets.
