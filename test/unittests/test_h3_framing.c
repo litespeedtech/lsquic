@@ -755,6 +755,122 @@ test_frame_header_split (unsigned n_packets)
 }
 
 
+static void
+test_zero_size_frame (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    ssize_t w;
+    size_t nw;
+    int fin, s;
+    unsigned char *buf_in, *buf_out;
+    const unsigned wsize = 7000;
+    const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
+
+    struct lsquic_http_header header = {
+        .name = { ":method", 7, },
+        .value = { "GET", 3, },
+    };
+    struct lsquic_http_headers headers = { 1, &header, };
+
+    buf_in = malloc(buf_in_sz);
+    buf_out = malloc(buf_out_sz);
+    assert(buf_in && buf_out);
+
+    struct packetization_test_stream_ctx packet_stream_ctx =
+    {
+        .buf = buf_in,
+        .off = 0,
+        .len = buf_in_sz,
+        .write_size = wsize,
+        .flush_after_each_write = 0,
+    };
+
+    init_buf(buf_in, buf_in_sz);
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, buf_out_sz, 1252);
+    tobjs.stream_if_ctx = &packet_stream_ctx;
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    g_ctl_settings.tcs_can_send = 1;
+    tobjs.stream_if = &packetization_inside_once_stream_if;
+    tobjs.ctor_flags |= SCF_DISP_RW_ONCE;
+
+    struct lsquic_packet_out *const packet_out
+        = lsquic_send_ctl_new_packet_out(&tobjs.send_ctl, 0, PNS_APP, &network_path);
+    assert(packet_out);
+    const size_t pad_size = packet_out->po_n_alloc
+                          - 2   /* STREAM header */
+                          - 5   /* 3-byte HEADERS frame */
+                          - 3;
+    packet_out->po_data_sz = pad_size;
+    lsquic_send_ctl_scheduled_one(&tobjs.send_ctl, packet_out);
+
+    stream = new_stream(&tobjs, 0, buf_out_sz);
+
+    s = lsquic_stream_send_headers(stream, &headers, 0);
+    assert(0 == s);
+
+    w = lsquic_stream_write(stream, buf_in, buf_in_sz);
+    assert(w >= 0);
+    lsquic_stream_flush(stream);
+
+    g_ctl_settings.tcs_can_send++;
+    w = lsquic_stream_write(stream, buf_in, buf_in_sz);
+    assert(w >= 0);
+    lsquic_stream_flush(stream);
+
+    /* Verify written data: */
+    nw = read_from_scheduled_packets(&tobjs.send_ctl, 0, buf_out, buf_out_sz,
+                                     0, &fin, 1);
+    {   /* Remove framing and verify contents */
+        const unsigned char *src;
+        unsigned char *dst;
+        uint64_t sz;
+        unsigned frame_type;
+        int s;
+
+        src = buf_out;
+        dst = buf_out;
+        while (src < buf_out + nw)
+        {
+            frame_type = *src++;
+            s = vint_read(src, buf_out + buf_out_sz, &sz);
+            assert(s > 0);
+            assert(sz < (1 << 14));
+            src += s;
+            if (src == buf_out + s + 1)
+            {
+                /* Ignore headers */
+                assert(frame_type == HQFT_HEADERS);
+                src += sz;
+            }
+            else
+            {
+                assert(frame_type == HQFT_DATA);
+                if (src + sz > buf_out + nw)    /* Chopped DATA frame (last) */
+                    sz = buf_out + nw - src;
+                memmove(dst, src, sz);
+                dst += sz;
+                src += sz;
+            }
+        }
+        assert(0 == memcmp(buf_in, buf_out, (uintptr_t) dst - (uintptr_t) buf_out));
+    }
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    free(buf_in);
+    free(buf_out);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
 
 int
 main (int argc, char **argv)
@@ -781,6 +897,7 @@ main (int argc, char **argv)
     main_test_hq_framing();
     test_frame_header_split(1);
     test_frame_header_split(2);
+    test_zero_size_frame();
 
     return 0;
 }

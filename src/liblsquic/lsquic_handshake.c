@@ -3281,13 +3281,6 @@ set_handshake_completed (struct lsquic_enc_session *enc_session)
 
 #endif
 
-static const char *
-lsquic_enc_session_get_sni (enc_session_t *enc_session_p)
-{
-    struct lsquic_enc_session *const enc_session = enc_session_p;
-    return lsquic_str_cstr(&enc_session->hs_ctx.sni);
-}
-
 
 #ifndef NDEBUG
 static uint8_t
@@ -3631,7 +3624,6 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 =
     .esf_cipher = lsquic_enc_session_cipher,
     .esf_keysize = lsquic_enc_session_keysize,
     .esf_alg_keysize = lsquic_enc_session_alg_keysize,
-    .esf_get_sni = lsquic_enc_session_get_sni,
     .esf_encrypt_packet = gquic_encrypt_packet,
     .esf_decrypt_packet = gquic_decrypt_packet,
     .esf_tag_len = GQUIC_PACKET_HASH_SZ,

@@ -1013,8 +1013,8 @@ iquic_lookup_cert (SSL *ssl, void *arg)
 #endif
     if (!server_name)
     {
-        LSQ_DEBUG("cert lookup: server name is not set, error");
-        return 0;
+        LSQ_DEBUG("cert lookup: server name is not set, skip");
+        return 1;
     }
 
     path = enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);
@@ -2048,15 +2048,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
 }
 
 
-static const char *
-iquic_esf_get_sni (enc_session_t *enc_session_p)
-{
-    struct enc_sess_iquic *const enc_sess = enc_session_p;
-
-    return SSL_get_servername(enc_sess->esi_ssl, TLSEXT_NAMETYPE_host_name);
-}
-
-
 static int
 iquic_esf_global_init (int flags)
 {
@@ -2240,7 +2231,6 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1 =
     .esf_tag_len         = IQUIC_TAG_LEN,
     .esf_get_server_cert_chain
                          = iquic_esf_get_server_cert_chain,
-    .esf_get_sni         = iquic_esf_get_sni,
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,
     .esf_alg_keysize     = iquic_esf_alg_keysize,

@@ -5464,6 +5464,11 @@ process_retry_packet (struct ietf_full_conn *conn,
 
     if (conn->ifc_flags & (IFC_SERVER|IFC_RETRIED))
     {
+        /* [draft-ietf-quic-transport-24] Section 17.2.5:
+         " After the client has received and processed an Initial or Retry
+         " packet from the server, it MUST discard any subsequent Retry
+         " packets that it receives.
+         */
         LSQ_DEBUG("ignore Retry packet");
         return 0;
     }

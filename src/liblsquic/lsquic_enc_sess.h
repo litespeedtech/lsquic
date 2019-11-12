@@ -99,9 +99,6 @@ struct enc_session_funcs_common
     int
     (*esf_alg_keysize) (enc_session_t *);
 
-    const char *
-    (*esf_get_sni) (enc_session_t *);
-
     enum enc_packout
     (*esf_encrypt_packet) (enc_session_t *, const struct lsquic_engine_public *,
         struct lsquic_conn *, struct lsquic_packet_out *);

@@ -2536,7 +2536,6 @@ open_hq_frame (struct lsquic_stream *stream)
 }
 
 
-/* Returns index of the new frame */
 static struct stream_hq_frame *
 stream_activate_hq_frame (struct lsquic_stream *stream, uint64_t off,
             enum hq_frame_type frame_type, enum shf_flags flags, size_t size)
@@ -2915,7 +2914,7 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
 
     bits = (shf->shf_flags & SHF_TWO_BYTES) > 0;
     size = stream->sm_payload + stream->sm_n_buffered - shf->shf_off;
-    if (size && size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
+    if (size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
     {
         if (0 == stream->sm_n_buffered)
             LSQ_DEBUG("close HQ frame type 0x%X of size %"PRIu64,
@@ -2935,23 +2934,18 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
     }
     else if (!shf->shf_frame_ptr)
     {
-        LSQ_WARN("dangling HTTP/3 frame");
+        LSQ_ERROR("dangling HTTP/3 frame, on stream %"PRIu64, stream->id);
         stream->conn_pub->lconn->cn_if->ci_internal_error(
-            stream->conn_pub->lconn, "dangling HTTP/3 frame on stream %"PRIu64,
-                stream->id);
-        stream_hq_frame_put(stream, shf);
-    }
-    else if (!size)
-    {
-        LSQ_WARN("discard zero-sized HQ frame type 0x%X (off: %"PRIu64")",
-                                        shf->shf_frame_type, shf->shf_off);
+            stream->conn_pub->lconn, "dangling HTTP/3 frame");
         stream_hq_frame_put(stream, shf);
     }
     else
     {
         assert(stream->sm_n_buffered);
-        LSQ_ERROR("cannot close frame of size %"PRIu64" -- too large", size);
-        /* TODO: abort connection */
+        LSQ_ERROR("cannot close frame of size %"PRIu64" on stream %"PRIu64
+            " -- too large", size, stream->id);
+        stream->conn_pub->lconn->cn_if->ci_internal_error(
+            stream->conn_pub->lconn, "HTTP/3 frame too large");
         stream_hq_frame_put(stream, shf);
     }
 }
