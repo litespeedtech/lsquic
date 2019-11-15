@@ -2693,6 +2693,35 @@ check_flush_threshold (lsquic_stream_t *stream)
 }
 
 
+#if LSQUIC_EXTRA_CHECKS
+static void
+verify_conn_cap (const struct lsquic_conn_public *conn_pub)
+{
+    const struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+    unsigned n_buffered;
+
+    if (!conn_pub->all_streams)
+        /* TODO: enable this check for unit tests as well */
+        return;
+
+    n_buffered = 0;
+    for (el = lsquic_hash_first(conn_pub->all_streams); el;
+                                 el = lsquic_hash_next(conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (stream->sm_bflags & SMBF_CONN_LIMITED)
+            n_buffered += stream->sm_n_buffered;
+    }
+
+    assert(n_buffered + conn_pub->stream_frame_bytes
+                                            == conn_pub->conn_cap.cc_sent);
+}
+
+
+#endif
+
+
 static int
 write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
                                         struct lsquic_packet_out *packet_out)
@@ -2703,7 +2732,7 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
     unsigned off;
     int len, s;
 
-#if LSQUIC_CONN_STATS
+#if LSQUIC_CONN_STATS || LSQUIC_EXTRA_CHECKS
     const uint64_t begin_off = stream->tosend_off;
 #endif
     off = packet_out->po_data_sz;
@@ -2733,6 +2762,13 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
         LSQ_ERROR("adding stream to packet failed: %s", strerror(errno));
         return -1;
     }
+#if LSQUIC_EXTRA_CHECKS
+    if (stream->sm_bflags & SMBF_CONN_LIMITED)
+    {
+        stream->conn_pub->stream_frame_bytes += stream->tosend_off - begin_off;
+        verify_conn_cap(stream->conn_pub);
+    }
+#endif
 
     check_flush_threshold(stream);
     return len;

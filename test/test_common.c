@@ -157,6 +157,8 @@ static void getExtensionPtrs()
     }
     LeaveCriticalSection(&initLock);
 }
+
+
 #endif
 
 
@@ -693,6 +695,8 @@ read_using_recvmmsg (struct read_iter *iter)
 
     return n == sizeof(mmsghdrs) / sizeof(mmsghdrs[0]) ? ROP_NOROOM : ROP_OK;
 }
+
+
 #endif
 
 
@@ -1223,6 +1227,7 @@ packet_out_limit (void)
         return 0;
 }
 
+
 enum ctl_what
 {
     CW_SENDADDR     = 1 << 0,
@@ -1440,6 +1445,8 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
 
     return s;
 }
+
+
 #endif
 
 
@@ -1466,6 +1473,8 @@ find_sport (struct prog *prog, const struct sockaddr *local_sa)
     assert(0);
     return NULL;
 }
+
+
 #endif
 
 
@@ -1662,11 +1671,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_sfcw = atoi(val);
             return 0;
         }
-        if (0 == strncmp(name, "srej", 4))
-        {
-            settings->es_support_srej = atoi(val);
-            return 0;
-        }
         break;
     case 7:
         if (0 == strncmp(name, "version", 7))
@@ -1767,11 +1771,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "handshake_to", 12))
         {
             settings->es_handshake_to = atoi(val);
-            return 0;
-        }
-        if (0 == strncmp(name, "support_srej", 12))
-        {
-            settings->es_support_srej = atoi(val);
             return 0;
         }
         break;
@@ -1932,6 +1931,7 @@ pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
     return pb;
 }
 
+
 void
 pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 {
@@ -1944,6 +1944,7 @@ pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 #endif
     --pba->n_out;
 }
+
 
 void
 pba_cleanup (struct packout_buf_allocator *pba)
@@ -1983,6 +1984,7 @@ print_conn_info (const lsquic_conn_t *conn)
         lsquic_conn_crypto_alg_keysize(conn)
     );
 }
+
 
 struct reader_ctx
 {

@@ -2220,7 +2220,7 @@ send_ctl_max_bpq_count (const lsquic_send_ctl_t *ctl,
         cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
         if (count < cwnd / SC_PACK_SIZE(ctl))
         {
-            count -= cwnd / SC_PACK_SIZE(ctl);
+            count = cwnd / SC_PACK_SIZE(ctl) - count;
             if (count > MAX_BPQ_COUNT)
                 return count;
         }

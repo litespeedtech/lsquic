@@ -1,3 +1,8 @@
+2019-11-15
+    - 2.6.4
+    - [BUGFIX] High priority buffered packet queue length.
+    - [BUGFIX] Rain time calculation: max_ack_delay is in milliseconds.
+
 2019-11-12
     - 2.6.3
     - [BUGFIX] Close DATA frames with empty payload correctly.

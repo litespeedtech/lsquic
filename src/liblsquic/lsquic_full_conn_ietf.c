@@ -2444,7 +2444,7 @@ ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
      */
     srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
     var = lsquic_rtt_stats_get_rttvar(&conn->ifc_pub.rtt_stats);
-    pto = srtt + 4 * var + TP_DEF_MAX_ACK_DELAY;
+    pto = srtt + 4 * var + TP_DEF_MAX_ACK_DELAY * 1000;
     drain_time = 3 * pto;
 
     LSQ_DEBUG("drain time is %"PRIu64" usec", drain_time);
