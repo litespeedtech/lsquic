@@ -318,8 +318,10 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     tobjs->conn_pub.path = &network_path;
     tobjs->initial_stream_window = initial_stream_window;
+    tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
+    tobjs->send_ctl.sc_cong_u.cubic.cu_cwnd = ~0ull;
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = &test_ctx;
     tobjs->ctor_flags = stream_ctor_flags;
