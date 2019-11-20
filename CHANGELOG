@@ -1,3 +1,8 @@
+2019-11-20
+    - 2.6.6
+    - [BUGFIX] Using HTTP/3 to HTTP/1.x converter.
+    - [BUGFIX] Truncate log messages instead of throwing them away.
+
 2019-11-15
     - 2.6.5
     - [BUGFIX] High priority buffered packet queue length.

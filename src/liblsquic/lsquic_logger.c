@@ -20,7 +20,12 @@
 #include "lsquic_logger.h"
 
 #define MAX_LINE_LEN 8192
-#define FORMAT_PROBLEM(lb, len, max) (((ssize_t)lb < 0) || ((ssize_t)lb + (ssize_t)len >= (ssize_t)max))
+/* Expanded TRUNC_FMT should not exceed TRUNC_SZ bytes.  At the same time,
+ * TRUNC_SZ should be significantly smaller than MAX_LINE_LEN.
+ */
+#define TRUNC_FMT "<truncated, need %d bytes>"
+#define TRUNC_SZ 40
+#define FORMAT_PROBLEM(lb, len, max) ((lb < 0) || (lb + len >= max))
 
 /* TODO: display GQUIC CIDs in Chrome-compatible format */
 
@@ -241,7 +246,7 @@ lsquic_logger_log3 (enum lsq_log_level log_level,
     const int saved_errno = errno;
     char cidbuf_[MAX_CID_LEN * 2 + 1];
     size_t len = 0;
-    size_t lb;
+    int lb;
     size_t max = MAX_LINE_LEN;
     char buf[MAX_LINE_LEN];
 
@@ -262,6 +267,11 @@ lsquic_logger_log3 (enum lsq_log_level log_level,
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
     va_end(ap);
+    if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
+    {
+        len = max - TRUNC_SZ;
+        lb = snprintf(buf + max - TRUNC_SZ, TRUNC_SZ, TRUNC_FMT, lb);
+    }
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -283,7 +293,7 @@ lsquic_logger_log2 (enum lsq_log_level log_level,
     const int saved_errno = errno;
     char cidbuf_[MAX_CID_LEN * 2 + 1];
     size_t len = 0;
-    size_t lb;
+    int lb;
     size_t max = MAX_LINE_LEN;
     char buf[MAX_LINE_LEN];
 
@@ -304,6 +314,11 @@ lsquic_logger_log2 (enum lsq_log_level log_level,
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
     va_end(ap);
+    if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
+    {
+        len = max - TRUNC_SZ;
+        lb = snprintf(buf + max - TRUNC_SZ, TRUNC_SZ, TRUNC_FMT, lb);
+    }
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -324,7 +339,7 @@ lsquic_logger_log1 (enum lsq_log_level log_level,
 {
     const int saved_errno = errno;
     size_t len = 0;
-    size_t lb;
+    int lb;
     size_t max = MAX_LINE_LEN;
     char buf[MAX_LINE_LEN];
 
@@ -344,6 +359,11 @@ lsquic_logger_log1 (enum lsq_log_level log_level,
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
     va_end(ap);
+    if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
+    {
+        len = max - TRUNC_SZ;
+        lb = snprintf(buf + max - TRUNC_SZ, TRUNC_SZ, TRUNC_FMT, lb);
+    }
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -362,7 +382,7 @@ lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
 {
     const int saved_errno = errno;
     size_t len = 0;
-    size_t lb;
+    int lb;
     size_t max = MAX_LINE_LEN;
     char buf[MAX_LINE_LEN];
 
@@ -382,6 +402,11 @@ lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
     va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
     va_end(ap);
+    if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
+    {
+        len = max - TRUNC_SZ;
+        lb = snprintf(buf + max - TRUNC_SZ, TRUNC_SZ, TRUNC_FMT, lb);
+    }
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;

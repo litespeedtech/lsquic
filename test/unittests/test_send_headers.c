@@ -52,6 +52,8 @@
 #include "lsquic_enc_sess.h"
 #include "lsqpack.h"
 #include "lsquic_frab_list.h"
+#include "lsquic_http1x_if.h"
+#include "lsquic_qdec_hdl.h"
 #include "lsquic_qenc_hdl.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
@@ -122,6 +124,7 @@ struct test_objs {
     unsigned                  initial_stream_window;
     enum stream_ctor_flags    ctor_flags;
     struct qpack_enc_hdl      qeh;
+    struct qpack_dec_hdl      qdh;
 };
 
 
@@ -189,6 +192,11 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
         assert(0 == s);
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
+        tobjs->conn_pub.enpub->enp_hsi_if  = lsquic_http1x_if;
+        s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
+                                    tobjs->conn_pub.enpub, 0, 0);
+        tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
+        assert(0 == s);
     }
 }
 
@@ -201,7 +209,10 @@ deinit_test_objs (struct test_objs *tobjs)
     lsquic_malo_destroy(tobjs->conn_pub.packet_out_malo);
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
     if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
+    {
         lsquic_qeh_cleanup(&tobjs->qeh);
+        lsquic_qdh_cleanup(&tobjs->qdh);
+    }
 }
 
 
@@ -583,6 +594,46 @@ test_read_headers (int ietf, int use_hset)
 }
 
 
+static void
+test_read_headers_http1x (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    int s;
+    const unsigned char headers_frame[5] = {
+        0x01,   /* Headers frame */
+        0x03,   /* Frame length */
+        0x00,
+        0x00,
+        0xC0 | 25   /* :status 200 */,
+    };
+    ssize_t nr;
+    unsigned char buf[0x100];
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in(&tobjs, 0, sizeof(headers_frame), 1);
+    memcpy((unsigned char *) frame->data_frame.df_data, headers_frame,
+                                                    sizeof(headers_frame));
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    assert(stream->stream_flags & STREAM_FIN_REACHED);
+    s = lsquic_stream_readable(stream);
+
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr > 0);
+    assert(nr == 19);
+    assert(0 == memcmp(buf, "HTTP/1.1 200 OK\r\n\r\n", nr));
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -612,6 +663,7 @@ main (int argc, char **argv)
     test_read_headers(0, 1);
     test_read_headers(1, 0);
     test_read_headers(1, 1);
+    test_read_headers_http1x();
 
     return 0;
 }

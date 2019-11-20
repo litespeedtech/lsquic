@@ -1435,10 +1435,16 @@ lsquic_stream_readf (struct lsquic_stream *stream,
         errno = EBADF;
         return -1;
     }
-    if ((stream->stream_flags & STREAM_FIN_REACHED)
-            && 0 == (!!(stream->stream_flags & STREAM_HAVE_UH)
-                   ^ !!(stream->sm_bflags & SMBF_USE_HEADERS)))
-        return 0;
+    if (stream->stream_flags & STREAM_FIN_REACHED)
+    {
+       if (stream->sm_bflags & SMBF_USE_HEADERS)
+       {
+            if ((stream->stream_flags & STREAM_HAVE_UH) && !stream->uh)
+                return 0;
+       }
+       else
+           return 0;
+    }
 
     return stream_readf(stream, readf, ctx);
 }
