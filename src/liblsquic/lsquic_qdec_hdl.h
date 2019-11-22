@@ -21,6 +21,7 @@ struct qpack_dec_hdl
     struct lsquic_conn      *qdh_conn;
     enum {
         QDH_INITIALIZED     = 1 << 0,
+        QDH_PUSH_PROMISE    = 1 << 1,
     }                        qdh_flags;
     struct lsqpack_dec       qdh_decoder;
     struct lsquic_stream    *qdh_enc_sm_in;

@@ -3726,8 +3726,9 @@ lsquic_stream_push_info (const lsquic_stream_t *stream,
 }
 
 
-int
-lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
+static int
+stream_uh_in_gquic (struct lsquic_stream *stream,
+                                            struct uncompressed_headers *uh)
 {
     if ((stream->sm_bflags & SMBF_USE_HEADERS)
                                     && !(stream->stream_flags & STREAM_HAVE_UH))
@@ -3761,6 +3762,68 @@ lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
         LSQ_ERROR("received unexpected uncompressed headers");
         return -1;
     }
+}
+
+
+static int
+stream_uh_in_ietf (struct lsquic_stream *stream,
+                                            struct uncompressed_headers *uh)
+{
+    int push_promise;
+
+    push_promise = lsquic_stream_header_is_pp(stream);
+    if (!(stream->stream_flags & STREAM_HAVE_UH) && !push_promise)
+    {
+        SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
+        LSQ_DEBUG("received uncompressed headers");
+        stream->stream_flags |= STREAM_HAVE_UH;
+        if (uh->uh_flags & UH_FIN)
+        {
+            /* IETF QUIC only sets UH_FIN for a pushed stream on the server to
+             * mark request as done:
+             */
+            if (stream->sm_bflags & SMBF_IETF)
+                assert((stream->sm_bflags & SMBF_SERVER)
+                                            && lsquic_stream_is_pushed(stream));
+            stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
+        }
+        stream->uh = uh;
+        if (uh->uh_oth_stream_id == 0)
+        {
+            if (uh->uh_weight)
+                lsquic_stream_set_priority_internal(stream, uh->uh_weight);
+        }
+        else
+            LSQ_NOTICE("don't know how to depend on stream %"PRIu64,
+                                                        uh->uh_oth_stream_id);
+    }
+    else
+    {
+        /* Trailer should never make here, as we discard it in qdh */
+        LSQ_DEBUG("discard %s header set",
+                                    push_promise ? "push promise" : "trailer");
+        if (uh->uh_hset)
+            stream->conn_pub->enpub->enp_hsi_if
+                            ->hsi_discard_header_set(uh->uh_hset);
+        free(uh);
+    }
+
+    return 0;
+}
+
+
+int
+lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
+{
+    if (stream->sm_bflags & SMBF_USE_HEADERS)
+    {
+        if (stream->sm_bflags & SMBF_IETF)
+            return stream_uh_in_ietf(stream, uh);
+        else
+            return stream_uh_in_gquic(stream, uh);
+    }
+    else
+        return -1;
 }
 
 
@@ -3961,7 +4024,8 @@ lsquic_stream_set_stream_if (struct lsquic_stream *stream,
 
 
 static int
-update_type_hist_and_check (struct hq_filter *filter)
+update_type_hist_and_check (const struct lsquic_stream *stream,
+                                                    struct hq_filter *filter)
 {
     /* 3-bit codes: */
     enum {
@@ -3988,6 +4052,20 @@ update_type_hist_and_check (struct hq_filter *filter)
     case HQFT_DATA:
         code = CODE_DATA;
         break;
+    case HQFT_PUSH_PROMISE:
+    case HQFT_DUPLICATE_PUSH:
+        /* [draft-ietf-quic-http-24], Section 7 */
+        if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT
+                                    && !(stream->sm_bflags & SMBF_SERVER))
+            return 0;
+        else
+            return -1;
+    case HQFT_CANCEL_PUSH:
+    case HQFT_SETTINGS:
+    case HQFT_GOAWAY:
+    case HQFT_MAX_PUSH_ID:
+        /* [draft-ietf-quic-http-24], Section 7 */
+        return -1;
     default:
         /* Ignore unknown frames */
         return 0;
@@ -4021,6 +4099,21 @@ update_type_hist_and_check (struct hq_filter *filter)
 }
 
 
+int
+lsquic_stream_header_is_pp (const struct lsquic_stream *stream)
+{
+    return stream->sm_hq_filter.hqfi_type == HQFT_PUSH_PROMISE;
+}
+
+
+int
+lsquic_stream_header_is_trailer (const struct lsquic_stream *stream)
+{
+    return (stream->stream_flags & STREAM_HAVE_UH)
+        && stream->sm_hq_filter.hqfi_type == HQFT_HEADERS;
+}
+
+
 static size_t
 hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
@@ -4037,11 +4130,11 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
         switch (filter->hqfi_state)
         {
         case HQFI_STATE_FRAME_HEADER_BEGIN:
-            filter->hqfi_vint_state.vr2s_state = 0;
+            filter->hqfi_vint2_state.vr2s_state = 0;
             filter->hqfi_state = HQFI_STATE_FRAME_HEADER_CONTINUE;
             /* fall-through */
         case HQFI_STATE_FRAME_HEADER_CONTINUE:
-            s = lsquic_varint_read_two(&p, end, &filter->hqfi_vint_state);
+            s = lsquic_varint_read_two(&p, end, &filter->hqfi_vint2_state);
             if (s < 0)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
@@ -4049,7 +4142,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);
-            if (0 != update_type_hist_and_check(filter))
+            if (0 != update_type_hist_and_check(stream, filter))
             {
                 lconn = stream->conn_pub->lconn;
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
@@ -4060,37 +4153,23 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     stream->id);
                 goto end;
             }
-            if (filter->hqfi_type == HQFT_HEADERS)
-            {
-                if (0 == (filter->hqfi_flags & HQFI_FLAG_GOT_HEADERS))
-                    filter->hqfi_flags |= HQFI_FLAG_GOT_HEADERS;
-                else
-                {
-                    filter->hqfi_type = (1ull << 62) - 1;
-                    LSQ_DEBUG("Ignoring HEADERS frame");
-                }
-            }
             if (filter->hqfi_left > 0)
             {
                 if (filter->hqfi_type == HQFT_DATA)
                     goto end;
                 else if (filter->hqfi_type == HQFT_PUSH_PROMISE)
                 {
-                    lconn = stream->conn_pub->lconn;
                     if (stream->sm_bflags & SMBF_SERVER)
+                    {
+                        lconn = stream->conn_pub->lconn;
                         lconn->cn_if->ci_abort_error(lconn, 1,
                             HEC_FRAME_UNEXPECTED, "Received PUSH_PROMISE frame "
                             "on stream %"PRIu64" (clients are not supposed to "
                             "send those)", stream->id);
+                        goto end;
+                    }
                     else
-                        /* Our client implementation does not support server
-                         * push.
-                         */
-                        lconn->cn_if->ci_abort_error(lconn, 1,
-                            HEC_FRAME_UNEXPECTED,
-                            "Received PUSH_PROMISE frame (not supported)"
-                            "on stream %"PRIu64, stream->id);
-                    goto end;
+                        filter->hqfi_state = HQFI_STATE_PUSH_ID_BEGIN;
                 }
             }
             else
@@ -4115,6 +4194,18 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 }
             }
             break;
+        case HQFI_STATE_PUSH_ID_BEGIN:
+            filter->hqfi_vint1_state.pos = 0;
+            filter->hqfi_state = HQFI_STATE_PUSH_ID_CONTINUE;
+            /* Fall-through */
+        case HQFI_STATE_PUSH_ID_CONTINUE:
+            prev = p;
+            s = lsquic_varint_read_nb(&p, end, &filter->hqfi_vint1_state);
+            filter->hqfi_left -= p - prev;
+            if (s == 0)
+                filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
+                /* A bit of a white lie here */
+            break;
         case HQFI_STATE_READING_PAYLOAD:
             if (filter->hqfi_type == HQFT_DATA)
                 goto end;
@@ -4124,6 +4215,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             switch (filter->hqfi_type)
             {
             case HQFT_HEADERS:
+            case HQFT_PUSH_PROMISE:
                 prev = p;
                 if (filter->hqfi_flags & HQFI_FLAG_BEGIN)
                 {

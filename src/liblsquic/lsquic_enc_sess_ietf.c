@@ -243,6 +243,7 @@ struct enc_sess_iquic
         ESI_CACHED_INFO  = 1 << 9,
         ESI_1RTT_ACKED   = 1 << 10,
         ESI_WANT_TICKET  = 1 << 11,
+        ESI_QL_BITS      = 1 << 12,
     }                    esi_flags;
     enum evp_aead_direction_t
                          esi_dir[2];        /* client, server */
@@ -333,7 +334,10 @@ apply_hp (struct enc_sess_iquic *enc_sess,
     hp->hp_gen_mask(enc_sess, hp, cliser, dst + packno_off + 4, mask);
     LSQ_DEBUG("apply header protection using mask %s",
                                                 HEXSTR(mask, 5, mask_str));
-    dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
+    if (enc_sess->esi_flags & ESI_QL_BITS)
+        dst[0] ^= (0x7 | ((dst[0] >> 7) << 3)) & mask[0];
+    else
+        dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
     switch (packno_len)
     {
     case 4:
@@ -391,7 +395,10 @@ strip_hp (struct enc_sess_iquic *enc_sess,
     hp->hp_gen_mask(enc_sess, hp, cliser, iv, mask);
     LSQ_DEBUG("strip header protection using mask %s",
                                                 HEXSTR(mask, 5, mask_str));
-    dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
+    if (enc_sess->esi_flags & ESI_QL_BITS)
+        dst[0] ^= (0x7 | ((dst[0] >> 7) << 3)) & mask[0];
+    else
+        dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
     packno = 0;
     shift = 0;
     *packno_len = 1 + (dst[0] & 3);
@@ -539,6 +546,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         - !!(params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
     if (!settings->es_allow_migration)
         params.tp_disable_active_migration = 1;
+    if (settings->es_ql_bits)
+        params.tp_flags |= TRAPA_QL_BITS;
 
     len = lsquic_tp_encode(&params, buf, bufsz);
     if (len >= 0)
@@ -1467,6 +1476,13 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         }
     }
 
+    if ((trans_params->tp_flags & TRAPA_QL_BITS)
+                        && enc_sess->esi_enpub->enp_settings.es_ql_bits)
+    {
+        LSQ_DEBUG("enable QL loss bits");
+        enc_sess->esi_flags |= ESI_QL_BITS;
+    }
+
     return 0;
 }
 
@@ -1978,7 +1994,15 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         goto err;
     }
 
-    if (dst[0] & (0x0C << (packet_in->pi_header_type == HETY_NOT_SET)))
+    if (enc_sess->esi_flags & ESI_QL_BITS)
+    {
+        packet_in->pi_flags |= PI_LOG_QL_BITS;
+        if (dst[0] & 0x10)
+            packet_in->pi_flags |= PI_SQUARE_BIT;
+        if (dst[0] & 0x08)
+            packet_in->pi_flags |= PI_LOSS_BIT;
+    }
+    else if (dst[0] & (0x0C << (packet_in->pi_header_type == HETY_NOT_SET)))
     {
         LSQ_DEBUG("reserved bits are not set to zero");
         dec_packin = DECPI_VIOLATION;

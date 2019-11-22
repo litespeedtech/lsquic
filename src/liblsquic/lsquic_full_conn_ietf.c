@@ -2690,6 +2690,13 @@ handshake_ok (struct lsquic_conn *lconn)
     LSQ_DEBUG("peer transport parameters: %s",
                         (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
 
+    if ((params->tp_flags & TRAPA_QL_BITS)
+                                        && conn->ifc_settings->es_ql_bits)
+    {
+        LSQ_DEBUG("turn on QL loss bits");
+        lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
+    }
+
     if (params->tp_init_max_streams_bidi > (1ull << 60)
                             || params->tp_init_max_streams_uni > (1ull << 60))
     {

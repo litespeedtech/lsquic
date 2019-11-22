@@ -101,12 +101,14 @@ struct stream_hq_frame
 
 struct hq_filter
 {
-    struct varint_read2_state   hqfi_vint_state;
+    struct varint_read2_state   hqfi_vint2_state;
     /* No need to copy the values: use it directly */
-#define hqfi_left hqfi_vint_state.vr2s_two
-#define hqfi_type hqfi_vint_state.vr2s_one
+#define hqfi_left hqfi_vint2_state.vr2s_two
+#define hqfi_type hqfi_vint2_state.vr2s_one
+    struct varint_read_state    hqfi_vint1_state;
+#define hqfi_push_id hqfi_vint1_state.value
     enum {
-        HQFI_FLAG_GOT_HEADERS   = 1 << 0,
+        HQFI_FLAG_UNUSED_0      = 1 << 0,
         HQFI_FLAG_ERROR         = 1 << 1,
         HQFI_FLAG_BEGIN         = 1 << 2,
         HQFI_FLAG_BLOCKED       = 1 << 3,
@@ -115,6 +117,8 @@ struct hq_filter
         HQFI_STATE_FRAME_HEADER_BEGIN,
         HQFI_STATE_FRAME_HEADER_CONTINUE,
         HQFI_STATE_READING_PAYLOAD,
+        HQFI_STATE_PUSH_ID_BEGIN,
+        HQFI_STATE_PUSH_ID_CONTINUE,
     }                           hqfi_state:8;
     unsigned char               hqfi_hist_idx;
 #define MAX_HQFI_ENTRIES (sizeof(unsigned) * 8 / 3)
@@ -263,7 +267,7 @@ struct lsquic_stream
     struct hq_filter                sm_hq_filter;
 
     /* We can safely use sm_hq_filter */
-#define sm_uni_type_state sm_hq_filter.hqfi_vint_state.vr2s_varint_state
+#define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
 
     /** If @ref SMQF_WANT_FLUSH is set, flush until this offset. */
     uint64_t                        sm_flush_to;
@@ -589,5 +593,11 @@ lsquic_stream_push_promise (struct lsquic_stream *, struct push_promise *);
 
 void
 lsquic_stream_force_finish (struct lsquic_stream *);
+
+int
+lsquic_stream_header_is_pp (const struct lsquic_stream *);
+
+int
+lsquic_stream_header_is_trailer (const struct lsquic_stream *);
 
 #endif

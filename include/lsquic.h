@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 6
-#define LSQUIC_PATCH_VERSION 6
+#define LSQUIC_PATCH_VERSION 7
 
 /**
  * Engine flags:
@@ -368,6 +368,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Allow migration by default */
 #define LSQUIC_DF_ALLOW_MIGRATION 1
+
+/** Use QL loss bits by default */
+#define LSQUIC_DF_QL_BITS 1
 
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 2
@@ -736,6 +739,13 @@ struct lsquic_engine_settings {
      *  2:  BBR
      */
     unsigned        es_cc_algo;
+
+    /**
+     * Use QL loss bits.
+     *
+     * Default value is @ref LSQUIC_DF_QL_BITS
+     */
+    int             es_ql_bits;
 };
 
 /* Initialize `settings' to default values */

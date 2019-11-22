@@ -1,3 +1,10 @@
+2019-11-22
+    - 2.6.7
+    - [FEATURE] Implement the QL extension (offered by default).
+    - [BUGFIX] Abort when encountering unexpected HTTP/3 frames.
+    - [BUGFIX] Acknowledge (QPACK) HTTP/3 trailers correctly.
+    - [DEBUG] Turn on debug message for next advisory tick.
+
 2019-11-20
     - 2.6.6
     - [BUGFIX] Using HTTP/3 to HTTP/1.x converter.

@@ -260,6 +260,8 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
 
     buf[0] = 0x40
            | (lsquic_packet_out_spin_bit(packet_out) << 5)
+           | (lsquic_packet_out_square_bit(packet_out) << 4)
+           | (lsquic_packet_out_loss_bit(packet_out) << 3)
            | (lsquic_packet_out_key_phase(packet_out) << 2)
            | packno_bits
            ;

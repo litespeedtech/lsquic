@@ -57,6 +57,8 @@ enum trapa_flags
 #define TPI_QUANTUM_READINESS 3127
     TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
 #endif
+#define TPI_QL_BITS 0x1055     /* 1055 is 133t for "loss" */
+    TRAPA_QL_BITS       = 1 << 6,
 };
 
 struct transport_params

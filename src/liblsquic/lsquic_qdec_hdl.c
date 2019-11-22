@@ -384,10 +384,12 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     struct uncompressed_headers *uh = NULL;
     const struct lsqpack_header *header;
     enum lsquic_header_status st;
+    int push_promise;
     unsigned i;
     void *hset;
 
-    hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, 0);
+    push_promise = lsquic_stream_header_is_pp(stream);
+    hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
     if (!hset)
     {
         LSQ_INFO("call to hsi_create_header_set failed");
@@ -440,6 +442,21 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
 }
 
 
+static int
+qdh_process_qlist (struct qpack_dec_hdl *qdh,
+            struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
+{
+    if (!lsquic_stream_header_is_trailer(stream))
+        return qdh_supply_hset_to_stream(qdh, stream, qlist);
+    else
+    {
+        LSQ_DEBUG("discard trailer header set");
+        lsqpack_dec_destroy_header_list(qlist);
+        return 0;
+    }
+}
+
+
 static enum lsqpack_read_header_status
 qdh_header_read_results (struct qpack_dec_hdl *qdh,
         struct lsquic_stream *stream, enum lsqpack_read_header_status rhs,
@@ -452,7 +469,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     {
         if (qlist)
         {
-            if (0 != qdh_supply_hset_to_stream(qdh, stream, qlist))
+            if (0 != qdh_process_qlist(qdh, stream, qlist))
                 return LQRHS_ERROR;
             if (qdh->qdh_dec_sm_out)
             {

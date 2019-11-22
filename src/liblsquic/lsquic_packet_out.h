@@ -143,7 +143,10 @@ typedef struct lsquic_packet_out
 #define POECN_SHIFT 4
         POL_ECNBIT_0 = 1 << 4,
         POL_ECNBIT_1 = 1 << 5,
-    }                  po_lflags:8;
+        POL_LOG_QL_BITS = 1 << 6,
+        POL_SQUARE_BIT = 1 << 7,
+        POL_LOSS_BIT = 1 << 8,
+    }                  po_lflags:16;
     unsigned char     *po_data;
 
     /* A lot of packets contain data belonging to only one stream.  Thus,
@@ -199,6 +202,8 @@ typedef struct lsquic_packet_out
 } while (0)
 
 #define lsquic_packet_out_spin_bit(p) (((p)->po_flags & PO_SPIN_BIT) > 0)
+#define lsquic_packet_out_square_bit(p) (((p)->po_lflags & POL_SQUARE_BIT) > 0)
+#define lsquic_packet_out_loss_bit(p) (((p)->po_lflags & POL_LOSS_BIT) > 0)
 
 #define lsquic_packet_out_set_spin_bit(p, b) do {                       \
     (p)->po_flags &= ~PO_SPIN_BIT;                                      \

@@ -66,13 +66,24 @@ lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
             (unsigned) (packet_in->pi_data_sz + GQUIC_PACKET_HASH_SZ));
         break;
     default:
-        LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
-            "path: %hhu",
-            packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
-            (unsigned) (packet_in->pi_data_sz + IQUIC_TAG_LEN),
-            lsquic_packet_in_ecn(packet_in),
-            /* spin bit value is only valid for short packet headers */
-            lsquic_packet_in_spin_bit(packet_in), packet_in->pi_path_id);
+        if (packet_in->pi_flags & PI_LOG_QL_BITS)
+            LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
+                "path: %hhu; Q: %d; L: %d",
+                packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
+                (unsigned) (packet_in->pi_data_sz + IQUIC_TAG_LEN),
+                lsquic_packet_in_ecn(packet_in),
+                /* spin bit value is only valid for short packet headers */
+                lsquic_packet_in_spin_bit(packet_in), packet_in->pi_path_id,
+                ((packet_in->pi_flags & PI_SQUARE_BIT) > 0),
+                ((packet_in->pi_flags & PI_LOSS_BIT) > 0));
+        else
+            LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
+                "path: %hhu",
+                packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
+                (unsigned) (packet_in->pi_data_sz + IQUIC_TAG_LEN),
+                lsquic_packet_in_ecn(packet_in),
+                /* spin bit value is only valid for short packet headers */
+                lsquic_packet_in_spin_bit(packet_in), packet_in->pi_path_id);
         break;
     }
 }
@@ -220,6 +231,27 @@ lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
                  */
                 lsquic_frame_types_to_str(frames, sizeof(frames),
                                                 packet_out->po_frame_types));
+    else if (packet_out->po_lflags & POL_LOG_QL_BITS)
+        LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
+            "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u; "
+            "Q: %u; L: %u",
+            packet_out->po_packno, lsquic_hety2str[packet_out->po_header_type],
+            lsquic_enclev2str[ lsquic_packet_out_enc_level(packet_out) ],
+            packet_out->po_enc_data_sz,
+                /* Frame types is a list of different frames types contained
+                 * in the packet, no more.  Count and order of frames is not
+                 * printed.
+                 */
+                lsquic_frame_types_to_str(frames, sizeof(frames),
+                                                packet_out->po_frame_types),
+                lsquic_packet_out_ecn(packet_out),
+                /* spin bit value is only valid for short packet headers */
+                lsquic_packet_out_spin_bit(packet_out),
+                lsquic_packet_out_kp(packet_out),
+                packet_out->po_path->np_path_id,
+                (unsigned) packet_out->po_flags,
+                lsquic_packet_out_square_bit(packet_out),
+                lsquic_packet_out_loss_bit(packet_out));
     else
         LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
             "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u",

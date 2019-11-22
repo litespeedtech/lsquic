@@ -80,7 +80,7 @@
 #include "lsquic_logger.h"
 
 #ifndef LSQUIC_DEBUG_NEXT_ADV_TICK
-#define LSQUIC_DEBUG_NEXT_ADV_TICK 0
+#define LSQUIC_DEBUG_NEXT_ADV_TICK 1
 #endif
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -322,6 +322,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_qpack_enc_max_size = LSQUIC_DF_QPACK_ENC_MAX_SIZE;
     settings->es_qpack_enc_max_blocked = LSQUIC_DF_QPACK_ENC_MAX_BLOCKED;
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
+    settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
 }
 
 

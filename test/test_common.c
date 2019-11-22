@@ -1703,6 +1703,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_cc_algo = atoi(val);
             return 0;
         }
+        else if (0 == strncmp(name, "ql_bits", 7))
+        {
+            settings->es_ql_bits = atoi(val);
+            return 0;
+        }
         break;
     case 8:
         if (0 == strncmp(name, "max_cfcw", 8))

@@ -44,6 +44,7 @@ enum send_ctl_flags {
     SC_1RTT_ACKED   =  1 << 11,
     SC_APP_LIMITED  =  1 << 12,
     SC_ECN          =  1 << 13,
+    SC_QL_BITS      =  1 << 14,
 };
 
 typedef struct lsquic_send_ctl {
@@ -124,6 +125,8 @@ typedef struct lsquic_send_ctl {
     unsigned                        sc_retry_count;
     unsigned                        sc_rt_count;    /* Count round trips */
     lsquic_packno_t                 sc_cur_rt_end;
+    unsigned                        sc_loss_count;  /* Used to set loss bit */
+    unsigned                        sc_square_count;/* Used to set square bit */
 } lsquic_send_ctl_t;
 
 void
@@ -356,5 +359,9 @@ lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *);
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
                                             const struct network_path *);
+
+#define lsquic_send_ctl_do_ql_bits(ctl) do {                       \
+    (ctl)->sc_flags |= SC_QL_BITS;                                 \
+} while (0)
 
 #endif

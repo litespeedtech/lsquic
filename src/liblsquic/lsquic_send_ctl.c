@@ -765,6 +765,8 @@ send_ctl_handle_lost_packet (lsquic_send_ctl_t *ctl,
     assert(ctl->sc_n_in_flight_all);
     packet_sz = packet_out_sent_sz(packet_out);
 
+    ++ctl->sc_loss_count;
+
     if (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
     {
         ctl->sc_flags |= SC_LOST_ACK_INIT << lsquic_packet_out_pns(packet_out);
@@ -1610,6 +1612,25 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
         send_ctl_maybe_zero_pad(ctl, packet_out, size ? size : 1200);
     }
 
+    if (ctl->sc_flags & SC_QL_BITS)
+    {
+        packet_out->po_lflags |= POL_LOG_QL_BITS;
+        if (ctl->sc_loss_count)
+        {
+            --ctl->sc_loss_count;
+            packet_out->po_lflags |= POL_LOSS_BIT;
+        }
+        else
+            packet_out->po_lflags &= ~POL_LOSS_BIT;
+        if (packet_out->po_header_type == HETY_NOT_SET)
+        {
+            if (ctl->sc_square_count++ & 128)
+                packet_out->po_lflags |= POL_SQUARE_BIT;
+            else
+                packet_out->po_lflags &= ~POL_SQUARE_BIT;
+        }
+    }
+
     return packet_out;
 }
 
@@ -1625,6 +1646,8 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_delayed;
 #endif
+    if (packet_out->po_lflags & POL_LOSS_BIT)
+        ++ctl->sc_loss_count;
 }
 
 
