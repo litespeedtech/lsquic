@@ -35,7 +35,7 @@ enum lsquic_conn_flags {
     LSCONN_HAS_OUTGOING   = (1 << 1),
     LSCONN_HASHED         = (1 << 2),
     LSCONN_MINI           = (1 << 3),   /* This is a mini connection */
-    LSCONN_UNUSED_4       = (1 << 4),
+    LSCONN_IMMED_CLOSE    = (1 << 4),
     LSCONN_UNUSED_5       = (1 << 5),
     LSCONN_HANDSHAKE_DONE = (1 << 6),
     LSCONN_CLOSING        = (1 << 7),
@@ -288,9 +288,7 @@ struct lsquic_conn
     STAILQ_ENTRY(lsquic_conn)    cn_next_new_full;
     TAILQ_ENTRY(lsquic_conn)     cn_next_ticked;
     TAILQ_ENTRY(lsquic_conn)     cn_next_out;
-    TAILQ_ENTRY(lsquic_conn)     cn_next_susp_cert;
-    /* Reuse this entry, as evanecsent connections are never suspended: */
-#define cn_next_pr cn_next_susp_cert
+    TAILQ_ENTRY(lsquic_conn)     cn_next_pr;
     const struct conn_iface     *cn_if;
     const struct parse_funcs    *cn_pf;
     struct attq_elem            *cn_attq_elem;

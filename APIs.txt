@@ -83,7 +83,7 @@ The streams have four callbacks:
     on_close                Stream has been closed.
 
 For both connections and streams, the "on new" callback return value can
-be use to specify user-supplied data.  This data pointer is optional and
+be used to specify user-supplied data.  This data pointer is optional and
 can be NULL.  It can also refer to the same data for the connection and
 its streams.  "on close" callbacks should be used to free user-supplied
 data.
@@ -133,7 +133,7 @@ drive QUIC connections:
 Connection Management
 ---------------------
 
-A connections needs to be processed once in a while.  It needs to be
+A connection needs to be processed once in a while.  It needs to be
 processed when one of the following is true:
 
     - There are incoming packets;

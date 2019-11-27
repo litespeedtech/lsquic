@@ -68,6 +68,9 @@ struct evanescent_conn
     struct pr_queue            *evc_queue;
     struct lsquic_packet_out    evc_packet_out;
     struct conn_cid_elem        evc_cces[1];
+    enum {
+        EVC_DROP    = 1 << 0,
+    }                           evc_flags;
     unsigned char               evc_buf[0];
 };
 
@@ -398,7 +401,9 @@ get_evconn (struct pr_queue *prq)
     if (lconn)
     {
         TAILQ_REMOVE(&prq->prq_free_conns, lconn, cn_next_pr);
-        return (struct evanescent_conn *) lconn;
+        evconn = (struct evanescent_conn *) lconn;
+        evconn->evc_flags = 0;
+        return evconn;
     }
 
     bufsz = max_bufsz(prq);
@@ -550,6 +555,17 @@ evanescent_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 
 
 static void
+prq_free_conn (struct pr_queue *prq, struct lsquic_conn *lconn)
+{
+    struct evanescent_conn *const evconn = (struct evanescent_conn *) lconn;
+
+    TAILQ_INSERT_HEAD(&prq->prq_free_conns, lconn, cn_next_pr);
+    put_req(prq, evconn->evc_req);
+    --prq->prq_nconns;
+}
+
+
+static void
 evanescent_conn_ci_packet_sent (struct lsquic_conn *lconn,
                             struct lsquic_packet_out *packet_out)
 {
@@ -562,9 +578,7 @@ evanescent_conn_ci_packet_sent (struct lsquic_conn *lconn,
     LSQ_DEBUGC("sent %s packet for connection %"CID_FMT"; free resources",
         lsquic_preqt2str[ evconn->evc_req->pr_type ],
         CID_BITS(&evconn->evc_req->pr_dcid));
-    TAILQ_INSERT_HEAD(&prq->prq_free_conns, lconn, cn_next_pr);
-    put_req(prq, evconn->evc_req);
-    --prq->prq_nconns;
+    prq_free_conn(prq, lconn);
 }
 
 
@@ -578,8 +592,17 @@ evanescent_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
     assert(packet_out == &evconn->evc_packet_out);
     assert(prq->prq_nconns > 0);
 
-    LSQ_DEBUG("packet not sent; put connection onto used list");
-    TAILQ_INSERT_HEAD(&prq->prq_returned_conns, lconn, cn_next_pr);
+    if (evconn->evc_flags & EVC_DROP)
+    {
+        LSQ_DEBUGC("packet not sent; drop connection %"CID_FMT,
+                                        CID_BITS(&evconn->evc_req->pr_dcid));
+        prq_free_conn(prq, lconn);
+    }
+    else
+    {
+        LSQ_DEBUG("packet not sent; put connection onto used list");
+        TAILQ_INSERT_HEAD(&prq->prq_returned_conns, lconn, cn_next_pr);
+    }
 }
 
 
@@ -668,3 +691,14 @@ const char *const lsquic_preqt2str[] =
     [PACKET_REQ_VERNEG] = "version negotiation",
     [PACKET_REQ_PUBRES] = "stateless reset",
 };
+
+
+void
+lsquic_prq_drop (struct lsquic_conn *lconn)
+{
+    struct evanescent_conn *const evconn = (void *) lconn;
+
+    evconn->evc_flags |= EVC_DROP;
+    LSQ_DEBUGC("mark for connection %"CID_FMT" for dropping",
+                                        CID_BITS(&evconn->evc_req->pr_dcid));
+}

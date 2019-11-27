@@ -3328,7 +3328,7 @@ immediate_close (struct ietf_full_conn *conn)
         return TICK_CLOSE;
     }
 
-    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_TIMED_OUT|IFC_HSK_FAILED));
+    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
     if (conn->ifc_error.u.err != 0)
     {
         conn_err = conn->ifc_error;
@@ -3343,11 +3343,6 @@ immediate_close (struct ietf_full_conn *conn)
     {
         conn_err = CONN_ERR(0, TEC_NO_ERROR);
         error_reason = "user aborted connection";
-    }
-    else if (conn->ifc_flags & IFC_TIMED_OUT)
-    {
-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
-        error_reason = "connection timed out";
     }
     else if (conn->ifc_flags & IFC_HSK_FAILED)
     {

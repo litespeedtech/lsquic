@@ -1894,11 +1894,9 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     if (enc_level == ENC_LEV_FORW)
     {
         key_phase = (dst[0] & 0x04) > 0;
+        pair = &enc_sess->esi_pairs[ key_phase ];
         if (key_phase == enc_sess->esi_key_phase)
-        {
-            pair = &enc_sess->esi_pairs[ key_phase ];
             crypto_ctx = &pair->ykp_ctx[ cliser ];
-        }
         else if (!is_valid_packno(
                         enc_sess->esi_pairs[enc_sess->esi_key_phase].ykp_thresh)
                 || packet_in->pi_packno
@@ -1929,7 +1927,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         }
         else
         {
-            pair = &enc_sess->esi_pairs[ key_phase ];
             crypto_ctx = &pair->ykp_ctx[ cliser ];
             if (UNLIKELY(0 == (crypto_ctx->yk_flags & YK_INITED)))
             {
@@ -2014,7 +2011,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         LSQ_DEBUG("decryption in the new key phase %u successful, rotate "
             "keys", key_phase);
         const struct ku_label kl = select_ku_label(enc_sess);
-        pair = &enc_sess->esi_pairs[ key_phase ];
         pair->ykp_thresh = packet_in->pi_packno;
         pair->ykp_ctx[ cliser ] = crypto_ctx_buf;
         memcpy(enc_sess->esi_traffic_secrets[ cliser ], new_secret,
@@ -2052,9 +2048,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     pns = lsquic_enclev2pns[enc_level];
     if (packet_in->pi_packno > enc_sess->esi_max_packno[pns])
         enc_sess->esi_max_packno[pns] = packet_in->pi_packno;
-    /* XXX Compiler complains that `pair' may be uninitialized here, but this
-     * variable is set in `if (crypto_ctx == &crypto_ctx_buf)' above.
-     */
     if (is_valid_packno(pair->ykp_thresh)
                                 && packet_in->pi_packno > pair->ykp_thresh)
         pair->ykp_thresh = packet_in->pi_packno;

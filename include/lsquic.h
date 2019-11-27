@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 6
-#define LSQUIC_PATCH_VERSION 7
+#define LSQUIC_MINOR_VERSION 7
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -788,8 +788,14 @@ struct lsquic_out_spec
  * Returns number of packets successfully sent out or -1 on error.  -1 should
  * only be returned if no packets were sent out.  If -1 is returned or if the
  * return value is smaller than `n_packets_out', this indicates that sending
- * of packets is not possible  No packets will be attempted to be sent out
- * until @ref lsquic_engine_send_unsent_packets() is called.
+ * of packets is not possible.
+ *
+ * If not all packets could be sent out, errno is examined.  If it is not
+ * EAGAIN or EWOULDBLOCK, the connection whose packet cause the error is
+ * closed forthwith.
+ *
+ * No packets will be attempted to be sent out until
+ * @ref lsquic_engine_send_unsent_packets() is called.
  */
 typedef int (*lsquic_packets_out_f)(
     void                          *packets_out_ctx,
@@ -1282,7 +1288,7 @@ int lsquic_stream_close(lsquic_stream_t *s);
 
 /**
  * Get certificate chain returned by the server.  This can be used for
- * server certificate verifiction.
+ * server certificate verification.
  *
  * If server certificate cannot be verified, the connection can be closed
  * using lsquic_conn_cert_verification_failed().
@@ -1523,7 +1529,7 @@ enum lsquic_version
 lsquic_alpn2ver (const char *alpn, size_t len);
 
 /**
- * This function closes all mini connections and marks all full connection
+ * This function closes all mini connections and marks all full connections
  * as going away.  In server mode, this also causes the engine to stop
  * creating new connections.
  */
