@@ -8,6 +8,7 @@
  */
 
 #include <stdint.h>
+#include <sys/types.h>
 
 #define MAX_CID_LEN 20
 #define GQUIC_CID_LEN 8
