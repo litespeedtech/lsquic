@@ -983,7 +983,7 @@ send_headers2 (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h,
         },
         {
             .name  = { .iov_base = "content-type", .iov_len = 12, },
-            .value = { .iov_base = "application/html", .iov_len = 16, },
+            .value = { .iov_base = "text/html", .iov_len = 9, },
         },
         {
             .name  = { .iov_base = "content-length", .iov_len = 14, },

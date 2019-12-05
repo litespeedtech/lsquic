@@ -1,3 +1,19 @@
+2019-12-05
+    - 2.7.1
+    - [BUGFIX] client: don't call ignore_init() in middle of batch send.
+      ignore_init() makes an assumption that the send controller has access
+      to all outgoing packets.  This change wraps a few IETF full connection
+      methods to delay calling ignore_init() until the engine returns all
+      outgoing packets that were batched.
+    - [BUGFIX] set errno to EAGAIN if sendmmsg() can't send all of them.
+      This needs to be done because the value of errno may be lost on
+      some platforms.
+    - [BUGFIX] Typo that set all bits in sm_qflags lead to crashes.
+    - [BUGFIX] Do not cancel header block processing after failure, as
+      QPACK releases the reference in that case.
+    - [CLEANUP] IETF encrypt: replace assert(0) with a warning.
+    - Several small improvements to the test server.
+
 2019-11-27
     - 2.7.0
     - [API, FEATURE] Close connection immediately when ea_packets_out()

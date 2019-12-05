@@ -613,6 +613,12 @@ static const struct lsquic_keylog_if keylog_if =
 };
 
 
+static struct ssl_ctx_st *
+no_cert (void *cert_lu_ctx, const struct sockaddr *sa_UNUSED, const char *sni)
+{
+    return NULL;
+}
+
 
 int
 prog_prep (struct prog *prog)
@@ -655,6 +661,12 @@ prog_prep (struct prog *prog)
     {
     prog->prog_api.ea_lookup_cert = lookup_cert;
     prog->prog_api.ea_cert_lu_ctx = prog->prog_certs;
+    }
+    else
+    {
+        if (prog->prog_engine_flags & LSENG_SERVER)
+            LSQ_WARN("Not a single service specified.  Use -c option.");
+        prog->prog_api.ea_lookup_cert = no_cert;
     }
 
     prog->prog_eb = event_base_new();

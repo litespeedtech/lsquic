@@ -1707,7 +1707,8 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     }
     else
     {
-        assert(0);
+        LSQ_WARN("no keys for encryption level %s",
+                                            lsquic_enclev2str[enc_level]);
         return ENCPA_BADCRYPT;
     }
 

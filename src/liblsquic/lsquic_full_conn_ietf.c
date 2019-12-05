@@ -369,7 +369,9 @@ struct ietf_full_conn
             uint64_t    ifcli_max_push_id;
             enum {
                 IFCLI_PUSH_ENABLED    = 1 << 0,
+                IFCLI_HSK_SENT_OR_DEL = 1 << 1,
             }           ifcli_flags;
+            unsigned    ifcli_packets_out;
         }                           cli;
         struct {
             uint64_t    ifser_max_push_id;
@@ -397,6 +399,7 @@ struct ietf_full_conn
 static const struct ver_neg server_ver_neg;
 
 static const struct conn_iface *ietf_full_conn_iface_ptr;
+static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr;
 
 static int
 process_incoming_packet_verneg (struct ietf_full_conn *,
@@ -880,7 +883,10 @@ static int
 ietf_full_conn_init (struct ietf_full_conn *conn,
            struct lsquic_engine_public *enpub, unsigned flags, int ecn)
 {
-    conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    if (flags & IFC_SERVER)
+        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    else
+        conn->ifc_conn.cn_if = ietf_full_conn_prehsk_iface_ptr;
     if (enpub->enp_settings.es_scid_len)
         assert(CN_SCID(&conn->ifc_conn)->len);
     conn->ifc_enpub = enpub;
@@ -3699,6 +3705,20 @@ ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 }
 
 
+static struct lsquic_packet_out *
+ietf_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
+                                                                    size_t size)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct lsquic_packet_out *packet_out;
+
+    packet_out = ietf_full_conn_ci_next_packet_to_send(lconn, size);
+    if (packet_out)
+        ++conn->ifc_u.cli.ifcli_packets_out;
+    return packet_out;
+}
+
+
 static lsquic_time_t
 ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
 {
@@ -5601,11 +5621,14 @@ ignore_init (struct ietf_full_conn *conn)
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_INIT);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_INIT]);
     if (!(conn->ifc_flags & IFC_SERVER))
+    {
         if (conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
         {
             lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
             conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = NULL;
         }
+        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    }
 }
 
 
@@ -5965,6 +5988,34 @@ ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 }
 
 
+/* Calling of ignore_init() must be delayed until all batched packets have
+ * been returned by the engine.
+ */
+static void
+pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
+                               const struct lsquic_packet_out *packet_out)
+{
+    /* Once IFC_IGNORE_INIT is set, the pre-hsk wrapper is removed: */
+    assert(!(conn->ifc_flags & IFC_IGNORE_INIT));
+    --conn->ifc_u.cli.ifcli_packets_out;
+    if (PNS_HSK == lsquic_packet_out_pns(packet_out))
+        conn->ifc_u.cli.ifcli_flags |= IFCLI_HSK_SENT_OR_DEL;
+    if (0 == conn->ifc_u.cli.ifcli_packets_out
+                && (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_SENT_OR_DEL))
+        ignore_init(conn);
+}
+
+
+static void
+ietf_full_conn_ci_packet_not_sent_pre_hsk (struct lsquic_conn *lconn,
+                                   struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    ietf_full_conn_ci_packet_not_sent(lconn, packet_out);
+    pre_hsk_packet_sent_or_delayed(conn, packet_out);
+}
+
+
 static void
 ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
                                struct lsquic_packet_out *packet_out)
@@ -5981,11 +6032,16 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
         ABORT_ERROR("sent packet failed: %s", strerror(errno));
     ++conn->ifc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
                               [ lsquic_packet_out_ecn(packet_out) ];
-    if (0 == (conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_INIT)))
-    {
-        if (PNS_HSK == lsquic_packet_out_pns(packet_out))
-            ignore_init(conn);
-    }
+}
+
+
+static void
+ietf_full_conn_ci_packet_sent_pre_hsk (struct lsquic_conn *lconn,
+                                   struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    ietf_full_conn_ci_packet_sent(lconn, packet_out);
+    pre_hsk_packet_sent_or_delayed(conn, packet_out);
 }
 
 
@@ -6586,48 +6642,59 @@ ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
 }
 
 
-static const struct conn_iface ietf_full_conn_iface = {
-    .ci_abort                =  ietf_full_conn_ci_abort,
-    .ci_abort_error          =  ietf_full_conn_ci_abort_error,
-    .ci_retire_cid           =  ietf_full_conn_ci_retire_cid,
-    .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack,
-    .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams,
-    .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new,
-    .ci_close                =  ietf_full_conn_ci_close,
-    .ci_destroy              =  ietf_full_conn_ci_destroy,
-    .ci_drain_time           =  ietf_full_conn_ci_drain_time,
-    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams,
-    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx,
-    .ci_get_engine           =  ietf_full_conn_ci_get_engine,
-    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid,
-    .ci_get_path             =  ietf_full_conn_ci_get_path,
-    .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id,
-    .ci_going_away           =  ietf_full_conn_ci_going_away,
-    .ci_hsk_done             =  ietf_full_conn_ci_hsk_done,
-    .ci_internal_error       =  ietf_full_conn_ci_internal_error,
-    .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled,
-    .ci_is_tickable          =  ietf_full_conn_ci_is_tickable,
-    .ci_make_stream          =  ietf_full_conn_ci_make_stream,
-    .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams,
-    .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams,
-    .ci_next_packet_to_send  =  ietf_full_conn_ci_next_packet_to_send,
-    .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time,
-    .ci_packet_in            =  ietf_full_conn_ci_packet_in,
-    .ci_packet_not_sent      =  ietf_full_conn_ci_packet_not_sent,
-    .ci_packet_sent          =  ietf_full_conn_ci_packet_sent,
-    .ci_push_stream          =  ietf_full_conn_ci_push_stream,
-    .ci_record_addrs         =  ietf_full_conn_ci_record_addrs,
-    .ci_report_live          =  ietf_full_conn_ci_report_live,
-    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx,
-    .ci_status               =  ietf_full_conn_ci_status,
-    .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset,
-    .ci_tick                 =  ietf_full_conn_ci_tick,
-    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert,
-    .ci_write_ack            =  ietf_full_conn_ci_write_ack,
-};
+#define IETF_FULL_CONN_FUNCS \
+    .ci_abort                =  ietf_full_conn_ci_abort, \
+    .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
+    .ci_retire_cid           =  ietf_full_conn_ci_retire_cid, \
+    .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack, \
+    .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams, \
+    .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new, \
+    .ci_close                =  ietf_full_conn_ci_close, \
+    .ci_destroy              =  ietf_full_conn_ci_destroy, \
+    .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
+    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
+    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx, \
+    .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
+    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
+    .ci_get_path             =  ietf_full_conn_ci_get_path, \
+    .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id, \
+    .ci_going_away           =  ietf_full_conn_ci_going_away, \
+    .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
+    .ci_internal_error       =  ietf_full_conn_ci_internal_error, \
+    .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
+    .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
+    .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
+    .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
+    .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
+    .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time, \
+    .ci_packet_in            =  ietf_full_conn_ci_packet_in, \
+    .ci_push_stream          =  ietf_full_conn_ci_push_stream, \
+    .ci_record_addrs         =  ietf_full_conn_ci_record_addrs, \
+    .ci_report_live          =  ietf_full_conn_ci_report_live, \
+    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
+    .ci_status               =  ietf_full_conn_ci_status, \
+    .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
+    .ci_tick                 =  ietf_full_conn_ci_tick, \
+    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_write_ack            =  ietf_full_conn_ci_write_ack
 
+static const struct conn_iface ietf_full_conn_iface = {
+    IETF_FULL_CONN_FUNCS,
+    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send,
+    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
+    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
+};
 static const struct conn_iface *ietf_full_conn_iface_ptr =
                                                 &ietf_full_conn_iface;
+
+static const struct conn_iface ietf_full_conn_prehsk_iface = {
+    IETF_FULL_CONN_FUNCS,
+    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send_pre_hsk,
+    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent_pre_hsk,
+    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent_pre_hsk,
+};
+static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr =
+                                                &ietf_full_conn_prehsk_iface;
 
 
 static void

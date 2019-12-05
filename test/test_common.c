@@ -1441,6 +1441,10 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
             LSQ_WARN("sendmmsg failed: %s", strerror(saved_errno));
             errno = saved_errno;
         }
+        else if (s > 0)
+            errno = EAGAIN;
+        else
+            errno = saved_errno;
     }
 
     return s;

@@ -3610,7 +3610,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint64_t error_code,
     if (stream->sm_qflags & SMQF_QPACK_DEC)
     {
         lsquic_qdh_cancel_stream(stream->conn_pub->u.ietf.qdh, stream);
-        stream->sm_qflags |= ~SMQF_QPACK_DEC;
+        stream->sm_qflags &= ~SMQF_QPACK_DEC;
     }
 
     drop_buffered_data(stream);
@@ -4246,6 +4246,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     goto end;
                 default:
                     assert(LQRHS_ERROR == rhs);
+                    stream->sm_qflags &= ~SMQF_QPACK_DEC;
                     filter->hqfi_flags |= HQFI_FLAG_ERROR;
                     LSQ_INFO("error processing header block");
                     abort_connection(stream);   /* XXX Overkill? */
