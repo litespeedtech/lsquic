@@ -708,8 +708,8 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_conn.cn_esf_c = select_esf_common_by_ver(version);
     conn->fc_conn.cn_esf.g = esf_g;
     conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf.g->esf_create_client(hostname, cid, conn->fc_enpub,
-                                                    zero_rtt, zero_rtt_len);
+        conn->fc_conn.cn_esf.g->esf_create_client(&conn->fc_conn, hostname,
+                                cid, conn->fc_enpub, zero_rtt, zero_rtt_len);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -818,6 +818,8 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
     assert(lconn_full->cn_enc_session == NULL);
     lconn_full->cn_enc_session = lconn_mini->cn_enc_session;
     lconn_mini->cn_enc_session = NULL;
+    lconn_full->cn_esf_c->esf_set_conn(lconn_full->cn_enc_session,
+                                                            &conn->fc_conn);
 
     lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
     conn->fc_send_ctl.sc_cur_packno = mc->mc_cur_packno;
@@ -3640,7 +3642,7 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     {
         if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
             conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
-                conn->fc_conn.cn_enc_session, &conn->fc_conn,
+                conn->fc_conn.cn_enc_session,
                 conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
         if (conn->fc_n_delayed_streams)
             create_delayed_streams(conn);

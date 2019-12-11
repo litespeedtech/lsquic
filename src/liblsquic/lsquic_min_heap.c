@@ -4,16 +4,10 @@
  */
 
 #include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "lsquic_min_heap.h"
-#define LSQUIC_LOGGER_MODULE LSQLM_MIN_HEAP
-#include "lsquic_types.h"
-#include "lsquic_logger.h"
-
-#define MHE_PARENT(i) ((i - 1) / 2)
-#define MHE_LCHILD(i) (2 * i + 1)
-#define MHE_RCHILD(i) (2 * i + 2)
 
 
 static void

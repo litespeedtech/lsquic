@@ -347,6 +347,13 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
     ctl->sc_max_packno_bits = PACKNO_BITS_2; /* Safe value before verneg */
     ctl->sc_cached_bpt.stream_id = UINT64_MAX;
+#if LSQUIC_EXTRA_CHECKS
+    ctl->sc_flags |= SC_SANITY_CHECK;
+#else
+    if ((ctl->sc_conn_pub->lconn->cn_flags & (LSCONN_IETF|LSCONN_SERVER))
+                                                                == LSCONN_IETF)
+        ctl->sc_flags |= SC_SANITY_CHECK;
+#endif
 }
 
 
@@ -1404,24 +1411,14 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl)
 }
 
 
-#if LSQUIC_EXTRA_CHECKS
 void
-lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
 {
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
     unsigned count, bytes;
     enum packnum_space pns;
-
-    assert(!send_ctl_first_unacked_retx_packet(ctl, PNS_APP) ||
-                    lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_APP));
-    if (lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_APP))
-    {
-        assert(send_ctl_first_unacked_retx_packet(ctl, PNS_APP));
-        assert(lsquic_time_now()
-                    < ctl->sc_alset->as_expiry[AL_RETX_APP] + MAX_RTO_DELAY);
-    }
 
     count = 0, bytes = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
@@ -1456,7 +1453,6 @@ lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
     assert(count == ctl->sc_n_scheduled);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
-#endif
 
 
 void
@@ -2813,4 +2809,43 @@ lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *ctl)
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         if (packet_out->po_flags & PO_ENCRYPTED)
             send_ctl_return_enc_data(ctl, packet_out);
+}
+
+
+/* When client updated DCID based on the first packet returned by the server,
+ * we must update the number of bytes scheduled if the DCID length changed
+ * because this length is used to calculate packet size.
+ */
+void
+lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
+                                unsigned orig_cid_len, unsigned new_cid_len)
+{
+    unsigned diff;
+
+    assert(!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER));
+    if (ctl->sc_n_scheduled)
+    {
+        ctl->sc_flags |= SC_CIDLEN;
+        ctl->sc_cidlen = (signed char) new_cid_len - (signed char) orig_cid_len;
+        if (new_cid_len > orig_cid_len)
+        {
+            diff = new_cid_len - orig_cid_len;
+            diff *= ctl->sc_n_scheduled;
+            ctl->sc_bytes_scheduled += diff;
+            LSQ_DEBUG("increased bytes scheduled by %u bytes to %u",
+                diff, ctl->sc_bytes_scheduled);
+        }
+        else if (new_cid_len < orig_cid_len)
+        {
+            diff = orig_cid_len - new_cid_len;
+            diff *= ctl->sc_n_scheduled;
+            ctl->sc_bytes_scheduled -= diff;
+            LSQ_DEBUG("decreased bytes scheduled by %u bytes to %u",
+                diff, ctl->sc_bytes_scheduled);
+        }
+        else
+            LSQ_DEBUG("DCID length did not change");
+    }
+    else
+        LSQ_DEBUG("no scheduled packets at the time of DCID change");
 }

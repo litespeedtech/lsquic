@@ -35,4 +35,8 @@ lsquic_mh_pop (struct min_heap *);
 
 #define lsquic_mh_nalloc(heap) (+(heap)->mh_nalloc)
 
+#define MHE_PARENT(i) ((i - 1) / 2)
+#define MHE_LCHILD(i) (2 * i + 1)
+#define MHE_RCHILD(i) (2 * i + 2)
+
 #endif

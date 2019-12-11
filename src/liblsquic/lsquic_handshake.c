@@ -56,7 +56,18 @@
 #define MAX_SPUBS_LENGTH 32
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HANDSHAKE
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(                         \
+    enc_session && enc_session->es_conn     ? enc_session->es_conn :    \
+    lconn && lconn != &dummy_lsquic_conn    ? lconn :                   \
+                                              &dummy_lsquic_conn)
 #include "lsquic_logger.h"
+
+/* enc_session may be NULL when encrypt and decrypt packet functions are
+ * called.  This is a workaround.
+ */
+static struct conn_cid_elem dummy_cce;
+static const struct lsquic_conn dummy_lsquic_conn = { .cn_cces = &dummy_cce, };
+static const struct lsquic_conn *const lconn = &dummy_lsquic_conn;
 
 enum handshake_state
 {
@@ -200,6 +211,7 @@ struct lsquic_zero_rtt_storage
 
 struct lsquic_enc_session
 {
+    struct lsquic_conn  *es_conn;
     enum handshake_state hsk_state;
     enum {
         ES_SERVER =     1 << 0,
@@ -674,8 +686,8 @@ lsquic_enc_session_deserialize_zero_rtt(
 
 
 static enc_session_t *
-lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
-                                    const struct lsquic_engine_public *enpub,
+lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
+                    lsquic_cid_t cid, const struct lsquic_engine_public *enpub,
                                     const unsigned char *zero_rtt, size_t zero_rtt_len)
 {
     lsquic_session_cache_info_t *info;
@@ -734,6 +746,7 @@ lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
                 break;
         }
     }
+    enc_session->es_conn = lconn;
     enc_session->enpub = enpub;
     enc_session->cid   = cid;
     enc_session->info  = info;
@@ -745,7 +758,7 @@ lsquic_enc_session_create_client (const char *domain, lsquic_cid_t cid,
 
 /* Server side: Session_cache_entry can be saved for 0rtt */
 static enc_session_t *
-lsquic_enc_session_create_server (lsquic_cid_t cid,
+lsquic_enc_session_create_server (struct lsquic_conn *lconn, lsquic_cid_t cid,
                         const struct lsquic_engine_public *enpub)
 {
     fiu_return_on("handshake/new_enc_session", NULL);
@@ -756,6 +769,7 @@ lsquic_enc_session_create_server (lsquic_cid_t cid,
     if (!enc_session)
         return NULL;
 
+    enc_session->es_conn = lconn;
     enc_session->enpub = enpub;
     enc_session->cid = cid;
     enc_session->es_flags |= ES_SERVER;
@@ -1575,7 +1589,8 @@ determine_rtts (struct lsquic_enc_session *enc_session,
 
 
 static int
-config_has_correct_size (const void *data, unsigned shm_len)
+config_has_correct_size (const struct lsquic_enc_session *enc_session,
+                                            const void *data, unsigned shm_len)
 {
     /* EVP_AEAD_CTX from boringssl after-18d9f28f0df9f95570. */
     struct new_evp_aead_ctx_st {
@@ -1620,7 +1635,8 @@ config_has_correct_size (const void *data, unsigned shm_len)
 
 
 static lsquic_server_config_t *
-get_valid_scfg (const struct lsquic_engine_public *enpub)
+get_valid_scfg (const struct lsquic_enc_session *enc_session,
+                                    const struct lsquic_engine_public *enpub)
 {
 #define SERVER_SCFG_KEY         "SERVER_SCFG"
 #define SERVER_SCFG_KEY_SIZE    (sizeof(SERVER_SCFG_KEY) - 1)
@@ -1644,7 +1660,7 @@ get_valid_scfg (const struct lsquic_engine_public *enpub)
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
-        if (config_has_correct_size(scfg_ptr, real_len) &&
+        if (config_has_correct_size(enc_session, scfg_ptr, real_len) &&
                 (s_server_config.lsc_scfg = scfg_ptr,
                             s_server_config.lsc_scfg->info.expy > (uint64_t)t))
         {
@@ -2621,7 +2637,8 @@ gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
 static
 #endif
 enum hsk_failure_reason
-verify_stk0 (lsquic_server_config_t *server_config,
+verify_stk0 (const struct lsquic_enc_session *enc_session,
+             lsquic_server_config_t *server_config,
              const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk,
              unsigned secs_since_stk_generated)
 {
@@ -2701,7 +2718,8 @@ verify_stk (enc_session_t *enc_session_p,
             return HFR_SRC_ADDR_TOKEN_INVALID;
     }
     else
-        return verify_stk0(enc_session->server_config, ip_addr, tm, stk, 0);
+        return verify_stk0(enc_session, enc_session->server_config, ip_addr,
+                                                                    tm, stk, 0);
 }
 
 
@@ -2850,14 +2868,13 @@ lsquic_enc_session_have_key_gt_one (enc_session_t *enc_session_p)
  * buffer correspond to the header and the payload of incoming QUIC packet.
  */
 static enum enc_level
-lsquic_enc_session_decrypt (enc_session_t *enc_session_p,
+lsquic_enc_session_decrypt (struct lsquic_enc_session *enc_session,
                enum lsquic_version version,
                uint8_t path_id, uint64_t pack_num,
                unsigned char *buf, size_t *header_len, size_t data_len,
                unsigned char *diversification_nonce,
                unsigned char *buf_out, size_t max_out_len, size_t *out_len)
 {
-    struct lsquic_enc_session *const enc_session = enc_session_p;
     /* Client: got SHLO which should have diversification_nonce */
     if (diversification_nonce && enc_session && enc_session->have_key == 1)
     {
@@ -2882,6 +2899,7 @@ gquic_decrypt_packet (enc_session_t *enc_session_p,
                             const struct lsquic_conn *lconn,
                             struct lsquic_packet_in *packet_in)
 {
+    struct lsquic_enc_session *const enc_session = enc_session_p;
     size_t header_len, data_len;
     enum enc_level enc_level;
     size_t out_len = 0;
@@ -2895,7 +2913,7 @@ gquic_decrypt_packet (enc_session_t *enc_session_p,
     assert(packet_in->pi_data);
     header_len = packet_in->pi_header_sz;
     data_len   = packet_in->pi_data_sz - packet_in->pi_header_sz;
-    enc_level = lsquic_enc_session_decrypt(enc_session_p,
+    enc_level = lsquic_enc_session_decrypt(enc_session,
                         lconn->cn_version, 0,
                         packet_in->pi_packno, packet_in->pi_data,
                         &header_len, data_len,
@@ -3030,7 +3048,7 @@ lsquic_enc_session_handle_chlo(enc_session_t *enc_session_p,
     const struct lsquic_shared_hash_if *const shi = enpub->enp_shi;
     void *const shi_ctx = enpub->enp_shi_ctx;
 
-    server_config = get_valid_scfg(enpub);
+    server_config = get_valid_scfg(enc_session, enpub);
     if (!server_config)
         return HS_ERROR;
     assert(server_config->lsc_scfg);
@@ -3493,10 +3511,10 @@ lsquic_enc_session_get_server_cert_chain (enc_session_t *enc_session_p)
 
 static void
 maybe_dispatch_zero_rtt (enc_session_t *enc_session_p,
-                struct lsquic_conn *lconn,
                 void (*cb)(struct lsquic_conn *, const unsigned char *, size_t))
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
+    struct lsquic_conn *const lconn = enc_session->es_conn;
     void *buf;
     size_t sz;
     int i;
@@ -3570,6 +3588,8 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
     unsigned char *buf;
     int ipv6;
 
+    assert(!enc_session || lconn == enc_session->es_conn);
+
     bufsz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
     if (bufsz > USHRT_MAX)
         return ENCPA_BADCRYPT;  /* To cause connection to close */
@@ -3614,6 +3634,15 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
 }
 
 
+static void
+gquic_esf_set_conn (enc_session_t *enc_session_p, struct lsquic_conn *lconn)
+{
+    struct lsquic_enc_session *const enc_session = enc_session_p;
+    enc_session->es_conn = lconn;
+    LSQ_DEBUG("updated conn reference");
+}
+
+
 #ifdef NDEBUG
 const
 #endif
@@ -3631,6 +3660,7 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 =
     .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
     .esf_did_zero_rtt_succeed = lsquic_enc_session_did_zero_rtt_succeed,
     .esf_is_zero_rtt_enabled = lsquic_enc_session_is_zero_rtt_enabled,
+    .esf_set_conn        = gquic_esf_set_conn,
 };
 
 

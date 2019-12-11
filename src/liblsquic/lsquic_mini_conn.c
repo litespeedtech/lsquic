@@ -1005,8 +1005,8 @@ continue_handshake (struct mini_conn *mc)
     if (!mc->mc_conn.cn_enc_session)
     {
         mc->mc_conn.cn_enc_session =
-            mc->mc_conn.cn_esf.g->esf_create_server(mc->mc_conn.cn_cid,
-                                                    mc->mc_enpub);
+            mc->mc_conn.cn_esf.g->esf_create_server(&mc->mc_conn,
+                                        mc->mc_conn.cn_cid, mc->mc_enpub);
         if (!mc->mc_conn.cn_enc_session)
         {
             LSQ_WARN("cannot create new enc session");

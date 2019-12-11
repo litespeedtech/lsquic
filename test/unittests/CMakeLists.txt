@@ -99,6 +99,9 @@ TARGET_LINK_LIBRARIES(graph_cubic ${LIBS})
 ADD_EXECUTABLE(mini_parse mini_parse.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(mini_parse ${LIBS})
 
+ADD_EXECUTABLE(test_min_heap test_min_heap.c ../../src/liblsquic/lsquic_min_heap.c)
+ADD_TEST(min_heap test_min_heap)
+
 ADD_EXECUTABLE(test_malo_pooled test_malo.c ../../src/liblsquic/lsquic_malo.c)
 SET_TARGET_PROPERTIES(test_malo_pooled
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=1")

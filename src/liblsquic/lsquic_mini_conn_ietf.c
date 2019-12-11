@@ -1154,7 +1154,7 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     }
 
     dec_packin = lconn->cn_esf_c->esf_decrypt_packet(lconn->cn_enc_session,
-                                        conn->imc_enpub, lconn, packet_in);
+                                conn->imc_enpub, &conn->imc_conn, packet_in);
     if (dec_packin != DECPI_OK)
     {
         /* TODO: handle reordering perhaps? */

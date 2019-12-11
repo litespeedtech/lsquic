@@ -7,6 +7,8 @@ to the LiteSpeed Client Library:
     - Alexis La Goutte -- Travis-CI integration
     - Bernhard Jaeger -- DNS Resolution
     - Zhang Chi -- libevent build fix on Darwin
+    - Omar Roth -- Alpine Linux build and Crystal language bindings
+    - initlife (?) -- XCode build
 
 Thank you!
 

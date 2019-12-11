@@ -1064,7 +1064,7 @@ iquic_lookup_cert (SSL *ssl, void *arg)
 
 
 static void
-iquic_esfi_set_conn (enc_session_t *enc_session_p, struct lsquic_conn *lconn)
+iquic_esf_set_conn (enc_session_t *enc_session_p, struct lsquic_conn *lconn)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
     enc_sess->esi_conn = lconn;
@@ -1657,10 +1657,11 @@ static const enum enc_level pns2enc_level[] =
 
 static enum enc_packout
 iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
-    const struct lsquic_engine_public *enpub, struct lsquic_conn *lconn,
+    const struct lsquic_engine_public *enpub, struct lsquic_conn *lconn_UNUSED,
     struct lsquic_packet_out *packet_out)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
+    struct lsquic_conn *const lconn = enc_sess->esi_conn;
     unsigned char *dst;
     const struct crypto_ctx_pair *pair;
     const struct crypto_ctx *crypto_ctx;
@@ -1675,8 +1676,6 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     unsigned packno_off, packno_len, cliser;
     enum packnum_space pns;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
-
-    assert(lconn == enc_sess->esi_conn);
 
     if (packet_out->po_flags & PO_MINI)
     {
@@ -2232,7 +2231,6 @@ const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1 =
                          = iquic_esfi_get_peer_transport_params,
     .esfi_reset_dcid     = iquic_esfi_reset_dcid,
     .esfi_init_server    = iquic_esfi_init_server,
-    .esfi_set_conn       = iquic_esfi_set_conn,
     .esfi_set_streams    = iquic_esfi_set_streams,
     .esfi_create_server  = iquic_esfi_create_server,
     .esfi_shake_stream   = iquic_esfi_shake_stream,
@@ -2253,6 +2251,7 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1 =
     .esf_keysize         = iquic_esf_keysize,
     .esf_alg_keysize     = iquic_esf_alg_keysize,
     .esf_is_zero_rtt_enabled = iquic_esf_zero_rtt_enabled,
+    .esf_set_conn        = iquic_esf_set_conn,
 };
 
 

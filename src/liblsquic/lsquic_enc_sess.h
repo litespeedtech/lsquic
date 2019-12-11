@@ -99,6 +99,9 @@ struct enc_session_funcs_common
     int
     (*esf_alg_keysize) (enc_session_t *);
 
+    /* Need to pass lconn in encrypt and decrypt methods because enc_session
+     * is allowed to be NULL for gQUIC.
+     */
     enum enc_packout
     (*esf_encrypt_packet) (enc_session_t *, const struct lsquic_engine_public *,
         struct lsquic_conn *, struct lsquic_packet_out *);
@@ -118,6 +121,9 @@ struct enc_session_funcs_common
 
     int
     (*esf_is_zero_rtt_enabled) (enc_session_t *);
+
+    void
+    (*esf_set_conn) (enc_session_t *, struct lsquic_conn *);
 
     unsigned
     esf_tag_len;
@@ -147,7 +153,8 @@ struct enc_session_funcs_gquic
 
     /* Create server session */
     enc_session_t *
-    (*esf_create_server) (lsquic_cid_t cid, const struct lsquic_engine_public *);
+    (*esf_create_server) (struct lsquic_conn *,
+                        lsquic_cid_t cid, const struct lsquic_engine_public *);
 
     /* out_len should have init value as the max length of out */
     enum handshake_error
@@ -208,7 +215,8 @@ struct enc_session_funcs_gquic
 
     /* Create client session */
     enc_session_t *
-    (*esf_create_client) (const char *domain, lsquic_cid_t cid,
+    (*esf_create_client) (struct lsquic_conn *, const char *domain,
+                            lsquic_cid_t cid,
                                     const struct lsquic_engine_public *,
                                     const unsigned char *, size_t);
 
@@ -229,7 +237,6 @@ struct enc_session_funcs_gquic
      * call it after the "handshake is done" callback is called.
      */
     void (*esf_maybe_dispatch_zero_rtt) (enc_session_t *,
-            struct lsquic_conn *conn,
             void (*cb)(struct lsquic_conn *, const unsigned char *, size_t));
 
     void (*esf_reset_cid) (enc_session_t *, const lsquic_cid_t *);
@@ -278,9 +285,6 @@ struct enc_session_funcs_iquic
 
     int
     (*esfi_init_server) (enc_session_t *);
-
-    void
-    (*esfi_set_conn) (enc_session_t *, struct lsquic_conn *);
 
     void
     (*esfi_set_streams) (enc_session_t *, void *(crypto_streams)[4],

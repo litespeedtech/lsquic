@@ -1,3 +1,18 @@
+2019-12-11
+    - 2.7.2
+    - [BUGFIX] Send controller: update scheduled bytes when DCID length
+      changes (IETF client).
+    - [BUGFIX] Drop alarm check from sanity test.  It no longer works now
+      that we use loss chains.
+    - [PORTABILITY] Fix build on Alpine Linux.
+    - [PORTABILITY] Fix build using XCode.
+    - Client initial DCID length: use RAND_bytes() instead of rand(3).
+    - Add unit tests for connection min heap.
+    - [DEBUG] Log CID in gQUIC handshake module
+    - [DEBUG] Turn on extra checks for IETF client send controller.
+    - [DEBUG] Dedup next advisory tick messages when reason is IDLE timer.
+    - [DEBUG] QPACK decoder handler: log header error code.
+
 2019-12-05
     - 2.7.1
     - [BUGFIX] client: don't call ignore_init() in middle of batch send.

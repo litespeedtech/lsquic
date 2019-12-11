@@ -1209,7 +1209,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->ifc_conn.cn_enc_session = mini_conn->cn_enc_session;
     mini_conn->cn_enc_session     = NULL;
-    conn->ifc_conn.cn_esf.i->esfi_set_conn(conn->ifc_conn.cn_enc_session,
+    conn->ifc_conn.cn_esf_c->esf_set_conn(conn->ifc_conn.cn_enc_session,
                                                             &conn->ifc_conn);
     conn->ifc_process_incoming_packet = process_incoming_packet_fast;
 
@@ -5672,6 +5672,21 @@ sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
 }
 
 
+static void
+record_dcid (struct ietf_full_conn *conn,
+                                    const struct lsquic_packet_in *packet_in)
+{
+    unsigned orig_cid_len;
+
+    orig_cid_len = CUR_DCID(conn)->len;
+    conn->ifc_flags |= IFC_DCID_SET;
+    lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
+    LSQ_DEBUGC("set DCID to %"CID_FMT, CID_BITS(CUR_DCID(conn)));
+    lsquic_send_ctl_cidlen_change(&conn->ifc_send_ctl, orig_cid_len,
+                                                        CUR_DCID(conn)->len);
+}
+
+
 static int
 process_regular_packet (struct ietf_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
@@ -5732,8 +5747,8 @@ process_regular_packet (struct ietf_full_conn *conn,
     if (0 == (packet_in->pi_flags & PI_DECRYPTED))
     {
         dec_packin = conn->ifc_conn.cn_esf_c->esf_decrypt_packet(
-                        conn->ifc_conn.cn_enc_session, conn->ifc_enpub,
-                        &conn->ifc_conn, packet_in);
+                            conn->ifc_conn.cn_enc_session, conn->ifc_enpub,
+                            &conn->ifc_conn, packet_in);
         switch (dec_packin)
         {
         case DECPI_BADCRYPT:
@@ -5784,12 +5799,7 @@ process_regular_packet (struct ietf_full_conn *conn,
     case REC_ST_OK:
         if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET))
                                                 && (packet_in->pi_scid_len))
-        {
-            conn->ifc_flags |= IFC_DCID_SET;
-            lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
-            LSQ_DEBUGC("set DCID to %"CID_FMT,
-                                        CID_BITS(CUR_DCID(conn)));
-        }
+            record_dcid(conn, packet_in);
         saved_path_id = conn->ifc_cur_path_id;
         parse_regular_packet(conn, packet_in);
         if (saved_path_id == conn->ifc_cur_path_id)

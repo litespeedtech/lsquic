@@ -3,7 +3,6 @@
 #include <inttypes.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <stdlib.h>
 
 #include <openssl/rand.h>
 
@@ -238,8 +237,12 @@ void
 lsquic_generate_cid (lsquic_cid_t *cid, size_t len)
 {
     if (!len)
+    {
         /* If not set, generate ID between 8 and MAX_CID_LEN bytes in length */
-        len = 8 + rand() % (MAX_CID_LEN - 7);
+        RAND_bytes((uint8_t *) &len, sizeof(len));
+        len %= MAX_CID_LEN - 7;
+        len += 8;
+    }
     RAND_bytes(cid->idbuf, len);
     cid->len = len;
 }

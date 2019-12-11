@@ -84,6 +84,10 @@
 #define LSQUIC_DEBUG_NEXT_ADV_TICK 1
 #endif
 
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
+#include "lsquic_alarmset.h"
+#endif
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 /* The batch of outgoing packets grows and shrinks dynamically */
@@ -247,6 +251,9 @@ struct lsquic_engine
     struct out_batch                   out_batch;
 #if LSQUIC_COUNT_ENGINE_CALLS
     unsigned long                      n_engine_calls;
+#endif
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
+    uintptr_t                          last_logged_idle_conn;
 #endif
 };
 
@@ -2543,9 +2550,6 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         (void) engine_decref_conn(engine, conn, LSCONN_CLOSING);
     }
 
-    /* TODO Heapification can be optimized by switching to the Floyd method:
-     * https://en.wikipedia.org/wiki/Binary_heap#Building_a_heap
-     */
     while ((conn = TAILQ_FIRST(&ticked_conns)))
     {
         TAILQ_REMOVE(&ticked_conns, conn, cn_next_ticked);
@@ -2553,6 +2557,7 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         if (!(conn->cn_flags & LSCONN_TICKABLE)
             && conn->cn_if->ci_is_tickable(conn))
         {
+            /* Floyd heapification is not faster, don't bother. */
             lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
             engine_incref_conn(conn, LSCONN_TICKABLE);
         }
@@ -2709,6 +2714,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_out);
+        engine->last_logged_idle_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
             "and have %u outgoing connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_out),
@@ -2722,6 +2728,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     if (engine->pr_queue && prq_have_pending(engine->pr_queue))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
+        engine->last_logged_idle_conn = 0;
         LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
 #endif
         *diff = 0;
@@ -2732,6 +2739,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_tickable);
+        engine->last_logged_idle_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
             "connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_tickable),
@@ -2769,9 +2777,21 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     *diff = (int) ((int64_t) next_time - (int64_t) now);
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
     if (next_attq)
-        LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
-            ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
-            lsquic_attq_why2str(next_attq->ae_why));
+    {
+        /* Deduplicate consecutive log messages about IDLE timer for the
+         * same connection.
+         */
+        if (!((unsigned) next_attq->ae_why == (unsigned) (N_AEWS + AL_IDLE)
+                    && (uintptr_t) next_attq->ae_conn
+                                            == engine->last_logged_idle_conn))
+        {
+            if ((unsigned) next_attq->ae_why == (unsigned) (N_AEWS + AL_IDLE))
+                engine->last_logged_idle_conn = (uintptr_t) next_attq->ae_conn;
+            LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
+                ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
+                lsquic_attq_why2str(next_attq->ae_why));
+        }
+    }
     else
         LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
 #endif

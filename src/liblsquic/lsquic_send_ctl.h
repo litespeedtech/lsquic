@@ -45,6 +45,8 @@ enum send_ctl_flags {
     SC_APP_LIMITED  =  1 << 12,
     SC_ECN          =  1 << 13,
     SC_QL_BITS      =  1 << 14,
+    SC_SANITY_CHECK =  1 << 15,
+    SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
 };
 
 typedef struct lsquic_send_ctl {
@@ -127,6 +129,7 @@ typedef struct lsquic_send_ctl {
     lsquic_packno_t                 sc_cur_rt_end;
     unsigned                        sc_loss_count;  /* Used to set loss bit */
     unsigned                        sc_square_count;/* Used to set square bit */
+    signed char                     sc_cidlen;      /* For debug purposes */
 } lsquic_send_ctl_t;
 
 void
@@ -172,12 +175,13 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
 #define lsquic_send_ctl_largest_ack2ed(ctl, pns) \
                                             (+(ctl)->sc_largest_ack2ed[pns])
 
-#if LSQUIC_EXTRA_CHECKS
 void
-lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl);
-#else
-#   define lsquic_send_ctl_sanity_check(ctl)
-#endif
+lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl);
+
+#define lsquic_send_ctl_sanity_check(ctl) do {                      \
+    if ((ctl)->sc_flags & SC_SANITY_CHECK)                          \
+        lsquic_send_ctl_do_sanity_check(ctl);                       \
+} while (0)
 
 int
 lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *);
@@ -363,5 +367,9 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
 #define lsquic_send_ctl_do_ql_bits(ctl) do {                       \
     (ctl)->sc_flags |= SC_QL_BITS;                                 \
 } while (0)
+
+void
+lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *,
+                                unsigned orig_cid_len, unsigned new_cid_len);
 
 #endif

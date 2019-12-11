@@ -408,7 +408,10 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
                     header->qh_name, header->qh_name_len,
                     header->qh_value, header->qh_value_len);
         if (st != LSQUIC_HDR_OK)
+        {
+            LSQ_INFO("header process returned non-OK code %u", (unsigned) st);
             goto err;
+        }
     }
 
     lsqpack_dec_destroy_header_list(qlist);
