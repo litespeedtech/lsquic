@@ -253,7 +253,9 @@ struct lsquic_engine
     unsigned long                      n_engine_calls;
 #endif
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
-    uintptr_t                          last_logged_idle_conn;
+    uintptr_t                          last_logged_conn;
+    unsigned                           last_logged_ae_why;
+    int                                last_tick_diff;
 #endif
 };
 
@@ -2714,7 +2716,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_out);
-        engine->last_logged_idle_conn = 0;
+        engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
             "and have %u outgoing connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_out),
@@ -2728,7 +2730,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     if (engine->pr_queue && prq_have_pending(engine->pr_queue))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
-        engine->last_logged_idle_conn = 0;
+        engine->last_logged_conn = 0;
         LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
 #endif
         *diff = 0;
@@ -2739,7 +2741,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_tickable);
-        engine->last_logged_idle_conn = 0;
+        engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
             "connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_tickable),
@@ -2778,15 +2780,19 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
     if (next_attq)
     {
-        /* Deduplicate consecutive log messages about IDLE timer for the
+        /* Deduplicate consecutive log messages about the same reason for the
          * same connection.
+         * If diff is always zero or diff reset to a higher value, event is
+         * still logged.
          */
-        if (!((unsigned) next_attq->ae_why == (unsigned) (N_AEWS + AL_IDLE)
+        if (!((unsigned) next_attq->ae_why == engine->last_logged_ae_why
                     && (uintptr_t) next_attq->ae_conn
-                                            == engine->last_logged_idle_conn))
+                                            == engine->last_logged_conn
+                    && *diff < engine->last_tick_diff))
         {
-            if ((unsigned) next_attq->ae_why == (unsigned) (N_AEWS + AL_IDLE))
-                engine->last_logged_idle_conn = (uintptr_t) next_attq->ae_conn;
+            engine->last_logged_conn = (uintptr_t) next_attq->ae_conn;
+            engine->last_logged_ae_why = (unsigned) next_attq->ae_why;
+            engine->last_tick_diff = *diff;
             LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
                 ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
                 lsquic_attq_why2str(next_attq->ae_why));

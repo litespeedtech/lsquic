@@ -1,3 +1,12 @@
+2019-12-18
+    - 2.7.3
+    - [DEBUG] Further dedup next advisory tick messages when reason is
+      the same.
+    - [BUGFIX] Update size of `a` array in TP struct.  Fixes (benign)
+      GitHub bug #94.
+    - Use Cubic by default again instead of BBR, as it delivers more
+      consistent performance.
+
 2019-12-11
     - 2.7.2
     - [BUGFIX] Send controller: update scheduled bytes when DCID length

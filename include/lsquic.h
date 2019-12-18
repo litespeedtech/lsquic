@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 7
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -373,7 +373,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_QL_BITS 1
 
 /* 1: Cubic; 2: BBR */
-#define LSQUIC_DF_CC_ALGO 2
+#define LSQUIC_DF_CC_ALGO 1
 
 struct lsquic_engine_settings {
     /**

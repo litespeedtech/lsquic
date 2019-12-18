@@ -79,7 +79,7 @@ struct transport_params
             uint64_t max_ack_delay;
             uint64_t active_connection_id_limit;
         }               s;
-        uint64_t        a[10];
+        uint64_t        a[11];
     }           tp_numerics_u;
 #define tp_init_max_stream_data_bidi_local tp_numerics_u.s.init_max_stream_data_bidi_local
 #define tp_init_max_stream_data_bidi_remote tp_numerics_u.s.init_max_stream_data_bidi_remote
