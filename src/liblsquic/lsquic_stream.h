@@ -2,9 +2,6 @@
 #ifndef LSQUIC_STREAM_H
 #define LSQUIC_STREAM_H
 
-#define LSQUIC_GQUIC_STREAM_HANDSHAKE 1
-#define LSQUIC_GQUIC_STREAM_HEADERS   3
-
 #define LSQUIC_STREAM_DEFAULT_PRIO 16   /* RFC 7540, Section 5.3.5 */
 
 
@@ -178,12 +175,13 @@ enum stream_b_flags
     SMBF_SERVER       = 1 << 0,
     SMBF_IETF         = 1 << 1,
     SMBF_USE_HEADERS  = 1 << 2,
-    SMBF_CRYPTO       = 1 << 3,
+    SMBF_CRYPTO       = 1 << 3,  /* Crypto stream: applies to both gQUIC and IETF QUIC */
     SMBF_CRITICAL     = 1 << 4,  /* This is a critical stream */
     SMBF_AUTOSWITCH   = 1 << 5,
     SMBF_RW_ONCE      = 1 << 6,  /* When set, read/write events are dispatched once per call */
     SMBF_CONN_LIMITED = 1 << 7,
-#define N_SMBF_FLAGS 8
+    SMBF_HEADERS      = 1 << 8,  /* Headers stream */
+#define N_SMBF_FLAGS 9
 };
 
 
@@ -356,6 +354,7 @@ enum stream_ctor_flags
     SCF_USE_DI_HASH   = (1 << (N_SMBF_FLAGS + 1)), /* Use hash-based data input.  If not set,
                                    * the nocopy data input is used.
                                    */
+    SCF_CRYPTO_FRAMES = (1 << (N_SMBF_FLAGS + 2)), /* Write CRYPTO frames */
     SCF_DI_AUTOSWITCH = SMBF_AUTOSWITCH, /* Automatically switch between nocopy
                                    * and hash-based to data input for optimal
                                    * performance.
@@ -364,6 +363,8 @@ enum stream_ctor_flags
     SCF_CRITICAL      = SMBF_CRITICAL, /* This is a critical stream */
     SCF_IETF          = SMBF_IETF,
     SCF_HTTP          = SMBF_USE_HEADERS,
+    SCF_CRYPTO        = SMBF_CRYPTO,
+    SCF_HEADERS       = SMBF_HEADERS,
 };
 
 
@@ -501,11 +502,9 @@ lsquic_stream_update_sfcw (lsquic_stream_t *, uint64_t max_off);
 int
 lsquic_stream_set_priority_internal (lsquic_stream_t *, unsigned priority);
 
-int
-lsquic_stream_id_is_critical (int use_http, lsquic_stream_id_t);
+#define lsquic_stream_is_critical(s) ((s)->sm_bflags & SMBF_CRITICAL)
 
-int
-lsquic_stream_is_critical (const struct lsquic_stream *);
+#define lsquic_stream_is_crypto(s) ((s)->sm_bflags & SMBF_CRYPTO)
 
 size_t
 lsquic_stream_mem_used (const struct lsquic_stream *);

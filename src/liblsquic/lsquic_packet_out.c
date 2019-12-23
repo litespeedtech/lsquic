@@ -241,7 +241,17 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
         memcpy(packet_out->po_nonce, nonce, 32);
     }
     if (flags & PO_LONGHEAD)
-        packet_out->po_header_type = HETY_HANDSHAKE;
+    {
+        if (lconn->cn_version == LSQVER_050)
+        {
+            if (lconn->cn_flags & (LSCONN_SERVER|LSCONN_HANDSHAKE_DONE))
+                packet_out->po_header_type = HETY_0RTT;
+            else
+                packet_out->po_header_type = HETY_INITIAL;
+        }
+        else
+            packet_out->po_header_type = HETY_HANDSHAKE;
+    }
     packet_out->po_path = path;
 
     return packet_out;

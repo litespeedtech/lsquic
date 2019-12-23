@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 7
-#define LSQUIC_PATCH_VERSION 3
+#define LSQUIC_MINOR_VERSION 8
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -112,6 +112,13 @@ enum lsquic_version
      */
     LSQVER_046,
 
+    /**
+     * Q050.  Variable-length QUIC server connection IDs.  Use CRYPTO frames
+     * for handshake.  IETF header format matching invariants-06.  Packet
+     * number encryption.  Initial packets are obfuscated.
+     */
+    LSQVER_050,
+
 #if LSQUIC_USE_Q098
     /**
      * Q098.  This is a made-up, experimental version used to test version
@@ -144,7 +151,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 39, 43, 46, and IETF Draft-23
+ * We currently support versions 39, 43, 46, 50, and IETF Draft-23 and Draft-24
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -152,7 +159,7 @@ enum lsquic_version
 /**
  * List of versions in which the server never includes CID in short packets.
  */
-#define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_046)
+#define LSQUIC_FORCED_TCID0_VERSIONS ((1 << LSQVER_046)|(1 << LSQVER_050))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
                             (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)

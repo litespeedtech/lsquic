@@ -99,7 +99,7 @@ typedef struct lsquic_packet_out
                                          */
         PO_SCHED    = (1 <<14),         /* On scheduled queue */
         PO_SENT_SZ  = (1 <<15),
-        PO_LONGHEAD = (1 <<16),         /* Only used for Q044 */
+        PO_LONGHEAD = (1 <<16),
 #define POIPv6_SHIFT 20
         PO_IPv6     = (1 <<20),         /* Set if pmi_allocate was passed is_ipv6=1,
                                          *   otherwise unset.

@@ -35,7 +35,7 @@ lsquic_Q046_parse_packet_in_begin (struct lsquic_packet_in *,
             struct packin_parse_state *);
 
 int
-lsquic_Q046_parse_packet_in_begin (struct lsquic_packet_in *,
+lsquic_Q050_parse_packet_in_begin (struct lsquic_packet_in *,
             size_t length, int is_server, unsigned cid_len,
             struct packin_parse_state *);
 
@@ -83,7 +83,7 @@ lsquic_is_valid_iquic_hs_packet (const unsigned char *buf, size_t buf_sz,
                                                     lsquic_ver_tag_t *tag);
 
 int
-lsquic_is_valid_ietf_v1_or_Q046_hs_packet (const unsigned char *buf,
+lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
                                     size_t length, lsquic_ver_tag_t *tagp);
 
 /* Instead of just -1 like CHECK_SPACE(), this macro returns the number

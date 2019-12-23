@@ -169,7 +169,7 @@ struct enc_session_funcs_gquic
 #ifndef NDEBUG
     /* Need to expose this function for testing */
     int (*esf_determine_diversification_key) (enc_session_t *,
-                              uint8_t *diversification_nonce, int is_client);
+                              uint8_t *diversification_nonce);
 #endif
 
     const char *
@@ -310,6 +310,13 @@ extern
 const
 #endif
 struct enc_session_funcs_common lsquic_enc_session_common_gquic_1;
+
+extern
+#ifdef NDEBUG
+const
+#endif
+struct enc_session_funcs_common lsquic_enc_session_common_gquic_2;
+
 extern const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1;
 
 extern
@@ -324,6 +331,7 @@ extern const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
     ver == LSQVER_ID23 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_ID24 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_VERNEG ? &lsquic_enc_session_common_ietf_v1 : \
+    ver == LSQVER_050 ? &lsquic_enc_session_common_gquic_2 : \
     &lsquic_enc_session_common_gquic_1 )
 
 #define select_esf_gquic_by_ver(ver) ( \

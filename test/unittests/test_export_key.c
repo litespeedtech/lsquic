@@ -424,15 +424,15 @@ static const struct export_key_test tests[] = {
 static void
 run_ekt_test (const struct export_key_test *test)
 {
-    int s;
+    int s, i;
 
     unsigned char   client_key[0x100],
                     server_key[0x100],
                     client_iv[0x100],
                     server_iv[0x100];
 
-    /* XXX: sub_key is confusing -- why is it so large? */
-    unsigned char   sub_key[0x1000];
+    unsigned char   sub_key[32];
+    unsigned char   c_hp[16], s_hp[16];
 
     /* Sanity check the test itself: */
     assert(test->ekt_client_key_sz < sizeof(client_key));
@@ -440,23 +440,28 @@ run_ekt_test (const struct export_key_test *test)
     assert(test->ekt_server_iv_sz < sizeof(server_iv));
     assert(test->ekt_client_iv_sz < sizeof(client_iv));
 
-    s = export_key_material(test->ekt_ikm,              (uint32_t)test->ekt_ikm_sz,
-                            test->ekt_salt,             (int)test->ekt_salt_sz,
-                            test->ekt_context,          (uint32_t)test->ekt_context_sz,
-                            (uint16_t)test->ekt_client_key_sz,    client_key,
-                            (uint16_t)test->ekt_server_key_sz,    server_key,
-                            (uint16_t)test->ekt_client_iv_sz,     client_iv,
-                            (uint16_t)test->ekt_server_iv_sz,     server_iv,
-                            sub_key);
-
-    assert(0 == s);     /* This function always returns zero */
-
-    if (test->ekt_client_key_sz)
-        assert(0 == memcmp(client_key, test->ekt_client_key,
-                                                    test->ekt_client_key_sz));
-    if (test->ekt_server_key_sz)
-        assert(0 == memcmp(server_key, test->ekt_server_key,
-                                                    test->ekt_server_key_sz));
+    for (i = 0; i < 2; ++i)
+    {
+        s = lsquic_export_key_material(test->ekt_ikm,       (uint32_t)test->ekt_ikm_sz,
+                                test->ekt_salt,             (int)test->ekt_salt_sz,
+                                test->ekt_context,          (uint32_t)test->ekt_context_sz,
+                                (uint16_t)test->ekt_client_key_sz,    client_key,
+                                (uint16_t)test->ekt_server_key_sz,    server_key,
+                                (uint16_t)test->ekt_client_iv_sz,     client_iv,
+                                (uint16_t)test->ekt_server_iv_sz,     server_iv,
+                                sub_key,
+                                /* Keys should not change because HP pointers are given */
+                                i ? c_hp : NULL,
+                                i ? s_hp : NULL
+                                );
+        assert(0 == s);     /* This function always returns zero */
+        if (test->ekt_client_key_sz)
+            assert(0 == memcmp(client_key, test->ekt_client_key,
+                                                        test->ekt_client_key_sz));
+        if (test->ekt_server_key_sz)
+            assert(0 == memcmp(server_key, test->ekt_server_key,
+                                                        test->ekt_server_key_sz));
+    }
 }
 
 

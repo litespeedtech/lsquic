@@ -198,7 +198,7 @@ lsquic_generate_gquic_reset (const lsquic_cid_t *cidp,
 }
 
 
-static const enum quic_frame_type byte2frame_type_Q035_thru_Q039[0x100] =
+static const enum quic_frame_type byte2frame_type_Q035_thru_Q046[0x100] =
 {
     [0x00] = QUIC_FRAME_PADDING,
     [0x01] = QUIC_FRAME_RST_STREAM,
@@ -460,14 +460,14 @@ static const enum quic_frame_type byte2frame_type_Q035_thru_Q039[0x100] =
 
 
 enum quic_frame_type
-parse_frame_type_gquic_Q035_thru_Q039 (unsigned char b)
+lsquic_parse_frame_type_gquic_Q035_thru_Q046 (unsigned char b)
 {
-    return byte2frame_type_Q035_thru_Q039[b];
+    return byte2frame_type_Q035_thru_Q046[b];
 }
 
 
 void
-lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *stream_header)
+lsquic_turn_on_fin_Q035_thru_Q046 (unsigned char *stream_header)
 {
     /* 1fdoooss */
     *stream_header |= 0x40;

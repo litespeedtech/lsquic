@@ -30,7 +30,6 @@ SET(TESTS
     arr
     attq
     blocked_gquic_be
-    buf
     bw_sampler
     conn_close_gquic_be
     crypto_gen

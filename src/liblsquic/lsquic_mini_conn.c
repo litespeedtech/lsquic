@@ -59,6 +59,7 @@
 
 
 static const struct conn_iface mini_conn_iface_standard;
+static const struct conn_iface mini_conn_iface_standard_Q050;
 #if LSQUIC_ENABLE_HANDSHAKE_DISABLE
 static const struct conn_iface mini_conn_iface_disable_handshake;
 #endif
@@ -138,6 +139,14 @@ lowest_bit_set (unsigned v)
 }
 
 
+static int
+is_handshake_stream_id (const struct mini_conn *conn,
+                                                lsquic_stream_id_t stream_id)
+{
+    return conn->mc_conn.cn_version < LSQVER_050 && stream_id == 1;
+}
+
+
 static void
 mini_destroy_packet (struct mini_conn *mc, struct lsquic_packet_out *packet_out)
 {
@@ -183,7 +192,15 @@ mini_conn_new (struct lsquic_engine_public *enp,
     {
         if (!packet_in_is_ok(packet_in))
             return NULL;
-        conn_iface = &mini_conn_iface_standard;
+        switch (version)
+        {
+        case LSQVER_050:
+            conn_iface = &mini_conn_iface_standard_Q050;
+            break;
+        default:
+            conn_iface = &mini_conn_iface_standard;
+            break;
+        }
     }
 
     mc = lsquic_malo_get(enp->enp_mm.malo.mini_conn);
@@ -469,7 +486,7 @@ process_rst_stream_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
                                                                 error_code);
     LSQ_DEBUG("Got RST_STREAM; stream: %"PRIu64"; offset: 0x%"PRIX64, stream_id,
                                                                     offset);
-    if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream_id)
+    if (is_handshake_stream_id(mc, stream_id))
     {
         LSQ_INFO("handshake stream reset, closing connection");
         return 0;
@@ -513,7 +530,7 @@ process_stream_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
         return 0;
     EV_LOG_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame);
     LSQ_DEBUG("Got stream frame for stream #%"PRIu64, stream_frame.stream_id);
-    if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream_frame.stream_id)
+    if (is_handshake_stream_id(mc, stream_frame.stream_id))
     {
         if (packet_in->pi_flags & PI_HSK_STREAM)
         {   /* This is not supported for simplicity.  The spec recommends
@@ -546,6 +563,47 @@ process_stream_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
 
 
 static unsigned
+process_crypto_frame (struct mini_conn *mc, struct lsquic_packet_in *packet_in,
+                                          const unsigned char *p, size_t len)
+{
+    stream_frame_t stream_frame;
+    int parsed_len;
+    parsed_len = mc->mc_conn.cn_pf->pf_parse_crypto_frame(p, len,
+                                                                &stream_frame);
+    if (parsed_len < 0)
+        return 0;
+    EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame,
+                                        lsquic_packet_in_enc_level(packet_in));
+    LSQ_DEBUG("Got CRYPTO frame at encryption level %s",
+                    lsquic_enclev2str[lsquic_packet_in_enc_level(packet_in)]);
+    if (packet_in->pi_flags & PI_HSK_STREAM)
+    {   /* This is not supported for simplicity: assume a single CRYPTO frame
+         * per packet.  If this changes, we can revisit this code.
+         */
+        LSQ_INFO("two handshake stream frames in single incoming packet");
+        MCHIST_APPEND(mc, MCHE_2HSK_1STREAM);
+        return 0;
+    }
+    if (stream_frame.data_frame.df_offset >= mc->mc_read_off)
+    {
+        packet_in->pi_flags |= PI_HSK_STREAM;
+        packet_in->pi_hsk_stream = p - packet_in->pi_data;
+        mc->mc_flags |= MC_HAVE_NEW_HSK;
+        MCHIST_APPEND(mc, MCHE_NEW_HSK);
+        if (0 == stream_frame.data_frame.df_offset)
+            /* First CHLO message: update maximum packet size */
+            mc->mc_path.np_pack_size = packet_in->pi_data_sz;
+    }
+    else
+    {
+        LSQ_DEBUG("drop duplicate frame");
+        MCHIST_APPEND(mc, MCHE_DUP_HSK);
+    }
+    return parsed_len;
+}
+
+
+static unsigned
 process_window_update_frame (struct mini_conn *mc,
             lsquic_packet_in_t *packet_in, const unsigned char *p, size_t len)
 {
@@ -556,7 +614,7 @@ process_window_update_frame (struct mini_conn *mc,
     if (parsed_len < 0)
         return 0;
     EV_LOG_WINDOW_UPDATE_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_id, offset);
-    if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream_id)
+    if (is_handshake_stream_id(mc, stream_id))
         /* This should not happen: why would the client send us WINDOW_UPDATE
          * on stream 1?
          */
@@ -575,6 +633,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_ACK]                  =  process_ack_frame,
     [QUIC_FRAME_BLOCKED]              =  process_blocked_frame,
     [QUIC_FRAME_CONNECTION_CLOSE]     =  process_connection_close_frame,
+    [QUIC_FRAME_CRYPTO]               =  process_crypto_frame,
     [QUIC_FRAME_GOAWAY]               =  process_goaway_frame,
     [QUIC_FRAME_INVALID]              =  process_invalid_frame,
     [QUIC_FRAME_PADDING]              =  process_padding_frame,
@@ -632,40 +691,58 @@ conn_decrypt_packet (struct mini_conn *conn, lsquic_packet_in_t *packet_in)
 }
 
 
-static enum { PRP_KEEP, PRP_DEFER, PRP_DROP, PRP_ERROR }
+/* PRP: Process Regular Packet */
+enum proc_rp { PRP_KEEP, PRP_DEFER, PRP_DROP, PRP_ERROR, };
+
+
+static enum proc_rp
+conn_decrypt_packet_or (struct mini_conn *mc,
+                                        struct lsquic_packet_in *packet_in)
+{
+    if (DECPI_OK == conn_decrypt_packet(mc, packet_in))
+    {
+        MCHIST_APPEND(mc, MCHE_DECRYPTED);
+        return PRP_KEEP;
+    }
+    else if (mc->mc_conn.cn_esf.g->esf_have_key_gt_one(
+                                            mc->mc_conn.cn_enc_session))
+    {
+        LSQ_INFO("could not decrypt packet: drop");
+        mc->mc_dropped_packnos |= MCONN_PACKET_MASK(packet_in->pi_packno);
+        MCHIST_APPEND(mc, MCHE_UNDECR_DROP);
+        return PRP_DROP;
+    }
+    else if ((packet_in->pi_flags & PI_OWN_DATA) ||
+            0 == lsquic_conn_copy_and_release_pi_data(&mc->mc_conn,
+                                                mc->mc_enpub, packet_in))
+    {
+        assert(packet_in->pi_flags & PI_OWN_DATA);
+        LSQ_INFO("could not decrypt packet: defer");
+        mc->mc_deferred_packnos |= MCONN_PACKET_MASK(packet_in->pi_packno);
+        MCHIST_APPEND(mc, MCHE_UNDECR_DEFER);
+        return PRP_DEFER;
+    }
+    else
+    {
+        MCHIST_APPEND(mc, MCHE_ENOMEM);
+        return PRP_ERROR;   /* Memory allocation must have failed */
+    }
+}
+
+
+static enum proc_rp
 process_regular_packet (struct mini_conn *mc, lsquic_packet_in_t *packet_in)
 {
     const unsigned char *p, *pend;
+    enum proc_rp prp;
     unsigned len;
 
     /* Decrypt packet if necessary */
     if (0 == (packet_in->pi_flags & PI_DECRYPTED))
     {
-        if (DECPI_OK == conn_decrypt_packet(mc, packet_in))
-            MCHIST_APPEND(mc, MCHE_DECRYPTED);
-        else if (mc->mc_conn.cn_esf.g->esf_have_key_gt_one(
-                                                mc->mc_conn.cn_enc_session))
-        {
-            LSQ_INFO("could not decrypt packet: drop");
-            mc->mc_dropped_packnos |= MCONN_PACKET_MASK(packet_in->pi_packno);
-            MCHIST_APPEND(mc, MCHE_UNDECR_DROP);
-            return PRP_DROP;
-        }
-        else if ((packet_in->pi_flags & PI_OWN_DATA) ||
-                0 == lsquic_conn_copy_and_release_pi_data(&mc->mc_conn,
-                                                    mc->mc_enpub, packet_in))
-        {
-            assert(packet_in->pi_flags & PI_OWN_DATA);
-            LSQ_INFO("could not decrypt packet: defer");
-            mc->mc_deferred_packnos |= MCONN_PACKET_MASK(packet_in->pi_packno);
-            MCHIST_APPEND(mc, MCHE_UNDECR_DEFER);
-            return PRP_DEFER;
-        }
-        else
-        {
-            MCHIST_APPEND(mc, MCHE_ENOMEM);
-            return PRP_ERROR;   /* Memory allocation must have failed */
-        }
+        prp = conn_decrypt_packet_or(mc, packet_in);
+        if (prp != PRP_KEEP)
+            return prp;
     }
 
     /* Update receive history before processing the packet: if there is an
@@ -749,6 +826,18 @@ mini_stream_read (void *stream, void *buf, size_t len, int *reached_fin)
 }
 
 
+/* Wrapper to throw out reached_fin */
+static size_t
+mini_stream_read_for_crypto (void *stream, void *buf, size_t len)
+{
+    size_t retval;
+    int reached_fin;
+
+    retval = mini_stream_read(stream, buf, len, &reached_fin);
+    return retval;
+}
+
+
 static size_t
 mini_stream_size (void *stream)
 {
@@ -811,11 +900,91 @@ allocate_packet_out (struct mini_conn *mc, const unsigned char *nonce)
         packet_out->po_flags |= PO_HELLO;
         packet_out->po_header_type = HETY_0RTT;
     }
+    if (mc->mc_conn.cn_version >= LSQVER_050)
+    {
+        if (nonce)
+            packet_out->po_header_type = HETY_0RTT;
+        else
+            packet_out->po_header_type = HETY_INITIAL;
+    }
     lsquic_packet_out_set_pns(packet_out, PNS_APP);
     TAILQ_INSERT_TAIL(&mc->mc_packets_out, packet_out, po_next);
     LSQ_DEBUG("allocated packet #%"PRIu64", nonce: %d", packno, !!nonce);
     MCHIST_APPEND(mc, MCHE_NEW_PACKET_OUT);
     EV_LOG_PACKET_CREATED(LSQUIC_LOG_CONN_ID, packet_out);
+    return packet_out;
+}
+
+
+static struct lsquic_packet_out *
+to_packet_pre_Q050 (struct mini_conn *mc, struct mini_stream_ctx *ms_ctx,
+                    const unsigned char *nonce)
+{
+    struct lsquic_packet_out *packet_out;
+    size_t cur_off;
+    int len;
+
+    packet_out = allocate_packet_out(mc, nonce);
+    if (!packet_out)
+        return NULL;
+    cur_off = ms_ctx->off;
+    len = mc->mc_conn.cn_pf->pf_gen_stream_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            1, mc->mc_write_off, mini_stream_fin(ms_ctx),
+            mini_stream_size(ms_ctx), mini_stream_read, ms_ctx);
+    if (len < 0)
+    {
+        LSQ_WARN("cannot generate STREAM frame (avail: %u)",
+                                    lsquic_packet_out_avail(packet_out));
+        return NULL;
+    }
+    mc->mc_write_off += ms_ctx->off - cur_off;
+    EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, mc->mc_conn.cn_pf,
+                        packet_out->po_data + packet_out->po_data_sz, len);
+    packet_out->po_data_sz += len;
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
+    if (0 == lsquic_packet_out_avail(packet_out))
+        packet_out->po_flags |= PO_STREAM_END;
+
+    return packet_out;
+}
+
+
+static struct lsquic_packet_out *
+to_packet_Q050plus (struct mini_conn *mc, struct mini_stream_ctx *ms_ctx,
+                    const unsigned char *nonce)
+{
+    struct lsquic_packet_out *packet_out;
+    size_t cur_off;
+    int len;
+
+    if (nonce && !(mc->mc_flags & MC_WR_OFF_RESET))
+    {
+        mc->mc_write_off = 0;
+        mc->mc_flags |= MC_WR_OFF_RESET;
+    }
+
+    packet_out = allocate_packet_out(mc, nonce);
+    if (!packet_out)
+        return NULL;
+    cur_off = ms_ctx->off;
+    len = mc->mc_conn.cn_pf->pf_gen_crypto_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), mc->mc_write_off,
+            mini_stream_size(ms_ctx), mini_stream_read_for_crypto, ms_ctx);
+    if (len < 0)
+    {
+        LSQ_WARN("cannot generate CRYPTO frame (avail: %u)",
+                                    lsquic_packet_out_avail(packet_out));
+        return NULL;
+    }
+    mc->mc_write_off += ms_ctx->off - cur_off;
+    EV_LOG_GENERATED_CRYPTO_FRAME(LSQUIC_LOG_CONN_ID, mc->mc_conn.cn_pf,
+                        packet_out->po_data + packet_out->po_data_sz, len);
+    packet_out->po_data_sz += len;
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
+
     return packet_out;
 }
 
@@ -826,8 +995,10 @@ packetize_response (struct mini_conn *mc, const unsigned char *buf,
 {
     struct mini_stream_ctx ms_ctx;
     lsquic_packet_out_t *packet_out;
-    size_t cur_off;
-    int len;
+    struct lsquic_packet_out * (*const to_packet) (struct mini_conn *,
+                struct mini_stream_ctx *, const unsigned char *)
+        = mc->mc_conn.cn_version < LSQVER_050
+            ? to_packet_pre_Q050 : to_packet_Q050plus;
 
     LSQ_DEBUG("Packetizing %zd bytes of handshake response", bufsz);
 
@@ -837,27 +1008,9 @@ packetize_response (struct mini_conn *mc, const unsigned char *buf,
 
     do
     {
-        packet_out = allocate_packet_out(mc, nonce);
+        packet_out = to_packet(mc, &ms_ctx, nonce);
         if (!packet_out)
             return -1;
-        cur_off = ms_ctx.off;
-        len = mc->mc_conn.cn_pf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
-                    lsquic_packet_out_avail(packet_out),
-                    LSQUIC_GQUIC_STREAM_HANDSHAKE, mc->mc_write_off, mini_stream_fin(&ms_ctx),
-                    mini_stream_size(&ms_ctx), mini_stream_read, &ms_ctx);
-        if (len < 0)
-        {
-            LSQ_WARN("cannot generate stream frame (avail: %u)",
-                                        lsquic_packet_out_avail(packet_out));
-            return -1;
-        }
-        mc->mc_write_off += ms_ctx.off - cur_off;
-        EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, mc->mc_conn.cn_pf,
-                            packet_out->po_data + packet_out->po_data_sz, len);
-        packet_out->po_data_sz += len;
-        packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
-        if (0 == lsquic_packet_out_avail(packet_out))
-            packet_out->po_flags |= PO_STREAM_END;
     }
     while (mini_stream_has_data(&ms_ctx));
 
@@ -893,6 +1046,10 @@ continue_handshake (struct mini_conn *mc)
     struct hsk_chunk hsk_chunks[MINICONN_MAX_PACKETS], *hsk_chunk;
     unsigned char nonce_buf[32];
     int nonce_set = 0;
+    int (*parse_frame)(const unsigned char *, size_t, struct stream_frame *)
+        = mc->mc_conn.cn_version < LSQVER_050
+            ? mc->mc_conn.cn_pf->pf_parse_stream_frame
+            : mc->mc_conn.cn_pf->pf_parse_crypto_frame;
 
     /* Get handshake stream data from each packet that contains a handshake
      * stream frame and place them into `hsk_chunks' array.
@@ -902,7 +1059,7 @@ continue_handshake (struct mini_conn *mc)
         assert(n_hsk_chunks < sizeof(hsk_chunks) / sizeof(hsk_chunks[0]));
         if (0 == (packet_in->pi_flags & PI_HSK_STREAM))
             continue;
-        s = mc->mc_conn.cn_pf->pf_parse_stream_frame(packet_in->pi_data + packet_in->pi_hsk_stream,
+        s = parse_frame(packet_in->pi_data + packet_in->pi_hsk_stream,
                 packet_in->pi_data_sz - packet_in->pi_hsk_stream, &frame);
         if (-1 == s)
         {
@@ -1485,7 +1642,14 @@ process_packet (struct mini_conn *mc, struct lsquic_packet_in *packet_in)
     case PRP_DEFER:
         assert(packet_in->pi_flags & PI_OWN_DATA);
         lsquic_packet_in_upref(packet_in);
-        TAILQ_INSERT_TAIL(&mc->mc_deferred, packet_in, pi_next);
+        if (mc->mc_n_deferred < MINI_CONN_MAX_DEFERRED)
+        {
+            TAILQ_INSERT_TAIL(&mc->mc_deferred, packet_in, pi_next);
+            ++mc->mc_n_deferred;
+        }
+        else
+            LSQ_DEBUG("won't defer more than %u packets: drop",
+                                                MINI_CONN_MAX_DEFERRED);
         break;
     case PRP_ERROR:
         mc->mc_flags |= MC_ERROR;
@@ -1514,6 +1678,7 @@ insert_into_deferred (struct mini_conn *mc, lsquic_packet_in_t *new_packet)
         TAILQ_INSERT_BEFORE(packet_in, new_packet, pi_next);
     else
         TAILQ_INSERT_TAIL(&mc->mc_deferred, new_packet, pi_next);
+    ++mc->mc_n_deferred;
 }
 
 
@@ -1528,6 +1693,7 @@ process_deferred_packets (struct mini_conn *mc)
     {
         packet_in = TAILQ_FIRST(&mc->mc_deferred);
         TAILQ_REMOVE(&mc->mc_deferred, packet_in, pi_next);
+        --mc->mc_n_deferred;
         process_packet(mc, packet_in);
         reached_last = packet_in == last;
         lsquic_packet_in_put(&mc->mc_enpub->enp_mm, packet_in);
@@ -1662,11 +1828,75 @@ mini_conn_ci_packet_in (struct lsquic_conn *lconn,
 
     if (TAILQ_EMPTY(&mc->mc_deferred))
         process_packet(mc, packet_in);
-    else
+    else if (mc->mc_n_deferred < MINI_CONN_MAX_DEFERRED)
     {
         insert_into_deferred(mc, packet_in);
         process_deferred_packets(mc);
     }
+    else
+        LSQ_DEBUG("won't defer more than %u packets: drop",
+                                                MINI_CONN_MAX_DEFERRED);
+}
+
+
+/* Q050 is different is that packet numbers are not known until after the
+ * packet is decrypted, so we have to follow different logic here.
+ */
+static void
+mini_conn_ci_Q050_packet_in (struct lsquic_conn *lconn,
+                        struct lsquic_packet_in *packet_in)
+{
+    struct mini_conn *mc = (struct mini_conn *) lconn;
+    enum proc_rp prp;
+
+    if (mc->mc_flags & MC_ERROR)
+    {
+        LSQ_DEBUG("error state: ignore packet");
+        return;
+    }
+
+    if (!mc->mc_conn.cn_enc_session)
+    {
+        mc->mc_conn.cn_enc_session =
+            mc->mc_conn.cn_esf.g->esf_create_server(&mc->mc_conn,
+                                        mc->mc_conn.cn_cid, mc->mc_enpub);
+        if (!mc->mc_conn.cn_enc_session)
+        {
+            LSQ_WARN("cannot create new enc session");
+            mc->mc_flags |= MC_ERROR;
+            return;
+        }
+        MCHIST_APPEND(mc, MCHE_NEW_ENC_SESS);
+    }
+
+    assert(!(packet_in->pi_flags & PI_DECRYPTED));
+    prp = conn_decrypt_packet_or(mc, packet_in);
+    switch (prp)
+    {
+    case PRP_KEEP:
+        break;
+    case PRP_DROP:
+        return;
+    case PRP_ERROR:
+        mc->mc_flags |= MC_ERROR;
+        return;
+    default:
+        if (mc->mc_n_deferred >= MINI_CONN_MAX_DEFERRED)
+        {
+            LSQ_DEBUG("won't defer more than %u packets: drop",
+                                                MINI_CONN_MAX_DEFERRED);
+            return;
+        }
+        assert(prp == PRP_DEFER);
+        assert(packet_in->pi_flags & PI_OWN_DATA);
+        lsquic_packet_in_upref(packet_in);
+        TAILQ_INSERT_TAIL(&mc->mc_deferred, packet_in, pi_next);
+        ++mc->mc_n_deferred;
+        return;
+    }
+
+    assert(prp == PRP_KEEP);
+    process_packet(mc, packet_in);
 }
 
 
@@ -1735,6 +1965,7 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
     while ((packet_in = TAILQ_FIRST(&mc->mc_deferred)))
     {
         TAILQ_REMOVE(&mc->mc_deferred, packet_in, pi_next);
+        --mc->mc_n_deferred;
         still_deferred |= MCONN_PACKET_MASK(packet_in->pi_packno);
         lsquic_packet_in_put(&mc->mc_enpub->enp_mm, packet_in);
     }
@@ -2004,6 +2235,26 @@ static const struct conn_iface mini_conn_iface_standard = {
     .ci_next_packet_to_send  =  mini_conn_ci_next_packet_to_send,
     .ci_next_tick_time       =  mini_conn_ci_next_tick_time,
     .ci_packet_in            =  mini_conn_ci_packet_in,
+    .ci_packet_not_sent      =  mini_conn_ci_packet_not_sent,
+    .ci_packet_sent          =  mini_conn_ci_packet_sent,
+    .ci_record_addrs         =  mini_conn_ci_record_addrs,
+    .ci_tick                 =  mini_conn_ci_tick,
+    .ci_tls_alert            =  mini_conn_ci_tls_alert,
+};
+
+
+static const struct conn_iface mini_conn_iface_standard_Q050 = {
+    .ci_abort_error          =  mini_conn_ci_abort_error,
+    .ci_client_call_on_new   =  mini_conn_ci_client_call_on_new,
+    .ci_destroy              =  mini_conn_ci_destroy,
+    .ci_get_engine           =  mini_conn_ci_get_engine,
+    .ci_get_path             =  mini_conn_ci_get_path,
+    .ci_hsk_done             =  mini_conn_ci_hsk_done,
+    .ci_internal_error       =  mini_conn_ci_internal_error,
+    .ci_is_tickable          =  mini_conn_ci_is_tickable,
+    .ci_next_packet_to_send  =  mini_conn_ci_next_packet_to_send,
+    .ci_next_tick_time       =  mini_conn_ci_next_tick_time,
+    .ci_packet_in            =  mini_conn_ci_Q050_packet_in,
     .ci_packet_not_sent      =  mini_conn_ci_packet_not_sent,
     .ci_packet_sent          =  mini_conn_ci_packet_sent,
     .ci_record_addrs         =  mini_conn_ci_record_addrs,

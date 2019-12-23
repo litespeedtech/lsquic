@@ -2616,6 +2616,8 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             parse_packet_in_begin = lsquic_gquic_parse_packet_in_begin;
         else if ((1 << conn->cn_version) & LSQUIC_IETF_VERSIONS)
             parse_packet_in_begin = lsquic_ietf_v1_parse_packet_in_begin;
+        else if (conn->cn_version == LSQVER_050)
+            parse_packet_in_begin = lsquic_Q050_parse_packet_in_begin;
         else
         {
             assert(conn->cn_version == LSQVER_046

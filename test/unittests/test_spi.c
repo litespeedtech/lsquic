@@ -158,8 +158,8 @@ struct stream_info
 
 
 const struct stream_info infos1[] = {
-    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    SMBF_CRITICAL, 0, },
-    { LSQUIC_GQUIC_STREAM_HEADERS,      SMBF_CRITICAL, 0, },
+    { 1,                                SMBF_CRITICAL, 0, },
+    { 3,                                SMBF_CRITICAL, 0, },
     { 5,                                0, 0, },
     { 7,                                0, 1, },
     { 127,                              0, 200, },
@@ -167,8 +167,8 @@ const struct stream_info infos1[] = {
 
 
 const struct stream_info infos2[] = {
-    { LSQUIC_GQUIC_STREAM_HANDSHAKE,    SMBF_CRITICAL, 0, },
-    { LSQUIC_GQUIC_STREAM_HEADERS,      SMBF_CRITICAL, 0, },
+    { 1,                                SMBF_CRITICAL, 0, },
+    { 3,                                SMBF_CRITICAL, 0, },
     { 5,                                0, 4, },
     { 7,                                0, 1, },
     { 127,                              0, 200, },

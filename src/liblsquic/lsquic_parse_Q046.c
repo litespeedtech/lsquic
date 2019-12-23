@@ -262,6 +262,33 @@ gquic_Q046_parse_packet_in_finish (struct lsquic_packet_in *packet_in,
 }
 
 
+static int
+gquic_Q046_gen_crypto_frame (unsigned char *buf, size_t buf_len,
+        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+{
+    assert(0);
+    return -1;
+}
+
+
+static int
+gquic_Q046_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
+                                            struct stream_frame *stream_frame)
+{
+    assert(0);
+    return -1;
+}
+
+
+static void
+gquic_Q046_packno_info (const struct lsquic_conn *lconn,
+        const struct lsquic_packet_out *packet_out, unsigned *packno_off,
+        unsigned *packno_len)
+{
+    assert(0);
+}
+
+
 const struct parse_funcs lsquic_parse_funcs_gquic_Q046 =
 {
     .pf_gen_reg_pkt_header            =  gquic_Q046_gen_reg_pkt_header,
@@ -290,10 +317,13 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q046 =
     .pf_read_float_time16             =  gquic_be_read_float_time16,
 #endif
     .pf_generate_simple_prst          =  lsquic_generate_iquic_reset,
-    .pf_parse_frame_type              =  parse_frame_type_gquic_Q035_thru_Q039,
-    .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q039,
+    .pf_parse_frame_type              =  lsquic_parse_frame_type_gquic_Q035_thru_Q046,
+    .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q046,
     .pf_packout_size                  =  gquic_Q046_packout_size,
     .pf_packout_max_header_size       =  gquic_Q046_packout_header_size,
     .pf_calc_packno_bits              =  gquic_Q046_calc_packno_bits,
     .pf_packno_bits2len               =  gquic_Q046_packno_bits2len,
+    .pf_gen_crypto_frame              =  gquic_Q046_gen_crypto_frame,
+    .pf_parse_crypto_frame            =  gquic_Q046_parse_crypto_frame,
+    .pf_packno_info                   =  gquic_Q046_packno_info,
 };

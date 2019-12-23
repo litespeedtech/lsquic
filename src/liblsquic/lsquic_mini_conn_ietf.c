@@ -185,7 +185,7 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
     while (msg_ctx.buf < msg_ctx.end)
     {
         header_sz = lconn->cn_pf->pf_calc_crypto_frame_header_sz(
-                                                        cryst->mcs_write_off);
+                            cryst->mcs_write_off, msg_ctx.end - msg_ctx.buf);
         need = header_sz + 1;
         packet_out = imico_get_packet_out(conn,
                                         el2hety[ cryst->mcs_enc_level ], need);

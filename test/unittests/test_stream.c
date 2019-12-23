@@ -426,14 +426,23 @@ new_frame_in (struct test_objs *tobjs, size_t off, size_t sz, int fin)
 static lsquic_stream_t *
 new_stream_ext (struct test_objs *tobjs, unsigned stream_id, uint64_t send_off)
 {
+    enum stream_ctor_flags ctor_flags;
+
     if (g_use_crypto_ctor)
         return lsquic_stream_new_crypto(stream_id, &tobjs->conn_pub,
             tobjs->stream_if, tobjs->stream_if_ctx,
             tobjs->ctor_flags | SCF_CRITICAL);
     else
+    {
+        /* For the purposes of the unit test, consider streams 1 and 3 critical */
+        if (stream_id == 3 || stream_id == 1)
+            ctor_flags = SCF_CRITICAL;
+        else
+            ctor_flags = 0;
         return lsquic_stream_new(stream_id, &tobjs->conn_pub, tobjs->stream_if,
             tobjs->stream_if_ctx, tobjs->initial_stream_window, send_off,
-            tobjs->ctor_flags);
+            tobjs->ctor_flags | ctor_flags);
+    }
 }
 
 
@@ -1256,7 +1265,7 @@ test_unlimited_stream_flush_data (struct test_objs *tobjs)
     const struct lsquic_conn_cap *const cap = &tobjs->conn_pub.conn_cap;
 
     assert(0x4000 == lsquic_conn_cap_avail(cap));   /* Self-check */
-    stream = new_stream(tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
+    stream = new_stream(tobjs, 1);
     n = lsquic_stream_write(stream, buf, 100);
     assert(n == 100);
 
@@ -1540,7 +1549,7 @@ test_conn_unlimited (void)
     unsigned char *const data = calloc(1, 0x4000);
 
     /* Test 1: first write headers, then data stream */
-    header_stream = new_stream(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
+    header_stream = new_stream(&tobjs, 1);
     data_stream = new_stream(&tobjs, 123);
     nw = lsquic_stream_write(header_stream, data, 98);
     assert(98 == nw);
@@ -1552,7 +1561,7 @@ test_conn_unlimited (void)
     lsquic_stream_destroy(data_stream);
 
     /* Test 2: first write data, then headers stream */
-    header_stream = new_stream(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE);
+    header_stream = new_stream(&tobjs, 1);
     data_stream = new_stream(&tobjs, 123);
     lsquic_conn_cap_init(&tobjs.conn_pub.conn_cap, 0x4000);
     nw = lsquic_stream_write(data_stream, data, 0x4000);
@@ -2775,7 +2784,7 @@ test_window_update2 (void)
 
     init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     n_closed = 0;
-    stream = new_stream_ext(&tobjs, LSQUIC_GQUIC_STREAM_HANDSHAKE, 3);
+    stream = new_stream_ext(&tobjs, 1, 3);
     nw = lsquic_stream_write(stream, "1234567890", 10);
     lsquic_stream_flush(stream);
     assert(("lsquic_stream_write is limited by the send window", 3 == nw));

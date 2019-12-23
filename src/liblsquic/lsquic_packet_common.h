@@ -30,7 +30,7 @@ enum quic_frame_type
     QUIC_FRAME_STOP_SENDING,        /* I */
     QUIC_FRAME_PATH_CHALLENGE,      /* I */
     QUIC_FRAME_PATH_RESPONSE,       /* I */
-    QUIC_FRAME_CRYPTO,              /* I */
+    QUIC_FRAME_CRYPTO,              /* B */
     QUIC_FRAME_RETIRE_CONNECTION_ID,/* I */
     QUIC_FRAME_NEW_TOKEN,           /* I */
     N_QUIC_FRAMES

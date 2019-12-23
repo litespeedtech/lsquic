@@ -319,10 +319,10 @@ stream_stream_frame_header_sz (const struct lsquic_stream *stream,
 
 static size_t
 stream_crypto_frame_header_sz (const struct lsquic_stream *stream,
-                                                    unsigned data_sz_IGNORED)
+                                                            unsigned data_sz)
 {
     return stream->conn_pub->lconn->cn_pf
-         ->pf_calc_crypto_frame_header_sz(stream->tosend_off);
+         ->pf_calc_crypto_frame_header_sz(stream->tosend_off, data_sz);
 }
 
 
@@ -333,7 +333,7 @@ stream_is_hsk (const struct lsquic_stream *stream)
     if (stream->sm_bflags & SMBF_IETF)
         return 0;
     else
-        return stream->id == LSQUIC_GQUIC_STREAM_HANDSHAKE;
+        return lsquic_stream_is_crypto(stream);
 }
 
 
@@ -366,7 +366,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
 
     STAILQ_INIT(&stream->sm_hq_frames);
 
-    stream->sm_bflags |= ctor_flags & ((1 << (N_SMBF_FLAGS - 1)) - 1);
+    stream->sm_bflags |= ctor_flags & ((1 << N_SMBF_FLAGS) - 1);
     if (conn_pub->lconn->cn_flags & LSCONN_SERVER)
         stream->sm_bflags |= SMBF_SERVER;
 
@@ -374,10 +374,6 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
 }
 
 
-/* TODO: The logic to figure out whether the stream is connection limited
- * should be taken out of the constructor.  The caller should specify this
- * via one of enum stream_ctor_flags.
- */
 lsquic_stream_t *
 lsquic_stream_new (lsquic_stream_id_t id,
         struct lsquic_conn_public *conn_pub,
@@ -411,10 +407,11 @@ lsquic_stream_new (lsquic_stream_id_t id,
         lsquic_stream_set_priority_internal(stream,
                                             LSQUIC_STREAM_DEFAULT_PRIO);
         stream->sm_write_to_packet = stream_write_to_packet_std;
+        stream->sm_frame_header_sz = stream_stream_frame_header_sz;
     }
     else
     {
-        if (lsquic_stream_id_is_critical(ctor_flags & SCF_HTTP, id))
+        if (ctor_flags & SCF_CRITICAL)
             cfcw = NULL;
         else
         {
@@ -427,17 +424,25 @@ lsquic_stream_new (lsquic_stream_id_t id,
             stream->sm_readable = stream_readable_http_gquic;
         else
             stream->sm_readable = stream_readable_non_http;
-        if (stream_is_hsk(stream))
-            stream->sm_write_to_packet = stream_write_to_packet_hsk;
+        if (ctor_flags & SCF_CRYPTO_FRAMES)
+        {
+            stream->sm_frame_header_sz = stream_crypto_frame_header_sz;
+            stream->sm_write_to_packet = stream_write_to_packet_crypto;
+        }
         else
-            stream->sm_write_to_packet = stream_write_to_packet_std;
+        {
+            if (stream_is_hsk(stream))
+                stream->sm_write_to_packet = stream_write_to_packet_hsk;
+            else
+                stream->sm_write_to_packet = stream_write_to_packet_std;
+            stream->sm_frame_header_sz = stream_stream_frame_header_sz;
+        }
     }
 
     lsquic_sfcw_init(&stream->fc, initial_window, cfcw, conn_pub, id);
     stream->max_send_off = initial_send_off;
     LSQ_DEBUG("created stream");
     SM_HISTORY_APPEND(stream, SHE_CREATED);
-    stream->sm_frame_header_sz = stream_stream_frame_header_sz;
     if (ctor_flags & SCF_CALL_ON_NEW)
         lsquic_stream_call_on_new(stream);
     return stream;
@@ -2877,6 +2882,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
 }
 
 
+/* Use for IETF crypto streams and gQUIC crypto stream for versions >= Q050. */
 static enum swtp_status
 stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
 {
@@ -2886,8 +2892,13 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     unsigned crypto_header_sz, need_at_least;
     struct lsquic_packet_out *packet_out;
     unsigned short off;
-    const enum packnum_space pns = lsquic_enclev2pns[ crypto_level(stream) ];
+    enum packnum_space pns;
     int len, s;
+
+    if (stream->sm_bflags & SMBF_IETF)
+        pns = lsquic_enclev2pns[ crypto_level(stream) ];
+    else
+        pns = PNS_INIT;
 
     assert(size > 0);
     crypto_header_sz = stream->sm_frame_header_sz(stream, size);
@@ -2918,6 +2929,15 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     }
 
     packet_out->po_flags |= PO_HELLO;
+
+    if (!(stream->sm_bflags & SMBF_IETF))
+    {
+        const unsigned short before = packet_out->po_data_sz;
+        lsquic_packet_out_zero_pad(packet_out);
+        /* XXX: too hacky */
+        if (before < packet_out->po_data_sz)
+            send_ctl->sc_bytes_scheduled += packet_out->po_data_sz - before;
+    }
 
     check_flush_threshold(stream);
     return SWTP_OK;
@@ -3990,22 +4010,6 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
     }
     LSQ_DEBUG("return header set");
     return hset;
-}
-
-
-/* GQUIC-only function */
-int
-lsquic_stream_id_is_critical (int use_http, lsquic_stream_id_t stream_id)
-{
-    return stream_id == LSQUIC_GQUIC_STREAM_HANDSHAKE
-        || (stream_id == LSQUIC_GQUIC_STREAM_HEADERS && use_http);
-}
-
-
-int
-lsquic_stream_is_critical (const struct lsquic_stream *stream)
-{
-    return stream->sm_bflags & SMBF_CRITICAL;
 }
 
 

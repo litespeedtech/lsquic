@@ -212,7 +212,7 @@ struct parse_funcs
     (*pf_calc_stream_frame_header_sz) (lsquic_stream_id_t stream_id,
                                             uint64_t offset, unsigned data_sz);
     size_t
-    (*pf_calc_crypto_frame_header_sz) (uint64_t offset);
+    (*pf_calc_crypto_frame_header_sz) (uint64_t offset, unsigned data_sz);
     void
     (*pf_turn_on_fin) (unsigned char *);
 
@@ -234,7 +234,7 @@ struct parse_funcs
     unsigned
     (*pf_packno_bits2len) (enum packno_bits);
 
-    /* Only used by IETF QUIC: */
+    /* Used by IETF QUIC and gQUIC >= Q050 */
     void
     (*pf_packno_info) (const struct lsquic_conn *,
         const struct lsquic_packet_out *, unsigned *packno_off,
@@ -318,13 +318,16 @@ struct parse_funcs
 
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
+extern const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
 extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
 
 #define select_pf_by_ver(ver) (                                             \
     (1 << (ver)) & ((1 << LSQVER_039)|(1 << LSQVER_043)) ?                  \
                                          &lsquic_parse_funcs_gquic_Q039 :   \
-    (1 << (ver)) & ((1 << LSQVER_046)|LSQUIC_EXPERIMENTAL_Q098) ?           \
+    (1 << (ver)) & (1 << LSQVER_046)                            ?           \
                                          &lsquic_parse_funcs_gquic_Q046 :   \
+    (1 << (ver)) & ((1 << LSQVER_050)|LSQUIC_EXPERIMENTAL_Q098) ?           \
+                                         &lsquic_parse_funcs_gquic_Q050 :   \
     &lsquic_parse_funcs_ietf_v1)
 
 /* This function is gQUIC-version independent */
@@ -340,8 +343,12 @@ int
 lsquic_Q046_parse_packet_in_long_begin (struct lsquic_packet_in *, size_t length,
                 int is_server, unsigned, struct packin_parse_state *);
 
+int
+lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *, size_t length,
+                int is_server, unsigned, struct packin_parse_state *);
+
 enum quic_frame_type
-parse_frame_type_gquic_Q035_thru_Q039 (unsigned char first_byte);
+lsquic_parse_frame_type_gquic_Q035_thru_Q046 (unsigned char first_byte);
 
 extern const enum quic_frame_type lsquic_iquic_byte2type[0x100];
 
@@ -391,7 +398,7 @@ char *
 acki2str (const struct ack_info *acki, size_t *sz);
 
 void
-lsquic_turn_on_fin_Q035_thru_Q039 (unsigned char *);
+lsquic_turn_on_fin_Q035_thru_Q046 (unsigned char *);
 
 enum packno_bits
 lsquic_gquic_calc_packno_bits (lsquic_packno_t packno,

@@ -1,3 +1,10 @@
+2019-12-23
+    - 2.8.0
+    - [FEATURE] Add support for Q050.
+    - [OPTIMIZATION] Reduce mallocs in gQUIC handshake.
+    - [BUGFIX] Disable redo of failed STREAM frame insertion with debug
+      logging.
+
 2019-12-18
     - 2.7.3
     - [DEBUG] Further dedup next advisory tick messages when reason is
