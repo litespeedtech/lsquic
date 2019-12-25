@@ -64,6 +64,7 @@ struct ietf_mini_conn
     }                               imc_last_in;
     TAILQ_HEAD(, lsquic_packet_in)  imc_app_packets;
     TAILQ_HEAD(, lsquic_packet_out) imc_packets_out;
+    TAILQ_HEAD(, stream_frame)      imc_crypto_frames;
     packno_set_t                    imc_sent_packnos;
     packno_set_t                    imc_recvd_packnos[N_PNS];
     packno_set_t                    imc_acked_packnos[N_PNS];
@@ -72,6 +73,11 @@ struct ietf_mini_conn
     unsigned                        imc_error_code;
     unsigned                        imc_bytes_in;
     unsigned                        imc_bytes_out;
+    unsigned short                  imc_crypto_frames_sz;
+    /* We need to read in the length of ClientHello to check when we have fed
+     * it to the crypto layer.
+     */
+    unsigned short                  imc_ch_len;
     unsigned char                   imc_next_packno;
     unsigned char                   imc_hsk_count;
     /* We don't send more than eight in the first flight, and so it's OK to
@@ -85,8 +91,21 @@ struct ietf_mini_conn
     uint8_t                         imc_ecn_counts_out[N_PNS][4];
     uint8_t                         imc_incoming_ecn;
     uint8_t                         imc_tls_alert;
+#define IMICO_MAX_STASHED_FRAMES 10u
+    unsigned char                   imc_n_crypto_frames;
     struct network_path             imc_path;
 };
+
+/* [draft-ietf-quic-transport-24] Section 7.4
+ *
+ " Implementations MUST support buffering at least 4096 bytes of data
+ " received in CRYPTO frames out of order.  Endpoints MAY choose to
+ " allow more data to be buffered during the handshake.  A larger limit
+ " during the handshake could allow for larger keys or credentials to be
+ " exchanged.  An endpoint's buffer size does not need to remain
+ " constant during the life of the connection.
+ */
+#define IMICO_MAX_BUFFERED_CRYPTO (6u * 1024u)
 
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *,

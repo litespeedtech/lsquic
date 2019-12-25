@@ -40,14 +40,15 @@ int export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
                         const uint8_t *context, uint32_t context_len,
                         uint8_t *key, uint16_t key_len);
 
-int export_key_material(const unsigned char *ikm, uint32_t ikm_len,
+int lsquic_export_key_material(const unsigned char *ikm, uint32_t ikm_len,
                         const unsigned char *salt, int salt_len,
                         const unsigned char *context, uint32_t context_len,
                         uint16_t c_key_len, uint8_t *c_key,
                         uint16_t s_key_len, uint8_t *s_key,
                         uint16_t c_key_iv_len, uint8_t *c_key_iv,
                         uint16_t s_key_iv_len, uint8_t *s_key_iv,
-                        uint8_t *sub_key);
+                        uint8_t *sub_key,
+                        uint8_t *c_hp, uint8_t *s_hp);
 
 void c255_get_pub_key(unsigned char *priv_key, unsigned char pub_key[32]);
 int c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, unsigned char *shared_key);
@@ -88,7 +89,8 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
                 uint16_t s_key_len, uint8_t *s_key,
                 uint16_t c_key_iv_len, uint8_t *c_key_iv,
                 uint16_t s_key_iv_len, uint8_t *s_key_iv,
-                uint16_t sub_key_len, uint8_t *sub_key);
+                uint16_t sub_key_len, uint8_t *sub_key,
+                uint8_t *c_hp, uint8_t *s_hp);
 void lshkdf_extract(const unsigned char *ikm, int ikm_len, const unsigned char *salt,
                   int salt_len, unsigned char *prk);
 

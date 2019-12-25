@@ -83,7 +83,11 @@ typedef struct lsquic_packet_in
 #define PIBIT_BITS_SHIFT 12
         PI_BITS_BIT_0   = (1 <<12),
         PI_BITS_BIT_1   = (1 <<13),
-    }                               pi_flags:16;
+        /* Square bit and loss bit flags are used for logging */
+        PI_LOG_QL_BITS  = (1 <<14),
+        PI_SQUARE_BIT   = (1 <<15),
+        PI_LOSS_BIT     = (1 <<16),
+    }                               pi_flags;
     /* pi_token and pi_token_size are set in Initial and Retry packets */
     unsigned short                  pi_token_size; /* Size of the token */
     unsigned char                   pi_token;      /* Offset to token */

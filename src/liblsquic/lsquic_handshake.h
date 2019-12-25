@@ -12,6 +12,7 @@ struct sockaddr;
 struct lsquic_str;
 struct lsquic_packet_in;
 struct lsquic_cid;
+struct lsquic_enc_session;
 
 /* client side, certs and hashs
  */
@@ -28,7 +29,8 @@ typedef struct cert_hash_item_st
 void gen_stk(struct lsquic_server_config *, const struct sockaddr *ip_addr, uint64_t tm,
              unsigned char stk_out[STK_LENGTH]);
 enum hsk_failure_reason
-verify_stk0(struct lsquic_server_config *, const struct sockaddr *ip_addr, uint64_t tm,
+verify_stk0(const struct lsquic_enc_session *,
+            struct lsquic_server_config *, const struct sockaddr *ip_addr, uint64_t tm,
                struct lsquic_str *stk,
                unsigned secs_since_stk_generated);
 enum hsk_failure_reason

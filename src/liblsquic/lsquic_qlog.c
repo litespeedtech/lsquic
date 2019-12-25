@@ -99,7 +99,8 @@ lsquic_qlog_packet_rx (const lsquic_cid_t* cid,
                         const unsigned char *packet_in_data,
                         size_t packet_in_size)
 {
-    int i, cur = 0, first = 0, ret = 0;
+    int i, first, ret;
+    unsigned cur;
     size_t raw_bytes_written;
     char data[QLOG_PACKET_RAW_SZ];
     char frame_list[QLOG_FRAME_LIST_MAX + 1];
@@ -107,11 +108,12 @@ lsquic_qlog_packet_rx (const lsquic_cid_t* cid,
     if (!packet_in || !packet_in_data)
         return;
 
-    frame_list[cur] = '\0';
     if (packet_in->pi_frame_types)
     {
-        cur = sprintf(frame_list, "%s", QLOG_FRAME_LIST_PREFIX);
-        for (i = 0; i < N_QUIC_FRAMES; i++)
+        memcpy(frame_list, QLOG_FRAME_LIST_PREFIX,
+                                            sizeof(QLOG_FRAME_LIST_PREFIX));
+        cur = sizeof(QLOG_FRAME_LIST_PREFIX) - 1;
+        for (i = 0, first = 0; i < N_QUIC_FRAMES; i++)
             if (packet_in->pi_frame_types & (1 << i))
             {
                 ret = snprintf(frame_list + cur,
@@ -124,13 +126,16 @@ lsquic_qlog_packet_rx (const lsquic_cid_t* cid,
                                     QLOG_FRAME_DICT_PREFIX),
                                 QUIC_FRAME_NAME(i),
                                 QLOG_FRAME_DICT_SUFFIX);
-                if ((unsigned)ret > QLOG_FRAME_LIST_MAX - cur)
+                if (ret < 0 || (unsigned)ret > QLOG_FRAME_LIST_MAX - cur)
                     break;
                 cur += ret;
             }
-        if ((unsigned)cur <= QLOG_FRAME_LIST_MAX)
-            sprintf(frame_list + cur, "%s", QLOG_FRAME_LIST_SUFFIX);
+        if (cur + sizeof(QLOG_FRAME_LIST_SUFFIX) <= QLOG_FRAME_LIST_MAX)
+            memcpy(frame_list + cur, QLOG_FRAME_LIST_SUFFIX,
+                                        sizeof(QLOG_FRAME_LIST_SUFFIX));
     }
+    else
+        frame_list[0] = '\0';
 
     raw_bytes_written = lsquic_hex_encode(packet_in_data, packet_in_size,
                                                     data, QLOG_PACKET_RAW_SZ);

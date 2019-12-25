@@ -121,7 +121,8 @@ lsquic_is_valid_hs_packet (struct lsquic_engine *engine,
     case 0x80|0x00|0x20|0x00|0x08:
     case 0x80|0x40|0x20|0x00|0x00:
     case 0x80|0x00|0x20|0x00|0x00:
-        is_valid = lsquic_is_valid_ietf_v1_or_Q046_hs_packet(buf, bufsz, &tag);
+        is_valid = lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet(buf, bufsz,
+                                                                        &tag);
         break;
     /* 01XX XGGG: ID-22 short header */
     case 0x00|0x40|0x00|0x00|0x00:

@@ -5,7 +5,6 @@ SET(lsquic_STAT_SRCS
     lsquic_arr.c
     lsquic_attq.c
     lsquic_bbr.c
-    lsquic_buf.c
     lsquic_bw_sampler.c
     lsquic_cfcw.c
     lsquic_chsk_stream.c
@@ -50,6 +49,7 @@ SET(lsquic_STAT_SRCS
     lsquic_packet_out.c
     lsquic_packints.c
     lsquic_parse_Q046.c
+    lsquic_parse_Q050.c
     lsquic_parse_common.c
     lsquic_parse_gquic_be.c
     lsquic_parse_gquic_common.c

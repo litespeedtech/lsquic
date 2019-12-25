@@ -115,6 +115,10 @@ lsquic_tp_encode (const struct transport_params *params,
         if (params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
             need += 4 + preferred_address_size(params);
     }
+#if LSQUIC_TEST_QUANTUM_READINESS
+    else if (params->tp_flags & TRAPA_QUANTUM_READY)
+        need += 4 + QUANTUM_READY_SZ;
+#endif
 
     for (tpi = 0; tpi <= MAX_TPI; ++tpi)
         if ((NUMERIC_TRANS_PARAMS & (1 << tpi))
@@ -135,6 +139,9 @@ lsquic_tp_encode (const struct transport_params *params,
         }
 
     if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
+        need += 4 + 0;
+
+    if (params->tp_flags & TRAPA_QL_BITS)
         need += 4 + 0;
 
     if (need > bufsz || need > UINT16_MAX)
@@ -248,6 +255,22 @@ lsquic_tp_encode (const struct transport_params *params,
                 return -1;
             }
 
+    if (params->tp_flags & TRAPA_QL_BITS)
+    {
+        WRITE_UINT_TO_P(TPI_QL_BITS, 16);
+        WRITE_UINT_TO_P(0, 16);
+    }
+
+#if LSQUIC_TEST_QUANTUM_READINESS
+    if (params->tp_flags & TRAPA_QUANTUM_READY)
+    {
+        WRITE_UINT_TO_P(TPI_QUANTUM_READINESS, 16);
+        WRITE_UINT_TO_P(QUANTUM_READY_SZ, 16);
+        memset(p, 'Q', QUANTUM_READY_SZ);
+        p += QUANTUM_READY_SZ;
+    }
+#endif
+
     assert(buf + need == p);
     return (int) (p - buf);
 
@@ -314,7 +337,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             set_of_ids |= 1 << param_id;
         }
         else
-            goto unknown;
+            goto gt32;
         if (NUMERIC_TRANS_PARAMS & (1u << param_id))
         {
             switch (len)
@@ -354,7 +377,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         }
         else
         {
-            switch (param_id)
+  gt32:     switch (param_id)
             {
             case TPI_DISABLE_ACTIVE_MIGRATION:
                 EXPECT_LEN(0);
@@ -432,8 +455,11 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                                 sizeof(params->tp_preferred_address.ipv6_addr)))
                     params->tp_flags |= TRAPA_PREFADDR_IPv6;
                 break;
+            case TPI_QL_BITS:
+                EXPECT_LEN(0);
+                params->tp_flags |= TRAPA_QL_BITS;
+                break;
             }
-  unknown:
             p += len;
         }
     }
@@ -517,6 +543,13 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
             if (buf >= end)
                 return;
         }
+    }
+    if (params->tp_flags & TRAPA_QL_BITS)
+    {
+        nw = snprintf(buf, end - buf, "; QL loss bits");
+        buf += nw;
+        if (buf >= end)
+            return;
     }
 
 #undef SEMICOLON

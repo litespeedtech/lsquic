@@ -116,6 +116,8 @@ struct mini_conn {
                            mc_cutoff,
                            mc_cur_packno;
     unsigned char          mc_hsk_count;
+#define MINI_CONN_MAX_DEFERRED 10
+    unsigned char          mc_n_deferred;
 #if LSQUIC_RECORD_INORD_HIST
     unsigned char          mc_inord_idx;
 #endif
@@ -131,7 +133,7 @@ struct mini_conn {
         MC_HAVE_NEW_HSK  = (1 << 0),
         MC_PROMOTE       = (1 << 1),
         MC_HAVE_SHLO     = (1 << 2),
-        MC_UNUSED_3      = (1 << 3),
+        MC_WR_OFF_RESET  = (1 << 3),
         MC_ERROR         = (1 << 4),
         MC_UNSENT_ACK    = (1 << 5),
         MC_GEN_ACK       = (1 << 6),

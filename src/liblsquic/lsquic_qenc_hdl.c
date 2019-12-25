@@ -114,7 +114,7 @@ lsquic_qeh_settings (struct qpack_enc_hdl *qeh, unsigned max_table_size,
     }
 
     enc_opts = LSQPACK_ENC_OPT_STAGE_2
-             | server ? LSQPACK_ENC_OPT_SERVER : 0;
+             | (server ? LSQPACK_ENC_OPT_SERVER : 0);
     qeh->qeh_tsu_sz = sizeof(qeh->qeh_tsu_buf);
     if (0 != lsqpack_enc_init(&qeh->qeh_encoder, (void *) qeh->qeh_conn,
                 max_table_size, dyn_table_size, max_risked_streams, enc_opts,

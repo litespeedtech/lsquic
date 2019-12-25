@@ -347,6 +347,13 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
     ctl->sc_max_packno_bits = PACKNO_BITS_2; /* Safe value before verneg */
     ctl->sc_cached_bpt.stream_id = UINT64_MAX;
+#if LSQUIC_EXTRA_CHECKS
+    ctl->sc_flags |= SC_SANITY_CHECK;
+#else
+    if ((ctl->sc_conn_pub->lconn->cn_flags & (LSCONN_IETF|LSCONN_SERVER))
+                                                                == LSCONN_IETF)
+        ctl->sc_flags |= SC_SANITY_CHECK;
+#endif
 }
 
 
@@ -764,6 +771,8 @@ send_ctl_handle_lost_packet (lsquic_send_ctl_t *ctl,
 
     assert(ctl->sc_n_in_flight_all);
     packet_sz = packet_out_sent_sz(packet_out);
+
+    ++ctl->sc_loss_count;
 
     if (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
     {
@@ -1372,17 +1381,14 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                                         &next);
         }
         break;
-    case EXFI_LAST:
+    default:
+        assert(filter == EXFI_LAST);
         packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
         if (packet_out)
             n_resubmitted = send_ctl_handle_lost_packet(ctl, packet_out, NULL);
         else
             n_resubmitted = 0;
         break;
-#ifdef WIN32
-    default:
-        n_resubmitted = 0;
-#endif
     }
 
     LSQ_DEBUG("consider %s packets lost: %d resubmitted",
@@ -1404,24 +1410,14 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl)
 }
 
 
-#if LSQUIC_EXTRA_CHECKS
 void
-lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
 {
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
     unsigned count, bytes;
     enum packnum_space pns;
-
-    assert(!send_ctl_first_unacked_retx_packet(ctl, PNS_APP) ||
-                    lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_APP));
-    if (lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_APP))
-    {
-        assert(send_ctl_first_unacked_retx_packet(ctl, PNS_APP));
-        assert(lsquic_time_now()
-                    < ctl->sc_alset->as_expiry[AL_RETX_APP] + MAX_RTO_DELAY);
-    }
 
     count = 0, bytes = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
@@ -1456,7 +1452,6 @@ lsquic_send_ctl_sanity_check (const lsquic_send_ctl_t *ctl)
     assert(count == ctl->sc_n_scheduled);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
-#endif
 
 
 void
@@ -1612,6 +1607,25 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
         send_ctl_maybe_zero_pad(ctl, packet_out, size ? size : 1200);
     }
 
+    if (ctl->sc_flags & SC_QL_BITS)
+    {
+        packet_out->po_lflags |= POL_LOG_QL_BITS;
+        if (ctl->sc_loss_count)
+        {
+            --ctl->sc_loss_count;
+            packet_out->po_lflags |= POL_LOSS_BIT;
+        }
+        else
+            packet_out->po_lflags &= ~POL_LOSS_BIT;
+        if (packet_out->po_header_type == HETY_NOT_SET)
+        {
+            if (ctl->sc_square_count++ & 128)
+                packet_out->po_lflags |= POL_SQUARE_BIT;
+            else
+                packet_out->po_lflags &= ~POL_SQUARE_BIT;
+        }
+    }
+
     return packet_out;
 }
 
@@ -1627,6 +1641,8 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_delayed;
 #endif
+    if (packet_out->po_lflags & POL_LOSS_BIT)
+        ++ctl->sc_loss_count;
 }
 
 
@@ -1653,7 +1669,7 @@ lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *ctl)
 }
 
 
-static void
+static int
 send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -1663,7 +1679,7 @@ send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
     if (!token)
     {
         LSQ_WARN("malloc failed: cannot set initial token");
-        return;
+        return -1;
     }
 
     memcpy(token, ctl->sc_token, ctl->sc_token_sz);
@@ -1671,6 +1687,7 @@ send_ctl_set_packet_out_token (const struct lsquic_send_ctl *ctl,
     packet_out->po_token_len = ctl->sc_token_sz;
     packet_out->po_flags |= PO_NONCE;
     LSQ_DEBUG("set initial token on packet");
+    return 0;
 }
 
 
@@ -1705,7 +1722,7 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
         {
             packet_out->po_header_type = HETY_INITIAL;
             if (ctl->sc_token)
-                send_ctl_set_packet_out_token(ctl, packet_out);
+                (void) send_ctl_set_packet_out_token(ctl, packet_out);
         }
         else
             packet_out->po_header_type = HETY_HANDSHAKE;
@@ -2221,7 +2238,7 @@ send_ctl_max_bpq_count (const lsquic_send_ctl_t *ctl,
         cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
         if (count < cwnd / SC_PACK_SIZE(ctl))
         {
-            count -= cwnd / SC_PACK_SIZE(ctl);
+            count = cwnd / SC_PACK_SIZE(ctl) - count;
             if (count > MAX_BPQ_COUNT)
                 return count;
         }
@@ -2401,7 +2418,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
 
     new_packet_out = send_ctl_allocate_packet(ctl, bits, 0,
                         lsquic_packet_out_pns(packet_out), packet_out->po_path);
-    if (!packet_out)
+    if (!new_packet_out)
         return -1;
 
     if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm, packet_out,
@@ -2417,7 +2434,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
     }
     else
     {
-        send_ctl_destroy_packet(ctl, packet_out);
+        send_ctl_destroy_packet(ctl, new_packet_out);
         return -1;
     }
 }
@@ -2552,23 +2569,35 @@ lsquic_send_ctl_verneg_done (struct lsquic_send_ctl *ctl)
 }
 
 
+static void
+strip_trailing_padding (struct lsquic_packet_out *packet_out)
+{
+    struct packet_out_srec_iter posi;
+    const struct stream_rec *srec;
+    unsigned off;
+
+    off = 0;
+    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+        off = srec->sr_off + srec->sr_len;
+
+    assert(off);
+
+    packet_out->po_data_sz = off;
+    packet_out->po_frame_types &= ~QUIC_FTBIT_PADDING;
+}
+
+
 int
 lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
-                const unsigned char *token, size_t token_sz, int cidlen_diff)
+                                const unsigned char *token, size_t token_sz)
 {
-    struct lsquic_packet_out *packet_out;
+    struct lsquic_packet_out *packet_out, *next, *new_packet_out;
+    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
+    size_t sz;
 
     if (token_sz >= 1ull << (sizeof(packet_out->po_token_len) * 8))
     {
         LSQ_WARN("token size %zu is too long", token_sz);
-        return -1;
-    }
-
-    send_ctl_expire(ctl, PNS_INIT, EXFI_ALL);
-    packet_out = TAILQ_FIRST(&ctl->sc_lost_packets);
-    if (!(packet_out && HETY_INITIAL == packet_out->po_header_type))
-    {
-        LSQ_INFO("cannot find initial packet to add token to");
         return -1;
     }
 
@@ -2579,26 +2608,68 @@ lsquic_send_ctl_retry (struct lsquic_send_ctl *ctl,
         return -1;
     }
 
+    send_ctl_expire(ctl, PNS_INIT, EXFI_ALL);
+
     if (0 != lsquic_send_ctl_set_token(ctl, token, token_sz))
         return -1;
 
-    if (packet_out->po_nonce)
-        free(packet_out->po_nonce);
-
-    packet_out->po_nonce = malloc(token_sz);
-    if (!packet_out->po_nonce)
+    for (packet_out = TAILQ_FIRST(&ctl->sc_lost_packets); packet_out; packet_out = next)
     {
-        LSQ_WARN("%s: malloc failed", __func__);
-        return -1;
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (HETY_INITIAL != packet_out->po_header_type)
+            continue;
+
+        if (packet_out->po_nonce)
+        {
+            free(packet_out->po_nonce);
+            packet_out->po_nonce = NULL;
+            packet_out->po_flags &= ~PO_NONCE;
+        }
+
+        if (0 != send_ctl_set_packet_out_token(ctl, packet_out))
+        {
+            LSQ_INFO("cannot set out token on packet");
+            return -1;
+        }
+
+        if (packet_out->po_frame_types & QUIC_FTBIT_PADDING)
+            strip_trailing_padding(packet_out);
+
+        sz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
+        if (sz > 1200)
+        {
+            const enum packno_bits bits = lsquic_send_ctl_calc_packno_bits(ctl);
+            new_packet_out = send_ctl_allocate_packet(ctl, bits, 0, PNS_INIT,
+                                                        packet_out->po_path);
+            if (!new_packet_out)
+                return -1;
+            if (0 != send_ctl_set_packet_out_token(ctl, new_packet_out))
+            {
+                send_ctl_destroy_packet(ctl, new_packet_out);
+                LSQ_INFO("cannot set out token on packet");
+                return -1;
+            }
+            if (0 == lsquic_packet_out_split_in_two(&ctl->sc_enpub->enp_mm,
+                            packet_out, new_packet_out,
+                            ctl->sc_conn_pub->lconn->cn_pf, sz - 1200))
+            {
+                LSQ_DEBUG("split lost packet %"PRIu64" into two",
+                                                        packet_out->po_packno);
+                lsquic_packet_out_set_packno_bits(packet_out, bits);
+                TAILQ_INSERT_AFTER(&ctl->sc_lost_packets, packet_out,
+                                    new_packet_out, po_next);
+                new_packet_out->po_flags |= PO_LOST;
+                packet_out->po_flags &= ~PO_SENT_SZ;
+            }
+            else
+            {
+                LSQ_DEBUG("could not split lost packet into two");
+                send_ctl_destroy_packet(ctl, new_packet_out);
+                return -1;
+            }
+        }
     }
-    memcpy(packet_out->po_nonce, token, token_sz);
-    packet_out->po_flags |= PO_NONCE;
-    packet_out->po_token_len = token_sz;
-    packet_out->po_data_sz -= token_sz;
-    if (cidlen_diff > 0)
-        packet_out->po_data_sz += cidlen_diff;
-    else if (cidlen_diff < 0)
-        packet_out->po_data_sz -= -cidlen_diff;
+
     return 0;
 }
 
@@ -2635,14 +2706,45 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
     unsigned count, packet_sz;
     struct lsquic_packets_tailq *const *q;
     struct lsquic_packets_tailq *const queues[] = {
-        &ctl->sc_scheduled_packets,
-        &ctl->sc_unacked_packets[pns],
         &ctl->sc_lost_packets,
         &ctl->sc_buffered_packets[0].bpq_packets,
         &ctl->sc_buffered_packets[1].bpq_packets,
     };
 
+    /* Don't bother with chain destruction, as all chains members are always
+     * within the same packet number space
+     */
+
     count = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (pns == lsquic_packet_out_pns(packet_out))
+        {
+            send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
+            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_destroy_packet(ctl, packet_out);
+            ++count;
+        }
+    }
+
+    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_flags & PO_LOSS_REC)
+            TAILQ_REMOVE(&ctl->sc_unacked_packets[pns], packet_out, po_next);
+        else
+        {
+            packet_sz = packet_out_sent_sz(packet_out);
+            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
+            lsquic_packet_out_ack_streams(packet_out);
+        }
+        send_ctl_destroy_packet(ctl, packet_out);
+        ++count;
+    }
+
     for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
         for (packet_out = TAILQ_FIRST(*q); packet_out; packet_out = next)
             {
@@ -2650,16 +2752,6 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
                 if (pns == lsquic_packet_out_pns(packet_out))
                 {
                     TAILQ_REMOVE(*q, packet_out, po_next);
-                    if (*q == &ctl->sc_unacked_packets[pns])
-                    {
-                        if (0 == (packet_out->po_flags & PO_LOSS_REC))
-                        {
-                            packet_sz = packet_out_sent_sz(packet_out);
-                            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
-                            lsquic_packet_out_ack_streams(packet_out);
-                        }
-                        send_ctl_destroy_chain(ctl, packet_out, &next);
-                    }
                     send_ctl_destroy_packet(ctl, packet_out);
                     ++count;
                 }
@@ -2716,4 +2808,43 @@ lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *ctl)
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         if (packet_out->po_flags & PO_ENCRYPTED)
             send_ctl_return_enc_data(ctl, packet_out);
+}
+
+
+/* When client updated DCID based on the first packet returned by the server,
+ * we must update the number of bytes scheduled if the DCID length changed
+ * because this length is used to calculate packet size.
+ */
+void
+lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
+                                unsigned orig_cid_len, unsigned new_cid_len)
+{
+    unsigned diff;
+
+    assert(!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER));
+    if (ctl->sc_n_scheduled)
+    {
+        ctl->sc_flags |= SC_CIDLEN;
+        ctl->sc_cidlen = (signed char) new_cid_len - (signed char) orig_cid_len;
+        if (new_cid_len > orig_cid_len)
+        {
+            diff = new_cid_len - orig_cid_len;
+            diff *= ctl->sc_n_scheduled;
+            ctl->sc_bytes_scheduled += diff;
+            LSQ_DEBUG("increased bytes scheduled by %u bytes to %u",
+                diff, ctl->sc_bytes_scheduled);
+        }
+        else if (new_cid_len < orig_cid_len)
+        {
+            diff = orig_cid_len - new_cid_len;
+            diff *= ctl->sc_n_scheduled;
+            ctl->sc_bytes_scheduled -= diff;
+            LSQ_DEBUG("decreased bytes scheduled by %u bytes to %u",
+                diff, ctl->sc_bytes_scheduled);
+        }
+        else
+            LSQ_DEBUG("DCID length did not change");
+    }
+    else
+        LSQ_DEBUG("no scheduled packets at the time of DCID change");
 }

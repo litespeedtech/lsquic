@@ -13,26 +13,31 @@
 #include "lsquic_parse.h"
 #include "lsquic_enc_sess.h"
 #include "lsquic_version.h"
+#include "lsquic_qtags.h"
 
 
 static int
-parse_ietf_v1_or_Q046_long_begin (struct lsquic_packet_in *packet_in,
+parse_ietf_v1_or_Q046plus_long_begin (struct lsquic_packet_in *packet_in,
                 size_t length, int is_server, unsigned cid_len,
                 struct packin_parse_state *state)
 {
-    enum lsquic_version version;
     lsquic_ver_tag_t tag;
 
     if (length >= 5)
     {
         memcpy(&tag, packet_in->pi_data + 1, 4);
-        version = lsquic_tag2ver(tag);
-        if (version == LSQVER_046)
+        switch (tag)
+        {
+        case TAG('Q', '0', '4', '6'):
             return lsquic_Q046_parse_packet_in_long_begin(packet_in, length,
                                                     is_server, cid_len, state);
-        else
+        case TAG('Q', '0', '5', '0'):
+            return lsquic_Q050_parse_packet_in_long_begin(packet_in, length,
+                                                    is_server, cid_len, state);
+        default:
             return lsquic_ietf_v1_parse_packet_in_long_begin(packet_in, length,
                                                     is_server, cid_len, state);
+        }
     }
     else
         return -1;
@@ -51,20 +56,20 @@ static int (* const parse_begin_funcs[32]) (struct lsquic_packet_in *,
     PBEL(0x80|0x40|0x20|0x10|0x00)  = lsquic_Q046_parse_packet_in_long_begin,
     PBEL(0x80|0x00|0x20|0x10|0x00)  = lsquic_Q046_parse_packet_in_long_begin,
     /* 1X00 XGGG: */
-    PBEL(0x80|0x40|0x00|0x00|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x00|0x00|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x40|0x00|0x00|0x00)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x00|0x00|0x00)  = parse_ietf_v1_or_Q046_long_begin,
+    PBEL(0x80|0x40|0x00|0x00|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x00|0x00|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x40|0x00|0x00|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x00|0x00|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
     /* 1X01 XGGG: */
-    PBEL(0x80|0x40|0x00|0x10|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x00|0x10|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x40|0x00|0x10|0x00)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x00|0x10|0x00)  = parse_ietf_v1_or_Q046_long_begin,
+    PBEL(0x80|0x40|0x00|0x10|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x00|0x10|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x40|0x00|0x10|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x00|0x10|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
     /* 1X10 XGGG: */
-    PBEL(0x80|0x40|0x20|0x00|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x20|0x00|0x08)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x40|0x20|0x00|0x00)  = parse_ietf_v1_or_Q046_long_begin,
-    PBEL(0x80|0x00|0x20|0x00|0x00)  = parse_ietf_v1_or_Q046_long_begin,
+    PBEL(0x80|0x40|0x20|0x00|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x20|0x00|0x08)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x40|0x20|0x00|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
+    PBEL(0x80|0x00|0x20|0x00|0x00)  = parse_ietf_v1_or_Q046plus_long_begin,
     /* 01XX XGGG */
     PBEL(0x00|0x40|0x00|0x00|0x00)  = lsquic_ietf_v1_parse_packet_in_short_begin,
     PBEL(0x00|0x40|0x00|0x00|0x08)  = lsquic_ietf_v1_parse_packet_in_short_begin,
@@ -102,7 +107,6 @@ lsquic_parse_packet_in_server_begin (struct lsquic_packet_in *packet_in,
 }
 
 
-/* This function does not support Q046 */
 int
 lsquic_parse_packet_in_begin (lsquic_packet_in_t *packet_in, size_t length,
             int is_server, unsigned cid_len, struct packin_parse_state *state)
@@ -111,10 +115,9 @@ lsquic_parse_packet_in_begin (lsquic_packet_in_t *packet_in, size_t length,
     {
         switch (packet_in->pi_data[0] & 0xC0)
         {
-        /* XXX Revisit this: does this logic check out? */
         case 0xC0:
         case 0x80:
-            return lsquic_ietf_v1_parse_packet_in_long_begin(packet_in,
+            return parse_ietf_v1_or_Q046plus_long_begin(packet_in,
                                         length, is_server, cid_len, state);
         case 0x00:
             return lsquic_gquic_parse_packet_in_begin(packet_in, length,
@@ -162,6 +165,27 @@ lsquic_Q046_parse_packet_in_begin (struct lsquic_packet_in *packet_in,
                                     is_server, is_server ? cid_len : 0, state);
         else
             return lsquic_Q046_parse_packet_in_long_begin(packet_in, length,
+                                                    is_server, cid_len, state);
+    }
+    else
+        return -1;
+}
+
+
+int
+lsquic_Q050_parse_packet_in_begin (struct lsquic_packet_in *packet_in,
+            size_t length, int is_server, unsigned cid_len,
+            struct packin_parse_state *state)
+{
+    assert(!is_server);
+    assert(cid_len == GQUIC_CID_LEN);
+    if (length > 0)
+    {
+        if (0 == (packet_in->pi_data[0] & 0x80))
+            return lsquic_ietf_v1_parse_packet_in_short_begin(packet_in, length,
+                                    is_server, is_server ? cid_len : 0, state);
+        else
+            return lsquic_Q050_parse_packet_in_long_begin(packet_in, length,
                                                     is_server, cid_len, state);
     }
     else

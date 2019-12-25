@@ -51,6 +51,14 @@ enum trapa_flags
     TRAPA_PREFADDR_IPv4 = 1 << 2,   /* Preferred IPv4 address is set */
     TRAPA_PREFADDR_IPv6 = 1 << 3,   /* Preferred IPv6 address is set */
     TRAPA_ORIGINAL_CID  = 1 << 4,   /* Original CID is set */
+#if LSQUIC_TEST_QUANTUM_READINESS
+#define QUANTUM_READY_SZ 1200
+    /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
+#define TPI_QUANTUM_READINESS 3127
+    TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
+#endif
+#define TPI_QL_BITS 0x1055     /* 1055 is 133t for "loss" */
+    TRAPA_QL_BITS       = 1 << 6,
 };
 
 struct transport_params
@@ -71,7 +79,7 @@ struct transport_params
             uint64_t max_ack_delay;
             uint64_t active_connection_id_limit;
         }               s;
-        uint64_t        a[10];
+        uint64_t        a[11];
     }           tp_numerics_u;
 #define tp_init_max_stream_data_bidi_local tp_numerics_u.s.init_max_stream_data_bidi_local
 #define tp_init_max_stream_data_bidi_remote tp_numerics_u.s.init_max_stream_data_bidi_remote

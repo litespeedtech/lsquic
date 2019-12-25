@@ -24,12 +24,12 @@ SET(TESTS
     ack
     ackgen_gquic_be
     ackparse_gquic_be
+    ackparse_ietf
     alarmset
     alt_svc_ver
     arr
     attq
     blocked_gquic_be
-    buf
     bw_sampler
     conn_close_gquic_be
     crypto_gen
@@ -97,6 +97,9 @@ TARGET_LINK_LIBRARIES(graph_cubic ${LIBS})
 
 ADD_EXECUTABLE(mini_parse mini_parse.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(mini_parse ${LIBS})
+
+ADD_EXECUTABLE(test_min_heap test_min_heap.c ../../src/liblsquic/lsquic_min_heap.c)
+ADD_TEST(min_heap test_min_heap)
 
 ADD_EXECUTABLE(test_malo_pooled test_malo.c ../../src/liblsquic/lsquic_malo.c)
 SET_TARGET_PROPERTIES(test_malo_pooled

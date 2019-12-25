@@ -2,9 +2,6 @@
 #ifndef LSQUIC_STREAM_H
 #define LSQUIC_STREAM_H
 
-#define LSQUIC_GQUIC_STREAM_HANDSHAKE 1
-#define LSQUIC_GQUIC_STREAM_HEADERS   3
-
 #define LSQUIC_STREAM_DEFAULT_PRIO 16   /* RFC 7540, Section 5.3.5 */
 
 
@@ -101,12 +98,14 @@ struct stream_hq_frame
 
 struct hq_filter
 {
-    struct varint_read2_state   hqfi_vint_state;
+    struct varint_read2_state   hqfi_vint2_state;
     /* No need to copy the values: use it directly */
-#define hqfi_left hqfi_vint_state.vr2s_two
-#define hqfi_type hqfi_vint_state.vr2s_one
+#define hqfi_left hqfi_vint2_state.vr2s_two
+#define hqfi_type hqfi_vint2_state.vr2s_one
+    struct varint_read_state    hqfi_vint1_state;
+#define hqfi_push_id hqfi_vint1_state.value
     enum {
-        HQFI_FLAG_GOT_HEADERS   = 1 << 0,
+        HQFI_FLAG_UNUSED_0      = 1 << 0,
         HQFI_FLAG_ERROR         = 1 << 1,
         HQFI_FLAG_BEGIN         = 1 << 2,
         HQFI_FLAG_BLOCKED       = 1 << 3,
@@ -115,6 +114,8 @@ struct hq_filter
         HQFI_STATE_FRAME_HEADER_BEGIN,
         HQFI_STATE_FRAME_HEADER_CONTINUE,
         HQFI_STATE_READING_PAYLOAD,
+        HQFI_STATE_PUSH_ID_BEGIN,
+        HQFI_STATE_PUSH_ID_CONTINUE,
     }                           hqfi_state:8;
     unsigned char               hqfi_hist_idx;
 #define MAX_HQFI_ENTRIES (sizeof(unsigned) * 8 / 3)
@@ -174,12 +175,13 @@ enum stream_b_flags
     SMBF_SERVER       = 1 << 0,
     SMBF_IETF         = 1 << 1,
     SMBF_USE_HEADERS  = 1 << 2,
-    SMBF_CRYPTO       = 1 << 3,
+    SMBF_CRYPTO       = 1 << 3,  /* Crypto stream: applies to both gQUIC and IETF QUIC */
     SMBF_CRITICAL     = 1 << 4,  /* This is a critical stream */
     SMBF_AUTOSWITCH   = 1 << 5,
     SMBF_RW_ONCE      = 1 << 6,  /* When set, read/write events are dispatched once per call */
     SMBF_CONN_LIMITED = 1 << 7,
-#define N_SMBF_FLAGS 8
+    SMBF_HEADERS      = 1 << 8,  /* Headers stream */
+#define N_SMBF_FLAGS 9
 };
 
 
@@ -194,7 +196,7 @@ enum stream_flags {
     STREAM_FIN_REACHED  = 1 << 7,   /* User read data up to FIN */
     STREAM_FINISHED     = 1 << 8,   /* Stream is finished */
     STREAM_ONCLOSE_DONE = 1 << 9,   /* on_close has been called */
-    STREAM_UNUSED10     = 1 << 10,  /* Unused */
+    STREAM_CACHED_FRAME = 1 << 10,  /* If set, sm_has_frame can be used */
     STREAM_HEADERS_SENT = 1 << 11,
     STREAM_HAVE_UH      = 1 << 12,  /* Have uncompressed headers */
     STREAM_ENCODER_DEP  = 1 << 13,  /* Encoder dependency: flush (IETF only) */
@@ -263,7 +265,7 @@ struct lsquic_stream
     struct hq_filter                sm_hq_filter;
 
     /* We can safely use sm_hq_filter */
-#define sm_uni_type_state sm_hq_filter.hqfi_vint_state.vr2s_varint_state
+#define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
 
     /** If @ref SMQF_WANT_FLUSH is set, flush until this offset. */
     uint64_t                        sm_flush_to;
@@ -310,6 +312,8 @@ struct lsquic_stream
     /* Push promises sent on this stream */
     SLIST_HEAD(, push_promise)      sm_promises;
 
+    uint64_t                        sm_last_frame_off;
+
     /* How much data there is in sm_header_block and how much of it has been
      * sent:
      */
@@ -327,6 +331,7 @@ struct lsquic_stream
         SSHS_HBLOCK_SENDING,/* Sending header block data */
     }                               sm_send_headers_state:8;
     signed char                     sm_saved_want_write;
+    signed char                     sm_has_frame;
 
     unsigned char                   sm_dup_push_off;
     unsigned char                   sm_dup_push_len;
@@ -349,6 +354,7 @@ enum stream_ctor_flags
     SCF_USE_DI_HASH   = (1 << (N_SMBF_FLAGS + 1)), /* Use hash-based data input.  If not set,
                                    * the nocopy data input is used.
                                    */
+    SCF_CRYPTO_FRAMES = (1 << (N_SMBF_FLAGS + 2)), /* Write CRYPTO frames */
     SCF_DI_AUTOSWITCH = SMBF_AUTOSWITCH, /* Automatically switch between nocopy
                                    * and hash-based to data input for optimal
                                    * performance.
@@ -357,6 +363,8 @@ enum stream_ctor_flags
     SCF_CRITICAL      = SMBF_CRITICAL, /* This is a critical stream */
     SCF_IETF          = SMBF_IETF,
     SCF_HTTP          = SMBF_USE_HEADERS,
+    SCF_CRYPTO        = SMBF_CRYPTO,
+    SCF_HEADERS       = SMBF_HEADERS,
 };
 
 
@@ -494,11 +502,9 @@ lsquic_stream_update_sfcw (lsquic_stream_t *, uint64_t max_off);
 int
 lsquic_stream_set_priority_internal (lsquic_stream_t *, unsigned priority);
 
-int
-lsquic_stream_id_is_critical (int use_http, lsquic_stream_id_t);
+#define lsquic_stream_is_critical(s) ((s)->sm_bflags & SMBF_CRITICAL)
 
-int
-lsquic_stream_is_critical (const struct lsquic_stream *);
+#define lsquic_stream_is_crypto(s) ((s)->sm_bflags & SMBF_CRYPTO)
 
 size_t
 lsquic_stream_mem_used (const struct lsquic_stream *);
@@ -586,5 +592,11 @@ lsquic_stream_push_promise (struct lsquic_stream *, struct push_promise *);
 
 void
 lsquic_stream_force_finish (struct lsquic_stream *);
+
+int
+lsquic_stream_header_is_pp (const struct lsquic_stream *);
+
+int
+lsquic_stream_header_is_trailer (const struct lsquic_stream *);
 
 #endif

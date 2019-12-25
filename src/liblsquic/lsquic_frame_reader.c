@@ -619,8 +619,6 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     LSQ_INFO("%s: stream error %u", __func__, err);
     if (hset)
         fr->fr_hsi_if->hsi_discard_header_set(hset);
-    if (uh)
-        free(uh);
     if (buf)
         lsquic_mm_put_16k(fr->fr_mm, buf);
     fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr), err);

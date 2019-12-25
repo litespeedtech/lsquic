@@ -11,10 +11,12 @@ static const unsigned char version_tags[N_LSQVER][4] =
     [LSQVER_039] = { 'Q', '0', '3', '9', },
     [LSQVER_043] = { 'Q', '0', '4', '3', },
     [LSQVER_046] = { 'Q', '0', '4', '6', },
+    [LSQVER_050] = { 'Q', '0', '5', '0', },
 #if LSQUIC_USE_Q098
     [LSQVER_098] = { 'Q', '0', '9', '8', },
 #endif
     [LSQVER_ID23] = { 0xFF, 0, 0, 23, },
+    [LSQVER_ID24] = { 0xFF, 0, 0, 24, },
     [LSQVER_VERNEG] = { 0xFA, 0xFA, 0xFA, 0xFA, },
 };
 
@@ -48,10 +50,12 @@ const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_039] = "Q039",
     [LSQVER_043] = "Q043",
     [LSQVER_046] = "Q046",
+    [LSQVER_050] = "Q050",
 #if LSQUIC_USE_Q098
     [LSQVER_098] = "Q098",
 #endif
     [LSQVER_ID23] = "FF000017",
+    [LSQVER_ID24] = "FF000018",
     [LSQVER_VERNEG] = "FAFAFAFA",
 };
 

@@ -8,6 +8,7 @@
 #include <openssl/x509.h>
 #include <openssl/rand.h>
 #include <openssl/curve25519.h>
+#include <openssl/hkdf.h>
 #include <openssl/hmac.h>
 
 #include <zlib.h>
@@ -208,58 +209,30 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
                 uint16_t s_key_len, uint8_t *s_key,
                 uint16_t c_key_iv_len, uint8_t *c_key_iv,
                 uint16_t s_key_iv_len, uint8_t *s_key_iv,
-                uint16_t sub_key_len, uint8_t *sub_key)
+                uint16_t sub_key_len, uint8_t *sub_key,
+                uint8_t *c_hp, uint8_t *s_hp)
 {
-    int L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len + sub_key_len;
-    int N = (L + SHA256LEN - 1) / SHA256LEN;
-    unsigned char *p_org;
-    uint8_t *buf;
+    const unsigned L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len
+            + sub_key_len
+            + (c_hp ? c_key_len : 0)
+            + (s_hp ? s_key_len : 0)
+            ;
     unsigned char *p;
-    unsigned char T[SHA256LEN + 1];
-    int T_len = 0;
-    int i;
-    uint8_t *pb;
+    unsigned char output[
+        EVP_MAX_KEY_LENGTH * 2  /* Keys */
+      + EVP_MAX_IV_LENGTH * 2   /* IVs */
+      + 32                      /* Subkey */
+      + EVP_MAX_KEY_LENGTH * 2  /* Header protection */
+    ];
 
-    p_org = malloc(N * SHA256LEN);
-    if (!p_org)
-        return -1;
+    assert((size_t) L <= sizeof(output));
 
-    buf = malloc(SHA256LEN + info_len + 13);
-    if (!buf)
-    {
-        free(p_org);
-        return -1;
-    }
-
-    p = p_org;
-
-    for (i = 1; i <= N; ++i)
-    {
-        pb = buf;
-        if (T_len > 0)
-        {
-            memcpy(pb, T, T_len);
-            pb += T_len;
-        }
-        
-        memcpy(pb, info, info_len);
-        pb += info_len;
-        *pb = i;
-        ++pb;
-        
-        HMAC(EVP_sha256(), prk, SHA256LEN, buf, pb - buf, T, NULL);
-        if (i != N)
-            T_len = SHA256LEN;
-        else
-            T_len = L - (N - 1) * SHA256LEN;
-
-        memcpy(p, T, T_len);
-        p += T_len;
-    }
-    
-    free(buf);
-    
-    p = p_org;
+#ifndef NDEBUG
+    const int s =
+#endif
+    HKDF_expand(output, L, EVP_sha256(), prk, 32, info, info_len);
+    assert(s);
+    p = output;
     if (c_key_len)
     {
         memcpy(c_key, p, c_key_len);
@@ -285,8 +258,16 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
         memcpy(sub_key, p, sub_key_len);
         p += sub_key_len;
     }
-    
-    free(p_org);
+    if (c_key_len && c_hp)
+    {
+        memcpy(c_hp, p, c_key_len);
+        p += c_key_len;
+    }
+    if (s_key_len && s_hp)
+    {
+        memcpy(s_hp, p, s_key_len);
+        p += s_key_len;
+    }
     return 0;
 }
 
@@ -313,20 +294,21 @@ int export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
     memcpy(info + info_len, context, context_len);
     info_len += context_len;
     lshkdf_expand(prk, info, info_len, key_len, key, 
-                0, NULL, 0, NULL,0, NULL, 0, NULL);
+                0, NULL, 0, NULL,0, NULL, 0, NULL, NULL, NULL);
     free(info);
     return 0;
 }
 
 
-int export_key_material(const unsigned char *ikm, uint32_t ikm_len,
+int
+lsquic_export_key_material(const unsigned char *ikm, uint32_t ikm_len,
                         const unsigned char *salt, int salt_len,
                         const unsigned char *context, uint32_t context_len,
                         uint16_t c_key_len, uint8_t *c_key,
                         uint16_t s_key_len, uint8_t *s_key,
                         uint16_t c_key_iv_len, uint8_t *c_key_iv,
                         uint16_t s_key_iv_len, uint8_t *s_key_iv,
-                        uint8_t *sub_key)
+                        uint8_t *sub_key, uint8_t *c_hp, uint8_t *s_hp)
 {
     unsigned char prk[32];
     uint16_t sub_key_len = ikm_len;
@@ -334,7 +316,7 @@ int export_key_material(const unsigned char *ikm, uint32_t ikm_len,
     lshkdf_extract(ikm, ikm_len, salt, salt_len, prk);
     lshkdf_expand(prk, context, context_len, c_key_len, c_key,
                 s_key_len, s_key, c_key_iv_len, c_key_iv, s_key_iv_len,
-                s_key_iv, sub_key_len, sub_key);
+                s_key_iv, sub_key_len, sub_key, c_hp, s_hp);
     return 0;
 }
 

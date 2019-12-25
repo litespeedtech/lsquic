@@ -319,10 +319,10 @@ stream_stream_frame_header_sz (const struct lsquic_stream *stream,
 
 static size_t
 stream_crypto_frame_header_sz (const struct lsquic_stream *stream,
-                                                    unsigned data_sz_IGNORED)
+                                                            unsigned data_sz)
 {
     return stream->conn_pub->lconn->cn_pf
-         ->pf_calc_crypto_frame_header_sz(stream->tosend_off);
+         ->pf_calc_crypto_frame_header_sz(stream->tosend_off, data_sz);
 }
 
 
@@ -333,7 +333,7 @@ stream_is_hsk (const struct lsquic_stream *stream)
     if (stream->sm_bflags & SMBF_IETF)
         return 0;
     else
-        return stream->id == LSQUIC_GQUIC_STREAM_HANDSHAKE;
+        return lsquic_stream_is_crypto(stream);
 }
 
 
@@ -366,7 +366,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
 
     STAILQ_INIT(&stream->sm_hq_frames);
 
-    stream->sm_bflags |= ctor_flags & ((1 << (N_SMBF_FLAGS - 1)) - 1);
+    stream->sm_bflags |= ctor_flags & ((1 << N_SMBF_FLAGS) - 1);
     if (conn_pub->lconn->cn_flags & LSCONN_SERVER)
         stream->sm_bflags |= SMBF_SERVER;
 
@@ -374,10 +374,6 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
 }
 
 
-/* TODO: The logic to figure out whether the stream is connection limited
- * should be taken out of the constructor.  The caller should specify this
- * via one of enum stream_ctor_flags.
- */
 lsquic_stream_t *
 lsquic_stream_new (lsquic_stream_id_t id,
         struct lsquic_conn_public *conn_pub,
@@ -411,10 +407,11 @@ lsquic_stream_new (lsquic_stream_id_t id,
         lsquic_stream_set_priority_internal(stream,
                                             LSQUIC_STREAM_DEFAULT_PRIO);
         stream->sm_write_to_packet = stream_write_to_packet_std;
+        stream->sm_frame_header_sz = stream_stream_frame_header_sz;
     }
     else
     {
-        if (lsquic_stream_id_is_critical(ctor_flags & SCF_HTTP, id))
+        if (ctor_flags & SCF_CRITICAL)
             cfcw = NULL;
         else
         {
@@ -427,17 +424,25 @@ lsquic_stream_new (lsquic_stream_id_t id,
             stream->sm_readable = stream_readable_http_gquic;
         else
             stream->sm_readable = stream_readable_non_http;
-        if (stream_is_hsk(stream))
-            stream->sm_write_to_packet = stream_write_to_packet_hsk;
+        if (ctor_flags & SCF_CRYPTO_FRAMES)
+        {
+            stream->sm_frame_header_sz = stream_crypto_frame_header_sz;
+            stream->sm_write_to_packet = stream_write_to_packet_crypto;
+        }
         else
-            stream->sm_write_to_packet = stream_write_to_packet_std;
+        {
+            if (stream_is_hsk(stream))
+                stream->sm_write_to_packet = stream_write_to_packet_hsk;
+            else
+                stream->sm_write_to_packet = stream_write_to_packet_std;
+            stream->sm_frame_header_sz = stream_stream_frame_header_sz;
+        }
     }
 
     lsquic_sfcw_init(&stream->fc, initial_window, cfcw, conn_pub, id);
     stream->max_send_off = initial_send_off;
     LSQ_DEBUG("created stream");
     SM_HISTORY_APPEND(stream, SHE_CREATED);
-    stream->sm_frame_header_sz = stream_stream_frame_header_sz;
     if (ctor_flags & SCF_CALL_ON_NEW)
         lsquic_stream_call_on_new(stream);
     return stream;
@@ -678,10 +683,24 @@ lsquic_stream_call_on_close (lsquic_stream_t *stream)
 
 
 static int
+stream_has_frame_at_read_offset (struct lsquic_stream *stream)
+{
+    if (!((stream->stream_flags & STREAM_CACHED_FRAME)
+                    && stream->read_offset == stream->sm_last_frame_off))
+    {
+        stream->sm_has_frame = stream->data_in->di_if->di_get_frame(
+                                stream->data_in, stream->read_offset) != NULL;
+        stream->sm_last_frame_off = stream->read_offset;
+        stream->stream_flags |= STREAM_CACHED_FRAME;
+    }
+    return stream->sm_has_frame;
+}
+
+
+static int
 stream_readable_non_http (struct lsquic_stream *stream)
 {
-    return stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                stream->read_offset) != NULL;
+    return stream_has_frame_at_read_offset(stream);
 }
 
 
@@ -690,8 +709,7 @@ stream_readable_http_gquic (struct lsquic_stream *stream)
 {
     return (stream->stream_flags & STREAM_HAVE_UH)
         && (stream->uh
-            ||  stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                    stream->read_offset));
+            || stream_has_frame_at_read_offset(stream));
 }
 
 
@@ -708,8 +726,7 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
         (stream->sm_sfi->sfi_readable(stream)
             && (/* Running the filter may result in hitting FIN: */
                 (stream->stream_flags & STREAM_FIN_REACHED)
-                || stream->data_in->di_if->di_get_frame(stream->data_in,
-                                                    stream->read_offset)));
+                || stream_has_frame_at_read_offset(stream)));
 }
 
 
@@ -940,6 +957,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
   end_ok:
         if (free_frame)
             lsquic_malo_put(frame);
+        stream->stream_flags &= ~STREAM_CACHED_FRAME;
         return rv;
     }
     else if (INS_FRAME_DUP == ins_frame)
@@ -977,6 +995,7 @@ drop_frames_in (lsquic_stream_t *stream)
          * dropped.
          */
         stream->data_in = data_in_error_new();
+        stream->stream_flags &= ~STREAM_CACHED_FRAME;
     }
 }
 
@@ -1421,10 +1440,16 @@ lsquic_stream_readf (struct lsquic_stream *stream,
         errno = EBADF;
         return -1;
     }
-    if ((stream->stream_flags & STREAM_FIN_REACHED)
-            && 0 == (!!(stream->stream_flags & STREAM_HAVE_UH)
-                   ^ !!(stream->sm_bflags & SMBF_USE_HEADERS)))
-        return 0;
+    if (stream->stream_flags & STREAM_FIN_REACHED)
+    {
+       if (stream->sm_bflags & SMBF_USE_HEADERS)
+       {
+            if ((stream->stream_flags & STREAM_HAVE_UH) && !stream->uh)
+                return 0;
+       }
+       else
+           return 0;
+    }
 
     return stream_readf(stream, readf, ctx);
 }
@@ -1462,7 +1487,7 @@ readv_f (void *ctx_p, const unsigned char *buf, size_t len, int fin)
             if (ctx->iov < ctx->end)
                 ctx->p = ctx->iov->iov_base;
             else
-                ctx->p = NULL;
+                break;
         }
     }
 
@@ -2522,7 +2547,6 @@ open_hq_frame (struct lsquic_stream *stream)
 }
 
 
-/* Returns index of the new frame */
 static struct stream_hq_frame *
 stream_activate_hq_frame (struct lsquic_stream *stream, uint64_t off,
             enum hq_frame_type frame_type, enum shf_flags flags, size_t size)
@@ -2584,7 +2608,9 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                     rem = (1 << 14) - 1;
                 shf = stream_activate_hq_frame(stream,
                                     stream->sm_payload, HQFT_DATA, 0, rem);
-                if (!shf)
+                if (shf)
+                    goto insert;
+                else
                 {
                     /* TODO: abort connection?  Handle failure somehow */
                     break;
@@ -2593,10 +2619,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
             else
                 break;
         }
-        avail = stream->sm_n_buffered + stream->sm_write_avail(stream);
         if (shf->shf_off == stream->sm_payload
                                         && !(shf->shf_flags & SHF_WRITTEN))
         {
+  insert:
             frame_sz = stream_hq_frame_size(shf);
             if (frame_sz > (uintptr_t) (end - p))
             {
@@ -2634,6 +2660,7 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
         }
         else
         {
+            avail = stream->sm_n_buffered + stream->sm_write_avail(stream);
             len = stream_hq_frame_end(shf) - stream->sm_payload;
             assert(len);
             if (len > (unsigned) (end - p))
@@ -2677,6 +2704,35 @@ check_flush_threshold (lsquic_stream_t *stream)
 }
 
 
+#if LSQUIC_EXTRA_CHECKS
+static void
+verify_conn_cap (const struct lsquic_conn_public *conn_pub)
+{
+    const struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+    unsigned n_buffered;
+
+    if (!conn_pub->all_streams)
+        /* TODO: enable this check for unit tests as well */
+        return;
+
+    n_buffered = 0;
+    for (el = lsquic_hash_first(conn_pub->all_streams); el;
+                                 el = lsquic_hash_next(conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (stream->sm_bflags & SMBF_CONN_LIMITED)
+            n_buffered += stream->sm_n_buffered;
+    }
+
+    assert(n_buffered + conn_pub->stream_frame_bytes
+                                            == conn_pub->conn_cap.cc_sent);
+}
+
+
+#endif
+
+
 static int
 write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
                                         struct lsquic_packet_out *packet_out)
@@ -2687,7 +2743,7 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
     unsigned off;
     int len, s;
 
-#if LSQUIC_CONN_STATS
+#if LSQUIC_CONN_STATS || LSQUIC_EXTRA_CHECKS
     const uint64_t begin_off = stream->tosend_off;
 #endif
     off = packet_out->po_data_sz;
@@ -2717,6 +2773,13 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
         LSQ_ERROR("adding stream to packet failed: %s", strerror(errno));
         return -1;
     }
+#if LSQUIC_EXTRA_CHECKS
+    if (stream->sm_bflags & SMBF_CONN_LIMITED)
+    {
+        stream->conn_pub->stream_frame_bytes += stream->tosend_off - begin_off;
+        verify_conn_cap(stream->conn_pub);
+    }
+#endif
 
     check_flush_threshold(stream);
     return len;
@@ -2819,6 +2882,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
 }
 
 
+/* Use for IETF crypto streams and gQUIC crypto stream for versions >= Q050. */
 static enum swtp_status
 stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
 {
@@ -2828,8 +2892,13 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     unsigned crypto_header_sz, need_at_least;
     struct lsquic_packet_out *packet_out;
     unsigned short off;
-    const enum packnum_space pns = lsquic_enclev2pns[ crypto_level(stream) ];
+    enum packnum_space pns;
     int len, s;
+
+    if (stream->sm_bflags & SMBF_IETF)
+        pns = lsquic_enclev2pns[ crypto_level(stream) ];
+    else
+        pns = PNS_INIT;
 
     assert(size > 0);
     crypto_header_sz = stream->sm_frame_header_sz(stream, (unsigned int)size);
@@ -2860,6 +2929,15 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     }
 
     packet_out->po_flags |= PO_HELLO;
+
+    if (!(stream->sm_bflags & SMBF_IETF))
+    {
+        const unsigned short before = packet_out->po_data_sz;
+        lsquic_packet_out_zero_pad(packet_out);
+        /* XXX: too hacky */
+        if (before < packet_out->po_data_sz)
+            send_ctl->sc_bytes_scheduled += packet_out->po_data_sz - before;
+    }
 
     check_flush_threshold(stream);
     return SWTP_OK;
@@ -2898,7 +2976,7 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
 
     bits = (shf->shf_flags & SHF_TWO_BYTES) > 0;
     size = stream->sm_payload + stream->sm_n_buffered - shf->shf_off;
-    if (size && size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
+    if (size <= VINT_MAX_B(bits) && shf->shf_frame_ptr)
     {
         if (0 == stream->sm_n_buffered)
             LSQ_DEBUG("close HQ frame type 0x%X of size %"PRIu64,
@@ -2918,24 +2996,18 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
     }
     else if (!shf->shf_frame_ptr)
     {
-        LSQ_WARN("dangling HTTP/3 frame");
+        LSQ_ERROR("dangling HTTP/3 frame, on stream %"PRIu64, stream->id);
         stream->conn_pub->lconn->cn_if->ci_internal_error(
-            stream->conn_pub->lconn, "dangling HTTP/3 frame on stream %"PRIu64,
-                stream->id);
-        stream_hq_frame_put(stream, shf);
-    }
-    else if (!size)
-    {
-        assert(!shf->shf_frame_ptr);
-        LSQ_WARN("discard zero-sized HQ frame type 0x%X (off: %"PRIu64")",
-                                        shf->shf_frame_type, shf->shf_off);
+            stream->conn_pub->lconn, "dangling HTTP/3 frame");
         stream_hq_frame_put(stream, shf);
     }
     else
     {
         assert(stream->sm_n_buffered);
-        LSQ_ERROR("cannot close frame of size %"PRIu64" -- too large", size);
-        /* TODO: abort connection */
+        LSQ_ERROR("cannot close frame of size %"PRIu64" on stream %"PRIu64
+            " -- too large", size, stream->id);
+        stream->conn_pub->lconn->cn_if->ci_internal_error(
+            stream->conn_pub->lconn, "HTTP/3 frame too large");
         stream_hq_frame_put(stream, shf);
     }
 }
@@ -3558,7 +3630,7 @@ lsquic_stream_reset_ext (lsquic_stream_t *stream, uint64_t error_code,
     if (stream->sm_qflags & SMQF_QPACK_DEC)
     {
         lsquic_qdh_cancel_stream(stream->conn_pub->u.ietf.qdh, stream);
-        stream->sm_qflags |= ~SMQF_QPACK_DEC;
+        stream->sm_qflags &= ~SMQF_QPACK_DEC;
     }
 
     drop_buffered_data(stream);
@@ -3674,8 +3746,9 @@ lsquic_stream_push_info (const lsquic_stream_t *stream,
 }
 
 
-int
-lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
+static int
+stream_uh_in_gquic (struct lsquic_stream *stream,
+                                            struct uncompressed_headers *uh)
 {
     if ((stream->sm_bflags & SMBF_USE_HEADERS)
                                     && !(stream->stream_flags & STREAM_HAVE_UH))
@@ -3709,6 +3782,68 @@ lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
         LSQ_ERROR("received unexpected uncompressed headers");
         return -1;
     }
+}
+
+
+static int
+stream_uh_in_ietf (struct lsquic_stream *stream,
+                                            struct uncompressed_headers *uh)
+{
+    int push_promise;
+
+    push_promise = lsquic_stream_header_is_pp(stream);
+    if (!(stream->stream_flags & STREAM_HAVE_UH) && !push_promise)
+    {
+        SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
+        LSQ_DEBUG("received uncompressed headers");
+        stream->stream_flags |= STREAM_HAVE_UH;
+        if (uh->uh_flags & UH_FIN)
+        {
+            /* IETF QUIC only sets UH_FIN for a pushed stream on the server to
+             * mark request as done:
+             */
+            if (stream->sm_bflags & SMBF_IETF)
+                assert((stream->sm_bflags & SMBF_SERVER)
+                                            && lsquic_stream_is_pushed(stream));
+            stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
+        }
+        stream->uh = uh;
+        if (uh->uh_oth_stream_id == 0)
+        {
+            if (uh->uh_weight)
+                lsquic_stream_set_priority_internal(stream, uh->uh_weight);
+        }
+        else
+            LSQ_NOTICE("don't know how to depend on stream %"PRIu64,
+                                                        uh->uh_oth_stream_id);
+    }
+    else
+    {
+        /* Trailer should never make here, as we discard it in qdh */
+        LSQ_DEBUG("discard %s header set",
+                                    push_promise ? "push promise" : "trailer");
+        if (uh->uh_hset)
+            stream->conn_pub->enpub->enp_hsi_if
+                            ->hsi_discard_header_set(uh->uh_hset);
+        free(uh);
+    }
+
+    return 0;
+}
+
+
+int
+lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
+{
+    if (stream->sm_bflags & SMBF_USE_HEADERS)
+    {
+        if (stream->sm_bflags & SMBF_IETF)
+            return stream_uh_in_ietf(stream, uh);
+        else
+            return stream_uh_in_gquic(stream, uh);
+    }
+    else
+        return -1;
 }
 
 
@@ -3878,22 +4013,6 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 }
 
 
-/* GQUIC-only function */
-int
-lsquic_stream_id_is_critical (int use_http, lsquic_stream_id_t stream_id)
-{
-    return stream_id == LSQUIC_GQUIC_STREAM_HANDSHAKE
-        || (stream_id == LSQUIC_GQUIC_STREAM_HEADERS && use_http);
-}
-
-
-int
-lsquic_stream_is_critical (const struct lsquic_stream *stream)
-{
-    return stream->sm_bflags & SMBF_CRITICAL;
-}
-
-
 void
 lsquic_stream_set_stream_if (struct lsquic_stream *stream,
            const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
@@ -3909,7 +4028,8 @@ lsquic_stream_set_stream_if (struct lsquic_stream *stream,
 
 
 static int
-update_type_hist_and_check (struct hq_filter *filter)
+update_type_hist_and_check (const struct lsquic_stream *stream,
+                                                    struct hq_filter *filter)
 {
     /* 3-bit codes: */
     enum {
@@ -3936,6 +4056,20 @@ update_type_hist_and_check (struct hq_filter *filter)
     case HQFT_DATA:
         code = CODE_DATA;
         break;
+    case HQFT_PUSH_PROMISE:
+    case HQFT_DUPLICATE_PUSH:
+        /* [draft-ietf-quic-http-24], Section 7 */
+        if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT
+                                    && !(stream->sm_bflags & SMBF_SERVER))
+            return 0;
+        else
+            return -1;
+    case HQFT_CANCEL_PUSH:
+    case HQFT_SETTINGS:
+    case HQFT_GOAWAY:
+    case HQFT_MAX_PUSH_ID:
+        /* [draft-ietf-quic-http-24], Section 7 */
+        return -1;
     default:
         /* Ignore unknown frames */
         return 0;
@@ -3969,6 +4103,21 @@ update_type_hist_and_check (struct hq_filter *filter)
 }
 
 
+int
+lsquic_stream_header_is_pp (const struct lsquic_stream *stream)
+{
+    return stream->sm_hq_filter.hqfi_type == HQFT_PUSH_PROMISE;
+}
+
+
+int
+lsquic_stream_header_is_trailer (const struct lsquic_stream *stream)
+{
+    return (stream->stream_flags & STREAM_HAVE_UH)
+        && stream->sm_hq_filter.hqfi_type == HQFT_HEADERS;
+}
+
+
 static size_t
 hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
@@ -3985,11 +4134,11 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
         switch (filter->hqfi_state)
         {
         case HQFI_STATE_FRAME_HEADER_BEGIN:
-            filter->hqfi_vint_state.vr2s_state = 0;
+            filter->hqfi_vint2_state.vr2s_state = 0;
             filter->hqfi_state = HQFI_STATE_FRAME_HEADER_CONTINUE;
             /* fall-through */
         case HQFI_STATE_FRAME_HEADER_CONTINUE:
-            s = lsquic_varint_read_two(&p, end, &filter->hqfi_vint_state);
+            s = lsquic_varint_read_two(&p, end, &filter->hqfi_vint2_state);
             if (s < 0)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
@@ -3997,7 +4146,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);
-            if (0 != update_type_hist_and_check(filter))
+            if (0 != update_type_hist_and_check(stream, filter))
             {
                 lconn = stream->conn_pub->lconn;
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
@@ -4008,37 +4157,23 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     stream->id);
                 goto end;
             }
-            if (filter->hqfi_type == HQFT_HEADERS)
-            {
-                if (0 == (filter->hqfi_flags & HQFI_FLAG_GOT_HEADERS))
-                    filter->hqfi_flags |= HQFI_FLAG_GOT_HEADERS;
-                else
-                {
-                    filter->hqfi_type = (1ull << 62) - 1;
-                    LSQ_DEBUG("Ignoring HEADERS frame");
-                }
-            }
             if (filter->hqfi_left > 0)
             {
                 if (filter->hqfi_type == HQFT_DATA)
                     goto end;
                 else if (filter->hqfi_type == HQFT_PUSH_PROMISE)
                 {
-                    lconn = stream->conn_pub->lconn;
                     if (stream->sm_bflags & SMBF_SERVER)
+                    {
+                        lconn = stream->conn_pub->lconn;
                         lconn->cn_if->ci_abort_error(lconn, 1,
                             HEC_FRAME_UNEXPECTED, "Received PUSH_PROMISE frame "
                             "on stream %"PRIu64" (clients are not supposed to "
                             "send those)", stream->id);
+                        goto end;
+                    }
                     else
-                        /* Our client implementation does not support server
-                         * push.
-                         */
-                        lconn->cn_if->ci_abort_error(lconn, 1,
-                            HEC_FRAME_UNEXPECTED,
-                            "Received PUSH_PROMISE frame (not supported)"
-                            "on stream %"PRIu64, stream->id);
-                    goto end;
+                        filter->hqfi_state = HQFI_STATE_PUSH_ID_BEGIN;
                 }
             }
             else
@@ -4063,6 +4198,18 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 }
             }
             break;
+        case HQFI_STATE_PUSH_ID_BEGIN:
+            filter->hqfi_vint1_state.pos = 0;
+            filter->hqfi_state = HQFI_STATE_PUSH_ID_CONTINUE;
+            /* Fall-through */
+        case HQFI_STATE_PUSH_ID_CONTINUE:
+            prev = p;
+            s = lsquic_varint_read_nb(&p, end, &filter->hqfi_vint1_state);
+            filter->hqfi_left -= p - prev;
+            if (s == 0)
+                filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
+                /* A bit of a white lie here */
+            break;
         case HQFI_STATE_READING_PAYLOAD:
             if (filter->hqfi_type == HQFT_DATA)
                 goto end;
@@ -4072,6 +4219,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             switch (filter->hqfi_type)
             {
             case HQFT_HEADERS:
+            case HQFT_PUSH_PROMISE:
                 prev = p;
                 if (filter->hqfi_flags & HQFI_FLAG_BEGIN)
                 {
@@ -4102,6 +4250,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     goto end;
                 default:
                     assert(LQRHS_ERROR == rhs);
+                    stream->sm_qflags &= ~SMQF_QPACK_DEC;
                     filter->hqfi_flags |= HQFI_FLAG_ERROR;
                     LSQ_INFO("error processing header block");
                     abort_connection(stream);   /* XXX Overkill? */

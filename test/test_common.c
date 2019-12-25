@@ -157,6 +157,8 @@ static void getExtensionPtrs()
     }
     LeaveCriticalSection(&initLock);
 }
+
+
 #endif
 
 
@@ -693,6 +695,8 @@ read_using_recvmmsg (struct read_iter *iter)
 
     return n == sizeof(mmsghdrs) / sizeof(mmsghdrs[0]) ? ROP_NOROOM : ROP_OK;
 }
+
+
 #endif
 
 
@@ -1223,6 +1227,7 @@ packet_out_limit (void)
         return 0;
 }
 
+
 enum ctl_what
 {
     CW_SENDADDR     = 1 << 0,
@@ -1436,10 +1441,16 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
             LSQ_WARN("sendmmsg failed: %s", strerror(saved_errno));
             errno = saved_errno;
         }
+        else if (s > 0)
+            errno = EAGAIN;
+        else
+            errno = saved_errno;
     }
 
     return s;
 }
+
+
 #endif
 
 
@@ -1466,6 +1477,8 @@ find_sport (struct prog *prog, const struct sockaddr *local_sa)
     assert(0);
     return NULL;
 }
+
+
 #endif
 
 
@@ -1592,15 +1605,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 
     if (n > 0)
         return n;
-    else if (s < 0)
+    else
     {
+        assert(s < 0);
 #if LSQUIC_RANDOM_SEND_FAILURE
   random_send_failure:
 #endif
         return -1;
     }
-    else
-        return 0;
 }
 
 
@@ -1663,11 +1675,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_sfcw = atoi(val);
             return 0;
         }
-        if (0 == strncmp(name, "srej", 4))
-        {
-            settings->es_support_srej = atoi(val);
-            return 0;
-        }
         break;
     case 7:
         if (0 == strncmp(name, "version", 7))
@@ -1698,6 +1705,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         else if (0 == strncmp(name, "cc_algo", 7))
         {
             settings->es_cc_algo = atoi(val);
+            return 0;
+        }
+        else if (0 == strncmp(name, "ql_bits", 7))
+        {
+            settings->es_ql_bits = atoi(val);
             return 0;
         }
         break;
@@ -1768,11 +1780,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "handshake_to", 12))
         {
             settings->es_handshake_to = atoi(val);
-            return 0;
-        }
-        if (0 == strncmp(name, "support_srej", 12))
-        {
-            settings->es_support_srej = atoi(val);
             return 0;
         }
         break;
@@ -1933,6 +1940,7 @@ pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
     return pb;
 }
 
+
 void
 pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 {
@@ -1945,6 +1953,7 @@ pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 #endif
     --pba->n_out;
 }
+
 
 void
 pba_cleanup (struct packout_buf_allocator *pba)
@@ -1984,6 +1993,7 @@ print_conn_info (const lsquic_conn_t *conn)
         lsquic_conn_crypto_alg_keysize(conn)
     );
 }
+
 
 struct reader_ctx
 {

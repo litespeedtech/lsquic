@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 4
-#define LSQUIC_PATCH_VERSION 7
+#define LSQUIC_MINOR_VERSION 8
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -112,6 +112,13 @@ enum lsquic_version
      */
     LSQVER_046,
 
+    /**
+     * Q050.  Variable-length QUIC server connection IDs.  Use CRYPTO frames
+     * for handshake.  IETF header format matching invariants-06.  Packet
+     * number encryption.  Initial packets are obfuscated.
+     */
+    LSQVER_050,
+
 #if LSQUIC_USE_Q098
     /**
      * Q098.  This is a made-up, experimental version used to test version
@@ -130,6 +137,11 @@ enum lsquic_version
     LSQVER_ID23,
 
     /**
+     * IETF QUIC Draft-24
+     */
+    LSQVER_ID24,
+
+    /**
      * Special version to trigger version negotiation.
      * [draft-ietf-quic-transport-11], Section 3.
      */
@@ -139,7 +151,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 39, 43, 46, and IETF Draft-23
+ * We currently support versions 39, 43, 46, 50, and IETF Draft-23 and Draft-24
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -147,7 +159,7 @@ enum lsquic_version
 /**
  * List of versions in which the server never includes CID in short packets.
  */
-#define LSQUIC_FORCED_TCID0_VERSIONS (1 << LSQVER_046)
+#define LSQUIC_FORCED_TCID0_VERSIONS ((1 << LSQVER_046)|(1 << LSQVER_050))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
                             (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
@@ -156,9 +168,11 @@ enum lsquic_version
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS ((1 << LSQVER_039) | (1 << LSQVER_043))
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+                                                    | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_VERNEG))
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+                                                    | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {
@@ -316,8 +330,6 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 #define LSQUIC_DF_STTL               86400
 #define LSQUIC_DF_MAX_INCHOATE     (1 * 1000 * 1000)
-#define LSQUIC_DF_SUPPORT_SREJ_SERVER  1
-#define LSQUIC_DF_SUPPORT_SREJ_CLIENT  0       /* TODO: client support */
 /** Do not use NSTP by default */
 #define LSQUIC_DF_SUPPORT_NSTP     0
 /** TODO: IETF QUIC clients do not support push */
@@ -364,8 +376,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Allow migration by default */
 #define LSQUIC_DF_ALLOW_MIGRATION 1
 
+/** Use QL loss bits by default */
+#define LSQUIC_DF_QL_BITS 1
+
 /* 1: Cubic; 2: BBR */
-#define LSQUIC_DF_CC_ALGO 2
+#define LSQUIC_DF_CC_ALGO 1
 
 struct lsquic_engine_settings {
     /**
@@ -459,13 +474,6 @@ struct lsquic_engine_settings {
      * only applicable in server mode.
      */
     unsigned        es_max_inchoate;
-
-    /**
-     * Support SREJ: for client side, this means supporting server's SREJ
-     * responses (this does not work yet) and for server side, this means
-     * generating SREJ instead of REJ when appropriate.
-     */
-    int             es_support_srej;
 
     /**
      * Setting this value to 0 means that
@@ -738,6 +746,13 @@ struct lsquic_engine_settings {
      *  2:  BBR
      */
     unsigned        es_cc_algo;
+
+    /**
+     * Use QL loss bits.
+     *
+     * Default value is @ref LSQUIC_DF_QL_BITS
+     */
+    int             es_ql_bits;
 };
 
 /* Initialize `settings' to default values */
@@ -780,8 +795,14 @@ struct lsquic_out_spec
  * Returns number of packets successfully sent out or -1 on error.  -1 should
  * only be returned if no packets were sent out.  If -1 is returned or if the
  * return value is smaller than `n_packets_out', this indicates that sending
- * of packets is not possible  No packets will be attempted to be sent out
- * until @ref lsquic_engine_send_unsent_packets() is called.
+ * of packets is not possible.
+ *
+ * If not all packets could be sent out, errno is examined.  If it is not
+ * EAGAIN or EWOULDBLOCK, the connection whose packet cause the error is
+ * closed forthwith.
+ *
+ * No packets will be attempted to be sent out until
+ * @ref lsquic_engine_send_unsent_packets() is called.
  */
 typedef int (*lsquic_packets_out_f)(
     void                          *packets_out_ctx,
@@ -1026,11 +1047,16 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
 
 /**
  * Create a client connection to peer identified by `peer_ctx'.
+ *
+ * To let the engine specify QUIC version, use N_LSQVER.  If zero-rtt info
+ * is supplied, version is picked from there instead.
+ *
  * If `max_packet_size' is set to zero, it is inferred based on `peer_sa':
  * 1350 for IPv6 and 1370 for IPv4.
  */
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *, const struct sockaddr *local_sa,
+lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
+                       const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
                        const char *hostname, unsigned short max_packet_size,
@@ -1269,7 +1295,7 @@ int lsquic_stream_close(lsquic_stream_t *s);
 
 /**
  * Get certificate chain returned by the server.  This can be used for
- * server certificate verifiction.
+ * server certificate verification.
  *
  * If server certificate cannot be verified, the connection can be closed
  * using lsquic_conn_cert_verification_failed().
@@ -1510,7 +1536,7 @@ enum lsquic_version
 lsquic_alpn2ver (const char *alpn, size_t len);
 
 /**
- * This function closes all mini connections and marks all full connection
+ * This function closes all mini connections and marks all full connections
  * as going away.  In server mode, this also causes the engine to stop
  * creating new connections.
  */

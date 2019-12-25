@@ -384,10 +384,12 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     struct uncompressed_headers *uh = NULL;
     const struct lsqpack_header *header;
     enum lsquic_header_status st;
+    int push_promise;
     unsigned i;
     void *hset;
 
-    hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, 0);
+    push_promise = lsquic_stream_header_is_pp(stream);
+    hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
     if (!hset)
     {
         LSQ_INFO("call to hsi_create_header_set failed");
@@ -406,10 +408,14 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
                     header->qh_name, header->qh_name_len,
                     header->qh_value, header->qh_value_len);
         if (st != LSQUIC_HDR_OK)
+        {
+            LSQ_INFO("header process returned non-OK code %u", (unsigned) st);
             goto err;
+        }
     }
 
     lsqpack_dec_destroy_header_list(qlist);
+    qlist = NULL;
     st = hset_if->hsi_process_header(hset, 0, 0, 0, 0, 0);
     if (st != LSQUIC_HDR_OK)
         goto err;
@@ -431,10 +437,26 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     return 0;
 
   err:
-    lsqpack_dec_destroy_header_list(qlist);
+    if (qlist)
+        lsqpack_dec_destroy_header_list(qlist);
     hset_if->hsi_discard_header_set(hset);
     free(uh);
     return -1;
+}
+
+
+static int
+qdh_process_qlist (struct qpack_dec_hdl *qdh,
+            struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
+{
+    if (!lsquic_stream_header_is_trailer(stream))
+        return qdh_supply_hset_to_stream(qdh, stream, qlist);
+    else
+    {
+        LSQ_DEBUG("discard trailer header set");
+        lsqpack_dec_destroy_header_list(qlist);
+        return 0;
+    }
 }
 
 
@@ -450,7 +472,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     {
         if (qlist)
         {
-            if (0 != qdh_supply_hset_to_stream(qdh, stream, qlist))
+            if (0 != qdh_process_qlist(qdh, stream, qlist))
                 return LQRHS_ERROR;
             if (qdh->qdh_dec_sm_out)
             {

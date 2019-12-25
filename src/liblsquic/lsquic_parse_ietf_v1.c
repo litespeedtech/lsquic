@@ -7,7 +7,6 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <stddef.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
 #ifndef WIN32
@@ -39,6 +38,8 @@
 #include "lsquic_conn.h"
 #include "lsquic_enc_sess.h"
 #include "lsquic_trans_params.h"
+#include "lsquic_parse_ietf.h"
+#include "lsquic_qtags.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PARSE
 #include "lsquic_logger.h"
@@ -236,8 +237,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
     vint_write(p, payload_len, bits, 1 << bits);
     p += 1 << bits;
 
-    p += write_packno(p, packet_out->po_packno,
-                                    lsquic_packet_out_packno_bits(packet_out));
+    p += write_packno(p, packet_out->po_packno, packno_bits);
 
     return (int)(p - buf);
 }
@@ -261,6 +261,8 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
 
     buf[0] = 0x40
            | (lsquic_packet_out_spin_bit(packet_out) << 5)
+           | (lsquic_packet_out_square_bit(packet_out) << 4)
+           | (lsquic_packet_out_loss_bit(packet_out) << 3)
            | (lsquic_packet_out_key_phase(packet_out) << 2)
            | packno_bits
            ;
@@ -430,9 +432,10 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
 }
 
 
-static int
-ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
-        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+int
+lsquic_ietf_v1_gen_crypto_frame (unsigned char *buf, unsigned char first_byte,
+            size_t buf_len, uint64_t offset, size_t size, gcf_read_f gcf_read,
+            void *stream)
 {
     unsigned char *const end = buf + buf_len;
     unsigned char *p;
@@ -453,7 +456,7 @@ ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
         size = n_avail;
 
     p = buf;
-    *p++ = 0x06;
+    *p++ = first_byte;
 
     vint_write(p, offset, obits, olen);
     p += olen;
@@ -466,6 +469,15 @@ ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
     p += dlen + nr;
 
     return (int)(p - buf);
+}
+
+
+static int
+ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
+        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+{
+    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x6, buf_len, offset,
+                                                size, gcf_read, stream);
 }
 
 
@@ -528,9 +540,9 @@ ietf_v1_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
 }
 
 
-static int
-ietf_v1_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
-                                        struct stream_frame *stream_frame)
+int
+lsquic_ietf_v1_parse_crypto_frame (const unsigned char *buf,
+                    size_t rem_packet_sz, struct stream_frame *stream_frame)
 {
     const unsigned char *const pend = buf + rem_packet_sz;
     const unsigned char *p = buf;
@@ -539,7 +551,6 @@ ietf_v1_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
 
     CHECK_SPACE(1, p, pend);
 
-    assert(0x06 == *p);
     ++p;
 
     r = vint_read(p, pend, &offset);
@@ -566,6 +577,20 @@ ietf_v1_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
     return (int)(p + data_sz - (unsigned char *) buf);
 }
 
+
+static int
+ietf_v1_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
+                                        struct stream_frame *stream_frame)
+{
+    if (rem_packet_sz > 0)
+    {
+        assert(0x06 == buf[0]);
+        return lsquic_ietf_v1_parse_crypto_frame(buf, rem_packet_sz,
+                                                            stream_frame);
+    }
+    else
+        return -1;
+}
 
 
 #if __GNUC__
@@ -916,7 +941,7 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     lsquic_packno_t packno_diff, gap, prev_low, maxno, rsize;
     size_t sz;
     const struct lsquic_packno_range *range;
-    unsigned a, b, c, addl_ack_blocks;
+    unsigned a, b, c, addl_ack_blocks, ecn_needs;
     unsigned bits[4];
     enum ecn ecn;
 
@@ -955,6 +980,15 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     CHECKOUT(sz);
 
+    if (ecn_counts)
+    {
+        for (ecn = 1; ecn <= 3; ++ecn)
+            bits[ecn] = vint_val2bits(ecn_counts[ecn]);
+        ecn_needs = (1 << bits[1]) + (1 << bits[2]) + (1 << bits[3]);
+    }
+    else
+        ecn_needs = 0;
+
     *p = 0x02 + !!ecn_counts;
     ++p;
 
@@ -976,13 +1010,14 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         rsize = range->high - range->low;
         a = vint_val2bits(gap - 1);
         b = vint_val2bits(rsize);
+        if (ecn_needs + (1 << a) + (1 << b) > AVAIL())
+            break;
         if (addl_ack_blocks == VINT_MAX_ONE_BYTE)
         {
             memmove(block_count_p + 2, block_count_p + 1,
                                                 p - block_count_p - 1);
             ++p;
         }
-        CHECKOUT((1 << a) + (1 << b));
         vint_write(p, gap - 1, a, 1 << a);
         p += 1 << a;
         vint_write(p, rsize, b, 1 << b);
@@ -1000,9 +1035,7 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     if (ecn_counts)
     {
-        for (ecn = 1; ecn <= 3; ++ecn)
-            bits[ecn] = vint_val2bits(ecn_counts[ecn]);
-        CHECKOUT((1 << bits[1]) + (1 << bits[2]) + (1 << bits[3]));
+        assert(ecn_needs <= AVAIL());
         for (ecn = 1; ecn <= 3; ++ecn)
         {
             vint_write(p, ecn_counts[ecnmap[ecn]], bits[ecnmap[ecn]], 1 << bits[ecnmap[ecn]]);
@@ -1035,12 +1068,13 @@ ietf_v1_calc_stream_frame_header_sz (lsquic_stream_id_t stream_id,
 }
 
 
+/* [draft-ietf-quic-transport-24] Section 19.6 */
 static size_t
-ietf_v1_calc_crypto_frame_header_sz (uint64_t offset)
+ietf_v1_calc_crypto_frame_header_sz (uint64_t offset, unsigned data_sz)
 {
     return 1    /* Frame type */
          + (1 << vint_val2bits(offset))
-         + 1    /* Data len */
+         + (1 << vint_val2bits(data_sz))
          ;
 }
 
@@ -1273,6 +1307,8 @@ ietf_v1_parse_new_conn_id (const unsigned char *buf, size_t len,
         return -1;
 
     cid_len = *p++;
+    if (cid_len == 0 || cid_len > MAX_CID_LEN)
+        return -2;
 
     if ((unsigned) (end - p) < cid_len + IQUIC_SRESET_TOKEN_SZ)
         return -1;
@@ -1694,7 +1730,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
 
 /* Is this a valid Initial packet?  We take the perspective of the server. */
 int
-lsquic_is_valid_ietf_v1_or_Q046_hs_packet (const unsigned char *buf,
+lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
                                         size_t length, lsquic_ver_tag_t *tagp)
 {
     const unsigned char *p = buf;
@@ -1716,11 +1752,11 @@ lsquic_is_valid_ietf_v1_or_Q046_hs_packet (const unsigned char *buf,
 
     memcpy(&tag, p, 4);
     p += 4;
-    if (tag == 0)
-        return 0;       /* Client never sends version negotiation packets */
-
-    if (tag == * (uint32_t *) "Q046")
+    switch (tag)
     {
+    case 0:
+        return 0;       /* Client never sends version negotiation packets */
+    case TAG('Q', '0', '4', '6'):
         dcil = p[0] >> 4;
         if (dcil)
             dcil += 3;
@@ -1736,9 +1772,19 @@ lsquic_is_valid_ietf_v1_or_Q046_hs_packet (const unsigned char *buf,
 
         if (end - p < (ptrdiff_t) (dcil + scil + packet_len))
             return 0;
-    }
-    else
-    {
+        break;
+    case TAG('Q', '0', '5', '0'):
+        dcil = *p++;
+        if (dcil != 8)
+            return 0;
+        if (p + dcil + 1 >= end)
+            return 0;
+        p += dcil;
+        scil = *p++;
+        if (scil != 0)
+            return 0;
+        goto read_token;
+    default:
         dcil = *p++;
         if (dcil < MIN_INITIAL_DCID_LEN || dcil > MAX_CID_LEN)
             return 0;
@@ -1749,6 +1795,7 @@ lsquic_is_valid_ietf_v1_or_Q046_hs_packet (const unsigned char *buf,
         if (p + scil > end || scil > MAX_CID_LEN)
             return 0;
         p += scil;
+  read_token:
         r = vint_read(p, end, &token_len);
         if (r < 0)
             return 0;
@@ -1835,7 +1882,8 @@ popcount (unsigned v)
 
 int
 lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
-         const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions)
+         const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions,
+         uint8_t rand)
 {
     size_t need;
     int r;
@@ -1846,7 +1894,7 @@ lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     if (need > bufsz)
         return -1;
 
-    *buf++ = 0x80 | 0x40 | rand();
+    *buf++ = 0x80 | 0x40 | rand;
     memset(buf, 0, 4);
     buf += 4;
 

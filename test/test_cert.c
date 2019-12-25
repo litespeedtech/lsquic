@@ -21,7 +21,7 @@ static int
 select_alpn (SSL *ssl, const unsigned char **out, unsigned char *outlen,
                     const unsigned char *in, unsigned int inlen, void *arg)
 {
-    const unsigned char alpn[] = "\x5h3-23";
+    const unsigned char alpn[] = "\x5h3-23\x5h3-24";
     int r;
 
     r = SSL_select_next_proto((unsigned char **) out, outlen, in, inlen,
@@ -117,8 +117,6 @@ load_cert (struct lsquic_hash *certs, const char *optarg)
 
   end:
     free(sni);
-    if (f)
-        fclose(f);
     if (rv != 0)
     {   /* Error: free cert and its components */
         if (cert)

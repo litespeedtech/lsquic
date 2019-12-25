@@ -75,4 +75,7 @@ prq_next_conn (struct pr_queue *);
 int
 prq_have_pending (const struct pr_queue *);
 
+void
+lsquic_prq_drop (struct lsquic_conn *);
+
 #endif

@@ -646,58 +646,81 @@ struct req_map
     enum {
         RM_WANTBODY     = 1 << 0,
         RM_REGEX        = 1 << 1,
+        RM_COMPILED     = 1 << 2,
     }                       flags;
+    regex_t                 re;
 };
 
 
-static const struct req_map req_maps[] =
+static struct req_map req_maps[] =
 {
-    { GET, "/", IOH_INDEX_HTML, "200", 0, },
-    { GET, "/index.html", IOH_INDEX_HTML, "200", 0, },
-    { POST, "/cgi-bin/md5sum.cgi", IOH_MD5SUM, "200", RM_WANTBODY, },
-    { POST, "/cgi-bin/verify-headers.cgi", IOH_VER_HEAD, "200", RM_WANTBODY, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
-    { GET, "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", IOH_GEN_FILE, "200", RM_REGEX, },
+    { .method = GET, .path = "/", .handler = IOH_INDEX_HTML, .status = "200", .flags = 0, },
+    { .method = GET, .path = "/index.html", .handler = IOH_INDEX_HTML, .status = "200", .flags = 0, },
+    { .method = POST, .path = "/cgi-bin/md5sum.cgi", .handler = IOH_MD5SUM, .status = "200", .flags = RM_WANTBODY, },
+    { .method = POST, .path = "/cgi-bin/verify-headers.cgi", .handler = IOH_VER_HEAD, .status = "200", .flags = RM_WANTBODY, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
+    { .method = GET, .path = "^/file-([0-9][0-9]*)([KMG]?)\\?push=([^&]*)&push=([^&]*)&push=([^&]*)$", .handler = IOH_GEN_FILE, .status = "200", .flags = RM_REGEX, },
 };
 
 
 #define MAX_MATCHES 5
 
 
+static void
+init_map_regexes (void)
+{
+    struct req_map *map;
+
+    for (map = req_maps; map < req_maps + sizeof(req_maps)
+                                            / sizeof(req_maps[0]); ++map)
+        if (map->flags & RM_REGEX)
+        {
+#ifndef NDEBUG
+            int s;
+            s =
+#endif
+            regcomp(&map->re, map->path, REG_EXTENDED|REG_ICASE);
+            assert(0 == s);
+            map->flags |= RM_COMPILED;
+        }
+}
+
+
+static void
+free_map_regexes (void)
+{
+    struct req_map *map;
+
+    for (map = req_maps; map < req_maps + sizeof(req_maps)
+                                            / sizeof(req_maps[0]); ++map)
+        if (map->flags & RM_COMPILED)
+        {
+            regfree(&map->re);
+            map->flags &= ~RM_COMPILED;
+        }
+}
+
+
 static const struct req_map *
 find_handler (enum method method, const char *path, regmatch_t *matches)
 {
     const struct req_map *map;
-    regex_t re;
 
     for (map = req_maps; map < req_maps + sizeof(req_maps)
                                             / sizeof(req_maps[0]); ++map)
-        if (method == map->method)
+        if (map->flags & RM_COMPILED)
         {
-            if (map->flags & RM_REGEX)
-            {
-#ifndef NDEBUG
-                int s;
-                s =
-#endif
-                regcomp(&re, map->path, REG_EXTENDED|REG_ICASE);
-                assert(0 == s);
-                if (0 == regexec(&re, path, MAX_MATCHES + 1, matches, 0))
-                {
-                    regfree(&re);
-                    return map;
-                }
-                regfree(&re);
-            }
-            else if (0 == strcasecmp(path, map->path))
+            if (0 == regexec(&map->re, path, MAX_MATCHES + 1, matches, 0))
                 return map;
         }
+        else if (0 == strcasecmp(path, map->path))
+            return map;
 
     return NULL;
 }
@@ -868,6 +891,8 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 LSQ_ERROR("could not read from stream for MD5: %s", strerror(errno));
                 exit(1);
             }
+            if (nw == 0)
+                st_h->interop_u.md5c.done = 1;
             if (st_h->interop_u.md5c.done)
             {
                 MD5_Final(md5sum, &st_h->interop_u.md5c.md5ctx);
@@ -958,7 +983,7 @@ send_headers2 (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h,
         },
         {
             .name  = { .iov_base = "content-type", .iov_len = 12, },
-            .value = { .iov_base = "application/html", .iov_len = 16, },
+            .value = { .iov_base = "text/html", .iov_len = 9, },
         },
         {
             .name  = { .iov_base = "content-length", .iov_len = 14, },
@@ -1168,6 +1193,8 @@ interop_server_hset_add_header (void *hset_p, unsigned name_idx,
         req->qif_str[req->qif_sz + name_len + 1 + value_len] = '\n';
         req->qif_sz += name_len + value_len + 2;
     }
+    else
+        return LSQUIC_HDR_OK;
 
     if (5 == name_len && 0 == strncmp(name, ":path", 5))
     {
@@ -1283,6 +1310,7 @@ main (int argc, char **argv)
     if (!server_ctx.document_root)
     {
         LSQ_NOTICE("Document root is not set: start in Interop Mode");
+        init_map_regexes();
         prog.prog_api.ea_stream_if = &interop_http_server_if;
         prog.prog_api.ea_hsi_if = &header_bypass_api;
         prog.prog_api.ea_hsi_ctx = NULL;
@@ -1298,6 +1326,9 @@ main (int argc, char **argv)
 
     s = prog_run(&prog);
     prog_cleanup(&prog);
+
+    if (!server_ctx.document_root)
+        free_map_regexes();
 
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

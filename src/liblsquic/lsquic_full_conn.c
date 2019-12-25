@@ -75,7 +75,7 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->fc_conn)
 #include "lsquic_logger.h"
 
-enum { STREAM_IF_STD, STREAM_IF_HSK, STREAM_IF_HDR, N_STREAM_IFS };
+enum stream_if { STREAM_IF_STD, STREAM_IF_HSK, STREAM_IF_HDR, N_STREAM_IFS };
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
 #define ACK_TIMEOUT                     25000
@@ -219,6 +219,8 @@ struct full_conn
     struct short_ack_info        fc_saved_ack_info;
     lsquic_time_t                fc_saved_ack_received;
     struct network_path          fc_path;
+    unsigned                     fc_orig_versions;      /* Client only */
+    enum enc_level               fc_crypto_enc_level;
 };
 
 static const struct ver_neg server_ver_neg;
@@ -260,6 +262,10 @@ ack_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t
 static lsquic_stream_t *
 new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
             enum stream_ctor_flags);
+
+static struct lsquic_stream *
+new_stream_ext (struct full_conn *, lsquic_stream_id_t, enum stream_if,
+                                                    enum stream_ctor_flags);
 
 static void
 reset_ack_state (struct full_conn *conn);
@@ -549,9 +555,59 @@ apply_peer_settings (struct full_conn *conn)
 
 static const struct conn_iface *full_conn_iface_ptr;
 
+
+/* gQUIC up to version Q046 has handshake stream 1 and headers stream 3.
+ * Q050 and later have "crypto streams" -- meaning CRYPTO frames, not
+ * STREAM frames and no stream IDs -- and headers stream 1.
+ */
+static lsquic_stream_id_t
+headers_stream_id_by_ver (enum lsquic_version version)
+{
+    if (version < LSQVER_050)
+        return 3;
+    else
+        return 1;
+}
+
+
+static lsquic_stream_id_t
+headers_stream_id_by_conn (const struct full_conn *conn)
+{
+    return headers_stream_id_by_ver(conn->fc_conn.cn_version);
+}
+
+
+static lsquic_stream_id_t
+hsk_stream_id (const struct full_conn *conn)
+{
+    if (conn->fc_conn.cn_version < LSQVER_050)
+        return 1;
+    else
+        /* Use this otherwise invalid stream ID as ID for the gQUIC crypto
+         * stream.
+         */
+        return (uint64_t) -1;
+}
+
+
+static int
+has_handshake_stream (const struct full_conn *conn)
+{
+    return conn->fc_conn.cn_version < LSQVER_050;
+}
+
+
+static int
+is_handshake_stream_id (const struct full_conn *conn,
+                                                lsquic_stream_id_t stream_id)
+{
+    return conn->fc_conn.cn_version < LSQVER_050 && stream_id == 1;
+}
+
+
 static struct full_conn *
 new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
-                 unsigned flags)
+                 unsigned flags, enum lsquic_version version)
 {
     struct full_conn *conn;
     lsquic_stream_t *headers_stream;
@@ -634,8 +690,9 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
             goto cleanup_on_error;
         conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = lsquic_headers_stream_if;
         conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = conn->fc_pub.u.gquic.hs;
-        headers_stream = new_stream(conn, LSQUIC_GQUIC_STREAM_HEADERS,
-                                    SCF_CALL_ON_NEW);
+        headers_stream = new_stream_ext(conn, headers_stream_id_by_ver(version),
+                                STREAM_IF_HDR,
+                    SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_CRITICAL|SCF_HEADERS);
         if (!headers_stream)
             goto cleanup_on_error;
     }
@@ -672,7 +729,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
 
 struct lsquic_conn *
 lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
-                      unsigned flags,
+                      unsigned versions, unsigned flags,
                       const char *hostname, unsigned short max_packet_size,
                       int is_ipv4,
                       const unsigned char *zero_rtt, size_t zero_rtt_len)
@@ -682,12 +739,13 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     lsquic_cid_t cid;
     const struct enc_session_funcs_gquic *esf_g;
 
-    version = highest_bit_set(enpub->enp_settings.es_versions);
+    versions &= (~LSQUIC_IETF_VERSIONS & LSQUIC_SUPPORTED_VERSIONS);
+    assert(versions);
+    version = highest_bit_set(versions);
     if (zero_rtt)
     {
         zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
-        if (zero_rtt_version < N_LSQVER &&
-            ((1 << zero_rtt_version) & enpub->enp_settings.es_versions))
+        if (zero_rtt_version < N_LSQVER && ((1 << zero_rtt_version) & versions))
             version = zero_rtt_version;
     }
     esf_g = select_esf_gquic_by_ver(version);
@@ -699,15 +757,16 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
         else
             max_packet_size = GQUIC_MAX_IPv6_PACKET_SZ;
     }
-    conn = new_conn_common(cid, enpub, flags);
+    conn = new_conn_common(cid, enpub, flags, version);
     if (!conn)
         return NULL;
+    init_ver_neg(conn, versions, &version);
     conn->fc_path.np_pack_size = max_packet_size;
     conn->fc_conn.cn_esf_c = select_esf_common_by_ver(version);
     conn->fc_conn.cn_esf.g = esf_g;
     conn->fc_conn.cn_enc_session =
-        conn->fc_conn.cn_esf.g->esf_create_client(hostname, cid, conn->fc_enpub,
-                                                    zero_rtt, zero_rtt_len);
+        conn->fc_conn.cn_esf.g->esf_create_client(&conn->fc_conn, hostname,
+                                cid, conn->fc_enpub, zero_rtt, zero_rtt_len);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -716,20 +775,24 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     }
 
     if (conn->fc_flags & FC_HTTP)
-        conn->fc_last_stream_id = LSQUIC_GQUIC_STREAM_HEADERS;   /* Client goes 5, 7, 9.... */
+        conn->fc_last_stream_id = headers_stream_id_by_conn(conn);   /* Client goes (3?), 5, 7, 9.... */
+    else if (has_handshake_stream(conn))
+        conn->fc_last_stream_id = 1;
     else
-        conn->fc_last_stream_id = LSQUIC_GQUIC_STREAM_HANDSHAKE;
+        conn->fc_last_stream_id = (uint64_t) -1;    /* +2 will get us to 1  */
     conn->fc_hsk_ctx.client.lconn   = &conn->fc_conn;
     conn->fc_hsk_ctx.client.mm      = &enpub->enp_mm;
     conn->fc_hsk_ctx.client.ver_neg = &conn->fc_ver_neg;
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
-    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
+    conn->fc_orig_versions = versions;
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->fc_settings->es_handshake_to);
-    if (!new_stream(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW))
+    if (!new_stream_ext(conn, hsk_stream_id(conn), STREAM_IF_HSK,
+            SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_CRITICAL|SCF_CRYPTO
+            |(conn->fc_conn.cn_version >= LSQVER_050 ? SCF_CRYPTO_FRAMES : 0)))
     {
         LSQ_WARN("could not create handshake stream: %s", strerror(errno));
         conn->fc_conn.cn_if->ci_destroy(&conn->fc_conn);
@@ -773,15 +836,18 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
     int have_outgoing_ack = 0;
 
     mc = (struct mini_conn *) lconn_mini;
-    conn = new_conn_common(lconn_mini->cn_cid, enpub, flags);
+    conn = new_conn_common(lconn_mini->cn_cid, enpub, flags,
+                                                    lconn_mini->cn_version);
     if (!conn)
         return NULL;
     lconn_full = &conn->fc_conn;
     conn->fc_last_stream_id = 0;   /* Server goes 2, 4, 6.... */
     if (conn->fc_flags & FC_HTTP)
-        conn->fc_max_peer_stream_id = LSQUIC_GQUIC_STREAM_HEADERS;
+        conn->fc_max_peer_stream_id = headers_stream_id_by_conn(conn);
+    else if (has_handshake_stream(conn))
+        conn->fc_max_peer_stream_id = 1;
     else
-        conn->fc_max_peer_stream_id = LSQUIC_GQUIC_STREAM_HANDSHAKE;
+        conn->fc_max_peer_stream_id = (uint64_t) -1;
     conn->fc_stream_ifs[STREAM_IF_HSK]
                 .stream_if     = &lsquic_server_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.server;
@@ -796,8 +862,15 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->fc_hsk_ctx.server.lconn = lconn_full;
     conn->fc_hsk_ctx.server.enpub = enpub;
 
+    /* TODO Optimize: we don't need an actual crypto stream and handler
+     * on the server side, as we don't do anything with it.  We can
+     * throw out appropriate frames earlier.
+     */
+
     /* Adjust offsets in the HANDSHAKE stream: */
-    hsk_stream = new_stream(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE, SCF_CALL_ON_NEW);
+    hsk_stream = new_stream_ext(conn, hsk_stream_id(conn), STREAM_IF_HSK,
+            SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_CRITICAL|SCF_CRYPTO
+            |(conn->fc_conn.cn_version >= LSQVER_050 ? SCF_CRYPTO_FRAMES : 0));
     if (!hsk_stream)
     {
         LSQ_DEBUG("could not create handshake stream: %s", strerror(errno));
@@ -815,6 +888,8 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
     assert(lconn_full->cn_enc_session == NULL);
     lconn_full->cn_enc_session = lconn_mini->cn_enc_session;
     lconn_mini->cn_enc_session = NULL;
+    lconn_full->cn_esf_c->esf_set_conn(lconn_full->cn_enc_session,
+                                                            &conn->fc_conn);
 
     lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
     conn->fc_send_ctl.sc_cur_packno = mc->mc_cur_packno;
@@ -1231,15 +1306,15 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
 
 
 static lsquic_stream_t *
-new_stream_ext (struct full_conn *conn, lsquic_stream_id_t stream_id, int if_idx,
-                enum stream_ctor_flags stream_ctor_flags)
+new_stream_ext (struct full_conn *conn, lsquic_stream_id_t stream_id,
+                enum stream_if if_idx, enum stream_ctor_flags stream_ctor_flags)
 {
     struct lsquic_stream *stream;
 
     stream = lsquic_stream_new(stream_id, &conn->fc_pub,
         conn->fc_stream_ifs[if_idx].stream_if,
         conn->fc_stream_ifs[if_idx].stream_if_ctx, conn->fc_settings->es_sfcw,
-        stream_id == LSQUIC_GQUIC_STREAM_HANDSHAKE
+        stream_ctor_flags & SCF_CRYPTO
                                 ? 16 * 1024 : conn->fc_cfg.max_stream_send,
         stream_ctor_flags);
     if (stream)
@@ -1253,30 +1328,13 @@ static lsquic_stream_t *
 new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
             enum stream_ctor_flags flags)
 {
-    int idx;
-    switch (stream_id)
-    {
-    case LSQUIC_GQUIC_STREAM_HANDSHAKE:
-        idx = STREAM_IF_HSK;
-        flags |= SCF_DI_AUTOSWITCH|SCF_CRITICAL;
-        break;
-    case LSQUIC_GQUIC_STREAM_HEADERS:
-        idx = STREAM_IF_HDR;
-        flags |= SCF_DI_AUTOSWITCH|SCF_CRITICAL;
-        if (!(conn->fc_flags & FC_HTTP) &&
-                                    conn->fc_enpub->enp_settings.es_rw_once)
-            flags |= SCF_DISP_RW_ONCE;
-        break;
-    default:
-        idx = STREAM_IF_STD;
-        flags |= SCF_DI_AUTOSWITCH;
-        if (conn->fc_pub.u.gquic.hs)
-            flags |= SCF_HTTP;
-        if (conn->fc_enpub->enp_settings.es_rw_once)
-            flags |= SCF_DISP_RW_ONCE;
-        break;
-    }
-    return new_stream_ext(conn, stream_id, idx, flags);
+    flags |= SCF_DI_AUTOSWITCH;
+    if (conn->fc_pub.u.gquic.hs)
+        flags |= SCF_HTTP;
+    if (conn->fc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+
+    return new_stream_ext(conn, stream_id, STREAM_IF_STD, flags);
 }
 
 
@@ -1487,7 +1545,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     int parsed_len;
 
 #ifndef LSQUIC_REDO_FAILED_INSERTION
-#define LSQUIC_REDO_FAILED_INSERTION 1
+#define LSQUIC_REDO_FAILED_INSERTION 0
 #endif
 #if LSQUIC_REDO_FAILED_INSERTION
     enum lsq_log_level saved_levels[3];
@@ -1521,12 +1579,11 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 #endif
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
-    if (stream_frame->stream_id != LSQUIC_GQUIC_STREAM_HANDSHAKE
+    if (!is_handshake_stream_id(conn, stream_frame->stream_id)
 #if LSQUIC_ENABLE_HANDSHAKE_DISABLE
         && !(conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
 #endif
-        && enc_level != ENC_LEV_FORW
-        && enc_level != ENC_LEV_INIT)
+        && enc_level == ENC_LEV_CLEAR)
     {
         lsquic_malo_put(stream_frame);
         ABORT_ERROR("received unencrypted data for stream %"PRIu64,
@@ -1636,7 +1693,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         return 0;
     }
 
-    if (stream->id == LSQUIC_GQUIC_STREAM_HANDSHAKE
+    if (lsquic_stream_is_crypto(stream)
         && (stream->sm_qflags & SMQF_WANT_READ)
         && !(conn->fc_flags & FC_SERVER)
         && !(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
@@ -1648,6 +1705,83 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
          * has not been completed yet.  Nevertheless, this is good enough
          * for now.
          */
+        lsquic_stream_dispatch_read_events(stream);
+    }
+
+    return parsed_len;
+}
+
+
+static unsigned
+process_crypto_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
+                      const unsigned char *p, size_t len)
+{
+    struct lsquic_stream *stream;
+    stream_frame_t *stream_frame;
+    enum enc_level enc_level;
+    int parsed_len;
+
+    stream_frame = lsquic_malo_get(conn->fc_pub.mm->malo.stream_frame);
+    if (!stream_frame)
+    {
+        LSQ_WARN("could not allocate stream frame: %s", strerror(errno));
+        return 0;
+    }
+
+    parsed_len = conn->fc_conn.cn_pf->pf_parse_crypto_frame(p, len,
+                                                            stream_frame);
+    if (parsed_len < 0)
+    {
+        lsquic_malo_put(stream_frame);
+        return 0;
+    }
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame, enc_level);
+    LSQ_DEBUG("Got CRYPTO frame on enc level %s", lsquic_enclev2str[enc_level]);
+
+    if (enc_level < conn->fc_crypto_enc_level)
+    {
+        LSQ_DEBUG("Old enc level: ignore frame");
+        lsquic_malo_put(stream_frame);
+        return parsed_len;
+    }
+
+    if (conn->fc_flags & FC_CLOSING)
+    {
+        LSQ_DEBUG("Connection closing: ignore frame");
+        lsquic_malo_put(stream_frame);
+        return parsed_len;
+    }
+
+    stream = find_stream_by_id(conn, hsk_stream_id(conn));
+    if (!stream)
+    {
+        LSQ_WARN("cannot find handshake stream for CRYPTO frame");
+        lsquic_malo_put(stream_frame);
+        return 0;
+    }
+
+    if (enc_level > conn->fc_crypto_enc_level)
+    {
+        stream->read_offset = 0;
+        stream->tosend_off = 0;
+        conn->fc_crypto_enc_level = enc_level;
+        LSQ_DEBUG("reset handshake stream offsets, new enc level %u",
+                                                        (unsigned) enc_level);
+    }
+
+    stream_frame->packet_in = lsquic_packet_in_get(packet_in);
+    if (0 != lsquic_stream_frame_in(stream, stream_frame))
+    {
+        ABORT_ERROR("cannot insert stream frame");
+        return 0;
+    }
+
+    if ((stream->sm_qflags & SMQF_WANT_READ)
+        && !(conn->fc_flags & FC_SERVER)
+        && !(conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
+    {
+        /* XXX what happens for server? */
         lsquic_stream_dispatch_read_events(stream);
     }
 
@@ -2129,13 +2263,12 @@ process_rst_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
         return parsed_len;
     }
 
-    if (lsquic_stream_id_is_critical(conn->fc_flags & FC_HTTP, stream_id))
+    stream = find_stream_by_id(conn, stream_id);
+    if (stream && lsquic_stream_is_critical(stream))
     {
         ABORT_ERROR("received reset on static stream %"PRIu64, stream_id);
         return 0;
     }
-
-    stream = find_stream_by_id(conn, stream_id);
     if (!stream)
     {
         if (conn_is_stream_closed(conn, stream_id))
@@ -2213,6 +2346,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_ACK]                  =  process_ack_frame,
     [QUIC_FRAME_BLOCKED]              =  process_blocked_frame,
     [QUIC_FRAME_CONNECTION_CLOSE]     =  process_connection_close_frame,
+    [QUIC_FRAME_CRYPTO]               =  process_crypto_frame,
     [QUIC_FRAME_GOAWAY]               =  process_goaway_frame,
     [QUIC_FRAME_INVALID]              =  process_invalid_frame,
     [QUIC_FRAME_PADDING]              =  process_padding_frame,
@@ -2363,8 +2497,11 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
     enum quic_ft_bit frame_types;
     int was_missing;
 
-    reconstruct_packet_number(conn, packet_in);
-    EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
+    if (conn->fc_conn.cn_version < LSQVER_050)
+    {
+        reconstruct_packet_number(conn, packet_in);
+        EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
+    }
 
 #if LSQUIC_CONN_STATS
     ++conn->fc_stats.in.packets;
@@ -2392,6 +2529,9 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
             return 0;
         }
     }
+
+    if (conn->fc_conn.cn_version >= LSQVER_050)
+        EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
     st = lsquic_rechist_received(&conn->fc_rechist, packet_in->pi_packno,
                                                     packet_in->pi_received);
@@ -2510,6 +2650,7 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct full_conn *conn = ctx;
     LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
     conn->fc_flags |= FC_TIMED_OUT;
 }
 
@@ -2612,8 +2753,7 @@ maybe_close_conn (struct full_conn *conn)
                              el = lsquic_hash_next(conn->fc_pub.all_streams))
         {
             stream = lsquic_hashelem_getdata(el);
-            assert(LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id
-                  || LSQUIC_GQUIC_STREAM_HEADERS == stream->id);
+            assert(stream->sm_bflags & (SMBF_CRYPTO|SMBF_HEADERS));
         }
 #endif
         conn->fc_flags |= FC_RECV_CLOSE;    /* Fake -- trigger "ok to close" */
@@ -3118,7 +3258,7 @@ process_hsk_stream_read_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     TAILQ_FOREACH(stream, &conn->fc_pub.read_streams, next_read_stream)
-        if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id)
+        if (lsquic_stream_is_crypto(stream))
         {
             lsquic_stream_dispatch_read_events(stream);
             break;
@@ -3131,7 +3271,7 @@ process_hsk_stream_write_events (struct full_conn *conn)
 {
     lsquic_stream_t *stream;
     TAILQ_FOREACH(stream, &conn->fc_pub.write_streams, next_write_stream)
-        if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id)
+        if (lsquic_stream_is_crypto(stream))
         {
             lsquic_stream_dispatch_write_events(stream);
             break;
@@ -3636,7 +3776,7 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     {
         if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
             conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
-                conn->fc_conn.cn_enc_session, &conn->fc_conn,
+                conn->fc_conn.cn_enc_session,
                 conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
         if (conn->fc_n_delayed_streams)
             create_delayed_streams(conn);
@@ -4264,7 +4404,7 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
-                if (LSQUIC_GQUIC_STREAM_HANDSHAKE == stream->id
+                if (lsquic_stream_is_crypto(stream)
                                     && lsquic_stream_write_avail(stream))
                 {
                     LSQ_DEBUG("tickable: stream %"PRIu64" can be written to",
@@ -4379,8 +4519,8 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
     lconn->cn_esf.g->esf_reset_cid(lconn->cn_enc_session, &cce->cce_cid);
 
     /* Reset version negotiation */
-    version = highest_bit_set(conn->fc_settings->es_versions);
-    init_ver_neg(conn, conn->fc_settings->es_versions, &version);
+    version = highest_bit_set(conn->fc_orig_versions);
+    init_ver_neg(conn, conn->fc_orig_versions, &version);
 
     /* Reset receive history */
     lsquic_rechist_cleanup(&conn->fc_rechist);
@@ -4392,7 +4532,7 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
                      &conn->fc_ver_neg, &conn->fc_pub, 0);
 
     /* Reset handshake stream state */
-    stream = find_stream_by_id(conn, LSQUIC_GQUIC_STREAM_HANDSHAKE);
+    stream = find_stream_by_id(conn, hsk_stream_id(conn));
     if (!stream)
         return -1;
     stream->n_unacked = 0;

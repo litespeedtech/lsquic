@@ -68,7 +68,7 @@
 #include "lsquic_headers.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
-#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
+#define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
@@ -369,7 +369,9 @@ struct ietf_full_conn
             uint64_t    ifcli_max_push_id;
             enum {
                 IFCLI_PUSH_ENABLED    = 1 << 0,
+                IFCLI_HSK_SENT_OR_DEL = 1 << 1,
             }           ifcli_flags;
+            unsigned    ifcli_packets_out;
         }                           cli;
         struct {
             uint64_t    ifser_max_push_id;
@@ -397,6 +399,7 @@ struct ietf_full_conn
 static const struct ver_neg server_ver_neg;
 
 static const struct conn_iface *ietf_full_conn_iface_ptr;
+static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr;
 
 static int
 process_incoming_packet_verneg (struct ietf_full_conn *,
@@ -420,6 +423,9 @@ ignore_hsk (struct ietf_full_conn *);
 
 static unsigned
 ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
+
+static const lsquic_cid_t *
+ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 
 
 static unsigned
@@ -480,6 +486,7 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
     LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
     conn->ifc_flags |= IFC_TIMED_OUT;
 }
 
@@ -876,7 +883,10 @@ static int
 ietf_full_conn_init (struct ietf_full_conn *conn,
            struct lsquic_engine_public *enpub, unsigned flags, int ecn)
 {
-    conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    if (flags & IFC_SERVER)
+        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    else
+        conn->ifc_conn.cn_if = ietf_full_conn_prehsk_iface_ptr;
     if (enpub->enp_settings.es_scid_len)
         assert(CN_SCID(&conn->ifc_conn)->len);
     conn->ifc_enpub = enpub;
@@ -937,7 +947,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
 struct lsquic_conn *
 lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
-           unsigned flags,
+           unsigned versions, unsigned flags,
            const char *hostname, unsigned short max_packet_size, int is_ipv4,
            const unsigned char *zero_rtt, size_t zero_rtt_sz,
            const unsigned char *token, size_t token_sz)
@@ -945,24 +955,25 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     const struct enc_session_funcs_iquic *esfi;
     struct ietf_full_conn *conn;
     enum lsquic_version ver, zero_rtt_version;
-    unsigned versions;
+    lsquic_time_t now;
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
         return NULL;
+    now = lsquic_time_now();
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF;
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);
-    if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, lsquic_time_now()))
+    if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, now))
     {
         free(conn);
         return NULL;
     }
 
-    versions = enpub->enp_settings.es_versions & LSQUIC_IETF_VERSIONS;
     assert(versions);
+    versions &= LSQUIC_IETF_VERSIONS;
     ver = highest_bit_set(versions);
     if (zero_rtt)
     {
@@ -1022,6 +1033,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (conn->ifc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->ifc_settings->es_handshake_to);
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
     if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
     {
         conn->ifc_u.cli.ifcli_flags |= IFCLI_PUSH_ENABLED;
@@ -1067,8 +1079,8 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     if (!conn->ifc_pub.packet_out_malo)
     {
-        free(conn);
         lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
+        free(conn);
         return NULL;
     }
     conn->ifc_flags |= IFC_PROC_CRYPTO;
@@ -1197,7 +1209,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->ifc_conn.cn_enc_session = mini_conn->cn_enc_session;
     mini_conn->cn_enc_session     = NULL;
-    conn->ifc_conn.cn_esf.i->esfi_set_conn(conn->ifc_conn.cn_enc_session,
+    conn->ifc_conn.cn_esf_c->esf_set_conn(conn->ifc_conn.cn_enc_session,
                                                             &conn->ifc_conn);
     conn->ifc_process_incoming_packet = process_incoming_packet_fast;
 
@@ -1286,6 +1298,8 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     /* TODO: check return valuee */ (void)
     handshake_ok(&conn->ifc_conn);
 
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+                                        imc->imc_created + conn->ifc_idle_to);
     while ((packet_in = TAILQ_FIRST(&imc->imc_app_packets)))
     {
         TAILQ_REMOVE(&imc->imc_app_packets, packet_in, pi_next);
@@ -1504,11 +1518,8 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         return -1;
     }
 
-    if (conn->ifc_flags & IFC_SERVER)
-        lsquic_tg_generate_sreset(conn->ifc_enpub->enp_tokgen, &cce->cce_cid,
+    lsquic_tg_generate_sreset(conn->ifc_enpub->enp_tokgen, &cce->cce_cid,
                                                                     token_buf);
-    else
-        memset(token_buf, 0, sizeof(token_buf));
 
     if (0 != lsquic_engine_add_cid(conn->ifc_enpub, &conn->ifc_conn,
                                                         cce - conn->ifc_cces))
@@ -2415,6 +2426,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
             lsquic_hash_destroy(conn->ifc_pub.u.ietf.promises);
     }
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "full connection destroyed");
     free(conn->ifc_errmsg);
     free(conn);
 }
@@ -2438,7 +2450,7 @@ ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
      */
     srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
     var = lsquic_rtt_stats_get_rttvar(&conn->ifc_pub.rtt_stats);
-    pto = srtt + 4 * var + TP_DEF_MAX_ACK_DELAY;
+    pto = srtt + 4 * var + TP_DEF_MAX_ACK_DELAY * 1000;
     drain_time = 3 * pto;
 
     LSQ_DEBUG("drain time is %"PRIu64" usec", drain_time);
@@ -2557,9 +2569,13 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
         struct sockaddr_in6 v6;
     } sockaddr;
 
-    if (params->tp_disable_active_migration)
+    if (params->tp_disable_active_migration
+                                || !conn->ifc_settings->es_allow_migration)
     {
-        LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
+        if (params->tp_disable_active_migration)
+            LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
+        else
+            LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
         retire_cid_from_tp(conn, params);
         return 0;
     }
@@ -2679,6 +2695,13 @@ handshake_ok (struct lsquic_conn *lconn)
 
     LSQ_DEBUG("peer transport parameters: %s",
                         (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
+
+    if ((params->tp_flags & TRAPA_QL_BITS)
+                                        && conn->ifc_settings->es_ql_bits)
+    {
+        LSQ_DEBUG("turn on QL loss bits");
+        lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
+    }
 
     if (params->tp_init_max_streams_bidi > (1ull << 60)
                             || params->tp_init_max_streams_uni > (1ull << 60))
@@ -3128,6 +3151,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     if (!uh)
     {
         LSQ_WARN("stream push: cannot allocate uh");
+        free(promise);
         lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
         if (own_hset)
             conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
@@ -3310,7 +3334,7 @@ immediate_close (struct ietf_full_conn *conn)
         return TICK_CLOSE;
     }
 
-    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_TIMED_OUT|IFC_HSK_FAILED));
+    assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
     if (conn->ifc_error.u.err != 0)
     {
         conn_err = conn->ifc_error;
@@ -3325,11 +3349,6 @@ immediate_close (struct ietf_full_conn *conn)
     {
         conn_err = CONN_ERR(0, TEC_NO_ERROR);
         error_reason = "user aborted connection";
-    }
-    else if (conn->ifc_flags & IFC_TIMED_OUT)
-    {
-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
-        error_reason = "connection timed out";
     }
     else if (conn->ifc_flags & IFC_HSK_FAILED)
     {
@@ -3682,6 +3701,20 @@ ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
     packet_out = lsquic_send_ctl_next_packet_to_send(&conn->ifc_send_ctl, size);
     if (packet_out)
         lsquic_packet_out_set_spin_bit(packet_out, conn->ifc_spin_bit);
+    return packet_out;
+}
+
+
+static struct lsquic_packet_out *
+ietf_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
+                                                                    size_t size)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct lsquic_packet_out *packet_out;
+
+    packet_out = ietf_full_conn_ci_next_packet_to_send(lconn, size);
+    if (packet_out)
+        ++conn->ifc_u.cli.ifcli_packets_out;
     return packet_out;
 }
 
@@ -4782,7 +4815,7 @@ process_max_streams_frame (struct ietf_full_conn *conn,
 
     if (max_stream_id > VINT_MAX_VALUE)
     {
-        ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR,
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
             "MAX_STREAMS: max %s stream ID of %"PRIu64" exceeds maximum "
             "stream ID", sd == SD_BIDI ? "bidi" : "uni", max_stream_id);
         return 0;
@@ -4866,11 +4899,17 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
     lsquic_cid_t cid;
     uint64_t seqno, retire_prior_to;
     int parsed_len, update_cur_dcid;
+    char tokstr[IQUIC_SRESET_TOKEN_SZ * 2 + 1];
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_conn_id(p, len,
                                         &seqno, &retire_prior_to, &cid, &token);
     if (parsed_len < 0)
+    {
+        if (parsed_len == -2)
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+                "NEW_CONNECTION_ID contains invalid CID length");
         return 0;
+    }
 
     if (seqno > UINT32_MAX || retire_prior_to > UINT32_MAX)
     {   /* It is wasteful to use 8-byte integers for these counters, so this
@@ -4883,7 +4922,7 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
 
     if (retire_prior_to > seqno)
     {
-        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
             "NEW_CONNECTION_ID: Retire Prior To=%"PRIu64" is larger then the "
             "Sequence Number=%"PRIu64, retire_prior_to, seqno);
         return 0;
@@ -4922,6 +4961,18 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
                 ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
                     "NEW_CONNECTION_ID: received the same CID with sequence "
                     "numbers %u and %"PRIu64, (*el)->de_seqno, seqno);
+                return 0;
+            }
+            else if (((*el)->de_flags & DE_SRST)
+                    && 0 == memcmp((*el)->de_srst, token,
+                                                    IQUIC_SRESET_TOKEN_SZ))
+            {
+                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                    "NEW_CONNECTION_ID: received second instance of reset "
+                    "token %s in seqno %"PRIu64", same as in seqno %u",
+                    (lsquic_hexstr(token, IQUIC_SRESET_TOKEN_SZ, tokstr,
+                                                    sizeof(tokstr)), tokstr),
+                    seqno, (*el)->de_seqno);
                 return 0;
             }
         }
@@ -5034,7 +5085,7 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     {
         if (LSQUIC_CIDS_EQ(&cce->cce_cid, &packet_in->pi_dcid))
         {
-            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "cannot retire CID "
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "cannot retire CID "
                 "seqno=%"PRIu64", for it is used as DCID in the packet", seqno);
             return 0;
         }
@@ -5060,6 +5111,13 @@ process_new_token_frame (struct ietf_full_conn *conn,
                                                                     &token_sz);
     if (parsed_len < 0)
         return 0;
+
+    if (0 == token_sz)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "received an empty "
+            "NEW_TOKEN frame");
+        return 0;
+    }
 
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG)
                             || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
@@ -5119,6 +5177,7 @@ static unsigned
 process_streams_blocked_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
+    lsquic_stream_id_t max_stream_id;
     uint64_t stream_limit;
     enum stream_dir sd;
     int parsed_len;
@@ -5127,6 +5186,15 @@ process_streams_blocked_frame (struct ietf_full_conn *conn,
                                                 len, &sd, &stream_limit);
     if (parsed_len < 0)
         return 0;
+
+    max_stream_id = stream_limit << SIT_SHIFT;
+    if (max_stream_id > VINT_MAX_VALUE)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+            "STREAMS_BLOCKED: max %s stream ID of %"PRIu64" exceeds maximum "
+            "stream ID", sd == SD_BIDI ? "bidi" : "uni", max_stream_id);
+        return 0;
+    }
 
     LSQ_DEBUG("received STREAMS_BLOCKED frame: limited to %"PRIu64
         " %sdirectional stream%.*s", stream_limit, sd == SD_UNI ? "uni" : "bi",
@@ -5247,6 +5315,9 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
     }
     else if (!dcid_changed)
     {
+        /* It is OK to reuse DCID if the peer did not use a new DCID when its
+         * address changed.  See [draft-ietf-quic-transport-24] Section 9.5.
+         */
         path->cop_path.np_dcid = CUR_NPATH(conn)->np_dcid;
         LSQ_DEBUGC("assigned already-used DCID %"CID_FMT" to new path %u, "
             "as incoming DCID did not change",
@@ -5387,15 +5458,55 @@ try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
 
 
 static int
+maybe_queue_opp_ack (struct ietf_full_conn *conn)
+{
+    if (/* If there is at least one ackable packet */
+        conn->ifc_n_slack_akbl[PNS_APP] > 0
+        /* ...and there are things to write */
+        && (!TAILQ_EMPTY(&conn->ifc_pub.write_streams) || conn->ifc_send_flags)
+        /* ...and writing is possible */
+        && write_is_possible(conn))
+    {
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
+        lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
+        conn->ifc_flags |= IFC_ACK_QUED_APP;
+        LSQ_DEBUG("%s ACK queued opportunistically", lsquic_pns2str[PNS_APP]);
+        return 1;
+    }
+    else
+        return 0;
+}
+
+
+static int
 process_retry_packet (struct ietf_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     lsquic_cid_t scid;
-    int cidlen_diff;
 
     if (conn->ifc_flags & (IFC_SERVER|IFC_RETRIED))
     {
+        /* [draft-ietf-quic-transport-24] Section 17.2.5:
+         " After the client has received and processed an Initial or Retry
+         " packet from the server, it MUST discard any subsequent Retry
+         " packets that it receives.
+         */
         LSQ_DEBUG("ignore Retry packet");
+        return 0;
+    }
+
+    if (CUR_DCID(conn)->len == packet_in->pi_scid_len
+            && 0 == memcmp(CUR_DCID(conn)->idbuf,
+                    packet_in->pi_data + packet_in->pi_scid_off,
+                    packet_in->pi_scid_len))
+    {
+        /*
+         * [draft-ietf-quic-transport-24] Section 17.2.5:
+         " A client MUST discard a Retry packet that contains a Source
+         " Connection ID field that is identical to the Destination
+         " Connection ID field of its Initial packet.
+         */
+        LSQ_DEBUG("server provided same SCID as ODCID: discard packet");
         return 0;
     }
 
@@ -5408,10 +5519,9 @@ process_retry_packet (struct ietf_full_conn *conn,
         return 0;
     }
 
-    cidlen_diff = (int) CUR_DCID(conn)->len - (int) packet_in->pi_scid_len;
     if (0 != lsquic_send_ctl_retry(&conn->ifc_send_ctl,
                     packet_in->pi_data + packet_in->pi_token,
-                            packet_in->pi_token_size, cidlen_diff))
+                            packet_in->pi_token_size))
         return -1;
 
     lsquic_scid_from_packet_in(packet_in, &scid);
@@ -5511,11 +5621,14 @@ ignore_init (struct ietf_full_conn *conn)
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_INIT);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_INIT]);
     if (!(conn->ifc_flags & IFC_SERVER))
+    {
         if (conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
         {
             lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
             conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = NULL;
         }
+        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+    }
 }
 
 
@@ -5556,6 +5669,21 @@ sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
             && 0 == memcmp(&((struct sockaddr_in6 *) a)->sin6_addr,
                             &((struct sockaddr_in6 *) b)->sin6_addr,
                             sizeof(((struct sockaddr_in6 *) b)->sin6_addr));
+}
+
+
+static void
+record_dcid (struct ietf_full_conn *conn,
+                                    const struct lsquic_packet_in *packet_in)
+{
+    unsigned orig_cid_len;
+
+    orig_cid_len = CUR_DCID(conn)->len;
+    conn->ifc_flags |= IFC_DCID_SET;
+    lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
+    LSQ_DEBUGC("set DCID to %"CID_FMT, CID_BITS(CUR_DCID(conn)));
+    lsquic_send_ctl_cidlen_change(&conn->ifc_send_ctl, orig_cid_len,
+                                                        CUR_DCID(conn)->len);
 }
 
 
@@ -5619,8 +5747,8 @@ process_regular_packet (struct ietf_full_conn *conn,
     if (0 == (packet_in->pi_flags & PI_DECRYPTED))
     {
         dec_packin = conn->ifc_conn.cn_esf_c->esf_decrypt_packet(
-                        conn->ifc_conn.cn_enc_session, conn->ifc_enpub,
-                        &conn->ifc_conn, packet_in);
+                            conn->ifc_conn.cn_enc_session, conn->ifc_enpub,
+                            &conn->ifc_conn, packet_in);
         switch (dec_packin)
         {
         case DECPI_BADCRYPT:
@@ -5669,16 +5797,9 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                     packet_in->pi_received);
     switch (st) {
     case REC_ST_OK:
-        if (!(conn->ifc_flags & (
-                                 IFC_SERVER|
-                                            IFC_DCID_SET))
+        if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET))
                                                 && (packet_in->pi_scid_len))
-        {
-            conn->ifc_flags |= IFC_DCID_SET;
-            lsquic_scid_from_packet_in(packet_in, CUR_DCID(conn));
-            LSQ_DEBUGC("set DCID to %"CID_FMT,
-                                        CID_BITS(CUR_DCID(conn)));
-        }
+            record_dcid(conn, packet_in);
         saved_path_id = conn->ifc_cur_path_id;
         parse_regular_packet(conn, packet_in);
         if (saved_path_id == conn->ifc_cur_path_id)
@@ -5709,10 +5830,14 @@ process_regular_packet (struct ietf_full_conn *conn,
                 frame_types &= ~(1 << QUIC_FRAME_PING);
             }
 #endif
-            was_missing = packet_in->pi_packno !=
+            if (frame_types & IQUIC_FRAME_ACKABLE_MASK)
+            {
+                was_missing = packet_in->pi_packno !=
                         lsquic_rechist_largest_packno(&conn->ifc_rechist[pns]);
-            conn->ifc_n_slack_akbl[pns]
-                                += !!(frame_types & IQUIC_FRAME_ACKABLE_MASK);
+                ++conn->ifc_n_slack_akbl[pns];
+            }
+            else
+                was_missing = 0;
             try_queueing_ack(conn, pns, was_missing, packet_in->pi_received);
         }
         conn->ifc_incoming_ecn <<= 1;
@@ -5745,8 +5870,7 @@ verneg_ok (const struct ietf_full_conn *conn)
 {
     enum lsquic_version ver;
 
-    ver = highest_bit_set(conn->ifc_enpub->enp_settings.es_versions
-                                                & LSQUIC_IETF_VERSIONS);
+    ver = highest_bit_set(conn->ifc_u.cli.ifcli_ver_neg.vn_supp);
     return (1 << ver) & LSQUIC_IETF_DRAFT_VERSIONS;
 }
 
@@ -5874,6 +5998,34 @@ ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 }
 
 
+/* Calling of ignore_init() must be delayed until all batched packets have
+ * been returned by the engine.
+ */
+static void
+pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
+                               const struct lsquic_packet_out *packet_out)
+{
+    /* Once IFC_IGNORE_INIT is set, the pre-hsk wrapper is removed: */
+    assert(!(conn->ifc_flags & IFC_IGNORE_INIT));
+    --conn->ifc_u.cli.ifcli_packets_out;
+    if (PNS_HSK == lsquic_packet_out_pns(packet_out))
+        conn->ifc_u.cli.ifcli_flags |= IFCLI_HSK_SENT_OR_DEL;
+    if (0 == conn->ifc_u.cli.ifcli_packets_out
+                && (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_SENT_OR_DEL))
+        ignore_init(conn);
+}
+
+
+static void
+ietf_full_conn_ci_packet_not_sent_pre_hsk (struct lsquic_conn *lconn,
+                                   struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    ietf_full_conn_ci_packet_not_sent(lconn, packet_out);
+    pre_hsk_packet_sent_or_delayed(conn, packet_out);
+}
+
+
 static void
 ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
                                struct lsquic_packet_out *packet_out)
@@ -5890,11 +6042,16 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
         ABORT_ERROR("sent packet failed: %s", strerror(errno));
     ++conn->ifc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
                               [ lsquic_packet_out_ecn(packet_out) ];
-    if (0 == (conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_INIT)))
-    {
-        if (PNS_HSK == lsquic_packet_out_pns(packet_out))
-            ignore_init(conn);
-    }
+}
+
+
+static void
+ietf_full_conn_ci_packet_sent_pre_hsk (struct lsquic_conn *lconn,
+                                   struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    ietf_full_conn_ci_packet_sent(lconn, packet_out);
+    pre_hsk_packet_sent_or_delayed(conn, packet_out);
 }
 
 
@@ -6000,7 +6157,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         have_delayed_packets =
             lsquic_send_ctl_maybe_squeeze_sched(&conn->ifc_send_ctl);
 
-    if (should_generate_ack(conn, IFC_ACK_QUEUED))
+    if (should_generate_ack(conn, IFC_ACK_QUEUED) ||
+                        (!have_delayed_packets && maybe_queue_opp_ack(conn)))
     {
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->ifc_send_ctl);
@@ -6478,8 +6636,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
     if (first_unvalidated || first_other)
     {
         victim = first_unvalidated ? first_unvalidated : first_other;
-        record_to_path(&first_unvalidated->cop_path, peer_ctx, local_sa,
-                                                                    peer_sa);
+        record_to_path(&victim->cop_path, peer_ctx, local_sa, peer_sa);
         return victim - conn->ifc_paths;
     }
 
@@ -6495,48 +6652,59 @@ ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
 }
 
 
-static const struct conn_iface ietf_full_conn_iface = {
-    .ci_abort                =  ietf_full_conn_ci_abort,
-    .ci_abort_error          =  ietf_full_conn_ci_abort_error,
-    .ci_retire_cid           =  ietf_full_conn_ci_retire_cid,
-    .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack,
-    .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams,
-    .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new,
-    .ci_close                =  ietf_full_conn_ci_close,
-    .ci_destroy              =  ietf_full_conn_ci_destroy,
-    .ci_drain_time           =  ietf_full_conn_ci_drain_time,
-    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams,
-    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx,
-    .ci_get_engine           =  ietf_full_conn_ci_get_engine,
-    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid,
-    .ci_get_path             =  ietf_full_conn_ci_get_path,
-    .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id,
-    .ci_going_away           =  ietf_full_conn_ci_going_away,
-    .ci_hsk_done             =  ietf_full_conn_ci_hsk_done,
-    .ci_internal_error       =  ietf_full_conn_ci_internal_error,
-    .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled,
-    .ci_is_tickable          =  ietf_full_conn_ci_is_tickable,
-    .ci_make_stream          =  ietf_full_conn_ci_make_stream,
-    .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams,
-    .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams,
-    .ci_next_packet_to_send  =  ietf_full_conn_ci_next_packet_to_send,
-    .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time,
-    .ci_packet_in            =  ietf_full_conn_ci_packet_in,
-    .ci_packet_not_sent      =  ietf_full_conn_ci_packet_not_sent,
-    .ci_packet_sent          =  ietf_full_conn_ci_packet_sent,
-    .ci_push_stream          =  ietf_full_conn_ci_push_stream,
-    .ci_record_addrs         =  ietf_full_conn_ci_record_addrs,
-    .ci_report_live          =  ietf_full_conn_ci_report_live,
-    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx,
-    .ci_status               =  ietf_full_conn_ci_status,
-    .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset,
-    .ci_tick                 =  ietf_full_conn_ci_tick,
-    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert,
-    .ci_write_ack            =  ietf_full_conn_ci_write_ack,
-};
+#define IETF_FULL_CONN_FUNCS \
+    .ci_abort                =  ietf_full_conn_ci_abort, \
+    .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
+    .ci_retire_cid           =  ietf_full_conn_ci_retire_cid, \
+    .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack, \
+    .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams, \
+    .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new, \
+    .ci_close                =  ietf_full_conn_ci_close, \
+    .ci_destroy              =  ietf_full_conn_ci_destroy, \
+    .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
+    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
+    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx, \
+    .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
+    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
+    .ci_get_path             =  ietf_full_conn_ci_get_path, \
+    .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id, \
+    .ci_going_away           =  ietf_full_conn_ci_going_away, \
+    .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
+    .ci_internal_error       =  ietf_full_conn_ci_internal_error, \
+    .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
+    .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
+    .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
+    .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
+    .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
+    .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time, \
+    .ci_packet_in            =  ietf_full_conn_ci_packet_in, \
+    .ci_push_stream          =  ietf_full_conn_ci_push_stream, \
+    .ci_record_addrs         =  ietf_full_conn_ci_record_addrs, \
+    .ci_report_live          =  ietf_full_conn_ci_report_live, \
+    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
+    .ci_status               =  ietf_full_conn_ci_status, \
+    .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
+    .ci_tick                 =  ietf_full_conn_ci_tick, \
+    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_write_ack            =  ietf_full_conn_ci_write_ack
 
+static const struct conn_iface ietf_full_conn_iface = {
+    IETF_FULL_CONN_FUNCS,
+    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send,
+    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
+    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
+};
 static const struct conn_iface *ietf_full_conn_iface_ptr =
                                                 &ietf_full_conn_iface;
+
+static const struct conn_iface ietf_full_conn_prehsk_iface = {
+    IETF_FULL_CONN_FUNCS,
+    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send_pre_hsk,
+    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent_pre_hsk,
+    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent_pre_hsk,
+};
+static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr =
+                                                &ietf_full_conn_prehsk_iface;
 
 
 static void

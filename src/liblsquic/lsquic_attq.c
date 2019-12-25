@@ -72,7 +72,7 @@ attq_destroy (struct attq *q)
 #define AE_RCHILD(i) (2 * i + 2)
 
 
-#ifndef NDEBUG
+#if LSQUIC_EXTRA_CHECKS && !defined(NDEBUG)
 static void
 attq_verify (struct attq *q)
 {

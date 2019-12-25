@@ -72,6 +72,9 @@ struct evanescent_conn
     struct pr_queue            *evc_queue;
     struct lsquic_packet_out    evc_packet_out;
     struct conn_cid_elem        evc_cces[1];
+    enum {
+        EVC_DROP    = 1 << 0,
+    }                           evc_flags;
     unsigned char               evc_buf[0];
 };
 
@@ -107,7 +110,17 @@ struct pr_queue
     unsigned char               prq_pubres_g_buf[GQUIC_RESET_SZ];
     unsigned char               prq_verneg_g_buf[1 + GQUIC_CID_LEN
                                                                 + N_LSQVER * 4];
+    /* We generate random nybbles in batches */
+#define NYBBLE_COUNT_BITS 4
+#define NYBBLE_COUNT (1 << NYBBLE_COUNT_BITS)
+#define NYBBLE_MASK (NYBBLE_COUNT - 1)
+    unsigned                    prq_rand_nybble_off;
+    uint8_t                     prq_rand_nybble_buf[NYBBLE_COUNT * 2];
 };
+
+
+static uint8_t
+get_rand_byte (struct pr_queue *);
 
 
 static int
@@ -200,6 +213,7 @@ prq_create (unsigned max_elems, unsigned max_conns,
     prq->prq_verneg_g_sz = verneg_g_sz;
     prq->prq_pubres_g_sz = (unsigned) prst_g_sz;
     prq->prq_enpub       = enpub;
+    prq->prq_rand_nybble_off = 0;
 
     LSQ_INFO("initialized queue of size %d", max_elems);
 
@@ -260,47 +274,33 @@ put_req (struct pr_queue *prq, struct packet_req *req)
 
 
 int
-prq_new_req (struct pr_queue *prq, enum packet_req_type type,
-         const struct lsquic_packet_in *packet_in, void *peer_ctx,
-         const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
+lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+    unsigned flags, enum lsquic_version version, unsigned short data_sz,
+    const lsquic_cid_t *dcid, const lsquic_cid_t *scid, void *peer_ctx,
+    const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
 {
     struct packet_req *req;
-    lsquic_ver_tag_t ver_tag;
-    enum lsquic_version version;
-    enum pr_flags flags;
-    unsigned max, size;
-
-    if (packet_in->pi_flags & PI_GQUIC)
-        flags = PR_GQUIC;
-    else
-        flags = 0;
-
-    if (packet_in->pi_quic_ver)
-    {
-        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
-                                                            sizeof(ver_tag));
-        version = lsquic_tag2ver(ver_tag);
-    }
-    else /* Got to set it to something sensible... */
-        version = LSQVER_ID23;
+    unsigned max, size, rand;
 
     if (type == PACKET_REQ_PUBRES && !(flags & PR_GQUIC))
     {
-        if (packet_in->pi_data_sz <= IQUIC_MIN_SRST_SIZE)
+        if (data_sz <= IQUIC_MIN_SRST_SIZE)
         {
             LSQ_DEBUGC("not scheduling public reset: incoming packet for CID "
-                "%"CID_FMT" too small: %hu bytes",
-                CID_BITS(&packet_in->pi_dcid), packet_in->pi_data_sz);
+                "%"CID_FMT" too small: %hu bytes", CID_BITS(dcid), data_sz);
             return -1;
         }
         /* Use a random stateless reset size */
-        max = MIN(IQUIC_MAX_SRST_SIZE, packet_in->pi_data_sz - 1u);
+        max = MIN(IQUIC_MAX_SRST_SIZE, data_sz - 1u);
         if (max > IQUIC_MIN_SRST_SIZE)
-            size = IQUIC_MIN_SRST_SIZE + rand() % (max - IQUIC_MIN_SRST_SIZE);
+        {
+            rand = get_rand_byte(prq);
+            size = IQUIC_MIN_SRST_SIZE + rand % (max - IQUIC_MIN_SRST_SIZE);
+        }
         else
             size = IQUIC_MIN_SRST_SIZE;
         LSQ_DEBUGC("selected %u-byte reset size for CID %"CID_FMT
-            " (range is [%u, %u])", size, CID_BITS(&packet_in->pi_dcid),
+            " (range is [%u, %u])", size, CID_BITS(dcid),
             IQUIC_MIN_SRST_SIZE, max);
     }
     else
@@ -314,7 +314,7 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     }
 
     req->pr_type     = type;
-    req->pr_dcid     = packet_in->pi_dcid;
+    req->pr_dcid     = *dcid;
     if (lsquic_hash_find(prq->prq_reqs_hash, req, sizeof(req)))
     {
         LSQ_DEBUG("request for this DCID and type already exists");
@@ -334,7 +334,7 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     req->pr_flags    = flags;
     req->pr_rst_sz   = size;
     req->pr_version  = version;
-    lsquic_scid_from_packet_in(packet_in, &req->pr_scid);
+    req->pr_scid     = *scid;
     req->pr_path.np_peer_ctx = peer_ctx;
     memcpy(NP_LOCAL_SA(&req->pr_path), local_addr,
                                             sizeof(req->pr_path.np_local_addr));
@@ -344,6 +344,36 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     LSQ_DEBUGC("scheduled %s packet for connection %"CID_FMT,
                             lsquic_preqt2str[type], CID_BITS(&req->pr_dcid));
     return 0;
+}
+
+
+int
+prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+         const struct lsquic_packet_in *packet_in, void *peer_ctx,
+         const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
+{
+    lsquic_ver_tag_t ver_tag;
+    enum lsquic_version version;
+    enum pr_flags flags;
+    lsquic_cid_t scid;
+
+    if (packet_in->pi_flags & PI_GQUIC)
+        flags = PR_GQUIC;
+    else
+        flags = 0;
+
+    if (packet_in->pi_quic_ver)
+    {
+        memcpy(&ver_tag, packet_in->pi_data + packet_in->pi_quic_ver,
+                                                            sizeof(ver_tag));
+        version = lsquic_tag2ver(ver_tag);
+    }
+    else /* Got to set it to something sensible... */
+        version = LSQVER_ID24;
+
+    lsquic_scid_from_packet_in(packet_in, &scid);
+    return lsquic_prq_new_req(prq, type, flags, version, packet_in->pi_data_sz,
+                &packet_in->pi_dcid, &scid, peer_ctx, local_addr, peer_addr);
 }
 
 
@@ -375,7 +405,9 @@ get_evconn (struct pr_queue *prq)
     if (lconn)
     {
         TAILQ_REMOVE(&prq->prq_free_conns, lconn, cn_next_pr);
-        return (struct evanescent_conn *) lconn;
+        evconn = (struct evanescent_conn *) lconn;
+        evconn->evc_flags = 0;
+        return evconn;
     }
 
     bufsz = max_bufsz(prq);
@@ -402,6 +434,31 @@ get_evconn (struct pr_queue *prq)
 }
 
 
+static uint8_t
+get_rand_nybble (struct pr_queue *prq)
+{
+    uint8_t byte;
+
+    if (prq->prq_rand_nybble_off == 0)
+        RAND_bytes(prq->prq_rand_nybble_buf, sizeof(prq->prq_rand_nybble_buf));
+
+    byte = prq->prq_rand_nybble_buf[prq->prq_rand_nybble_off / 2];
+    if (prq->prq_rand_nybble_off & 1)
+        byte >>= 4;
+    else
+        byte &= 0xF;
+    prq->prq_rand_nybble_off = (prq->prq_rand_nybble_off + 1) & NYBBLE_MASK;
+    return byte;
+}
+
+
+static uint8_t
+get_rand_byte (struct pr_queue *prq)
+{
+    return (get_rand_nybble(prq) << 4) | get_rand_nybble(prq);
+}
+
+
 struct lsquic_conn *
 prq_next_conn (struct pr_queue *prq)
 {
@@ -411,7 +468,7 @@ prq_next_conn (struct pr_queue *prq)
     struct packet_req *req;
     struct lsquic_packet_out *packet_out;
     int (*gen_verneg) (unsigned char *, size_t, const lsquic_cid_t *,
-                                            const lsquic_cid_t *, unsigned);
+                                    const lsquic_cid_t *, unsigned, uint8_t);
     int len;
 
     lconn = TAILQ_FIRST(&prq->prq_returned_conns);
@@ -455,7 +512,8 @@ prq_next_conn (struct pr_queue *prq)
             gen_verneg = lsquic_ietf_v1_gen_ver_nego_pkt;
         len = gen_verneg(packet_out->po_data, max_bufsz(prq),
                     /* Flip SCID/DCID here: */ &req->pr_dcid, &req->pr_scid,
-                    prq->prq_enpub->enp_settings.es_versions);
+                    prq->prq_enpub->enp_settings.es_versions,
+                    get_rand_byte(prq));
         if (len > 0)
             packet_out->po_data_sz = len;
         else
@@ -501,6 +559,17 @@ evanescent_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 
 
 static void
+prq_free_conn (struct pr_queue *prq, struct lsquic_conn *lconn)
+{
+    struct evanescent_conn *const evconn = (struct evanescent_conn *) lconn;
+
+    TAILQ_INSERT_HEAD(&prq->prq_free_conns, lconn, cn_next_pr);
+    put_req(prq, evconn->evc_req);
+    --prq->prq_nconns;
+}
+
+
+static void
 evanescent_conn_ci_packet_sent (struct lsquic_conn *lconn,
                             struct lsquic_packet_out *packet_out)
 {
@@ -513,9 +582,7 @@ evanescent_conn_ci_packet_sent (struct lsquic_conn *lconn,
     LSQ_DEBUGC("sent %s packet for connection %"CID_FMT"; free resources",
         lsquic_preqt2str[ evconn->evc_req->pr_type ],
         CID_BITS(&evconn->evc_req->pr_dcid));
-    TAILQ_INSERT_HEAD(&prq->prq_free_conns, lconn, cn_next_pr);
-    put_req(prq, evconn->evc_req);
-    --prq->prq_nconns;
+    prq_free_conn(prq, lconn);
 }
 
 
@@ -529,8 +596,17 @@ evanescent_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
     assert(packet_out == &evconn->evc_packet_out);
     assert(prq->prq_nconns > 0);
 
-    LSQ_DEBUG("packet not sent; put connection onto used list");
-    TAILQ_INSERT_HEAD(&prq->prq_returned_conns, lconn, cn_next_pr);
+    if (evconn->evc_flags & EVC_DROP)
+    {
+        LSQ_DEBUGC("packet not sent; drop connection %"CID_FMT,
+                                        CID_BITS(&evconn->evc_req->pr_dcid));
+        prq_free_conn(prq, lconn);
+    }
+    else
+    {
+        LSQ_DEBUG("packet not sent; put connection onto used list");
+        TAILQ_INSERT_HEAD(&prq->prq_returned_conns, lconn, cn_next_pr);
+    }
 }
 
 
@@ -619,3 +695,14 @@ const char *const lsquic_preqt2str[] =
     [PACKET_REQ_VERNEG] = "version negotiation",
     [PACKET_REQ_PUBRES] = "stateless reset",
 };
+
+
+void
+lsquic_prq_drop (struct lsquic_conn *lconn)
+{
+    struct evanescent_conn *const evconn = (void *) lconn;
+
+    evconn->evc_flags |= EVC_DROP;
+    LSQ_DEBUGC("mark for connection %"CID_FMT" for dropping",
+                                        CID_BITS(&evconn->evc_req->pr_dcid));
+}

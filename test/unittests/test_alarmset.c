@@ -32,6 +32,21 @@ alarm_cb (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 }
 
 
+#if __GNUC__
+#   define popcount __builtin_popcount
+#else
+static int
+popcount (unsigned v)
+{
+    int count, i;
+    for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
+        if (v & (1 << i))
+            ++count;
+    return count;
+}
+#endif
+
+
 int
 main (void)
 {
@@ -82,6 +97,33 @@ main (void)
 
     assert(4 == global_ctx.n_calls);
     assert(20 == global_ctx.last_expiry);
+
+    unsigned t = 1;
+    for (i = 1; i < (1u << MAX_LSQUIC_ALARMS); ++i)
+    {
+        alset.as_armed_set = 0;     /* Unset all */
+        unsigned const count = popcount(i);
+        unsigned const min_n = i % count;
+        unsigned const min_t = t++;
+        unsigned j, n, ids[2];
+        for (j = 0, n = 0; j < MAX_LSQUIC_ALARMS; ++j)
+        {
+            if ((1u << j) & i)
+            {
+                if (n == min_n)
+                {
+                    ids[0] = j;
+                    lsquic_alarmset_set(&alset, j, min_t);
+                }
+                else
+                    lsquic_alarmset_set(&alset, j, t++);
+                ++n;
+            }
+        }
+        lsquic_time_t found_min_t = lsquic_alarmset_mintime(&alset, &ids[1]);
+        assert(min_t == found_min_t);
+        assert(ids[0] == ids[1]);
+    }
 
     return 0;
 }

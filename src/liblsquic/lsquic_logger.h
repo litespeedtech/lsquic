@@ -73,7 +73,6 @@ enum lsquic_logger_module {
     LSQLM_DI,
     LSQLM_PRQ,
     LSQLM_PACER,
-    LSQLM_MIN_HEAP,
     LSQLM_HTTP1X,
     LSQLM_QLOG,
     LSQLM_TRAPA,

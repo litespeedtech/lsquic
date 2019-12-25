@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <time.h>
+#include <arpa/inet.h>
 #ifndef WIN32
 #include <sys/time.h>
 #include <netinet/in.h>
@@ -78,6 +79,14 @@
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
+
+#ifndef LSQUIC_DEBUG_NEXT_ADV_TICK
+#define LSQUIC_DEBUG_NEXT_ADV_TICK 1
+#endif
+
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
+#include "lsquic_alarmset.h"
+#endif
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -243,6 +252,11 @@ struct lsquic_engine
 #if LSQUIC_COUNT_ENGINE_CALLS
     unsigned long                      n_engine_calls;
 #endif
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
+    uintptr_t                          last_logged_conn;
+    unsigned                           last_logged_ae_why;
+    int                                last_tick_diff;
+#endif
 };
 
 
@@ -256,7 +270,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
-        settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_SERVER;
         settings->es_init_max_stream_data_bidi_remote
@@ -273,7 +286,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
-        settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
         settings->es_init_max_stream_data_bidi_remote
@@ -320,6 +332,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_qpack_enc_max_size = LSQUIC_DF_QPACK_ENC_MAX_SIZE;
     settings->es_qpack_enc_max_blocked = LSQUIC_DF_QPACK_ENC_MAX_BLOCKED;
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
+    settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
 }
 
 
@@ -532,11 +545,11 @@ lsquic_engine_new (unsigned flags,
     if (hash_conns_by_addr(engine))
         engine->flags |= ENG_CONNS_BY_ADDR;
     engine->conns_hash = lsquic_hash_create();
+    engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
+    if (!engine->pub.enp_tokgen)
+        return NULL;
     if (flags & ENG_SERVER)
     {
-        engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
-        if (!engine->pub.enp_tokgen)
-            return NULL;
         engine->pr_queue = prq_create(
             10000 /* TODO: make configurable */, MAX_OUT_BATCH_SIZE,
             &engine->pub);
@@ -711,7 +724,8 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
             && (conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED))
                                         != (LSCONN_MINI|LSCONN_PROMOTED))
     {
-        if (conn->cn_if->ci_drain_time &&
+        if (!(conn->cn_flags & LSCONN_IMMED_CLOSE)
+            && conn->cn_if->ci_drain_time &&
             (drain_time = conn->cn_if->ci_drain_time(conn), drain_time))
         {
             for (cce = cce_iter_first(&citer, conn); cce;
@@ -1010,7 +1024,6 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          const struct sockaddr *sa_peer, void *peer_ctx)
 {
     struct lsquic_hash_elem *el;
-    lsquic_cid_t odcid;
     struct purga_el *puel;
     lsquic_conn_t *conn;
 
@@ -1120,7 +1133,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     if ((1 << version) & LSQUIC_IETF_VERSIONS)
     {
         conn = lsquic_mini_conn_ietf_new(&engine->pub, packet_in, version,
-                    sa_peer->sa_family == AF_INET, odcid.len ? &odcid : NULL);
+                    sa_peer->sa_family == AF_INET, NULL);
     }
     else
     {
@@ -1231,7 +1244,7 @@ find_conn_by_srst (struct lsquic_engine *engine,
 static int
 process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
        struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
-       const struct sockaddr *sa_peer, void *peer_ctx)
+       const struct sockaddr *sa_peer, void *peer_ctx, int full_udp_packet)
 {
     lsquic_conn_t *conn;
     const unsigned char *packet_in_data;
@@ -1254,6 +1267,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     if (!conn)
     {
         if (engine->pub.enp_settings.es_honor_prst
+                && full_udp_packet
                 && !(packet_in->pi_flags & PI_GQUIC)
                 && engine->pub.enp_srst_hash
                 && (conn = find_conn_by_srst(engine, packet_in)))
@@ -1459,7 +1473,8 @@ add_conn_to_hash (struct lsquic_engine *engine, struct lsquic_conn *conn,
 
 
 lsquic_conn_t *
-lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
+lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
+                       const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
                        const char *hostname, unsigned short max_packet_size,
@@ -1467,7 +1482,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
                        const unsigned char *token, size_t token_sz)
 {
     lsquic_conn_t *conn;
-    unsigned flags;
+    unsigned flags, versions;
     int is_ipv4;
 
     ENGINE_IN(engine);
@@ -1489,13 +1504,31 @@ lsquic_engine_connect (lsquic_engine_t *engine, const struct sockaddr *local_sa,
         return NULL;
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
     is_ipv4 = peer_sa->sa_family == AF_INET;
-    if (engine->pub.enp_settings.es_versions & LSQUIC_IETF_VERSIONS)
-        conn = lsquic_ietf_full_conn_client_new(&engine->pub,
+    if (zero_rtt && zero_rtt_len)
+    {
+        version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
+        if (version >= N_LSQVER)
+        {
+            LSQ_INFO("zero-rtt version is bad, won't use");
+            zero_rtt = NULL;
+            zero_rtt_len = 0;
+        }
+    }
+    if (version >= N_LSQVER)
+    {
+        if (version > N_LSQVER)
+            LSQ_WARN("invalid version specified, engine will pick");
+        versions = engine->pub.enp_settings.es_versions;
+    }
+    else
+        versions = 1u << version;
+    if (versions & LSQUIC_IETF_VERSIONS)
+        conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
                     flags, hostname, max_packet_size,
                     is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
     else
-        conn = lsquic_gquic_full_conn_client_new(&engine->pub, flags,
-                            hostname, max_packet_size, is_ipv4,
+        conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
+                            flags, hostname, max_packet_size, is_ipv4,
                             zero_rtt, zero_rtt_len);
     if (!conn)
         goto err;
@@ -1555,13 +1588,12 @@ refflags2str (enum lsquic_conn_flags flags, char s[6])
 static void
 engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
 {
-    const lsquic_cid_t *cid;
     char str[2][7];
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
-    cid = lsquic_conn_log_cid(conn);
-    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(cid),
+    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'",
+                    CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags & ~flag, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
 }
@@ -1571,7 +1603,6 @@ static lsquic_conn_t *
 engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
                                         enum lsquic_conn_flags flags)
 {
-    const lsquic_cid_t *cid;
     char str[2][7];
     lsquic_time_t now;
     assert(flags & CONN_REF_FLAGS);
@@ -1581,8 +1612,8 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
         assert(0 == (conn->cn_flags & LSCONN_HASHED));
 #endif
     conn->cn_flags &= ~flags;
-    cid = lsquic_conn_log_cid(conn);
-    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'", CID_BITS(cid),
+    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'",
+                    CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags | flags, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
     if (0 == (conn->cn_flags & CONN_REF_FLAGS))
@@ -1922,7 +1953,8 @@ coi_reheap (struct conns_out_iter *iter, lsquic_engine_t *engine)
     {
         TAILQ_REMOVE(&iter->coi_active_list, conn, cn_next_out);
         conn->cn_flags &= ~LSCONN_COI_ACTIVE;
-        if ((conn->cn_flags & CONN_REF_FLAGS) != LSCONN_HAS_OUTGOING)
+        if ((conn->cn_flags & CONN_REF_FLAGS) != LSCONN_HAS_OUTGOING
+                                && !(conn->cn_flags & LSCONN_IMMED_CLOSE))
             lsquic_mh_insert(iter->coi_heap, conn, conn->cn_last_sent);
         else    /* Closed connection gets one shot at sending packets */
             (void) engine_decref_conn(engine, conn, LSCONN_HAS_OUTGOING);
@@ -1972,14 +2004,99 @@ lose_matching_packets (const lsquic_engine_t *engine, struct out_batch *batch,
 #define CONST_BATCH
 #endif
 
-static unsigned
-send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
-            CONST_BATCH struct out_batch *batch, unsigned n_to_send)
+
+static void
+sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
 {
-    int n_sent, i;
+    unsigned short port;
+    int len;
+
+    switch (addr->sa_family)
+    {
+    case AF_INET:
+        port = ((struct sockaddr_in *) addr)->sin_port;
+        if (!inet_ntop(AF_INET, &((struct sockaddr_in *) addr)->sin_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    case AF_INET6:
+        port = ((struct sockaddr_in6 *) addr)->sin6_port;
+        if (!inet_ntop(AF_INET6, &((struct sockaddr_in6 *) addr)->sin6_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    default:
+        port = 0;
+        (void) snprintf(buf, sz, "<invalid family %d>", addr->sa_family);
+        break;
+    }
+
+    len = strlen(buf);
+    if (len < (int) sz)
+        snprintf(buf + len, sz - (size_t) len, ":%hu", port);
+}
+
+
+struct send_batch_ctx {
+    struct conns_stailq                 *closed_conns;
+    struct conns_tailq                  *ticked_conns;
+    struct conns_out_iter               *conns_iter;
+    CONST_BATCH struct out_batch        *batch;
+};
+
+
+static void
+close_conn_immediately (struct lsquic_engine *engine,
+                const struct send_batch_ctx *sb_ctx, struct lsquic_conn *conn)
+{
+    conn->cn_flags |= LSCONN_IMMED_CLOSE;
+    if (!(conn->cn_flags & LSCONN_CLOSING))
+    {
+        STAILQ_INSERT_TAIL(sb_ctx->closed_conns, conn, cn_next_closed_conn);
+        engine_incref_conn(conn, LSCONN_CLOSING);
+        if (conn->cn_flags & LSCONN_HASHED)
+            remove_conn_from_hash(engine, conn);
+    }
+    if (conn->cn_flags & LSCONN_TICKED)
+    {
+        TAILQ_REMOVE(sb_ctx->ticked_conns, conn, cn_next_ticked);
+        engine_decref_conn(engine, conn, LSCONN_TICKED);
+    }
+}
+
+
+static void
+close_conn_on_send_error (struct lsquic_engine *engine,
+                          const struct send_batch_ctx *sb_ctx, int n, int e_val)
+{
+    const struct out_batch *batch = sb_ctx->batch;
+    struct lsquic_conn *const conn = batch->conns[n];
+    char buf[2][INET6_ADDRSTRLEN + sizeof(":65535")];
+
+    LSQ_WARNC("error sending packet for %s connection %"CID_FMT" - close it; "
+        "src: %s; dst: %s; errno: %d",
+        conn->cn_flags & LSCONN_EVANESCENT ? "evanecsent" :
+        conn->cn_flags & LSCONN_MINI ? "mini" : "regular",
+        CID_BITS(lsquic_conn_log_cid(conn)),
+        (sockaddr2str(batch->outs[n].local_sa, buf[0], sizeof(buf[0])), buf[0]),
+        (sockaddr2str(batch->outs[n].dest_sa, buf[1], sizeof(buf[1])), buf[1]),
+        e_val);
+    if (conn->cn_flags & LSCONN_EVANESCENT)
+        lsquic_prq_drop(conn);
+    else
+        close_conn_immediately(engine, sb_ctx, conn);
+}
+
+
+static unsigned
+send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
+            unsigned n_to_send)
+{
+    int n_sent, i, e_val;
     lsquic_time_t now;
     unsigned off;
     size_t count;
+    CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
 
 #ifndef NDEBUG
@@ -2001,18 +2118,22 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
     }
     n_sent = engine->packets_out(engine->packets_out_ctx, batch->outs,
                                                                 n_to_send);
+    e_val = errno;
     if (n_sent < (int) n_to_send)
     {
         engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
         engine->resume_sending_at = now + 1000000;
         LSQ_DEBUG("cannot send packets");
         EV_LOG_GENERIC_EVENT("cannot send packets");
+        if (!(EAGAIN == e_val || EWOULDBLOCK == e_val))
+            close_conn_on_send_error(engine, sb_ctx,
+                                        n_sent < 0 ? 0 : n_sent, e_val);
     }
     if (n_sent >= 0)
         LSQ_DEBUG("packets out returned %d (out of %u)", n_sent, n_to_send);
     else
     {
-        LSQ_DEBUG("packets out returned an error: %s", strerror(errno));
+        LSQ_DEBUG("packets out returned an error: %s", strerror(e_val));
         n_sent = 0;
     }
     if (n_sent > 0)
@@ -2077,7 +2198,7 @@ send_batch (lsquic_engine_t *engine, struct conns_out_iter *conns_iter,
                                                                 *packet_out);
         while (--packet_out > end);
         if (!(batch->conns[i]->cn_flags & (LSCONN_COI_ACTIVE|LSCONN_EVANESCENT)))
-            coi_reactivate(conns_iter, batch->conns[i]);
+            coi_reactivate(sb_ctx->conns_iter, batch->conns[i]);
     }
     return n_sent;
 }
@@ -2125,7 +2246,6 @@ send_packets_out (struct lsquic_engine *engine,
                   struct conns_tailq *ticked_conns,
                   struct conns_stailq *closed_conns)
 {
-    const lsquic_cid_t *cid;
     unsigned n, w, n_sent, n_batches_sent;
     lsquic_packet_out_t *packet_out;
     struct lsquic_packet_out **packet;
@@ -2134,6 +2254,12 @@ send_packets_out (struct lsquic_engine *engine,
     struct iovec *iov, *packet_iov;
     struct conns_out_iter conns_iter;
     int shrink, deadline_exceeded;
+    const struct send_batch_ctx sb_ctx = {
+        closed_conns,
+        ticked_conns,
+        &conns_iter,
+        &engine->out_batch,
+    };
 
     coi_init(&conns_iter, engine);
     n_batches_sent = 0;
@@ -2145,14 +2271,13 @@ send_packets_out (struct lsquic_engine *engine,
 
     while ((conn = coi_next(&conns_iter)))
     {
-        cid = lsquic_conn_log_cid(conn);
         packet_out = conn->cn_if->ci_next_packet_to_send(conn, 0);
         if (!packet_out) {
             /* Evanescent connection always has a packet to send: */
             assert(!(conn->cn_flags & LSCONN_EVANESCENT));
             LSQ_DEBUGC("batched all outgoing packets for %s conn %"CID_FMT,
-                (conn->cn_flags & LSCONN_MINI   ? "mini"   :
-                                          "full"), CID_BITS(cid));
+                (conn->cn_flags & LSCONN_MINI   ? "mini" : "full"),
+                CID_BITS(lsquic_conn_log_cid(conn)));
             coi_deactivate(&conns_iter, conn);
             continue;
         }
@@ -2171,22 +2296,11 @@ send_packets_out (struct lsquic_engine *engine,
                 /* This is pretty bad: close connection immediately */
                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
                 LSQ_INFOC("conn %"CID_FMT" has unsendable packets",
-                                                    CID_BITS(cid));
+                                        CID_BITS(lsquic_conn_log_cid(conn)));
                 if (!(conn->cn_flags & LSCONN_EVANESCENT))
                 {
-                    if (!(conn->cn_flags & LSCONN_CLOSING))
-                    {
-                        STAILQ_INSERT_TAIL(closed_conns, conn, cn_next_closed_conn);
-                        engine_incref_conn(conn, LSCONN_CLOSING);
-                        if (conn->cn_flags & LSCONN_HASHED)
-                            remove_conn_from_hash(engine, conn);
-                    }
+                    close_conn_immediately(engine, &sb_ctx, conn);
                     coi_deactivate(&conns_iter, conn);
-                    if (conn->cn_flags & LSCONN_TICKED)
-                    {
-                        TAILQ_REMOVE(ticked_conns, conn, cn_next_ticked);
-                        engine_decref_conn(engine, conn, LSCONN_TICKED);
-                    }
                 }
                 continue;
             case ENCPA_OK:
@@ -2204,7 +2318,7 @@ send_packets_out (struct lsquic_engine *engine,
             }
         }
         LSQ_DEBUGC("batched packet %"PRIu64" for connection %"CID_FMT,
-                                        packet_out->po_packno, CID_BITS(cid));
+                    packet_out->po_packno, CID_BITS(lsquic_conn_log_cid(conn)));
         if (packet_out->po_flags & PO_ENCRYPTED)
         {
             iov->iov_base          = packet_out->po_enc_data;
@@ -2245,7 +2359,7 @@ send_packets_out (struct lsquic_engine *engine,
         if (n == engine->batch_size
             || iov >= batch->iov + sizeof(batch->iov) / sizeof(batch->iov[0]))
         {
-            w = send_batch(engine, &conns_iter, batch, n);
+            w = send_batch(engine, &sb_ctx, n);
             n = 0;
             iov = batch->iov;
             packet = batch->packets;
@@ -2265,7 +2379,7 @@ send_packets_out (struct lsquic_engine *engine,
   end_for:
 
     if (n > 0) {
-        w = send_batch(engine, &conns_iter, batch, n);
+        w = send_batch(engine, &sb_ctx, n);
         n_sent += w;
         shrink = w < n;
         ++n_batches_sent;
@@ -2438,9 +2552,6 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         (void) engine_decref_conn(engine, conn, LSCONN_CLOSING);
     }
 
-    /* TODO Heapification can be optimized by switching to the Floyd method:
-     * https://en.wikipedia.org/wiki/Binary_heap#Building_a_heap
-     */
     while ((conn = TAILQ_FIRST(&ticked_conns)))
     {
         TAILQ_REMOVE(&ticked_conns, conn, cn_next_ticked);
@@ -2448,6 +2559,7 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         if (!(conn->cn_flags & LSCONN_TICKABLE)
             && conn->cn_if->ci_is_tickable(conn))
         {
+            /* Floyd heapification is not faster, don't bother. */
             lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
             engine_incref_conn(conn, LSCONN_TICKABLE);
         }
@@ -2504,6 +2616,8 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             parse_packet_in_begin = lsquic_gquic_parse_packet_in_begin;
         else if ((1 << conn->cn_version) & LSQUIC_IETF_VERSIONS)
             parse_packet_in_begin = lsquic_ietf_v1_parse_packet_in_begin;
+        else if (conn->cn_version == LSQVER_050)
+            parse_packet_in_begin = lsquic_Q050_parse_packet_in_begin;
         else
         {
             assert(conn->cn_version == LSQVER_046
@@ -2544,7 +2658,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         packet_in->pi_flags |= (3 & ecn) << PIBIT_ECN_SHIFT;
         eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);
         s = process_packet_in(engine, packet_in, &ppstate, sa_local, sa_peer,
-                                                                    peer_ctx);
+                            peer_ctx, packet_in->pi_data_sz == packet_in_size);
         n_zeroes += s == 0;
     }
     while (0 == s && packet_in_data < packet_end);
@@ -2592,40 +2706,50 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
     const struct attq_elem *next_attq;
     lsquic_time_t now, next_time;
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
     const struct lsquic_conn *conn;
-    const lsquic_cid_t *cid;
     const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
+#endif
 
     ENGINE_CALLS_INCR(engine);
 
     if ((engine->flags & ENG_PAST_DEADLINE)
                                     && lsquic_mh_count(&engine->conns_out))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_out);
-        cid = lsquic_conn_log_cid(conn);
+        engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
             "and have %u outgoing connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_out),
-            lsquic_mh_count(&engine->conns_out) != 1, "s", CID_BITS(cid));
+            lsquic_mh_count(&engine->conns_out) != 1, "s",
+            CID_BITS(lsquic_conn_log_cid(conn)));
+#endif
         *diff = 0;
         return 1;
     }
 
     if (engine->pr_queue && prq_have_pending(engine->pr_queue))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
+        engine->last_logged_conn = 0;
         LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
+#endif
         *diff = 0;
         return 1;
     }
 
     if (lsquic_mh_count(&engine->conns_tickable))
     {
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
         conn = lsquic_mh_peek(&engine->conns_tickable);
-        cid = lsquic_conn_log_cid(conn);
+        engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
             "connection%.*s (%"CID_FMT" first)",
             lsquic_mh_count(&engine->conns_tickable),
-            lsquic_mh_count(&engine->conns_tickable) != 1, "s", CID_BITS(cid));
+            lsquic_mh_count(&engine->conns_tickable) != 1, "s",
+            CID_BITS(lsquic_conn_log_cid(conn)));
+#endif
         *diff = 0;
         return 1;
     }
@@ -2655,15 +2779,30 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 
     now = lsquic_time_now();
     *diff = (int) ((int64_t) next_time - (int64_t) now);
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
     if (next_attq)
     {
-        cid = lsquic_conn_log_cid(next_attq->ae_conn);
-        LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
-            ": %s", *diff, CID_BITS(cid),
-            lsquic_attq_why2str(next_attq->ae_why));
+        /* Deduplicate consecutive log messages about the same reason for the
+         * same connection.
+         * If diff is always zero or diff reset to a higher value, event is
+         * still logged.
+         */
+        if (!((unsigned) next_attq->ae_why == engine->last_logged_ae_why
+                    && (uintptr_t) next_attq->ae_conn
+                                            == engine->last_logged_conn
+                    && *diff < engine->last_tick_diff))
+        {
+            engine->last_logged_conn = (uintptr_t) next_attq->ae_conn;
+            engine->last_logged_ae_why = (unsigned) next_attq->ae_why;
+            engine->last_tick_diff = *diff;
+            LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
+                ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
+                lsquic_attq_why2str(next_attq->ae_why));
+        }
     }
     else
         LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
+#endif
     return 1;
 }
 

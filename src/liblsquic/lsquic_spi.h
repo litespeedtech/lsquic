@@ -23,6 +23,7 @@ struct stream_prio_iter
     const char                     *spi_name;           /* Used for logging */
     uint64_t                        spi_set[4];         /* 256 bits */
     enum stream_q_flags             spi_onlist_mask;
+    unsigned                        spi_n_added;
     unsigned char                   spi_cur_prio;
     unsigned char                   spi_prev_prio;
     struct lsquic_stream           *spi_prev_stream,

@@ -30,7 +30,7 @@ enum quic_frame_type
     QUIC_FRAME_STOP_SENDING,        /* I */
     QUIC_FRAME_PATH_CHALLENGE,      /* I */
     QUIC_FRAME_PATH_RESPONSE,       /* I */
-    QUIC_FRAME_CRYPTO,              /* I */
+    QUIC_FRAME_CRYPTO,              /* B */
     QUIC_FRAME_RETIRE_CONNECTION_ID,/* I */
     QUIC_FRAME_NEW_TOKEN,           /* I */
     N_QUIC_FRAMES
@@ -209,9 +209,10 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_NEW_TOKEN          \
     |  QUIC_FTBIT_CRYPTO             )
 
-/* [draft-ietf-quic-transport-20] Section 13.1.1 */
+/* [draft-ietf-quic-transport-24] Section 1.2 */
 #define IQUIC_FRAME_ACKABLE_MASK (  \
-    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_ACK|QUIC_FTBIT_PADDING))
+    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_ACK|QUIC_FTBIT_PADDING\
+                                            |QUIC_FTBIT_CONNECTION_CLOSE))
 
 /* [draft-ietf-quic-transport-20], Section 13.2 */
 /* We bend some rules and retransmit BLOCKED, MAX_DATA, MAX_STREAM_DATA,

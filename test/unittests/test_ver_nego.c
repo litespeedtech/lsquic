@@ -144,7 +144,7 @@ run_gvnt (int i)
         /* XXX this is never executed, as there is no test case for this */
         scid = (lsquic_cid_t) { .len = 0, };
         len = lsquic_Q046_gen_ver_nego_pkt(out, gvnt->gvnt_bufsz, &dcid,
-                                            &scid, gvnt->gvnt_versions);
+                    &scid, gvnt->gvnt_versions, ((unsigned char) rand()) & 0xF);
     }
     assert(("Packet length is correct", len == gvnt->gvnt_len));
 

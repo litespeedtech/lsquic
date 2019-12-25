@@ -54,6 +54,9 @@ struct lsquic_conn_public {
     struct conn_stats              *conn_stats;
 #endif
     const struct network_path      *path;
+#if LSQUIC_EXTRA_CHECKS
+    unsigned long                   stream_frame_bytes;
+#endif
 };
 
 #endif
