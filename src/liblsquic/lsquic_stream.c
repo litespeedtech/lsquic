@@ -2898,7 +2898,7 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
     if (stream->sm_bflags & SMBF_IETF)
         pns = lsquic_enclev2pns[ crypto_level(stream) ];
     else
-        pns = PNS_INIT;
+        pns = PNS_APP;
 
     assert(size > 0);
     crypto_header_sz = stream->sm_frame_header_sz(stream, size);

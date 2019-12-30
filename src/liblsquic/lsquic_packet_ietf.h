@@ -20,4 +20,7 @@
  */
 #define MIN_INITIAL_DCID_LEN 8
 
+/* [draft-ietf-quic-transport-24] Section 8.1 */
+#define IQUIC_MIN_INIT_PACKET_SZ 1200
+
 #endif

@@ -1385,6 +1385,7 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
     enum ctl_what cw;
     unsigned i;
     int s, saved_errno;
+    uintptr_t ancil_key, prev_ancil_key;
     struct mmsghdr mmsgs[1024];
     union {
         /* cmsg(3) recommends union for proper alignment */
@@ -1404,6 +1405,7 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
         struct cmsghdr cmsg;
     } ancil [ sizeof(mmsgs) / sizeof(mmsgs[0]) ];
 
+    prev_ancil_key = 0;
     for (i = 0; i < count && i < sizeof(mmsgs) / sizeof(mmsgs[0]); ++i)
     {
         mmsgs[i].msg_hdr.msg_name       = (void *) specs[i].dest_sa;
@@ -1414,20 +1416,51 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
         mmsgs[i].msg_hdr.msg_iovlen     = specs[i].iovlen;
         mmsgs[i].msg_hdr.msg_flags      = 0;
         if ((sport->sp_flags & SPORT_SERVER) && specs[i].local_sa->sa_family)
+        {
             cw = CW_SENDADDR;
-        else
-            cw = 0;
-#if ECN_SUPPORTED
-        if (sport->sp_prog->prog_api.ea_settings->es_ecn && specs[i].ecn)
-            cw |= CW_ECN;
-#endif
-        if (cw)
-            setup_control_msg(&mmsgs[i].msg_hdr, cw, &specs[i], ancil[i].buf,
-                                                    sizeof(ancil[i].buf));
+            ancil_key = (uintptr_t) specs[i].local_sa;
+            assert(0 == (ancil_key & 3));
+        }
         else
         {
-            mmsgs[i].msg_hdr.msg_control = NULL;
+            cw = 0;
+            ancil_key = 0;
+        }
+#if ECN_SUPPORTED
+        if (sport->sp_prog->prog_api.ea_settings->es_ecn && specs[i].ecn)
+        {
+            cw |= CW_ECN;
+            ancil_key |= specs[i].ecn;
+        }
+#endif
+        if (cw && prev_ancil_key == ancil_key)
+        {
+            /* Reuse previous ancillary message */
+            assert(i > 0);
+#ifndef WIN32
+            mmsgs[i].msg_hdr.msg_control    = mmsgs[i - 1].msg_hdr.msg_control;
+            mmsgs[i].msg_hdr.msg_controllen = mmsgs[i - 1].msg_hdr.msg_controllen;
+#else
+            mmsgs[i].msg_hdr.Control.buf    = mmsgs[i - 1].msg_hdr.Control.buf;
+            mmsgs[i].msg_hdr.Control.len    = mmsgs[i - 1].msg_hdr.Control.len;
+#endif
+        }
+        else if (cw)
+        {
+            prev_ancil_key = ancil_key;
+            setup_control_msg(&mmsgs[i].msg_hdr, cw, &specs[i], ancil[i].buf,
+                                                    sizeof(ancil[i].buf));
+        }
+        else
+        {
+            prev_ancil_key = 0;
+#ifndef WIN32
+            mmsgs[i].msg_hdr.msg_control    = NULL;
             mmsgs[i].msg_hdr.msg_controllen = 0;
+#else
+            mmsgs[i].msg_hdr.Control.buf    = NULL;
+            mmsgs[i].msg_hdr.Control.len    = 0;
+#endif
         }
     }
 
@@ -1510,6 +1543,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         ];
         struct cmsghdr cmsg;
     } ancil;
+    uintptr_t ancil_key, prev_ancil_key;
 
     if (0 == count)
         return 0;
@@ -1538,6 +1572,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #endif
 
     n = 0;
+    prev_ancil_key = 0;
     do
     {
         sport = specs[n].peer_ctx;
@@ -1563,17 +1598,36 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         msg.dwFlags        = 0;
 #endif
         if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)
+        {
             cw = CW_SENDADDR;
-        else
-            cw = 0;
-#if ECN_SUPPORTED
-        if (sport->sp_prog->prog_api.ea_settings->es_ecn && specs[n].ecn)
-            cw |= CW_ECN;
-#endif
-        if (cw)
-            setup_control_msg(&msg, cw, &specs[n], ancil.buf, sizeof(ancil.buf));
+            ancil_key = (uintptr_t) specs[n].local_sa;
+            assert(0 == (ancil_key & 3));
+        }
         else
         {
+            cw = 0;
+            ancil_key = 0;
+        }
+#if ECN_SUPPORTED
+        if (sport->sp_prog->prog_api.ea_settings->es_ecn && specs[n].ecn)
+        {
+            cw |= CW_ECN;
+            ancil_key |= specs[n].ecn;
+        }
+#endif
+        if (cw && prev_ancil_key == ancil_key)
+        {
+            /* Reuse previous ancillary message */
+            ;
+        }
+        else if (cw)
+        {
+            prev_ancil_key = ancil_key;
+            setup_control_msg(&msg, cw, &specs[n], ancil.buf, sizeof(ancil.buf));
+        }
+        else
+        {
+            prev_ancil_key = 0;
 #ifndef WIN32
             msg.msg_control = NULL;
             msg.msg_controllen = 0;

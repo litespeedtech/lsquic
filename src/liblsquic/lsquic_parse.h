@@ -17,7 +17,6 @@ enum packet_out_flags;
 enum lsquic_version;
 enum stream_dir;
 
-#define LSQUIC_PARSE_ACK_TIMESTAMPS 0
 
 struct ack_info
 {
@@ -28,31 +27,11 @@ struct ack_info
                                  * ran out of elements in `ranges'.
                                  */
     }               flags;
-    unsigned    n_timestamps;   /* 0 to 255 */
     unsigned    n_ranges;       /* This is at least 1 */
                                 /* Largest acked is ack_info.ranges[0].high */
     lsquic_time_t   lack_delta;
     uint64_t        ecn_counts[4];
     struct lsquic_packno_range ranges[256];
-#if LSQUIC_PARSE_ACK_TIMESTAMPS
-    struct {
-        /* Currently we just read these timestamps in (assuming it is
-         * compiled in, of course), but do not do anything with them.
-         * When we do, the representation of these fields should be
-         * switched to whatever is most appropriate/efficient.
-         */
-        unsigned char   packet_delta;
-        uint64_t        delta_usec;
-    }           timestamps[255];
-#endif
-};
-
-
-struct short_ack_info
-{
-    unsigned                    sai_n_timestamps;
-    lsquic_time_t               sai_lack_delta;
-    struct lsquic_packno_range  sai_range;
 };
 
 #define largest_acked(acki) (+(acki)->ranges[0].high)
@@ -394,8 +373,16 @@ lsquic_gquic_po_header_sz (enum packet_out_flags flags);
  */
 #define twobit_to_1248(bits) (1 << (bits))
 
-char *
-acki2str (const struct ack_info *acki, size_t *sz);
+#define ECN_COUNTS_STR  " ECT(0): 01234567879012345678790;" \
+                        " ECT(1): 01234567879012345678790;" \
+                        " CE: 01234567879012345678790"
+#define RANGES_TRUNCATED_STR " ranges truncated! "
+
+#define MAX_ACKI_STR_SZ (256 * (3 /* [-] */ + 20 /* ~0ULL */ * 2) \
+                    + sizeof(ECN_COUNTS_STR) + sizeof(RANGES_TRUNCATED_STR))
+
+void
+lsquic_acki2str (const struct ack_info *acki, char *, size_t);
 
 void
 lsquic_turn_on_fin_Q035_thru_Q046 (unsigned char *);
@@ -406,5 +393,8 @@ lsquic_gquic_calc_packno_bits (lsquic_packno_t packno,
 
 unsigned
 lsquic_gquic_packno_bits2len (enum packno_bits);
+
+int
+lsquic_merge_acks (struct ack_info *dst, const struct ack_info *src);
 
 #endif

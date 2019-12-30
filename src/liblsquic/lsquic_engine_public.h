@@ -21,6 +21,7 @@ enum warning_type
 {
     WT_ACKPARSE_MINI,
     WT_ACKPARSE_FULL,
+    WT_NO_POISON,
     N_WARNING_TYPES,
 };
 

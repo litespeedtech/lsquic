@@ -51,8 +51,6 @@ enum handshake_error            /* TODO: rename this enum */
     HS_SHLO = 0,
     HS_1RTT = 1,
     HS_SREJ = 2,
-    HS_DELAYED = 3,
-    HS_PK_OFFLOAD = 4,
 };
 
 #ifndef LSQUIC_KEEP_ENC_SESS_HISTORY
@@ -207,11 +205,6 @@ struct enc_session_funcs_gquic
     const unsigned char *
     (*esf_get_dec_key_nonce_f) (enc_session_t *);
 #endif /* !defined(NDEBUG) */
-
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    void
-    (*esf_set_handshake_completed) (enc_session_t *);
-#endif
 
     /* Create client session */
     enc_session_t *

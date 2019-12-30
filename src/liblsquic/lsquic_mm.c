@@ -88,6 +88,7 @@ lsquic_mm_init (struct lsquic_mm *mm)
     mm->malo.dcid_elem = lsquic_malo_create(sizeof(struct dcid_elem));
     mm->malo.stream_hq_frame
                         = lsquic_malo_create(sizeof(struct stream_hq_frame));
+    mm->ack_str = malloc(MAX_ACKI_STR_SZ);
 #if LSQUIC_USE_POOLS
     TAILQ_INIT(&mm->free_packets_in);
     for (i = 0; i < MM_N_OUT_BUCKETS; ++i)
@@ -99,7 +100,8 @@ lsquic_mm_init (struct lsquic_mm *mm)
 #endif
     if (mm->acki && mm->malo.stream_frame && mm->malo.stream_rec_arr
         && mm->malo.mini_conn && mm->malo.mini_conn_ietf && mm->malo.packet_in
-        && mm->malo.stream_hq_frame)
+        && mm->malo.packet_out && mm->malo.dcid_elem
+        && mm->malo.stream_hq_frame && mm->ack_str)
     {
         return 0;
     }
@@ -128,6 +130,7 @@ lsquic_mm_cleanup (struct lsquic_mm *mm)
     lsquic_malo_destroy(mm->malo.stream_rec_arr);
     lsquic_malo_destroy(mm->malo.mini_conn);
     lsquic_malo_destroy(mm->malo.mini_conn_ietf);
+    free(mm->ack_str);
 
 #if LSQUIC_USE_POOLS
     for (i = 0; i < MM_N_OUT_BUCKETS; ++i)

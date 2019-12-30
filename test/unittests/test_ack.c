@@ -155,7 +155,6 @@ compare_ackis (const struct ack_info *exp, const struct ack_info *got)
     assert(exp->flags == got->flags);
     assert(exp->n_ranges == got->n_ranges);
     assert(exp->lack_delta == got->lack_delta);
-    assert(exp->n_timestamps == got->n_timestamps);
 
     for (i = 0; i < exp->n_ranges; ++i)
     {

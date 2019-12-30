@@ -15,8 +15,10 @@ struct packet_interval {
     struct lsquic_packno_range      range;
 };
 
+TAILQ_HEAD(pinhead, packet_interval);
+
 struct packints {
-    TAILQ_HEAD(, packet_interval)   pk_intervals;
+    struct pinhead                  pk_intervals;
     struct packet_interval         *pk_cur;
 };
 

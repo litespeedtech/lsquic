@@ -51,7 +51,6 @@ test1 (void)
     assert(("Number of ranges is 1", acki.n_ranges == 1));
     assert(("Largest acked is 0x1234", acki.ranges[0].high == 0x1234));
     assert(("Lowest acked is 1", acki.ranges[0].low == 1));
-    assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 0x1234", n == 0x1234));
 
@@ -112,7 +111,6 @@ test2 (void)
     assert(("Parsed length is correct (29)", len == sizeof(ack_buf)));
     assert(("Number of ranges is 4", acki.n_ranges == 4));
     assert(("Largest acked is 0x1234", acki.ranges[0].high == 0x1234));
-    assert(("Number of timestamps is 2", acki.n_timestamps == 2));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 4254", n == 4254));
 
@@ -163,7 +161,6 @@ test3 (void)
     assert(("Parsed length is correct (9)", len == sizeof(ack_buf)));
     assert(("Number of ranges is 2", acki.n_ranges == 2));
     assert(("Largest acked is 6", acki.ranges[0].high == 6));
-    assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 4", n == 4));
 
@@ -213,7 +210,6 @@ test4 (void)
     assert(("Parsed length is correct (9)", len == sizeof(ack_buf)));
     assert(("Number of ranges is 2", acki.n_ranges == 2));
     assert(("Largest acked is 3", acki.ranges[0].high == 3));
-    assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     unsigned n = n_acked(&acki);
     assert(("Number of acked packets is 2", n == 2));
 
@@ -267,7 +263,6 @@ test5 (void)
     assert(("Parsed length is correct (9)", len == sizeof(ack_buf)));
     assert(("Number of ranges is 2", acki.n_ranges == 2));
     assert(("Largest acked is 0x23456789", acki.ranges[0].high == 0x23456789));
-    assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     lsquic_packno_t n = n_acked(&acki);
     assert(("Number of acked packets is correct", n == 0x23456768 + 1));
 
@@ -316,7 +311,6 @@ test6 (void)
     assert(("Parsed length is correct", len == sizeof(ack_buf)));
     assert(("Number of ranges is 2", acki.n_ranges == 2));
     assert(("Largest acked is 0xABCD23456789", acki.ranges[0].high == 0xABCD23456789));
-    assert(("Number of timestamps is 0", acki.n_timestamps == 0));
     lsquic_packno_t n = n_acked(&acki);
     assert(("Number of acked packets is correct", n == 0xABCD23456768 + 1));
 

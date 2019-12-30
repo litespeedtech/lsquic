@@ -35,6 +35,7 @@
 #include "lsquic_malo.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_gquic.h"
+#include "lsquic_packet_ietf.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_util.h"
@@ -60,9 +61,6 @@
 
 static const struct conn_iface mini_conn_iface_standard;
 static const struct conn_iface mini_conn_iface_standard_Q050;
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-static const struct conn_iface mini_conn_iface_disable_handshake;
-#endif
 
 #if LSQUIC_KEEP_MINICONN_HISTORY
 
@@ -156,18 +154,29 @@ mini_destroy_packet (struct mini_conn *mc, struct lsquic_packet_out *packet_out)
 
 
 static int
-packet_in_is_ok (const struct lsquic_packet_in *packet_in)
+packet_in_is_ok (enum lsquic_version version,
+                                    const struct lsquic_packet_in *packet_in)
 {
+    size_t min_size;
+
     if (packet_in->pi_data_sz > GQUIC_MAX_PACKET_SZ)
     {
         LSQ_LOG1(LSQ_LOG_DEBUG, "incoming packet too large: %hu bytes",
                                                     packet_in->pi_data_sz);
         return 0;
     }
-    if (packet_in->pi_data_sz < 200)    /* TODO: 64 packets now */
-    {   /* mini connection is limited to 32 packets, yet it must send out REJ
-         * and SHLO, which are about 4 KB combined.
+
+    if ((1 << version) & LSQUIC_GQUIC_HEADER_VERSIONS)
+        /* This is a very lax number, it allows the server to send
+         * 64 * 200 = 12KB of output (REJ and SHLO).
          */
+        min_size = 200;
+    else
+        /* Chrome enforces 1200-byte minimum initial packet limit */
+        min_size = IQUIC_MIN_INIT_PACKET_SZ;
+
+    if (packet_in->pi_data_sz < min_size)
+    {
         LSQ_LOG1(LSQ_LOG_DEBUG, "incoming packet too small: %hu bytes",
                                                     packet_in->pi_data_sz);
         return 0;
@@ -184,23 +193,16 @@ mini_conn_new (struct lsquic_engine_public *enp,
     struct mini_conn *mc;
     const struct conn_iface *conn_iface;
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
-        conn_iface = &mini_conn_iface_disable_handshake;
-    else
-#endif
+    if (!packet_in_is_ok(version, packet_in))
+        return NULL;
+    switch (version)
     {
-        if (!packet_in_is_ok(packet_in))
-            return NULL;
-        switch (version)
-        {
-        case LSQVER_050:
-            conn_iface = &mini_conn_iface_standard_Q050;
-            break;
-        default:
-            conn_iface = &mini_conn_iface_standard;
-            break;
-        }
+    case LSQVER_050:
+        conn_iface = &mini_conn_iface_standard_Q050;
+        break;
+    default:
+        conn_iface = &mini_conn_iface_standard;
+        break;
     }
 
     mc = lsquic_malo_get(enp->enp_mm.malo.mini_conn);
@@ -217,12 +219,7 @@ mini_conn_new (struct lsquic_engine_public *enp,
     TAILQ_INIT(&mc->mc_packets_out);
     mc->mc_enpub = enp;
     mc->mc_created = packet_in->pi_received;
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (conn_iface == &mini_conn_iface_disable_handshake)
-        mc->mc_path.np_pack_size = 1370;
-    else
-#endif
-        mc->mc_path.np_pack_size = packet_in->pi_data_sz;
+    mc->mc_path.np_pack_size = packet_in->pi_data_sz;
     mc->mc_conn.cn_cces = mc->mc_cces;
     mc->mc_conn.cn_cces_mask = 1;
     mc->mc_conn.cn_n_cces = sizeof(mc->mc_cces) / sizeof(mc->mc_cces[0]);
@@ -675,17 +672,7 @@ record_largest_recv (struct mini_conn *mc, lsquic_time_t t)
 static enum dec_packin
 conn_decrypt_packet (struct mini_conn *conn, lsquic_packet_in_t *packet_in)
 {
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
-    {
-        (void) lsquic_conn_copy_and_release_pi_data(&conn->mc_conn,
-                                                conn->mc_enpub, packet_in);
-        packet_in->pi_flags |= PI_DECRYPTED;
-        return 0;
-    }
-    else
-#endif
-        return conn->mc_conn.cn_esf_c->esf_decrypt_packet(
+    return conn->mc_conn.cn_esf_c->esf_decrypt_packet(
                         conn->mc_conn.cn_enc_session, conn->mc_enpub,
                         &conn->mc_conn, packet_in);
 }
@@ -2059,44 +2046,6 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
 }
 
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-static void
-mini_conn_ci_packet_in_disable_handshake (struct lsquic_conn *lconn,
-                                          struct lsquic_packet_in *packet_in)
-{
-    struct mini_conn *mc = (struct mini_conn *) lconn;
-    if (0 == (mc->mc_flags & MC_ERROR))
-    {
-        if (packet_in->pi_packno > MINICONN_MAX_PACKETS)
-            mc->mc_flags |= MC_ERROR;
-        else if (!(mc->mc_received_packnos &
-                                    MCONN_PACKET_MASK(packet_in->pi_packno)))
-        {
-            lsquic_packet_in_upref(packet_in);
-            TAILQ_INSERT_TAIL(&mc->mc_packets_in, packet_in, pi_next);
-            mc->mc_received_packnos |= MCONN_PACKET_MASK(packet_in->pi_packno);
-        }
-    }
-}
-
-
-static enum tick_st
-mini_conn_ci_tick_disable_handshake (struct lsquic_conn *lconn,
-                                     lsquic_time_t now)
-{
-    struct mini_conn *mc = (struct mini_conn *) lconn;
-    LSQ_WARN("handshake disabled, promote me now");
-    lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
-    mc->mc_conn.cn_enc_session =
-        mc->mc_conn.cn_esf.g->esf_create_server(lconn->cn_cid, mc->mc_enpub, 0);
-    mc->mc_conn.cn_esf.g->esf_set_handshake_completed(mc->mc_conn.cn_enc_session);
-    return TICK_PROMOTE;
-}
-
-
-#endif
-
-
 static struct lsquic_engine *
 mini_conn_ci_get_engine (struct lsquic_conn *lconn)
 {
@@ -2262,25 +2211,6 @@ static const struct conn_iface mini_conn_iface_standard_Q050 = {
     .ci_tls_alert            =  mini_conn_ci_tls_alert,
 };
 
-
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-static const struct conn_iface mini_conn_iface_disable_handshake = {
-    .ci_abort_error          =  mini_conn_ci_abort_error,
-    .ci_client_call_on_new   =  mini_conn_ci_client_call_on_new,
-    .ci_destroy              =  mini_conn_ci_destroy,
-    .ci_get_engine           =  mini_conn_ci_get_engine,
-    .ci_hsk_done             =  mini_conn_ci_hsk_done,
-    .ci_internal_error       =  mini_conn_ci_internal_error,
-    .ci_is_tickable          =  mini_conn_ci_is_tickable,
-    .ci_next_packet_to_send  =  mini_conn_ci_next_packet_to_send,
-    .ci_next_tick_time       =  mini_conn_ci_next_tick_time,
-    .ci_packet_in            =  mini_conn_ci_packet_in_disable_handshake,
-    .ci_packet_not_sent      =  mini_conn_ci_packet_not_sent,
-    .ci_packet_sent          =  mini_conn_ci_packet_sent,
-    .ci_tick                 =  mini_conn_ci_tick_disable_handshake,
-    .ci_tls_alert            =  mini_conn_ci_tls_alert,
-};
-#endif
 
 typedef char largest_recv_holds_at_least_16_seconds[
     ((1 << (sizeof(((struct mini_conn *) 0)->mc_largest_recv) * 8)) / 1000000

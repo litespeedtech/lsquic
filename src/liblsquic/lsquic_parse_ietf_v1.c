@@ -681,12 +681,6 @@ ietf_v1_parse_ack_frame (const unsigned char *const buf, size_t buf_len,
         ack->flags |= AI_ECN;
     }
 
-#if LSQUIC_PARSE_ACK_TIMESTAMPS
-#error Pasing ACK timestamps not supported
-#else
-    ack->n_timestamps = 0;
-#endif
-
     return p - buf;
 }
 

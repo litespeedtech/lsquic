@@ -78,6 +78,11 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     SET(TESTS ${TESTS} frame_rw)
 ENDIF()
 
+IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    # No regexes on Windows
+    SET(TESTS ${TESTS} ack_merge)
+ENDIF()
+
 
 FOREACH(TEST_NAME ${TESTS})
     ADD_EXECUTABLE(test_${TEST_NAME} test_${TEST_NAME}.c ${ADDL_SOURCES})

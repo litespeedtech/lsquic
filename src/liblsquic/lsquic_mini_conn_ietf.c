@@ -393,6 +393,13 @@ static const struct crypto_stream_if crypto_stream_if =
 static int
 is_first_packet_ok (const struct lsquic_packet_in *packet_in)
 {
+    if (packet_in->pi_data_sz < IQUIC_MIN_INIT_PACKET_SZ)
+    {
+        /* [draft-ietf-quic-transport-24] Section 14 */
+        LSQ_LOG1(LSQ_LOG_DEBUG, "incoming packet too small: %hu bytes",
+                                                    packet_in->pi_data_sz);
+        return 0;
+    }
     /* TODO: Move decryption of the first packet into this function? */
     return 1;   /* TODO */
 }

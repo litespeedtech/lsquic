@@ -52,9 +52,7 @@ enum lsquic_conn_flags {
     LSCONN_UNUSED_18      = (1 <<18),
     LSCONN_ATTQ           = (1 <<19),
     LSCONN_SKIP_ON_PROC   = (1 <<20),
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    LSCONN_NO_CRYPTO      = (1 <<21),
-#endif
+    LSCONN_UNUSED_21      = (1 <<21),
     LSCONN_SERVER         = (1 <<22),
     LSCONN_IETF           = (1 <<23),
     LSCONN_RETRY_CONN     = (1 <<24),   /* This is a retry connection */
@@ -362,7 +360,7 @@ struct conn_stats {
                             err_packets;        /* Error packets(?) */
         unsigned long       n_acks,
                             n_acks_proc,
-                            n_acks_merged[2];
+                            n_acks_merged;
         unsigned long       bytes;              /* Overall bytes in */
         unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
         unsigned long       headers_comp;       /* Sum of compressed header bytes */

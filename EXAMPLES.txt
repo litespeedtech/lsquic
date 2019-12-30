@@ -166,19 +166,6 @@ LSQUIC_PACKET_OUT_LIMIT
 
     Note 2: see -m option for a related packet-out limitation.
 
-LSQUIC_DISABLE_HANDSHAKE
-
-    If set (to anything, not any particular value), the QUIC handshake is
-    disabled and packets are not encrypted.  This can be useful to:
-        a) profile functions in LSQUIC without accounting for crypto stuff,
-           which tends to dwarf everything else;
-        b) see bytes in the clear on the wire; and
-        c) compare throughput performance to TCP without crypto.
-
-    This functionality is compiled in if the somewhat-awkwardly named
-    LSQUIC_ENABLE_HANDSHAKE_DISABLE is set to 1.  By default, it is enabled
-    in debug builds and disabled in optimized builds.
-
 LSQUIC_LOSE_PACKETS_RE
 
     If set, this regular expression specifies the numbers of packets which
@@ -228,6 +215,10 @@ LSQUIC_USE_POOLS
     malloc() and free().  This facilitates debugging memory issues.
     The default is true.
 
+LSQUIC_ACK_ATTACK
+
+    If set to true, generate optimistic ACKs.
+
 Control Network-Related Stuff
 -----------------------------
 
@@ -245,10 +236,6 @@ Control Network-Related Stuff
 
 More Compilation Options
 ------------------------
-
--DLSQUIC_ENABLE_HANDSHAKE_DISABLE=1
-
-    Support disabling of handshake.  See above.
 
 -DLSQUIC_CONN_STATS=1
 
@@ -296,3 +283,8 @@ More Compilation Options
     When compiled with this flag, setting environment variable
     LSQUIC_ECN_BLACK_HOLE to 1 will emulate ECN black hole: all received
     packets with ECN markings are dropped on the floor.
+
+-DLSQUIC_ACK_ATTACK=1
+
+    Enable ACK attack mode.  See LSQUIC_ACK_ATTACK environment variable
+    entry above.

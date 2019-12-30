@@ -313,7 +313,6 @@ struct ietf_full_conn
     struct transport_params     ifc_peer_param;
     STAILQ_HEAD(, stream_id_to_ss)
                                 ifc_stream_ids_to_ss;
-    struct short_ack_info       ifc_saved_ack_info;
     lsquic_time_t               ifc_saved_ack_received;
     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
     lsquic_packno_t             ifc_max_non_probing;
@@ -387,6 +386,7 @@ struct ietf_full_conn
      */
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
+    struct ack_info             ifc_ack;
 };
 
 #define CUR_CPATH(conn_) (&(conn_)->ifc_paths[(conn_)->ifc_cur_path_id])
@@ -1214,6 +1214,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_process_incoming_packet = process_incoming_packet_fast;
 
     conn->ifc_send_ctl.sc_cur_packno = imc->imc_next_packno - 1;
+    lsquic_send_ctl_begin_optack_detection(&conn->ifc_send_ctl);
 
     for (pns = 0; pns < N_PNS; ++pns)
     {
@@ -1386,12 +1387,13 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     else
         conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
     LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
+    /* TODO: randomize the 20 to be 20 +/- 8 */
     if (conn->ifc_n_cons_unretx >= 20 &&
                 !lsquic_send_ctl_have_outgoing_retx_frames(&conn->ifc_send_ctl))
     {
-        LSQ_DEBUG("schedule MAX_DATA frame after %u non-retx "
+        LSQ_DEBUG("schedule PING frame after %u non-retx "
                                     "packets sent", conn->ifc_n_cons_unretx);
-        conn->ifc_send_flags |= SF_SEND_MAX_DATA;
+        conn->ifc_send_flags |= SF_SEND_PING;
     }
 
     conn->ifc_n_slack_akbl[pns] = 0;
@@ -2874,7 +2876,12 @@ ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
     {
     case LSQ_HSK_OK:
     case LSQ_HSK_0RTT_OK:
-        if (0 != handshake_ok(lconn))
+        if (0 == handshake_ok(lconn))
+        {
+            if (!(conn->ifc_flags & IFC_SERVER))
+                lsquic_send_ctl_begin_optack_detection(&conn->ifc_send_ctl);
+        }
+        else
         {
             LSQ_INFO("handshake was reported successful, but later processing "
                 "produced an error");
@@ -3544,8 +3551,8 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
 }
 
 
-static int
-generate_ping_frame (struct ietf_full_conn *conn)
+static void
+generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 {
     struct lsquic_packet_out *packet_out;
     int sz;
@@ -3554,19 +3561,19 @@ generate_ping_frame (struct ietf_full_conn *conn)
     if (!packet_out)
     {
         LSQ_DEBUG("cannot get writeable packet for PING frame");
-        return 1;
+        return;
     }
     sz = conn->ifc_conn.cn_pf->pf_gen_ping_frame(
                             packet_out->po_data + packet_out->po_data_sz,
                             lsquic_packet_out_avail(packet_out));
     if (sz < 0) {
         ABORT_ERROR("gen_ping_frame failed");
-        return 1;
+        return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
     LSQ_DEBUG("wrote PING frame");
-    return 0;
+    conn->ifc_send_flags &= ~SF_SEND_PING;
 }
 
 
@@ -3818,103 +3825,6 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
         ABORT_ERROR("Received invalid ACK");
         return -1;
     }
-}
-
-
-static int
-process_saved_ack (struct ietf_full_conn *conn, int restore_parsed_ack,
-                                                        lsquic_time_t now)
-{
-    struct ack_info *const acki = conn->ifc_pub.mm->acki;
-    struct lsquic_packno_range range;
-    unsigned n_ranges, n_timestamps;
-    lsquic_time_t lack_delta;
-    int retval;
-
-#ifdef WIN32
-    /* Useless initialization to mollify MSVC: */
-    memset(&range, 0, sizeof(range));
-    n_ranges = 0;
-    n_timestamps = 0;
-    lack_delta = 0;
-#endif
-
-    if (restore_parsed_ack)
-    {
-        n_ranges     = acki->n_ranges;
-        n_timestamps = acki->n_timestamps;
-        lack_delta   = acki->lack_delta;
-        range        = acki->ranges[0];
-    }
-
-    acki->pns          = PNS_APP;
-    acki->n_ranges     = 1;
-    acki->n_timestamps = conn->ifc_saved_ack_info.sai_n_timestamps;
-    acki->lack_delta   = conn->ifc_saved_ack_info.sai_lack_delta;
-    acki->ranges[0]    = conn->ifc_saved_ack_info.sai_range;
-
-    retval = process_ack(conn, acki, conn->ifc_saved_ack_received, now);
-
-    if (restore_parsed_ack)
-    {
-        acki->n_ranges     = n_ranges;
-        acki->n_timestamps = n_timestamps;
-        acki->lack_delta   = lack_delta;
-        acki->ranges[0]    = range;
-    }
-
-    return retval;
-}
-
-
-static int
-new_ack_is_superset (const struct short_ack_info *old, const struct ack_info *new)
-{
-    const struct lsquic_packno_range *new_range;
-
-    new_range = &new->ranges[ new->n_ranges - 1 ];
-    return new_range->low  <= old->sai_range.low
-        && new_range->high >= old->sai_range.high;
-}
-
-
-static int
-merge_saved_to_new (const struct short_ack_info *old, struct ack_info *new)
-{
-    struct lsquic_packno_range *smallest_range;
-
-    assert(new->n_ranges > 1);
-    smallest_range = &new->ranges[ new->n_ranges - 1 ];
-    if (old->sai_range.high <= smallest_range->high
-        && old->sai_range.high >= smallest_range->low
-        && old->sai_range.low < smallest_range->low)
-    {
-        smallest_range->low = old->sai_range.low;
-        return 1;
-    }
-    else
-        return 0;
-}
-
-
-static int
-merge_new_to_saved (struct short_ack_info *old, const struct ack_info *new)
-{
-    const struct lsquic_packno_range *new_range;
-
-    assert(new->n_ranges == 1);
-    new_range = &new->ranges[0];
-    /* Only merge if new is higher, for simplicity.  This is also the
-     * expected case.
-     */
-    if (new_range->high > old->sai_range.high
-        && new_range->low > old->sai_range.low)
-    {
-        old->sai_range.high = new_range->high;
-        return 1;
-    }
-    else
-        return 0;
 }
 
 
@@ -4571,10 +4481,15 @@ static unsigned
 process_ack_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    struct ack_info *const new_acki = conn->ifc_pub.mm->acki;
+    struct ack_info *new_acki;
     enum packnum_space pns;
     int parsed_len;
     lsquic_time_t warn_time;
+
+    if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
+        new_acki = conn->ifc_pub.mm->acki;
+    else
+        new_acki = &conn->ifc_ack;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_ack_frame(p, len, new_acki,
                                                         conn->ifc_cfg.ack_exp);
@@ -4604,67 +4519,32 @@ process_ack_frame (struct ietf_full_conn *conn,
     EV_LOG_ACK_FRAME_IN(LSQUIC_LOG_CONN_ID, new_acki);
     conn->ifc_max_ack_packno[pns] = packet_in->pi_packno;
     new_acki->pns = pns;
-    if (pns != PNS_APP) /* Don't bother optimizing non-APP */
-        goto process_ack;
 
-    if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
+    /* Only cache ACKs for PNS_APP */
+    if (pns == PNS_APP && new_acki == &conn->ifc_ack)
     {
-        LSQ_DEBUG("old ack [%"PRIu64"-%"PRIu64"]",
-            conn->ifc_saved_ack_info.sai_range.high,
-            conn->ifc_saved_ack_info.sai_range.low);
-        const int is_superset = new_ack_is_superset(&conn->ifc_saved_ack_info,
-                                                    new_acki);
-        const int is_1range = new_acki->n_ranges == 1;
-        switch (
-             (is_superset << 1)
-                      | (is_1range << 0))
-           /* |          |
-              |          |
-              V          V                      */ {
-        case (0 << 1) | (0 << 0):
-            if (!merge_saved_to_new(&conn->ifc_saved_ack_info, new_acki))
-                process_saved_ack(conn, 1, packet_in->pi_received);
-            conn->ifc_flags &= ~IFC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
-                                                    packet_in->pi_received))
-                goto err;
-            break;
-        case (0 << 1) | (1 << 0):
-            if (!merge_new_to_saved(&conn->ifc_saved_ack_info, new_acki))
-            {
-                process_saved_ack(conn, 1, packet_in->pi_received);
-                conn->ifc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-                conn->ifc_saved_ack_info.sai_range        = new_acki->ranges[0];
-            }
-            conn->ifc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-            conn->ifc_saved_ack_received              = packet_in->pi_received;
-            break;
-        case (1 << 1) | (0 << 0):
-            conn->ifc_flags &= ~IFC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
-                                                    packet_in->pi_received))
-                goto err;
-            break;
-        case (1 << 1) | (1 << 0):
-            conn->ifc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-            conn->ifc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-            conn->ifc_saved_ack_info.sai_range        = new_acki->ranges[0];
-            conn->ifc_saved_ack_received              = packet_in->pi_received;
-            break;
-        }
-    }
-    else if (new_acki->n_ranges == 1)
-    {
-        conn->ifc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-        conn->ifc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-        conn->ifc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-        conn->ifc_saved_ack_info.sai_range        = new_acki->ranges[0];
-        conn->ifc_saved_ack_received              = packet_in->pi_received;
+        LSQ_DEBUG("Saved ACK");
         conn->ifc_flags |= IFC_HAVE_SAVED_ACK;
+        conn->ifc_saved_ack_received = packet_in->pi_received;
+    }
+    else if (pns == PNS_APP)
+    {
+        if (0 == lsquic_merge_acks(&conn->ifc_ack, new_acki))
+            LSQ_DEBUG("merged into saved ACK, getting %s",
+                (lsquic_acki2str(&conn->ifc_ack, conn->ifc_pub.mm->ack_str,
+                                MAX_ACKI_STR_SZ), conn->ifc_pub.mm->ack_str));
+        else
+        {
+            LSQ_DEBUG("could not merge new ACK into saved ACK");
+            if (0 != process_ack(conn, &conn->ifc_ack, packet_in->pi_received,
+                                                        packet_in->pi_received))
+                goto err;
+            conn->ifc_ack = *new_acki;
+        }
+        conn->ifc_saved_ack_received = packet_in->pi_received;
     }
     else
     {
-  process_ack:
         if (0 != process_ack(conn, new_acki, packet_in->pi_received,
                                                 packet_in->pi_received))
             goto err;
@@ -5428,6 +5308,8 @@ static void
 try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
                                             int was_missing, lsquic_time_t now)
 {
+    lsquic_time_t srtt, ack_timeout;
+
     if (conn->ifc_n_slack_akbl[pns] >= MAX_RETR_PACKETS_SINCE_LAST_ACK ||
                         ((conn->ifc_flags & IFC_ACK_HAD_MISS) && was_missing))
     {
@@ -5441,18 +5323,16 @@ try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
     }
     else if (conn->ifc_n_slack_akbl[pns] > 0)
     {
-/* [draft-ietf-quic-transport-15] Section-7.16.3:
- *
- * The receiver's delayed acknowledgment timer SHOULD NOT exceed the
- * current RTT estimate or the value it indicates in the "max_ack_delay"
- * transport parameter
- *
- * TODO: Need to do MIN(ACK_TIMEOUT, RTT Estimate)
- */
+        /* See https://github.com/quicwg/base-drafts/issues/3304 for more */
+        srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
+        if (srtt)
+            ack_timeout = MAX(1000, MIN(ACK_TIMEOUT, srtt / 4));
+        else
+            ack_timeout = ACK_TIMEOUT;
         lsquic_alarmset_set(&conn->ifc_alset, AL_ACK_INIT + pns,
-                                                        now + ACK_TIMEOUT);
+                                                        now + ack_timeout);
         LSQ_DEBUG("%s ACK alarm set to %"PRIu64, lsquic_pns2str[pns],
-                                                        now + ACK_TIMEOUT);
+                                                        now + ack_timeout);
     }
 }
 
@@ -6069,6 +5949,7 @@ static void (*const send_funcs[N_SEND])(
     [SEND_PATH_CHAL_PATH_1]    = generate_path_chal_1,
     [SEND_PATH_RESP_PATH_0]    = generate_path_resp_0,
     [SEND_PATH_RESP_PATH_1]    = generate_path_resp_1,
+    [SEND_PING]                = generate_ping_frame,
 };
 
 
@@ -6078,6 +5959,7 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_MAX_STREAMS_UNI|SF_SEND_MAX_STREAMS_BIDI\
     |SF_SEND_PATH_CHAL_PATH_0|SF_SEND_PATH_CHAL_PATH_1\
     |SF_SEND_PATH_RESP_PATH_0|SF_SEND_PATH_RESP_PATH_1\
+    |SF_SEND_PING\
     |SF_SEND_STOP_SENDING)
 
 static enum tick_st
@@ -6118,7 +6000,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
     {
         (void) /* If there is an error, we'll fail shortly */
-            process_saved_ack(conn, 0, now);
+        process_ack(conn, &conn->ifc_ack, conn->ifc_saved_ack_received, now);
         conn->ifc_flags &= ~IFC_HAVE_SAVED_ACK;
     }
 
@@ -6290,12 +6172,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (conn->ifc_send_flags & SF_SEND_PING)
         {
             RETURN_IF_OUT_OF_PACKETS();
-            if (0 == generate_ping_frame(conn))
-            {
-                conn->ifc_send_flags &= ~SF_SEND_PING;
-                CLOSE_IF_NECESSARY();
-                assert(lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl) != 0);
-            }
+            generate_ping_frame(conn, now);
+            CLOSE_IF_NECESSARY();
+            assert(lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl) != 0);
         }
         else
         {

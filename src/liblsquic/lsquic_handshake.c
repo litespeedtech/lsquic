@@ -2199,7 +2199,12 @@ gen_iasn_key (X509 *cert, unsigned char *const out, size_t const sz)
 }
 
 
-static enum { GET_SNI_OK, GET_SNI_ERR, GET_SNI_DELAYED, }
+static enum {
+    GET_SNI_OK,
+    GET_SNI_ERR,
+}
+
+
 get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
                     void *cb_ctx, const struct sockaddr *local)
 {
@@ -2315,10 +2320,6 @@ handle_chlo_frames_data(const uint8_t *data, int len,
     lsquic_str_setto(&enc_session->chlo, (const char *)data, len);
     switch (get_sni_SSL_CTX(enc_session, cb, cb_ctx, local))
     {
-    case GET_SNI_DELAYED:
-        ESHIST_APPEND(enc_session, ESHE_SNI_DELAYED);
-        LSQ_DEBUG("%s: sni delayed", __func__);
-        return HS_DELAYED;
     case GET_SNI_ERR:
         ESHIST_APPEND(enc_session, ESHE_SNI_FAIL);
         LSQ_DEBUG("handle_chlo_frames_data got data format error 2.");
@@ -2690,8 +2691,6 @@ he2str (enum handshake_error he)
     case HS_SHLO:           return "HS_SHLO";
     case HS_1RTT:           return "HS_1RTT";
     case HS_SREJ:           return "HS_SREJ";
-    case HS_DELAYED:        return "HS_DELAYED";
-    case HS_PK_OFFLOAD:     return "HS_PK_OFFLOAD";
     default:
         assert(0);          return "<unknown enum value>";
     }
@@ -3289,11 +3288,6 @@ lsquic_enc_session_handle_chlo(enc_session_t *enc_session_p,
 
         LSQ_DEBUG("lsquic_enc_session_handle_chlo call gen_rej1_data");
         len = gen_rej1_data(enc_session, out, *out_len, peer, t);
-        if (len == -2)
-        {
-            rtt = HS_PK_OFFLOAD;
-            goto end;
-        }
         if (len < 0)
         {
             rtt = HS_ERROR;
@@ -3512,17 +3506,6 @@ lsquic_enc_session_get_ua (enc_session_t *enc_session_p)
     else
         return NULL;
 }
-
-
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-static void
-set_handshake_completed (struct lsquic_enc_session *enc_session)
-{
-    enc_session->hsk_state = HSK_COMPLETED;
-}
-
-
-#endif
 
 
 #ifndef NDEBUG
@@ -3773,34 +3756,6 @@ maybe_dispatch_zero_rtt (enc_session_t *enc_session_p,
 }
 
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-static ssize_t
-just_copy_packet (const struct lsquic_conn *lconn,
-                  const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                  size_t bufsz)
-{
-    int header_sz;
-
-    header_sz = lconn->cn_pf->pf_gen_reg_pkt_header(lconn, packet_out,
-                                                                buf, bufsz);
-    if (header_sz < 0)
-        return -1;
-
-    if ((unsigned) header_sz + packet_out->po_data_sz > bufsz)
-    {
-        LSQ_WARN("packet too large (%d bytes) to encrypt",
-                                        header_sz + packet_out->po_data_sz);
-        return -1;
-    }
-
-    memcpy(buf + header_sz, packet_out->po_data, packet_out->po_data_sz);
-    return header_sz + packet_out->po_data_sz;
-}
-
-
-#endif
-
-
 static enum enc_packout
 gquic_encrypt_packet (enc_session_t *enc_session_p,
         const struct lsquic_engine_public *enpub,
@@ -3809,7 +3764,6 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
     struct lsquic_enc_session *const enc_session = enc_session_p;
     ssize_t enc_sz;
     size_t bufsz;
-    unsigned sent_sz;
     unsigned char *buf;
     int ipv6;
 
@@ -3828,20 +3782,8 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
         return ENCPA_NOMEM;
     }
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
-    {
-        enc_sz = just_copy_packet(lconn, packet_out, buf, bufsz);
-        sent_sz = enc_sz + GQUIC_PACKET_HASH_SZ;
-    }
-    else
-#endif
-    {
-        enc_sz = gquic_really_encrypt_packet(enc_session,
-                                                lconn, packet_out, buf, bufsz);
-        sent_sz = enc_sz;
-    }
-
+    enc_sz = gquic_really_encrypt_packet(enc_session,
+                                            lconn, packet_out, buf, bufsz);
     if (enc_sz < 0)
     {
         enpub->enp_pmi->pmi_return(enpub->enp_pmi_ctx,
@@ -3851,7 +3793,7 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
 
     packet_out->po_enc_data    = buf;
     packet_out->po_enc_data_sz = enc_sz;
-    packet_out->po_sent_sz     = sent_sz;
+    packet_out->po_sent_sz     = enc_sz;
     packet_out->po_flags &= ~PO_IPv6;
     packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ|(ipv6 << POIPv6_SHIFT);
 
@@ -4349,9 +4291,6 @@ struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1 =
     .esf_get_enc_key_nonce_f = lsquic_enc_session_get_enc_key_nonce_f,
     .esf_get_dec_key_nonce_f = lsquic_enc_session_get_dec_key_nonce_f,
 #endif /* !defined(NDEBUG) */
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    .esf_set_handshake_completed = set_handshake_completed,
-#endif
     .esf_create_client = lsquic_enc_session_create_client,
     .esf_gen_chlo = lsquic_enc_session_gen_chlo,
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,

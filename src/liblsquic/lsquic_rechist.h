@@ -23,7 +23,13 @@ struct lsquic_rechist {
     unsigned                        rh_n_packets;
     enum {
         RH_CUTOFF_SET   = (1 << 0),
+#if LSQUIC_ACK_ATTACK
+        RH_ACK_ATTACK   = (1 << 1),
+#endif
     }                               rh_flags;
+#if LSQUIC_ACK_ATTACK
+    struct lsquic_packno_range      rh_first;
+#endif
 };
 
 typedef struct lsquic_rechist lsquic_rechist_t;

@@ -58,14 +58,6 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(enc_sess->esi_conn)
 #include "lsquic_logger.h"
 
-/* [draft-ietf-quic-tls-11] Section 5.3.2 */
-#define HSK_SECRET_SZ SHA256_DIGEST_LENGTH
-
-/* TODO: Specify ciphers */
-#define HSK_CIPHERS "TLS13-AES-128-GCM-SHA256"  \
-                   ":TLS13-AES-256-GCM-SHA384"  \
-                   ":TLS13-CHACHA20-POLY1305-SHA256"
-
 #define KEY_LABEL "quic key"
 #define KEY_LABEL_SZ (sizeof(KEY_LABEL) - 1)
 #define IV_LABEL "quic iv"
@@ -1585,7 +1577,8 @@ iquic_esfi_post_handshake (struct enc_sess_iquic *enc_sess)
         return IHS_WANT_READ;
     else
     {
-        LSQ_DEBUG("TODO: abort connection?");
+        enc_sess->esi_conn->cn_if->ci_internal_error(enc_sess->esi_conn,
+                                        "post-handshake error, code %d", s);
         return IHS_STOP;
     }
 }
@@ -2735,8 +2728,8 @@ maybe_write_from_fral (struct enc_sess_iquic *enc_sess,
     }
     else
     {
-        /* TODO: abort connection */
-        LSQ_WARN("cannot write to stream: %s", strerror(errno));
+        enc_sess->esi_conn->cn_if->ci_internal_error(enc_sess->esi_conn,
+                            "cannot write to stream: %s", strerror(errno));
         lsquic_stream_wantwrite(stream, 0);
     }
 }

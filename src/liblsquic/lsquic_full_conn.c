@@ -216,11 +216,11 @@ struct full_conn
 #endif
     STAILQ_HEAD(, stream_id_to_reset)
                                  fc_stream_ids_to_reset;
-    struct short_ack_info        fc_saved_ack_info;
     lsquic_time_t                fc_saved_ack_received;
     struct network_path          fc_path;
     unsigned                     fc_orig_versions;      /* Client only */
     enum enc_level               fc_crypto_enc_level;
+    struct ack_info              fc_ack;
 };
 
 static const struct ver_neg server_ver_neg;
@@ -521,31 +521,13 @@ apply_peer_settings (struct full_conn *conn)
         return 0;
 #endif
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
-    {   /* Magically figure out peer's settings */
-        if (conn->fc_flags & FC_SERVER)
+    for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
+        if (0 != conn->fc_conn.cn_esf.g->esf_get_peer_setting(
+                    conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
         {
-            cfcw = LSQUIC_DF_CFCW_CLIENT;
-            sfcw = LSQUIC_DF_SFCW_CLIENT;
-            mids = 100;
+            LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
+            return -1;
         }
-        else
-        {
-            cfcw = LSQUIC_DF_CFCW_SERVER;
-            sfcw = LSQUIC_DF_SFCW_SERVER;
-            mids = 100;
-        }
-    }
-    else
-#endif
-        for (n = 0; n < sizeof(tags) / sizeof(tags[0]); ++n)
-            if (0 != conn->fc_conn.cn_esf.g->esf_get_peer_setting(
-                        conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
-            {
-                LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
-                return -1;
-            }
 
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
         cfcw, sfcw, mids);
@@ -893,6 +875,7 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     lsquic_send_ctl_verneg_done(&conn->fc_send_ctl);
     conn->fc_send_ctl.sc_cur_packno = mc->mc_cur_packno;
+    lsquic_send_ctl_begin_optack_detection(&conn->fc_send_ctl);
 
     /* Remove those that still exist from the set: they will be marked as
      * received during regular processing in ci_packet_in() later on.
@@ -952,10 +935,6 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     assert(lconn_mini->cn_flags & LSCONN_HANDSHAKE_DONE);
     lconn_full->cn_flags |= LSCONN_HANDSHAKE_DONE;
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
-        lconn_full->cn_flags |= LSCONN_NO_CRYPTO;
-#endif
 
     lconn_full->cn_flags |= lconn_mini->cn_flags &
         LSCONN_PEER_GOING_AWAY /* We are OK with fc_goaway_stream_id = 0 */;
@@ -1130,9 +1109,9 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
         conn->fc_stats.in.dup_packets, conn->fc_stats.in.err_packets,
         conn->fc_stats.out.packets,
         conn->fc_stats.out.stream_data_sz / conn->fc_stats.out.packets);
-    LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged to: new %lu, old %lu",
+    LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
         conn->fc_stats.in.n_acks, conn->fc_stats.in.n_acks_proc,
-        conn->fc_stats.in.n_acks_merged[0], conn->fc_stats.in.n_acks_merged[1]);
+        conn->fc_stats.in.n_acks_merged);
 #endif
     while ((sitr = STAILQ_FIRST(&conn->fc_stream_ids_to_reset)))
     {
@@ -1580,9 +1559,6 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
     if (!is_handshake_stream_id(conn, stream_frame->stream_id)
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-        && !(conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
-#endif
         && enc_level == ENC_LEV_CLEAR)
     {
         lsquic_malo_put(stream_frame);
@@ -1863,28 +1839,21 @@ log_invalid_ack_frame (struct full_conn *conn, const unsigned char *p,
                                 int parsed_len, const struct ack_info *acki)
 {
     char *buf;
-    size_t sz;
 
     buf = malloc(0x1000);
-    if (buf)
+    if (!buf)
     {
-        lsquic_senhist_tostr(&conn->fc_send_ctl.sc_senhist, buf, 0x1000);
-        LSQ_WARN("send history: %s", buf);
-        lsquic_hexdump(p, parsed_len, buf, 0x1000);
-        LSQ_WARN("raw ACK frame:\n%s", buf);
-        free(buf);
-    }
-    else
         LSQ_WARN("malloc failed");
+        return;
+    }
 
-    buf = acki2str(acki, &sz);
-    if (buf)
-    {
-        LSQ_WARN("parsed ACK frame: %.*s", (int) sz, buf);
-        free(buf);
-    }
-    else
-        LSQ_WARN("malloc failed");
+    lsquic_senhist_tostr(&conn->fc_send_ctl.sc_senhist, buf, 0x1000);
+    LSQ_WARN("send history: %s", buf);
+    lsquic_hexdump(p, parsed_len, buf, 0x1000);
+    LSQ_WARN("raw ACK frame:\n%s", buf);
+    lsquic_acki2str(acki, buf, 0x1000);
+    LSQ_WARN("parsed ACK frame: %s", buf);
+    free(buf);
 }
 
 
@@ -1912,114 +1881,22 @@ process_ack (struct full_conn *conn, struct ack_info *acki,
 }
 
 
-static int
-process_saved_ack (struct full_conn *conn, int restore_parsed_ack,
-                                                        lsquic_time_t now)
-{
-    struct ack_info *const acki = conn->fc_pub.mm->acki;
-    struct lsquic_packno_range range;
-    unsigned n_ranges, n_timestamps;
-    lsquic_time_t lack_delta;
-    int retval;
-
-#ifdef WIN32
-    /* Useless initialization to mollify MSVC: */
-    memset(&range, 0, sizeof(range));
-    n_ranges = 0;
-    n_timestamps = 0;
-    lack_delta = 0;
-#endif
-
-    if (restore_parsed_ack)
-    {
-        n_ranges     = acki->n_ranges;
-        n_timestamps = acki->n_timestamps;
-        lack_delta   = acki->lack_delta;
-        range        = acki->ranges[0];
-    }
-
-    acki->pns          = PNS_APP;
-    acki->n_ranges     = 1;
-    acki->n_timestamps = conn->fc_saved_ack_info.sai_n_timestamps;
-    acki->lack_delta   = conn->fc_saved_ack_info.sai_lack_delta;
-    acki->ranges[0]    = conn->fc_saved_ack_info.sai_range;
-
-    retval = process_ack(conn, acki, conn->fc_saved_ack_received, now);
-
-    if (restore_parsed_ack)
-    {
-        acki->n_ranges     = n_ranges;
-        acki->n_timestamps = n_timestamps;
-        acki->lack_delta   = lack_delta;
-        acki->ranges[0]    = range;
-    }
-
-    return retval;
-}
-
-
-static int
-new_ack_is_superset (const struct short_ack_info *old, const struct ack_info *new)
-{
-    const struct lsquic_packno_range *new_range;
-
-    new_range = &new->ranges[ new->n_ranges - 1 ];
-    return new_range->low  <= old->sai_range.low
-        && new_range->high >= old->sai_range.high;
-}
-
-
-static int
-merge_saved_to_new (const struct short_ack_info *old, struct ack_info *new)
-{
-    struct lsquic_packno_range *smallest_range;
-
-    assert(new->n_ranges > 1);
-    smallest_range = &new->ranges[ new->n_ranges - 1 ];
-    if (old->sai_range.high <= smallest_range->high
-        && old->sai_range.high >= smallest_range->low
-        && old->sai_range.low < smallest_range->low)
-    {
-        smallest_range->low = old->sai_range.low;
-        return 1;
-    }
-    else
-        return 0;
-}
-
-
-static int
-merge_new_to_saved (struct short_ack_info *old, const struct ack_info *new)
-{
-    const struct lsquic_packno_range *new_range;
-
-    assert(new->n_ranges == 1);
-    new_range = &new->ranges[0];
-    /* Only merge if new is higher, for simplicity.  This is also the
-     * expected case.
-     */
-    if (new_range->high > old->sai_range.high
-        && new_range->low > old->sai_range.low)
-    {
-        old->sai_range.high = new_range->high;
-        return 1;
-    }
-    else
-        return 0;
-}
-
-
 static unsigned
 process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                             const unsigned char *p, size_t len)
 {
-    struct ack_info *const new_acki = conn->fc_pub.mm->acki;
+    struct ack_info *new_acki;
     int parsed_len;
     lsquic_time_t warn_time;
 
 #if LSQUIC_CONN_STATS
     ++conn->fc_stats.in.n_acks;
 #endif
+
+    if (conn->fc_flags & FC_HAVE_SAVED_ACK)
+        new_acki = conn->fc_pub.mm->acki;
+    else
+        new_acki = &conn->fc_ack;
 
     parsed_len = conn->fc_conn.cn_pf->pf_parse_ack_frame(p, len, new_acki, 0);
     if (parsed_len < 0)
@@ -2040,77 +1917,33 @@ process_ack_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
     EV_LOG_ACK_FRAME_IN(LSQUIC_LOG_CONN_ID, new_acki);
     conn->fc_max_ack_packno = packet_in->pi_packno;
 
-    if (conn->fc_flags & FC_HAVE_SAVED_ACK)
+    if (new_acki == &conn->fc_ack)
     {
-        LSQ_DEBUG("old ack [%"PRIu64"-%"PRIu64"]",
-            conn->fc_saved_ack_info.sai_range.high,
-            conn->fc_saved_ack_info.sai_range.low);
-        const int is_superset = new_ack_is_superset(&conn->fc_saved_ack_info,
-                                                    new_acki);
-        const int is_1range = new_acki->n_ranges == 1;
-        switch (
-             (is_superset << 1)
-                      | (is_1range << 0))
-           /* |          |
-              |          |
-              V          V                      */ {
-        case (0 << 1) | (0 << 0):
-            if (merge_saved_to_new(&conn->fc_saved_ack_info, new_acki))
-            {
+        LSQ_DEBUG("Saved ACK");
+        conn->fc_flags |= FC_HAVE_SAVED_ACK;
+        conn->fc_saved_ack_received = packet_in->pi_received;
+    }
+    else
+    {
+        if (0 == lsquic_merge_acks(&conn->fc_ack, new_acki))
+        {
 #if LSQUIC_CONN_STATS
-                ++conn->fc_stats.in.n_acks_merged[0]
+            ++conn->fc_stats.in.n_acks_merged;
 #endif
-                ;
-            }
-            else
-                process_saved_ack(conn, 1, packet_in->pi_received);
-            conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
+            LSQ_DEBUG("merged into saved ACK, getting %s",
+                (lsquic_acki2str(&conn->fc_ack, conn->fc_pub.mm->ack_str,
+                                MAX_ACKI_STR_SZ), conn->fc_pub.mm->ack_str));
+        }
+        else
+        {
+            LSQ_DEBUG("could not merge new ACK into saved ACK");
+            if (0 != process_ack(conn, &conn->fc_ack, packet_in->pi_received,
                                                         packet_in->pi_received))
                 goto err;
-            break;
-        case (0 << 1) | (1 << 0):
-            if (merge_new_to_saved(&conn->fc_saved_ack_info, new_acki))
-            {
-#if LSQUIC_CONN_STATS
-                ++conn->fc_stats.in.n_acks_merged[1]
-#endif
-                ;
-            }
-            else
-            {
-                process_saved_ack(conn, 1, packet_in->pi_received);
-                conn->fc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-                conn->fc_saved_ack_info.sai_range        = new_acki->ranges[0];
-            }
-            conn->fc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-            conn->fc_saved_ack_received              = packet_in->pi_received;
-            break;
-        case (1 << 1) | (0 << 0):
-            conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
-            if (0 != process_ack(conn, new_acki, packet_in->pi_received,
-                                                    packet_in->pi_received))
-                goto err;
-            break;
-        case (1 << 1) | (1 << 0):
-            conn->fc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-            conn->fc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-            conn->fc_saved_ack_info.sai_range        = new_acki->ranges[0];
-            conn->fc_saved_ack_received              = packet_in->pi_received;
-            break;
+            conn->fc_ack = *new_acki;
         }
+        conn->fc_saved_ack_received = packet_in->pi_received;
     }
-    else if (new_acki->n_ranges == 1)
-    {
-        conn->fc_saved_ack_info.sai_n_timestamps = new_acki->n_timestamps;
-        conn->fc_saved_ack_info.sai_lack_delta   = new_acki->lack_delta;
-        conn->fc_saved_ack_info.sai_range        = new_acki->ranges[0];
-        conn->fc_saved_ack_received              = packet_in->pi_received;
-        conn->fc_flags |= FC_HAVE_SAVED_ACK;
-    }
-    else if (0 != process_ack(conn, new_acki, packet_in->pi_received,
-                                                    packet_in->pi_received))
-        goto err;
 
     return parsed_len;
 
@@ -2439,17 +2272,7 @@ reconstruct_packet_number (struct full_conn *conn, lsquic_packet_in_t *packet_in
 static enum dec_packin
 conn_decrypt_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
 {
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (conn->fc_conn.cn_flags & LSCONN_NO_CRYPTO)
-    {
-        (void) lsquic_conn_copy_and_release_pi_data(&conn->fc_conn,
-                                                conn->fc_enpub, packet_in);
-        packet_in->pi_flags |= PI_DECRYPTED;
-        return DECPI_OK;
-    }
-    else
-#endif
-        return conn->fc_conn.cn_esf_c->esf_decrypt_packet(
+    return conn->fc_conn.cn_esf_c->esf_decrypt_packet(
                     conn->fc_conn.cn_enc_session, conn->fc_enpub,
                     &conn->fc_conn, packet_in);
 }
@@ -3460,7 +3283,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (conn->fc_flags & FC_HAVE_SAVED_ACK)
     {
         (void) /* If there is an error, we'll fail shortly */
-            process_saved_ack(conn, 0, now);
+            process_ack(conn, &conn->fc_ack, conn->fc_saved_ack_received, now);
         conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
     }
 
@@ -3780,6 +3603,8 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
                 conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
         if (conn->fc_n_delayed_streams)
             create_delayed_streams(conn);
+        if (!(conn->fc_flags & FC_SERVER))
+            lsquic_send_ctl_begin_optack_detection(&conn->fc_send_ctl);
     }
 }
 

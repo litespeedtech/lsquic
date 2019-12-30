@@ -110,7 +110,7 @@ typedef struct lsquic_packet_out
         PO_PNS_APP  = (1 <<23),         /*   packet number space. */
         PO_RETRY    = (1 <<24),         /* Retry packet */
         PO_RETX     = (1 <<25),         /* Retransmitted packet: don't append to it */
-        PO_UNUSED26 = (1 <<26),         /* Unused */
+        PO_POISON   = (1 <<26),         /* Used to detect opt-ACK attack */
         PO_LOSS_REC = (1 <<27),         /* This structure is a loss record */
         /* Only one of PO_SCHED, PO_UNACKED, or PO_LOST can be set.  If pressed
          * for room in the enum, we can switch to using two bits to represent

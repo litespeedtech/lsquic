@@ -30,6 +30,14 @@ lsquic_rechist_init (struct lsquic_rechist *rechist,
     rechist->rh_cutoff = ietf ? 0 : 1;
     lsquic_packints_init(&rechist->rh_pints);
     LSQ_DEBUG("instantiated received packet history");
+#if LSQUIC_ACK_ATTACK
+    const char *s = getenv("LSQUIC_ACK_ATTACK");
+    if (s && atoi(s))
+    {
+        LSQ_NOTICE("ACK attack mode ON!");
+        rechist->rh_flags |= RH_ACK_ATTACK;
+    }
+#endif
 }
 
 
@@ -144,6 +152,23 @@ lsquic_rechist_largest_recv (const lsquic_rechist_t *rechist)
 const struct lsquic_packno_range *
 lsquic_rechist_first (lsquic_rechist_t *rechist)
 {
+#if LSQUIC_ACK_ATTACK
+    if (rechist->rh_flags & RH_ACK_ATTACK)
+    {
+        /* This only performs the lazy variant of the attack.  An aggressive
+         * attack would increase the value of high number.
+         */
+        const struct lsquic_packno_range *range;
+
+        range = lsquic_packints_first(&rechist->rh_pints);
+        if (!range)
+            return NULL;
+        rechist->rh_first = *range;
+        range = &TAILQ_LAST(&rechist->rh_pints.pk_intervals, pinhead)->range;
+        rechist->rh_first.low = range->low;
+        return &rechist->rh_first;
+    }
+#endif
     return lsquic_packints_first(&rechist->rh_pints);
 }
 
@@ -151,6 +176,10 @@ lsquic_rechist_first (lsquic_rechist_t *rechist)
 const struct lsquic_packno_range *
 lsquic_rechist_next (lsquic_rechist_t *rechist)
 {
+#if LSQUIC_ACK_ATTACK
+    if (rechist->rh_flags & RH_ACK_ATTACK)
+        return NULL;
+#endif
     return lsquic_packints_next(&rechist->rh_pints);
 }
 

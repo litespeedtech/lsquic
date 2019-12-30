@@ -47,6 +47,7 @@ enum send_ctl_flags {
     SC_QL_BITS      =  1 << 14,
     SC_SANITY_CHECK =  1 << 15,
     SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
+    SC_POISON       =  1 << 17,     /* poisoned packet exists */
 };
 
 typedef struct lsquic_send_ctl {
@@ -127,6 +128,7 @@ typedef struct lsquic_send_ctl {
     unsigned                        sc_retry_count;
     unsigned                        sc_rt_count;    /* Count round trips */
     lsquic_packno_t                 sc_cur_rt_end;
+    lsquic_packno_t                 sc_gap;
     unsigned                        sc_loss_count;  /* Used to set loss bit */
     unsigned                        sc_square_count;/* Used to set square bit */
     signed char                     sc_cidlen;      /* For debug purposes */
@@ -371,5 +373,8 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
 void
 lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *,
                                 unsigned orig_cid_len, unsigned new_cid_len);
+
+void
+lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
 
 #endif

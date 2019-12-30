@@ -508,29 +508,12 @@ static const char *const ecn2str[4] =
 };
 
 
-#define ECN_COUNTS  " ECT(0): 01234567879012345678790;" \
-                    " ECT(1): 01234567879012345678790;" \
-                    " CE: 01234567879012345678790"
-#define RANGES_TRUNCATED " ranges truncated! "
-
-char *
-acki2str (const struct ack_info *acki, size_t *sz)
+void
+lsquic_acki2str (const struct ack_info *acki, char *buf, size_t bufsz)
 {
-    size_t off, bufsz, nw;
+    size_t off, nw;
     enum ecn ecn;
     unsigned n;
-    char *buf;
-
-    bufsz = acki->n_ranges * (3 /* [-] */ + 20 /* ~0ULL */ * 2)
-        + (acki->flags & AI_ECN ? sizeof(ECN_COUNTS) : 0)
-        + (acki->flags & AI_TRUNCATED ? sizeof(RANGES_TRUNCATED) : 0);
-    buf = malloc(bufsz);
-    if (!buf)
-    {
-        LSQ_WARN("%s: malloc(%zd) failure: %s", __func__, bufsz,
-                                                        strerror(errno));
-        return NULL;
-    }
 
     off = 0;
     for (n = 0; n < acki->n_ranges; ++n)
@@ -538,18 +521,15 @@ acki2str (const struct ack_info *acki, size_t *sz)
         nw = snprintf(buf + off, bufsz - off, "[%"PRIu64"-%"PRIu64"]",
                 acki->ranges[n].high, acki->ranges[n].low);
         if (nw > bufsz - off)
-            break;
+            return;
         off += nw;
     }
 
     if (acki->flags & AI_TRUNCATED)
     {
-        nw = snprintf(buf + off, bufsz - off, RANGES_TRUNCATED);
+        nw = snprintf(buf + off, bufsz - off, RANGES_TRUNCATED_STR);
         if (nw > bufsz - off)
-        {
-            nw = bufsz - off;
-            goto end;
-        }
+            return;
         off += nw;
     }
 
@@ -560,14 +540,10 @@ acki2str (const struct ack_info *acki, size_t *sz)
             nw = snprintf(buf + off, bufsz - off, " %s: %"PRIu64"%.*s",
                         ecn2str[ecn], acki->ecn_counts[ecn], ecn < 3, ";");
             if (nw > bufsz - off)
-                break;
+                return;
             off += nw;
         }
     }
-
-  end:
-    *sz = off;
-    return buf;
 }
 
 
@@ -653,4 +629,69 @@ lsquic_gquic_calc_packno_bits (lsquic_packno_t packno,
          + (delta > (1ULL << 32));
 
     return bits;
+}
+
+
+/* `dst' serves both as source and destination.  `src' is the new frame */
+int
+lsquic_merge_acks (struct ack_info *dst, const struct ack_info *src)
+{
+    const struct lsquic_packno_range *a, *a_end, *b, *b_end, **p;
+    struct lsquic_packno_range *out, *out_end;
+    unsigned i;
+    struct lsquic_packno_range out_ranges[256];
+
+    if (!(dst->n_ranges && src->n_ranges))
+        return -1;
+
+    a = dst->ranges;
+    a_end = a + dst->n_ranges;
+    b = src->ranges;
+    b_end = b + src->n_ranges;
+    out = out_ranges;
+    out_end = out + sizeof(out_ranges) / sizeof(out_ranges[0]);
+
+    if (a->high >= b->high)
+        *out = *a;
+    else
+        *out = *b;
+
+    while (1)
+    {
+        if (a < a_end && b < b_end)
+        {
+            if (a->high >= b->high)
+                p = &a;
+            else
+                p = &b;
+        }
+        else if (a < a_end)
+            p = &a;
+        else if (b < b_end)
+            p = &b;
+        else
+        {
+            ++out;
+            break;
+        }
+
+        if ((*p)->high + 1 >= out->low)
+            out->low = (*p)->low;
+        else if (out + 1 < out_end)
+            *++out = **p;
+        else
+            return -1;
+        ++*p;
+    }
+
+    if (src->flags & AI_ECN)
+        for (i = 0; i < sizeof(src->ecn_counts)
+                                        / sizeof(src->ecn_counts[0]); ++i)
+            dst->ecn_counts[i] += src->ecn_counts[i];
+    dst->flags |= src->flags;
+    dst->lack_delta = src->lack_delta;
+    dst->n_ranges = out - out_ranges;
+    memcpy(dst->ranges, out_ranges, sizeof(out_ranges[0]) * dst->n_ranges);
+
+    return 0;
 }

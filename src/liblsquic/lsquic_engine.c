@@ -2237,10 +2237,6 @@ iov_size (const struct iovec *iov, const struct iovec *const end)
 }
 
 
-/* XXX A lot of extra setup -- two extra arguments to this function, two extra
- * connection ref flags and queues -- is just to handle the ENCPA_BADCRYPT case,
- * which never really happens.
- */
 static void
 send_packets_out (struct lsquic_engine *engine,
                   struct conns_tailq *ticked_conns,
@@ -2417,7 +2413,6 @@ reset_deadline (lsquic_engine_t *engine, lsquic_time_t now)
 }
 
 
-/* TODO: this is a user-facing function, account for load */
 void
 lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 {

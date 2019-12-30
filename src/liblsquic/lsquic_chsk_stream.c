@@ -38,16 +38,6 @@ hsk_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 
     LSQ_DEBUG("stream created");
 
-#if LSQUIC_ENABLE_HANDSHAKE_DISABLE
-    if (getenv("LSQUIC_DISABLE_HANDSHAKE"))
-    {
-        LSQ_WARN("Handshake disabled: faking it");
-        c_hsk->lconn->cn_flags |= LSCONN_NO_CRYPTO;
-        c_hsk->lconn->cn_if->ci_handshake_ok(c_hsk->lconn);
-        return (void *) c_hsk;
-    }
-#endif
-
     lsquic_stream_wantwrite(stream, 1);
 
     return (void *) c_hsk;

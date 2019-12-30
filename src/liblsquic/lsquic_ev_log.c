@@ -93,14 +93,10 @@ void
 lsquic_ev_log_ack_frame_in (const lsquic_cid_t *cid,
                                         const struct ack_info *acki)
 {
-    size_t sz;
-    char *buf;
+    char buf[MAX_ACKI_STR_SZ];
 
-    if ((buf = acki2str(acki, &sz)))
-    {
-        LCID("ACK frame in: %.*s", (int) sz, buf);
-        free(buf);
-    }
+    lsquic_acki2str(acki, buf, sizeof(buf));
+    LCID("ACK frame in: %s", buf);
 }
 
 
@@ -361,9 +357,8 @@ lsquic_ev_log_generated_ack_frame (const lsquic_cid_t *cid,
                 size_t ack_buf_sz)
 {
     struct ack_info acki;
-    size_t sz;
-    char *buf;
     int len;
+    char buf[MAX_ACKI_STR_SZ];
 
     len = pf->pf_parse_ack_frame(ack_buf, ack_buf_sz, &acki,
                                                     TP_DEF_ACK_DELAY_EXP);
@@ -373,11 +368,8 @@ lsquic_ev_log_generated_ack_frame (const lsquic_cid_t *cid,
         return;
     }
 
-    if ((buf = acki2str(&acki, &sz)))
-    {
-        LCID("generated ACK frame: %.*s", (int) sz, buf);
-        free(buf);
-    }
+    lsquic_acki2str(&acki, buf, sizeof(buf));
+    LCID("generated ACK frame: %s", buf);
 }
 
 

@@ -1,3 +1,18 @@
+2019-12-30
+    - 2.8.1
+    - [FEATURE] Use occasional packet number gaps to detect optimistic
+      ACK attacks.
+    - [BUGFIX] Q050 client: all packet numbers are in the App PNS.
+    - [OPTIMIZATION] Merge multi-range ACK frames, not just single-range
+      ACK frames.
+    - IETF QUIC: use RTT estimate in ack timeout calculation.
+    - IETF handshake: abort conn when unexpected errors occur.
+    - Use PING rather than MAX_DATA frames to elicit ACKs from peer.
+    - Server: enforce 1200 byte Initial minimum packet size.
+    - [CLEANUP] Remove code to disable gQUIC crypto.
+    - [CLEANUP] Remove n_timestamps from ACK info struct.
+    - Optimize driver: reuse previous ancillary message when possible.
+
 2019-12-23
     - 2.8.0
     - [FEATURE] Add support for Q050.

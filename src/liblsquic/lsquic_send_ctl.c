@@ -10,6 +10,8 @@
 #include <string.h>
 #include <sys/queue.h>
 
+#include <openssl/rand.h>
+
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic.h"
@@ -110,6 +112,8 @@ send_ctl_retx_bytes_out (const struct lsquic_send_ctl *ctl);
 static unsigned
 send_ctl_all_bytes_out (const struct lsquic_send_ctl *ctl);
 
+static void
+send_ctl_reschedule_poison (struct lsquic_send_ctl *ctl);
 
 #ifdef NDEBUG
 static
@@ -141,7 +145,7 @@ lsquic_send_ctl_have_unacked_stream_frames (const lsquic_send_ctl_t *ctl)
     const lsquic_packet_out_t *packet_out;
 
     TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[PNS_APP], po_next)
-        if (0 == (packet_out->po_flags & PO_LOSS_REC)
+        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
                 && (packet_out->po_frame_types &
                     ((1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM))))
             return 1;
@@ -157,7 +161,7 @@ send_ctl_first_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
     lsquic_packet_out_t *packet_out;
 
     TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[pns], po_next)
-        if (0 == (packet_out->po_flags & PO_LOSS_REC)
+        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out;
 
@@ -172,7 +176,7 @@ send_ctl_last_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
     lsquic_packet_out_t *packet_out;
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                             lsquic_packets_tailq, po_next)
-        if (0 == (packet_out->po_flags & PO_LOSS_REC)
+        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out;
     return NULL;
@@ -354,6 +358,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
                                                                 == LSCONN_IETF)
         ctl->sc_flags |= SC_SANITY_CHECK;
 #endif
+    ctl->sc_gap = UINT64_MAX - 1 /* Can't have +1 == 0 */;
 }
 
 
@@ -494,7 +499,7 @@ send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
     enum packnum_space pns;
 
     pns = lsquic_packet_out_pns(packet_out);
-    assert(0 == (packet_out->po_flags & PO_LOSS_REC));
+    assert(0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)));
     TAILQ_INSERT_TAIL(&ctl->sc_unacked_packets[pns], packet_out, po_next);
     packet_out->po_flags |= PO_UNACKED;
     ctl->sc_bytes_unacked_all += packet_out_sent_sz(packet_out);
@@ -569,6 +574,62 @@ send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Poisoned packets are used to detect optimistic ACK attacks.  We only
+ * use a single poisoned packet at a time.
+ */
+static int
+send_ctl_add_poison (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *poison;
+
+    poison = lsquic_malo_get(ctl->sc_conn_pub->packet_out_malo);
+    if (!poison)
+        return -1;
+
+    memset(poison, 0, sizeof(*poison));
+    poison->po_flags      = PO_UNACKED|PO_POISON;
+    poison->po_packno     = ctl->sc_gap;
+    poison->po_loss_chain = poison; /* Won't be used, but just in case */
+    TAILQ_INSERT_TAIL(&ctl->sc_unacked_packets[PNS_APP], poison, po_next);
+    LSQ_DEBUG("insert poisoned packet %"PRIu64, poison->po_packno);
+    ctl->sc_flags |= SC_POISON;
+    return 0;
+}
+
+
+static void
+send_ctl_reschedule_poison (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *poison;
+    enum lsq_log_level log_level;
+    lsquic_time_t approx_now;
+
+    TAILQ_FOREACH(poison, &ctl->sc_unacked_packets[PNS_APP], po_next)
+        if (poison->po_flags & PO_POISON)
+        {
+            LSQ_DEBUG("remove poisoned packet %"PRIu64, poison->po_packno);
+            TAILQ_REMOVE(&ctl->sc_unacked_packets[PNS_APP], poison, po_next);
+            lsquic_malo_put(poison);
+            lsquic_send_ctl_begin_optack_detection(ctl);
+            ctl->sc_flags &= ~SC_POISON;
+            return;
+        }
+
+    approx_now = ctl->sc_last_sent_time;
+    if (0 == ctl->sc_enpub->enp_last_warning[WT_NO_POISON]
+                || ctl->sc_enpub->enp_last_warning[WT_NO_POISON]
+                                            + WARNING_INTERVAL < approx_now)
+    {
+        ctl->sc_enpub->enp_last_warning[WT_NO_POISON] = approx_now;
+        log_level = LSQ_LOG_WARN;
+    }
+    else
+        log_level = LSQ_LOG_DEBUG;
+    LSQ_LOG(log_level, "odd: poisoned packet %"PRIu64" not found during "
+        "reschedule, flag: %d", ctl->sc_gap, !!(ctl->sc_flags & SC_POISON));
+}
+
+
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
                              struct lsquic_packet_out *packet_out)
@@ -579,6 +640,13 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     assert(!(packet_out->po_flags & PO_ENCRYPTED));
     ctl->sc_last_sent_time = packet_out->po_sent;
     pns = lsquic_packet_out_pns(packet_out);
+    if (packet_out->po_packno == ctl->sc_gap + 1 && pns == PNS_APP)
+    {
+        assert(!(ctl->sc_flags & SC_POISON));
+        lsquic_senhist_add(&ctl->sc_senhist, ctl->sc_gap);
+        if (0 != send_ctl_add_poison(ctl))
+            return -1;
+    }
     LSQ_DEBUG("packet %"PRIu64" has been sent (frame types: %s)",
         packet_out->po_packno, lsquic_frame_types_to_str(frames,
             sizeof(frames), packet_out->po_frame_types));
@@ -640,7 +708,7 @@ static void
 send_ctl_destroy_packet (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
-    if (0 == (packet_out->po_flags & PO_LOSS_REC))
+    if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub,
                                             packet_out->po_path->np_peer_ctx);
     else
@@ -823,7 +891,7 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                                 lsquic_packets_tailq, po_next)
     {
-        if (0 == (packet_out->po_flags & PO_LOSS_REC)
+        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out->po_packno;
     }
@@ -848,7 +916,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     {
         next = TAILQ_NEXT(packet_out, po_next);
 
-        if (packet_out->po_flags & PO_LOSS_REC)
+        if (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
             continue;
 
         if (packet_out->po_packno + N_NACKS_BEFORE_RETX <
@@ -1012,7 +1080,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             ecn_total_acked += lsquic_packet_out_ecn(packet_out) != ECN_NOT_ECT;
             ecn_ce_cnt += lsquic_packet_out_ecn(packet_out) == ECN_CE;
             one_rtt_cnt += lsquic_packet_out_enc_level(packet_out) == ENC_LEV_FORW;
-            if (0 == (packet_out->po_flags & PO_LOSS_REC))
+            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
             {
                 packet_sz = packet_out_sent_sz(packet_out);
                 send_ctl_unacked_remove(ctl, packet_out, packet_sz);
@@ -1020,7 +1088,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                 LSQ_DEBUG("acking via regular record %"PRIu64,
                                                         packet_out->po_packno);
             }
-            else
+            else if (packet_out->po_flags & PO_LOSS_REC)
             {
                 packet_sz = packet_out->po_sent_sz;
                 TAILQ_REMOVE(&ctl->sc_unacked_packets[pns], packet_out,
@@ -1032,6 +1100,12 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                 LSQ_DEBUG("acking via loss record %"PRIu64,
                                                         packet_out->po_packno);
 #endif
+            }
+            else
+            {
+                LSQ_WARN("poisoned packet %"PRIu64" acked",
+                                                        packet_out->po_packno);
+                return -1;
             }
             ack2ed[!!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))]
                 = packet_out->po_ack2ed;
@@ -1114,6 +1188,8 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     lsquic_send_ctl_sanity_check(ctl);
     if (ctl->sc_ci->cci_end_ack)
         ctl->sc_ci->cci_end_ack(CGP(ctl), ctl->sc_bytes_unacked_all);
+    if (ctl->sc_gap < smallest_acked(acki))
+        send_ctl_reschedule_poison(ctl);
     return 0;
 
   no_unacked_packets:
@@ -1191,7 +1267,13 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
 static lsquic_packno_t
 send_ctl_next_packno (lsquic_send_ctl_t *ctl)
 {
-    return ++ctl->sc_cur_packno;
+    lsquic_packno_t packno;
+
+    packno = ++ctl->sc_cur_packno;
+    if (packno == ctl->sc_gap)
+        packno = ++ctl->sc_cur_packno;
+
+    return packno;
 }
 
 
@@ -1216,7 +1298,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
             TAILQ_REMOVE(&ctl->sc_unacked_packets[pns], packet_out, po_next);
             packet_out->po_flags &= ~PO_UNACKED;
 #ifndef NDEBUG
-            if (0 == (packet_out->po_flags & PO_LOSS_REC))
+            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
             {
                 ctl->sc_bytes_unacked_all -= packet_out_sent_sz(packet_out);
                 --ctl->sc_n_in_flight_all;
@@ -1366,7 +1448,7 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                 packet_out; packet_out = next)
         {
             next = TAILQ_NEXT(packet_out, po_next);
-            if (0 == (packet_out->po_flags & PO_LOSS_REC))
+            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
                 n_resubmitted += send_ctl_handle_lost_packet(ctl, packet_out,
                                                                         &next);
         }
@@ -1433,7 +1515,7 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
                 prev_packno = packet_out->po_packno;
                 prev_packno_set = 1;
             }
-            if (0 == (packet_out->po_flags & PO_LOSS_REC))
+            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
             {
                 bytes += packet_out_sent_sz(packet_out);
                 ++count;
@@ -1620,6 +1702,8 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
             packet_out->po_lflags &= ~POL_LOSS_BIT;
         if (packet_out->po_header_type == HETY_NOT_SET)
         {
+            if (ctl->sc_gap + 1 == packet_out->po_packno)
+                ++ctl->sc_square_count;
             if (ctl->sc_square_count++ & 128)
                 packet_out->po_lflags |= POL_SQUARE_BIT;
             else
@@ -2734,7 +2818,7 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
                                                             packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
-        if (packet_out->po_flags & PO_LOSS_REC)
+        if (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
             TAILQ_REMOVE(&ctl->sc_unacked_packets[pns], packet_out, po_next);
         else
         {
@@ -2848,4 +2932,14 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
     }
     else
         LSQ_DEBUG("no scheduled packets at the time of DCID change");
+}
+
+
+void
+lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *ctl)
+{
+    unsigned char buf[1];
+
+    RAND_bytes(buf, sizeof(buf));
+    ctl->sc_gap = ctl->sc_cur_packno + 1 + buf[0];
 }

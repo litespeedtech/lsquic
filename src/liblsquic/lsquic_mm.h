@@ -48,6 +48,7 @@ struct lsquic_mm {
     SLIST_HEAD(, packet_in_buf)     packet_in_bufs[MM_N_IN_BUCKETS];
     SLIST_HEAD(, four_k_page)       four_k_pages;
     SLIST_HEAD(, sixteen_k_page)    sixteen_k_pages;
+    char                *ack_str;
 };
 
 int

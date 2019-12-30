@@ -375,6 +375,7 @@ parse_ack_frame_without_blocks (const unsigned char *buf, size_t buf_len,
     const unsigned char type = buf[0];
     const unsigned char *p = buf + 1;
     const unsigned char *const pend = buf + buf_len;
+    unsigned char n_timestamps;
 
     const int ack_block_len   = twobit_to_1246(type & 3);        /* mm */
     const int largest_obs_len = twobit_to_1246((type >> 2) & 3); /* ll */
@@ -393,12 +394,12 @@ parse_ack_frame_without_blocks (const unsigned char *buf, size_t buf_len,
 
     ack->n_ranges = 1;
 
-    ack->n_timestamps = *p;
+    n_timestamps = *p;
     ++p;
 
-    if (ack->n_timestamps)
+    if (n_timestamps)
     {
-        unsigned timestamps_size = 5 + 3 * (ack->n_timestamps - 1);
+        unsigned timestamps_size = 5 + 3 * (n_timestamps - 1);
         CHECK_SPACE(timestamps_size, p, pend);
         p += timestamps_size;
     }
@@ -419,6 +420,7 @@ parse_ack_frame_with_blocks (const unsigned char *buf, size_t buf_len,
     const unsigned char type = buf[0];
     const unsigned char *p = buf + 1;
     const unsigned char *const pend = buf + buf_len;
+    unsigned char n_timestamps;
 
     assert((type & 0xC0) == 0x40);      /* We're passed correct frame type */
 
@@ -461,31 +463,14 @@ parse_ack_frame_with_blocks (const unsigned char *buf, size_t buf_len,
     }
     ack->n_ranges = n;
 
-    ack->n_timestamps = *p;
+    n_timestamps = *p;
     ++p;
 
-    if (ack->n_timestamps)
+    if (n_timestamps)
     {
-#if LSQUIC_PARSE_ACK_TIMESTAMPS
-        CHECK_SPACE(5, p , pend);
-        ack->timestamps[0].packet_delta = *p++;
-        memcpy(&ack->timestamps[0].delta_usec, p, 4);
-        p += 4;
-        unsigned i;
-        for (i = 1; i < ack->n_timestamps; ++i)
-        {
-            CHECK_SPACE(3, p , pend);
-            ack->timestamps[i].packet_delta = *p++;
-            uint64_t delta_time = read_float_time16(p);
-            p += 2;
-            ack->timestamps[i].delta_usec =
-                ack->timestamps[i - 1].delta_usec + delta_time;
-        }
-#else
-        unsigned timestamps_size = 5 + 3 * (ack->n_timestamps - 1);
+        unsigned timestamps_size = 5 + 3 * (n_timestamps - 1);
         CHECK_SPACE(timestamps_size, p, pend);
         p += timestamps_size;
-#endif
     }
 
     assert(p <= pend);
