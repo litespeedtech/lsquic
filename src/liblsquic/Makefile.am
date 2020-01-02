@@ -10,7 +10,6 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_arr.c \
     lsquic_attq.c \
     lsquic_bbr.c \
-    lsquic_buf.c \
     lsquic_bw_sampler.c \
     lsquic_cfcw.c \
     lsquic_chsk_stream.c \
