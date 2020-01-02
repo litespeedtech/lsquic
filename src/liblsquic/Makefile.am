@@ -54,6 +54,7 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_packet_out.c \
     lsquic_packints.c \
     lsquic_parse_Q046.c \
+    lsquic_parse_Q050.c \
     lsquic_parse_common.c \
     lsquic_parse_gquic_be.c \
     lsquic_parse_gquic_common.c \
