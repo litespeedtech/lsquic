@@ -181,7 +181,8 @@ enum stream_b_flags
     SMBF_RW_ONCE      = 1 << 6,  /* When set, read/write events are dispatched once per call */
     SMBF_CONN_LIMITED = 1 << 7,
     SMBF_HEADERS      = 1 << 8,  /* Headers stream */
-#define N_SMBF_FLAGS 9
+    SMBF_VERIFY_CL    = 1 << 9,  /* Verify content-length (stored in sm_cont_len) */
+#define N_SMBF_FLAGS 10
 };
 
 
@@ -313,6 +314,13 @@ struct lsquic_stream
     SLIST_HEAD(, push_promise)      sm_promises;
 
     uint64_t                        sm_last_frame_off;
+
+    /* Content length specified in incoming `content-length' header field.
+     * Used to verify size of DATA frames.
+     */
+    unsigned long long              sm_cont_len;
+    /* Sum of bytes in all incoming DATA frames.  Used for verification. */
+    unsigned long long              sm_data_in;
 
     /* How much data there is in sm_header_block and how much of it has been
      * sent:
@@ -598,5 +606,8 @@ lsquic_stream_header_is_pp (const struct lsquic_stream *);
 
 int
 lsquic_stream_header_is_trailer (const struct lsquic_stream *);
+
+int
+lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 
 #endif

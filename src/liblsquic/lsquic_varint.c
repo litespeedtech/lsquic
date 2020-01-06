@@ -74,8 +74,9 @@ lsquic_varint_read_nb (const unsigned char **pp, const unsigned char *end,
         return 0;
     case 1:
         state->val = (*p++ & VINT_MASK) << 8;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1000; break; }
+        /* fall through */
+    case 1000:
         state->val |= *p++;
         *pp = p;
         return 0;
@@ -91,14 +92,17 @@ lsquic_varint_read_nb (const unsigned char **pp, const unsigned char *end,
             return 0;
         }
         state->val = (*p++ & VINT_MASK) << 24;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1001; break; }
+        /* fall through */
+    case 1001:
         state->val |= *p++ << 16;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1002; break; }
+        /* fall through */
+    case 1002:
         state->val |= *p++ << 8;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1003; break; }
+        /* fall through */
+    case 1003:
         state->val |= *p++;
         *pp = p;
         return 0;
@@ -114,26 +118,33 @@ lsquic_varint_read_nb (const unsigned char **pp, const unsigned char *end,
             return 0;
         }
         state->val = (uint64_t) (*p++ & VINT_MASK) << 56;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1004; break; }
+        /* fall through */
+    case 1004:
         state->val |= (uint64_t) *p++ << 48;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1005; break; }
+        /* fall through */
+    case 1005:
         state->val |= (uint64_t) *p++ << 40;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1006; break; }
+        /* fall through */
+    case 1006:
         state->val |= (uint64_t) *p++ << 32;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1007; break; }
+        /* fall through */
+    case 1007:
         state->val |= (uint64_t) *p++ << 24;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1008; break; }
+        /* fall through */
+    case 1008:
         state->val |= (uint64_t) *p++ << 16;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1009; break; }
+        /* fall through */
+    case 1009:
         state->val |= (uint64_t) *p++ << 8;
-        if (p >= end) { state->pos = __LINE__ + 1; break; }
-    case __LINE__:
+        if (p >= end) { state->pos = 1010; break; }
+        /* fall through */
+    case 1010:
         state->val |= *p++;
         *pp = p;
         return 0;

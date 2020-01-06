@@ -1241,6 +1241,26 @@ read_uh (struct lsquic_stream *stream,
 
 
 static void
+verify_cl_on_fin (struct lsquic_stream *stream)
+{
+    struct lsquic_conn *lconn;
+
+    /* The rules in RFC7230, Section 3.3.2 are a bit too intricate.  We take
+     * a simple approach and verify content-length only when there was any
+     * payload at all.
+     */
+    if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 1, HEC_GENERAL_PROTOCOL_ERROR,
+            "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
+            "while content-length specified of %llu", stream->id,
+            stream->sm_data_in, stream->sm_cont_len);
+    }
+}
+
+
+static void
 stream_consumed_bytes (struct lsquic_stream *stream)
 {
     lsquic_sfcw_set_read_off(&stream->fc, stream->read_offset);
@@ -1320,6 +1340,8 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 if (fin)
                 {
                     stream->stream_flags |= STREAM_FIN_REACHED;
+                    if (stream->sm_bflags & SMBF_VERIFY_CL)
+                        verify_cl_on_fin(stream);
                     goto end_while;
                 }
             }
@@ -3169,7 +3191,8 @@ update_buffered_hq_frames (struct lsquic_stream *stream, size_t len,
     {
         assert(avail >= 3);
         shf = stream_activate_hq_frame(stream, cur_off, HQFT_DATA, 0, len);
-        /* XXX malloc can fail */
+        if (!shf)
+            return 0;
         if (len > stream_hq_frame_end(shf) - cur_off)
             len = stream_hq_frame_end(shf) - cur_off;
         extendable = 0;
@@ -4118,6 +4141,23 @@ lsquic_stream_header_is_trailer (const struct lsquic_stream *stream)
 }
 
 
+static void
+verify_cl_on_new_data_frame (struct lsquic_stream *stream,
+                                                    struct hq_filter *filter)
+{
+    struct lsquic_conn *lconn;
+
+    stream->sm_data_in += filter->hqfi_left;
+    if (stream->sm_data_in > stream->sm_cont_len)
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 1, HEC_GENERAL_PROTOCOL_ERROR,
+            "number of bytes in DATA frames of stream %"PRIu64" exceeds "
+            "content-length limit of %llu", stream->id, stream->sm_cont_len);
+    }
+}
+
+
 static size_t
 hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
@@ -4160,7 +4200,11 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             if (filter->hqfi_left > 0)
             {
                 if (filter->hqfi_type == HQFT_DATA)
+                {
+                    if (stream->sm_bflags & SMBF_VERIFY_CL)
+                        verify_cl_on_new_data_frame(stream, filter);
                     goto end;
+                }
                 else if (filter->hqfi_type == HQFT_PUSH_PROMISE)
                 {
                     if (stream->sm_bflags & SMBF_SERVER)
@@ -4716,6 +4760,7 @@ pp_reader_size (void *lsqr_ctx)
     case PPWS_ID6:
     case PPWS_ID7:
         size += 8 - promise->pp_write_state;
+        /* fall-through */
     case PPWS_PFX0:
         ++size;
         /* fall-through */
@@ -4835,4 +4880,22 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
         stream->stream_flags &= ~STREAM_PUSHING;
         return -1;
     }
+}
+
+
+int
+lsquic_stream_verify_len (struct lsquic_stream *stream,
+                                                unsigned long long cont_len)
+{
+    if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
+                                            == (SMBF_IETF|SMBF_USE_HEADERS))
+    {
+        stream->sm_cont_len = cont_len;
+        stream->sm_bflags |= SMBF_VERIFY_CL;
+        LSQ_DEBUG("will verify that incoming DATA frames have %llu bytes",
+            cont_len);
+        return 0;
+    }
+    else
+        return -1;
 }

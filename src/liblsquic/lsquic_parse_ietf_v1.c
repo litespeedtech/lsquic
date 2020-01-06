@@ -172,10 +172,13 @@ write_packno (unsigned char *p, lsquic_packno_t packno,
     {
     case IQUIC_PACKNO_LEN_4:
         *p++ = packno >> 24;
+        /* fall through */
     case IQUIC_PACKNO_LEN_3:
         *p++ = packno >> 16;
+        /* fall through */
     case IQUIC_PACKNO_LEN_2:
         *p++ = packno >> 8;
+        /* fall through */
     default:
         *p++ = packno;
     }

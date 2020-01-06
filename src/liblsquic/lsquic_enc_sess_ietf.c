@@ -1518,6 +1518,7 @@ iquic_esfi_handshake (struct enc_sess_iquic *enc_sess)
             LSQ_DEBUG("early data rejected");
             hsk_status = LSQ_HSK_0RTT_FAIL;
             goto err;
+            /* fall through */
         default:
             LSQ_DEBUG("handshake: %s", ERR_error_string(err, errbuf));
             hsk_status = LSQ_HSK_FAIL;

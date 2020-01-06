@@ -1,3 +1,15 @@
+2020-01-06
+    - 2.8.4
+    - [HTTP3] Verify number of bytes in incoming DATA frames against
+      content-length.
+    - [HTTP3] Stop issuing streams credits if peer stops opening QPACK
+      decoder window.  This addresses a potential attack whereby client
+      can cause the server to keep allocating memory.  See Security
+      Considerations in the QPACK draft.
+    - [BUGFIX] Mini conn: don't shorten max packet size for Q050 and later.
+    - [BUGFIX] Init IETF connection flow controller using correct setting.
+    - Code cleanup and minor fixes.
+
 2019-12-30
     - 2.8.1
     - [FEATURE] Use occasional packet number gaps to detect optimistic

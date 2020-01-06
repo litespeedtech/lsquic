@@ -1030,7 +1030,7 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     [QUIC_FRAME_ACK]                =  imico_process_ack_frame,
     [QUIC_FRAME_PING]               =  imico_process_ping_frame,
     [QUIC_FRAME_CONNECTION_CLOSE]   =  imico_process_connection_close_frame,
-    /* XXX: Some of them are invalid, while others are unexpected.  We treat
+    /* Some of them are invalid, while others are unexpected.  We treat
      * them the same: handshake cannot proceed.
      */
     [QUIC_FRAME_RST_STREAM]         =  imico_process_invalid_frame,

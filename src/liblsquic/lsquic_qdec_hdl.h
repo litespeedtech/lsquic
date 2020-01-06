@@ -31,6 +31,8 @@ struct qpack_dec_hdl
                             *qdh_enpub;
     struct http1x_ctor_ctx   qdh_h1x_ctor_ctx;
     void                    *qdh_hsi_ctx;
+    void                   (*qdh_on_dec_sent_func)(void *);
+    void                    *qdh_on_dec_sent_ctx;
 };
 
 int
@@ -66,6 +68,9 @@ lsquic_qdh_unref_stream (struct qpack_dec_hdl *, struct lsquic_stream *);
 void
 lsquic_qdh_cancel_stream (struct qpack_dec_hdl *,
                                                 struct lsquic_stream *);
+
+int
+lsquic_qdh_arm_if_unsent (struct qpack_dec_hdl *, void (*)(void *), void *);
 
 extern const struct lsquic_stream_if *const lsquic_qdh_enc_sm_in_if;
 extern const struct lsquic_stream_if *const lsquic_qdh_dec_sm_out_if;

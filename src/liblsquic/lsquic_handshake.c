@@ -4216,7 +4216,7 @@ gquic2_esf_decrypt_packet (enc_session_t *enc_session_p,
         goto err;
     }
 
-    /* Bits 2 and 3 are not set and don't need to be check in gQUIC */
+    /* Bits 2 and 3 are not set and don't need to be checked in gQUIC */
 
     packet_in->pi_data_sz = packet_in->pi_header_sz + out_sz;
     if (packet_in->pi_flags & PI_OWN_DATA)

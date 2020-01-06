@@ -111,9 +111,11 @@ load_cert (struct lsquic_hash *certs, const char *optarg)
     const int was = SSL_CTX_set_session_cache_mode(cert->ce_ssl_ctx, 1);
     LSQ_DEBUG("set SSL session cache mode to 1 (was: %d)", was);
 
-    lsquic_hash_insert(certs, cert->ce_sni, strlen(cert->ce_sni), cert,
-                                                            &cert->ce_hash_el);
-    rv = 0;
+    if (lsquic_hash_insert(certs, cert->ce_sni, strlen(cert->ce_sni), cert,
+                                                            &cert->ce_hash_el))
+        rv = 0;
+    else
+        LSQ_WARN("cannot insert cert for %s into hash table", cert->ce_sni);
 
   end:
     free(sni);

@@ -223,7 +223,16 @@ qdh_out_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
         LSQ_DEBUG("wrote %zd bytes to stream", nw);
         (void) lsquic_stream_flush(stream);
         if (lsquic_frab_list_empty(&qdh->qdh_fral))
+        {
             lsquic_stream_wantwrite(stream, 0);
+            if (qdh->qdh_on_dec_sent_func)
+            {
+                LSQ_DEBUG("buffered data written: call callback");
+                qdh->qdh_on_dec_sent_func(qdh->qdh_on_dec_sent_ctx);
+                qdh->qdh_on_dec_sent_func = NULL;
+                qdh->qdh_on_dec_sent_ctx = NULL;
+            }
+        }
     }
     else
     {
@@ -294,7 +303,7 @@ qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
     s = lsqpack_dec_enc_in(&qdh->qdh_decoder, buf, sz);
     if (s != 0)
     {
-        LSQ_INFO("error reading decoder stream");
+        LSQ_INFO("error reading encoder stream");
         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
         qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
             HEC_QPACK_DECODER_STREAM_ERROR, "Error interpreting QPACK encoder "
@@ -376,6 +385,63 @@ qdh_hblock_unblocked (void *stream_p)
 }
 
 
+struct cont_len
+{
+    unsigned long long      value;
+    int                     has;    /* 1: set, 0: not set, -1: invalid */
+};
+
+
+static void
+process_content_length (const struct qpack_dec_hdl *qdh /* for logging */,
+            struct cont_len *cl, const char *val /* not NUL-terminated */,
+                                                                unsigned len)
+{
+    char *endcl, cont_len_buf[30];
+
+    if (0 == cl->has)
+    {
+        if (len >= sizeof(cont_len_buf))
+        {
+            LSQ_DEBUG("content-length has invalid value `%.*s'",
+                                                            (int) len, val);
+            cl->has = -1;
+            return;
+        }
+        memcpy(cont_len_buf, val, len);
+        cont_len_buf[len] = '\0';
+        cl->value = strtoull(cont_len_buf, &endcl, 10);
+        if (*endcl == '\0' && !(ULLONG_MAX == cl->value && ERANGE == errno))
+        {
+            cl->has = 1;
+            LSQ_DEBUG("content length is %llu", cl->value);
+        }
+        else
+        {
+            cl->has = -1;
+            LSQ_DEBUG("content-length has invalid value `%.*s'",
+                (int) len, val);
+        }
+    }
+    else if (cl->has > 0)
+    {
+        LSQ_DEBUG("header set has two content-length: ambiguous, "
+            "turn off checking");
+        cl->has = -1;
+    }
+}
+
+
+static int
+is_content_length (const struct lsqpack_header *header)
+{
+    return ((header->qh_flags & QH_ID_SET) && header->qh_static_id == 4)
+        || (header->qh_name_len == 14 && header->qh_name[0] == 'c'
+                    && 0 == memcmp(header->qh_name + 1, "ontent-length", 13))
+        ;
+}
+
+
 static int
 qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
             struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
@@ -387,6 +453,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     int push_promise;
     unsigned i;
     void *hset;
+    struct cont_len cl;
 
     push_promise = lsquic_stream_header_is_pp(stream);
     hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
@@ -398,6 +465,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
 
     LSQ_DEBUG("got header set for stream %"PRIu64, stream->id);
 
+    cl.has = 0;
     for (i = 0; i < qlist->qhl_count; ++i)
     {
         header = qlist->qhl_headers[i];
@@ -412,6 +480,9 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
             LSQ_INFO("header process returned non-OK code %u", (unsigned) st);
             goto err;
         }
+        if (is_content_length(header))
+            process_content_length(qdh, &cl, header->qh_value,
+                                                        header->qh_value_len);
     }
 
     lsqpack_dec_destroy_header_list(qlist);
@@ -434,6 +505,8 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
         goto err;
     LSQ_DEBUG("converted qlist to hset and gave it to stream %"PRIu64,
                                                                 stream->id);
+    if (cl.has > 0)
+        (void) lsquic_stream_verify_len(stream, cl.value);
     return 0;
 
   err:
@@ -588,5 +661,26 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
         LSQ_WARN("cannot cancel stream %"PRIu64" -- not enough buffer space "
             "to encode Cancel Stream instructin", stream->id);
         lsquic_qdh_unref_stream(qdh, stream);
+    }
+}
+
+
+int
+lsquic_qdh_arm_if_unsent (struct qpack_dec_hdl *qdh, void (*func)(void *),
+                                                                    void *ctx)
+{
+    size_t bytes;
+
+    /* Use size of a single frab list buffer as an arbitrary threshold */
+    bytes = lsquic_frab_list_size(&qdh->qdh_fral);
+    if (bytes <= qdh->qdh_fral.fl_buf_size)
+        return 0;
+    else
+    {
+        LSQ_DEBUG("have %zu bytes of unsent QPACK decoder stream data: set "
+            "up callback", bytes);
+        qdh->qdh_on_dec_sent_func = func;
+        qdh->qdh_on_dec_sent_ctx  = ctx;
+        return 1;
     }
 }

@@ -294,6 +294,7 @@ struct ietf_full_conn
     uint64_t                    ifc_max_stream_data_uni;
     enum ifull_conn_flags       ifc_flags;
     enum send_flags             ifc_send_flags;
+    enum send_flags             ifc_delayed_send;
     struct {
         uint64_t    streams_blocked[N_SDS];
     }                           ifc_send;
@@ -920,7 +921,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         flags & IFC_SERVER ? &server_ver_neg : &conn->ifc_u.cli.ifcli_ver_neg,
         &conn->ifc_pub, SC_IETF|SC_NSTP|(ecn ? SC_ECN : 0));
     lsquic_cfcw_init(&conn->ifc_pub.cfcw, &conn->ifc_pub,
-                                                conn->ifc_settings->es_cfcw);
+                                        conn->ifc_settings->es_init_max_data);
     conn->ifc_pub.all_streams = lsquic_hash_create();
     if (!conn->ifc_pub.all_streams)
         return -1;
@@ -1979,34 +1980,44 @@ is_peer_initiated (const struct ietf_full_conn *conn,
 }
 
 
-#if 0
-/* XXX seems we don't need this? */
-static unsigned
-count_streams (const struct ietf_full_conn *conn, enum stream_id_type sit)
+static void
+sched_max_bidi_streams (void *conn_p)
 {
-    const struct lsquic_stream *stream;
-    struct lsquic_hash_elem *el;
-    unsigned count;
-    int peer;
+    struct ietf_full_conn *conn = conn_p;
 
-    peer = is_peer_initiated(conn, sit);
-    for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
-                             el = lsquic_hash_next(conn->ifc_pub.all_streams))
-    {
-        stream = lsquic_hashelem_getdata(el);
-        count += (stream->id & SIT_MASK) == sit
-              && !lsquic_stream_is_closed(stream)
-                 /* When counting peer-initiated streams, do not include those
-                  * that have been reset:
-                  */
-              && !(peer && lsquic_stream_is_reset(stream));
-    }
-
-    return count;
+    conn->ifc_send_flags |= SF_SEND_MAX_STREAMS_BIDI;
+    conn->ifc_delayed_send &= ~SF_SEND_MAX_STREAMS_BIDI;
+    LSQ_DEBUG("schedule MAX_STREAMS frame for bidirectional streams (was "
+        "delayed)");
 }
 
 
-#endif
+/* Do not allow peer to open more streams while QPACK decoder stream has
+ * unsent data.
+ */
+static int
+can_give_peer_streams_credit (struct ietf_full_conn *conn, enum stream_dir sd)
+{
+    /* This logic only applies to HTTP servers. */
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) != (IFC_SERVER|IFC_HTTP))
+        return 1;
+    /* HTTP client does not open unidirectional streams (other than the
+     * standard three), not applicable.
+     */
+    if (SD_UNI == sd)
+        return 1;
+    if (conn->ifc_delayed_send & (SF_SEND_MAX_STREAMS << sd))
+        return 0;
+    if (lsquic_qdh_arm_if_unsent(&conn->ifc_qdh, sched_max_bidi_streams, conn))
+    {
+        LSQ_DEBUG("delay sending more streams credit to peer until QPACK "
+            "decoder sends unsent data");
+        conn->ifc_delayed_send |= SF_SEND_MAX_STREAMS << sd;
+        return 0;
+    }
+    else
+        return 1;
+}
 
 
 /* Because stream IDs are distributed unevenly, it is more efficient to
@@ -2034,7 +2045,7 @@ conn_mark_stream_closed (struct ietf_full_conn *conn,
             max_allowed = conn->ifc_max_allowed_stream_id[idx] >> SIT_SHIFT;
             thresh = conn->ifc_closed_peer_streams[sd]
                                             + conn->ifc_max_streams_in[sd] / 2;
-            if (thresh >= max_allowed)
+            if (thresh >= max_allowed && can_give_peer_streams_credit(conn, sd))
             {
                 LSQ_DEBUG("closed incoming %sdirectional streams reached "
                     "%"PRIu64", scheduled MAX_STREAMS frame",

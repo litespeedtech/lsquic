@@ -546,8 +546,12 @@ process_stream_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
             mc->mc_flags |= MC_HAVE_NEW_HSK;
             MCHIST_APPEND(mc, MCHE_NEW_HSK);
             if (0 == stream_frame.data_frame.df_offset)
+            {
                 /* First CHLO message: update maximum packet size */
                 mc->mc_path.np_pack_size = packet_in->pi_data_sz;
+                LSQ_DEBUG("update packet size to %hu",
+                                                    mc->mc_path.np_pack_size);
+            }
         }
         else
         {
@@ -577,7 +581,7 @@ process_crypto_frame (struct mini_conn *mc, struct lsquic_packet_in *packet_in,
     {   /* This is not supported for simplicity: assume a single CRYPTO frame
          * per packet.  If this changes, we can revisit this code.
          */
-        LSQ_INFO("two handshake stream frames in single incoming packet");
+        LSQ_INFO("two CRYPTO frames in single incoming packet");
         MCHIST_APPEND(mc, MCHE_2HSK_1STREAM);
         return 0;
     }
@@ -588,8 +592,15 @@ process_crypto_frame (struct mini_conn *mc, struct lsquic_packet_in *packet_in,
         mc->mc_flags |= MC_HAVE_NEW_HSK;
         MCHIST_APPEND(mc, MCHE_NEW_HSK);
         if (0 == stream_frame.data_frame.df_offset)
+        {
             /* First CHLO message: update maximum packet size */
-            mc->mc_path.np_pack_size = packet_in->pi_data_sz;
+            mc->mc_path.np_pack_size = packet_in->pi_data_sz
+                /* Q050 and later adjust pi_data_sz of Initial packets during
+                 * decryption, here we have to add the tag length back:
+                 */
+                                        + mc->mc_conn.cn_esf_c->esf_tag_len;
+            LSQ_DEBUG("update packet size to %hu", mc->mc_path.np_pack_size);
+        }
     }
     else
     {
