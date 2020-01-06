@@ -4095,17 +4095,17 @@ gquic2_strip_hp (struct lsquic_enc_session *enc_session,
         /* fall-through */
     case 3:
         dst[packno_off + 2] ^= mask[3];
-        packno |= dst[packno_off + 2] << shift;
+        packno |= (unsigned) dst[packno_off + 2] << shift;
         shift += 8;
         /* fall-through */
     case 2:
         dst[packno_off + 1] ^= mask[2];
-        packno |= dst[packno_off + 1] << shift;
+        packno |= (unsigned) dst[packno_off + 1] << shift;
         shift += 8;
         /* fall-through */
     default:
         dst[packno_off + 0] ^= mask[1];
-        packno |= dst[packno_off + 0] << shift;
+        packno |= (unsigned) dst[packno_off + 0] << shift;
         shift += 8;
     }
     return decode_packno(enc_session->es_max_packno, packno, shift);

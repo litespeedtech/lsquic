@@ -403,17 +403,17 @@ strip_hp (struct enc_sess_iquic *enc_sess,
         /* fall-through */
     case 3:
         dst[packno_off + 2] ^= mask[3];
-        packno |= dst[packno_off + 2] << shift;
+        packno |= (unsigned) dst[packno_off + 2] << shift;
         shift += 8;
         /* fall-through */
     case 2:
         dst[packno_off + 1] ^= mask[2];
-        packno |= dst[packno_off + 1] << shift;
+        packno |= (unsigned) dst[packno_off + 1] << shift;
         shift += 8;
         /* fall-through */
     default:
         dst[packno_off + 0] ^= mask[1];
-        packno |= dst[packno_off + 0] << shift;
+        packno |= (unsigned) dst[packno_off + 0] << shift;
         shift += 8;
     }
     pns = lsquic_enclev2pns[hp->hp_enc_level];

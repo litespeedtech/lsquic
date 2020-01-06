@@ -311,7 +311,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
 
     req->pr_type     = type;
     req->pr_dcid     = *dcid;
-    if (lsquic_hash_find(prq->prq_reqs_hash, req, sizeof(req)))
+    if (lsquic_hash_find(prq->prq_reqs_hash, req, sizeof(*req)))
     {
         LSQ_DEBUG("request for this DCID and type already exists");
         put_req(prq, req);
@@ -319,7 +319,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     }
 
     req->pr_hash_el.qhe_flags = 0;
-    if (!lsquic_hash_insert(prq->prq_reqs_hash, req, sizeof(req),
+    if (!lsquic_hash_insert(prq->prq_reqs_hash, req, sizeof(*req),
                                                     req, &req->pr_hash_el))
     {
         LSQ_DEBUG("could not insert req into hash");
@@ -332,7 +332,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
     req->pr_version  = version;
     req->pr_scid     = *scid;
     req->pr_path.np_peer_ctx = peer_ctx;
-    memcpy(NP_LOCAL_SA(&req->pr_path), local_addr,
+    memcpy(req->pr_path.np_local_addr, local_addr,
                                             sizeof(req->pr_path.np_local_addr));
     memcpy(NP_PEER_SA(&req->pr_path), peer_addr,
                                             sizeof(req->pr_path.np_peer_addr));

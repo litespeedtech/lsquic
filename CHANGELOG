@@ -1,5 +1,5 @@
 2020-01-06
-    - 2.8.4
+    - 2.8.5
     - [HTTP3] Verify number of bytes in incoming DATA frames against
       content-length.
     - [HTTP3] Stop issuing streams credits if peer stops opening QPACK
@@ -8,6 +8,7 @@
       Considerations in the QPACK draft.
     - [BUGFIX] Mini conn: don't shorten max packet size for Q050 and later.
     - [BUGFIX] Init IETF connection flow controller using correct setting.
+    - [BUGFIX] Fix unintended sign extension when removing header protection.
     - Code cleanup and minor fixes.
 
 2019-12-30
