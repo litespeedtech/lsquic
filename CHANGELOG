@@ -1,3 +1,12 @@
+2020-01-09
+    - 2.8.7
+    - [BUGFIX] Initial packet size check for IETF mini conn applies to
+      UDP payload, not QUIC packet.
+    - Support old and new school loss_bits transport parameter.
+    - Use Q run length of 64 as suggested in the loss bits Draft.
+    - Undo square wave count when packet is delayed.
+    - Code cleanup; minor fixes.
+
 2020-01-06
     - 2.8.5
     - [HTTP3] Verify number of bytes in incoming DATA frames against

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_enc_sess_ietf.c -- Crypto session for IETF QUIC
  */
@@ -235,7 +235,8 @@ struct enc_sess_iquic
         ESI_CACHED_INFO  = 1 << 9,
         ESI_1RTT_ACKED   = 1 << 10,
         ESI_WANT_TICKET  = 1 << 11,
-        ESI_QL_BITS      = 1 << 12,
+        ESI_RECV_QL_BITS = 1 << 12,
+        ESI_SEND_QL_BITS = 1 << 13,
     }                    esi_flags;
     enum evp_aead_direction_t
                          esi_dir[2];        /* client, server */
@@ -326,7 +327,7 @@ apply_hp (struct enc_sess_iquic *enc_sess,
     hp->hp_gen_mask(enc_sess, hp, cliser, dst + packno_off + 4, mask);
     LSQ_DEBUG("apply header protection using mask %s",
                                                 HEXSTR(mask, 5, mask_str));
-    if (enc_sess->esi_flags & ESI_QL_BITS)
+    if (enc_sess->esi_flags & ESI_SEND_QL_BITS)
         dst[0] ^= (0x7 | ((dst[0] >> 7) << 3)) & mask[0];
     else
         dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
@@ -387,7 +388,7 @@ strip_hp (struct enc_sess_iquic *enc_sess,
     hp->hp_gen_mask(enc_sess, hp, cliser, iv, mask);
     LSQ_DEBUG("strip header protection using mask %s",
                                                 HEXSTR(mask, 5, mask_str));
-    if (enc_sess->esi_flags & ESI_QL_BITS)
+    if (enc_sess->esi_flags & ESI_RECV_QL_BITS)
         dst[0] ^= (0x7 | ((dst[0] >> 7) << 3)) & mask[0];
     else
         dst[0] ^= (0xF | (((dst[0] & 0x80) == 0) << 4)) & mask[0];
@@ -538,8 +539,13 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         - !!(params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
     if (!settings->es_allow_migration)
         params.tp_disable_active_migration = 1;
-    if (settings->es_ql_bits)
+    if (settings->es_ql_bits == -1)
+        params.tp_flags |= TRAPA_QL_BITS_OLD;
+    else if (settings->es_ql_bits)
+    {
+        params.tp_loss_bits = settings->es_ql_bits - 1;
         params.tp_flags |= TRAPA_QL_BITS;
+    }
 
     len = lsquic_tp_encode(&params, buf, bufsz);
     if (len >= 0)
@@ -1469,11 +1475,36 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     }
 
     if ((trans_params->tp_flags & TRAPA_QL_BITS)
-                        && enc_sess->esi_enpub->enp_settings.es_ql_bits)
+                            && enc_sess->esi_enpub->enp_settings.es_ql_bits)
     {
-        LSQ_DEBUG("enable QL loss bits");
-        enc_sess->esi_flags |= ESI_QL_BITS;
+        unsigned our_loss_bits;
+        if (enc_sess->esi_enpub->enp_settings.es_ql_bits == -1)
+            our_loss_bits = 1;
+        else
+            our_loss_bits = enc_sess->esi_enpub->enp_settings.es_ql_bits - 1;
+
+        switch ((our_loss_bits << 1) | trans_params->tp_loss_bits)
+        {
+        case    (0             << 1) | 0:
+            LSQ_DEBUG("both sides only tolerate QL bits: don't enable them");
+            break;
+        case    (0             << 1) | 1:
+            LSQ_DEBUG("peer sends QL bits, we receive them");
+            enc_sess->esi_flags |= ESI_RECV_QL_BITS;
+            break;
+        case    (1             << 1) | 0:
+            LSQ_DEBUG("we send QL bits, peer receives them");
+            enc_sess->esi_flags |= ESI_SEND_QL_BITS;
+            break;
+        default/*1             << 1) | 1*/:
+            LSQ_DEBUG("enable sending and receiving QL bits");
+            enc_sess->esi_flags |= ESI_RECV_QL_BITS;
+            enc_sess->esi_flags |= ESI_SEND_QL_BITS;
+            break;
+        }
     }
+    else
+        LSQ_DEBUG("no QL bits");
 
     return 0;
 }
@@ -1633,14 +1664,6 @@ static const enum enc_level hety2el[] =
 };
 
 
-static const enum header_type pns2hety[] =
-{
-    [PNS_INIT]  = HETY_INITIAL,
-    [PNS_HSK]   = HETY_HANDSHAKE,
-    [PNS_APP]   = HETY_NOT_SET,
-};
-
-
 static const enum enc_level pns2enc_level[] =
 {
     [PNS_INIT]  = ENC_LEV_CLEAR,
@@ -1671,19 +1694,9 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     enum packnum_space pns;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
-    if (packet_out->po_flags & PO_MINI)
-    {
-        /* XXX TODO Don't rely on PO_MINI, generalize this logic */
-        assert(enc_sess->esi_flags & ESI_SERVER);
-        enc_level = hety2el[ packet_out->po_header_type ];
-    }
-    else
-    {
-        pns = lsquic_packet_out_pns(packet_out);
-        /* TODO Obviously, will need more logic for 0-RTT */
-        enc_level = pns2enc_level[ pns ];
-        packet_out->po_header_type = pns2hety[ pns ];
-    }
+    pns = lsquic_packet_out_pns(packet_out);
+    /* TODO Obviously, will need more logic for 0-RTT */
+    enc_level = pns2enc_level[ pns ];
 
     cliser = !!(enc_sess->esi_flags & ESI_SERVER);
     if (enc_level == ENC_LEV_FORW)
@@ -1985,7 +1998,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         goto err;
     }
 
-    if (enc_sess->esi_flags & ESI_QL_BITS)
+    if (enc_sess->esi_flags & ESI_SEND_QL_BITS)
     {
         packet_in->pi_flags |= PI_LOG_QL_BITS;
         if (dst[0] & 0x10)
@@ -2021,7 +2034,9 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         {
             LSQ_ERROR("could not init seal crypto ctx (key phase)");
             cleanup_crypto_ctx(&pair->ykp_ctx[ !cliser ]);
-            /* XXX Is this the proper thing to do?  Packet decrypted fine... */
+            /* This is a severe error, abort connection */
+            enc_sess->esi_conn->cn_if->ci_internal_error(enc_sess->esi_conn,
+                "crypto ctx failure during key phase shift");
             dec_packin = DECPI_BADCRYPT;
             goto err;
         }
@@ -2180,15 +2195,22 @@ iquic_esf_zero_rtt_enabled (enc_session_t *enc_session_p)
 }
 
 
-int
+static int
 iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
         const lsquic_cid_t *old_dcid, const lsquic_cid_t *new_dcid)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
+    struct crypto_ctx_pair *pair;
 
     enc_sess->esi_odcid = *old_dcid;
     enc_sess->esi_flags |= ESI_ODCID;
-    /* TODO: free previous handshake keys */
+
+    /* Free previous handshake keys */
+    assert(enc_sess->esi_hsk_pairs);
+    pair = &enc_sess->esi_hsk_pairs[ENC_LEV_CLEAR];
+    cleanup_crypto_ctx(&pair->ykp_ctx[0]);
+    cleanup_crypto_ctx(&pair->ykp_ctx[1]);
+
     if (0 == setup_handshake_keys(enc_sess, new_dcid))
     {
         LSQ_INFOC("reset DCID to %"CID_FMT, CID_BITS(new_dcid));

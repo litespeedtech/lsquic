@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_qdec_hdl.c -- QPACK decoder streams handler
  */
@@ -447,6 +447,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
             struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
 {
     const struct lsquic_hset_if *const hset_if = qdh->qdh_enpub->enp_hsi_if;
+    const unsigned hpack_static_table_size = 61;
     struct uncompressed_headers *uh = NULL;
     const struct lsqpack_header *header;
     enum lsquic_header_status st;
@@ -472,7 +473,8 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
         LSQ_DEBUG("%.*s: %.*s", header->qh_name_len, header->qh_name,
                                         header->qh_value_len, header->qh_value);
         st = hset_if->hsi_process_header(hset,
-                    header->qh_flags & QH_ID_SET ? 62 /* XXX: 62 */ + header->qh_static_id : 0,
+                    header->qh_flags & QH_ID_SET ?
+                        hpack_static_table_size + 1 + header->qh_static_id : 0,
                     header->qh_name, header->qh_name_len,
                     header->qh_value, header->qh_value_len);
         if (st != LSQUIC_HDR_OK)

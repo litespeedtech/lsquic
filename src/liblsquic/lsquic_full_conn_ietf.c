@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_full_conn_ietf.c -- IETF QUIC connection.
  */
@@ -2710,7 +2710,8 @@ handshake_ok (struct lsquic_conn *lconn)
                         (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
 
     if ((params->tp_flags & TRAPA_QL_BITS)
-                                        && conn->ifc_settings->es_ql_bits)
+                                    && (conn->ifc_settings->es_ql_bits == 2
+                                     || conn->ifc_settings->es_ql_bits == -1))
     {
         LSQ_DEBUG("turn on QL loss bits");
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_frame_reader.c -- Read HTTP frames from stream
  */
@@ -513,6 +513,7 @@ static int
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
     struct headers_state *hs = &fr->fr_state.by_type.headers_state;
+    const uint32_t hpack_static_table_size = 61;
     const unsigned char *comp, *end;
     enum frame_reader_error err;
     int s;
@@ -547,7 +548,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
                     buf, buf + 16 * 1024, &name_len, &val_len, &name_idx);
         if (s == 0)
         {
-            if (name_idx > 61   /* XXX 61 */)
+            if (name_idx > hpack_static_table_size)
                 name_idx = 0;   /* Work around bug in ls-hpack */
             err = (enum frame_reader_error)
                 fr->fr_hsi_if->hsi_process_header(hset, name_idx, buf,

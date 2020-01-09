@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_PARSE_GQUIC_BE_H
 #define LSQUIC_PARSE_GQUIC_BE_H
 
@@ -80,6 +80,10 @@ gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len,
 
 int
 gquic_be_gen_ping_frame (unsigned char *buf, int buf_len);
+
+size_t
+gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
+                                unsigned frame_type, size_t reason_len);
 
 int
 gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,

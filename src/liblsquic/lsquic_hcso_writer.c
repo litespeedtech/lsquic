@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_hcso_writer.c - write to outgoing HTTP Control Stream
  */
@@ -21,6 +21,7 @@
 #include "lsquic_varint.h"
 #include "lsquic_byteswap.h"
 #include "lsquic_hcso_writer.h"
+#include "lsquic_conn.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HCSO_WRITER
 #define LSQUIC_LOG_CONN_ID \
@@ -67,6 +68,8 @@ static lsquic_stream_ctx_t *
 hcso_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 {
     struct hcso_writer *writer = stream_if_ctx;
+    struct lsquic_conn *lconn;
+
     writer->how_stream = stream;
     lsquic_frab_list_init(&writer->how_fral, 0x100, NULL, NULL, NULL);
 #ifndef NDEBUG
@@ -85,7 +88,8 @@ hcso_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
     if (0 != hcso_write_type(writer))
     {
         LSQ_INFO("cannot write to frab list");
-        /* TODO: abort connection */
+        lconn = lsquic_stream_conn(stream);
+        lconn->cn_if->ci_internal_error(lconn, "cannot write to frab list");
     }
     LSQ_DEBUG("create HTTP Control Stream Writer");
     lsquic_stream_wantwrite(stream, 1);
@@ -301,6 +305,7 @@ hcso_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
         .lsqr_ctx   = &writer->how_fral
     };
     ssize_t nw;
+    struct lsquic_conn *lconn;
 
 #ifndef NDEBUG
     if (stream->tosend_off < 8 && (writer->how_flags & HOW_CHOP_STREAM))
@@ -320,8 +325,9 @@ hcso_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
     }
     else
     {
-        /* TODO: abort connection */
-        LSQ_WARN("cannot write to stream: %s", strerror(errno));
+        lconn = lsquic_stream_conn(stream);
+        lconn->cn_if->ci_internal_error(lconn, "cannot write to stream: %s",
+                                                            strerror(errno));
         lsquic_stream_wantwrite(stream, 0);
     }
 }

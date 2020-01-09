@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef __LSQUIC_H__
 #define __LSQUIC_H__
 
@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 8
-#define LSQUIC_PATCH_VERSION 5
+#define LSQUIC_PATCH_VERSION 7
 
 /**
  * Engine flags:
@@ -377,7 +377,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_ALLOW_MIGRATION 1
 
 /** Use QL loss bits by default */
-#define LSQUIC_DF_QL_BITS 1
+#define LSQUIC_DF_QL_BITS 2
 
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 1
@@ -675,7 +675,7 @@ struct lsquic_engine_settings {
 
     /**
      * Source Connection ID length.  Only applicable to the IETF QUIC
-     * versions.  Valid values are 4 through 18, inclusive.
+     * versions.  Valid values are 0 through 20, inclusive.
      *
      * Default value is @ref LSQUIC_DF_SCID_LEN.
      */
@@ -748,7 +748,11 @@ struct lsquic_engine_settings {
     unsigned        es_cc_algo;
 
     /**
-     * Use QL loss bits.
+     * Use QL loss bits.  Allowed values are:
+     *  0:  Do not use loss bits
+     *  1:  Allow loss bits
+     *  2:  Allow and send loss bits
+     * -1:  Allow and send loss bits, sending old-style boolean loss_bits TP
      *
      * Default value is @ref LSQUIC_DF_QL_BITS
      */

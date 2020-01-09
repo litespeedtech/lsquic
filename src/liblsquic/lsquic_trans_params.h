@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_trans_params.h -- Transport parameters types and functions.
  */
@@ -58,7 +58,10 @@ enum trapa_flags
     TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
 #endif
 #define TPI_QL_BITS 0x1055     /* 1055 is 133t for "loss" */
-    TRAPA_QL_BITS       = 1 << 6,
+    TRAPA_QL_BITS       = 1 << 6,   /* tp_loss_bits contains valid value */
+    TRAPA_QL_BITS_OLD   = 1 << 7,   /* Send old-school boolean loss_bits TP.
+                                     * Not set on decoded transport parameters.
+                                     */
 };
 
 struct transport_params
@@ -93,6 +96,7 @@ struct transport_params
 #define tp_max_ack_delay tp_numerics_u.s.max_ack_delay
 #define tp_active_connection_id_limit tp_numerics_u.s.active_connection_id_limit
 
+    unsigned char   tp_loss_bits;   /* Valid values 0, 1.  Set if TRAPA_QL_BITS is set. */
     signed char tp_disable_active_migration;
     uint8_t     tp_stateless_reset_token[IQUIC_SRESET_TOKEN_SZ];
     struct {

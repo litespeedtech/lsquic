@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_mini_conn_ietf.h -- Mini connection used by the IETF QUIC
  */
@@ -110,7 +110,8 @@ struct ietf_mini_conn
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *,
                const struct lsquic_packet_in *,
-               enum lsquic_version, int is_ipv4, const struct lsquic_cid *);
+               enum lsquic_version, int is_ipv4, const struct lsquic_cid *,
+               size_t udp_payload_size);
 
 int
 lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *);

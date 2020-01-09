@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_engine.c - QUIC engine
  */
@@ -383,13 +383,12 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                         "The maximum value of idle timeout is 600 seconds");
         return -1;
     }
-    if (!(!(flags & ENG_SERVER) && settings->es_scid_len == 0)
-            && (settings->es_scid_len < 4 || settings->es_scid_len > 18))
+    if (settings->es_scid_len > MAX_CID_LEN)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Source connection ID cannot be %u "
-                        "bytes long; it must be between 4 and 18.",
-                        settings->es_scid_len);
+                        "bytes long; it must be between 0 and %u.",
+                        settings->es_scid_len, MAX_CID_LEN);
         return -1;
     }
 
@@ -400,6 +399,15 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 "algorithm value %u", settings->es_cc_algo);
         return -1;
     }
+
+    if (!(settings->es_ql_bits >= -1 && settings->es_ql_bits <= 2))
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "Invalid QL bits value %d ",
+                settings->es_ql_bits);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -1021,7 +1029,7 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 static lsquic_conn_t *
 find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
-         const struct sockaddr *sa_peer, void *peer_ctx)
+         const struct sockaddr *sa_peer, void *peer_ctx, size_t packet_in_size)
 {
     struct lsquic_hash_elem *el;
     struct purga_el *puel;
@@ -1133,7 +1141,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     if ((1 << version) & LSQUIC_IETF_VERSIONS)
     {
         conn = lsquic_mini_conn_ietf_new(&engine->pub, packet_in, version,
-                    sa_peer->sa_family == AF_INET, NULL);
+                    sa_peer->sa_family == AF_INET, NULL, packet_in_size);
     }
     else
     {
@@ -1244,11 +1252,10 @@ find_conn_by_srst (struct lsquic_engine *engine,
 static int
 process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
        struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
-       const struct sockaddr *sa_peer, void *peer_ctx, int full_udp_packet)
+       const struct sockaddr *sa_peer, void *peer_ctx, size_t packet_in_size)
 {
     lsquic_conn_t *conn;
     const unsigned char *packet_in_data;
-    size_t packet_in_size;
 
     if (lsquic_packet_in_is_gquic_prst(packet_in)
                                 && !engine->pub.enp_settings.es_honor_prst)
@@ -1260,14 +1267,14 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 
     if (engine->flags & ENG_SERVER)
         conn = find_or_create_conn(engine, packet_in, ppstate, sa_local,
-                                                        sa_peer, peer_ctx);
+                                            sa_peer, peer_ctx, packet_in_size);
     else
         conn = find_conn(engine, packet_in, ppstate, sa_local);
 
     if (!conn)
     {
         if (engine->pub.enp_settings.es_honor_prst
-                && full_udp_packet
+                && packet_in_size == packet_in->pi_data_sz /* Full UDP packet */
                 && !(packet_in->pi_flags & PI_GQUIC)
                 && engine->pub.enp_srst_hash
                 && (conn = find_conn_by_srst(engine, packet_in)))
@@ -2653,7 +2660,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         packet_in->pi_flags |= (3 & ecn) << PIBIT_ECN_SHIFT;
         eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);
         s = process_packet_in(engine, packet_in, &ppstate, sa_local, sa_peer,
-                            peer_ctx, packet_in->pi_data_sz == packet_in_size);
+                            peer_ctx, packet_in_size);
         n_zeroes += s == 0;
     }
     while (0 == s && packet_in_data < packet_end);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_send_ctl.c -- Logic for sending and sent packets
  */
@@ -1704,7 +1704,7 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
         {
             if (ctl->sc_gap + 1 == packet_out->po_packno)
                 ++ctl->sc_square_count;
-            if (ctl->sc_square_count++ & 128)
+            if (ctl->sc_square_count++ & 64)
                 packet_out->po_lflags |= POL_SQUARE_BIT;
             else
                 packet_out->po_lflags &= ~POL_SQUARE_BIT;
@@ -1728,6 +1728,9 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
 #endif
     if (packet_out->po_lflags & POL_LOSS_BIT)
         ++ctl->sc_loss_count;
+    if ((ctl->sc_flags & SC_QL_BITS)
+                            && packet_out->po_header_type == HETY_NOT_SET)
+        ctl->sc_square_count -= 1 + (ctl->sc_gap + 1 == packet_out->po_packno);
 }
 
 

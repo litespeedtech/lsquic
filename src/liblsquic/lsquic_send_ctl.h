@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_SEND_CTL_H
 #define LSQUIC_SEND_CTL_H 1
 

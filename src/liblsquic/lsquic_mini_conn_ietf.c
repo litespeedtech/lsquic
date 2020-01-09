@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_mini_conn_ietf.c -- Mini connection used by the IETF QUIC
  */
@@ -391,13 +391,14 @@ static const struct crypto_stream_if crypto_stream_if =
 
 
 static int
-is_first_packet_ok (const struct lsquic_packet_in *packet_in)
+is_first_packet_ok (const struct lsquic_packet_in *packet_in,
+                                                    size_t udp_payload_size)
 {
-    if (packet_in->pi_data_sz < IQUIC_MIN_INIT_PACKET_SZ)
+    if (udp_payload_size < IQUIC_MIN_INIT_PACKET_SZ)
     {
         /* [draft-ietf-quic-transport-24] Section 14 */
-        LSQ_LOG1(LSQ_LOG_DEBUG, "incoming packet too small: %hu bytes",
-                                                    packet_in->pi_data_sz);
+        LSQ_LOG1(LSQ_LOG_DEBUG, "incoming UDP payload too small: %zu bytes",
+                                                            udp_payload_size);
         return 0;
     }
     /* TODO: Move decryption of the first packet into this function? */
@@ -408,14 +409,15 @@ is_first_packet_ok (const struct lsquic_packet_in *packet_in)
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
                const struct lsquic_packet_in *packet_in,
-           enum lsquic_version version, int is_ipv4, const lsquic_cid_t *odcid)
+           enum lsquic_version version, int is_ipv4, const lsquic_cid_t *odcid,
+           size_t udp_payload_size)
 {
     struct ietf_mini_conn *conn;
     enc_session_t *enc_sess;
     enum enc_level i;
     const struct enc_session_funcs_iquic *esfi;
 
-    if (!is_first_packet_ok(packet_in))
+    if (!is_first_packet_ok(packet_in, udp_payload_size))
         return NULL;
 
     conn = lsquic_malo_get(enpub->enp_mm.malo.mini_conn_ietf);
@@ -706,14 +708,6 @@ imico_dispatch_stream_events (struct ietf_mini_conn *conn)
             lsquic_mini_cry_sm_if.on_write((void *) &conn->imc_streams[i],
                                             conn->imc_conn.cn_enc_session);
         }
-}
-
-
-static unsigned
-imico_process_stream_frame (IMICO_PROC_FRAME_ARGS)
-{
-    LSQ_WARN("%s: TODO", __func__);
-    return 0;
 }
 
 
@@ -1025,7 +1019,6 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
                                                 (IMICO_PROC_FRAME_ARGS) =
 {
     [QUIC_FRAME_PADDING]            =  imico_process_padding_frame,
-    [QUIC_FRAME_STREAM]             =  imico_process_stream_frame,
     [QUIC_FRAME_CRYPTO]             =  imico_process_crypto_frame,
     [QUIC_FRAME_ACK]                =  imico_process_ack_frame,
     [QUIC_FRAME_PING]               =  imico_process_ping_frame,
@@ -1044,6 +1037,8 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     [QUIC_FRAME_STOP_SENDING]       =  imico_process_invalid_frame,
     [QUIC_FRAME_PATH_CHALLENGE]     =  imico_process_invalid_frame,
     [QUIC_FRAME_PATH_RESPONSE]      =  imico_process_invalid_frame,
+    /* STREAM frame can only come in the App PNS and we delay those packets: */
+    [QUIC_FRAME_STREAM]             =  imico_process_invalid_frame,
 };
 
 
@@ -1582,12 +1577,13 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
         break;
     }
 
+    need = conn->imc_conn.cn_pf->pf_connect_close_frame_size(is_app,
+                                                        error_code, 0, rlen);
     LSQ_DEBUG("will generate %u CONNECTION_CLOSE frame%.*s",
         pns_max - pns + 1, pns_max > pns, "s");
     do
     {
         header_type = pns2hety[pns];
-        need = 30;  /* Guess */ /* TODO: calculate, don't guess */
         packet_out = imico_get_packet_out(conn, header_type, need);
         if (!packet_out)
             return;

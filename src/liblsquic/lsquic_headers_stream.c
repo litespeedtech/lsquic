@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * HEADERS stream logic
  */
@@ -414,7 +414,7 @@ lsquic_headers_stream_mem_used (const struct headers_stream *hs)
     size = sizeof(*hs);
     size += lsquic_frame_reader_mem_used(hs->hs_fr);
     size += lsquic_frame_writer_mem_used(hs->hs_fw);
-    /* XXX: get rid of this mem_used business as we no longer use it? */
+    /* XXX: does not cover HPACK encoder and HPACK decoder */
 
     return size;
 }

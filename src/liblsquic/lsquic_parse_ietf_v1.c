@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_parse_ietf_v1.c -- Parsing functions specific to IETF QUIC v1
  */
@@ -840,6 +840,19 @@ ietf_v1_gen_ping_frame (unsigned char *buf, int buf_len)
 }
 
 
+static size_t
+ietf_v1_connect_close_frame_size (int app_error, unsigned error_code,
+                                unsigned frame_type, size_t reason_len)
+{
+    return 1                                                         /* Type */
+         + (1 << vint_val2bits(error_code))                    /* Error code */
+         + (app_error ? 0 : 1 << vint_val2bits(frame_type))    /* Frame type */
+         + (1 << vint_val2bits(reason_len))          /* Reason Phrase Length */
+         + reason_len
+         ;
+}
+
+
 static int
 ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     int app_error, unsigned error_code, const char *reason, int reason_len)
@@ -1630,7 +1643,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     switch (header_type)
     {
     case HETY_INITIAL:
-        if (dcil < MIN_INITIAL_DCID_LEN)
+        if (is_server && dcil < MIN_INITIAL_DCID_LEN)
             return -1;
         r = vint_read(p, end, &token_len);
         if (r < 0)
@@ -1941,6 +1954,7 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_rst_frame_size                =  ietf_v1_rst_frame_size,
     .pf_gen_rst_frame                 =  ietf_v1_gen_rst_frame,
     .pf_parse_rst_frame               =  ietf_v1_parse_rst_frame,
+    .pf_connect_close_frame_size      =  ietf_v1_connect_close_frame_size,
     .pf_gen_connect_close_frame       =  ietf_v1_gen_connect_close_frame,
     .pf_parse_connect_close_frame     =  ietf_v1_parse_connect_close_frame,
     .pf_gen_ping_frame                =  ietf_v1_gen_ping_frame,

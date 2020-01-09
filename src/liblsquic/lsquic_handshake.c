@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #define _GNU_SOURCE         /* for memmem */
 
 #include <netinet/in.h>
@@ -564,22 +564,6 @@ make_compress_cert_hash_item(lsquic_str_t *domain, lsquic_str_t *crts_compress_b
     lsquic_str_copy(item->domain, domain);
     lsquic_str_copy(item->crts_compress_buf, crts_compress_buf);
     return item;
-}
-
-
-/* server */
-#if __GNUC__
-__attribute__((unused))        /* XXX why? */
-#endif
-static void
-free_compress_cert_hash_item(compress_cert_hash_item_t *item)
-{
-    if (item)
-    {
-        lsquic_str_delete(item->crts_compress_buf);
-        lsquic_str_delete(item->domain);
-        free(item);
-    }
 }
 
 
@@ -2946,22 +2930,6 @@ verify_stk (enc_session_t *enc_session_p,
                                                                     tm, stk, 0);
 }
 
-
-#if 0   /* unused */
-enum AEAD_TYPE determineaead()
-{
-    return AEAD_AESG;
-}
-
-
-enum KENX_TYPE determinekexs()
-{
-    /* only support C255 now */
-    return KENX_C255;
-}
-
-
-#endif /* 0 */
 
 static uint64_t combine_path_id_pack_num(uint8_t path_id, uint64_t pack_num)
 {

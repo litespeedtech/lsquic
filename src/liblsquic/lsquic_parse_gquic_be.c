@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_parse_gquic_be.c -- Parsing functions specific to big-endian
  *                              (Q039 and higher) GQUIC.
@@ -688,6 +688,14 @@ gquic_be_gen_ping_frame (unsigned char *buf, int buf_len)
 }
 
 
+size_t
+gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
+                                unsigned frame_type, size_t reason_len)
+{
+    return 1 + 4 + 2 + reason_len;
+}
+
+
 int
 gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     int app_error_UNUSED, unsigned ecode, const char *reason, int reason_len)
@@ -1021,6 +1029,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q039 =
     .pf_rst_frame_size                =  gquic_be_rst_frame_size,
     .pf_gen_rst_frame                 =  gquic_be_gen_rst_frame,
     .pf_parse_rst_frame               =  gquic_be_parse_rst_frame,
+    .pf_connect_close_frame_size      =  gquic_be_connect_close_frame_size,
     .pf_gen_connect_close_frame       =  gquic_be_gen_connect_close_frame,
     .pf_parse_connect_close_frame     =  gquic_be_parse_connect_close_frame,
     .pf_gen_goaway_frame              =  gquic_be_gen_goaway_frame,

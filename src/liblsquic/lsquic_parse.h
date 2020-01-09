@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_PARSE_H
 #define LSQUIC_PARSE_H 1
 
@@ -152,6 +152,9 @@ struct parse_funcs
     int
     (*pf_gen_stop_sending_frame) (unsigned char *buf, size_t buf_len,
                                     lsquic_stream_id_t, uint64_t error_code);
+    size_t
+    (*pf_connect_close_frame_size) (int app_error, unsigned error_code,
+                                unsigned frame_type, size_t reason_len);
     int
     (*pf_gen_connect_close_frame) (unsigned char *buf, size_t buf_len,
         int app_error, unsigned error_code, const char *reason, int reason_len);

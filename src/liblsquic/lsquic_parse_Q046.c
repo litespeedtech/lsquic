@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_parse_Q046.c -- Parsing functions specific to GQUIC Q046
  */
@@ -307,6 +307,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q046 =
     .pf_parse_blocked_frame           =  gquic_be_parse_blocked_frame,
     .pf_gen_rst_frame                 =  gquic_be_gen_rst_frame,
     .pf_parse_rst_frame               =  gquic_be_parse_rst_frame,
+    .pf_connect_close_frame_size      =  gquic_be_connect_close_frame_size,
     .pf_gen_connect_close_frame       =  gquic_be_gen_connect_close_frame,
     .pf_parse_connect_close_frame     =  gquic_be_parse_connect_close_frame,
     .pf_gen_goaway_frame              =  gquic_be_gen_goaway_frame,

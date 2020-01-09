@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_trans_params.c
  */
@@ -137,8 +137,10 @@ lsquic_tp_encode (const struct transport_params *params,
     if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
         need += 4 + 0;
 
-    if (params->tp_flags & TRAPA_QL_BITS)
+    if (params->tp_flags & TRAPA_QL_BITS_OLD)
         need += 4 + 0;
+    else if (params->tp_flags & TRAPA_QL_BITS)
+        need += 4 + 1;
 
     if (need > bufsz || need > UINT16_MAX)
     {
@@ -259,10 +261,16 @@ lsquic_tp_encode (const struct transport_params *params,
                 return -1;
             }
 
-    if (params->tp_flags & TRAPA_QL_BITS)
+    if (params->tp_flags & TRAPA_QL_BITS_OLD)
     {
         WRITE_UINT_TO_P(TPI_QL_BITS, 16);
         WRITE_UINT_TO_P(0, 16);
+    }
+    else if (params->tp_flags & TRAPA_QL_BITS)
+    {
+        WRITE_UINT_TO_P(TPI_QL_BITS, 16);
+        WRITE_UINT_TO_P(1, 16);
+        *p++ = !!params->tp_loss_bits;
     }
 
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -292,6 +300,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
     uint16_t len, param_id, tlen;
     unsigned set_of_ids;
     int s;
+    uint64_t tmp64;
 
     p = buf;
     end = buf + bufsz;
@@ -460,8 +469,36 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                     params->tp_flags |= TRAPA_PREFADDR_IPv6;
                 break;
             case TPI_QL_BITS:
-                EXPECT_LEN(0);
-                params->tp_flags |= TRAPA_QL_BITS;
+                switch (len)
+                {
+                case 0:
+                    /* Old-school boolean */
+                    params->tp_flags |= TRAPA_QL_BITS;
+                    params->tp_loss_bits = 1;
+                    break;
+                case 1:
+                case 2:
+                case 4:
+                case 8:
+                    s = vint_read(p, p + len, &tmp64);
+                    if (s != len)
+                    {
+                        LSQ_DEBUG("cannot read the value of numeric transport "
+                                    "param loss_bits of length %u", len);
+                        return -1;
+                    }
+                    if (!(tmp64 == 0 || tmp64 == 1))
+                    {
+                        LSQ_DEBUG("unexpected value of loss_bits TP: %"PRIu64,
+                                                                        tmp64);
+                        return -1;
+                    }
+                    params->tp_loss_bits = tmp64;
+                    params->tp_flags |= TRAPA_QL_BITS;
+                    break;
+                default:
+                    return -1;
+                }
                 break;
             }
             p += len;
@@ -550,7 +587,8 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
     }
     if (params->tp_flags & TRAPA_QL_BITS)
     {
-        nw = snprintf(buf, end - buf, "; QL loss bits");
+        nw = snprintf(buf, end - buf, "; QL loss bits: %hhu",
+                                                    params->tp_loss_bits);
         buf += nw;
         if (buf >= end)
             return;
