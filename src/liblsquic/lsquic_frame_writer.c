@@ -35,6 +35,11 @@
                                         lsquic_stream_conn(fw->fw_stream))
 #include "lsquic_logger.h"
 
+/* Size of the buffer passed to lshpack_enc_encode() -- this limits the size
+ * of a single compressed header field.
+ */
+#define MAX_COMP_HEADER_FIELD_SIZE (64 * 1024)
+
 
 struct lsquic_frame_writer
 {
@@ -457,10 +462,10 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
             return s;
     }
 
-    buf = malloc(MAX_HEADERS_SIZE);
+    buf = malloc(MAX_COMP_HEADER_FIELD_SIZE);
     if (!buf)
         return -1;
-    s = write_headers(fw, headers, &hfc, buf, MAX_HEADERS_SIZE);
+    s = write_headers(fw, headers, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
     free(buf);
     if (0 == s)
     {
@@ -529,11 +534,11 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     if (s < 0)
         return s;
 
-    buf = malloc(MAX_HEADERS_SIZE);
+    buf = malloc(MAX_COMP_HEADER_FIELD_SIZE);
     if (!buf)
         return -1;
 
-    s = write_headers(fw, &mpas, &hfc, buf, MAX_HEADERS_SIZE);
+    s = write_headers(fw, &mpas, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
     if (s != 0)
     {
         free(buf);
@@ -541,7 +546,7 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     }
 
     if (extra_headers)
-        s = write_headers(fw, extra_headers, &hfc, buf, MAX_HEADERS_SIZE);
+        s = write_headers(fw, extra_headers, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
 
     free(buf);
 

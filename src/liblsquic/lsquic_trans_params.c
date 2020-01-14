@@ -329,7 +329,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
 } while (0)
 
     set_of_ids = 0;
-    while (p < end)
+    while (p + 4 <= end)
     {
         READ_UINT(param_id, 16, p, 2);
         p += 2;

@@ -1338,7 +1338,13 @@ static int
 ietf_full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    return should_generate_ack(conn, IFC_ACK_QUED_APP);
+
+    /* Follow opportunistic ACK logic.  Because this method is only used by
+     * buffered packets code path, no need to check whether anything is
+     * writing: we know it is.
+     */
+    return conn->ifc_n_slack_akbl[PNS_APP] > 0
+        && lsquic_send_ctl_can_send(&conn->ifc_send_ctl);
 }
 
 

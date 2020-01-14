@@ -49,7 +49,6 @@ SET(TESTS
     lsquic_hash
     packet_out
     packno_len
-    parse
     parse_packet_in
     purga
     qlog

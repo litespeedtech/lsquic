@@ -3418,7 +3418,7 @@ stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz)
 }
 
 
-/* XXX Move this define elsewhere? */
+/* This limits the cumulative size of the compressed header fields */
 #define MAX_HEADERS_SIZE (64 * 1024)
 
 static int

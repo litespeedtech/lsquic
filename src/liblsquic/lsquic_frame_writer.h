@@ -9,9 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Same as H2_TMP_HDR_BUFF_SIZE */
-#define MAX_HEADERS_SIZE (64 * 1024)
-
 struct iovec;
 struct lshpack_enc;
 struct lsquic_mm;

@@ -45,6 +45,10 @@
 #include "lsquic_hash.h"
 #include "lsquic_malo.h"
 #include "lsquic_attq.h"
+#include "lsquic_http1x_if.h"
+#include "lsqpack.h"
+#include "lsquic_frab_list.h"
+#include "lsquic_qdec_hdl.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_SENDCTL
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ctl->sc_conn_pub->lconn)
@@ -2435,6 +2439,25 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
 }
 
 
+static void
+send_ctl_maybe_flush_decoder (struct lsquic_send_ctl *ctl,
+                                        const struct lsquic_stream *caller)
+{
+    struct lsquic_stream *decoder;
+
+    if ((ctl->sc_flags & SC_IETF) && ctl->sc_conn_pub->u.ietf.qdh)
+    {
+        decoder = ctl->sc_conn_pub->u.ietf.qdh->qdh_dec_sm_out;
+        if (decoder && decoder != caller
+                                && lsquic_stream_has_data_to_flush(decoder))
+        {
+            LSQ_DEBUG("flushing decoder stream");
+            lsquic_stream_flush(decoder);
+        }
+    }
+}
+
+
 lsquic_packet_out_t *
 lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
                 unsigned need_at_least, const struct network_path *path,
@@ -2447,6 +2470,8 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
                                                 need_at_least, path, 0, NULL);
     else
     {
+        if (!lsquic_send_ctl_has_buffered(ctl))
+            send_ctl_maybe_flush_decoder(ctl, stream);
         packet_type = send_ctl_lookup_bpt(ctl, stream);
         return send_ctl_get_buffered_packet(ctl, packet_type, need_at_least,
                                             path, stream);

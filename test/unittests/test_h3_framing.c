@@ -589,7 +589,11 @@ test_hq_framing (int sched_immed, int dispatch_once, unsigned wsize,
             frame_type = *src++;
             s = vint_read(src, buf_out + buf_out_sz, &sz);
             assert(s > 0);
-            assert(sz > 0);
+            /* In some rare circumstances it is possible to produce zero-length
+             * DATA frames:
+             *
+             * assert(sz > 0);
+             */
             assert(sz < (1 << 14));
             src += s;
             if (src == buf_out + s + 1)
@@ -643,6 +647,77 @@ main_test_hq_framing (void)
                         for (k = 0; k < sizeof(n_packets) / sizeof(n_packets[0]); ++k)
                             for (l = 0; l < sizeof(packet_sz) / sizeof(packet_sz[0]); ++l)
                                 test_hq_framing(sched_immed, dispatch_once, wsizes[i], flush_after_each_write, conn_limits[j], n_packets[k], packet_sz[l]);
+}
+
+
+/* Instead of the not-very-random testing done in main_test_hq_framing(),
+ * the fuzz-guided testing initializes parameters based on the fuzz input
+ * file.  This allows afl-fuzz explore the code paths.
+ */
+void
+fuzz_guided_testing (const char *input)
+{
+                                /* Range */                 /* Bytes from file */
+    unsigned short packet_sz;   /* [200, 0x3FFF] */         /* 2 */
+    unsigned wsize;             /* [1, 20000] */            /* 2 */
+    unsigned n_packets;         /* [1, 255] and UINT_MAX */ /* 1 */
+    size_t conn_limit;          /* [1, 33K] */              /* 2 */
+    int sched_immed;            /* 0 or 1 */                /* 1 */
+    int dispatch_once;          /* 0 or 1 */                /* 0 (same as above) */
+    int flush_after_each_write; /* 0 or 1 */                /* 0 (same as above) */
+                                                     /* TOTAL: 8 bytes */
+
+    FILE *f;
+    size_t nread;
+    uint16_t tmp;
+    unsigned char buf[9];
+
+    f = fopen(input, "rb");
+    if (!f)
+    {
+        assert(0);
+        return;
+    }
+
+    nread = fread(buf, 1, sizeof(buf), f);
+    if (nread != 8)
+        goto cleanup;
+
+    memcpy(&tmp, &buf[0], 2);
+    if (tmp < 200)
+        tmp = 200;
+    else if (tmp > IQUIC_MAX_OUT_PACKET_SZ)
+        tmp = IQUIC_MAX_OUT_PACKET_SZ;
+    packet_sz = tmp;
+
+    memcpy(&tmp, &buf[2], 2);
+    if (tmp < 1)
+        tmp = 1;
+    else if (tmp > 20000)
+        tmp = 20000;
+    wsize = tmp;
+
+    if (buf[4])
+        n_packets = buf[4];
+    else
+        n_packets = UINT_MAX;
+
+    memcpy(&tmp, &buf[5], 2);
+    if (tmp < 1)
+        tmp = 1;
+    else if (tmp > 33 * 1024)
+        tmp = 33 * 1024;
+    conn_limit = tmp;
+
+    sched_immed             = !!(buf[7] & 1);
+    dispatch_once           = !!(buf[7] & 2);
+    flush_after_each_write  = !!(buf[7] & 4);
+
+    test_hq_framing(sched_immed, dispatch_once, wsize,
+        flush_after_each_write, conn_limit, n_packets, packet_sz);
+
+  cleanup:
+    (void) fclose(f);
 }
 
 
@@ -877,14 +952,18 @@ test_zero_size_frame (void)
 int
 main (int argc, char **argv)
 {
+    const char *fuzz_input = NULL;
     int opt;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 
-    while (-1 != (opt = getopt(argc, argv, "l:")))
+    while (-1 != (opt = getopt(argc, argv, "f:l:")))
     {
         switch (opt)
         {
+        case 'f':
+            fuzz_input = optarg;
+            break;
         case 'l':
             lsquic_log_to_fstream(stderr, 0);
             lsquic_logger_lopt(optarg);
@@ -896,10 +975,15 @@ main (int argc, char **argv)
 
     init_test_ctl_settings(&g_ctl_settings);
 
-    main_test_hq_framing();
-    test_frame_header_split(1);
-    test_frame_header_split(2);
-    test_zero_size_frame();
+    if (fuzz_input)
+        fuzz_guided_testing(fuzz_input);
+    else
+    {
+        main_test_hq_framing();
+        test_frame_header_split(1);
+        test_frame_header_split(2);
+        test_zero_size_frame();
+    }
 
     return 0;
 }

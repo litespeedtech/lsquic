@@ -139,7 +139,7 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
     {
         qdh->qdh_h1x_ctor_ctx = (struct http1x_ctor_ctx) {
             .conn           = conn,
-            .max_headers_sz = 0x10000,  /* XXX */
+            .max_headers_sz = MAX_HTTP1X_HEADERS_SIZE,
             .is_server      = is_server,
         };
         qdh->qdh_hsi_ctx = &qdh->qdh_h1x_ctor_ctx;

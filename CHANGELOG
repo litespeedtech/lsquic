@@ -1,3 +1,13 @@
+2020-01-14
+    - 2.8.8
+    - [BUGFIX] Invalid read when parsing IETF transport parameters
+      (this was benign).
+    - [OPTIMIZATION] Frame bundling when using buffered packets in
+      IETF QUIC: a) flush QPACK decoder stream and b) include ACKs
+      in opportunistic fashion.
+    - Fix HTTP/3 framing unit test.
+    - Code cleanup.
+
 2020-01-09
     - 2.8.7
     - [BUGFIX] Initial packet size check for IETF mini conn applies to

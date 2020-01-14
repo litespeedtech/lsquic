@@ -23,4 +23,9 @@
 /* [draft-ietf-quic-transport-24] Section 8.1 */
 #define IQUIC_MIN_INIT_PACKET_SZ 1200
 
+/* Our stream code makes an assumption that packet size is smaller than the
+ * maximum HTTP/3 DATA frame size we can generate.
+ */
+#define IQUIC_MAX_OUT_PACKET_SZ ((1u << 14) - 1)
+
 #endif
