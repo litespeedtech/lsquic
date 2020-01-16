@@ -520,6 +520,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
 }
 
 
+/* Releases qlist */
 static int
 qdh_process_qlist (struct qpack_dec_hdl *qdh,
             struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
@@ -562,7 +563,8 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
         }
         else
         {
-            assert(0);  /* XXX TODO What do we do here? */
+            LSQ_WARN("read header status is DONE but header list is not set");
+            assert(0);
             return LQRHS_ERROR;
         }
     }

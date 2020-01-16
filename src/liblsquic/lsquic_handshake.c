@@ -1571,7 +1571,7 @@ lsquic_enc_session_gen_chlo (enc_session_t *enc_session_p,
                                             ++n_tags;           /* PUBS */
             MSG_LEN_ADD(msg_len, sizeof(enc_session->hs_ctx.nonc));
                                             ++n_tags;           /* NONC */
-            rand_bytes(enc_session->priv_key, 32);
+            RAND_bytes(enc_session->priv_key, 32);
             c255_get_pub_key(enc_session->priv_key, pub_key);
             gen_nonce_c(enc_session->hs_ctx.nonc, enc_session->info->orbt);
         }
@@ -1832,9 +1832,9 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
         return NULL;
 
     temp_scfg = &s_server_config.lsc_scfg->info;
-    rand_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
-    rand_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
-    rand_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
+    RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
+    RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
+    RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
     c255_get_pub_key(temp_scfg->priv_key, spubs + 3);
     temp_scfg->aead = settings->es_aead;
     temp_scfg->kexs = settings->es_kexs;
@@ -2038,7 +2038,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
         lsquic_str_prealloc(&enc_session->ssno, SNO_LENGTH);
         lsquic_str_setlen(&enc_session->ssno, SNO_LENGTH);
     }
-    rand_bytes(lsquic_str_buf(&enc_session->ssno), SNO_LENGTH);
+    RAND_bytes((uint8_t *) lsquic_str_buf(&enc_session->ssno), SNO_LENGTH);
 
     MW_BEGIN(&mw, QTAG_REJ, 7, data);
     MW_WRITE_LS_STR(&mw, QTAG_STK, &enc_session->sstk);
@@ -2088,8 +2088,8 @@ gen_shlo_data (uint8_t *buf, size_t buf_len, struct lsquic_enc_session *enc_sess
     if (MSG_LEN_VAL(msg_len) > buf_len)
         return -1;
 
-    rand_bytes(nonce, 32);
-    rand_bytes(enc_session->priv_key, 32);
+    RAND_bytes(nonce, 32);
+    RAND_bytes(enc_session->priv_key, 32);
     c255_get_pub_key(enc_session->priv_key, (unsigned char *)pub_key);
     if (lsquic_str_len(&enc_session->sstk) != STK_LENGTH)
     {
@@ -2105,7 +2105,7 @@ gen_shlo_data (uint8_t *buf, size_t buf_len, struct lsquic_enc_session *enc_sess
         lsquic_str_prealloc(&enc_session->ssno, SNO_LENGTH);
         lsquic_str_setlen(&enc_session->ssno, SNO_LENGTH);
     }
-    rand_bytes(lsquic_str_buf(&enc_session->ssno), SNO_LENGTH);
+    RAND_bytes((uint8_t *) lsquic_str_buf(&enc_session->ssno), SNO_LENGTH);
 
     MW_BEGIN(&mw, QTAG_SHLO, 9 + include_reset_token, buf);
     MW_WRITE_LS_STR(&mw, QTAG_STK, &enc_session->sstk);
@@ -2833,8 +2833,8 @@ gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
     else
         memcpy(stk, &((struct sockaddr_in6 *)ip_addr)->sin6_addr, 16);
     memcpy(stk + 16, &tm, 8);
-    rand_bytes(stk + 24, STK_LENGTH - 24 - 12);
-    rand_bytes(stk_out + STK_LENGTH - 12, 12);
+    RAND_bytes(stk + 24, STK_LENGTH - 24 - 12);
+    RAND_bytes(stk_out + STK_LENGTH - 12, 12);
     aes_aead_enc(&server_config->lsc_stk_ctx, NULL, 0, stk_out + STK_LENGTH - 12, 12, stk,
                  STK_LENGTH - 12 - 12, stk_out, &out_len);
 }

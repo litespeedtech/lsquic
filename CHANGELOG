@@ -1,3 +1,12 @@
+2020-01-16
+    - 2.8.9
+    - [BUGFIX] Use ls-qpack 0.11.1
+    - [OPTIMIZATION] Generate random bytes in batches.
+    - Change loss_bits transport parameter ID to 0x1057 following
+      latest draft.
+    - Randomize period with which PINGs are sent to elicit ACKs.
+    - Some refactoring and code cleanup.
+
 2020-01-14
     - 2.8.8
     - [BUGFIX] Invalid read when parsing IETF transport parameters

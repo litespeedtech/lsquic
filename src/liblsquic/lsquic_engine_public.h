@@ -16,6 +16,7 @@ struct stack_st_X509;
 struct lsquic_hash;
 struct lsquic_stream_if;
 struct ssl_ctx_st;
+struct crand;
 
 enum warning_type
 {
@@ -60,6 +61,7 @@ struct lsquic_engine_public {
     }                               enp_flags;
     unsigned char                   enp_ver_tags_buf[ sizeof(lsquic_ver_tag_t) * N_LSQVER ];
     unsigned                        enp_ver_tags_len;
+    struct crand                   *enp_crand;
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

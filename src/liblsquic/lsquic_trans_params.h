@@ -57,7 +57,7 @@ enum trapa_flags
 #define TPI_QUANTUM_READINESS 3127
     TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
 #endif
-#define TPI_QL_BITS 0x1055     /* 1055 is 133t for "loss" */
+#define TPI_QL_BITS 0x1057     /* 1057 is 133t for "lost" */
     TRAPA_QL_BITS       = 1 << 6,   /* tp_loss_bits contains valid value */
     TRAPA_QL_BITS_OLD   = 1 << 7,   /* Send old-school boolean loss_bits TP.
                                      * Not set on decoded transport parameters.

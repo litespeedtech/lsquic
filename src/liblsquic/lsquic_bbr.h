@@ -33,7 +33,7 @@
 
 struct lsquic_bbr
 {
-    struct lsquic_conn   *bbr_conn;
+    const struct lsquic_conn_public  *bbr_conn_pub;
 
     enum bbr_mode
     {

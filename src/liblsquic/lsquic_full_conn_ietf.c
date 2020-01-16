@@ -66,6 +66,7 @@
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_headers.h"
+#include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
 #define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
@@ -358,6 +359,7 @@ struct ietf_full_conn
     unsigned char               ifc_active_cids_limit;
     unsigned char               ifc_active_cids_count;
     unsigned char               ifc_first_active_cid_seqno;
+    unsigned char               ifc_ping_unretx_thresh;
     unsigned                    ifc_last_retire_prior_to;
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
@@ -942,6 +944,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_idle_to = enpub->enp_settings.es_idle_timeout * 1000 * 1000;
     conn->ifc_ping_period = enpub->enp_settings.es_ping_period * 1000 * 1000;
+    conn->ifc_ping_unretx_thresh = 20;
     return 0;
 }
 
@@ -1394,13 +1397,15 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     else
         conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
     LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
-    /* TODO: randomize the 20 to be 20 +/- 8 */
-    if (conn->ifc_n_cons_unretx >= 20 &&
+    if (conn->ifc_n_cons_unretx >= conn->ifc_ping_unretx_thresh &&
                 !lsquic_send_ctl_have_outgoing_retx_frames(&conn->ifc_send_ctl))
     {
         LSQ_DEBUG("schedule PING frame after %u non-retx "
                                     "packets sent", conn->ifc_n_cons_unretx);
         conn->ifc_send_flags |= SF_SEND_PING;
+        /* This gives a range [12, 27]: */
+        conn->ifc_ping_unretx_thresh = 12
+                    + lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand);
     }
 
     conn->ifc_n_slack_akbl[pns] = 0;
@@ -5717,17 +5722,6 @@ process_regular_packet (struct ietf_full_conn *conn,
         if (0 == (conn->ifc_flags & (IFC_ACK_QUED_INIT << pns)))
         {
             frame_types = packet_in->pi_frame_types;
-#if 0   /* TODO */
-            if ((conn->fc_flags & FC_GOING_AWAY)
-                && lsquic_hash_count(conn->fc_pub.all_streams) < 3)
-            {
-                /* Ignore PING frames if we are going away and there are no
-                 * active streams.  (HANDSHAKE and HEADERS streams are the
-                 * two streams that are always in the all_streams hash).
-                 */
-                frame_types &= ~(1 << QUIC_FRAME_PING);
-            }
-#endif
             if (frame_types & IQUIC_FRAME_ACKABLE_MASK)
             {
                 was_missing = packet_in->pi_packno !=

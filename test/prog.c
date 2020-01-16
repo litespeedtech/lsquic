@@ -488,6 +488,7 @@ prog_usr2_handler (int fd, short what, void *arg)
     LSQ_NOTICE("Got SIGUSR2, cool down engine");
     prog->prog_flags |= PROG_FLAG_COOLDOWN;
     lsquic_engine_cooldown(prog->prog_engine);
+    prog_process_conns(prog);
 }
 
 

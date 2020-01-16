@@ -76,6 +76,7 @@
 #include "lsquic_http1x_if.h"
 #include "lsquic_parse_common.h"
 #include "lsquic_handshake.h"
+#include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -257,6 +258,7 @@ struct lsquic_engine
     unsigned                           last_logged_ae_why;
     int                                last_tick_diff;
 #endif
+    struct crand                       crand;
 };
 
 
@@ -556,6 +558,7 @@ lsquic_engine_new (unsigned flags,
     engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
     if (!engine->pub.enp_tokgen)
         return NULL;
+    engine->pub.enp_crand = &engine->crand;
     if (flags & ENG_SERVER)
     {
         engine->pr_queue = prq_create(

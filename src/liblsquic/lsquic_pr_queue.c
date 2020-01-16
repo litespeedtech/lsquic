@@ -35,6 +35,7 @@
 #include "lsquic_sizes.h"
 #include "lsquic_handshake.h"
 #include "lsquic_xxhash.h"
+#include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PRQ
 #include "lsquic_logger.h"
@@ -106,17 +107,7 @@ struct pr_queue
     unsigned char               prq_pubres_g_buf[GQUIC_RESET_SZ];
     unsigned char               prq_verneg_g_buf[1 + GQUIC_CID_LEN
                                                                 + N_LSQVER * 4];
-    /* We generate random nybbles in batches */
-#define NYBBLE_COUNT_BITS 4
-#define NYBBLE_COUNT (1 << NYBBLE_COUNT_BITS)
-#define NYBBLE_MASK (NYBBLE_COUNT - 1)
-    unsigned                    prq_rand_nybble_off;
-    uint8_t                     prq_rand_nybble_buf[NYBBLE_COUNT * 2];
 };
-
-
-static uint8_t
-get_rand_byte (struct pr_queue *);
 
 
 static int
@@ -209,7 +200,6 @@ prq_create (unsigned max_elems, unsigned max_conns,
     prq->prq_verneg_g_sz = verneg_g_sz;
     prq->prq_pubres_g_sz = (unsigned) prst_g_sz;
     prq->prq_enpub       = enpub;
-    prq->prq_rand_nybble_off = 0;
 
     LSQ_INFO("initialized queue of size %d", max_elems);
 
@@ -290,7 +280,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         max = MIN(IQUIC_MAX_SRST_SIZE, data_sz - 1u);
         if (max > IQUIC_MIN_SRST_SIZE)
         {
-            rand = get_rand_byte(prq);
+            rand = lsquic_crand_get_byte(prq->prq_enpub->enp_crand);
             size = IQUIC_MIN_SRST_SIZE + rand % (max - IQUIC_MIN_SRST_SIZE);
         }
         else
@@ -430,31 +420,6 @@ get_evconn (struct pr_queue *prq)
 }
 
 
-static uint8_t
-get_rand_nybble (struct pr_queue *prq)
-{
-    uint8_t byte;
-
-    if (prq->prq_rand_nybble_off == 0)
-        RAND_bytes(prq->prq_rand_nybble_buf, sizeof(prq->prq_rand_nybble_buf));
-
-    byte = prq->prq_rand_nybble_buf[prq->prq_rand_nybble_off / 2];
-    if (prq->prq_rand_nybble_off & 1)
-        byte >>= 4;
-    else
-        byte &= 0xF;
-    prq->prq_rand_nybble_off = (prq->prq_rand_nybble_off + 1) & NYBBLE_MASK;
-    return byte;
-}
-
-
-static uint8_t
-get_rand_byte (struct pr_queue *prq)
-{
-    return (get_rand_nybble(prq) << 4) | get_rand_nybble(prq);
-}
-
-
 struct lsquic_conn *
 prq_next_conn (struct pr_queue *prq)
 {
@@ -509,7 +474,7 @@ prq_next_conn (struct pr_queue *prq)
         len = gen_verneg(packet_out->po_data, max_bufsz(prq),
                     /* Flip SCID/DCID here: */ &req->pr_dcid, &req->pr_scid,
                     prq->prq_enpub->enp_settings.es_versions,
-                    get_rand_byte(prq));
+                    lsquic_crand_get_byte(prq->prq_enpub->enp_crand));
         if (len > 0)
             packet_out->po_data_sz = len;
         else

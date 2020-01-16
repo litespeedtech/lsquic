@@ -30,9 +30,6 @@ struct x509_st;
 
 void crypto_init(void);
 
-/* XXX: why have a wrapper around RAND_bytes? */
-void rand_bytes(void *data, int len);
-
 
 int export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
                         unsigned char *salt, int salt_len,

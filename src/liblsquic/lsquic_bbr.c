@@ -29,9 +29,12 @@
 #include "lsquic_conn_public.h"
 #include "lsquic_util.h"
 #include "lsquic_malo.h"
+#include "lsquic_crand.h"
+#include "lsquic_mm.h"
+#include "lsquic_engine_public.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_BBR
-#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(bbr->bbr_conn)
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(bbr->bbr_conn_pub->lconn)
 #include "lsquic_logger.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -165,8 +168,8 @@ lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
                                                 enum quic_ft_bit retx_frames)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
-    bbr->bbr_conn = conn_pub->lconn;
-    lsquic_bw_sampler_init(&bbr->bbr_bw_sampler, bbr->bbr_conn, retx_frames);
+    bbr->bbr_conn_pub = conn_pub;
+    lsquic_bw_sampler_init(&bbr->bbr_bw_sampler, conn_pub->lconn, retx_frames);
 
     bbr->bbr_rtt_stats = &conn_pub->rtt_stats;
     bbr->bbr_mode = BBR_MODE_STARTUP;
@@ -665,13 +668,16 @@ on_exit_startup (struct lsquic_bbr *bbr, lsquic_time_t now)
 static void
 enter_probe_bw_mode (struct lsquic_bbr *bbr, lsquic_time_t now)
 {
+    uint8_t rand;
+
     set_mode(bbr, BBR_MODE_PROBE_BW);
     bbr->bbr_cwnd_gain = kCwndGain;
 
     // Pick a random offset for the gain cycle out of {0, 2..7} range. 1 is
     // excluded because in that case increased gain and decreased gain would not
     // follow each other.
-    bbr->bbr_cycle_current_offset = rand() % (kGainCycleLength - 1);
+    rand = lsquic_crand_get_byte(bbr->bbr_conn_pub->enpub->enp_crand);
+    bbr->bbr_cycle_current_offset = rand % (kGainCycleLength - 1);
     if (bbr->bbr_cycle_current_offset >= 1)
         ++bbr->bbr_cycle_current_offset;
 

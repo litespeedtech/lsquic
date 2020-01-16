@@ -30,12 +30,6 @@ static const char s_hs_signature[] = "QUIC CHLO and server config signature";
 static int crypto_inited = 0;
 
 
-void rand_bytes(void *data, int len)
-{
-    RAND_bytes(data, len);
-}
-
-
 uint64_t fnv1a_64(const uint8_t * data, int len)
 {
     uint64_t hash = UINT64_C(14695981039346656037);
@@ -408,7 +402,7 @@ void gen_nonce_c(unsigned char *buf, uint64_t orbit)
     p += 4;
     memcpy(p, &orbit, 8);
     p += 8;
-    rand_bytes(p, 20);
+    RAND_bytes(p, 20);
     p += 20;
 }
 

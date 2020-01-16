@@ -49,6 +49,7 @@
 #include "lsqpack.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_qdec_hdl.h"
+#include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_SENDCTL
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ctl->sc_conn_pub->lconn)
@@ -2966,8 +2967,8 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
 void
 lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *ctl)
 {
-    unsigned char buf[1];
+    uint8_t rand;
 
-    RAND_bytes(buf, sizeof(buf));
-    ctl->sc_gap = ctl->sc_cur_packno + 1 + buf[0];
+    rand = lsquic_crand_get_byte(ctl->sc_enpub->enp_crand);
+    ctl->sc_gap = ctl->sc_cur_packno + 1 + rand;
 }

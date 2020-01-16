@@ -9,6 +9,7 @@ SET(lsquic_STAT_SRCS
     lsquic_cfcw.c
     lsquic_chsk_stream.c
     lsquic_conn.c
+    lsquic_crand.c
     lsquic_crt_compress.c
     lsquic_crypto.c
     lsquic_cubic.c
