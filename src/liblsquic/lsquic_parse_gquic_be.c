@@ -1,7 +1,7 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_parse_gquic_be.c -- Parsing functions specific to big-endian
- *                              (Q039 and higher) GQUIC.
+ *                              (now only Q043) GQUIC.
  */
 
 #include <assert.h>
@@ -1010,7 +1010,7 @@ gquic_be_packno_info (const struct lsquic_conn *lconn,
 }
 
 
-const struct parse_funcs lsquic_parse_funcs_gquic_Q039 =
+const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
     .pf_gen_reg_pkt_header            =  gquic_be_gen_reg_pkt_header,
     .pf_parse_packet_in_finish        =  gquic_be_parse_packet_in_finish,

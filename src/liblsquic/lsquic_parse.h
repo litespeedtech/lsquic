@@ -298,14 +298,14 @@ struct parse_funcs
 };
 
 
-extern const struct parse_funcs lsquic_parse_funcs_gquic_Q039;
+extern const struct parse_funcs lsquic_parse_funcs_gquic_Q043;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
 extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
 
 #define select_pf_by_ver(ver) (                                             \
-    (1 << (ver)) & ((1 << LSQVER_039)|(1 << LSQVER_043)) ?                  \
-                                         &lsquic_parse_funcs_gquic_Q039 :   \
+    (1 << (ver)) & (1 << LSQVER_043)                     ?                  \
+                                         &lsquic_parse_funcs_gquic_Q043 :   \
     (1 << (ver)) & (1 << LSQVER_046)                            ?           \
                                          &lsquic_parse_funcs_gquic_Q046 :   \
     (1 << (ver)) & ((1 << LSQVER_050)|LSQUIC_EXPERIMENTAL_Q098) ?           \

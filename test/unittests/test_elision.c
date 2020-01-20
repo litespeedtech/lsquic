@@ -26,7 +26,7 @@
 #include "lsquic_logger.h"
 
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
 
 static struct {
     unsigned char   buf[0x1000];

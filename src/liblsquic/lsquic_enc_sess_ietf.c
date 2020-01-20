@@ -18,6 +18,8 @@
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
 
+#include "fiu-local.h"
+
 #include "lsquic_types.h"
 #include "lsquic_hkdf.h"
 #include "lsquic.h"
@@ -680,6 +682,8 @@ iquic_esfi_create_client (const char *hostname,
             struct lsquic_alarmset *alset, unsigned max_streams_uni)
 {
     struct enc_sess_iquic *enc_sess;
+
+    fiu_return_on("enc_sess_ietf/create_client", NULL);
 
     enc_sess = calloc(1, sizeof(*enc_sess));
     if (!enc_sess)

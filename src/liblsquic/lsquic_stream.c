@@ -26,6 +26,8 @@
 #include <sys/queue.h>
 #include <stddef.h>
 
+#include "fiu-local.h"
+
 #include "lsquic.h"
 
 #include "lsquic_int_types.h"
@@ -459,6 +461,8 @@ lsquic_stream_new_crypto (enum enc_level enc_level,
     lsquic_stream_id_t stream_id;
 
     assert(ctor_flags & SCF_CRITICAL);
+
+    fiu_return_on("stream/new_crypto", NULL);
 
     stream_id = ~0ULL - enc_level;
     stream = stream_new_common(stream_id, conn_pub, stream_if,
@@ -3940,6 +3944,7 @@ lsquic_stream_set_priority (lsquic_stream_t *stream, unsigned priority)
 lsquic_stream_ctx_t *
 lsquic_stream_get_ctx (const lsquic_stream_t *stream)
 {
+    fiu_return_on("stream/get_ctx", NULL);
     return stream->st_ctx;
 }
 

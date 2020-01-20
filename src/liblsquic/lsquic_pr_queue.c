@@ -169,7 +169,7 @@ prq_create (unsigned max_elems, unsigned max_conns,
     }
 
     const lsquic_cid_t cid = { .len = 8, };
-    pf = select_pf_by_ver(LSQVER_039);
+    pf = select_pf_by_ver(LSQVER_043);
     len = lsquic_gquic_gen_ver_nego_pkt(prq->prq_verneg_g_buf,
                     sizeof(prq->prq_verneg_g_buf), &cid,
                     enpub->enp_settings.es_versions);

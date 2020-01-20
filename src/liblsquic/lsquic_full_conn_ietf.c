@@ -14,6 +14,8 @@
 
 #include <openssl/rand.h>
 
+#include "fiu-local.h"
+
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -73,6 +75,7 @@
 #include "lsquic_logger.h"
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
+#define MAX_ANY_PACKETS_SINCE_LAST_ACK 20
 #define ACK_TIMEOUT                    (TP_DEF_MAX_ACK_DELAY * 1000)
 #define INITIAL_CHAL_TIMEOUT            25000
 
@@ -327,6 +330,7 @@ struct ietf_full_conn
                                                 struct lsquic_packet_in *);
     /* Number ackable packets received since last ACK was sent: */
     unsigned                    ifc_n_slack_akbl[N_PNS];
+    unsigned                    ifc_n_slack_all;    /* App PNS only */
     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
     uint64_t                    ifc_ecn_counts_out[N_PNS][4];
     lsquic_stream_id_t          ifc_max_req_id;
@@ -389,6 +393,7 @@ struct ietf_full_conn
      */
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
+    uint64_t                    ifc_last_max_data_off_sent;
     struct ack_info             ifc_ack;
 };
 
@@ -430,6 +435,8 @@ ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
 static const lsquic_cid_t *
 ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 
+static void
+ietf_full_conn_ci_destroy (struct lsquic_conn *);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -963,7 +970,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
-        return NULL;
+        goto err0;
     now = lsquic_time_now();
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF;
@@ -971,10 +978,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);
     if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, now))
-    {
-        free(conn);
-        return NULL;
-    }
+        goto err1;
 
     assert(versions);
     versions &= LSQUIC_IETF_VERSIONS;
@@ -998,18 +1002,12 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
     if (0 != ietf_full_conn_init(conn, enpub, flags,
                                                 enpub->enp_settings.es_ecn))
-    {
-        free(conn);
-        return NULL;
-    }
+        goto err2;
     if (token)
     {
         if (0 != lsquic_send_ctl_set_token(&conn->ifc_send_ctl, token,
                                                                 token_sz))
-        {
-            free(conn);
-            return NULL;
-        }
+            goto err2;
     }
 
     /* Do not infer anything about server limits before processing its
@@ -1057,36 +1055,20 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                 zero_rtt, zero_rtt_sz, &conn->ifc_alset,
                 conn->ifc_max_streams_in[SD_UNI]);
     if (!conn->ifc_conn.cn_enc_session)
-    {
-        /* TODO: free other stuff */
-        free(conn);
-        return NULL;
-    }
+        goto err2;
 
     conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = lsquic_stream_new_crypto(
         ENC_LEV_CLEAR, &conn->ifc_pub, &lsquic_cry_sm_if,
         conn->ifc_conn.cn_enc_session,
         SCF_IETF|SCF_DI_AUTOSWITCH|SCF_CALL_ON_NEW|SCF_CRITICAL);
     if (!conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
-    {
-        /* TODO: free other stuff */
-        free(conn);
-        return NULL;
-    }
+        goto err3;
     if (!lsquic_stream_get_ctx(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]))
-    {
-        /* TODO: free other stuff */
-        free(conn);
-        return NULL;
-    }
+        goto err4;
     conn->ifc_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     if (!conn->ifc_pub.packet_out_malo)
-    {
-        lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
-        free(conn);
-        return NULL;
-    }
+        goto err4;
     conn->ifc_flags |= IFC_PROC_CRYPTO;
 
     LSQ_DEBUG("negotiating version %s",
@@ -1095,6 +1077,19 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     LSQ_DEBUG("logging using %s SCID",
         LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "client" : "server");
     return &conn->ifc_conn;
+
+  err4:
+    lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
+  err3:
+    conn->ifc_conn.cn_esf.i->esfi_destroy(conn->ifc_conn.cn_enc_session);
+  err2:
+    lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
+    if (conn->ifc_pub.all_streams)
+        lsquic_hash_destroy(conn->ifc_pub.all_streams);
+  err1:
+    free(conn);
+  err0:
+    return NULL;
 }
 
 
@@ -1111,7 +1106,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     struct lsquic_packet_out *packet_out;
     struct lsquic_packet_in *packet_in;
     struct conn_cid_elem *cce;
-    int have_errors, have_outgoing_ack;
+    int have_outgoing_ack;
     lsquic_packno_t next_packno;
     lsquic_time_t now;
     packno_set_t set;
@@ -1120,7 +1115,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
-        return NULL;
+        goto err0;
     now = lsquic_time_now();
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
@@ -1151,23 +1146,14 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     if (0 != ietf_full_conn_init(conn, enpub, flags,
                                         lsquic_mini_conn_ietf_ecn_ok(imc)))
-    {
-        free(conn);
-        return NULL;
-    }
+        goto err1;
     conn->ifc_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     if (!conn->ifc_pub.packet_out_malo)
-    {
-        /* XXX: deinit conn? */
-        free(conn);
-        return NULL;
-    }
+        goto err1;
     if (imc->imc_flags & IMC_IGNORE_INIT)
         conn->ifc_flags |= IFC_IGNORE_INIT;
 
-    conn->ifc_conn.cn_flags |= mini_conn->cn_flags &
-        LSCONN_PEER_GOING_AWAY /* XXX what is this for, again? Was copied */;
     conn->ifc_paths[0].cop_path = imc->imc_path;
     conn->ifc_paths[0].cop_flags = COP_VALIDATED;
     conn->ifc_used_paths = 1 << 0;
@@ -1199,13 +1185,13 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         conn->ifc_u.ser.ifser_flags |= IFSER_PUSH_ENABLED;
     if (flags & IFC_HTTP)
     {
+        fiu_do_on("full_conn_ietf/promise_hash", goto promise_alloc_failed);
         conn->ifc_pub.u.ietf.promises = lsquic_hash_create();
+#if FIU_ENABLE
+  promise_alloc_failed:
+#endif
         if (!conn->ifc_pub.u.ietf.promises)
-        {
-            /* XXX: deinit conn? */
-            free(conn);
-            return NULL;
-        }
+            goto err2;
     }
 
     assert(mini_conn->cn_flags & LSCONN_HANDSHAKE_DONE);
@@ -1236,7 +1222,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
      * been lost.  We take ownership of all packets in mc_packets_out; those
      * that are not on the list are recorded in fc_send_ctl.sc_senhist.
      */
-    have_errors = 0;
     have_outgoing_ack = 0;
     next_packno = ~0ULL;
     while ((packet_out = TAILQ_FIRST(&imc->imc_packets_out)))
@@ -1254,12 +1239,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
             LSQ_DEBUG("got sent packet_out %"PRIu64" from mini",
                                                    packet_out->po_packno);
             if (0 != lsquic_send_ctl_sent_packet(&conn->ifc_send_ctl,
-                                                 packet_out)
-                && !have_errors /* Warn once */)
+                                                             packet_out))
             {
-                ++have_errors;
                 LSQ_WARN("could not add packet %"PRIu64" to sent set: %s",
                     packet_out->po_packno, strerror(errno));
+                goto err2;
             }
         }
         else
@@ -1292,16 +1276,14 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->ifc_last_live_update = now;
 
-    /* TODO: do something if there are errors */
-
     LSQ_DEBUG("Calling on_new_conn callback");
     conn->ifc_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
 
     /* TODO: do something if there is outgoing ACK */
 
-    /* TODO: check return valuee */ (void)
-    handshake_ok(&conn->ifc_conn);
+    if (0 != handshake_ok(&conn->ifc_conn))
+        goto err3;
 
     lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                                         imc->imc_created + conn->ifc_idle_to);
@@ -1317,6 +1299,20 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     LSQ_DEBUG("logging using %s SCID",
         LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "server" : "client");
     return &conn->ifc_conn;
+
+  err3:
+    ietf_full_conn_ci_destroy(&conn->ifc_conn);
+    return NULL;
+
+  err2:
+    lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
+  err1:
+    lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
+    if (conn->ifc_pub.all_streams)
+        lsquic_hash_destroy(conn->ifc_pub.all_streams);
+    free(conn);
+  err0:
+    return NULL;
 }
 
 
@@ -1409,6 +1405,8 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     }
 
     conn->ifc_n_slack_akbl[pns] = 0;
+    if (PNS_APP == pns)
+        conn->ifc_n_slack_all = 0;
     conn->ifc_flags &= ~(IFC_ACK_QUED_INIT << pns);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + pns);
     lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
@@ -1499,6 +1497,7 @@ generate_max_data_frame (struct ietf_full_conn *conn)
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_frame_types |= QUIC_FTBIT_MAX_DATA;
     conn->ifc_send_flags &= ~SF_SEND_MAX_DATA;
+    conn->ifc_last_max_data_off_sent = offset;
 }
 
 
@@ -1837,7 +1836,7 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_MAX_STREAM_DATA;
     lsquic_stream_max_stream_data_sent(stream);
-    return 0;
+    return 1;
 }
 
 
@@ -1867,7 +1866,7 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
     lsquic_stream_blocked_frame_sent(stream);
-    return 0;
+    return 1;
 }
 
 
@@ -2704,6 +2703,8 @@ handshake_ok (struct lsquic_conn *lconn)
     uint64_t limit;
     char buf[0x200];
 
+    fiu_return_on("full_conn_ietf/handshake_ok", -1);
+
     /* Need to set this flag even we hit an error in the rest of this funciton.
      * This is because this flag is used to calculate packet out header size
      */
@@ -3006,7 +3007,8 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     enum lsqpack_enc_status enc_st;
     enum lsquic_header_status header_st;
     unsigned i, name_idx, n_header_sets;
-    int own_hset;
+    int own_hset, stx_tab_id;
+    const unsigned hpack_static_table_size = 61;
     unsigned char discard[2];
 
     if (!ietf_full_conn_ci_is_push_enabled(lconn)
@@ -3130,9 +3132,13 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
                     header < all_headers[i].headers + all_headers[i].count;
                         ++header)
             {
-                name_idx = 0;   /* TODO: lsqpack_enc_get_stx_tab_id(header->name.iov_base,
+                stx_tab_id = lsqpack_get_stx_tab_id(header->name.iov_base,
                                 header->name.iov_len, header->value.iov_base,
-                                header->value.iov_len); */
+                                header->value.iov_len);
+                if (stx_tab_id >= 0)
+                    name_idx = hpack_static_table_size + 1 + stx_tab_id;
+                else
+                    name_idx = 0;
                 header_st = conn->ifc_enpub->enp_hsi_if->hsi_process_header(hset,
                                 name_idx,
                                 header->name.iov_base, header->name.iov_len,
@@ -3827,7 +3833,7 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
     {
         pns = acki->pns;
         packno = lsquic_send_ctl_largest_ack2ed(&conn->ifc_send_ctl, pns);
-        /* FIXME TODO zero is a valid packet number */
+        /* It's OK to skip valid packno 0: the alternative is too expensive */
         if (packno)
             lsquic_rechist_stop_wait(&conn->ifc_rechist[ pns ], packno + 1);
         /* ACK of 1-RTT packet indicates that handshake has been confirmed: */
@@ -5056,13 +5062,16 @@ process_stream_blocked_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "STREAM_BLOCKED frame in: stream "
+        "%"PRIu64"; offset %"PRIu64, stream_id, peer_off);
     LSQ_DEBUG("received STREAM_BLOCKED frame: stream %"PRIu64
                                     "; offset %"PRIu64, stream_id, peer_off);
 
     if (conn_is_send_only_stream(conn, stream_id))
     {
-        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received BLOCKED frame "
-            "on send-only stream %"PRIu64, stream_id);
+        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
+            "received STREAM_BLOCKED frame on send-only stream %"PRIu64,
+                                                                stream_id);
         return 0;
     }
 
@@ -5111,15 +5120,38 @@ static unsigned
 process_blocked_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    uint64_t off;
+    uint64_t peer_off, last_off;
     int parsed_len;
 
-    parsed_len = conn->ifc_conn.cn_pf->pf_parse_blocked_frame(p, len, &off);
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_blocked_frame(p, len,
+                                                                &peer_off);
     if (parsed_len < 0)
         return 0;
 
-    LSQ_DEBUG("received BLOCKED frame: offset %"PRIu64, off);
-    /* XXX Try to do something? */
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "BLOCKED frame in: offset %"PRIu64,
+                                                                    peer_off);
+    LSQ_DEBUG("received BLOCKED frame: offset %"PRIu64, peer_off);
+
+    if (conn->ifc_last_max_data_off_sent)
+        last_off = conn->ifc_last_max_data_off_sent;
+    else
+        last_off = lsquic_cfcw_get_max_recv_off(&conn->ifc_pub.cfcw);
+
+    /* Same logic as in lsquic_stream_peer_blocked() */
+    if (peer_off > last_off && !(conn->ifc_send_flags & SF_SEND_MAX_DATA))
+    {
+        conn->ifc_send_flags |= SF_SEND_MAX_DATA;
+        LSQ_DEBUG("marked to send MAX_DATA frame");
+    }
+    else if (conn->ifc_send_flags & SF_SEND_MAX_DATA)
+        LSQ_DEBUG("MAX_STREAM_DATA frame is already scheduled");
+    else if (conn->ifc_last_max_data_off_sent)
+        LSQ_DEBUG("MAX_DATA(%"PRIu64") has already been either "
+            "packetized or sent", conn->ifc_last_max_data_off_sent);
+    else
+        LSQ_INFO("Peer should have received transport param limit "
+            "of %"PRIu64"; odd", last_off);
+
     return parsed_len;
 }
 
@@ -5327,21 +5359,43 @@ parse_regular_packet (struct ietf_full_conn *conn,
 }
 
 
+/* From [draft-ietf-quic-transport-24] Section 13.2.1:
+ *      " An endpoint MUST NOT send a non-ack-eliciting packet in response
+ *      " to a non-ack-eliciting packet, even if there are packet gaps
+ *      " which precede the received packet.
+ *
+ * To ensure that we always send an ack-eliciting packet in this case, we
+ * check that there are frames that are about to be written.
+ */
+static int
+many_in_and_will_write (struct ietf_full_conn *conn)
+{
+    return conn->ifc_n_slack_all > MAX_ANY_PACKETS_SINCE_LAST_ACK
+        && (conn->ifc_send_flags
+            || !TAILQ_EMPTY(&conn->ifc_pub.sending_streams)
+            || !TAILQ_EMPTY(&conn->ifc_pub.write_streams))
+        ;
+}
+
+
 static void
 try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
                                             int was_missing, lsquic_time_t now)
 {
     lsquic_time_t srtt, ack_timeout;
 
-    if (conn->ifc_n_slack_akbl[pns] >= MAX_RETR_PACKETS_SINCE_LAST_ACK ||
-                        ((conn->ifc_flags & IFC_ACK_HAD_MISS) && was_missing))
+    if (conn->ifc_n_slack_akbl[pns] >= MAX_RETR_PACKETS_SINCE_LAST_ACK
+            || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
+                    && was_missing && conn->ifc_n_slack_akbl[pns] > 0)
+            || (PNS_APP == pns && many_in_and_will_write(conn)))
     {
         lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + pns);
         lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
         conn->ifc_flags |= IFC_ACK_QUED_INIT << pns;
-        LSQ_DEBUG("%s ACK queued: ackable: %u; had_miss: %d; "
+        LSQ_DEBUG("%s ACK queued: ackable: %u; all: %u; had_miss: %d; "
             "was_missing: %d",
             lsquic_pns2str[pns], conn->ifc_n_slack_akbl[pns],
+            conn->ifc_n_slack_all,
             !!(conn->ifc_flags & IFC_ACK_HAD_MISS), was_missing);
     }
     else if (conn->ifc_n_slack_akbl[pns] > 0)
@@ -5730,6 +5784,7 @@ process_regular_packet (struct ietf_full_conn *conn,
             }
             else
                 was_missing = 0;
+            conn->ifc_n_slack_all += PNS_APP == pns;
             try_queueing_ack(conn, pns, was_missing, packet_in->pi_received);
         }
         conn->ifc_incoming_ecn <<= 1;
@@ -6057,10 +6112,6 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->ifc_send_ctl);
 
-        /* ACK frame generation fails with an error if it does not fit into
-         * a single packet (it always should fit).
-         * XXX Is this still true?
-         */
         n = generate_ack_frame(conn, now);
         CLOSE_IF_NECESSARY();
 
@@ -6523,7 +6574,6 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
         return first_unused - conn->ifc_paths;
     }
 
-    /* XXX TODO Revisit this logic! */
     if (first_unvalidated || first_other)
     {
         victim = first_unvalidated ? first_unvalidated : first_other;

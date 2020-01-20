@@ -44,7 +44,7 @@ struct test {
 static const struct test tests[] = {
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
@@ -61,7 +61,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
@@ -78,13 +78,13 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NULL,
         .packno = 0x09,
         .bits   = GQUIC_PACKNO_LEN_1,
-        .ver.buf= { 'Q', '0', '3', '9', },
+        .ver.buf= { 'Q', '0', '4', '3', },
         .len    = 1 + 8 + 4 + 0 + 1,
         .out    = {     (0 << 2)                                        /* Nonce present */
                       | 0x01                                            /* Version present */
@@ -92,7 +92,7 @@ static const struct test tests[] = {
                       | 0x00                                            /* Packet number length */
                       ,
                       0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-                      'Q', '0', '3', '9',
+                      'Q', '0', '4', '3',
                       0x09,                                             /* Packet number */
         },
     },
@@ -101,7 +101,7 @@ static const struct test tests[] = {
 #define NONCENSE_BYTES '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v'
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
@@ -119,7 +119,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0,    /* Do not set connection ID */
         .nonce  = NONCENSE,
@@ -135,13 +135,13 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
         .packno = 0x00,
         .bits   = GQUIC_PACKNO_LEN_1,
-        .ver.buf= { 'Q', '0', '3', '9', },
+        .ver.buf= { 'Q', '0', '4', '3', },
         .len    = 1 + 8 + 4 + 32 + 1,
         .out    = {     (1 << 2)                                        /* Nonce present */
                       | 0x01                                            /* Version present */
@@ -149,14 +149,14 @@ static const struct test tests[] = {
                       | 0x00                                            /* Packet number length */
                       ,
                       0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-                      'Q', '0', '3', '9',
+                      'Q', '0', '4', '3',
                       NONCENSE_BYTES,
                       0x00,                                             /* Packet number */
         },
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,
@@ -174,7 +174,7 @@ static const struct test tests[] = {
     },
 
     {
-        .pf     = select_pf_by_ver(LSQVER_039),
+        .pf     = select_pf_by_ver(LSQVER_043),
         .bufsz  = GQUIC_MAX_PUBHDR_SZ,
         .cid    = 0x0102030405060708UL,
         .nonce  = NONCENSE,

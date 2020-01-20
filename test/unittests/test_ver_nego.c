@@ -40,46 +40,32 @@ static const struct gen_ver_nego_test tests[] = {
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_039),
-        .gvnt_gen_ver   = LSQVER_039,
-        .gvnt_bufsz     = 13,
-        .gvnt_len       = 13,
-        .gvnt_buf       = {
-            PACKET_PUBLIC_FLAGS_VERSION|
-            PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
-            0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-            'Q', '0', '3', '9',
-        },
-    },
-
-    {   .gvnt_lineno    = __LINE__,
-        .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_039),
-        .gvnt_gen_ver   = LSQVER_039,
+        .gvnt_versions  = (1 << LSQVER_043),
+        .gvnt_gen_ver   = LSQVER_043,
         .gvnt_bufsz     = 12,
         .gvnt_len       = -1,       /* Buffer size is too small */
     },
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_039) | (1 << N_LSQVER),
-        .gvnt_gen_ver   = LSQVER_039,
+        .gvnt_versions  = (1 << LSQVER_043) | (1 << N_LSQVER),
+        .gvnt_gen_ver   = LSQVER_043,
         .gvnt_bufsz     = 20,
         .gvnt_len       = -1,       /* Invalid version specified in the bitmask */
     },
 
     {   .gvnt_lineno    = __LINE__,
         .gvnt_cid       = 0x0102030405060708UL,
-        .gvnt_versions  = (1 << LSQVER_039) | (1 << LSQVER_043),
-        .gvnt_gen_ver   = LSQVER_039,
+        .gvnt_versions  = (1 << LSQVER_043) | (1 << LSQVER_046),
+        .gvnt_gen_ver   = LSQVER_043,
         .gvnt_bufsz     = 17,
         .gvnt_len       = 17,
         .gvnt_buf       = {
             PACKET_PUBLIC_FLAGS_VERSION|
             PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID,
             0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-            'Q', '0', '3', '9',
             'Q', '0', '4', '3',
+            'Q', '0', '4', '6',
         },
     },
 

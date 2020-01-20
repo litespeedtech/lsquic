@@ -1,3 +1,15 @@
+2020-01-20
+    - 2.9.0
+    - [API] Drop support for Q039.
+    - Improve ACK-queuing logic.  Send an ACK once in a while if
+      peer keeps on sending non-ack-eliciting packets.
+    - Improve Alt-Svc string: Q050 and later are not included in
+      the old-style "quic" string.
+    - Send stateless resets if connection could not be promoted.
+    - Schedule MAX_DATA if needed when DATA_BLOCKED is received.
+    - Use ls-qpack 0.11.2 -- needed for server push optimization.
+    - Code cleanup: handle some error cases, improve logging.
+
 2020-01-16
     - 2.8.9
     - [BUGFIX] Use ls-qpack 0.11.1

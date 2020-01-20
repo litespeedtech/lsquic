@@ -51,7 +51,7 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 
-static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_039);
+static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_043);
 
 static int g_use_crypto_ctor;
 
@@ -2266,7 +2266,7 @@ test_changing_pack_size (void)
         assert(("on_close called", 1 == n_closed));
         deinit_test_objs(&tobjs);
     }
-    g_pf = select_pf_by_ver(LSQVER_039);
+    g_pf = select_pf_by_ver(LSQVER_043);
 }
 
 

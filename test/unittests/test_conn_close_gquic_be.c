@@ -11,7 +11,7 @@
 #include "lsquic_types.h"
 #include "lsquic_parse.h"
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_039);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
 
 
 struct conn_close_parse_test {

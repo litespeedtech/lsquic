@@ -3327,9 +3327,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         if (have_delayed_packets)
             lsquic_send_ctl_reset_packnos(&conn->fc_send_ctl);
 
-        /* ACK frame generation fails with an error if it does not fit into
-         * a single packet (it always should fit).
-         */
         generate_ack_frame(conn);
         CLOSE_IF_NECESSARY();
 

@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 8
-#define LSQUIC_PATCH_VERSION 9
+#define LSQUIC_MINOR_VERSION 9
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -76,7 +76,9 @@ enum lsquic_version
      * WINDOW_UPDATE frame every 20 sent packets which do not contain
      * retransmittable frames.
      */
-    LSQVER_039,
+    /* Support for this version has been removed.  The comment remains to
+     * document the changes.
+     */
 
     /*
      * Q041.  RST_STREAM, ACK and STREAM frames match IETF format.
@@ -151,7 +153,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 39, 43, 46, 50, and IETF Draft-23 and Draft-24
+ * We currently support versions 43, 46, 50, and IETF Draft-23 and Draft-24
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -166,7 +168,7 @@ enum lsquic_version
 
 #define LSQUIC_DEPRECATED_VERSIONS 0
 
-#define LSQUIC_GQUIC_HEADER_VERSIONS ((1 << LSQVER_039) | (1 << LSQVER_043))
+#define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
 #define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
                                                     | (1 << LSQVER_VERNEG))

@@ -14,8 +14,10 @@ open OUT, ">$outfile"
 while (<HEADER>) {
     if (/^enum lsquic_version$/ .. /^}/) {
         if (/^\s*(LSQVER_0*(\d+)),\s*$/ && $1 ne 'LSQVER_098') {
-            push @enums, $1;
-            push @versions, $2;
+            if ($2 < 50) {
+                push @enums, $1;
+                push @versions, $2;
+            }
             push @all_versions, $1;
             push @all_alpns, "h3-Q0$2";
         }

@@ -58,7 +58,7 @@ main (int argc, char **argv)
     lsquic_packet_in_t packet_in;
     unsigned char buf[0x1000];
     ssize_t packet_sz;
-    enum lsquic_version ver = LSQVER_039;
+    enum lsquic_version ver = LSQVER_043;
 
     memset(&enpub, 0, sizeof(enpub));
     lsquic_mm_init(&enpub.enp_mm);

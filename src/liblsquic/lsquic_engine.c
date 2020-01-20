@@ -2517,9 +2517,9 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                 STAILQ_INSERT_TAIL(&new_full_conns, new_conn, cn_next_new_full);
                 new_conn->cn_last_sent = engine->last_sent;
                 eng_hist_inc(&engine->history, now, sl_new_full_conns);
+                conn->cn_flags |= LSCONN_PROMOTED;
             }
             tick_st |= TICK_CLOSE;  /* Destroy mini connection */
-            conn->cn_flags |= LSCONN_PROMOTED;
         }
         if (tick_st & TICK_SEND)
         {
