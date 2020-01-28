@@ -266,7 +266,7 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
            | (lsquic_packet_out_spin_bit(packet_out) << 5)
            | (lsquic_packet_out_square_bit(packet_out) << 4)
            | (lsquic_packet_out_loss_bit(packet_out) << 3)
-           | (lsquic_packet_out_key_phase(packet_out) << 2)
+           | (lsquic_packet_out_kp(packet_out) << 2)
            | packno_bits
            ;
 
@@ -529,6 +529,10 @@ ietf_v1_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
     else
         data_sz = pend - p;
 
+    /* Largest offset cannot exceed this value and we MUST detect this error */
+    if (VINT_MAX_VALUE - offset < data_sz)
+        return -1;
+
     stream_frame->stream_id             = stream_id;
     stream_frame->data_frame.df_fin     = type & 0x1;
     stream_frame->data_frame.df_offset  = offset;
@@ -566,6 +570,10 @@ lsquic_ietf_v1_parse_crypto_frame (const unsigned char *buf,
         return -1;
     p += r;
     CHECK_SPACE(data_sz, p, pend);
+
+    /* Largest offset cannot exceed this value and we MUST detect this error */
+    if (VINT_MAX_VALUE - offset < data_sz)
+        return -1;
 
     stream_frame->stream_id             = ~0ULL;    /* Unset */
     stream_frame->data_frame.df_fin     = 0;
@@ -1093,6 +1101,273 @@ static enum quic_frame_type
 ietf_v1_parse_frame_type (unsigned char byte)
 {
     return lsquic_iquic_byte2type[byte];
+}
+
+
+static enum quic_frame_type
+ietf_id24_parse_frame_type (unsigned char byte)
+{
+    /* This one does not have QUIC_FRAME_HANDSHAKE_DONE */
+    static const enum quic_frame_type byte2type[0x100] =
+    {
+        [0x00] = QUIC_FRAME_PADDING,
+        [0x01] = QUIC_FRAME_PING,
+        [0x02] = QUIC_FRAME_ACK,
+        [0x03] = QUIC_FRAME_ACK,
+        [0x04] = QUIC_FRAME_RST_STREAM,
+        [0x05] = QUIC_FRAME_STOP_SENDING,
+        [0x06] = QUIC_FRAME_CRYPTO,
+        [0x07] = QUIC_FRAME_NEW_TOKEN,
+        [0x08] = QUIC_FRAME_STREAM,
+        [0x09] = QUIC_FRAME_STREAM,
+        [0x0A] = QUIC_FRAME_STREAM,
+        [0x0B] = QUIC_FRAME_STREAM,
+        [0x0C] = QUIC_FRAME_STREAM,
+        [0x0D] = QUIC_FRAME_STREAM,
+        [0x0E] = QUIC_FRAME_STREAM,
+        [0x0F] = QUIC_FRAME_STREAM,
+        [0x10] = QUIC_FRAME_MAX_DATA,
+        [0x11] = QUIC_FRAME_MAX_STREAM_DATA,
+        [0x12] = QUIC_FRAME_MAX_STREAMS,
+        [0x13] = QUIC_FRAME_MAX_STREAMS,
+        [0x14] = QUIC_FRAME_BLOCKED,
+        [0x15] = QUIC_FRAME_STREAM_BLOCKED,
+        [0x16] = QUIC_FRAME_STREAMS_BLOCKED,
+        [0x17] = QUIC_FRAME_STREAMS_BLOCKED,
+        [0x18] = QUIC_FRAME_NEW_CONNECTION_ID,
+        [0x19] = QUIC_FRAME_RETIRE_CONNECTION_ID,
+        [0x1A] = QUIC_FRAME_PATH_CHALLENGE,
+        [0x1B] = QUIC_FRAME_PATH_RESPONSE,
+        [0x1C] = QUIC_FRAME_CONNECTION_CLOSE,
+        [0x1D] = QUIC_FRAME_CONNECTION_CLOSE,
+        [0x1E] = QUIC_FRAME_INVALID,
+        [0x1F] = QUIC_FRAME_INVALID,
+        [0x20] = QUIC_FRAME_INVALID,
+        [0x21] = QUIC_FRAME_INVALID,
+        [0x22] = QUIC_FRAME_INVALID,
+        [0x23] = QUIC_FRAME_INVALID,
+        [0x24] = QUIC_FRAME_INVALID,
+        [0x25] = QUIC_FRAME_INVALID,
+        [0x26] = QUIC_FRAME_INVALID,
+        [0x27] = QUIC_FRAME_INVALID,
+        [0x28] = QUIC_FRAME_INVALID,
+        [0x29] = QUIC_FRAME_INVALID,
+        [0x2A] = QUIC_FRAME_INVALID,
+        [0x2B] = QUIC_FRAME_INVALID,
+        [0x2C] = QUIC_FRAME_INVALID,
+        [0x2D] = QUIC_FRAME_INVALID,
+        [0x2E] = QUIC_FRAME_INVALID,
+        [0x2F] = QUIC_FRAME_INVALID,
+        [0x30] = QUIC_FRAME_INVALID,
+        [0x31] = QUIC_FRAME_INVALID,
+        [0x32] = QUIC_FRAME_INVALID,
+        [0x33] = QUIC_FRAME_INVALID,
+        [0x34] = QUIC_FRAME_INVALID,
+        [0x35] = QUIC_FRAME_INVALID,
+        [0x36] = QUIC_FRAME_INVALID,
+        [0x37] = QUIC_FRAME_INVALID,
+        [0x38] = QUIC_FRAME_INVALID,
+        [0x39] = QUIC_FRAME_INVALID,
+        [0x3A] = QUIC_FRAME_INVALID,
+        [0x3B] = QUIC_FRAME_INVALID,
+        [0x3C] = QUIC_FRAME_INVALID,
+        [0x3D] = QUIC_FRAME_INVALID,
+        [0x3E] = QUIC_FRAME_INVALID,
+        [0x3F] = QUIC_FRAME_INVALID,
+        [0x40] = QUIC_FRAME_INVALID,
+        [0x41] = QUIC_FRAME_INVALID,
+        [0x42] = QUIC_FRAME_INVALID,
+        [0x43] = QUIC_FRAME_INVALID,
+        [0x44] = QUIC_FRAME_INVALID,
+        [0x45] = QUIC_FRAME_INVALID,
+        [0x46] = QUIC_FRAME_INVALID,
+        [0x47] = QUIC_FRAME_INVALID,
+        [0x48] = QUIC_FRAME_INVALID,
+        [0x49] = QUIC_FRAME_INVALID,
+        [0x4A] = QUIC_FRAME_INVALID,
+        [0x4B] = QUIC_FRAME_INVALID,
+        [0x4C] = QUIC_FRAME_INVALID,
+        [0x4D] = QUIC_FRAME_INVALID,
+        [0x4E] = QUIC_FRAME_INVALID,
+        [0x4F] = QUIC_FRAME_INVALID,
+        [0x50] = QUIC_FRAME_INVALID,
+        [0x51] = QUIC_FRAME_INVALID,
+        [0x52] = QUIC_FRAME_INVALID,
+        [0x53] = QUIC_FRAME_INVALID,
+        [0x54] = QUIC_FRAME_INVALID,
+        [0x55] = QUIC_FRAME_INVALID,
+        [0x56] = QUIC_FRAME_INVALID,
+        [0x57] = QUIC_FRAME_INVALID,
+        [0x58] = QUIC_FRAME_INVALID,
+        [0x59] = QUIC_FRAME_INVALID,
+        [0x5A] = QUIC_FRAME_INVALID,
+        [0x5B] = QUIC_FRAME_INVALID,
+        [0x5C] = QUIC_FRAME_INVALID,
+        [0x5D] = QUIC_FRAME_INVALID,
+        [0x5E] = QUIC_FRAME_INVALID,
+        [0x5F] = QUIC_FRAME_INVALID,
+        [0x60] = QUIC_FRAME_INVALID,
+        [0x61] = QUIC_FRAME_INVALID,
+        [0x62] = QUIC_FRAME_INVALID,
+        [0x63] = QUIC_FRAME_INVALID,
+        [0x64] = QUIC_FRAME_INVALID,
+        [0x65] = QUIC_FRAME_INVALID,
+        [0x66] = QUIC_FRAME_INVALID,
+        [0x67] = QUIC_FRAME_INVALID,
+        [0x68] = QUIC_FRAME_INVALID,
+        [0x69] = QUIC_FRAME_INVALID,
+        [0x6A] = QUIC_FRAME_INVALID,
+        [0x6B] = QUIC_FRAME_INVALID,
+        [0x6C] = QUIC_FRAME_INVALID,
+        [0x6D] = QUIC_FRAME_INVALID,
+        [0x6E] = QUIC_FRAME_INVALID,
+        [0x6F] = QUIC_FRAME_INVALID,
+        [0x70] = QUIC_FRAME_INVALID,
+        [0x71] = QUIC_FRAME_INVALID,
+        [0x72] = QUIC_FRAME_INVALID,
+        [0x73] = QUIC_FRAME_INVALID,
+        [0x74] = QUIC_FRAME_INVALID,
+        [0x75] = QUIC_FRAME_INVALID,
+        [0x76] = QUIC_FRAME_INVALID,
+        [0x77] = QUIC_FRAME_INVALID,
+        [0x78] = QUIC_FRAME_INVALID,
+        [0x79] = QUIC_FRAME_INVALID,
+        [0x7A] = QUIC_FRAME_INVALID,
+        [0x7B] = QUIC_FRAME_INVALID,
+        [0x7C] = QUIC_FRAME_INVALID,
+        [0x7D] = QUIC_FRAME_INVALID,
+        [0x7E] = QUIC_FRAME_INVALID,
+        [0x7F] = QUIC_FRAME_INVALID,
+        [0x80] = QUIC_FRAME_INVALID,
+        [0x81] = QUIC_FRAME_INVALID,
+        [0x82] = QUIC_FRAME_INVALID,
+        [0x83] = QUIC_FRAME_INVALID,
+        [0x84] = QUIC_FRAME_INVALID,
+        [0x85] = QUIC_FRAME_INVALID,
+        [0x86] = QUIC_FRAME_INVALID,
+        [0x87] = QUIC_FRAME_INVALID,
+        [0x88] = QUIC_FRAME_INVALID,
+        [0x89] = QUIC_FRAME_INVALID,
+        [0x8A] = QUIC_FRAME_INVALID,
+        [0x8B] = QUIC_FRAME_INVALID,
+        [0x8C] = QUIC_FRAME_INVALID,
+        [0x8D] = QUIC_FRAME_INVALID,
+        [0x8E] = QUIC_FRAME_INVALID,
+        [0x8F] = QUIC_FRAME_INVALID,
+        [0x90] = QUIC_FRAME_INVALID,
+        [0x91] = QUIC_FRAME_INVALID,
+        [0x92] = QUIC_FRAME_INVALID,
+        [0x93] = QUIC_FRAME_INVALID,
+        [0x94] = QUIC_FRAME_INVALID,
+        [0x95] = QUIC_FRAME_INVALID,
+        [0x96] = QUIC_FRAME_INVALID,
+        [0x97] = QUIC_FRAME_INVALID,
+        [0x98] = QUIC_FRAME_INVALID,
+        [0x99] = QUIC_FRAME_INVALID,
+        [0x9A] = QUIC_FRAME_INVALID,
+        [0x9B] = QUIC_FRAME_INVALID,
+        [0x9C] = QUIC_FRAME_INVALID,
+        [0x9D] = QUIC_FRAME_INVALID,
+        [0x9E] = QUIC_FRAME_INVALID,
+        [0x9F] = QUIC_FRAME_INVALID,
+        [0xA0] = QUIC_FRAME_INVALID,
+        [0xA1] = QUIC_FRAME_INVALID,
+        [0xA2] = QUIC_FRAME_INVALID,
+        [0xA3] = QUIC_FRAME_INVALID,
+        [0xA4] = QUIC_FRAME_INVALID,
+        [0xA5] = QUIC_FRAME_INVALID,
+        [0xA6] = QUIC_FRAME_INVALID,
+        [0xA7] = QUIC_FRAME_INVALID,
+        [0xA8] = QUIC_FRAME_INVALID,
+        [0xA9] = QUIC_FRAME_INVALID,
+        [0xAA] = QUIC_FRAME_INVALID,
+        [0xAB] = QUIC_FRAME_INVALID,
+        [0xAC] = QUIC_FRAME_INVALID,
+        [0xAD] = QUIC_FRAME_INVALID,
+        [0xAE] = QUIC_FRAME_INVALID,
+        [0xAF] = QUIC_FRAME_INVALID,
+        [0xB0] = QUIC_FRAME_INVALID,
+        [0xB1] = QUIC_FRAME_INVALID,
+        [0xB2] = QUIC_FRAME_INVALID,
+        [0xB3] = QUIC_FRAME_INVALID,
+        [0xB4] = QUIC_FRAME_INVALID,
+        [0xB5] = QUIC_FRAME_INVALID,
+        [0xB6] = QUIC_FRAME_INVALID,
+        [0xB7] = QUIC_FRAME_INVALID,
+        [0xB8] = QUIC_FRAME_INVALID,
+        [0xB9] = QUIC_FRAME_INVALID,
+        [0xBA] = QUIC_FRAME_INVALID,
+        [0xBB] = QUIC_FRAME_INVALID,
+        [0xBC] = QUIC_FRAME_INVALID,
+        [0xBD] = QUIC_FRAME_INVALID,
+        [0xBE] = QUIC_FRAME_INVALID,
+        [0xBF] = QUIC_FRAME_INVALID,
+        [0xC0] = QUIC_FRAME_INVALID,
+        [0xC1] = QUIC_FRAME_INVALID,
+        [0xC2] = QUIC_FRAME_INVALID,
+        [0xC3] = QUIC_FRAME_INVALID,
+        [0xC4] = QUIC_FRAME_INVALID,
+        [0xC5] = QUIC_FRAME_INVALID,
+        [0xC6] = QUIC_FRAME_INVALID,
+        [0xC7] = QUIC_FRAME_INVALID,
+        [0xC8] = QUIC_FRAME_INVALID,
+        [0xC9] = QUIC_FRAME_INVALID,
+        [0xCA] = QUIC_FRAME_INVALID,
+        [0xCB] = QUIC_FRAME_INVALID,
+        [0xCC] = QUIC_FRAME_INVALID,
+        [0xCD] = QUIC_FRAME_INVALID,
+        [0xCE] = QUIC_FRAME_INVALID,
+        [0xCF] = QUIC_FRAME_INVALID,
+        [0xD0] = QUIC_FRAME_INVALID,
+        [0xD1] = QUIC_FRAME_INVALID,
+        [0xD2] = QUIC_FRAME_INVALID,
+        [0xD3] = QUIC_FRAME_INVALID,
+        [0xD4] = QUIC_FRAME_INVALID,
+        [0xD5] = QUIC_FRAME_INVALID,
+        [0xD6] = QUIC_FRAME_INVALID,
+        [0xD7] = QUIC_FRAME_INVALID,
+        [0xD8] = QUIC_FRAME_INVALID,
+        [0xD9] = QUIC_FRAME_INVALID,
+        [0xDA] = QUIC_FRAME_INVALID,
+        [0xDB] = QUIC_FRAME_INVALID,
+        [0xDC] = QUIC_FRAME_INVALID,
+        [0xDD] = QUIC_FRAME_INVALID,
+        [0xDE] = QUIC_FRAME_INVALID,
+        [0xDF] = QUIC_FRAME_INVALID,
+        [0xE0] = QUIC_FRAME_INVALID,
+        [0xE1] = QUIC_FRAME_INVALID,
+        [0xE2] = QUIC_FRAME_INVALID,
+        [0xE3] = QUIC_FRAME_INVALID,
+        [0xE4] = QUIC_FRAME_INVALID,
+        [0xE5] = QUIC_FRAME_INVALID,
+        [0xE6] = QUIC_FRAME_INVALID,
+        [0xE7] = QUIC_FRAME_INVALID,
+        [0xE8] = QUIC_FRAME_INVALID,
+        [0xE9] = QUIC_FRAME_INVALID,
+        [0xEA] = QUIC_FRAME_INVALID,
+        [0xEB] = QUIC_FRAME_INVALID,
+        [0xEC] = QUIC_FRAME_INVALID,
+        [0xED] = QUIC_FRAME_INVALID,
+        [0xEE] = QUIC_FRAME_INVALID,
+        [0xEF] = QUIC_FRAME_INVALID,
+        [0xF0] = QUIC_FRAME_INVALID,
+        [0xF1] = QUIC_FRAME_INVALID,
+        [0xF2] = QUIC_FRAME_INVALID,
+        [0xF3] = QUIC_FRAME_INVALID,
+        [0xF4] = QUIC_FRAME_INVALID,
+        [0xF5] = QUIC_FRAME_INVALID,
+        [0xF6] = QUIC_FRAME_INVALID,
+        [0xF7] = QUIC_FRAME_INVALID,
+        [0xF8] = QUIC_FRAME_INVALID,
+        [0xF9] = QUIC_FRAME_INVALID,
+        [0xFA] = QUIC_FRAME_INVALID,
+        [0xFB] = QUIC_FRAME_INVALID,
+        [0xFC] = QUIC_FRAME_INVALID,
+        [0xFD] = QUIC_FRAME_INVALID,
+        [0xFE] = QUIC_FRAME_INVALID,
+        [0xFF] = QUIC_FRAME_INVALID,
+    };
+    return byte2type[byte];
 }
 
 
@@ -1695,14 +1970,32 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     case HETY_RETRY:
         if (p >= end)
             return -1;
-        odcil = *p++;
-        if (p + odcil > end || odcil > MAX_CID_LEN)
-            return -1;
-        packet_in->pi_odcid_len = odcil;
-        packet_in->pi_odcid = p - packet_in->pi_data;
-        p += odcil;
-        packet_in->pi_token = p - packet_in->pi_data;
-        packet_in->pi_token_size = end - p;
+        if (LSQVER_ID24 == lsquic_tag2ver(tag))
+        {
+            odcil = *p++;
+            if (p + odcil > end || odcil > MAX_CID_LEN)
+                return -1;
+            packet_in->pi_odcid_len = odcil;
+            packet_in->pi_odcid = p - packet_in->pi_data;
+            p += odcil;
+            packet_in->pi_token = p - packet_in->pi_data;
+            packet_in->pi_token_size = end - p;
+        }
+        else
+        {
+            if (p
+                /* [draft-ietf-quic-transport-25] Section 17.2.5 says that "a
+                 * client MUST discard a Retry packet with a zero-length Retry
+                 * Token field."  We might as well do it here.
+                 */
+                + 1
+                /* Integrity tag length: */
+                + 16 > end)
+                    return -1;
+            packet_in->pi_token = p - packet_in->pi_data;
+            packet_in->pi_token_size = end - p - 16;
+            /* Tag validation happens later */
+        }
         p = end;
         length = end - packet_in->pi_data;
         state->pps_p      = NULL;
@@ -1937,6 +2230,117 @@ lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
 }
 
 
+static int
+ietf_v1_gen_handshake_done_frame (unsigned char *buf, size_t buf_len)
+{
+    if (buf_len > 0)
+    {
+        *buf = 0x1E;
+        return 1;
+    }
+    else
+        return -1;
+}
+
+
+static int
+ietf_v1_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
+{
+    assert(buf[0] == 0x1E);
+    assert(buf_len > 0);
+    return 1;
+}
+
+
+static unsigned
+ietf_v1_handshake_done_frame_size (void)
+{
+    return 1;
+}
+
+
+static int
+ietf_id24_gen_handshake_done_frame (unsigned char *buf, size_t buf_len)
+{
+    /* ID-24 does not have HANDSHAKE_DONE frame */
+    return -1;
+}
+
+
+static int
+ietf_id24_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
+{
+    /* ID-24 does not have HANDSHAKE_DONE frame */
+    return -1;
+}
+
+
+const struct parse_funcs lsquic_parse_funcs_ietf_id24 =
+{
+    .pf_gen_reg_pkt_header            =  ietf_v1_gen_reg_pkt_header,
+    .pf_parse_packet_in_finish        =  ietf_v1_parse_packet_in_finish,
+    .pf_gen_stream_frame              =  ietf_v1_gen_stream_frame,
+    .pf_calc_stream_frame_header_sz   =  ietf_v1_calc_stream_frame_header_sz,
+    .pf_parse_stream_frame            =  ietf_v1_parse_stream_frame,
+    .pf_parse_ack_frame               =  ietf_v1_parse_ack_frame,
+    .pf_gen_ack_frame                 =  ietf_v1_gen_ack_frame,
+    .pf_gen_blocked_frame             =  ietf_v1_gen_blocked_frame,
+    .pf_parse_blocked_frame           =  ietf_v1_parse_blocked_frame,
+    .pf_blocked_frame_size            =  ietf_v1_blocked_frame_size,
+    .pf_rst_frame_size                =  ietf_v1_rst_frame_size,
+    .pf_gen_rst_frame                 =  ietf_v1_gen_rst_frame,
+    .pf_parse_rst_frame               =  ietf_v1_parse_rst_frame,
+    .pf_connect_close_frame_size      =  ietf_v1_connect_close_frame_size,
+    .pf_gen_connect_close_frame       =  ietf_v1_gen_connect_close_frame,
+    .pf_parse_connect_close_frame     =  ietf_v1_parse_connect_close_frame,
+    .pf_gen_ping_frame                =  ietf_v1_gen_ping_frame,
+    .pf_parse_frame_type              =  ietf_id24_parse_frame_type,
+    .pf_turn_on_fin                   =  ietf_v1_turn_on_fin,
+    .pf_packout_size                  =  ietf_v1_packout_size,
+    .pf_packout_max_header_size       =  ietf_v1_packout_max_header_size,
+    .pf_path_chal_frame_size          =  ietf_v1_path_chal_frame_size,
+    .pf_parse_path_chal_frame         =  ietf_v1_parse_path_chal_frame,
+    .pf_gen_path_chal_frame           =  ietf_v1_gen_path_chal_frame,
+    .pf_path_resp_frame_size          =  ietf_v1_path_resp_frame_size,
+    .pf_gen_path_resp_frame           =  ietf_v1_gen_path_resp_frame,
+    .pf_parse_path_resp_frame         =  ietf_v1_parse_path_resp_frame,
+    .pf_calc_packno_bits              =  ietf_v1_calc_packno_bits,
+    .pf_packno_bits2len               =  ietf_v1_packno_bits2len,
+    .pf_packno_info                   =  ietf_v1_packno_info,
+    .pf_gen_crypto_frame              =  ietf_v1_gen_crypto_frame,
+    .pf_parse_crypto_frame            =  ietf_v1_parse_crypto_frame,
+    .pf_calc_crypto_frame_header_sz   =  ietf_v1_calc_crypto_frame_header_sz,
+    .pf_parse_max_data                =  ietf_v1_parse_max_data,
+    .pf_gen_max_data_frame            =  ietf_v1_gen_max_data_frame,
+    .pf_max_data_frame_size           =  ietf_v1_max_data_frame_size,
+    .pf_parse_new_conn_id             =  ietf_v1_parse_new_conn_id,
+    .pf_gen_stream_blocked_frame      =  ietf_v1_gen_stream_blocked_frame,
+    .pf_parse_stream_blocked_frame    =  ietf_v1_parse_stream_blocked_frame,
+    .pf_stream_blocked_frame_size     =  ietf_v1_stream_blocked_frame_size,
+    .pf_gen_max_stream_data_frame     =  ietf_v1_gen_max_stream_data_frame,
+    .pf_parse_max_stream_data_frame   =  ietf_v1_parse_max_stream_data_frame,
+    .pf_max_stream_data_frame_size    =  ietf_v1_max_stream_data_frame_size,
+    .pf_parse_stop_sending_frame      =  ietf_v1_parse_stop_sending_frame,
+    .pf_gen_stop_sending_frame        =  ietf_v1_gen_stop_sending_frame,
+    .pf_stop_sending_frame_size       =  ietf_v1_stop_sending_frame_size,
+    .pf_parse_new_token_frame         =  ietf_v1_parse_new_token_frame,
+    .pf_new_connection_id_frame_size  =  ietf_v1_new_connection_id_frame_size,
+    .pf_gen_new_connection_id_frame   =  ietf_v1_gen_new_connection_id_frame,
+    .pf_new_token_frame_size          =  ietf_v1_new_token_frame_size,
+    .pf_gen_new_token_frame           =  ietf_v1_gen_new_token_frame,
+    .pf_parse_retire_cid_frame        =  ietf_v1_parse_retire_cid_frame,
+    .pf_gen_retire_cid_frame          =  ietf_v1_gen_retire_cid_frame,
+    .pf_retire_cid_frame_size         =  ietf_v1_retire_cid_frame_size,
+    .pf_gen_streams_blocked_frame     =  ietf_v1_gen_streams_blocked_frame,
+    .pf_parse_streams_blocked_frame   =  ietf_v1_parse_streams_blocked_frame,
+    .pf_streams_blocked_frame_size    =  ietf_v1_streams_blocked_frame_size,
+    .pf_gen_max_streams_frame         =  ietf_v1_gen_max_streams_frame,
+    .pf_parse_max_streams_frame       =  ietf_v1_parse_max_streams_frame,
+    .pf_max_streams_frame_size        =  ietf_v1_max_streams_frame_size,
+    .pf_gen_handshake_done_frame      =  ietf_id24_gen_handshake_done_frame,
+    .pf_parse_handshake_done_frame    =  ietf_id24_parse_handshake_done_frame,
+    .pf_handshake_done_frame_size     =  ietf_v1_handshake_done_frame_size,
+};
 
 
 const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
@@ -2001,4 +2405,7 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_gen_max_streams_frame         =  ietf_v1_gen_max_streams_frame,
     .pf_parse_max_streams_frame       =  ietf_v1_parse_max_streams_frame,
     .pf_max_streams_frame_size        =  ietf_v1_max_streams_frame_size,
+    .pf_gen_handshake_done_frame      =  ietf_v1_gen_handshake_done_frame,
+    .pf_parse_handshake_done_frame    =  ietf_v1_parse_handshake_done_frame,
+    .pf_handshake_done_frame_size     =  ietf_v1_handshake_done_frame_size,
 };

@@ -77,6 +77,7 @@
 #include "lsquic_parse_common.h"
 #include "lsquic_handshake.h"
 #include "lsquic_crand.h"
+#include "lsquic_ietf.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -259,6 +260,7 @@ struct lsquic_engine
     int                                last_tick_diff;
 #endif
     struct crand                       crand;
+    EVP_AEAD_CTX                       retry_aead_ctx;
 };
 
 
@@ -625,6 +627,14 @@ lsquic_engine_new (unsigned flags,
 #if LSQUIC_CONN_STATS
     engine->stats_fh = api->ea_stats_fh;
 #endif
+    if (1 != EVP_AEAD_CTX_init(&engine->retry_aead_ctx, EVP_aead_aes_128_gcm(),
+                            IETF_RETRY_KEY_BUF, IETF_RETRY_KEY_SZ, 16, NULL))
+    {
+        LSQ_ERROR("could not initialize retry AEAD ctx");
+        lsquic_engine_destroy(engine);
+        return NULL;
+    }
+    engine->pub.enp_retry_aead_ctx = &engine->retry_aead_ctx;
 
     LSQ_INFO("instantiated engine");
     return engine;
@@ -878,7 +888,12 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
 
     if (mini_conn->cn_flags & LSCONN_IETF)
-        ctor = lsquic_ietf_full_conn_server_new;
+    {
+        if (mini_conn->cn_version == LSQVER_ID24)
+            ctor = lsquic_id24_full_conn_server_new;
+        else
+            ctor = lsquic_ietf_full_conn_server_new;
+    }
     else
         ctor = lsquic_gquic_full_conn_server_new;
 
@@ -1434,6 +1449,8 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
 #if LSQUIC_COUNT_ENGINE_CALLS
     LSQ_NOTICE("number of calls into the engine: %lu", engine->n_engine_calls);
 #endif
+    if (engine->pub.enp_retry_aead_ctx)
+        EVP_AEAD_CTX_cleanup(engine->pub.enp_retry_aead_ctx);
     free(engine);
 }
 
@@ -1533,9 +1550,16 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
     else
         versions = 1u << version;
     if (versions & LSQUIC_IETF_VERSIONS)
-        conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
-                    flags, hostname, max_packet_size,
-                    is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
+    {
+        if (version == LSQVER_ID24)
+            conn = lsquic_id24_full_conn_client_new(&engine->pub, versions,
+                        flags, hostname, max_packet_size,
+                        is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
+        else
+            conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
+                        flags, hostname, max_packet_size,
+                        is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
+    }
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
                             flags, hostname, max_packet_size, is_ipv4,
@@ -2577,7 +2601,11 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                     engine_incref_conn(conn, LSCONN_ATTQ);
             }
             else
-                assert(0);
+                /* In all other cases, the idle timeout would make the next
+                 * tick time non-zero:
+                 */
+                assert((conn->cn_flags & LSCONN_IETF)
+                    && engine->pub.enp_settings.es_idle_timeout == 0);
         }
     }
 

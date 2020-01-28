@@ -74,8 +74,8 @@ static const struct alpn_map {
     const unsigned char *alpn;
 } s_alpns[] = {
     {   LSQVER_ID24, (unsigned char *) "\x05h3-24",     },
-    {   LSQVER_ID23, (unsigned char *) "\x05h3-23",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-24",     },
+    {   LSQVER_ID25, (unsigned char *) "\x05h3-25",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-25",     },
 };
 
 struct enc_sess_iquic;
@@ -235,7 +235,7 @@ struct enc_sess_iquic
         ESI_HAVE_PEER_TP = 1 << 7,
         ESI_ALPN_CHECKED = 1 << 8,
         ESI_CACHED_INFO  = 1 << 9,
-        ESI_1RTT_ACKED   = 1 << 10,
+        ESI_HSK_CONFIRMED= 1 << 10,
         ESI_WANT_TICKET  = 1 << 11,
         ESI_RECV_QL_BITS = 1 << 12,
         ESI_SEND_QL_BITS = 1 << 13,
@@ -533,12 +533,16 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                             = settings->es_init_max_streams_bidi;
     params.tp_ack_delay_exponent
                             = TP_DEF_ACK_DELAY_EXP;
-    params.tp_idle_timeout  = settings->es_idle_timeout * 1000;
+    params.tp_max_idle_timeout = settings->es_idle_timeout * 1000;
     params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
     params.tp_max_packet_size = 1370 /* XXX: based on socket */;
-    params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS
+    params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
+    if (enc_sess->esi_conn->cn_version == LSQVER_ID24)
+    {
+        params.tp_active_connection_id_limit = params.tp_active_connection_id_limit
         - 1 /* One slot is used by peer's SCID */
         - !!(params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
+    }
     if (!settings->es_allow_migration)
         params.tp_disable_active_migration = 1;
     if (settings->es_ql_bits == -1)
@@ -1828,10 +1832,7 @@ static struct ku_label
 
 select_ku_label (const struct enc_sess_iquic *enc_sess)
 {
-    if (enc_sess->esi_conn->cn_version == LSQVER_ID23)
-        return (struct ku_label) { "traffic upd", 11, };
-    else
-        return (struct ku_label) { "quic ku", 7, };
+    return (struct ku_label) { "quic ku", 7, };
 }
 
 
@@ -2226,14 +2227,14 @@ iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
 
 
 static void
-iquic_esfi_1rtt_acked (enc_session_t *sess)
+iquic_esfi_handshake_confirmed (enc_session_t *sess)
 {
     struct enc_sess_iquic *enc_sess = (struct enc_sess_iquic *) sess;
 
-    if (!(enc_sess->esi_flags & ESI_1RTT_ACKED))
+    if (!(enc_sess->esi_flags & ESI_HSK_CONFIRMED))
     {
-        LSQ_DEBUG("1RTT packet has been acked");
-        enc_sess->esi_flags |= ESI_1RTT_ACKED;
+        LSQ_DEBUG("handshake has been confirmed");
+        enc_sess->esi_flags |= ESI_HSK_CONFIRMED;
         maybe_drop_SSL(enc_sess);
     }
 }
@@ -2254,7 +2255,8 @@ const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1 =
     .esfi_set_streams    = iquic_esfi_set_streams,
     .esfi_create_server  = iquic_esfi_create_server,
     .esfi_shake_stream   = iquic_esfi_shake_stream,
-    .esfi_1rtt_acked     = iquic_esfi_1rtt_acked,
+    .esfi_handshake_confirmed
+                         = iquic_esfi_handshake_confirmed,
 };
 
 
@@ -2310,8 +2312,8 @@ maybe_drop_SSL (struct enc_sess_iquic *enc_sess)
      * in which case we can close it, or (unlikely) they are buffered in the
      * frab list.
      */
-    if ((enc_sess->esi_flags & (ESI_1RTT_ACKED|ESI_HANDSHAKE_OK))
-                            == (ESI_1RTT_ACKED|ESI_HANDSHAKE_OK)
+    if ((enc_sess->esi_flags & (ESI_HSK_CONFIRMED|ESI_HANDSHAKE_OK))
+                            == (ESI_HSK_CONFIRMED|ESI_HANDSHAKE_OK)
         && enc_sess->esi_ssl
         && lsquic_frab_list_empty(&enc_sess->esi_frals[ENC_LEV_FORW]))
     {

@@ -139,7 +139,7 @@ typedef struct lsquic_packet_out
         POL_ELBIT_0  = 1 << 1,         /* EL bits encode the crypto level. */
         POL_ELBIT_1  = 1 << 2,
 #define POKP_SHIFT 3
-        POL_KEY_PHASE= 1 << 3,         /* Used for logging */
+        POL_KEY_PHASE= 1 << 3,
 #define POECN_SHIFT 4
         POL_ECNBIT_0 = 1 << 4,
         POL_ECNBIT_1 = 1 << 5,
@@ -209,8 +209,6 @@ typedef struct lsquic_packet_out
     (p)->po_flags &= ~PO_SPIN_BIT;                                      \
     (p)->po_flags |= ((b) & 1) << POSPIN_SHIFT;                         \
 } while (0)
-
-#define lsquic_packet_out_key_phase(p) 0    /* TODO */
 
 #define lsquic_po_header_length(lconn, po_flags, dcid_len) ( \
     lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags, dcid_len))

@@ -137,8 +137,8 @@ get_or_generate_state (struct lsquic_engine_public *enpub, time_t now,
                                         sizeof(TOKGEN_SHM_MAGIC_TOP) - 1);
     if (getenv("LSQUIC_NULL_TOKGEN"))
     {
-        memset(&srst_ikm, 0, sizeof(srst_ikm));
         LSQ_NOTICE("using NULL tokgen");
+        memset(&srst_ikm, 0, sizeof(srst_ikm));
     }
     else
     {

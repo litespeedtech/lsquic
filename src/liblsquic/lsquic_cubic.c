@@ -137,6 +137,16 @@ lsquic_cubic_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
 }
 
 
+static void
+lsquic_cubic_reinit (void *cong_ctl)
+{
+    struct lsquic_cubic *const cubic = cong_ctl;
+    cubic_reset(cubic);
+    cubic->cu_ssthresh = 10000 * TCP_MSS; /* Emulate "unbounded" slow start */
+    LSQ_DEBUG("re-initialized");
+}
+
+
 #define LOG_CWND(c) do {                                                    \
     if (LSQ_LOG_ENABLED(LSQ_LOG_INFO)) {                                    \
         lsquic_time_t now = lsquic_time_now();                              \
@@ -278,6 +288,7 @@ const struct cong_ctl_if lsquic_cong_cubic_if =
     .cci_init          = lsquic_cubic_init,
     .cci_pacing_rate   = lsquic_cubic_pacing_rate,
     .cci_loss          = lsquic_cubic_loss,
+    .cci_reinit        = lsquic_cubic_reinit,
     .cci_timeout       = lsquic_cubic_timeout,
     .cci_was_quiet     = lsquic_cubic_was_quiet,
 };

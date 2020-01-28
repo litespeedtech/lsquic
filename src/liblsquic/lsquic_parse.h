@@ -295,12 +295,19 @@ struct parse_funcs
     (*pf_path_resp_frame_size) (void);
     int
     (*pf_gen_path_resp_frame) (unsigned char *, size_t, uint64_t resp);
+    int
+    (*pf_gen_handshake_done_frame) (unsigned char *buf, size_t buf_len);
+    int
+    (*pf_parse_handshake_done_frame) (const unsigned char *buf, size_t buf_len);
+    unsigned
+    (*pf_handshake_done_frame_size) (void);
 };
 
 
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q043;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
 extern const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
+extern const struct parse_funcs lsquic_parse_funcs_ietf_id24;
 extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
 
 #define select_pf_by_ver(ver) (                                             \
@@ -310,6 +317,8 @@ extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
                                          &lsquic_parse_funcs_gquic_Q046 :   \
     (1 << (ver)) & ((1 << LSQVER_050)|LSQUIC_EXPERIMENTAL_Q098) ?           \
                                          &lsquic_parse_funcs_gquic_Q050 :   \
+    (1 << (ver)) & (1 << LSQVER_ID24)                           ?           \
+                                         &lsquic_parse_funcs_ietf_id24 :    \
     &lsquic_parse_funcs_ietf_v1)
 
 /* This function is gQUIC-version independent */

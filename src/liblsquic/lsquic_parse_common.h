@@ -69,9 +69,6 @@ lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     const struct lsquic_engine_public *, const lsquic_cid_t *scid,
     const lsquic_cid_t *dcid, enum lsquic_version, const struct sockaddr *,
     uint8_t random_nybble);
-ssize_t
-lsquic_generate_iquic_reset (const lsquic_cid_t *, unsigned char *buf,
-                                                            size_t buf_sz);
 
 #define GQUIC_RESET_SZ 33
 ssize_t

@@ -24,6 +24,9 @@ struct cong_ctl_if
                                                             enum quic_ft_bit);
 
     void
+    (*cci_reinit) (void *cong_ctl);
+
+    void
     (*cci_ack) (void *cong_ctl, struct lsquic_packet_out *, unsigned packet_sz,
                 lsquic_time_t now, int app_limited);
 

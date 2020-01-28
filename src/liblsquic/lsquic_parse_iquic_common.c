@@ -28,6 +28,7 @@
 #include "lsquic.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
+#include "lsquic_ietf.h"
 
 
 /* [draft-ietf-quic-transport-17] Section-17.2 */
@@ -194,35 +195,6 @@ lsquic_Q046_parse_packet_in_short_begin (lsquic_packet_in_t *packet_in,
 }
 
 
-/* TODO: this only works Q044? XXX */
-ssize_t
-lsquic_generate_iquic_reset (const lsquic_cid_t *cidp, unsigned char *buf,
-                                                            size_t buf_sz)
-{
-    size_t need;
-    uint64_t id;
-
-    need = 1 /* Type */ + 20 /* Random bytes */ + 16 /* Reset token */;
-    if (buf_sz < need)
-        return -1;
-
-    *buf = 0x30;
-    (void) RAND_pseudo_bytes(buf + 1, 20);
-    /* XXX code duplication here and lsquic_generate_reset_token().  Which
-     * should call which: parse function the crypto functions or the other
-     * way around?
-     */
-    /* TODO test this */
-    memcpy(&id, cidp->idbuf, GQUIC_CID_LEN);
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-    id = bswap_64(id);
-#endif
-    memcpy(buf + 21, &id, sizeof(id));
-    memset(buf + 21 + sizeof(id), 0, SRST_LENGTH - sizeof(id));
-    return need;
-}
-
-
 /* This is a bare-bones version of lsquic_Q046_parse_packet_in_long_begin()
  */
 int
@@ -300,7 +272,7 @@ const enum quic_frame_type lsquic_iquic_byte2type[0x100] =
     [0x1B] = QUIC_FRAME_PATH_RESPONSE,
     [0x1C] = QUIC_FRAME_CONNECTION_CLOSE,
     [0x1D] = QUIC_FRAME_CONNECTION_CLOSE,
-    [0x1E] = QUIC_FRAME_INVALID,
+    [0x1E] = QUIC_FRAME_HANDSHAKE_DONE,
     [0x1F] = QUIC_FRAME_INVALID,
     [0x20] = QUIC_FRAME_INVALID,
     [0x21] = QUIC_FRAME_INVALID,

@@ -56,7 +56,7 @@ static const struct trapa_test tests[] =
             .tp_flags   = 0,
             .tp_init_max_stream_data_bidi_local = 0x12348877,
             .tp_init_max_data = 0xAABB,
-            .tp_idle_timeout = 10 * 1000,
+            .tp_max_idle_timeout = 10 * 1000,
             .tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY,
             .tp_active_connection_id_limit = 7,
         },

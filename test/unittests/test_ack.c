@@ -179,7 +179,7 @@ run_test (const struct test *test)
     size_t sz;
     unsigned char buf[0x1000];
 
-    pf = select_pf_by_ver(LSQVER_ID23);
+    pf = select_pf_by_ver(LSQVER_ID24);
     if (!test->skip_gen)
     {
         rechist.acki = &test->acki;

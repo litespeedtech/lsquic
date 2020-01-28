@@ -1,6 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
- * lsquic_full_conn_ietf.c -- IETF QUIC connection.
+ * lsquic_full_conn_id24.c -- IETF QUIC connection (ID-24)
  */
 
 #include <assert.h>
@@ -12,7 +12,6 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include <openssl/aead.h>
 #include <openssl/rand.h>
 
 #include "fiu-local.h"
@@ -72,7 +71,7 @@
 #include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
-#define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
+#define LSQUIC_LOG_CONN_ID id24_full_conn_ci_get_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
@@ -130,7 +129,6 @@ enum ifull_conn_flags
     IFC_FIRST_TICK    = 1 << 24,
     IFC_IGNORE_HSK    = 1 << 25,
     IFC_PROC_CRYPTO   = 1 << 26,
-    IFC_MIGRA         = 1 << 27,
 };
 
 
@@ -280,7 +278,7 @@ struct conn_path
 };
 
 
-struct ietf_full_conn
+struct id24_full_conn
 {
     struct lsquic_conn          ifc_conn;
     struct conn_cid_elem        ifc_cces[MAX_SCID];
@@ -328,7 +326,7 @@ struct ietf_full_conn
         uint8_t     ack_exp;
     }                           ifc_cfg;
     int                       (*ifc_process_incoming_packet)(
-                                                struct ietf_full_conn *,
+                                                struct id24_full_conn *,
                                                 struct lsquic_packet_in *);
     /* Number ackable packets received since last ACK was sent: */
     unsigned                    ifc_n_slack_akbl[N_PNS];
@@ -355,10 +353,12 @@ struct ietf_full_conn
     unsigned char               ifc_cur_path_id;    /* Indexes ifc_paths */
     unsigned char               ifc_used_paths;     /* Bitmask */
     unsigned char               ifc_mig_path_id;
+    unsigned char               ifc_original_cids;
     /* ifc_active_cids_limit is the maximum number of CIDs at any one time this
      * endpoint is allowed to issue to peer.  If the TP value exceeds cn_n_cces,
      * it is reduced to it.  ifc_active_cids_count tracks how many CIDs have
-     * been issued.  It is decremented each time a CID is retired.
+     * been issued.  It is decremented each time a CID is retired.  Both are
+     * only applicable to CIDs issued via NEW_CONNECTION_ID frame.
      */
     unsigned char               ifc_active_cids_limit;
     unsigned char               ifc_active_cids_count;
@@ -388,6 +388,9 @@ struct ietf_full_conn
             }           ifser_flags;
         }                           ser;
     }                           ifc_u;
+    /* XXX This is 16 bytes per connection, which is expensive.  Perhaps move
+     * these to enpub (add a new IETF-specific section)?
+     */
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     uint64_t                    ifc_last_max_data_off_sent;
@@ -403,37 +406,37 @@ struct ietf_full_conn
 
 static const struct ver_neg server_ver_neg;
 
-static const struct conn_iface *ietf_full_conn_iface_ptr;
-static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr;
+static const struct conn_iface *id24_full_conn_iface_ptr;
+static const struct conn_iface *id24_full_conn_prehsk_iface_ptr;
 
 static int
-process_incoming_packet_verneg (struct ietf_full_conn *,
+process_incoming_packet_verneg (struct id24_full_conn *,
                                                 struct lsquic_packet_in *);
 
 static int
-process_incoming_packet_fast (struct ietf_full_conn *,
+process_incoming_packet_fast (struct id24_full_conn *,
                                                 struct lsquic_packet_in *);
 
 static void
-ietf_full_conn_ci_packet_in (struct lsquic_conn *, struct lsquic_packet_in *);
+id24_full_conn_ci_packet_in (struct lsquic_conn *, struct lsquic_packet_in *);
 
 static int
 handshake_ok (struct lsquic_conn *);
 
 static void
-ignore_init (struct ietf_full_conn *);
+ignore_init (struct id24_full_conn *);
 
 static void
-ignore_hsk (struct ietf_full_conn *);
+ignore_hsk (struct id24_full_conn *);
 
 static unsigned
-ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
+id24_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
 
 static const lsquic_cid_t *
-ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
+id24_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 
 static void
-ietf_full_conn_ci_destroy (struct lsquic_conn *);
+id24_full_conn_ci_destroy (struct lsquic_conn *);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -455,7 +458,7 @@ highest_bit_set (unsigned sz)
 
 
 static void
-set_versions (struct ietf_full_conn *conn, unsigned versions,
+set_versions (struct id24_full_conn *conn, unsigned versions,
                                                     enum lsquic_version *ver)
 {
     conn->ifc_u.cli.ifcli_ver_neg.vn_supp = versions;
@@ -466,7 +469,7 @@ set_versions (struct ietf_full_conn *conn, unsigned versions,
 
 
 static void
-init_ver_neg (struct ietf_full_conn *conn, unsigned versions,
+init_ver_neg (struct id24_full_conn *conn, unsigned versions,
                                                     enum lsquic_version *ver)
 {
     set_versions(conn, versions, ver);
@@ -479,7 +482,7 @@ static void
 ack_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                         lsquic_time_t now)
 {
-    struct ietf_full_conn *conn = ctx;
+    struct id24_full_conn *conn = ctx;
     enum packnum_space pns = al_id - AL_ACK_INIT;
     LSQ_DEBUG("%s ACK timer expired (%"PRIu64" < %"PRIu64"): ACK queued",
         lsquic_pns2str[pns], expiry, now);
@@ -491,7 +494,7 @@ static void
 idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                             lsquic_time_t now)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     LSQ_DEBUG("connection timed out");
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
     conn->ifc_flags |= IFC_TIMED_OUT;
@@ -502,7 +505,7 @@ static void
 handshake_alarm_expired (enum alarm_id al_id, void *ctx,
                                     lsquic_time_t expiry, lsquic_time_t now)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     LSQ_DEBUG("connection timed out: handshake timed out");
     conn->ifc_flags |= IFC_TIMED_OUT;
 }
@@ -516,7 +519,7 @@ static void
 cid_throt_alarm_expired (enum alarm_id al_id, void *ctx,
                                     lsquic_time_t expiry, lsquic_time_t now)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     LSQ_DEBUG("%s", __func__);
     conn->ifc_send_flags |= SF_SEND_NEW_CID;
     return;
@@ -527,7 +530,7 @@ static void
 path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
                     lsquic_time_t expiry, lsquic_time_t now, unsigned path_id)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     struct conn_path *const copath = &conn->ifc_paths[path_id];
 
     if (copath->cop_n_chals < sizeof(copath->cop_path_chals)
@@ -561,47 +564,8 @@ path_chal_1_alarm_expired (enum alarm_id al_id, void *ctx,
 }
 
 
-/* Sending DATA_BLOCKED and STREAM_DATA_BLOCKED frames is a way to elicit
- * incoming packets from peer when it is too slow to read data.  This is
- * recommended by [draft-ietf-quic-transport-25] Section 4.1.
- *
- * If we are still in the blocked state, we schedule a blocked frame to
- * be sent.
- */
-static void
-blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
-                                    lsquic_time_t expiry, lsquic_time_t now)
-{
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
-    struct lsquic_stream *stream;
-    struct lsquic_hash_elem *el;
-
-    if (lsquic_conn_cap_avail(&conn->ifc_pub.conn_cap) == 0)
-    {
-        LSQ_DEBUG("set SEND_BLOCKED flag on connection");
-        conn->ifc_conn.cn_flags |= LSCONN_SEND_BLOCKED;
-        return;
-    }
-
-    for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
-                         el = lsquic_hash_next(conn->ifc_pub.all_streams))
-    {
-        stream = lsquic_hashelem_getdata(el);
-        if (lsquic_stream_is_blocked(stream))
-        {
-            if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
-                TAILQ_INSERT_TAIL(&conn->ifc_pub.sending_streams, stream,
-                                                            next_send_stream);
-            stream->sm_qflags |= SMQF_SEND_BLOCKED;
-            LSQ_DEBUG("set SEND_BLOCKED flag on stream %"PRIu64, stream->id);
-            return;
-        }
-    }
-}
-
-
 static int
-migra_is_on (const struct ietf_full_conn *conn)
+migra_is_on (const struct id24_full_conn *conn)
 {
     return (conn->ifc_send_flags & SF_SEND_PATH_CHAL_ALL)
         || lsquic_alarmset_are_set(&conn->ifc_alset, ALBIT_PATH_CHAL_0|ALBIT_PATH_CHAL_1);
@@ -609,7 +573,7 @@ migra_is_on (const struct ietf_full_conn *conn)
 
 
 static void
-migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
+migra_begin (struct id24_full_conn *conn, struct conn_path *copath,
                 struct dcid_elem *dce, const struct sockaddr *dest_sa)
 {
     assert(!(migra_is_on(conn)));
@@ -639,67 +603,20 @@ static void
 ping_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                             lsquic_time_t now)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     LSQ_DEBUG("Ping alarm rang: schedule PING frame to be generated");
     conn->ifc_send_flags |= SF_SEND_PING;
 }
 
 
 static void
-retire_cid (struct ietf_full_conn *, struct conn_cid_elem *, lsquic_time_t);
-
-
-static void
-log_scids (const struct ietf_full_conn *conn)
-{
-    const struct lsquic_conn *const lconn = &conn->ifc_conn;
-    const struct conn_cid_elem *cce;
-    char flags[5];
-    unsigned idx;
-    int fi;
-
-    LSQ_DEBUG("Log SCID array: (n_cces %hhu; mask: 0x%hhX; "
-                                        "active: %hhu; limit: %hhu)",
-        conn->ifc_conn.cn_n_cces, conn->ifc_conn.cn_cces_mask,
-        conn->ifc_active_cids_count, conn->ifc_active_cids_limit);
-    for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
-    {
-        idx = cce - lconn->cn_cces;
-        fi = 0;
-        if (cce->cce_flags & CCE_PORT)  flags[fi++] = 'p';
-        if (cce->cce_flags & CCE_REG)   flags[fi++] = 'r';
-        if (cce->cce_flags & CCE_SEQNO) flags[fi++] = 's';
-        if (cce->cce_flags & CCE_USED)  flags[fi++] = 'u';
-                                        flags[fi]   = '\0';
-        if (lconn->cn_cces_mask & (1 << idx))
-        {
-            if (cce->cce_flags & CCE_PORT)
-                LSQ_DEBUG( "  %u: flags %-4s; port %hu", idx, flags,
-                                                            cce->cce_port);
-            else if (cce->cce_flags & CCE_SEQNO)
-                LSQ_DEBUGC("  %u: flags %-4s; seqno: %u; %"CID_FMT, idx,
-                            flags, cce->cce_seqno, CID_BITS(&cce->cce_cid));
-            else
-                LSQ_DEBUGC("  %u: flags %-4s; %"CID_FMT, idx, flags,
-                                                    CID_BITS(&cce->cce_cid));
-        }
-        else
-                LSQ_DEBUG( "  %u: flags %-4s; <empty>",  idx, flags);
-    }
-}
-
-
-#define LOG_SCIDS(conn_) do {                                               \
-    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))                                     \
-        log_scids(conn_);                                                   \
-} while (0)
-
+retire_cid (struct id24_full_conn *, struct conn_cid_elem *, lsquic_time_t);
 
 static void
 ret_cids_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                             lsquic_time_t now)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) ctx;
     struct lsquic_conn *const lconn = &conn->ifc_conn;
     struct conn_cid_elem *cce;
     unsigned idx;
@@ -709,14 +626,14 @@ ret_cids_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
     for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
     {
         idx = cce - lconn->cn_cces;
-        if ((lconn->cn_cces_mask & (1 << idx))
-                            && (cce->cce_flags & (CCE_SEQNO|CCE_PORT)) == 0)
+        if (conn->ifc_original_cids & (1 << idx))
         {
+            assert(lconn->cn_cces_mask & (1 << idx));
+            conn->ifc_original_cids &= ~(1 << idx);
             LSQ_DEBUG("retiring original CID at index %u", idx);
             retire_cid(conn, cce, now);
         }
     }
-    LOG_SCIDS(conn);
 }
 
 
@@ -779,7 +696,7 @@ static const struct lsquic_stream_if *unicla_if_ptr;
 
 
 static lsquic_stream_id_t
-generate_stream_id (struct ietf_full_conn *conn, enum stream_dir sd)
+generate_stream_id (struct id24_full_conn *conn, enum stream_dir sd)
 {
     lsquic_stream_id_t id;
 
@@ -792,7 +709,7 @@ generate_stream_id (struct ietf_full_conn *conn, enum stream_dir sd)
 
 
 static lsquic_stream_id_t
-avail_streams_count (const struct ietf_full_conn *conn, int server,
+avail_streams_count (const struct id24_full_conn *conn, int server,
                                                             enum stream_dir sd)
 {
     enum stream_id_type sit;
@@ -814,7 +731,7 @@ avail_streams_count (const struct ietf_full_conn *conn, int server,
 
 /* If `priority' is negative, this means that the stream is critical */
 static int
-create_uni_stream_out (struct ietf_full_conn *conn, int priority,
+create_uni_stream_out (struct id24_full_conn *conn, int priority,
         const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
 {
     struct lsquic_stream *stream;
@@ -840,7 +757,7 @@ create_uni_stream_out (struct ietf_full_conn *conn, int priority,
 
 
 static int
-create_ctl_stream_out (struct ietf_full_conn *conn)
+create_ctl_stream_out (struct id24_full_conn *conn)
 {
     return create_uni_stream_out(conn, -1,
                                     lsquic_hcso_writer_if, &conn->ifc_hcso);
@@ -848,7 +765,7 @@ create_ctl_stream_out (struct ietf_full_conn *conn)
 
 
 static int
-create_qenc_stream_out (struct ietf_full_conn *conn)
+create_qenc_stream_out (struct id24_full_conn *conn)
 {
     return create_uni_stream_out(conn, -1,
                                     lsquic_qeh_enc_sm_out_if, &conn->ifc_qeh);
@@ -856,7 +773,7 @@ create_qenc_stream_out (struct ietf_full_conn *conn)
 
 
 static int
-create_qdec_stream_out (struct ietf_full_conn *conn)
+create_qdec_stream_out (struct id24_full_conn *conn)
 {
     return create_uni_stream_out(conn, -1,
                                     lsquic_qdh_dec_sm_out_if, &conn->ifc_qdh);
@@ -864,7 +781,7 @@ create_qdec_stream_out (struct ietf_full_conn *conn)
 
 
 static int
-create_bidi_stream_out (struct ietf_full_conn *conn)
+create_bidi_stream_out (struct id24_full_conn *conn)
 {
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
@@ -890,7 +807,7 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
 
 
 static struct lsquic_stream *
-create_push_stream (struct ietf_full_conn *conn)
+create_push_stream (struct id24_full_conn *conn)
 {
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
@@ -926,7 +843,7 @@ create_push_stream (struct ietf_full_conn *conn)
  *  7. add timestamp for when slot is new available for CID generation.
  */
 static struct conn_cid_elem *
-ietf_full_conn_add_scid (struct ietf_full_conn *conn,
+id24_full_conn_add_scid (struct id24_full_conn *conn,
                             struct lsquic_engine_public *enpub,
                             enum conn_cce_flags flags,
                             lsquic_time_t now)
@@ -958,7 +875,6 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
     cce->cce_seqno = conn->ifc_scid_seqno++;
     cce->cce_flags |= CCE_SEQNO | flags;
     lconn->cn_cces_mask |= 1 << (cce - lconn->cn_cces);
-    ++conn->ifc_active_cids_count;
     if (enpub->enp_settings.es_scid_iss_rate)
     {
         min_timestamp = &conn->ifc_scid_timestamp[0];
@@ -974,13 +890,13 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
 
 
 static int
-ietf_full_conn_init (struct ietf_full_conn *conn,
+id24_full_conn_init (struct id24_full_conn *conn,
            struct lsquic_engine_public *enpub, unsigned flags, int ecn)
 {
     if (flags & IFC_SERVER)
-        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+        conn->ifc_conn.cn_if = id24_full_conn_iface_ptr;
     else
-        conn->ifc_conn.cn_if = ietf_full_conn_prehsk_iface_ptr;
+        conn->ifc_conn.cn_if = id24_full_conn_prehsk_iface_ptr;
     if (enpub->enp_settings.es_scid_len)
         assert(CN_SCID(&conn->ifc_conn)->len);
     conn->ifc_enpub = enpub;
@@ -1007,7 +923,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_CID_THROT, cid_throt_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_0, path_chal_0_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_1, path_chal_1_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], &conn->ifc_conn, 1);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], &conn->ifc_conn, 1);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], &conn->ifc_conn, 1);
@@ -1034,20 +949,22 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_paths[1].cop_path.np_path_id = 1;
 #define valid_stream_id(v) ((v) <= VINT_MAX_VALUE)
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
+    conn->ifc_idle_to = enpub->enp_settings.es_idle_timeout * 1000 * 1000;
+    conn->ifc_ping_period = enpub->enp_settings.es_ping_period * 1000 * 1000;
     conn->ifc_ping_unretx_thresh = 20;
     return 0;
 }
 
 
 struct lsquic_conn *
-lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
+lsquic_id24_full_conn_client_new (struct lsquic_engine_public *enpub,
            unsigned versions, unsigned flags,
            const char *hostname, unsigned short max_packet_size, int is_ipv4,
            const unsigned char *zero_rtt, size_t zero_rtt_sz,
            const unsigned char *token, size_t token_sz)
 {
     const struct enc_session_funcs_iquic *esfi;
-    struct ietf_full_conn *conn;
+    struct id24_full_conn *conn;
     enum lsquic_version ver, zero_rtt_version;
     lsquic_time_t now;
 
@@ -1060,7 +977,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);
-    if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, now))
+    if (!id24_full_conn_add_scid(conn, enpub, CCE_USED, now))
         goto err1;
 
     assert(versions);
@@ -1083,7 +1000,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     }
     conn->ifc_paths[0].cop_path.np_pack_size = max_packet_size;
 
-    if (0 != ietf_full_conn_init(conn, enpub, flags,
+    if (0 != id24_full_conn_init(conn, enpub, flags,
                                                 enpub->enp_settings.es_ecn))
         goto err2;
     if (token)
@@ -1118,8 +1035,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (conn->ifc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->ifc_settings->es_handshake_to);
-    if (conn->ifc_idle_to)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
     if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
     {
         conn->ifc_u.cli.ifcli_flags |= IFCLI_PUSH_ENABLED;
@@ -1179,14 +1095,14 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
 typedef char mini_conn_does_not_have_more_cces[
     sizeof(((struct ietf_mini_conn *)0)->imc_cces)
-    <= sizeof(((struct ietf_full_conn *)0)->ifc_cces) ? 1 : -1];
+    <= sizeof(((struct id24_full_conn *)0)->ifc_cces) ? 1 : -1];
 
 struct lsquic_conn *
-lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
+lsquic_id24_full_conn_server_new (struct lsquic_engine_public *enpub,
                unsigned flags, struct lsquic_conn *mini_conn)
 {
     struct ietf_mini_conn *const imc = (void *) mini_conn;
-    struct ietf_full_conn *conn;
+    struct id24_full_conn *conn;
     struct lsquic_packet_out *packet_out;
     struct lsquic_packet_in *packet_in;
     struct conn_cid_elem *cce;
@@ -1218,16 +1134,17 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                 if (cce->cce_seqno > conn->ifc_scid_seqno)
                     conn->ifc_scid_seqno = cce->cce_seqno;
                 conn->ifc_conn.cn_cces[i].cce_seqno = cce->cce_seqno;
-                ++conn->ifc_active_cids_count;
+                conn->ifc_scid_timestamp[i] = now;
             }
-            conn->ifc_scid_timestamp[i] = now;
+            else
+                conn->ifc_original_cids |= 1 << i;
         }
     ++conn->ifc_scid_seqno;
 
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF | LSCONN_SERVER;
 
-    if (0 != ietf_full_conn_init(conn, enpub, flags,
+    if (0 != id24_full_conn_init(conn, enpub, flags,
                                         lsquic_mini_conn_ietf_ecn_ok(imc)))
         goto err1;
     conn->ifc_pub.packet_out_malo =
@@ -1348,10 +1265,14 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_incoming_ecn = imc->imc_incoming_ecn;
     conn->ifc_pub.rtt_stats = imc->imc_rtt_stats;
 
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_RET_CIDS,
-                                            ret_cids_alarm_expired, conn);
-    lsquic_alarmset_set(&conn->ifc_alset, AL_RET_CIDS,
-                                            now + RET_CID_TIMEOUT);
+    if (conn->ifc_original_cids)
+    {
+        lsquic_time_t now = lsquic_time_now();
+        lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_RET_CIDS,
+                                                ret_cids_alarm_expired, conn);
+        lsquic_alarmset_set(&conn->ifc_alset, AL_RET_CIDS,
+                                                now + RET_CID_TIMEOUT);
+    }
 
     conn->ifc_last_live_update = now;
 
@@ -1364,15 +1285,14 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     if (0 != handshake_ok(&conn->ifc_conn))
         goto err3;
 
-    if (conn->ifc_idle_to)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                                         imc->imc_created + conn->ifc_idle_to);
     while ((packet_in = TAILQ_FIRST(&imc->imc_app_packets)))
     {
         TAILQ_REMOVE(&imc->imc_app_packets, packet_in, pi_next);
         LSQ_DEBUG("inherit packet %"PRIu64" from mini conn",
                                                         packet_in->pi_packno);
-        ietf_full_conn_ci_packet_in(&conn->ifc_conn, packet_in);
+        id24_full_conn_ci_packet_in(&conn->ifc_conn, packet_in);
         lsquic_packet_in_put(conn->ifc_pub.mm, packet_in);
     }
 
@@ -1381,7 +1301,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err3:
-    ietf_full_conn_ci_destroy(&conn->ifc_conn);
+    id24_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 
   err2:
@@ -1397,7 +1317,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
 
 static int
-should_generate_ack (struct ietf_full_conn *conn,
+should_generate_ack (struct id24_full_conn *conn,
                                             enum ifull_conn_flags ack_queued)
 {
     unsigned lost_acks;
@@ -1414,9 +1334,9 @@ should_generate_ack (struct ietf_full_conn *conn,
 
 
 static int
-ietf_full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
+id24_full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
 
     /* Follow opportunistic ACK logic.  Because this method is only used by
      * buffered packets code path, no need to check whether anything is
@@ -1428,9 +1348,9 @@ ietf_full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
 
 
 static unsigned
-ietf_full_conn_ci_cancel_pending_streams (struct lsquic_conn *lconn, unsigned n)
+id24_full_conn_ci_cancel_pending_streams (struct lsquic_conn *lconn, unsigned n)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     if (n > conn->ifc_n_delayed_streams)
         conn->ifc_n_delayed_streams = 0;
     else
@@ -1440,7 +1360,7 @@ ietf_full_conn_ci_cancel_pending_streams (struct lsquic_conn *lconn, unsigned n)
 
 
 static int
-generate_ack_frame_for_pns (struct ietf_full_conn *conn,
+generate_ack_frame_for_pns (struct id24_full_conn *conn,
                 struct lsquic_packet_out *packet_out, enum packnum_space pns,
                 lsquic_time_t now)
 {
@@ -1498,7 +1418,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
 
 /* Return number of packets scheduled or 0 on error */
 static unsigned
-generate_ack_frame (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_ack_frame (struct id24_full_conn *conn, lsquic_time_t now)
 {
     struct lsquic_packet_out *packet_out;
     enum packnum_space pns;
@@ -1528,7 +1448,7 @@ generate_ack_frame (struct ietf_full_conn *conn, lsquic_time_t now)
 
 
 static struct lsquic_packet_out *
-get_writeable_packet_on_path (struct ietf_full_conn *conn,
+get_writeable_packet_on_path (struct id24_full_conn *conn,
                     unsigned need_at_least, const struct network_path *path,
                     int regen_match)
 {
@@ -1544,7 +1464,7 @@ get_writeable_packet_on_path (struct ietf_full_conn *conn,
 
 
 static struct lsquic_packet_out *
-get_writeable_packet (struct ietf_full_conn *conn, unsigned need_at_least)
+get_writeable_packet (struct id24_full_conn *conn, unsigned need_at_least)
 {
     return get_writeable_packet_on_path(conn, need_at_least,
                                                         CUR_NPATH(conn), 0);
@@ -1552,7 +1472,7 @@ get_writeable_packet (struct ietf_full_conn *conn, unsigned need_at_least)
 
 
 static void
-generate_max_data_frame (struct ietf_full_conn *conn)
+generate_max_data_frame (struct id24_full_conn *conn)
 {
     const uint64_t offset = lsquic_cfcw_get_fc_recv_off(&conn->ifc_pub.cfcw);
     struct lsquic_packet_out *packet_out;
@@ -1582,23 +1502,14 @@ generate_max_data_frame (struct ietf_full_conn *conn)
 
 
 static int
-can_issue_cids (const struct ietf_full_conn *conn)
+can_issue_cids (const struct id24_full_conn *conn)
 {
-    int can;
-
-    can = ((1 << conn->ifc_conn.cn_n_cces) - 1
-                                            != conn->ifc_conn.cn_cces_mask)
-       && conn->ifc_active_cids_count < conn->ifc_active_cids_limit;
-    LSQ_DEBUG("can issue CIDs: %d (n_cces %hhu; mask: 0x%hhX; "
-                                        "active: %hhu; limit: %hhu)",
-        can, conn->ifc_conn.cn_n_cces, conn->ifc_conn.cn_cces_mask,
-        conn->ifc_active_cids_count, conn->ifc_active_cids_limit);
-    return can;
+    return conn->ifc_active_cids_count < conn->ifc_active_cids_limit;
 }
 
 
 static int
-generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_new_cid_frame (struct id24_full_conn *conn, lsquic_time_t now)
 {
     struct lsquic_packet_out *packet_out;
     struct conn_cid_elem *cce;
@@ -1614,7 +1525,7 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
     if (!packet_out)
         return -1;
 
-    if (!(cce = ietf_full_conn_add_scid(conn, conn->ifc_enpub, 0, now)))
+    if (!(cce = id24_full_conn_add_scid(conn, conn->ifc_enpub, 0, now)))
     {
         ABORT_WARN("cannot add a new SCID");
         return -1;
@@ -1645,8 +1556,10 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         conn->ifc_conn.cn_pf, packet_out->po_data + packet_out->po_data_sz, w);
     packet_out->po_frame_types |= QUIC_FTBIT_NEW_CONNECTION_ID;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    ++conn->ifc_active_cids_count;
 
-    if (!can_issue_cids(conn))
+    if ((1 << conn->ifc_conn.cn_n_cces) - 1 == conn->ifc_conn.cn_cces_mask
+                                                        || !can_issue_cids(conn))
     {
         conn->ifc_send_flags &= ~SF_SEND_NEW_CID;
         LSQ_DEBUG("All %u SCID slots have been assigned",
@@ -1658,12 +1571,10 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
 
 
 static void
-maybe_get_rate_available_scid_slot (struct ietf_full_conn *conn,
+maybe_get_rate_available_scid_slot (struct id24_full_conn *conn,
                                                             lsquic_time_t now)
 {
-    const struct lsquic_conn *const lconn = &conn->ifc_conn;
-    const struct conn_cid_elem *cce;
-    unsigned active_cid;
+    unsigned i, active_cid;
     lsquic_time_t total_elapsed, elapsed_thresh, period, wait_time;
 
     if (!conn->ifc_enpub->enp_settings.es_scid_iss_rate)
@@ -1676,18 +1587,12 @@ maybe_get_rate_available_scid_slot (struct ietf_full_conn *conn,
     period = (60 * 1000000) / conn->ifc_enpub->enp_settings.es_scid_iss_rate;
     active_cid = 0;
     total_elapsed = 0;
-    for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
+    for (i = 0; i < MAX_SCID; i++)
     {
-        if ((cce->cce_flags & (CCE_SEQNO|CCE_PORT)) == CCE_SEQNO)
-        {
-            active_cid += 1;
-            /* When server is promoted, the timestamp may be larger than the
-             * first tick time.
-             */
-            if (now > conn->ifc_scid_timestamp[cce - lconn->cn_cces])
-                total_elapsed +=
-                        now - conn->ifc_scid_timestamp[cce - lconn->cn_cces];
-        }
+        if (conn->ifc_original_cids & (1 << i))
+            continue;
+        active_cid += 1;
+        total_elapsed += (now - conn->ifc_scid_timestamp[i]);
     }
     elapsed_thresh = ((active_cid * (active_cid + 1)) / 2) * period;
     /* compare total elapsed ns to elapsed ns threshold */
@@ -1705,7 +1610,7 @@ maybe_get_rate_available_scid_slot (struct ietf_full_conn *conn,
 
 
 static void
-generate_new_cid_frames (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_new_cid_frames (struct id24_full_conn *conn, lsquic_time_t now)
 {
     int s;
 
@@ -1718,12 +1623,11 @@ generate_new_cid_frames (struct ietf_full_conn *conn, lsquic_time_t now)
             maybe_get_rate_available_scid_slot(conn, now);
     }
     while (conn->ifc_send_flags & SF_SEND_NEW_CID);
-    LOG_SCIDS(conn);
 }
 
 
 static int
-generate_retire_cid_frame (struct ietf_full_conn *conn)
+generate_retire_cid_frame (struct id24_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     struct dcid_elem *dce;
@@ -1764,7 +1668,7 @@ generate_retire_cid_frame (struct ietf_full_conn *conn)
 
 
 static void
-generate_retire_cid_frames (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_retire_cid_frames (struct id24_full_conn *conn, lsquic_time_t now)
 {
     int s;
 
@@ -1775,7 +1679,7 @@ generate_retire_cid_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 
 
 static void
-generate_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
+generate_streams_blocked_frame (struct id24_full_conn *conn, enum stream_dir sd)
 {
     struct lsquic_packet_out *packet_out;
     uint64_t limit;
@@ -1807,7 +1711,7 @@ generate_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
 
 
 static void
-generate_streams_blocked_uni_frame (struct ietf_full_conn *conn,
+generate_streams_blocked_uni_frame (struct id24_full_conn *conn,
                                                             lsquic_time_t now)
 {
     generate_streams_blocked_frame(conn, SD_UNI);
@@ -1815,7 +1719,7 @@ generate_streams_blocked_uni_frame (struct ietf_full_conn *conn,
 
 
 static void
-generate_streams_blocked_bidi_frame (struct ietf_full_conn *conn,
+generate_streams_blocked_bidi_frame (struct id24_full_conn *conn,
                                                             lsquic_time_t now)
 {
     generate_streams_blocked_frame(conn, SD_BIDI);
@@ -1823,7 +1727,7 @@ generate_streams_blocked_bidi_frame (struct ietf_full_conn *conn,
 
 
 static void
-generate_max_streams_frame (struct ietf_full_conn *conn, enum stream_dir sd)
+generate_max_streams_frame (struct id24_full_conn *conn, enum stream_dir sd)
 {
     struct lsquic_packet_out *packet_out;
     enum stream_id_type sit;
@@ -1861,14 +1765,14 @@ generate_max_streams_frame (struct ietf_full_conn *conn, enum stream_dir sd)
 
 
 static void
-generate_max_streams_uni_frame (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_max_streams_uni_frame (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_max_streams_frame(conn, SD_UNI);
 }
 
 
 static void
-generate_max_streams_bidi_frame (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_max_streams_bidi_frame (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_max_streams_frame(conn, SD_BIDI);
 }
@@ -1876,7 +1780,7 @@ generate_max_streams_bidi_frame (struct ietf_full_conn *conn, lsquic_time_t now)
 
 /* Return true if generated, false otherwise */
 static int
-generate_blocked_frame (struct ietf_full_conn *conn)
+generate_blocked_frame (struct id24_full_conn *conn)
 {
     const uint64_t offset = conn->ifc_pub.conn_cap.cc_blocked;
     struct lsquic_packet_out *packet_out;
@@ -1908,7 +1812,7 @@ generate_blocked_frame (struct ietf_full_conn *conn)
 
 /* Return true if generated, false otherwise */
 static int
-generate_max_stream_data_frame (struct ietf_full_conn *conn,
+generate_max_stream_data_frame (struct id24_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
     struct lsquic_packet_out *packet_out;
@@ -1938,7 +1842,7 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
 
 /* Return true if generated, false otherwise */
 static int
-generate_stream_blocked_frame (struct ietf_full_conn *conn,
+generate_stream_blocked_frame (struct id24_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
     struct lsquic_packet_out *packet_out;
@@ -1967,7 +1871,7 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
 
 
 static int
-generate_stop_sending_frame (struct ietf_full_conn *conn,
+generate_stop_sending_frame (struct id24_full_conn *conn,
                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
 {
     struct lsquic_packet_out *packet_out;
@@ -2001,7 +1905,7 @@ generate_stop_sending_frame (struct ietf_full_conn *conn,
 
 
 static void
-generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_stop_sending_frames (struct id24_full_conn *conn, lsquic_time_t now)
 {
     struct stream_id_to_ss *sits;
 
@@ -2027,7 +1931,7 @@ generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 
 /* Return true if generated, false otherwise */
 static int
-generate_rst_stream_frame (struct ietf_full_conn *conn,
+generate_rst_stream_frame (struct id24_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
     lsquic_packet_out_t *packet_out;
@@ -2069,7 +1973,7 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
 
 
 static int
-is_our_stream (const struct ietf_full_conn *conn,
+is_our_stream (const struct id24_full_conn *conn,
                                         const struct lsquic_stream *stream)
 {
     const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
@@ -2078,7 +1982,7 @@ is_our_stream (const struct ietf_full_conn *conn,
 
 
 static int
-is_peer_initiated (const struct ietf_full_conn *conn,
+is_peer_initiated (const struct id24_full_conn *conn,
                                                 lsquic_stream_id_t stream_id)
 {
     const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
@@ -2089,7 +1993,7 @@ is_peer_initiated (const struct ietf_full_conn *conn,
 static void
 sched_max_bidi_streams (void *conn_p)
 {
-    struct ietf_full_conn *conn = conn_p;
+    struct id24_full_conn *conn = conn_p;
 
     conn->ifc_send_flags |= SF_SEND_MAX_STREAMS_BIDI;
     conn->ifc_delayed_send &= ~SF_SEND_MAX_STREAMS_BIDI;
@@ -2102,7 +2006,7 @@ sched_max_bidi_streams (void *conn_p)
  * unsent data.
  */
 static int
-can_give_peer_streams_credit (struct ietf_full_conn *conn, enum stream_dir sd)
+can_give_peer_streams_credit (struct id24_full_conn *conn, enum stream_dir sd)
 {
     /* This logic only applies to HTTP servers. */
     if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) != (IFC_SERVER|IFC_HTTP))
@@ -2130,7 +2034,7 @@ can_give_peer_streams_credit (struct ietf_full_conn *conn, enum stream_dir sd)
  * maintain four sets of closed stream IDs.
  */
 static void
-conn_mark_stream_closed (struct ietf_full_conn *conn,
+conn_mark_stream_closed (struct id24_full_conn *conn,
                                                 lsquic_stream_id_t stream_id)
 {
     lsquic_stream_id_t shifted_id;
@@ -2170,7 +2074,7 @@ conn_mark_stream_closed (struct ietf_full_conn *conn,
 
 
 static int
-conn_is_stream_closed (struct ietf_full_conn *conn,
+conn_is_stream_closed (struct id24_full_conn *conn,
                                                 lsquic_stream_id_t stream_id)
 {
     enum stream_id_type idx = stream_id & SIT_MASK;
@@ -2180,7 +2084,7 @@ conn_is_stream_closed (struct ietf_full_conn *conn,
 
 
 static int
-either_side_going_away (const struct ietf_full_conn *conn)
+either_side_going_away (const struct id24_full_conn *conn)
 {
     return (conn->ifc_flags & IFC_GOING_AWAY)
         || (conn->ifc_conn.cn_flags & LSCONN_PEER_GOING_AWAY);
@@ -2188,7 +2092,7 @@ either_side_going_away (const struct ietf_full_conn *conn)
 
 
 static void
-maybe_create_delayed_streams (struct ietf_full_conn *conn)
+maybe_create_delayed_streams (struct id24_full_conn *conn)
 {
     unsigned avail, delayed;
 
@@ -2196,7 +2100,7 @@ maybe_create_delayed_streams (struct ietf_full_conn *conn)
     if (0 == delayed)
         return;
 
-    avail = ietf_full_conn_ci_n_avail_streams(&conn->ifc_conn);
+    avail = id24_full_conn_ci_n_avail_streams(&conn->ifc_conn);
     while (avail > 0)
     {
         if (0 == create_bidi_stream_out(conn))
@@ -2220,7 +2124,7 @@ maybe_create_delayed_streams (struct ietf_full_conn *conn)
 
 
 static int
-have_bidi_streams (const struct ietf_full_conn *conn)
+have_bidi_streams (const struct id24_full_conn *conn)
 {
     const struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
@@ -2238,7 +2142,7 @@ have_bidi_streams (const struct ietf_full_conn *conn)
 
 
 static void
-maybe_close_conn (struct ietf_full_conn *conn)
+maybe_close_conn (struct id24_full_conn *conn)
 {
     if ((conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY|IFC_SERVER))
                                             == (IFC_GOING_AWAY|IFC_SERVER)
@@ -2252,7 +2156,7 @@ maybe_close_conn (struct ietf_full_conn *conn)
 
 
 static void
-service_streams (struct ietf_full_conn *conn)
+service_streams (struct id24_full_conn *conn)
 {
     struct lsquic_hash_elem *el;
     lsquic_stream_t *stream, *next;
@@ -2304,7 +2208,7 @@ service_streams (struct ietf_full_conn *conn)
 
 
 static int
-process_stream_ready_to_send (struct ietf_full_conn *conn,
+process_stream_ready_to_send (struct id24_full_conn *conn,
                                             struct lsquic_stream *stream)
 {
     int r = 1;
@@ -2319,7 +2223,7 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
 
 
 static void
-process_streams_ready_to_send (struct ietf_full_conn *conn)
+process_streams_ready_to_send (struct id24_full_conn *conn)
 {
     struct lsquic_stream *stream;
     struct stream_prio_iter spi;
@@ -2339,18 +2243,18 @@ process_streams_ready_to_send (struct ietf_full_conn *conn)
 
 
 static void
-ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
+id24_full_conn_ci_write_ack (struct lsquic_conn *lconn,
                                         struct lsquic_packet_out *packet_out)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     generate_ack_frame_for_pns(conn, packet_out, PNS_APP, lsquic_time_now());
 }
 
 
 static void
-ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
+id24_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     assert(conn->ifc_flags & IFC_CREATED_OK);
     conn->ifc_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                                 conn->ifc_enpub->enp_stream_if_ctx, lconn);
@@ -2358,9 +2262,9 @@ ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 
 
 static void
-ietf_full_conn_ci_close (struct lsquic_conn *lconn)
+id24_full_conn_ci_close (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
     enum stream_dir sd;
@@ -2382,16 +2286,16 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
 
 
 static void
-ietf_full_conn_ci_abort (struct lsquic_conn *lconn)
+id24_full_conn_ci_abort (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     LSQ_INFO("User aborted connection");
     conn->ifc_flags |= IFC_ABORTED;
 }
 
 
 static void
-retire_dcid (struct ietf_full_conn *conn, struct dcid_elem **dce)
+retire_dcid (struct id24_full_conn *conn, struct dcid_elem **dce)
 {
     if ((*dce)->de_hash_el.qhe_flags & QHE_HASHED)
         lsquic_hash_erase(conn->ifc_enpub->enp_srst_hash, &(*dce)->de_hash_el);
@@ -2399,25 +2303,6 @@ retire_dcid (struct ietf_full_conn *conn, struct dcid_elem **dce)
     LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32"", (*dce)->de_seqno);
     *dce = NULL;
     conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
-}
-
-
-static void
-retire_seqno (struct ietf_full_conn *conn, unsigned seqno)
-{
-    struct dcid_elem *dce;
-
-    dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
-    if (dce)
-    {
-        memset(dce, 0, sizeof(*dce));
-        dce->de_seqno = seqno;
-        TAILQ_INSERT_TAIL(&conn->ifc_to_retire, dce, de_next_to_ret);
-        LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32, seqno);
-        conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
-    }
-    else
-        LSQ_INFO("%s: cannot allocate dce", __func__);
 }
 
 
@@ -2429,9 +2314,9 @@ retire_seqno (struct ietf_full_conn *conn, unsigned seqno)
  * this should trigger the CID issuance throttling.
  */
 static void
-ietf_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
+id24_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct dcid_elem **el, **dces[2];
     int eq;
     /*
@@ -2475,7 +2360,7 @@ ietf_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
 
 
 static void
-drop_crypto_streams (struct ietf_full_conn *conn)
+drop_crypto_streams (struct id24_full_conn *conn)
 {
     struct lsquic_stream **streamp;
     unsigned count;
@@ -2501,9 +2386,9 @@ drop_crypto_streams (struct ietf_full_conn *conn)
 
 
 static void
-ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
+id24_full_conn_ci_destroy (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct lsquic_stream **streamp, *stream;
     struct stream_id_to_ss *sits;
     struct dcid_elem **dcep, *dce;
@@ -2571,9 +2456,9 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
 
 
 static lsquic_time_t
-ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
+id24_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     lsquic_time_t drain_time, pto, srtt, var;
 
     /* Only applicable to a server whose connection was not timed out */
@@ -2597,9 +2482,9 @@ ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
 
 
 static void
-ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
+id24_full_conn_ci_going_away (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
 
     if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == (IFC_SERVER|IFC_HTTP))
     {
@@ -2628,7 +2513,7 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
 static void
 handshake_failed (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     LSQ_DEBUG("handshake failed");
     lsquic_alarmset_unset(&conn->ifc_alset, AL_HANDSHAKE);
     conn->ifc_flags |= IFC_HSK_FAILED;
@@ -2636,7 +2521,7 @@ handshake_failed (struct lsquic_conn *lconn)
 
 
 static struct dcid_elem *
-get_new_dce (struct ietf_full_conn *conn)
+get_new_dce (struct id24_full_conn *conn)
 {
     struct dcid_elem **el;
 
@@ -2650,7 +2535,7 @@ get_new_dce (struct ietf_full_conn *conn)
 
 
 static void
-queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
+queue_streams_blocked_frame (struct id24_full_conn *conn, enum stream_dir sd)
 {
     enum stream_id_type sit;
     uint64_t limit;
@@ -2671,7 +2556,7 @@ queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
 
 
 static void
-retire_cid_from_tp (struct ietf_full_conn *conn,
+retire_cid_from_tp (struct id24_full_conn *conn,
                                         const struct transport_params *params)
 {
     struct dcid_elem *dce;
@@ -2696,7 +2581,7 @@ retire_cid_from_tp (struct ietf_full_conn *conn,
 
 
 static int
-begin_migra_or_retire_cid (struct ietf_full_conn *conn,
+begin_migra_or_retire_cid (struct id24_full_conn *conn,
                                         const struct transport_params *params)
 {
     struct conn_path *copath;
@@ -2791,7 +2676,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
 
 
 static void
-maybe_start_migration (struct ietf_full_conn *conn)
+maybe_start_migration (struct id24_full_conn *conn)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
     const struct transport_params *params;
@@ -2809,7 +2694,7 @@ maybe_start_migration (struct ietf_full_conn *conn)
 static int
 handshake_ok (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
     struct dcid_elem *dce;
@@ -2900,42 +2785,7 @@ handshake_ok (struct lsquic_conn *lconn)
                                 = params->tp_init_max_stream_data_bidi_remote;
     conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
 
-    switch ((!!conn->ifc_settings->es_idle_timeout << 1)
-                | !!params->tp_max_idle_timeout)
-    {
-    case       (0 << 1) | 0:
-        LSQ_DEBUG("neither side specified max idle time out, turn it off");
-        break;
-    case       (0 << 1) | 1:
-        LSQ_DEBUG("peer specified max idle timeout of %"PRIu64" ms (vs ours "
-            "of zero): use it", params->tp_max_idle_timeout);
-        conn->ifc_idle_to = params->tp_max_idle_timeout * 1000;
-        break;
-    case       (1 << 1) | 0:
-        LSQ_DEBUG("peer did not specify max idle timeout, while ours is "
-            "%u ms: use it", conn->ifc_settings->es_idle_timeout * 1000);
-        conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
-        break;
-    default:/* (1 << 1) | 1 */
-        LSQ_DEBUG("our max idle timeout is %u ms, peer's is %"PRIu64" ms; "
-            "use minimum value of %"PRIu64" ms",
-            conn->ifc_settings->es_idle_timeout * 1000,
-            params->tp_max_idle_timeout,
-            MIN(conn->ifc_settings->es_idle_timeout * 1000,
-                                            params->tp_max_idle_timeout));
-        conn->ifc_idle_to = 1000 * MIN(conn->ifc_settings->es_idle_timeout
-                                        * 1000, params->tp_max_idle_timeout);
-        break;
-    }
-
-    if (conn->ifc_idle_to >= 2000000
-                            && conn->ifc_enpub->enp_settings.es_ping_period)
-        conn->ifc_ping_period = conn->ifc_idle_to / 2;
-    else
-        conn->ifc_ping_period = 0;
-    LSQ_DEBUG("PING period is set to %"PRIu64" usec", conn->ifc_ping_period);
-
-    /* TODO: packet size */
+    /* TODO: idle timeout, packet size */
 
     dce = get_new_dce(conn);
     if (!dce)
@@ -3028,7 +2878,9 @@ handshake_ok (struct lsquic_conn *lconn)
         conn->ifc_active_cids_limit = params->tp_active_connection_id_limit;
     conn->ifc_first_active_cid_seqno = conn->ifc_scid_seqno;
 
-    if (can_issue_cids(conn) && CN_SCID(&conn->ifc_conn)->len != 0)
+    if ((1 << conn->ifc_conn.cn_n_cces) - 1 != conn->ifc_conn.cn_cces_mask
+            && can_issue_cids(conn)
+            && CN_SCID(&conn->ifc_conn)->len != 0)
         conn->ifc_send_flags |= SF_SEND_NEW_CID;
     maybe_create_delayed_streams(conn);
 
@@ -3037,10 +2889,10 @@ handshake_ok (struct lsquic_conn *lconn)
 
 
 static void
-ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
+id24_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
                                                 enum lsquic_hsk_status status)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
 
     lsquic_alarmset_unset(&conn->ifc_alset, AL_HANDSHAKE);
 
@@ -3075,17 +2927,17 @@ ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
 
 
 static void
-ietf_full_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
+id24_full_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     ABORT_QUIETLY(0, 0x100 + alert, "TLS alert %"PRIu8, alert);
 }
 
 
 static int
-ietf_full_conn_ci_report_live (struct lsquic_conn *lconn, lsquic_time_t now)
+id24_full_conn_ci_report_live (struct lsquic_conn *lconn, lsquic_time_t now)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
 
     if (conn->ifc_last_live_update + 30000000 < now)
     {
@@ -3098,9 +2950,9 @@ ietf_full_conn_ci_report_live (struct lsquic_conn *lconn, lsquic_time_t now)
 
 
 static int
-ietf_full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
+id24_full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
 
     return (conn->ifc_flags & IFC_SERVER)
         && (conn->ifc_u.ser.ifser_flags
@@ -3115,7 +2967,7 @@ ietf_full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 
 
 static void
-undo_stream_creation (struct ietf_full_conn *conn,
+undo_stream_creation (struct id24_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
     enum stream_dir sd;
@@ -3136,11 +2988,11 @@ undo_stream_creation (struct ietf_full_conn *conn,
  * want to do everything efficiently.
  */
 static int
-ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
+id24_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     struct lsquic_stream *dep_stream, const struct iovec *path,
     const struct iovec *host, const struct lsquic_http_headers *headers)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     unsigned char *header_block_buf, *end, *p;
     size_t hea_sz, enc_sz;
     ssize_t prefix_sz;
@@ -3159,7 +3011,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     const unsigned hpack_static_table_size = 61;
     unsigned char discard[2];
 
-    if (!ietf_full_conn_ci_is_push_enabled(lconn)
+    if (!id24_full_conn_ci_is_push_enabled(lconn)
                                 || !lsquic_stream_can_push(dep_stream))
     {
         LSQ_DEBUG("cannot push using stream %"PRIu64, dep_stream->id);
@@ -3424,9 +3276,9 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
 
 
 static int
-ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
+id24_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     struct lsquic_stream *stream;
 
     if (!TAILQ_EMPTY(&conn->ifc_pub.service_streams))
@@ -3443,11 +3295,6 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
         if (conn->ifc_send_flags)
         {
             LSQ_DEBUG("tickable: send flags: 0x%X", conn->ifc_send_flags);
-            goto check_can_send;
-        }
-        if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
-        {
-            LSQ_DEBUG("tickable: send DATA_BLOCKED frame");
             goto check_can_send;
         }
         if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE ?
@@ -3490,7 +3337,7 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
 
 
 static enum tick_st
-immediate_close (struct ietf_full_conn *conn)
+immediate_close (struct id24_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     const char *error_reason;
@@ -3568,7 +3415,7 @@ immediate_close (struct ietf_full_conn *conn)
 
 
 static void
-process_streams_read_events (struct ietf_full_conn *conn)
+process_streams_read_events (struct id24_full_conn *conn)
 {
     struct lsquic_stream *stream;
     int iters;
@@ -3605,7 +3452,7 @@ process_streams_read_events (struct ietf_full_conn *conn)
 
 
 static void
-process_crypto_stream_read_events (struct ietf_full_conn *conn)
+process_crypto_stream_read_events (struct id24_full_conn *conn)
 {
     struct lsquic_stream **stream;
 
@@ -3619,7 +3466,7 @@ process_crypto_stream_read_events (struct ietf_full_conn *conn)
 
 
 static void
-process_crypto_stream_write_events (struct ietf_full_conn *conn)
+process_crypto_stream_write_events (struct id24_full_conn *conn)
 {
     struct lsquic_stream **stream;
 
@@ -3633,7 +3480,7 @@ process_crypto_stream_write_events (struct ietf_full_conn *conn)
 
 
 static void
-maybe_conn_flush_special_streams (struct ietf_full_conn *conn)
+maybe_conn_flush_special_streams (struct id24_full_conn *conn)
 {
     if (!(conn->ifc_flags & IFC_HTTP))
         return;
@@ -3653,7 +3500,7 @@ maybe_conn_flush_special_streams (struct ietf_full_conn *conn)
 
 
 static int
-write_is_possible (struct ietf_full_conn *conn)
+write_is_possible (struct id24_full_conn *conn)
 {
     const lsquic_packet_out_t *packet_out;
 
@@ -3665,7 +3512,7 @@ write_is_possible (struct ietf_full_conn *conn)
 
 
 static void
-process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
+process_streams_write_events (struct id24_full_conn *conn, int high_prio)
 {
     struct lsquic_stream *stream;
     struct stream_prio_iter spi;
@@ -3691,7 +3538,7 @@ process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 
 
 static int
-conn_ok_to_close (const struct ietf_full_conn *conn)
+conn_ok_to_close (const struct id24_full_conn *conn)
 {
     assert(conn->ifc_flags & IFC_CLOSING);
     return !(conn->ifc_flags & IFC_SERVER)
@@ -3705,7 +3552,7 @@ conn_ok_to_close (const struct ietf_full_conn *conn)
 
 
 static void
-generate_connection_close_packet (struct ietf_full_conn *conn)
+generate_connection_close_packet (struct id24_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     int sz;
@@ -3734,7 +3581,7 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
 
 
 static void
-generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
+generate_ping_frame (struct id24_full_conn *conn, lsquic_time_t unused)
 {
     struct lsquic_packet_out *packet_out;
     int sz;
@@ -3760,7 +3607,7 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 
 
 static void
-generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
+generate_path_chal_frame (struct id24_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
     struct lsquic_packet_out *packet_out;
@@ -3819,21 +3666,21 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
 
 
 static void
-generate_path_chal_0 (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_path_chal_0 (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_path_chal_frame(conn, now, 0);
 }
 
 
 static void
-generate_path_chal_1 (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_path_chal_1 (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_path_chal_frame(conn, now, 1);
 }
 
 
 static void
-generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
+generate_path_resp_frame (struct id24_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
     struct lsquic_packet_out *packet_out;
@@ -3868,23 +3715,23 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
 
 
 static void
-generate_path_resp_0 (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_path_resp_0 (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_path_resp_frame(conn, now, 0);
 }
 
 
 static void
-generate_path_resp_1 (struct ietf_full_conn *conn, lsquic_time_t now)
+generate_path_resp_1 (struct id24_full_conn *conn, lsquic_time_t now)
 {
     generate_path_resp_frame(conn, now, 1);
 }
 
 
 static struct lsquic_packet_out *
-ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+id24_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct lsquic_packet_out *packet_out;
 
     packet_out = lsquic_send_ctl_next_packet_to_send(&conn->ifc_send_ctl, size);
@@ -3895,13 +3742,13 @@ ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
 
 
 static struct lsquic_packet_out *
-ietf_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
+id24_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
                                                                     size_t size)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct lsquic_packet_out *packet_out;
 
-    packet_out = ietf_full_conn_ci_next_packet_to_send(lconn, size);
+    packet_out = id24_full_conn_ci_next_packet_to_send(lconn, size);
     if (packet_out)
         ++conn->ifc_u.cli.ifcli_packets_out;
     return packet_out;
@@ -3909,9 +3756,9 @@ ietf_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
 
 
 static lsquic_time_t
-ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
+id24_full_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     lsquic_time_t alarm_time, pacer_time, now;
     enum alarm_id al_id;
 
@@ -3965,31 +3812,15 @@ count_zero_bytes (const unsigned char *p, size_t len)
 
 
 static unsigned
-process_padding_frame (struct ietf_full_conn *conn,
+process_padding_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     return (unsigned) count_zero_bytes(p, len);
 }
 
 
-static void
-handshake_confirmed (struct ietf_full_conn *conn)
-{
-    ignore_hsk(conn);
-    /* Even in ID-25, we wait for 1-RTT ACK on the server before dropping keys.
-     */
-    conn->ifc_conn.cn_esf.i->esfi_handshake_confirmed(
-                                        conn->ifc_conn.cn_enc_session);
-    if (!(conn->ifc_flags & (IFC_SERVER|IFC_MIGRA)))
-    {
-        conn->ifc_flags |= IFC_MIGRA;   /* Perform migration just once */
-        maybe_start_migration(conn);
-    }
-}
-
-
 static int
-process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
+process_ack (struct id24_full_conn *conn, struct ack_info *acki,
              lsquic_time_t received, lsquic_time_t now)
 {
     enum packnum_space pns;
@@ -4010,7 +3841,11 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
         {
             if (!(conn->ifc_flags & IFC_IGNORE_INIT))
                 ignore_init(conn);
-            handshake_confirmed(conn);
+            ignore_hsk(conn);
+            conn->ifc_conn.cn_esf.i->esfi_handshake_confirmed(
+                                                conn->ifc_conn.cn_enc_session);
+            if (!(conn->ifc_flags & IFC_SERVER))
+                maybe_start_migration(conn);
         }
         return 0;
     }
@@ -4023,7 +3858,7 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
 
 
 static unsigned
-process_path_challenge_frame (struct ietf_full_conn *conn,
+process_path_challenge_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct conn_path *const path = &conn->ifc_paths[packet_in->pi_path_id];
@@ -4050,7 +3885,7 @@ process_path_challenge_frame (struct ietf_full_conn *conn,
  * enough CIDs and we had to reuse one.  See init_new_path().
  */
 static void
-maybe_retire_dcid (struct ietf_full_conn *conn, const lsquic_cid_t *dcid)
+maybe_retire_dcid (struct id24_full_conn *conn, const lsquic_cid_t *dcid)
 {
     struct conn_path *copath;
     struct dcid_elem **dce;
@@ -4080,7 +3915,7 @@ maybe_retire_dcid (struct ietf_full_conn *conn, const lsquic_cid_t *dcid)
 
 
 static void
-switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
+switch_path_to (struct id24_full_conn *conn, unsigned char path_id)
 {
     const unsigned char old_path_id = conn->ifc_cur_path_id;
 
@@ -4105,7 +3940,7 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
 
 
 static unsigned
-process_path_response_frame (struct ietf_full_conn *conn,
+process_path_response_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct conn_path *path;
@@ -4177,7 +4012,7 @@ process_path_response_frame (struct ietf_full_conn *conn,
 
 
 static lsquic_stream_t *
-find_stream_by_id (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id)
+find_stream_by_id (struct id24_full_conn *conn, lsquic_stream_id_t stream_id)
 {
     struct lsquic_hash_elem *el;
     el = lsquic_hash_find(conn->ifc_pub.all_streams, &stream_id,
@@ -4193,13 +4028,13 @@ static struct lsquic_stream *
 ieft_full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
                                lsquic_stream_id_t stream_id)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     return find_stream_by_id(conn, stream_id);
 }
 
 
 static void
-maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
+maybe_schedule_ss_for_stream (struct id24_full_conn *conn,
                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
 {
     struct stream_id_to_ss *sits;
@@ -4221,7 +4056,7 @@ maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
 
 /* This function is called to create incoming streams */
 static struct lsquic_stream *
-new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
+new_stream (struct id24_full_conn *conn, lsquic_stream_id_t stream_id,
             enum stream_ctor_flags flags)
 {
     const struct lsquic_stream_if *iface;
@@ -4281,7 +4116,7 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
 
 
 static int
-conn_is_send_only_stream (const struct ietf_full_conn *conn,
+conn_is_send_only_stream (const struct id24_full_conn *conn,
                                                 lsquic_stream_id_t stream_id)
 {
     enum stream_id_type sit;
@@ -4295,7 +4130,7 @@ conn_is_send_only_stream (const struct ietf_full_conn *conn,
 
 
 static int
-conn_is_receive_only_stream (const struct ietf_full_conn *conn,
+conn_is_receive_only_stream (const struct id24_full_conn *conn,
                                                 lsquic_stream_id_t stream_id)
 {
     enum stream_id_type sit;
@@ -4309,7 +4144,7 @@ conn_is_receive_only_stream (const struct ietf_full_conn *conn,
 
 
 static unsigned
-process_rst_stream_frame (struct ietf_full_conn *conn,
+process_rst_stream_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     lsquic_stream_id_t stream_id;
@@ -4370,7 +4205,7 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_stop_sending_frame (struct ietf_full_conn *conn,
+process_stop_sending_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct lsquic_stream *stream;
@@ -4450,7 +4285,7 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-discard_crypto_frame (struct ietf_full_conn *conn,
+discard_crypto_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame stream_frame;
@@ -4469,7 +4304,7 @@ discard_crypto_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_crypto_frame (struct ietf_full_conn *conn,
+process_crypto_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame *stream_frame;
@@ -4494,8 +4329,6 @@ process_crypto_frame (struct ietf_full_conn *conn,
                                                                 stream_frame);
     if (parsed_len < 0) {
         lsquic_malo_put(stream_frame);
-        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
-                                                "cannot decode CRYPTO frame");
         return 0;
     }
     enc_level = lsquic_packet_in_enc_level(packet_in);
@@ -4558,7 +4391,7 @@ process_crypto_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_stream_frame (struct ietf_full_conn *conn,
+process_stream_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame *stream_frame;
@@ -4576,8 +4409,6 @@ process_stream_frame (struct ietf_full_conn *conn,
                                                                 stream_frame);
     if (parsed_len < 0) {
         lsquic_malo_put(stream_frame);
-        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
-                                                "cannot decode STREAM frame");
         return 0;
     }
     EV_LOG_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame);
@@ -4676,7 +4507,7 @@ process_stream_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_ack_frame (struct ietf_full_conn *conn,
+process_ack_frame (struct id24_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct ack_info *new_acki;
@@ -4764,7 +4595,7 @@ process_ack_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_ping_frame (struct ietf_full_conn *conn,
+process_ping_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {   /* This frame causes ACK frame to be queued, but nothing to do here;
      * return the length of this frame.
@@ -4776,7 +4607,7 @@ process_ping_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_connection_close_frame (struct ietf_full_conn *conn,
+process_connection_close_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     lsquic_stream_t *stream;
@@ -4811,7 +4642,7 @@ process_connection_close_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_max_data_frame (struct ietf_full_conn *conn,
+process_max_data_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     uint64_t max_data;
@@ -4836,7 +4667,7 @@ process_max_data_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_max_stream_data_frame (struct ietf_full_conn *conn,
+process_max_stream_data_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct lsquic_stream *stream;
@@ -4874,7 +4705,7 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_max_streams_frame (struct ietf_full_conn *conn,
+process_max_streams_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     lsquic_stream_id_t max_stream_id;
@@ -4918,7 +4749,7 @@ process_max_streams_frame (struct ietf_full_conn *conn,
  * replaced.
  */
 static int
-retire_dcids_prior_to (struct ietf_full_conn *conn, unsigned retire_prior_to)
+retire_dcids_prior_to (struct id24_full_conn *conn, unsigned retire_prior_to)
 {
     struct dcid_elem **el;
     int update_cur_dcid = 0;
@@ -4943,8 +4774,32 @@ retire_dcids_prior_to (struct ietf_full_conn *conn, unsigned retire_prior_to)
 }
 
 
+/* We need to be able to allocate a DCE slot to begin migration or to retire
+ * the DCID in transport parameters.
+ */
+static int
+must_reserve_one_dce_slot (struct id24_full_conn *conn)
+{
+    struct lsquic_conn *const lconn = &conn->ifc_conn;
+    const struct transport_params *params;
+
+    if (conn->ifc_flags & IFC_SERVER)
+        return 0;
+
+    if (lsquic_send_ctl_1rtt_acked(&conn->ifc_send_ctl))
+        return 0;
+
+    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                        lconn->cn_enc_session);
+    if (params) /* Just in case */
+        return !!(params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
+    else
+        return 0;
+}
+
+
 static unsigned
-process_new_connection_id_frame (struct ietf_full_conn *conn,
+process_new_connection_id_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct dcid_elem **dce, **el;
@@ -4980,13 +4835,6 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
             "NEW_CONNECTION_ID: Retire Prior To=%"PRIu64" is larger then the "
             "Sequence Number=%"PRIu64, retire_prior_to, seqno);
         return 0;
-    }
-
-    if (seqno < conn->ifc_last_retire_prior_to)
-    {
-        retire_seqno(conn, seqno);
-        action_str = "Ignored (seqno smaller than last retire_prior_to";
-        goto end;
     }
 
     if (retire_prior_to > conn->ifc_last_retire_prior_to)
@@ -5040,28 +4888,35 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
         else if (!dce)
             dce = el;
 
-    if (!dce)
+    if (dce)
     {
-        ABORT_QUIETLY(0, TEC_CONNECTION_ID_LIMIT_ERROR,
-            "NEW_CONNECTION_ID: received connection ID that is going over the "
-            "limit of %u CIDs", MAX_IETF_CONN_DCIDS);
-        return 0;
-    }
-
-    *dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
-    if (*dce)
-    {
-        memset(*dce, 0, sizeof(**dce));
-        (*dce)->de_seqno = seqno;
-        (*dce)->de_cid = cid;
-        memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
-        (*dce)->de_flags |= DE_SRST;
-        action_str = "Saved";
-        if (update_cur_dcid)
-            *CUR_DCID(conn) = cid;
+        if (must_reserve_one_dce_slot(conn))
+        {
+            for (el = dce + 1; el < DCES_END(conn) && *el; ++el)
+                ;
+            if (el == DCES_END(conn))
+            {
+                action_str = "Ignored (last slot reserved for migration)";
+                goto end;
+            }
+        }
+        *dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
+        if (*dce)
+        {
+            memset(*dce, 0, sizeof(**dce));
+            (*dce)->de_seqno = seqno;
+            (*dce)->de_cid = cid;
+            memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
+            (*dce)->de_flags |= DE_SRST;
+            action_str = "Saved";
+            if (update_cur_dcid)
+                *CUR_DCID(conn) = cid;
+        }
+        else
+            action_str = "Ignored (alloc failure)";
     }
     else
-        action_str = "Ignored (alloc failure)";
+        action_str = "Ignored (no slots available)";
 
   end:
     LSQ_DEBUGC("Got new connection ID from peer: seq=%"PRIu64"; "
@@ -5071,7 +4926,7 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
 
 
 static void
-retire_cid (struct ietf_full_conn *conn, struct conn_cid_elem *cce,
+retire_cid (struct id24_full_conn *conn, struct conn_cid_elem *cce,
                                                         lsquic_time_t now)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
@@ -5080,19 +4935,18 @@ retire_cid (struct ietf_full_conn *conn, struct conn_cid_elem *cce,
                 CID_BITS(&cce->cce_cid), cce->cce_seqno,
                 (cce->cce_flags & CCE_SEQNO) ? "" : "original");
 
-    if (cce->cce_flags & CCE_SEQNO)
-        --conn->ifc_active_cids_count;
     lsquic_engine_retire_cid(conn->ifc_enpub, lconn, cce - lconn->cn_cces, now);
     memset(cce, 0, sizeof(*cce));
 
-    if (can_issue_cids(conn)
+    if (((1 << conn->ifc_conn.cn_n_cces) - 1 != conn->ifc_conn.cn_cces_mask)
+        && can_issue_cids(conn)
         && !(lsquic_alarmset_is_set(&conn->ifc_alset, AL_CID_THROT)))
         maybe_get_rate_available_scid_slot(conn, now);
 }
 
 
 static unsigned
-process_retire_connection_id_frame (struct ietf_full_conn *conn,
+process_retire_connection_id_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
@@ -5100,11 +4954,11 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     uint64_t seqno;
     int parsed_len;
 
-    /* [draft-ietf-quic-transport-25] Section 19.16
+    /* [draft-ietf-quic-transport-20] Section 19.16
      *
      * - Peer cannot retire zero-lenth CID. (MUST treat as PROTOCOL_VIOLATION)
      * - Peer cannot retire CID with sequence number that has not been
-     *   allocated yet. (MUST treat as PROTOCOL_VIOLATION)
+     *   allocated yet. (MAY treat as PROTOCOL_VIOLATION)
      * - Peer cannot retire CID that matches the DCID in packet.
      *   (MAY treat as PROTOCOL_VIOLATION)
      */
@@ -5148,14 +5002,13 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     }
     else
         LSQ_DEBUG("cannot retire CID seqno=%"PRIu64": not found", seqno);
-    LOG_SCIDS(conn);
 
     return parsed_len;
 }
 
 
 static unsigned
-process_new_token_frame (struct ietf_full_conn *conn,
+process_new_token_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     const unsigned char *token;
@@ -5196,7 +5049,7 @@ process_new_token_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_stream_blocked_frame (struct ietf_full_conn *conn,
+process_stream_blocked_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct lsquic_stream *stream;
@@ -5233,7 +5086,7 @@ process_stream_blocked_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_streams_blocked_frame (struct ietf_full_conn *conn,
+process_streams_blocked_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     lsquic_stream_id_t max_stream_id;
@@ -5264,10 +5117,10 @@ process_streams_blocked_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
-process_blocked_frame (struct ietf_full_conn *conn,
+process_blocked_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    uint64_t peer_off;
+    uint64_t peer_off, last_off;
     int parsed_len;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_blocked_frame(p, len,
@@ -5279,50 +5132,32 @@ process_blocked_frame (struct ietf_full_conn *conn,
                                                                     peer_off);
     LSQ_DEBUG("received BLOCKED frame: offset %"PRIu64, peer_off);
 
-    if (peer_off > conn->ifc_last_max_data_off_sent
-                                && !(conn->ifc_send_flags & SF_SEND_MAX_DATA))
+    if (conn->ifc_last_max_data_off_sent)
+        last_off = conn->ifc_last_max_data_off_sent;
+    else
+        last_off = lsquic_cfcw_get_max_recv_off(&conn->ifc_pub.cfcw);
+
+    /* Same logic as in lsquic_stream_peer_blocked() */
+    if (peer_off > last_off && !(conn->ifc_send_flags & SF_SEND_MAX_DATA))
     {
         conn->ifc_send_flags |= SF_SEND_MAX_DATA;
         LSQ_DEBUG("marked to send MAX_DATA frame");
     }
     else if (conn->ifc_send_flags & SF_SEND_MAX_DATA)
         LSQ_DEBUG("MAX_STREAM_DATA frame is already scheduled");
-    else
+    else if (conn->ifc_last_max_data_off_sent)
         LSQ_DEBUG("MAX_DATA(%"PRIu64") has already been either "
-            "packetized or sent to peer", conn->ifc_last_max_data_off_sent);
-
-    return parsed_len;
-}
-
-
-static unsigned
-process_handshake_done_frame (struct ietf_full_conn *conn,
-    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
-{
-    int parsed_len;
-
-    parsed_len = conn->ifc_conn.cn_pf->pf_parse_handshake_done_frame(p, len);
-    if (parsed_len < 0)
-        return 0;
-
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "HANDSHAKE_DONE frame in");
-    LSQ_DEBUG("received HANDSHAKE_DONE frame");
-
-    if (conn->ifc_flags & IFC_SERVER)
-    {
-        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-            "Client cannot send HANDSHAKE_DONE frame");
-        return 0;
-    }
-
-    handshake_confirmed(conn);
+            "packetized or sent", conn->ifc_last_max_data_off_sent);
+    else
+        LSQ_INFO("Peer should have received transport param limit "
+            "of %"PRIu64"; odd", last_off);
 
     return parsed_len;
 }
 
 
 typedef unsigned (*process_frame_f)(
-    struct ietf_full_conn *, struct lsquic_packet_in *,
+    struct id24_full_conn *, struct lsquic_packet_in *,
     const unsigned char *p, size_t);
 
 
@@ -5347,12 +5182,11 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_RETIRE_CONNECTION_ID] =  process_retire_connection_id_frame,
     [QUIC_FRAME_STREAM]             =  process_stream_frame,
     [QUIC_FRAME_CRYPTO]             =  process_crypto_frame,
-    [QUIC_FRAME_HANDSHAKE_DONE]     =  process_handshake_done_frame,
 };
 
 
 static unsigned
-process_packet_frame (struct ietf_full_conn *conn,
+process_packet_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     enum enc_level enc_level = lsquic_packet_in_enc_level(packet_in);
@@ -5373,7 +5207,7 @@ process_packet_frame (struct ietf_full_conn *conn,
 
 
 static struct dcid_elem *
-find_unassigned_dcid (struct ietf_full_conn *conn)
+find_unassigned_dcid (struct id24_full_conn *conn)
 {
     struct dcid_elem **dce;
 
@@ -5386,7 +5220,7 @@ find_unassigned_dcid (struct ietf_full_conn *conn)
 
 
 static struct conn_cid_elem *
-find_cce_by_cid (struct ietf_full_conn *conn, const lsquic_cid_t *cid)
+find_cce_by_cid (struct id24_full_conn *conn, const lsquic_cid_t *cid)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
     struct conn_cid_elem *cce;
@@ -5401,7 +5235,7 @@ find_cce_by_cid (struct ietf_full_conn *conn, const lsquic_cid_t *cid)
 
 
 static int
-init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
+init_new_path (struct id24_full_conn *conn, struct conn_path *path,
                                                             int dcid_changed)
 {
     struct dcid_elem *dce;
@@ -5443,7 +5277,7 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
 
 
 static void
-on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
+on_new_or_unconfirmed_path (struct id24_full_conn *conn,
                                     const struct lsquic_packet_in *packet_in)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
@@ -5498,12 +5332,11 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
 
     path->cop_cce_idx = cce - lconn->cn_cces;
     cce->cce_flags |= CCE_USED;
-    LOG_SCIDS(conn);
 }
 
 
 static void
-parse_regular_packet (struct ietf_full_conn *conn,
+parse_regular_packet (struct id24_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     const unsigned char *p, *pend;
@@ -5535,7 +5368,7 @@ parse_regular_packet (struct ietf_full_conn *conn,
  * check that there are frames that are about to be written.
  */
 static int
-many_in_and_will_write (struct ietf_full_conn *conn)
+many_in_and_will_write (struct id24_full_conn *conn)
 {
     return conn->ifc_n_slack_all > MAX_ANY_PACKETS_SINCE_LAST_ACK
         && (conn->ifc_send_flags
@@ -5546,7 +5379,7 @@ many_in_and_will_write (struct ietf_full_conn *conn)
 
 
 static void
-try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
+try_queueing_ack (struct id24_full_conn *conn, enum packnum_space pns,
                                             int was_missing, lsquic_time_t now)
 {
     lsquic_time_t srtt, ack_timeout;
@@ -5582,7 +5415,7 @@ try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
 
 
 static int
-maybe_queue_opp_ack (struct ietf_full_conn *conn)
+maybe_queue_opp_ack (struct id24_full_conn *conn)
 {
     if (/* If there is at least one ackable packet */
         conn->ifc_n_slack_akbl[PNS_APP] > 0
@@ -5603,50 +5436,7 @@ maybe_queue_opp_ack (struct ietf_full_conn *conn)
 
 
 static int
-verify_retry_packet (struct ietf_full_conn *conn,
-                                    const struct lsquic_packet_in *packet_in)
-{
-    unsigned char *pseudo_packet;
-    size_t out_len, ad_len;
-    int verified;
-
-    if (1 + CUR_DCID(conn)->len + packet_in->pi_data_sz > 0x1000)
-    {
-        /* Cover the theoretical possibility that we cannot fit the pseudo-
-         * packet and 16-byte decrypted output into 4 KB:
-         */
-        LSQ_INFO("%s: Retry packet is too long: %hu bytes", __func__,
-                                                        packet_in->pi_data_sz);
-        return -1;
-    }
-
-    pseudo_packet = lsquic_mm_get_4k(conn->ifc_pub.mm);
-    if (!pseudo_packet)
-    {
-        LSQ_INFO("%s: cannot allocate memory", __func__);
-        return -1;
-    }
-
-    pseudo_packet[0] = CUR_DCID(conn)->len;
-    memcpy(pseudo_packet + 1, CUR_DCID(conn)->idbuf, CUR_DCID(conn)->len);
-    memcpy(pseudo_packet + 1 + CUR_DCID(conn)->len, packet_in->pi_data,
-                                                    packet_in->pi_data_sz);
-
-    out_len = 0;
-    ad_len = 1 + CUR_DCID(conn)->len + packet_in->pi_data_sz - 16;
-    verified = 1 == EVP_AEAD_CTX_open(conn->ifc_enpub->enp_retry_aead_ctx,
-                    pseudo_packet + ad_len, &out_len, out_len,
-                    IETF_RETRY_NONCE_BUF, IETF_RETRY_NONCE_SZ,
-                    pseudo_packet + ad_len, 16, pseudo_packet, ad_len)
-            && out_len == 0;
-
-    lsquic_mm_put_4k(conn->ifc_pub.mm, pseudo_packet);
-    return verified ? 0 : -1;
-}
-
-
-static int
-process_retry_packet (struct ietf_full_conn *conn,
+process_retry_packet (struct id24_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     lsquic_cid_t scid;
@@ -5677,8 +5467,14 @@ process_retry_packet (struct ietf_full_conn *conn,
         return 0;
     }
 
-    if (0 != verify_retry_packet(conn, packet_in))
+    if (!(CUR_DCID(conn)->len == packet_in->pi_odcid_len
+            && 0 == memcmp(CUR_DCID(conn)->idbuf,
+                            packet_in->pi_data + packet_in->pi_odcid,
+                            packet_in->pi_odcid_len)))
+    {
+        LSQ_DEBUG("retry packet's ODCID does not match the original: ignore");
         return 0;
+    }
 
     if (0 != lsquic_send_ctl_retry(&conn->ifc_send_ctl,
                     packet_in->pi_data + packet_in->pi_token,
@@ -5705,7 +5501,7 @@ process_retry_packet (struct ietf_full_conn *conn,
 
 
 static int
-is_stateless_reset (struct ietf_full_conn *conn,
+is_stateless_reset (struct id24_full_conn *conn,
                                     const struct lsquic_packet_in *packet_in)
 {
     struct lsquic_hash_elem *el;
@@ -5734,7 +5530,7 @@ is_stateless_reset (struct ietf_full_conn *conn,
  *  (2) has not been used before.
  */
 static int
-on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
+on_dcid_change (struct id24_full_conn *conn, const lsquic_cid_t *dcid_in)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;  /* Shorthand */
     struct conn_cid_elem *cce;
@@ -5764,7 +5560,6 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
     cce->cce_flags |= CCE_USED;
     lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
     LSQ_DEBUGC("%s: set SCID to %"CID_FMT, __func__, CID_BITS(CN_SCID(lconn)));
-    LOG_SCIDS(conn);
 
     /* Reset spin bit, see [draft-ietf-quic-transport-20] Section 17.3.1 */
     conn->ifc_spin_bit = 0;
@@ -5774,7 +5569,7 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
 
 
 static void
-ignore_init (struct ietf_full_conn *conn)
+ignore_init (struct id24_full_conn *conn)
 {
     LSQ_DEBUG("henceforth, no Initial packets shall be sent or received");
     conn->ifc_flags |= IFC_IGNORE_INIT;
@@ -5789,13 +5584,13 @@ ignore_init (struct ietf_full_conn *conn)
             lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
             conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = NULL;
         }
-        conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
+        conn->ifc_conn.cn_if = id24_full_conn_iface_ptr;
     }
 }
 
 
 static void
-ignore_hsk (struct ietf_full_conn *conn)
+ignore_hsk (struct id24_full_conn *conn)
 {
     LSQ_DEBUG("henceforth, no Handshake packets shall be sent or received");
     conn->ifc_flags |= IFC_IGNORE_HSK;
@@ -5835,7 +5630,7 @@ sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
 
 
 static void
-record_dcid (struct ietf_full_conn *conn,
+record_dcid (struct id24_full_conn *conn,
                                     const struct lsquic_packet_in *packet_in)
 {
     unsigned orig_cid_len;
@@ -5850,7 +5645,7 @@ record_dcid (struct ietf_full_conn *conn,
 
 
 static int
-process_regular_packet (struct ietf_full_conn *conn,
+process_regular_packet (struct id24_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     enum packnum_space pns;
@@ -6018,7 +5813,7 @@ process_regular_packet (struct ietf_full_conn *conn,
 
 
 static int
-verneg_ok (const struct ietf_full_conn *conn)
+verneg_ok (const struct id24_full_conn *conn)
 {
     enum lsquic_version ver;
 
@@ -6031,7 +5826,7 @@ verneg_ok (const struct ietf_full_conn *conn)
  * complete.
  */
 static int
-process_incoming_packet_verneg (struct ietf_full_conn *conn,
+process_incoming_packet_verneg (struct id24_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     int s;
@@ -6120,7 +5915,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
 
 /* This function is used after version negotiation is completed */
 static int
-process_incoming_packet_fast (struct ietf_full_conn *conn,
+process_incoming_packet_fast (struct id24_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
     return process_regular_packet(conn, packet_in);
@@ -6128,13 +5923,12 @@ process_incoming_packet_fast (struct ietf_full_conn *conn,
 
 
 static void
-ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
+id24_full_conn_ci_packet_in (struct lsquic_conn *lconn,
                              struct lsquic_packet_in *packet_in)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
 
-    if (conn->ifc_idle_to)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+    lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                 packet_in->pi_received + conn->ifc_idle_to);
     if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
         if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
@@ -6143,10 +5937,10 @@ ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
 
 
 static void
-ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
+id24_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
                                    struct lsquic_packet_out *packet_out)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     lsquic_send_ctl_delayed_one(&conn->ifc_send_ctl, packet_out);
 }
 
@@ -6155,7 +5949,7 @@ ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
  * been returned by the engine.
  */
 static void
-pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
+pre_hsk_packet_sent_or_delayed (struct id24_full_conn *conn,
                                const struct lsquic_packet_out *packet_out)
 {
     /* Once IFC_IGNORE_INIT is set, the pre-hsk wrapper is removed: */
@@ -6170,20 +5964,20 @@ pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
 
 
 static void
-ietf_full_conn_ci_packet_not_sent_pre_hsk (struct lsquic_conn *lconn,
+id24_full_conn_ci_packet_not_sent_pre_hsk (struct lsquic_conn *lconn,
                                    struct lsquic_packet_out *packet_out)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    ietf_full_conn_ci_packet_not_sent(lconn, packet_out);
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
+    id24_full_conn_ci_packet_not_sent(lconn, packet_out);
     pre_hsk_packet_sent_or_delayed(conn, packet_out);
 }
 
 
 static void
-ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
+id24_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
                                struct lsquic_packet_out *packet_out)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     int s;
 
     if (packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
@@ -6195,27 +5989,21 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
         ABORT_ERROR("sent packet failed: %s", strerror(errno));
     ++conn->ifc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
                               [ lsquic_packet_out_ecn(packet_out) ];
-    /* Set blocked keep-alive for a [1,8] seconds */
-    if (packet_out->po_frame_types
-                            & (QUIC_FTBIT_BLOCKED|QUIC_FTBIT_STREAM_BLOCKED))
-        lsquic_alarmset_set(&conn->ifc_alset, AL_BLOCKED_KA,
-            packet_out->po_sent + (1 + (7 & lsquic_crand_get_nybble(
-                                conn->ifc_enpub->enp_crand))) * 1000000);
 }
 
 
 static void
-ietf_full_conn_ci_packet_sent_pre_hsk (struct lsquic_conn *lconn,
+id24_full_conn_ci_packet_sent_pre_hsk (struct lsquic_conn *lconn,
                                    struct lsquic_packet_out *packet_out)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-    ietf_full_conn_ci_packet_sent(lconn, packet_out);
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
+    id24_full_conn_ci_packet_sent(lconn, packet_out);
     pre_hsk_packet_sent_or_delayed(conn, packet_out);
 }
 
 
 static void (*const send_funcs[N_SEND])(
-                            struct ietf_full_conn *, lsquic_time_t) =
+                            struct id24_full_conn *, lsquic_time_t) =
 {
     [SEND_NEW_CID]      = generate_new_cid_frames,
     [SEND_RETIRE_CID]   = generate_retire_cid_frames,
@@ -6242,9 +6030,9 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_STOP_SENDING)
 
 static enum tick_st
-ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
+id24_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     int have_delayed_packets, s;
     enum tick_st tick = 0;
     unsigned n;
@@ -6494,9 +6282,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
 
 static enum LSQUIC_CONN_STATUS
-ietf_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
+id24_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     size_t n;
 
     /* Test the common case first: */
@@ -6546,56 +6334,56 @@ ietf_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
 
 
 static void
-ietf_full_conn_ci_stateless_reset (struct lsquic_conn *lconn)
+id24_full_conn_ci_stateless_reset (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     conn->ifc_flags |= IFC_GOT_PRST;
     LSQ_INFO("stateless reset reported");
 }
 
 
 static struct lsquic_conn_ctx *
-ietf_full_conn_ci_get_ctx (const struct lsquic_conn *lconn)
+id24_full_conn_ci_get_ctx (const struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     return conn->ifc_conn_ctx;
 }
 
 
 static struct lsquic_engine *
-ietf_full_conn_ci_get_engine (struct lsquic_conn *lconn)
+id24_full_conn_ci_get_engine (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     return conn->ifc_enpub->enp_engine;
 }
 
 
 static void
-ietf_full_conn_ci_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
+id24_full_conn_ci_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     conn->ifc_conn_ctx = ctx;
 }
 
 
 static unsigned
-ietf_full_conn_ci_n_pending_streams (const struct lsquic_conn *lconn)
+id24_full_conn_ci_n_pending_streams (const struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     return conn->ifc_n_delayed_streams;
 }
 
 
 static unsigned
-ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *lconn)
+id24_full_conn_ci_n_avail_streams (const struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     return avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_BIDI);
 }
 
 
 static int
-handshake_done_or_doing_zero_rtt (const struct ietf_full_conn *conn)
+handshake_done_or_doing_zero_rtt (const struct id24_full_conn *conn)
 {
     return (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         || conn->ifc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
@@ -6604,12 +6392,12 @@ handshake_done_or_doing_zero_rtt (const struct ietf_full_conn *conn)
 
 
 static void
-ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
+id24_full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
 
     if (handshake_done_or_doing_zero_rtt(conn)
-        && ietf_full_conn_ci_n_avail_streams(lconn) > 0)
+        && id24_full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (0 != create_bidi_stream_out(conn))
             ABORT_ERROR("could not create new stream: %s", strerror(errno));
@@ -6630,20 +6418,20 @@ ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
 
 
 static void
-ietf_full_conn_ci_internal_error (struct lsquic_conn *lconn,
+id24_full_conn_ci_internal_error (struct lsquic_conn *lconn,
                                                     const char *format, ...)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     LSQ_INFO("internal error reported");
     ABORT_QUIETLY(0, TEC_INTERNAL_ERROR, "Internal error");
 }
 
 
 static void
-ietf_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
+id24_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
                                 unsigned error_code, const char *fmt, ...)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     va_list ap;
     const char *err_str, *percent;
     char err_buf[0x100];
@@ -6673,9 +6461,9 @@ path_matches_local_sa (const struct network_path *path,
 
 
 static const lsquic_cid_t *
-ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
+id24_full_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
 
     if (lconn->cn_flags & LSCONN_SERVER)
     {
@@ -6692,10 +6480,10 @@ ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
 
 
 static struct network_path *
-ietf_full_conn_ci_get_path (struct lsquic_conn *lconn,
+id24_full_conn_ci_get_path (struct lsquic_conn *lconn,
                                                     const struct sockaddr *sa)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *const conn = (struct id24_full_conn *) lconn;
     struct conn_path *copath;
 
     if (NULL == sa || path_matches_local_sa(CUR_NPATH(conn), sa))
@@ -6736,10 +6524,10 @@ record_to_path (struct network_path *path, void *peer_ctx,
 
 
 static unsigned char
-ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
+id24_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     struct network_path *path;
     struct conn_path *copath, *first_unused, *first_unvalidated, *first_other,
                                                                         *victim;
@@ -6798,72 +6586,72 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 
 
 static void
-ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
+id24_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
     drop_crypto_streams(conn);
 }
 
 
 #define IETF_FULL_CONN_FUNCS \
-    .ci_abort                =  ietf_full_conn_ci_abort, \
-    .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
-    .ci_retire_cid           =  ietf_full_conn_ci_retire_cid, \
-    .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack, \
-    .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams, \
-    .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new, \
-    .ci_close                =  ietf_full_conn_ci_close, \
-    .ci_destroy              =  ietf_full_conn_ci_destroy, \
-    .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
-    .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
-    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx, \
-    .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
-    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
-    .ci_get_path             =  ietf_full_conn_ci_get_path, \
+    .ci_abort                =  id24_full_conn_ci_abort, \
+    .ci_abort_error          =  id24_full_conn_ci_abort_error, \
+    .ci_retire_cid           =  id24_full_conn_ci_retire_cid, \
+    .ci_can_write_ack        =  id24_full_conn_ci_can_write_ack, \
+    .ci_cancel_pending_streams =  id24_full_conn_ci_cancel_pending_streams, \
+    .ci_client_call_on_new   =  id24_full_conn_ci_client_call_on_new, \
+    .ci_close                =  id24_full_conn_ci_close, \
+    .ci_destroy              =  id24_full_conn_ci_destroy, \
+    .ci_drain_time           =  id24_full_conn_ci_drain_time, \
+    .ci_drop_crypto_streams  =  id24_full_conn_ci_drop_crypto_streams, \
+    .ci_get_ctx              =  id24_full_conn_ci_get_ctx, \
+    .ci_get_engine           =  id24_full_conn_ci_get_engine, \
+    .ci_get_log_cid          =  id24_full_conn_ci_get_log_cid, \
+    .ci_get_path             =  id24_full_conn_ci_get_path, \
     .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id, \
-    .ci_going_away           =  ietf_full_conn_ci_going_away, \
-    .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
-    .ci_internal_error       =  ietf_full_conn_ci_internal_error, \
-    .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
-    .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
-    .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
-    .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
-    .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
-    .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time, \
-    .ci_packet_in            =  ietf_full_conn_ci_packet_in, \
-    .ci_push_stream          =  ietf_full_conn_ci_push_stream, \
-    .ci_record_addrs         =  ietf_full_conn_ci_record_addrs, \
-    .ci_report_live          =  ietf_full_conn_ci_report_live, \
-    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
-    .ci_status               =  ietf_full_conn_ci_status, \
-    .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
-    .ci_tick                 =  ietf_full_conn_ci_tick, \
-    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
-    .ci_write_ack            =  ietf_full_conn_ci_write_ack
+    .ci_going_away           =  id24_full_conn_ci_going_away, \
+    .ci_hsk_done             =  id24_full_conn_ci_hsk_done, \
+    .ci_internal_error       =  id24_full_conn_ci_internal_error, \
+    .ci_is_push_enabled      =  id24_full_conn_ci_is_push_enabled, \
+    .ci_is_tickable          =  id24_full_conn_ci_is_tickable, \
+    .ci_make_stream          =  id24_full_conn_ci_make_stream, \
+    .ci_n_avail_streams      =  id24_full_conn_ci_n_avail_streams, \
+    .ci_n_pending_streams    =  id24_full_conn_ci_n_pending_streams, \
+    .ci_next_tick_time       =  id24_full_conn_ci_next_tick_time, \
+    .ci_packet_in            =  id24_full_conn_ci_packet_in, \
+    .ci_push_stream          =  id24_full_conn_ci_push_stream, \
+    .ci_record_addrs         =  id24_full_conn_ci_record_addrs, \
+    .ci_report_live          =  id24_full_conn_ci_report_live, \
+    .ci_set_ctx              =  id24_full_conn_ci_set_ctx, \
+    .ci_status               =  id24_full_conn_ci_status, \
+    .ci_stateless_reset      =  id24_full_conn_ci_stateless_reset, \
+    .ci_tick                 =  id24_full_conn_ci_tick, \
+    .ci_tls_alert            =  id24_full_conn_ci_tls_alert, \
+    .ci_write_ack            =  id24_full_conn_ci_write_ack
 
-static const struct conn_iface ietf_full_conn_iface = {
+static const struct conn_iface id24_full_conn_iface = {
     IETF_FULL_CONN_FUNCS,
-    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send,
-    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
-    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
+    .ci_next_packet_to_send =  id24_full_conn_ci_next_packet_to_send,
+    .ci_packet_not_sent     =  id24_full_conn_ci_packet_not_sent,
+    .ci_packet_sent         =  id24_full_conn_ci_packet_sent,
 };
-static const struct conn_iface *ietf_full_conn_iface_ptr =
-                                                &ietf_full_conn_iface;
+static const struct conn_iface *id24_full_conn_iface_ptr =
+                                                &id24_full_conn_iface;
 
-static const struct conn_iface ietf_full_conn_prehsk_iface = {
+static const struct conn_iface id24_full_conn_prehsk_iface = {
     IETF_FULL_CONN_FUNCS,
-    .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send_pre_hsk,
-    .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent_pre_hsk,
-    .ci_packet_sent         =  ietf_full_conn_ci_packet_sent_pre_hsk,
+    .ci_next_packet_to_send =  id24_full_conn_ci_next_packet_to_send_pre_hsk,
+    .ci_packet_not_sent     =  id24_full_conn_ci_packet_not_sent_pre_hsk,
+    .ci_packet_sent         =  id24_full_conn_ci_packet_sent_pre_hsk,
 };
-static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr =
-                                                &ietf_full_conn_prehsk_iface;
+static const struct conn_iface *id24_full_conn_prehsk_iface_ptr =
+                                                &id24_full_conn_prehsk_iface;
 
 
 static void
 on_cancel_push (void *ctx, uint64_t push_id)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     LSQ_DEBUG("TODO %s: %"PRIu64, __func__, push_id);
     /* TODO */
 }
@@ -6872,7 +6660,7 @@ on_cancel_push (void *ctx, uint64_t push_id)
 static void
 on_max_push_id_client (void *ctx, uint64_t push_id)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "client does not expect the server "
         "to send MAX_PUSH_ID frame");
 }
@@ -6881,7 +6669,7 @@ on_max_push_id_client (void *ctx, uint64_t push_id)
 static void
 on_max_push_id (void *ctx, uint64_t push_id)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
 
     if (!(conn->ifc_u.ser.ifser_flags & IFSER_MAX_PUSH_ID)
                             || push_id > conn->ifc_u.ser.ifser_max_push_id)
@@ -6901,7 +6689,7 @@ on_max_push_id (void *ctx, uint64_t push_id)
 static void
 on_settings_frame (void *ctx)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     unsigned dyn_table_size, max_risked_streams;
 
     LSQ_DEBUG("SETTINGS frame");
@@ -6937,7 +6725,7 @@ on_settings_frame (void *ctx)
 static void
 on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
 
     switch (setting_id)
     {
@@ -6965,7 +6753,7 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 static void
 on_goaway_server (void *ctx, uint64_t stream_id)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED,
                                     "client should not send GOAWAY frames");
 }
@@ -6974,7 +6762,7 @@ on_goaway_server (void *ctx, uint64_t stream_id)
 static void
 on_goaway (void *ctx, uint64_t stream_id)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
     enum stream_id_type sit;
@@ -7014,7 +6802,7 @@ on_goaway (void *ctx, uint64_t stream_id)
 static void
 on_unexpected_frame (void *ctx, uint64_t frame_type)
 {
-    struct ietf_full_conn *const conn = ctx;
+    struct id24_full_conn *const conn = ctx;
     ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "Frame type %"PRIu64" is not "
         "allowed on the control stream", frame_type);
 }
@@ -7044,7 +6832,7 @@ static const struct hcsi_callbacks hcsi_callbacks =
 static lsquic_stream_ctx_t *
 hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 {
-    struct ietf_full_conn *const conn = (void *) stream_if_ctx;
+    struct id24_full_conn *const conn = (void *) stream_if_ctx;
     conn->ifc_stream_hcsi = stream;
     lsquic_hcsi_reader_init(&conn->ifc_hcsi.reader, &conn->ifc_conn,
         conn->ifc_flags & IFC_SERVER ? &hcsi_callbacks_server : &hcsi_callbacks,
@@ -7056,7 +6844,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 
 struct feed_hcsi_ctx
 {
-    struct ietf_full_conn *conn;
+    struct id24_full_conn *conn;
     int                    s;
 };
 
@@ -7065,7 +6853,7 @@ static size_t
 feed_hcsi_reader (void *ctx, const unsigned char *buf, size_t bufsz, int fin)
 {
     struct feed_hcsi_ctx *feed_ctx = ctx;
-    struct ietf_full_conn *conn = feed_ctx->conn;
+    struct id24_full_conn *conn = feed_ctx->conn;
 
     feed_ctx->s = lsquic_hcsi_reader_feed(&conn->ifc_hcsi.reader, buf, bufsz);
     return bufsz;
@@ -7075,7 +6863,7 @@ feed_hcsi_reader (void *ctx, const unsigned char *buf, size_t bufsz, int fin)
 static void
 hcsi_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 {
-    struct ietf_full_conn *const conn = (void *) ctx;
+    struct id24_full_conn *const conn = (void *) ctx;
     struct lsquic_conn *const lconn = &conn->ifc_conn;
     struct feed_hcsi_ctx feed_ctx = { conn, 0, };
     ssize_t nread;
@@ -7113,7 +6901,7 @@ hcsi_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 static void
 hcsi_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 {
-    struct ietf_full_conn *const conn = (void *) ctx;
+    struct id24_full_conn *const conn = (void *) ctx;
     conn->ifc_stream_hcsi = NULL;
 }
 
@@ -7128,7 +6916,7 @@ static const struct lsquic_stream_if hcsi_if =
 
 
 static void
-apply_uni_stream_class (struct ietf_full_conn *conn,
+apply_uni_stream_class (struct id24_full_conn *conn,
                             struct lsquic_stream *stream, uint64_t stream_type)
 {
     switch (stream_type)
@@ -7262,7 +7050,7 @@ unicla_readf (void *ctx, const unsigned char *begin, size_t sz, int fin)
 static void
 unicla_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 {
-    struct ietf_full_conn *const conn = (void *) ctx;
+    struct id24_full_conn *const conn = (void *) ctx;
     struct unicla_ctx unicla_ctx = { .state = &stream->sm_uni_type_state,
                                      .status = UC_MORE, };
     ssize_t nr;

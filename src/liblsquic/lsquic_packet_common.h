@@ -33,6 +33,7 @@ enum quic_frame_type
     QUIC_FRAME_CRYPTO,              /* B */
     QUIC_FRAME_RETIRE_CONNECTION_ID,/* I */
     QUIC_FRAME_NEW_TOKEN,           /* I */
+    QUIC_FRAME_HANDSHAKE_DONE,      /* I */
     N_QUIC_FRAMES
 };
 
@@ -60,6 +61,7 @@ enum quic_ft_bit {
     QUIC_FTBIT_CRYPTO            = 1 << QUIC_FRAME_CRYPTO,
     QUIC_FTBIT_NEW_TOKEN         = 1 << QUIC_FRAME_NEW_TOKEN,
     QUIC_FTBIT_RETIRE_CONNECTION_ID = 1 << QUIC_FRAME_RETIRE_CONNECTION_ID,
+    QUIC_FTBIT_HANDSHAKE_DONE    = 1 << QUIC_FRAME_HANDSHAKE_DONE,
 };
 
 static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
@@ -86,6 +88,7 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     [QUIC_FRAME_CRYPTO]            =  "QUIC_FRAME_CRYPTO",
     [QUIC_FRAME_NEW_TOKEN]         =  "QUIC_FRAME_NEW_TOKEN",
     [QUIC_FRAME_RETIRE_CONNECTION_ID]  =  "QUIC_FRAME_RETIRE_CONNECTION_ID",
+    [QUIC_FRAME_HANDSHAKE_DONE]    =  "QUIC_FRAME_HANDSHAKE_DONE",
 };
 
 #define QUIC_FRAME_PRELEN   (sizeof("QUIC_FRAME_"))
@@ -120,6 +123,7 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     QUIC_FRAME_SLEN(QUIC_FRAME_RETIRE_CONNECTION_ID) \
                                                   + 1 + \
     QUIC_FRAME_SLEN(QUIC_FRAME_NEW_TOKEN)         + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_HANDSHAKE_DONE)    + 1 + \
     0
 
 
@@ -207,6 +211,7 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_PATH_RESPONSE      \
     |  QUIC_FTBIT_RETIRE_CONNECTION_ID      \
     |  QUIC_FTBIT_NEW_TOKEN          \
+    |  QUIC_FTBIT_HANDSHAKE_DONE     \
     |  QUIC_FTBIT_CRYPTO             )
 
 /* [draft-ietf-quic-transport-24] Section 1.2 */

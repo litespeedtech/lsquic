@@ -1010,6 +1010,27 @@ gquic_be_packno_info (const struct lsquic_conn *lconn,
 }
 
 
+static unsigned
+gquic_Q043_handshake_done_frame_size (void)
+{
+    return 0;
+}
+
+
+static int
+gquic_Q043_gen_handshake_done_frame (unsigned char *buf, size_t buf_len)
+{
+    return -1;
+}
+
+
+static int
+gquic_Q043_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
+{
+    return -1;
+}
+
+
 const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
     .pf_gen_reg_pkt_header            =  gquic_be_gen_reg_pkt_header,
@@ -1049,4 +1070,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_gen_crypto_frame              =  gquic_be_gen_crypto_frame,
     .pf_parse_crypto_frame            =  gquic_be_parse_crypto_frame,
     .pf_packno_info                   =  gquic_be_packno_info,
+    .pf_gen_handshake_done_frame      =  gquic_Q043_gen_handshake_done_frame,
+    .pf_parse_handshake_done_frame    =  gquic_Q043_parse_handshake_done_frame,
+    .pf_handshake_done_frame_size     =  gquic_Q043_handshake_done_frame_size,
 };

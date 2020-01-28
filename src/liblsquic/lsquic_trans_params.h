@@ -10,7 +10,7 @@
 enum transport_param_id
 {
     TPI_ORIGINAL_CONNECTION_ID            =  0,
-    TPI_IDLE_TIMEOUT                      =  1,
+    TPI_MAX_IDLE_TIMEOUT                  =  1,
     TPI_STATELESS_RESET_TOKEN             =  2,
     TPI_MAX_PACKET_SIZE                   =  3,
     TPI_INIT_MAX_DATA                     =  4,
@@ -36,7 +36,7 @@ enum transport_param_id
     |(1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL) \
     |(1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE) \
     |(1 << TPI_INIT_MAX_STREAM_DATA_UNI) \
-    |(1 << TPI_IDLE_TIMEOUT) \
+    |(1 << TPI_MAX_IDLE_TIMEOUT) \
     |(1 << TPI_MAX_ACK_DELAY) \
     |(1 << TPI_ACK_DELAY_EXPONENT) \
     |(1 << TPI_ACTIVE_CONNECTION_ID_LIMIT) \
@@ -74,7 +74,7 @@ struct transport_params
             uint64_t init_max_stream_data_bidi_remote;
             uint64_t init_max_stream_data_uni;
             uint64_t init_max_data;
-            uint64_t idle_timeout;
+            uint64_t max_idle_timeout;
             uint64_t init_max_streams_bidi;
             uint64_t init_max_streams_uni;
             uint64_t max_packet_size;
@@ -88,7 +88,7 @@ struct transport_params
 #define tp_init_max_stream_data_bidi_remote tp_numerics_u.s.init_max_stream_data_bidi_remote
 #define tp_init_max_stream_data_uni tp_numerics_u.s.init_max_stream_data_uni
 #define tp_init_max_data tp_numerics_u.s.init_max_data
-#define tp_idle_timeout tp_numerics_u.s.idle_timeout
+#define tp_max_idle_timeout tp_numerics_u.s.max_idle_timeout
 #define tp_init_max_streams_bidi tp_numerics_u.s.init_max_streams_bidi
 #define tp_init_max_streams_uni tp_numerics_u.s.init_max_streams_uni
 #define tp_max_packet_size tp_numerics_u.s.max_packet_size
@@ -119,16 +119,16 @@ struct transport_params
 #define TP_DEF_INIT_MAX_STREAM_DATA_BIDI_LOCAL 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_UNI 0
-#define TP_DEF_IDLE_TIMEOUT 0
+#define TP_DEF_MAX_IDLE_TIMEOUT 0
 #define TP_DEF_MAX_ACK_DELAY 25
-#define TP_DEF_ACTIVE_CONNECTION_ID_LIMIT 0
+#define TP_DEF_ACTIVE_CONNECTION_ID_LIMIT 2
 
 /* [draft-ietf-quic-transport-18], Section 18.1 */
 #define TP_MAX_MAX_ACK_DELAY ((1u << 14) - 1)
 
 #define TP_DEFAULT_VALUES                                                             \
     .tp_active_connection_id_limit        =  TP_DEF_ACTIVE_CONNECTION_ID_LIMIT,       \
-    .tp_idle_timeout                      =  TP_DEF_IDLE_TIMEOUT,                     \
+    .tp_max_idle_timeout                  =  TP_DEF_MAX_IDLE_TIMEOUT,                 \
     .tp_max_ack_delay                     =  TP_DEF_MAX_ACK_DELAY,                    \
     .tp_max_packet_size                   =  TP_DEF_MAX_PACKET_SIZE,                  \
     .tp_ack_delay_exponent                =  TP_DEF_ACK_DELAY_EXP,                    \

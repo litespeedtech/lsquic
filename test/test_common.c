@@ -922,7 +922,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 #endif
 
 #if LSQUIC_DONTFRAG_SUPPORTED
-    if (sport->sp_flags & SPORT_DONT_FRAGMENT)
+    if (!(sport->sp_flags & SPORT_FRAGMENT_OK))
     {
         if (AF_INET == sa_local->sa_family)
         {
@@ -1110,7 +1110,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
 #endif
 
 #if LSQUIC_DONTFRAG_SUPPORTED
-    if (sport->sp_flags & SPORT_DONT_FRAGMENT)
+    if (!(sport->sp_flags & SPORT_FRAGMENT_OK))
     {
         if (AF_INET == sa_local->sa_family)
         {
@@ -1809,6 +1809,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "idle_conn_to", 12))
         {
             settings->es_idle_conn_to = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "idle_timeout", 12))
+        {
+            settings->es_idle_timeout = atoi(val);
             return 0;
         }
         if (0 == strncmp(name, "silent_close", 12))

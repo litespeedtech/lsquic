@@ -164,14 +164,8 @@ set_startup_values (struct lsquic_bbr *bbr)
 
 
 static void
-lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
-                                                enum quic_ft_bit retx_frames)
+init_bbr (struct lsquic_bbr *bbr)
 {
-    struct lsquic_bbr *const bbr = cong_ctl;
-    bbr->bbr_conn_pub = conn_pub;
-    lsquic_bw_sampler_init(&bbr->bbr_bw_sampler, conn_pub->lconn, retx_frames);
-
-    bbr->bbr_rtt_stats = &conn_pub->rtt_stats;
     bbr->bbr_mode = BBR_MODE_STARTUP;
     bbr->bbr_round_count = 0;
     minmax_init(&bbr->bbr_max_bandwidth, 10);
@@ -203,10 +197,33 @@ lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
     bbr->bbr_flags &= ~BBR_FLAG_LAST_SAMPLE_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_HAS_NON_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_FLEXIBLE_APP_LIMITED;
-
     set_startup_values(bbr);
+}
+
+
+static void
+lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
+                                                enum quic_ft_bit retx_frames)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+    bbr->bbr_conn_pub = conn_pub;
+    lsquic_bw_sampler_init(&bbr->bbr_bw_sampler, conn_pub->lconn, retx_frames);
+    bbr->bbr_rtt_stats = &conn_pub->rtt_stats;
+
+    init_bbr(bbr);
 
     LSQ_DEBUG("initialized");
+}
+
+
+static void
+lsquic_bbr_reinit (void *cong_ctl)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    init_bbr(bbr);
+
+    LSQ_DEBUG("re-initialized");
 }
 
 
@@ -1060,6 +1077,7 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_pacing_rate   = lsquic_bbr_pacing_rate,
     .cci_loss          = lsquic_bbr_loss,
     .cci_lost          = lsquic_bbr_lost,
+    .cci_reinit        = lsquic_bbr_reinit,
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,

@@ -127,7 +127,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 If no -s option is given, 0.0.0.0:12345 address\n"
 "                 is used.\n"
 #if LSQUIC_DONTFRAG_SUPPORTED
-"   -D          Set `do not fragment' flag on outgoing UDP packets\n"
+"   -D          Do not set `do not fragment' flag on outgoing UDP packets\n"
 #endif
 "   -z BYTES    Maximum size of outgoing UDP packets.  The default is 1370\n"
 "                 bytes for IPv4 socket and 1350 bytes for IPv6 socket\n"
@@ -226,7 +226,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
             struct service_port *sport = TAILQ_LAST(prog->prog_sports, sport_head);
             if (!sport)
                 sport = &prog->prog_dummy_sport;
-            sport->sp_flags |= SPORT_DONT_FRAGMENT;
+            sport->sp_flags |= SPORT_FRAGMENT_OK;
         }
         return 0;
 #endif

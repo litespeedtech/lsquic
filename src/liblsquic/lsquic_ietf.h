@@ -4,7 +4,7 @@
 
 /* Things specific to the IETF version of QUIC that do not fit anywhere else */
 
-/* [draft-ietf-quic-transport-18] Section 22.3 */
+/* [draft-ietf-quic-transport-25] Section 22.4 */
 enum trans_error_code
 {
     TEC_NO_ERROR                   =  0x0,
@@ -16,12 +16,21 @@ enum trans_error_code
     TEC_FINAL_SIZE_ERROR           =  0x6,
     TEC_FRAME_ENCODING_ERROR       =  0x7,
     TEC_TRANSPORT_PARAMETER_ERROR  =  0x8,
-    TEC_VERSION_NEGOTIATION_ERROR  =  0x9,
+    TEC_CONNECTION_ID_LIMIT_ERROR  =  0x9,
     TEC_PROTOCOL_VIOLATION         =  0xA,
+    TEC_INVALID_TOKEN              =  0xB,
     TEC_CRYPTO_BUFFER_EXCEEDED     =  0xD,
 };
 
 /* Must be at least two */
 #define MAX_IETF_CONN_DCIDS 8
+
+/* [draft-ietf-quic-tls-25] Section 5.8 */
+#define IETF_RETRY_KEY_BUF ((unsigned char *) \
+        "\x4d\x32\xec\xdb\x2a\x21\x33\xc8\x41\xe4\x04\x3d\xf2\x7d\x44\x30")
+#define IETF_RETRY_KEY_SZ 16
+#define IETF_RETRY_NONCE_BUF ((unsigned char *) \
+                        "\x4d\x16\x11\xd0\x55\x13\xa5\x52\xc5\x87\xd5\x75")
+#define IETF_RETRY_NONCE_SZ 12
 
 #endif

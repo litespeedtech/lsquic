@@ -36,7 +36,7 @@ static const uint64_t def_vals[MAX_TPI + 1] =
     [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_LOCAL,
     [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE,
     [TPI_INIT_MAX_STREAM_DATA_UNI]          =  TP_DEF_INIT_MAX_STREAM_DATA_UNI,
-    [TPI_IDLE_TIMEOUT]                      =  TP_DEF_IDLE_TIMEOUT,
+    [TPI_MAX_IDLE_TIMEOUT]                  =  TP_DEF_MAX_IDLE_TIMEOUT,
     [TPI_MAX_ACK_DELAY]                     =  TP_DEF_MAX_ACK_DELAY,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  TP_DEF_ACTIVE_CONNECTION_ID_LIMIT,
 };
@@ -52,7 +52,7 @@ static const uint64_t max_vals[MAX_TPI + 1] =
     [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  VINT_MAX_VALUE,
     [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  VINT_MAX_VALUE,
     [TPI_INIT_MAX_STREAM_DATA_UNI]          =  VINT_MAX_VALUE,
-    [TPI_IDLE_TIMEOUT]                      =  VINT_MAX_VALUE,
+    [TPI_MAX_IDLE_TIMEOUT]                  =  VINT_MAX_VALUE,
     [TPI_MAX_ACK_DELAY]                     =  TP_MAX_MAX_ACK_DELAY,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  VINT_MAX_VALUE,
 };
@@ -73,7 +73,7 @@ static const unsigned tpi2idx[MAX_TPI + 1] =
     [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  TP_OFF(init_max_stream_data_bidi_local),
     [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  TP_OFF(init_max_stream_data_bidi_remote),
     [TPI_INIT_MAX_STREAM_DATA_UNI]          =  TP_OFF(init_max_stream_data_uni),
-    [TPI_IDLE_TIMEOUT]                      =  TP_OFF(idle_timeout),
+    [TPI_MAX_IDLE_TIMEOUT]                  =  TP_OFF(max_idle_timeout),
     [TPI_MAX_ACK_DELAY]                     =  TP_OFF(max_ack_delay),
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  TP_OFF(active_connection_id_limit),
 };
@@ -533,7 +533,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
     WRITE_ONE_PARAM(init_max_stream_data_bidi_remote, "%"PRIu64);
     WRITE_ONE_PARAM(init_max_stream_data_uni, "%"PRIu64);
     WRITE_ONE_PARAM(init_max_data, "%"PRIu64);
-    WRITE_ONE_PARAM(idle_timeout, "%"PRIu64);
+    WRITE_ONE_PARAM(max_idle_timeout, "%"PRIu64);
     WRITE_ONE_PARAM(init_max_streams_bidi, "%"PRIu64);
     WRITE_ONE_PARAM(init_max_streams_uni, "%"PRIu64);
     WRITE_ONE_PARAM(max_packet_size, "%"PRIu64);

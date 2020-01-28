@@ -1,3 +1,10 @@
+2020-01-28
+    - 2.10.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 25 support.
+    - [API] Drop support for ID-23.
+    - [BUGFIX] Set key phase bit on outgoing packets correctly.
+    - Code cleanup.
+
 2020-01-20
     - 2.9.0
     - [API] Drop support for Q039.

@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 9
+#define LSQUIC_MINOR_VERSION 10
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -134,14 +134,14 @@ enum lsquic_version
 #endif
 
     /**
-     * IETF QUIC Draft-23
-     */
-    LSQVER_ID23,
-
-    /**
      * IETF QUIC Draft-24
      */
     LSQVER_ID24,
+
+    /**
+     * IETF QUIC Draft-25
+     */
+    LSQVER_ID25,
 
     /**
      * Special version to trigger version negotiation.
@@ -153,7 +153,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, and IETF Draft-23 and Draft-24
+ * We currently support versions 43, 46, 50, and Draft-24
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -170,10 +170,10 @@ enum lsquic_version
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID24) | (1 << LSQVER_ID25) \
                                                     | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID23) | (1 << LSQVER_ID24) \
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID24) | (1 << LSQVER_ID25) \
                                                     | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status

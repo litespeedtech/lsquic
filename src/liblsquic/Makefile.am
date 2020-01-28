@@ -31,6 +31,7 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_frame_reader.c \
     lsquic_frame_writer.c \
     lsquic_full_conn.c \
+    lsquic_full_conn_id24.c \
     lsquic_full_conn_ietf.c \
     lsquic_global.c \
     lsquic_handshake.c \

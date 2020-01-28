@@ -2909,6 +2909,10 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl, struct network_path *old,
             }
 
     LSQ_DEBUG("repathed %u packet%.*s", count, count != 1, "s");
+
+    memset(&ctl->sc_conn_pub->rtt_stats, 0,
+                                    sizeof(ctl->sc_conn_pub->rtt_stats));
+    ctl->sc_ci->cci_reinit(CGP(ctl));
 }
 
 

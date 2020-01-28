@@ -825,6 +825,36 @@ gquic_Q050_calc_crypto_frame_header_sz (uint64_t offset, unsigned data_sz)
 }
 
 
+/* No simple PRST for Q050 */
+static ssize_t
+gquic_Q050_generate_simple_prst (const lsquic_cid_t *cidp, unsigned char *buf,
+                                                                size_t buf_sz)
+{
+    return -1;
+}
+
+
+static unsigned
+gquic_Q050_handshake_done_frame_size (void)
+{
+    return 0;
+}
+
+
+static int
+gquic_Q050_gen_handshake_done_frame (unsigned char *buf, size_t buf_len)
+{
+    return -1;
+}
+
+
+static int
+gquic_Q050_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
+{
+    return -1;
+}
+
+
 const struct parse_funcs lsquic_parse_funcs_gquic_Q050 =
 {
     .pf_gen_reg_pkt_header            =  gquic_Q050_gen_reg_pkt_header,
@@ -853,7 +883,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q050 =
     .pf_write_float_time16            =  gquic_be_write_float_time16,
     .pf_read_float_time16             =  gquic_be_read_float_time16,
 #endif
-    .pf_generate_simple_prst          =  lsquic_generate_iquic_reset,
+    .pf_generate_simple_prst          =  gquic_Q050_generate_simple_prst,
     .pf_parse_frame_type              =  gquic_Q050_parse_frame_type,
     .pf_turn_on_fin                   =  lsquic_turn_on_fin_Q035_thru_Q046,
     .pf_packout_size                  =  gquic_Q050_packout_size,
@@ -864,4 +894,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q050 =
     .pf_parse_crypto_frame            =  gquic_Q050_parse_crypto_frame,
     .pf_packno_info                   =  gquic_Q050_packno_info,
     .pf_calc_crypto_frame_header_sz   =  gquic_Q050_calc_crypto_frame_header_sz,
+    .pf_gen_handshake_done_frame      =  gquic_Q050_gen_handshake_done_frame,
+    .pf_parse_handshake_done_frame    =  gquic_Q050_parse_handshake_done_frame,
+    .pf_handshake_done_frame_size     =  gquic_Q050_handshake_done_frame_size,
 };

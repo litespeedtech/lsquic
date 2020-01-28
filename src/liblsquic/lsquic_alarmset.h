@@ -36,6 +36,7 @@ enum alarm_id {
     AL_PATH_CHAL_0 = AL_PATH_CHAL,
     AL_PATH_CHAL_1,
     AL_SESS_TICKET,
+    AL_BLOCKED_KA,      /* Blocked Keep-Alive */
     MAX_LSQUIC_ALARMS
 };
 
@@ -55,6 +56,7 @@ enum alarm_id_bit {
     ALBIT_PATH_CHAL_0 = 1 << AL_PATH_CHAL_0,
     ALBIT_PATH_CHAL_1 = 1 << AL_PATH_CHAL_1,
     ALBIT_SESS_TICKET = 1 << AL_SESS_TICKET,
+    ALBIT_BLOCKED_KA  = 1 << AL_BLOCKED_KA,
 };
 
 

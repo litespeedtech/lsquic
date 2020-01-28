@@ -706,6 +706,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 s_stat_downloaded_bytes > client_ctx->hcc_retire_cid_after_nbytes)
             {
                 lsquic_conn_retire_cid(lsquic_stream_conn(stream));
+                client_ctx->hcc_retire_cid_after_nbytes = 0;
                 break;
             }
             if (!g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
@@ -850,6 +851,7 @@ usage (const char *prog)
 "   -T FILE     Print stats to FILE.  If FILE is -, print stats to stdout.\n"
 "   -q FILE     QIF mode: issue requests from the QIF file and validate\n"
 "                 server responses.\n"
+"   -e TOKEN    Hexadecimal string representing resume token.\n"
             , prog);
 }
 

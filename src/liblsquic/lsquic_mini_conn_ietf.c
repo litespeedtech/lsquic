@@ -760,7 +760,10 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
     parsed_len = conn->imc_conn.cn_pf->pf_parse_crypto_frame(p, len,
                                                                 &stream_frame);
     if (parsed_len < 0)
+    {
+        conn->imc_flags |= IMC_PARSE_FAILED;
         return 0;
+    }
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
     EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame, enc_level);
@@ -903,7 +906,10 @@ imico_process_ack_frame (IMICO_PROC_FRAME_ARGS)
     parsed_len = conn->imc_conn.cn_pf->pf_parse_ack_frame(p, len, acki,
                                                                     ack_exp);
     if (parsed_len < 0)
+    {
+        conn->imc_flags |= IMC_PARSE_FAILED;
         return 0;
+    }
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
     acked = 0;
@@ -996,7 +1002,10 @@ imico_process_connection_close_frame (IMICO_PROC_FRAME_ARGS)
     parsed_len = conn->imc_conn.cn_pf->pf_parse_connect_close_frame(p, len,
                             &app_error, &error_code, &reason_len, &reason_off);
     if (parsed_len < 0)
+    {
+        conn->imc_flags |= IMC_PARSE_FAILED;
         return 0;
+    }
     EV_LOG_CONNECTION_CLOSE_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code,
                             (int) reason_len, (const char *) p + reason_off);
     LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
@@ -1039,6 +1048,7 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     [QUIC_FRAME_PATH_RESPONSE]      =  imico_process_invalid_frame,
     /* STREAM frame can only come in the App PNS and we delay those packets: */
     [QUIC_FRAME_STREAM]             =  imico_process_invalid_frame,
+    [QUIC_FRAME_HANDSHAKE_DONE]     =  imico_process_invalid_frame,
 };
 
 
@@ -1540,6 +1550,13 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
         reason = "handshake failed";
         rlen = 16;
     }
+    else if (conn->imc_flags & IMC_PARSE_FAILED)
+    {
+        is_app = 0;
+        error_code = TEC_FRAME_ENCODING_ERROR;
+        reason = "cannot decode frame";
+        rlen = 19;
+    }
     else
     {
         is_app = 0;
@@ -1605,6 +1622,34 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
 }
 
 
+static int
+imico_generate_handshake_done (struct ietf_mini_conn *conn)
+{
+    struct lsquic_packet_out *packet_out;
+    unsigned need;
+    int sz;
+
+    need = conn->imc_conn.cn_pf->pf_handshake_done_frame_size();
+    packet_out = imico_get_packet_out(conn, HETY_NOT_SET, need);
+    if (!packet_out)
+        return -1;
+    sz = conn->imc_conn.cn_pf->pf_gen_handshake_done_frame(
+                 packet_out->po_data + packet_out->po_data_sz,
+                 lsquic_packet_out_avail(packet_out));
+    if (sz < 0)
+    {
+        LSQ_WARN("could not generate HANDSHAKE_DONE frame");
+        return -1;
+    }
+
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_HANDSHAKE_DONE;
+    packet_out->po_data_sz += sz;
+    LSQ_DEBUG("generated HANDSHAKE_DONE frame");
+
+    return 0;
+}
+
+
 static enum tick_st
 ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -1633,12 +1678,18 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     if (conn->imc_flags & IMC_ERROR)
     {
+  close_on_error:
         if (!(conn->imc_flags & IMC_CLOSE_RECVD))
             imico_generate_conn_close(conn);
         tick |= TICK_CLOSE;
     }
     else if (conn->imc_flags & IMC_HSK_OK)
+    {
+        if (conn->imc_conn.cn_version > LSQVER_ID24
+                                && 0 != imico_generate_handshake_done(conn))
+            goto close_on_error;
         tick |= TICK_PROMOTE;
+    }
 
     if (imico_have_packets_to_send(conn, now))
         tick |= TICK_SEND;

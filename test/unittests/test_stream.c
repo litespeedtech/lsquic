@@ -325,7 +325,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_version = tobjs->lconn.cn_pf == &lsquic_parse_funcs_ietf_v1 ?
-        LSQVER_ID23 : LSQVER_043;
+        LSQVER_ID24 : LSQVER_043;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
     network_path.np_pack_size = 1370;
     tobjs->lconn.cn_if = &our_conn_if;
@@ -2200,7 +2200,7 @@ test_changing_pack_size (void)
     enum lsquic_version versions_to_test[3] =
     {
         LSQVER_046,
-        LSQVER_ID23,
+        LSQVER_ID24,
     };
 
     for (i = 0; i < 3; i++)
@@ -3130,7 +3130,7 @@ main (int argc, char **argv)
 
     /* Redo some tests using crypto streams and frames */
     g_use_crypto_ctor = 1;
-    g_pf = select_pf_by_ver(LSQVER_ID23);
+    g_pf = select_pf_by_ver(LSQVER_ID24);
     main_test_packetization();
 
     return 0;

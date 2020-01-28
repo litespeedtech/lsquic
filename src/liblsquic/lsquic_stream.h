@@ -610,4 +610,7 @@ lsquic_stream_header_is_trailer (const struct lsquic_stream *);
 int
 lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 
+#define lsquic_stream_is_blocked(stream_) ((stream_)->blocked_off && \
+                        (stream_)->blocked_off == (stream_)->max_send_off)
+
 #endif

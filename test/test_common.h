@@ -23,7 +23,7 @@ struct reader_ctx;
 enum sport_flags
 {
 #if LSQUIC_DONTFRAG_SUPPORTED
-    SPORT_DONT_FRAGMENT     = (1 << 0),
+    SPORT_FRAGMENT_OK       = (1 << 0),
 #endif
     SPORT_SET_SNDBUF        = (1 << 1), /* SO_SNDBUF */
     SPORT_SET_RCVBUF        = (1 << 2), /* SO_RCVBUF */

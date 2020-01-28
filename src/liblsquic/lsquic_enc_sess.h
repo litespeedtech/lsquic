@@ -295,7 +295,7 @@ struct enc_session_funcs_iquic
                          const char *);
 
     void
-    (*esfi_1rtt_acked)(enc_session_t *);
+    (*esfi_handshake_confirmed)(enc_session_t *);
 };
 
 extern
@@ -321,8 +321,8 @@ struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1;
 extern const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
 
 #define select_esf_common_by_ver(ver) ( \
-    ver == LSQVER_ID23 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_ID24 ? &lsquic_enc_session_common_ietf_v1 : \
+    ver == LSQVER_ID25 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_VERNEG ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_050 ? &lsquic_enc_session_common_gquic_2 : \
     &lsquic_enc_session_common_gquic_1 )
