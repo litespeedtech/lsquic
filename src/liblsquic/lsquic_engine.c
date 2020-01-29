@@ -337,6 +337,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_qpack_enc_max_blocked = LSQUIC_DF_QPACK_ENC_MAX_BLOCKED;
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
     settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
+    settings->es_spin            = LSQUIC_DF_SPIN;
 }
 
 
@@ -409,6 +410,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid QL bits value %d ",
                 settings->es_ql_bits);
+        return -1;
+    }
+
+    if (!(settings->es_spin == 0 || settings->es_spin == 1))
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "Invalid spin value %d",
+                settings->es_spin);
         return -1;
     }
 
@@ -2048,13 +2057,13 @@ sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
     switch (addr->sa_family)
     {
     case AF_INET:
-        port = ((struct sockaddr_in *) addr)->sin_port;
+        port = ntohs(((struct sockaddr_in *) addr)->sin_port);
         if (!inet_ntop(AF_INET, &((struct sockaddr_in *) addr)->sin_addr,
                                                                     buf, sz))
             buf[0] = '\0';
         break;
     case AF_INET6:
-        port = ((struct sockaddr_in6 *) addr)->sin6_port;
+        port = ntohs(((struct sockaddr_in6 *) addr)->sin6_port);
         if (!inet_ntop(AF_INET6, &((struct sockaddr_in6 *) addr)->sin6_addr,
                                                                     buf, sz))
             buf[0] = '\0';

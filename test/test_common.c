@@ -1729,6 +1729,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_sfcw = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "spin", 4))
+        {
+            settings->es_spin = atoi(val);
+            return 0;
+        }
         break;
     case 7:
         if (0 == strncmp(name, "version", 7))

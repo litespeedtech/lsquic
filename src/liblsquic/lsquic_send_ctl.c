@@ -1608,18 +1608,21 @@ send_ctl_maybe_zero_pad (struct lsquic_send_ctl *ctl,
 
     cum_size = packet_out_total_sz(initial_packet);
     if (cum_size >= limit)
+    {
+        LSQ_DEBUG("packet size %zu larger than %zu-byte limit: not "
+            "zero-padding", cum_size, limit);
         return;
+    }
 
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
     {
         size = packet_out_total_sz(packet_out);
-        if (cum_size + size > SC_PACK_SIZE(ctl))
+        if (cum_size + size > limit)
             break;
         cum_size += size;
-        if (cum_size >= limit)
-            return;
     }
 
+    LSQ_DEBUG("cum_size: %zu; limit: %zu", cum_size, limit);
     assert(cum_size < limit);
     size = limit - cum_size;
     if (size > lsquic_packet_out_avail(initial_packet))
@@ -1676,8 +1679,9 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
     {
         if (packet_out_total_sz(packet_out) + size > SC_PACK_SIZE(ctl))
             return NULL;
-        LSQ_DEBUG("packet %"PRIu64" will be tacked on to previous packet "
-                                    "(coalescing)", packet_out->po_packno);
+        LSQ_DEBUG("packet %"PRIu64" (%zu bytes) will be tacked on to "
+            "previous packet(s) (%zu bytes) (coalescing)",
+            packet_out->po_packno, packet_out_total_sz(packet_out), size);
     }
     send_ctl_sched_remove(ctl, packet_out);
 
@@ -1690,9 +1694,10 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
         packet_out->po_flags &= ~PO_LIMITED;
 
     if (UNLIKELY(packet_out->po_header_type == HETY_INITIAL)
-                    && !(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER))
+                    && !(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER)
+                    && size < 1200)
     {
-        send_ctl_maybe_zero_pad(ctl, packet_out, size ? size : 1200);
+        send_ctl_maybe_zero_pad(ctl, packet_out, 1200 - size);
     }
 
     if (ctl->sc_flags & SC_QL_BITS)

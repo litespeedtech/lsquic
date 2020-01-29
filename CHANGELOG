@@ -1,3 +1,11 @@
+2020-01-29
+    - 2.10.1
+    - [BUGFIX] Coalesced packets could get longer than normal packet
+      size.
+    - Add spin bit configuration option es_spin (-o spin=[01]).
+    - Disable spin bit in 1/16 of connections.
+    - Improve logging a bit.
+
 2020-01-28
     - 2.10.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 25 support.

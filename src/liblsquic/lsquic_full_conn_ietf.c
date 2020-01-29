@@ -131,6 +131,7 @@ enum ifull_conn_flags
     IFC_IGNORE_HSK    = 1 << 25,
     IFC_PROC_CRYPTO   = 1 << 26,
     IFC_MIGRA         = 1 << 27,
+    IFC_SPIN          = 1 << 28, /* Spin bits are enabled */
 };
 
 
@@ -973,6 +974,43 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
 }
 
 
+/* From [draft-ietf-quic-transport-25] Section 17.3.1:
+ *  " endpoints MUST disable their use of the spin bit for a random selection
+ *  " of at least one in every 16 network paths, or for one in every 16
+ *  " connection IDs.
+ */
+static void
+maybe_enable_spin (struct ietf_full_conn *conn)
+{
+    uint8_t nyb;
+
+    if (!conn->ifc_settings->es_spin)
+    {
+        conn->ifc_flags &= ~IFC_SPIN;
+        LSQ_DEBUG("spin bit disabled via settings");
+    }
+    else if (lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand))
+    {
+        conn->ifc_flags |= IFC_SPIN;
+        conn->ifc_spin_bit = 0;
+        LSQ_DEBUG("spin bit enabled");
+    }
+    else
+    {
+        /* " It is RECOMMENDED that endpoints set the spin bit to a random
+         * " value either chosen independently for each packet or chosen
+         * " independently for each connection ID.
+         * (ibid.)
+         */
+        conn->ifc_flags &= ~IFC_SPIN;
+        nyb = lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand);
+        conn->ifc_spin_bit = nyb & 1;
+        LSQ_DEBUG("spin bit randomly disabled; random spin bit value is %d",
+            conn->ifc_spin_bit);
+    }
+}
+
+
 static int
 ietf_full_conn_init (struct ietf_full_conn *conn,
            struct lsquic_engine_public *enpub, unsigned flags, int ecn)
@@ -1035,6 +1073,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 #define valid_stream_id(v) ((v) <= VINT_MAX_VALUE)
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_ping_unretx_thresh = 20;
+    maybe_enable_spin(conn);
     return 0;
 }
 
@@ -5678,7 +5717,10 @@ process_retry_packet (struct ietf_full_conn *conn,
     }
 
     if (0 != verify_retry_packet(conn, packet_in))
+    {
+        LSQ_DEBUG("cannot verify retry packet: ignore it");
         return 0;
+    }
 
     if (0 != lsquic_send_ctl_retry(&conn->ifc_send_ctl,
                     packet_in->pi_data + packet_in->pi_token,
@@ -5767,7 +5809,7 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
     LOG_SCIDS(conn);
 
     /* Reset spin bit, see [draft-ietf-quic-transport-20] Section 17.3.1 */
-    conn->ifc_spin_bit = 0;
+    maybe_enable_spin(conn);
 
     return 0;
 }
@@ -5996,7 +6038,7 @@ process_regular_packet (struct ietf_full_conn *conn,
         conn->ifc_incoming_ecn |=
                             lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
         ++conn->ifc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
-        if (packno_increased && PNS_APP == pns)
+        if (packno_increased && PNS_APP == pns && (conn->ifc_flags & IFC_SPIN))
         {
             if (conn->ifc_flags & IFC_SERVER)
                 conn->ifc_spin_bit = lsquic_packet_in_spin_bit(packet_in);

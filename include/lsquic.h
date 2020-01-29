@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:
@@ -380,6 +380,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Use QL loss bits by default */
 #define LSQUIC_DF_QL_BITS 2
+
+/** Turn spin bit on by default */
+#define LSQUIC_DF_SPIN 1
 
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 1
@@ -759,6 +762,13 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_QL_BITS
      */
     int             es_ql_bits;
+
+    /**
+     * Enable spin bit.  Allowed values are 0 and 1.
+     *
+     * Default value is @ref LSQUIC_DF_SPIN
+     */
+    int             es_spin;
 };
 
 /* Initialize `settings' to default values */
