@@ -128,7 +128,7 @@ lsquic_tp_encode (const struct transport_params *params,
             else
             {
                 LSQ_DEBUG("numeric value is too large (%"PRIu64" vs maximum "
-                    "of %"PRIu64, params->tp_numerics_u.a[tpi2idx[tpi]],
+                    "of %"PRIu64")", params->tp_numerics_u.a[tpi2idx[tpi]],
                     max_vals[tpi]);
                 return -1;
             }

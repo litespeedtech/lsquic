@@ -14,6 +14,7 @@
 #else
 #include <vc_compat.h>
 #endif
+#include <netinet/in.h>
 
 #if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
 #include <mach/mach_time.h>
@@ -253,4 +254,26 @@ lsquic_hexdump (const void *src_void, size_t src_sz, char *out, size_t out_sz)
         out_end[-1] = '\0';
 
     return out + out_sz - out_end;
+}
+
+
+/* Returns true if socket addresses are equal, false otherwise.  Only
+ * families, IP addresses, and ports are compared.
+ */
+int
+lsquic_sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
+{
+    if (a->sa_family == AF_INET)
+        return a->sa_family == b->sa_family
+            && ((struct sockaddr_in *) a)->sin_addr.s_addr
+                            == ((struct sockaddr_in *) b)->sin_addr.s_addr
+            && ((struct sockaddr_in *) a)->sin_port
+                            == ((struct sockaddr_in *) b)->sin_port;
+    else
+        return a->sa_family == b->sa_family
+            && ((struct sockaddr_in6 *) a)->sin6_port ==
+                                ((struct sockaddr_in6 *) b)->sin6_port
+            && 0 == memcmp(&((struct sockaddr_in6 *) a)->sin6_addr,
+                            &((struct sockaddr_in6 *) b)->sin6_addr,
+                            sizeof(((struct sockaddr_in6 *) b)->sin6_addr));
 }

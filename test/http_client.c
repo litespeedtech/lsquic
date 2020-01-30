@@ -659,6 +659,13 @@ http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 }
 
 
+static size_t
+discard (void *ctx, const unsigned char *buf, size_t sz, int fin)
+{
+    return sz;
+}
+
+
 static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
@@ -691,7 +698,10 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             hset_destroy(hset);
             st_h->sh_flags |= PROCESSED_HEADERS;
         }
-        else if (nread = lsquic_stream_read(stream, buf, sizeof(buf)), nread > 0)
+        else if (nread = (s_discard_response
+                            ? lsquic_stream_readf(stream, discard, NULL)
+                            : lsquic_stream_read(stream, buf, sizeof(buf))),
+                    nread > 0)
         {
             s_stat_downloaded_bytes += nread;
             /* test stream_reset after some number of read bytes */

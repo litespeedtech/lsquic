@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+struct sockaddr;
+
 lsquic_time_t
 lsquic_time_now (void);
 
@@ -37,6 +39,9 @@ lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz);
 
 #define HEXSTR(buf, bufsz, out) \
     (lsquic_hexstr(buf, bufsz, out, sizeof(out)), out)
+
+int
+lsquic_sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b);
 
 #ifdef __cplusplus
 }

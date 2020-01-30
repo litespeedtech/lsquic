@@ -27,6 +27,7 @@ enum alarm_id {
     AL_RETX_APP = AL_RETX_INIT + PNS_APP,
     AL_PING,
     AL_IDLE,
+    /* TODO: remove AL_ACK_INIT and AL_ACK_HSK when LSQVER_ID24 is removed */
     AL_ACK_INIT,
     AL_ACK_HSK = AL_ACK_INIT + PNS_HSK,
     AL_ACK_APP = AL_ACK_INIT + PNS_APP,

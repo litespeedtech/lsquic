@@ -481,10 +481,10 @@ ack_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                         lsquic_time_t now)
 {
     struct ietf_full_conn *conn = ctx;
-    enum packnum_space pns = al_id - AL_ACK_INIT;
+    assert(al_id == AL_ACK_APP);
     LSQ_DEBUG("%s ACK timer expired (%"PRIu64" < %"PRIu64"): ACK queued",
-        lsquic_pns2str[pns], expiry, now);
-    conn->ifc_flags |= IFC_ACK_QUED_INIT << pns;
+        lsquic_pns2str[PNS_APP], expiry, now);
+    conn->ifc_flags |= IFC_ACK_QUED_APP;
 }
 
 
@@ -671,7 +671,7 @@ log_scids (const struct ietf_full_conn *conn)
         if (cce->cce_flags & CCE_REG)   flags[fi++] = 'r';
         if (cce->cce_flags & CCE_SEQNO) flags[fi++] = 's';
         if (cce->cce_flags & CCE_USED)  flags[fi++] = 'u';
-                                        flags[fi]   = '\0';
+        flags[fi]                                   = '\0';
         if (lconn->cn_cces_mask & (1 << idx))
         {
             if (cce->cce_flags & CCE_PORT)
@@ -1038,8 +1038,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init(&conn->ifc_alset, &conn->ifc_conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_IDLE, idle_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_ACK_APP, ack_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_ACK_INIT, ack_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_ACK_HSK, ack_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PING, ping_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_CID_THROT, cid_throt_alarm_expired, conn);
@@ -1279,6 +1277,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_paths[0].cop_path = imc->imc_path;
     conn->ifc_paths[0].cop_flags = COP_VALIDATED;
     conn->ifc_used_paths = 1 << 0;
+    if (imc->imc_flags & IMC_PATH_CHANGED)
+    {
+        LSQ_DEBUG("path changed during mini conn: schedule PATH_CHALLENGE");
+        conn->ifc_send_flags |= SF_SEND_PATH_CHAL_PATH_0;
+    }
 #ifndef NDEBUG
     if (getenv("LSQUIC_CN_PACK_SIZE"))
     {
@@ -1524,10 +1527,14 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     }
 
     conn->ifc_n_slack_akbl[pns] = 0;
-    if (PNS_APP == pns)
-        conn->ifc_n_slack_all = 0;
     conn->ifc_flags &= ~(IFC_ACK_QUED_INIT << pns);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + pns);
+    if (pns == PNS_APP)
+    {
+        conn->ifc_n_slack_all = 0;
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
+    }
+    else
+        assert(!lsquic_alarmset_is_set(&conn->ifc_alset, AL_ACK_INIT + pns));
     lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
     LSQ_DEBUG("%s ACK state reset", lsquic_pns2str[pns]);
 
@@ -1968,6 +1975,8 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("Generating MAX_STREAM_DATA frame failed");
         return 0;
     }
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte MAX_STREAM_DATA "
+        "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_MAX_STREAM_DATA;
     lsquic_stream_max_stream_data_sent(stream);
@@ -1998,6 +2007,8 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("Generating STREAM_BLOCKED frame failed");
         return 0;
     }
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte STREAM_BLOCKED "
+        "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
     lsquic_stream_blocked_frame_sent(stream);
@@ -4860,6 +4871,8 @@ process_max_data_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "MAX_DATA frame in; offset: %"PRIu64,
+        max_data);
     if (max_data > conn->ifc_pub.conn_cap.cc_max)
     {
         LSQ_DEBUG("max data goes from %"PRIu64" to %"PRIu64,
@@ -4888,6 +4901,8 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "MAX_STREAM_DATA frame in; "
+        "stream_id: %"PRIu64"; offset: %"PRIu64, stream_id, max_data);
     if (conn_is_receive_only_stream(conn, stream_id))
     {
         ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
@@ -5585,26 +5600,26 @@ many_in_and_will_write (struct ietf_full_conn *conn)
 
 
 static void
-try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
+try_queueing_ack_app (struct ietf_full_conn *conn,
                                             int was_missing, lsquic_time_t now)
 {
     lsquic_time_t srtt, ack_timeout;
 
-    if (conn->ifc_n_slack_akbl[pns] >= MAX_RETR_PACKETS_SINCE_LAST_ACK
+    if (conn->ifc_n_slack_akbl[PNS_APP] >= MAX_RETR_PACKETS_SINCE_LAST_ACK
             || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
-                    && was_missing && conn->ifc_n_slack_akbl[pns] > 0)
-            || (PNS_APP == pns && many_in_and_will_write(conn)))
+                    && was_missing && conn->ifc_n_slack_akbl[PNS_APP] > 0)
+            || many_in_and_will_write(conn))
     {
-        lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + pns);
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
         lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
-        conn->ifc_flags |= IFC_ACK_QUED_INIT << pns;
+        conn->ifc_flags |= IFC_ACK_QUED_APP;
         LSQ_DEBUG("%s ACK queued: ackable: %u; all: %u; had_miss: %d; "
             "was_missing: %d",
-            lsquic_pns2str[pns], conn->ifc_n_slack_akbl[pns],
+            lsquic_pns2str[PNS_APP], conn->ifc_n_slack_akbl[PNS_APP],
             conn->ifc_n_slack_all,
             !!(conn->ifc_flags & IFC_ACK_HAD_MISS), was_missing);
     }
-    else if (conn->ifc_n_slack_akbl[pns] > 0)
+    else if (conn->ifc_n_slack_akbl[PNS_APP] > 0)
     {
         /* See https://github.com/quicwg/base-drafts/issues/3304 for more */
         srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
@@ -5612,11 +5627,35 @@ try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
             ack_timeout = MAX(1000, MIN(ACK_TIMEOUT, srtt / 4));
         else
             ack_timeout = ACK_TIMEOUT;
-        lsquic_alarmset_set(&conn->ifc_alset, AL_ACK_INIT + pns,
+        lsquic_alarmset_set(&conn->ifc_alset, AL_ACK_APP,
                                                         now + ack_timeout);
-        LSQ_DEBUG("%s ACK alarm set to %"PRIu64, lsquic_pns2str[pns],
+        LSQ_DEBUG("%s ACK alarm set to %"PRIu64, lsquic_pns2str[PNS_APP],
                                                         now + ack_timeout);
     }
+}
+
+
+static void
+try_queueing_ack_init_or_hsk (struct ietf_full_conn *conn,
+                                                        enum packnum_space pns)
+{
+    if (conn->ifc_n_slack_akbl[pns] > 0)
+    {
+        conn->ifc_flags |= IFC_ACK_QUED_INIT << pns;
+        LSQ_DEBUG("%s ACK queued: ackable: %u",
+            lsquic_pns2str[pns], conn->ifc_n_slack_akbl[pns]);
+    }
+}
+
+
+static void
+try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
+                                            int was_missing, lsquic_time_t now)
+{
+    if (PNS_APP == pns)
+        try_queueing_ack_app(conn, was_missing, now);
+    else
+        try_queueing_ack_init_or_hsk(conn, pns);
 }
 
 
@@ -5736,9 +5775,6 @@ process_retry_packet (struct ietf_full_conn *conn,
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_INIT);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_HSK);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_APP);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_HSK);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
 
     LSQ_INFO("Received a retry packet.  Will retry.");
     conn->ifc_flags |= IFC_RETRIED;
@@ -5821,7 +5857,6 @@ ignore_init (struct ietf_full_conn *conn)
     LSQ_DEBUG("henceforth, no Initial packets shall be sent or received");
     conn->ifc_flags |= IFC_IGNORE_INIT;
     conn->ifc_flags &= ~(IFC_ACK_QUED_INIT << PNS_INIT);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_INIT + PNS_INIT);
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_INIT);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_INIT]);
     if (!(conn->ifc_flags & IFC_SERVER))
@@ -5842,7 +5877,6 @@ ignore_hsk (struct ietf_full_conn *conn)
     LSQ_DEBUG("henceforth, no Handshake packets shall be sent or received");
     conn->ifc_flags |= IFC_IGNORE_HSK;
     conn->ifc_flags &= ~(IFC_ACK_QUED_INIT << PNS_HSK);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_HSK);
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_HSK);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_HSK]);
     if (!(conn->ifc_flags & IFC_SERVER))
@@ -5851,28 +5885,6 @@ ignore_hsk (struct ietf_full_conn *conn)
             lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]);
             conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT] = NULL;
         }
-}
-
-
-/* Returns true if socket addresses are equal, false otherwise.  Only
- * families, IP addresses, and ports are compared.
- */
-static int
-sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
-{
-    if (a->sa_family == AF_INET)
-        return a->sa_family == b->sa_family
-            && ((struct sockaddr_in *) a)->sin_addr.s_addr
-                            == ((struct sockaddr_in *) b)->sin_addr.s_addr
-            && ((struct sockaddr_in *) a)->sin_port
-                            == ((struct sockaddr_in *) b)->sin_port;
-    else
-        return a->sa_family == b->sa_family
-            && ((struct sockaddr_in6 *) a)->sin6_port ==
-                                ((struct sockaddr_in6 *) b)->sin6_port
-            && 0 == memcmp(&((struct sockaddr_in6 *) a)->sin6_addr,
-                            &((struct sockaddr_in6 *) b)->sin6_addr,
-                            sizeof(((struct sockaddr_in6 *) b)->sin6_addr));
 }
 
 
@@ -5929,12 +5941,12 @@ process_regular_packet (struct ietf_full_conn *conn,
                  NP_IS_IPv6(&conn->ifc_paths[packet_in->pi_path_id].cop_path))
         {
         case (1 << 1) | 1:  /* IPv6 */
-            if (sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
+            if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
                         &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
                 goto known_peer_addr;
             break;
         case (0 << 1) | 0:  /* IPv4 */
-            if (sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
+            if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
                         &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
                 goto known_peer_addr;
             break;
@@ -6710,7 +6722,7 @@ static int
 path_matches_local_sa (const struct network_path *path,
                                             const struct sockaddr *local_sa)
 {
-    return sockaddr_eq(NP_LOCAL_SA(path), local_sa);
+    return lsquic_sockaddr_eq(NP_LOCAL_SA(path), local_sa);
 }
 
 
@@ -6758,8 +6770,8 @@ path_matches (const struct network_path *path,
             const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
 {
     return local_sa->sa_family == NP_LOCAL_SA(path)->sa_family
-        && sockaddr_eq(local_sa, NP_LOCAL_SA(path))
-        && sockaddr_eq(peer_sa, NP_PEER_SA(path));
+        && lsquic_sockaddr_eq(local_sa, NP_LOCAL_SA(path))
+        && lsquic_sockaddr_eq(peer_sa, NP_PEER_SA(path));
 }
 
 

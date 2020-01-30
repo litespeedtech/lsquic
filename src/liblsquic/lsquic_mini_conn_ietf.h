@@ -56,6 +56,7 @@ struct ietf_mini_conn
         IMC_HSK_PACKET_SENT     = 1 << 18,
         IMC_CLOSE_RECVD         = 1 << 19,
         IMC_PARSE_FAILED        = 1 << 20,
+        IMC_PATH_CHANGED        = 1 << 21,
     }                               imc_flags;
     struct mini_crypto_stream       imc_streams[N_ENC_LEVS];
     void                           *imc_stream_ps[N_ENC_LEVS];

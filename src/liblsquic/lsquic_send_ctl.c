@@ -1498,6 +1498,7 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl)
 }
 
 
+#ifndef NDEBUG
 void
 lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
 {
@@ -1540,6 +1541,7 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     assert(count == ctl->sc_n_scheduled);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
+#endif
 
 
 void

@@ -1766,6 +1766,7 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
 {
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
+    const struct sockaddr *orig_peer_sa;
     struct lsquic_packet_out *packet_out;
     size_t len;
 
@@ -1773,6 +1774,12 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
             if ((packet_out->po_flags & (PO_SENT|PO_ENCRYPTED)) == PO_ENCRYPTED)
                 imico_return_enc_data(conn, packet_out);
+
+    orig_peer_sa = NP_PEER_SA(&conn->imc_path);
+    if (orig_peer_sa->sa_family != 0
+            && !(lsquic_sockaddr_eq(NP_PEER_SA(&conn->imc_path), peer_sa)
+              && lsquic_sockaddr_eq(NP_LOCAL_SA(&conn->imc_path), local_sa)))
+        conn->imc_flags |= IMC_PATH_CHANGED;
 
     len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
                                                 : sizeof(struct sockaddr_in6);

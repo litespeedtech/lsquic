@@ -180,10 +180,14 @@ lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
 void
 lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl);
 
+#ifndef NDEBUG
 #define lsquic_send_ctl_sanity_check(ctl) do {                      \
     if ((ctl)->sc_flags & SC_SANITY_CHECK)                          \
         lsquic_send_ctl_do_sanity_check(ctl);                       \
 } while (0)
+#else
+#define lsquic_send_ctl_sanity_check(ctl)
+#endif
 
 int
 lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *);
