@@ -3931,6 +3931,9 @@ switch_path_to (struct id24_full_conn *conn, unsigned char path_id)
     conn->ifc_cur_path_id = path_id;
     conn->ifc_pub.path = CUR_NPATH(conn);
     conn->ifc_conn.cn_cur_cce_idx = CUR_CPATH(conn)->cop_cce_idx;
+    conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << old_path_id);
+    conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << old_path_id);
+    lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + old_path_id);
     if (conn->ifc_flags & IFC_SERVER)
     {
         memset(&conn->ifc_paths[old_path_id], 0, sizeof(conn->ifc_paths[0]));

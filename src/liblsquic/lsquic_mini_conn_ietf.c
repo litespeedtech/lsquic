@@ -1769,6 +1769,7 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
     const struct sockaddr *orig_peer_sa;
     struct lsquic_packet_out *packet_out;
     size_t len;
+    char path_str[4][INET6_ADDRSTRLEN + sizeof(":65535")];
 
     if (NP_IS_IPv6(&conn->imc_path) != (AF_INET6 == peer_sa->sa_family))
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
@@ -1776,10 +1777,19 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
                 imico_return_enc_data(conn, packet_out);
 
     orig_peer_sa = NP_PEER_SA(&conn->imc_path);
-    if (orig_peer_sa->sa_family != 0
-            && !(lsquic_sockaddr_eq(NP_PEER_SA(&conn->imc_path), peer_sa)
+    if (orig_peer_sa->sa_family == 0)
+        LSQ_DEBUG("connection to %s from %s", SA2STR(local_sa, path_str[0]),
+                                                SA2STR(peer_sa, path_str[1]));
+    else if (!(lsquic_sockaddr_eq(NP_PEER_SA(&conn->imc_path), peer_sa)
               && lsquic_sockaddr_eq(NP_LOCAL_SA(&conn->imc_path), local_sa)))
+    {
+        LSQ_DEBUG("path changed from (%s - %s) to (%s - %s)",
+            SA2STR(NP_LOCAL_SA(&conn->imc_path), path_str[0]),
+            SA2STR(NP_PEER_SA(&conn->imc_path), path_str[1]),
+            SA2STR(local_sa, path_str[2]),
+            SA2STR(peer_sa, path_str[3]));
         conn->imc_flags |= IMC_PATH_CHANGED;
+    }
 
     len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
                                                 : sizeof(struct sockaddr_in6);

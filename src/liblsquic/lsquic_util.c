@@ -15,6 +15,7 @@
 #include <vc_compat.h>
 #endif
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
 #include <mach/mach_time.h>
@@ -276,4 +277,36 @@ lsquic_sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
             && 0 == memcmp(&((struct sockaddr_in6 *) a)->sin6_addr,
                             &((struct sockaddr_in6 *) b)->sin6_addr,
                             sizeof(((struct sockaddr_in6 *) b)->sin6_addr));
+}
+
+
+void
+lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
+{
+    unsigned short port;
+    int len;
+
+    switch (addr->sa_family)
+    {
+    case AF_INET:
+        port = ntohs(((struct sockaddr_in *) addr)->sin_port);
+        if (!inet_ntop(AF_INET, &((struct sockaddr_in *) addr)->sin_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    case AF_INET6:
+        port = ntohs(((struct sockaddr_in6 *) addr)->sin6_port);
+        if (!inet_ntop(AF_INET6, &((struct sockaddr_in6 *) addr)->sin6_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    default:
+        port = 0;
+        (void) snprintf(buf, sz, "<invalid family %d>", addr->sa_family);
+        break;
+    }
+
+    len = strlen(buf);
+    if (len < (int) sz)
+        snprintf(buf + len, sz - (size_t) len, ":%hu", port);
 }

@@ -4137,15 +4137,15 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
     assert(conn->ifc_cur_path_id != path_id);
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "switched paths");
-    /* TODO: reset cwnd and RTT estimate.
-     *      See [draft-ietf-quic-transport-23] Section 9.4.
-     */
     lsquic_send_ctl_repath(&conn->ifc_send_ctl,
         CUR_NPATH(conn), &conn->ifc_paths[path_id].cop_path);
     maybe_retire_dcid(conn, &CUR_NPATH(conn)->np_dcid);
     conn->ifc_cur_path_id = path_id;
     conn->ifc_pub.path = CUR_NPATH(conn);
     conn->ifc_conn.cn_cur_cce_idx = CUR_CPATH(conn)->cop_cce_idx;
+    conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << old_path_id);
+    conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << old_path_id);
+    lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + old_path_id);
     if (conn->ifc_flags & IFC_SERVER)
     {
         memset(&conn->ifc_paths[old_path_id], 0, sizeof(conn->ifc_paths[0]));
@@ -6776,10 +6776,17 @@ path_matches (const struct network_path *path,
 
 
 static void
-record_to_path (struct network_path *path, void *peer_ctx,
+record_to_path (struct ietf_full_conn *conn, struct conn_path *copath, void *peer_ctx,
             const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
 {
-    size_t len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
+    struct network_path *path;
+    size_t len;
+    char path_str[2][INET6_ADDRSTRLEN + sizeof(":65535")];
+
+    LSQ_DEBUG("record path %d: (%s - %s)", (int) (copath - conn->ifc_paths),
+                SA2STR(local_sa, path_str[0]), SA2STR(peer_sa, path_str[1]));
+    path = &copath->cop_path;
+    len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
                                                 : sizeof(struct sockaddr_in6);
     memcpy(NP_LOCAL_SA(path), local_sa, len);
     len = peer_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)
@@ -6830,7 +6837,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 
     if (first_unused)
     {
-        record_to_path(&first_unused->cop_path, peer_ctx, local_sa, peer_sa);
+        record_to_path(conn, first_unused, peer_ctx, local_sa, peer_sa);
         if (0 == conn->ifc_used_paths && !(conn->ifc_flags & IFC_SERVER))
             /* First path is considered valid immediately */
             first_unused->cop_flags |= COP_VALIDATED;
@@ -6843,7 +6850,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
     if (first_unvalidated || first_other)
     {
         victim = first_unvalidated ? first_unvalidated : first_other;
-        record_to_path(&victim->cop_path, peer_ctx, local_sa, peer_sa);
+        record_to_path(conn, victim, peer_ctx, local_sa, peer_sa);
         return victim - conn->ifc_paths;
     }
 

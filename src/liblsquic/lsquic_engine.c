@@ -13,7 +13,6 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <time.h>
-#include <arpa/inet.h>
 #ifndef WIN32
 #include <sys/time.h>
 #include <netinet/in.h>
@@ -2048,38 +2047,6 @@ lose_matching_packets (const lsquic_engine_t *engine, struct out_batch *batch,
 #endif
 
 
-static void
-sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
-{
-    unsigned short port;
-    int len;
-
-    switch (addr->sa_family)
-    {
-    case AF_INET:
-        port = ntohs(((struct sockaddr_in *) addr)->sin_port);
-        if (!inet_ntop(AF_INET, &((struct sockaddr_in *) addr)->sin_addr,
-                                                                    buf, sz))
-            buf[0] = '\0';
-        break;
-    case AF_INET6:
-        port = ntohs(((struct sockaddr_in6 *) addr)->sin6_port);
-        if (!inet_ntop(AF_INET6, &((struct sockaddr_in6 *) addr)->sin6_addr,
-                                                                    buf, sz))
-            buf[0] = '\0';
-        break;
-    default:
-        port = 0;
-        (void) snprintf(buf, sz, "<invalid family %d>", addr->sa_family);
-        break;
-    }
-
-    len = strlen(buf);
-    if (len < (int) sz)
-        snprintf(buf + len, sz - (size_t) len, ":%hu", port);
-}
-
-
 struct send_batch_ctx {
     struct conns_stailq                 *closed_conns;
     struct conns_tailq                  *ticked_conns;
@@ -2121,8 +2088,8 @@ close_conn_on_send_error (struct lsquic_engine *engine,
         conn->cn_flags & LSCONN_EVANESCENT ? "evanecsent" :
         conn->cn_flags & LSCONN_MINI ? "mini" : "regular",
         CID_BITS(lsquic_conn_log_cid(conn)),
-        (sockaddr2str(batch->outs[n].local_sa, buf[0], sizeof(buf[0])), buf[0]),
-        (sockaddr2str(batch->outs[n].dest_sa, buf[1], sizeof(buf[1])), buf[1]),
+        SA2STR(batch->outs[n].local_sa, buf[0]),
+        SA2STR(batch->outs[n].dest_sa, buf[1]),
         e_val);
     if (conn->cn_flags & LSCONN_EVANESCENT)
         lsquic_prq_drop(conn);

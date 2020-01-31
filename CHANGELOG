@@ -1,3 +1,9 @@
+2020-01-31
+    - 2.10.3
+    - [BUGFIX] Cancel path responses and challenges on old path when
+      switching to new path
+    - Logging network path information.
+
 2020-01-30
     - 2.10.2
     - [BUGFIX] Do not delay ACKs for Initial and Handshake packets.
