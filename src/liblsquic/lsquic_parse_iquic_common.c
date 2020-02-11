@@ -25,7 +25,6 @@
 #include "lsquic_varint.h"
 #include "lsquic_enc_sess.h"
 #include "lsquic_tokgen.h"
-#include "lsquic.h"
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_ietf.h"

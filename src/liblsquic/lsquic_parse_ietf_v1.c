@@ -34,7 +34,6 @@
 #include "lsquic_version.h"
 #include "lsquic.h"
 #include "lsquic_byteswap.h"
-#include "lsquic_varint.h"
 #include "lsquic_conn.h"
 #include "lsquic_enc_sess.h"
 #include "lsquic_trans_params.h"

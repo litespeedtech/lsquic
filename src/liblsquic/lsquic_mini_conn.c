@@ -46,7 +46,6 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
-#include "lsquic_varint.h"
 #include "lsquic_stream.h"
 #include "lsquic_rechist.h"
 #include "lsquic_ev_log.h"

@@ -42,7 +42,6 @@
 #include "lsquic_conn_public.h"
 #include "lsquic_cong_ctl.h"
 #include "lsquic_enc_sess.h"
-#include "lsquic_hash.h"
 #include "lsquic_malo.h"
 #include "lsquic_attq.h"
 #include "lsquic_http1x_if.h"
