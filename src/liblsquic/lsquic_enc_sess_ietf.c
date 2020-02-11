@@ -2238,6 +2238,55 @@ iquic_esfi_handshake_confirmed (enc_session_t *sess)
 }
 
 
+static int
+iquic_esfi_in_init (enc_session_t *sess)
+{
+    struct enc_sess_iquic *enc_sess = (struct enc_sess_iquic *) sess;
+    int in_init;
+
+    if (enc_sess->esi_ssl)
+    {
+        in_init = SSL_in_init(enc_sess->esi_ssl);
+        LSQ_DEBUG("in_init: %d", in_init);
+        return in_init;
+    }
+    else
+    {
+        LSQ_DEBUG("no SSL object, in_init: 0");
+        return 0;
+    }
+}
+
+
+int
+iquic_esfi_data_in (enc_session_t *sess, enum enc_level enc_level,
+                                    const unsigned char *buf, size_t len)
+{
+    struct enc_sess_iquic *enc_sess = (struct enc_sess_iquic *) sess;
+    int s;
+    size_t str_sz;
+    char str[MAX(1500 * 5, ERR_ERROR_STRING_BUF_LEN)];
+
+    if (!enc_sess->esi_ssl)
+        return -1;
+
+    s = SSL_provide_quic_data(enc_sess->esi_ssl,
+                (enum ssl_encryption_level_t) enc_level, buf, len);
+    if (!s)
+    {
+        LSQ_WARN("SSL_provide_quic_data returned false: %s",
+                                    ERR_error_string(ERR_get_error(), str));
+        return -1;
+    }
+    LSQ_DEBUG("provided %zu bytes of %u-level data to SSL", len, enc_level);
+    str_sz = lsquic_hexdump(buf, len, str, sizeof(str));
+    LSQ_DEBUG("\n%.*s", (int) str_sz, str);
+    s = SSL_do_handshake(enc_sess->esi_ssl);
+    LSQ_DEBUG("do_handshake returns %d", s);
+    return 0;
+}
+
+
 static void iquic_esfi_shake_stream (enc_session_t *sess,
                             struct lsquic_stream *stream, const char *what);
 
@@ -2255,6 +2304,8 @@ const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1 =
     .esfi_shake_stream   = iquic_esfi_shake_stream,
     .esfi_handshake_confirmed
                          = iquic_esfi_handshake_confirmed,
+    .esfi_in_init        = iquic_esfi_in_init,
+    .esfi_data_in        = iquic_esfi_data_in,
 };
 
 

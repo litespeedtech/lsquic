@@ -296,6 +296,13 @@ struct enc_session_funcs_iquic
 
     void
     (*esfi_handshake_confirmed)(enc_session_t *);
+
+    int
+    (*esfi_in_init)(enc_session_t *);
+
+    int
+    (*esfi_data_in)(enc_session_t *, enum enc_level,
+                                            const unsigned char *, size_t);
 };
 
 extern

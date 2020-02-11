@@ -1645,6 +1645,7 @@ imico_generate_handshake_done (struct ietf_mini_conn *conn)
     packet_out->po_frame_types |= 1 << QUIC_FRAME_HANDSHAKE_DONE;
     packet_out->po_data_sz += sz;
     LSQ_DEBUG("generated HANDSHAKE_DONE frame");
+    conn->imc_flags |= IMC_HSK_DONE_SENT;
 
     return 0;
 }
@@ -1685,9 +1686,13 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
     else if (conn->imc_flags & IMC_HSK_OK)
     {
-        if (conn->imc_conn.cn_version > LSQVER_ID24
-                                && 0 != imico_generate_handshake_done(conn))
-            goto close_on_error;
+        if (conn->imc_conn.cn_version > LSQVER_ID24)
+        {
+            if (lconn->cn_esf.i->esfi_in_init(lconn->cn_enc_session))
+                LSQ_DEBUG("still in init, defer HANDSHAKE_DONE");
+            else if (0 != imico_generate_handshake_done(conn))
+                goto close_on_error;
+        }
         tick |= TICK_PROMOTE;
     }
 

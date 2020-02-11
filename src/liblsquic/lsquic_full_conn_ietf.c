@@ -160,6 +160,7 @@ enum send
     SEND_MAX_STREAMS_BIDI = SEND_MAX_STREAMS + SD_BIDI,
     SEND_MAX_STREAMS_UNI = SEND_MAX_STREAMS + SD_UNI,
     SEND_STOP_SENDING,
+    SEND_HANDSHAKE_DONE,
     N_SEND
 };
 
@@ -183,6 +184,7 @@ enum send_flags
     SF_SEND_MAX_STREAMS_BIDI        = 1 << SEND_MAX_STREAMS_BIDI,
     SF_SEND_MAX_STREAMS_UNI         = 1 << SEND_MAX_STREAMS_UNI,
     SF_SEND_STOP_SENDING            = 1 << SEND_STOP_SENDING,
+    SF_SEND_HANDSHAKE_DONE          = 1 << SEND_HANDSHAKE_DONE,
 };
 
 #define SF_SEND_PATH_CHAL_ALL \
@@ -1321,6 +1323,12 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     assert(mini_conn->cn_flags & LSCONN_HANDSHAKE_DONE);
     conn->ifc_conn.cn_flags      |= LSCONN_HANDSHAKE_DONE;
+    if (mini_conn->cn_version > LSQVER_ID24
+                                    && !(imc->imc_flags & IMC_HSK_DONE_SENT))
+    {
+        LSQ_DEBUG("HANDSHAKE_DONE not yet sent, will process CRYPTO frames");
+        conn->ifc_flags |= IFC_PROC_CRYPTO;
+    }
 
     conn->ifc_conn.cn_enc_session = mini_conn->cn_enc_session;
     mini_conn->cn_enc_session     = NULL;
@@ -2530,7 +2538,7 @@ drop_crypto_streams (struct ietf_full_conn *conn)
     struct lsquic_stream **streamp;
     unsigned count;
 
-    if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_PROC_CRYPTO)) != IFC_PROC_CRYPTO)
         return;
 
     conn->ifc_flags &= ~IFC_PROC_CRYPTO;
@@ -3810,6 +3818,34 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 
 
 static void
+generate_handshake_done_frame (struct ietf_full_conn *conn,
+                                                        lsquic_time_t unused)
+{
+    struct lsquic_packet_out *packet_out;
+    unsigned need;
+    int sz;
+
+    need = conn->ifc_conn.cn_pf->pf_handshake_done_frame_size();
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+        return;
+    sz = conn->ifc_conn.cn_pf->pf_gen_handshake_done_frame(
+                            packet_out->po_data + packet_out->po_data_sz,
+                            lsquic_packet_out_avail(packet_out));
+    if (sz < 0)
+    {
+        ABORT_ERROR("generate_handshake_done_frame failed");
+        return;
+    }
+
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= QUIC_FTBIT_HANDSHAKE_DONE;
+    LSQ_DEBUG("generated HANDSHAKE_DONE frame");
+    conn->ifc_send_flags &= ~SF_SEND_HANDSHAKE_DONE;
+}
+
+
+static void
 generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
@@ -4518,8 +4554,48 @@ discard_crypto_frame (struct ietf_full_conn *conn,
 }
 
 
+/* In the server, we only wait for Finished frame */
 static unsigned
-process_crypto_frame (struct ietf_full_conn *conn,
+process_crypto_frame_server (struct ietf_full_conn *conn,
+    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    struct stream_frame stream_frame;
+    int parsed_len;
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_crypto_frame(p, len,
+                                                                &stream_frame);
+    if (parsed_len < 0)
+        return 0;
+
+    if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
+    {
+        LSQ_DEBUG("discard %d-byte CRYPTO frame", parsed_len);
+        return (unsigned) parsed_len;
+    }
+
+    if (0 != conn->ifc_conn.cn_esf.i->esfi_data_in(
+                    conn->ifc_conn.cn_enc_session,
+                    lsquic_packet_in_enc_level(packet_in),
+                    stream_frame.data_frame.df_data,
+                    stream_frame.data_frame.df_size))
+    {
+        LSQ_DEBUG("feeding CRYPTO frame to enc session failed");
+        return 0;
+    }
+
+    if (!conn->ifc_conn.cn_esf.i->esfi_in_init(conn->ifc_conn.cn_enc_session))
+    {
+        LSQ_DEBUG("handshake confirmed: send HANDSHAKE_DONE");
+        conn->ifc_flags &= ~IFC_PROC_CRYPTO;
+        conn->ifc_send_flags |= SF_SEND_HANDSHAKE_DONE;
+    }
+
+    return (unsigned) parsed_len;
+}
+
+
+static unsigned
+process_crypto_frame_client (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame *stream_frame;
@@ -4604,6 +4680,17 @@ process_crypto_frame (struct ietf_full_conn *conn,
     }
 
     return parsed_len;
+}
+
+
+static unsigned
+process_crypto_frame (struct ietf_full_conn *conn,
+    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    if (conn->ifc_flags & IFC_SERVER)
+        return process_crypto_frame_server(conn, packet_in, p, len);
+    else
+        return process_crypto_frame_client(conn, packet_in, p, len);
 }
 
 
@@ -6283,6 +6370,7 @@ static void (*const send_funcs[N_SEND])(
     [SEND_PATH_RESP_PATH_0]    = generate_path_resp_0,
     [SEND_PATH_RESP_PATH_1]    = generate_path_resp_1,
     [SEND_PING]                = generate_ping_frame,
+    [SEND_HANDSHAKE_DONE]      = generate_handshake_done_frame,
 };
 
 
@@ -6292,7 +6380,7 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_MAX_STREAMS_UNI|SF_SEND_MAX_STREAMS_BIDI\
     |SF_SEND_PATH_CHAL_PATH_0|SF_SEND_PATH_CHAL_PATH_1\
     |SF_SEND_PATH_RESP_PATH_0|SF_SEND_PATH_RESP_PATH_1\
-    |SF_SEND_PING\
+    |SF_SEND_PING|SF_SEND_HANDSHAKE_DONE\
     |SF_SEND_STOP_SENDING)
 
 static enum tick_st

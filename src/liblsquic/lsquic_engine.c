@@ -2657,8 +2657,8 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         {
             LSQ_DEBUG("Cannot parse incoming packet's header");
             lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
-            errno = EINVAL;
-            return -1;
+            s = 1;
+            break;
         }
 
         packet_in_data += packet_in->pi_data_sz;

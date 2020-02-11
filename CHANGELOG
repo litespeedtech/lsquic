@@ -1,3 +1,11 @@
+2020-02-11
+    - 2.10.4
+    - [BUGFIX] Send HANDSHAKE_DONE only after Finished is received.
+    - [BUGFIX] Don't treat garbage UDP padding as library error; ignore
+      it instead.
+    - [BUGFIX] Fix compilation on FreeBSD (missing header).
+    - Code cleanup: remove unnecessary #includes.
+
 2020-01-31
     - 2.10.3
     - [BUGFIX] Cancel path responses and challenges on old path when
