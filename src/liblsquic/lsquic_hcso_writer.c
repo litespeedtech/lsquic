@@ -18,7 +18,6 @@
 #include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_frab_list.h"
-#include "lsquic_varint.h"
 #include "lsquic_byteswap.h"
 #include "lsquic_hcso_writer.h"
 #include "lsquic_conn.h"

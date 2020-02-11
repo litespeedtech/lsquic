@@ -73,7 +73,6 @@
 #include "lsquic_attq.h"
 #include "lsquic_min_heap.h"
 #include "lsquic_http1x_if.h"
-#include "lsquic_parse_common.h"
 #include "lsquic_handshake.h"
 #include "lsquic_crand.h"
 #include "lsquic_ietf.h"

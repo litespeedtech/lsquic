@@ -21,10 +21,8 @@
 #include "lsquic_packet_out.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
-#include "lsquic_packet_out.h"
 #include "lsquic_parse_common.h"
 #include "lsquic_parse.h"
-#include "lsquic_parse_common.h"
 #include "lsquic_version.h"
 #include "lsquic.h"
 

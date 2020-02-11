@@ -25,7 +25,6 @@
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_headers.h"
-#include "lsquic_http1x_if.h"
 #include "lsquic_conn.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_QDEC_HDL
