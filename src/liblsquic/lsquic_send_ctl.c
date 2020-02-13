@@ -655,6 +655,9 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
         packet_out->po_packno, lsquic_frame_types_to_str(frames,
             sizeof(frames), packet_out->po_frame_types));
     lsquic_senhist_add(&ctl->sc_senhist, packet_out->po_packno);
+    if (ctl->sc_ci->cci_sent)
+        ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_bytes_unacked_all,
+                                            ctl->sc_flags & SC_APP_LIMITED);
     send_ctl_unacked_append(ctl, packet_out);
     if (packet_out->po_frame_types & ctl->sc_retx_frames)
     {
@@ -670,9 +673,6 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_total_sent;
 #endif
-    if (ctl->sc_ci->cci_sent)
-        ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_n_in_flight_all,
-                                            ctl->sc_flags & SC_APP_LIMITED);
     lsquic_send_ctl_sanity_check(ctl);
     return 0;
 }

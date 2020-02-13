@@ -6,98 +6,76 @@
 #ifndef LSQUIC_TRANS_PARAMS_H
 #define LSQUIC_TRANS_PARAMS_H 1
 
-/* [draft-ietf-quic-transport-17], Section 18 */
+/* Transport parameters are grouped by the type of their values: numeric,
+ * empty, and custom.
+ *
+ * The enum values are arbitrary.  The literal transport parameter ID
+ * *values* (e.g. 0x1057 for loss bits) are not exposed by the API.
+ */
 enum transport_param_id
 {
-    TPI_ORIGINAL_CONNECTION_ID            =  0,
-    TPI_MAX_IDLE_TIMEOUT                  =  1,
-    TPI_STATELESS_RESET_TOKEN             =  2,
-    TPI_MAX_PACKET_SIZE                   =  3,
-    TPI_INIT_MAX_DATA                     =  4,
-    TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL   =  5,
-    TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE  =  6,
-    TPI_INIT_MAX_STREAM_DATA_UNI          =  7,
-    TPI_INIT_MAX_STREAMS_BIDI             =  8,
-    TPI_INIT_MAX_STREAMS_UNI              =  9,
-    TPI_ACK_DELAY_EXPONENT                =  10,
-    TPI_MAX_ACK_DELAY                     =  11,
-    TPI_DISABLE_ACTIVE_MIGRATION          =  12,
-    TPI_PREFERRED_ADDRESS                 =  13,
-    TPI_ACTIVE_CONNECTION_ID_LIMIT        =  14,
-#define MAX_TPI TPI_ACTIVE_CONNECTION_ID_LIMIT
-};
+    /*
+     * Numeric transport parameters that have default values:
+     */
+    TPI_MAX_IDLE_TIMEOUT,
+    TPI_MAX_PACKET_SIZE,
+    TPI_INIT_MAX_DATA,
+    TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL,
+    TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE,
+    TPI_INIT_MAX_STREAM_DATA_UNI,
+    TPI_INIT_MAX_STREAMS_BIDI,
+    TPI_INIT_MAX_STREAMS_UNI,
+    TPI_ACK_DELAY_EXPONENT,
+    TPI_MAX_ACK_DELAY,
+    TPI_ACTIVE_CONNECTION_ID_LIMIT,         MAX_NUM_WITH_DEF_TPI = TPI_ACTIVE_CONNECTION_ID_LIMIT,
 
-#define NUMERIC_TRANS_PARAMS (\
-     (1 << TPI_MAX_PACKET_SIZE) \
-    |(1 << TPI_INIT_MAX_STREAMS_UNI) \
-    |(1 << TPI_INIT_MAX_STREAMS_UNI) \
-    |(1 << TPI_INIT_MAX_STREAMS_BIDI) \
-    |(1 << TPI_INIT_MAX_DATA) \
-    |(1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL) \
-    |(1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE) \
-    |(1 << TPI_INIT_MAX_STREAM_DATA_UNI) \
-    |(1 << TPI_MAX_IDLE_TIMEOUT) \
-    |(1 << TPI_MAX_ACK_DELAY) \
-    |(1 << TPI_ACK_DELAY_EXPONENT) \
-    |(1 << TPI_ACTIVE_CONNECTION_ID_LIMIT) \
-    )
+    /*
+     * Numeric transport parameters without default values:
+     */
+    TPI_LOSS_BITS,                          MAX_NUMERIC_TPI = TPI_LOSS_BITS,
 
-#define IQUIC_MAX_SUPP_VERS ((2<<7) - 4)/sizeof(uint32_t)
+    /*
+     * Empty transport parameters:
+     */
+    TPI_DISABLE_ACTIVE_MIGRATION,           MAX_EMPTY_TPI = TPI_DISABLE_ACTIVE_MIGRATION,
 
-enum trapa_flags
-{
-    TRAPA_RESET_TOKEN   = 1 << 0,   /* Reset token is set */
-    TRAPA_SERVER        = 1 << 1,   /* Server transport parameters */
-    TRAPA_PREFADDR_IPv4 = 1 << 2,   /* Preferred IPv4 address is set */
-    TRAPA_PREFADDR_IPv6 = 1 << 3,   /* Preferred IPv6 address is set */
-    TRAPA_ORIGINAL_CID  = 1 << 4,   /* Original CID is set */
+    /*
+     * Custom handlers:
+     */
+    TPI_PREFERRED_ADDRESS,
+    TPI_ORIGINAL_CONNECTION_ID,
 #if LSQUIC_TEST_QUANTUM_READINESS
-#define QUANTUM_READY_SZ 1200
     /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
-#define TPI_QUANTUM_READINESS 3127
-    TRAPA_QUANTUM_READY = 1 << 5,   /* Include "Quantum Readiness" TP */
+#define QUANTUM_READY_SZ 1200
+    TPI_QUANTUM_READINESS,
 #endif
-#define TPI_QL_BITS 0x1057     /* 1057 is 133t for "lost" */
-    TRAPA_QL_BITS       = 1 << 6,   /* tp_loss_bits contains valid value */
-    TRAPA_QL_BITS_OLD   = 1 << 7,   /* Send old-school boolean loss_bits TP.
-                                     * Not set on decoded transport parameters.
-                                     */
+    TPI_STATELESS_RESET_TOKEN,              LAST_TPI = TPI_STATELESS_RESET_TOKEN
 };
+
 
 struct transport_params
 {
-    enum trapa_flags        tp_flags;
+    /* Which transport parameters values are set: */
+    unsigned                tp_set;
 
-    union {
-        struct {
-            uint64_t init_max_stream_data_bidi_local;
-            uint64_t init_max_stream_data_bidi_remote;
-            uint64_t init_max_stream_data_uni;
-            uint64_t init_max_data;
-            uint64_t max_idle_timeout;
-            uint64_t init_max_streams_bidi;
-            uint64_t init_max_streams_uni;
-            uint64_t max_packet_size;
-            uint64_t ack_delay_exponent;
-            uint64_t max_ack_delay;
-            uint64_t active_connection_id_limit;
-        }               s;
-        uint64_t        a[11];
-    }           tp_numerics_u;
-#define tp_init_max_stream_data_bidi_local tp_numerics_u.s.init_max_stream_data_bidi_local
-#define tp_init_max_stream_data_bidi_remote tp_numerics_u.s.init_max_stream_data_bidi_remote
-#define tp_init_max_stream_data_uni tp_numerics_u.s.init_max_stream_data_uni
-#define tp_init_max_data tp_numerics_u.s.init_max_data
-#define tp_max_idle_timeout tp_numerics_u.s.max_idle_timeout
-#define tp_init_max_streams_bidi tp_numerics_u.s.init_max_streams_bidi
-#define tp_init_max_streams_uni tp_numerics_u.s.init_max_streams_uni
-#define tp_max_packet_size tp_numerics_u.s.max_packet_size
-#define tp_ack_delay_exponent tp_numerics_u.s.ack_delay_exponent
-#define tp_max_ack_delay tp_numerics_u.s.max_ack_delay
-#define tp_active_connection_id_limit tp_numerics_u.s.active_connection_id_limit
+    /* Which transport parameters were present (set by the decoder): */
+    unsigned                tp_decoded;
 
-    unsigned char   tp_loss_bits;   /* Valid values 0, 1.  Set if TRAPA_QL_BITS is set. */
-    signed char tp_disable_active_migration;
+    uint64_t                tp_numerics[MAX_NUMERIC_TPI + 1];
+
+#define tp_init_max_stream_data_bidi_local  tp_numerics[TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]
+#define tp_init_max_stream_data_bidi_remote tp_numerics[TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]
+#define tp_init_max_stream_data_uni         tp_numerics[TPI_INIT_MAX_STREAM_DATA_UNI]
+#define tp_init_max_data                    tp_numerics[TPI_INIT_MAX_DATA]
+#define tp_max_idle_timeout                 tp_numerics[TPI_MAX_IDLE_TIMEOUT]
+#define tp_init_max_streams_bidi            tp_numerics[TPI_INIT_MAX_STREAMS_BIDI]
+#define tp_init_max_streams_uni             tp_numerics[TPI_INIT_MAX_STREAMS_UNI]
+#define tp_max_packet_size                  tp_numerics[TPI_MAX_PACKET_SIZE]
+#define tp_ack_delay_exponent               tp_numerics[TPI_ACK_DELAY_EXPONENT]
+#define tp_max_ack_delay                    tp_numerics[TPI_MAX_ACK_DELAY]
+#define tp_active_connection_id_limit       tp_numerics[TPI_ACTIVE_CONNECTION_ID_LIMIT]
+#define tp_loss_bits                        tp_numerics[TPI_LOSS_BITS]
+
     uint8_t     tp_stateless_reset_token[IQUIC_SRESET_TOKEN_SZ];
     struct {
         uint8_t         ipv4_addr[4];
@@ -127,6 +105,7 @@ struct transport_params
 #define TP_MAX_MAX_ACK_DELAY ((1u << 14) - 1)
 
 #define TP_DEFAULT_VALUES                                                             \
+    .tp_set = ((1 << (MAX_NUM_WITH_DEF_TPI + 1)) - 1),                                \
     .tp_active_connection_id_limit        =  TP_DEF_ACTIVE_CONNECTION_ID_LIMIT,       \
     .tp_max_idle_timeout                  =  TP_DEF_MAX_IDLE_TIMEOUT,                 \
     .tp_max_ack_delay                     =  TP_DEF_MAX_ACK_DELAY,                    \
@@ -135,7 +114,6 @@ struct transport_params
     .tp_init_max_streams_bidi             =  TP_DEF_INIT_MAX_STREAMS_BIDI,            \
     .tp_init_max_streams_uni              =  TP_DEF_INIT_MAX_STREAMS_UNI,             \
     .tp_init_max_data                     =  TP_DEF_INIT_MAX_DATA,                    \
-    .tp_disable_active_migration          =  TP_DEF_DISABLE_ACTIVE_MIGRATION,         \
     .tp_init_max_stream_data_bidi_local   =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_LOCAL,  \
     .tp_init_max_stream_data_bidi_remote  =  TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE, \
     .tp_init_max_stream_data_uni          =  TP_DEF_INIT_MAX_STREAM_DATA_UNI
@@ -143,7 +121,7 @@ struct transport_params
 #define TP_INITIALIZER() (struct transport_params) { TP_DEFAULT_VALUES }
 
 int
-lsquic_tp_encode (const struct transport_params *,
+lsquic_tp_encode (const struct transport_params *, int is_server,
                   unsigned char *buf, size_t bufsz);
 
 int
@@ -157,5 +135,11 @@ lsquic_tp_decode (const unsigned char *buf, size_t bufsz,
 
 void
 lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz);
+
+int
+lsquic_tp_has_pref_ipv4 (const struct transport_params *);
+
+int
+lsquic_tp_has_pref_ipv6 (const struct transport_params *);
 
 #endif

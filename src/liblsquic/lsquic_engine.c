@@ -403,7 +403,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (!(settings->es_ql_bits >= -1 && settings->es_ql_bits <= 2))
+    if (!(settings->es_ql_bits >= 0 && settings->es_ql_bits <= 2))
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid QL bits value %d ",

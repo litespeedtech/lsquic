@@ -2765,10 +2765,10 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
         struct sockaddr_in6 v6;
     } sockaddr;
 
-    if (params->tp_disable_active_migration
+    if ((params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION))
                                 || !conn->ifc_settings->es_allow_migration)
     {
-        if (params->tp_disable_active_migration)
+        if (params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION))
             LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
         else
             LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
@@ -2777,8 +2777,8 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
     }
 
     is_ipv6 = NP_IS_IPv6(CUR_NPATH(conn));
-    if ((is_ipv6 && !(params->tp_flags & TRAPA_PREFADDR_IPv6))
-                || (!is_ipv6 && !(params->tp_flags & TRAPA_PREFADDR_IPv4)))
+    if ((is_ipv6 && !lsquic_tp_has_pref_ipv6(params))
+                || (!is_ipv6 && !lsquic_tp_has_pref_ipv4(params)))
     {
         /* XXX This is a limitation in the client code outside of the library.
          * To support cross-IP-version migration, we need to add some callbacks
@@ -2856,7 +2856,7 @@ maybe_start_migration (struct ietf_full_conn *conn)
 
     params = lconn->cn_esf.i->esfi_get_peer_transport_params(
                                                         lconn->cn_enc_session);
-    if (params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
+    if (params->tp_set & (1 << TPI_PREFERRED_ADDRESS))
     {
         if (0 != begin_migra_or_retire_cid(conn, params))
             ABORT_QUIETLY(0, TEC_INTERNAL_ERROR, "error initiating migration");
@@ -2894,9 +2894,8 @@ handshake_ok (struct lsquic_conn *lconn)
     LSQ_DEBUG("peer transport parameters: %s",
                         (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
 
-    if ((params->tp_flags & TRAPA_QL_BITS)
-                                    && (conn->ifc_settings->es_ql_bits == 2
-                                     || conn->ifc_settings->es_ql_bits == -1))
+    if ((params->tp_set & (1 << TPI_LOSS_BITS))
+                                    && conn->ifc_settings->es_ql_bits == 2)
     {
         LSQ_DEBUG("turn on QL loss bits");
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
@@ -3005,7 +3004,7 @@ handshake_ok (struct lsquic_conn *lconn)
     memset(dce, 0, sizeof(*dce));
     dce->de_cid = *CUR_DCID(conn);
     dce->de_seqno = 0;
-    if (params->tp_flags & TRAPA_RESET_TOKEN)
+    if (params->tp_set & (1 << TPI_STATELESS_RESET_TOKEN))
     {
         memcpy(dce->de_srst, params->tp_stateless_reset_token,
                                                     sizeof(dce->de_srst));

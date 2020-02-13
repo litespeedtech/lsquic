@@ -29,6 +29,8 @@ struct trapa_test
     }                           flags;
     struct transport_params     params;
     size_t                      enc_len, dec_len;
+    unsigned                    addl_set;
+    int                         is_server;
     int                         expect_decode_err;
     unsigned char               encoded[ENC_BUF_SZ];
 };
@@ -53,13 +55,20 @@ static const struct trapa_test tests[] =
         .line   = __LINE__,
         .flags  = TEST_ENCODE | TEST_DECODE,
         .params = {
-            .tp_flags   = 0,
+            .tp_set = (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)
+                    | (1 << TPI_INIT_MAX_DATA)
+                    | (1 << TPI_MAX_IDLE_TIMEOUT)
+                    | (1 << TPI_MAX_ACK_DELAY)
+                    | (1 << TPI_MAX_PACKET_SIZE)
+                    | (1 << TPI_ACK_DELAY_EXPONENT)
+                    | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT),
             .tp_init_max_stream_data_bidi_local = 0x12348877,
             .tp_init_max_data = 0xAABB,
             .tp_max_idle_timeout = 10 * 1000,
             .tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY,
             .tp_active_connection_id_limit = 7,
         },
+        .is_server = 0,
         .enc_len = 39,
         .encoded =
      /* Overall length */   "\x00\x25"
@@ -94,12 +103,12 @@ static const struct trapa_test tests[] =
         .flags  = TEST_ENCODE | TEST_DECODE,
         .params = {
             TP_DEFAULT_VALUES,
-            .tp_flags = TRAPA_SERVER,
             .tp_init_max_data = 0x123456,
             .tp_init_max_stream_data_bidi_local = 0xABCDEF88,
-            .tp_disable_active_migration = 1,
             .tp_max_packet_size = 0x333,
         },
+        .is_server = 1,
+        .addl_set = 1 << TPI_DISABLE_ACTIVE_MIGRATION,
         .enc_len = 32,
         .encoded =
      /* Overall length */   "\x00\x1E"
@@ -117,7 +126,6 @@ static const struct trapa_test tests[] =
         .flags  = TEST_DECODE,
         .params = {
             TP_DEFAULT_VALUES,
-            .tp_flags = TRAPA_SERVER | TRAPA_PREFADDR_IPv4 | TRAPA_PREFADDR_IPv6,
             .tp_max_ack_delay = 25,
             .tp_max_packet_size = 0x333,
             .tp_preferred_address = {
@@ -129,6 +137,8 @@ static const struct trapa_test tests[] =
                 .srst = "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F",
             },
         },
+        .is_server = 1,
+        .addl_set = 1 << TPI_PREFERRED_ADDRESS,
         .enc_len = 0x3E + 2,
         .encoded =
      /* Overall length */   "\x00\x3E"
@@ -154,9 +164,8 @@ params_are_equal (const struct transport_params *a,
                   const struct transport_params *b)
 {
 #define MCMP(f) 0 == memcmp(&a->f, &b->f, sizeof(a->f))
-    return a->tp_flags == b->tp_flags
-        && MCMP(tp_numerics_u)
-        && a->tp_disable_active_migration == b->tp_disable_active_migration
+    return MCMP(tp_numerics)
+        && MCMP(tp_set)
         && MCMP(tp_stateless_reset_token)
         && MCMP(tp_preferred_address.ipv4_addr)
         && MCMP(tp_preferred_address.ipv6_addr)
@@ -175,14 +184,18 @@ params_are_equal (const struct transport_params *a,
 static void
 run_test (const struct trapa_test *test)
 {
+    struct transport_params source_params;
     struct transport_params decoded_params;
     size_t dec_len;
     int s;
     unsigned char buf[ENC_BUF_SZ];
 
+    source_params = test->params;
+    source_params.tp_set |= test->addl_set;
+
     if (test->flags & TEST_ENCODE)
     {
-        s = lsquic_tp_encode(&test->params, buf, sizeof(buf));
+        s = lsquic_tp_encode(&source_params, test->is_server, buf, sizeof(buf));
         assert(s > 0);
         assert((size_t) s == test->enc_len);
         assert(0 == memcmp(test->encoded, buf, s));
@@ -195,12 +208,16 @@ run_test (const struct trapa_test *test)
         else
             dec_len = sizeof(buf);
         s = lsquic_tp_decode(test->encoded, dec_len,
-                     test->params.tp_flags & TRAPA_SERVER, &decoded_params);
+                     test->is_server, &decoded_params);
         if (!test->expect_decode_err)
         {
             assert(s > 0);
             assert((size_t) s == test->enc_len);
-            s = params_are_equal(&test->params, &decoded_params);
+            /* The decoder initializes all default values, so set the flag
+             * accordingly:
+             */
+            source_params.tp_set |= ((1 << (MAX_NUM_WITH_DEF_TPI + 1)) - 1);
+            s = params_are_equal(&source_params, &decoded_params);
             assert(s);
         }
         else

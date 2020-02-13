@@ -3407,10 +3407,10 @@ lsquic_stream_writef (lsquic_stream_t *stream, struct lsquic_reader *reader)
 static ssize_t
 stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz)
 {
-    struct iovec iov = { (void *) buf, sz, };
+    const struct iovec iov[1] = {{ (void *) buf, sz, }};
     struct inner_reader_iovec iro = {
-        .iov = &iov,
-        .end = &iov + 1,
+        .iov = iov,
+        .end = iov + 1,
         .cur_iovec_off = 0,
     };
     struct lsquic_reader reader = {

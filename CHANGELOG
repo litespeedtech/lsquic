@@ -1,3 +1,10 @@
+2020-02-13
+    - 2.10.5
+    - [BUGFIX] BBR: call cci_sent() with correct arguments and at correct
+      time.
+    - Refactor transport parameters module.
+    - Minor code cleanup.
+
 2020-02-11
     - 2.10.4
     - [BUGFIX] Send HANDSHAKE_DONE only after Finished is received.

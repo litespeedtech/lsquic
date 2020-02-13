@@ -887,9 +887,10 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     *type |= bits;
 
     CHECKOUT(largest_acked_len);
-    tmp_packno = maxno;
 #if __BYTE_ORDER == __LITTLE_ENDIAN
     tmp_packno = bswap_64(maxno);
+#else
+    tmp_packno = maxno;
 #endif
     memcpy(p, (unsigned char *) &tmp_packno + 8 - largest_acked_len,
                                                             largest_acked_len);

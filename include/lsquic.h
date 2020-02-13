@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_PATCH_VERSION 5
 
 /**
  * Engine flags:
@@ -757,7 +757,6 @@ struct lsquic_engine_settings {
      *  0:  Do not use loss bits
      *  1:  Allow loss bits
      *  2:  Allow and send loss bits
-     * -1:  Allow and send loss bits, sending old-style boolean loss_bits TP
      *
      * Default value is @ref LSQUIC_DF_QL_BITS
      */

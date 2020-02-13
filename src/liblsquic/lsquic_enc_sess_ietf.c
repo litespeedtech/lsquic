@@ -436,15 +436,14 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     {
         const struct lsquic_conn *const lconn = enc_sess->esi_conn;
 
-        params.tp_flags |= TRAPA_SERVER|TRAPA_RESET_TOKEN;
-
+        params.tp_set |= 1 << TPI_STATELESS_RESET_TOKEN;
         lsquic_tg_generate_sreset(enc_sess->esi_enpub->enp_tokgen,
             CN_SCID(lconn), params.tp_stateless_reset_token);
 
         if (enc_sess->esi_flags & ESI_ODCID)
         {
             params.tp_original_cid = enc_sess->esi_odcid;
-            params.tp_flags |= TRAPA_ORIGINAL_CID;
+            params.tp_set |= 1 << TPI_ORIGINAL_CONNECTION_ID;
         }
 #if LSQUIC_PREFERRED_ADDR
         char addr_buf[INET6_ADDRSTRLEN + 6 /* port */ + 1];
@@ -459,7 +458,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             addr_buf[colon - s] = '\0';
             inet_pton(AF_INET, addr_buf, params.tp_preferred_address.ipv4_addr);
             params.tp_preferred_address.ipv4_port = atoi(colon + 1);
-            params.tp_flags |= TRAPA_PREFADDR_IPv4;
+            params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
         }
         s = getenv("LSQUIC_PREFERRED_ADDR6");
         if (s && strlen(s) < sizeof(addr_buf) && (colon = strrchr(s, ':')))
@@ -469,10 +468,10 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             inet_pton(AF_INET6, addr_buf,
                                         params.tp_preferred_address.ipv6_addr);
             params.tp_preferred_address.ipv6_port = atoi(colon + 1);
-            params.tp_flags |= TRAPA_PREFADDR_IPv6;
+            params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
         }
         conn = enc_sess->esi_conn;
-        if ((params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
+        if ((params.tp_set & (1 << TPI_PREFERRED_ADDRESS))
                             && (1 << conn->cn_n_cces) - 1 != conn->cn_cces_mask)
         {
             seqno = 0;
@@ -506,7 +505,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         else
         {
   cant_use_prefaddr:
-            params.tp_flags &= ~(TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6);
+            params.tp_set &= ~(1 << TPI_PREFERRED_ADDRESS);
         }
 #endif
     }
@@ -515,7 +514,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     {
         const char *s = getenv("LSQUIC_TEST_QUANTUM_READINESS");
         if (s && atoi(s))
-            params.tp_flags |= TRAPA_QUANTUM_READY;
+            params.tp_set |= 1 << TPI_QUANTUM_READINESS;
     }
 #endif
     params.tp_init_max_data = settings->es_init_max_data;
@@ -535,23 +534,33 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
     params.tp_max_packet_size = 1370 /* XXX: based on socket */;
     params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
+    params.tp_set |= (1 << TPI_INIT_MAX_DATA)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_UNI)
+                  |  (1 << TPI_INIT_MAX_STREAMS_UNI)
+                  |  (1 << TPI_INIT_MAX_STREAMS_BIDI)
+                  |  (1 << TPI_ACK_DELAY_EXPONENT)
+                  |  (1 << TPI_MAX_IDLE_TIMEOUT)
+                  |  (1 << TPI_MAX_ACK_DELAY)
+                  |  (1 << TPI_MAX_PACKET_SIZE)
+                  |  (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)
+                  ;
     if (enc_sess->esi_conn->cn_version == LSQVER_ID24)
     {
         params.tp_active_connection_id_limit = params.tp_active_connection_id_limit
         - 1 /* One slot is used by peer's SCID */
-        - !!(params.tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6));
+        - !!(params.tp_set & (1 << TPI_PREFERRED_ADDRESS));
     }
     if (!settings->es_allow_migration)
-        params.tp_disable_active_migration = 1;
-    if (settings->es_ql_bits == -1)
-        params.tp_flags |= TRAPA_QL_BITS_OLD;
-    else if (settings->es_ql_bits)
+        params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
+    if (settings->es_ql_bits)
     {
         params.tp_loss_bits = settings->es_ql_bits - 1;
-        params.tp_flags |= TRAPA_QL_BITS;
+        params.tp_set |= 1 << TPI_LOSS_BITS;
     }
 
-    len = lsquic_tp_encode(&params, buf, bufsz);
+    len = lsquic_tp_encode(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
     if (len >= 0)
         LSQ_DEBUG("generated transport parameters buffer of %d bytes", len);
     else
@@ -1458,7 +1467,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
 
     if ((enc_sess->esi_flags & (ESI_ODCID|ESI_SERVER)) == ESI_ODCID)
     {
-        if (!(trans_params->tp_flags & TRAPA_ORIGINAL_CID))
+        if (!(trans_params->tp_set & (1 << TPI_ORIGINAL_CONNECTION_ID)))
         {
             LSQ_DEBUG("server did not produce original DCID (ODCID)");
             return -1;
@@ -1480,15 +1489,11 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         }
     }
 
-    if ((trans_params->tp_flags & TRAPA_QL_BITS)
+    if ((trans_params->tp_set & (1 << TPI_LOSS_BITS))
                             && enc_sess->esi_enpub->enp_settings.es_ql_bits)
     {
-        unsigned our_loss_bits;
-        if (enc_sess->esi_enpub->enp_settings.es_ql_bits == -1)
-            our_loss_bits = 1;
-        else
-            our_loss_bits = enc_sess->esi_enpub->enp_settings.es_ql_bits - 1;
-
+        const unsigned our_loss_bits
+            = enc_sess->esi_enpub->enp_settings.es_ql_bits - 1;
         switch ((our_loss_bits << 1) | trans_params->tp_loss_bits)
         {
         case    (0             << 1) | 0:

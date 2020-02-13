@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -26,7 +27,84 @@
 #include "lsquic_logger.h"
 
 
-static const uint64_t def_vals[MAX_TPI + 1] =
+static enum transport_param_id
+tpi_val_2_enum (uint64_t tpi_val)
+{
+    switch (tpi_val)
+    {
+    case 0:         return TPI_ORIGINAL_CONNECTION_ID;
+    case 1:         return TPI_MAX_IDLE_TIMEOUT;
+    case 2:         return TPI_STATELESS_RESET_TOKEN;
+    case 3:         return TPI_MAX_PACKET_SIZE;
+    case 4:         return TPI_INIT_MAX_DATA;
+    case 5:         return TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL;
+    case 6:         return TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE;
+    case 7:         return TPI_INIT_MAX_STREAM_DATA_UNI;
+    case 8:         return TPI_INIT_MAX_STREAMS_BIDI;
+    case 9:         return TPI_INIT_MAX_STREAMS_UNI;
+    case 10:        return TPI_ACK_DELAY_EXPONENT;
+    case 11:        return TPI_MAX_ACK_DELAY;
+    case 12:        return TPI_DISABLE_ACTIVE_MIGRATION;
+    case 13:        return TPI_PREFERRED_ADDRESS;
+    case 14:        return TPI_ACTIVE_CONNECTION_ID_LIMIT;
+#if LSQUIC_TEST_QUANTUM_READINESS
+    case 0xC37:     return TPI_QUANTUM_READINESS;
+#endif
+    case 0x1057:    return TPI_LOSS_BITS;
+    default:        return INT_MAX;
+    }
+}
+
+
+static const unsigned short enum_2_tpi_val[LAST_TPI + 1] =
+{
+    [TPI_ORIGINAL_CONNECTION_ID]            =  0x0,
+    [TPI_MAX_IDLE_TIMEOUT]                  =  0x1,
+    [TPI_STATELESS_RESET_TOKEN]             =  0x2,
+    [TPI_MAX_PACKET_SIZE]                   =  0x3,
+    [TPI_INIT_MAX_DATA]                     =  0x4,
+    [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  0x5,
+    [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  0x6,
+    [TPI_INIT_MAX_STREAM_DATA_UNI]          =  0x7,
+    [TPI_INIT_MAX_STREAMS_BIDI]             =  0x8,
+    [TPI_INIT_MAX_STREAMS_UNI]              =  0x9,
+    [TPI_ACK_DELAY_EXPONENT]                =  0xA,
+    [TPI_MAX_ACK_DELAY]                     =  0xB,
+    [TPI_DISABLE_ACTIVE_MIGRATION]          =  0xC,
+    [TPI_PREFERRED_ADDRESS]                 =  0xD,
+    [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  0xE,
+#if LSQUIC_TEST_QUANTUM_READINESS
+    [TPI_QUANTUM_READINESS]                 =  0xC37,
+#endif
+    [TPI_LOSS_BITS]                         =  0x1057,
+};
+
+
+static const char * const tpi2str[LAST_TPI + 1] =
+{
+    [TPI_ORIGINAL_CONNECTION_ID]            =  "original_connection_id",
+    [TPI_MAX_IDLE_TIMEOUT]                  =  "max_idle_timeout",
+    [TPI_STATELESS_RESET_TOKEN]             =  "stateless_reset_token",
+    [TPI_MAX_PACKET_SIZE]                   =  "max_packet_size",
+    [TPI_INIT_MAX_DATA]                     =  "init_max_data",
+    [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  "init_max_stream_data_bidi_local",
+    [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  "init_max_stream_data_bidi_remote",
+    [TPI_INIT_MAX_STREAM_DATA_UNI]          =  "init_max_stream_data_uni",
+    [TPI_INIT_MAX_STREAMS_BIDI]             =  "init_max_streams_bidi",
+    [TPI_INIT_MAX_STREAMS_UNI]              =  "init_max_streams_uni",
+    [TPI_ACK_DELAY_EXPONENT]                =  "ack_delay_exponent",
+    [TPI_MAX_ACK_DELAY]                     =  "max_ack_delay",
+    [TPI_DISABLE_ACTIVE_MIGRATION]          =  "disable_active_migration",
+    [TPI_PREFERRED_ADDRESS]                 =  "preferred_address",
+    [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  "active_connection_id_limit",
+#if LSQUIC_TEST_QUANTUM_READINESS
+    [TPI_QUANTUM_READINESS]                 =  "quantum_readiness",
+#endif
+    [TPI_LOSS_BITS]                         =  "loss_bits",
+};
+
+
+static const uint64_t def_vals[MAX_NUM_WITH_DEF_TPI + 1] =
 {
     [TPI_MAX_PACKET_SIZE]                   =  TP_DEF_MAX_PACKET_SIZE,
     [TPI_ACK_DELAY_EXPONENT]                =  TP_DEF_ACK_DELAY_EXP,
@@ -42,7 +120,7 @@ static const uint64_t def_vals[MAX_TPI + 1] =
 };
 
 
-static const uint64_t max_vals[MAX_TPI + 1] =
+static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
 {
     [TPI_MAX_PACKET_SIZE]                   =  VINT_MAX_VALUE,
     [TPI_ACK_DELAY_EXPONENT]                =  VINT_MAX_VALUE,
@@ -55,27 +133,7 @@ static const uint64_t max_vals[MAX_TPI + 1] =
     [TPI_MAX_IDLE_TIMEOUT]                  =  VINT_MAX_VALUE,
     [TPI_MAX_ACK_DELAY]                     =  TP_MAX_MAX_ACK_DELAY,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  VINT_MAX_VALUE,
-};
-
-
-#define TP_OFF(name_) ((uint64_t *) &((struct transport_params *) 0 \
-    )->tp_numerics_u.s.name_ - (uint64_t *) &((struct transport_params *) \
-    0)->tp_numerics_u.s)
-
-/* Map enum transport_params to index of tp_numerics_u.a; for numeric values only */
-static const unsigned tpi2idx[MAX_TPI + 1] =
-{
-    [TPI_MAX_PACKET_SIZE]                   =  TP_OFF(max_packet_size),
-    [TPI_ACK_DELAY_EXPONENT]                =  TP_OFF(ack_delay_exponent),
-    [TPI_INIT_MAX_STREAMS_UNI]              =  TP_OFF(init_max_streams_uni),
-    [TPI_INIT_MAX_STREAMS_BIDI]             =  TP_OFF(init_max_streams_bidi),
-    [TPI_INIT_MAX_DATA]                     =  TP_OFF(init_max_data),
-    [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  TP_OFF(init_max_stream_data_bidi_local),
-    [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  TP_OFF(init_max_stream_data_bidi_remote),
-    [TPI_INIT_MAX_STREAM_DATA_UNI]          =  TP_OFF(init_max_stream_data_uni),
-    [TPI_MAX_IDLE_TIMEOUT]                  =  TP_OFF(max_idle_timeout),
-    [TPI_MAX_ACK_DELAY]                     =  TP_OFF(max_ack_delay),
-    [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  TP_OFF(active_connection_id_limit),
+    [TPI_LOSS_BITS]                         =  1,
 };
 
 
@@ -93,54 +151,78 @@ preferred_address_size (const struct transport_params *params)
 
 
 int
-lsquic_tp_encode (const struct transport_params *params,
+lsquic_tp_has_pref_ipv4 (const struct transport_params *params)
+{
+    return (params->tp_set & (1 << TPI_PREFERRED_ADDRESS))
+        && params->tp_preferred_address.ipv4_port
+        && !lsquic_is_zero(params->tp_preferred_address.ipv4_addr,
+                    sizeof(params->tp_preferred_address.ipv4_addr));
+}
+
+
+int
+lsquic_tp_has_pref_ipv6 (const struct transport_params *params)
+{
+    return (params->tp_set & (1 << TPI_PREFERRED_ADDRESS))
+        && params->tp_preferred_address.ipv6_port
+        && !lsquic_is_zero(params->tp_preferred_address.ipv6_addr,
+                    sizeof(params->tp_preferred_address.ipv6_addr));
+}
+
+
+int
+lsquic_tp_encode (const struct transport_params *params, int is_server,
                   unsigned char *const buf, size_t bufsz)
 {
     unsigned char *p;
     size_t need = 2;
     uint16_t u16;
     enum transport_param_id tpi;
-    unsigned bits[MAX_TPI + 1];
+    unsigned set;
+    unsigned bits[MAX_NUMERIC_TPI + 1];
 
-    if (params->tp_flags & TRAPA_SERVER)
+    set = params->tp_set;   /* Will turn bits off for default values */
+
+    if (is_server)
     {
-        if (params->tp_flags & TRAPA_ORIGINAL_CID)
+        if (set & (1 << TPI_ORIGINAL_CONNECTION_ID))
             need += 4 + params->tp_original_cid.len;
-        if (params->tp_flags & TRAPA_RESET_TOKEN)
+        if (set & (1 << TPI_STATELESS_RESET_TOKEN))
             need += 4 + sizeof(params->tp_stateless_reset_token);
-        if (params->tp_flags & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
+        if (set & (1 << TPI_PREFERRED_ADDRESS))
             need += 4 + preferred_address_size(params);
     }
 #if LSQUIC_TEST_QUANTUM_READINESS
-    else if (params->tp_flags & TRAPA_QUANTUM_READY)
+    else if (set & (1 << TPI_QUANTUM_READINESS))
         need += 4 + QUANTUM_READY_SZ;
 #endif
 
-    for (tpi = 0; tpi <= MAX_TPI; ++tpi)
-        if ((NUMERIC_TRANS_PARAMS & (1 << tpi))
-                    && params->tp_numerics_u.a[tpi2idx[tpi]] != def_vals[tpi])
+    for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
+        if (set & (1 << tpi))
         {
-            if (params->tp_numerics_u.a[tpi2idx[tpi]] < max_vals[tpi])
+            if (tpi > MAX_NUM_WITH_DEF_TPI
+                        || params->tp_numerics[tpi] != def_vals[tpi])
             {
-                bits[tpi] = vint_val2bits(params->tp_numerics_u.a[tpi2idx[tpi]]);
-                need += 4 + (1 << bits[tpi]);
+                if (params->tp_numerics[tpi] <= max_vals[tpi])
+                {
+                    bits[tpi] = vint_val2bits(params->tp_numerics[tpi]);
+                    need += 4 + (1 << bits[tpi]);
+                }
+                else
+                {
+                    LSQ_DEBUG("numeric value is too large (%"PRIu64" vs maximum "
+                        "of %"PRIu64")", params->tp_numerics[tpi],
+                        max_vals[tpi]);
+                    return -1;
+                }
             }
             else
-            {
-                LSQ_DEBUG("numeric value is too large (%"PRIu64" vs maximum "
-                    "of %"PRIu64")", params->tp_numerics_u.a[tpi2idx[tpi]],
-                    max_vals[tpi]);
-                return -1;
-            }
+                set &= ~(1 << tpi);     /* Don't write default value */
         }
 
-    if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
-        need += 4 + 0;
-
-    if (params->tp_flags & TRAPA_QL_BITS_OLD)
-        need += 4 + 0;
-    else if (params->tp_flags & TRAPA_QL_BITS)
-        need += 4 + 1;
+    for (; tpi <= MAX_EMPTY_TPI; ++tpi)
+        if (set & (1 << tpi))
+            need += 4 + 0;
 
     if (need > bufsz || need > UINT16_MAX)
     {
@@ -178,110 +260,65 @@ lsquic_tp_encode (const struct transport_params *params,
 
     WRITE_UINT_TO_P(need - 2 + buf - p, 16);
 
-    for (tpi = 0; tpi <= MAX_TPI; ++tpi)
-        if (NUMERIC_TRANS_PARAMS & (1 << tpi))
+    for (tpi = 0; tpi <= LAST_TPI; ++tpi)
+        if (set & (1 << tpi))
         {
-            if (params->tp_numerics_u.a[tpi2idx[tpi]] != def_vals[tpi])
-            {
-                WRITE_UINT_TO_P(tpi, 16);
-                WRITE_UINT_TO_P(1 << bits[tpi], 16);
-                vint_write(p, params->tp_numerics_u.a[tpi2idx[tpi]], bits[tpi],
-                                                                1 << bits[tpi]);
-                p += 1 << bits[tpi];
-            }
-        }
-        else
+            WRITE_UINT_TO_P(enum_2_tpi_val[tpi], 16);
             switch (tpi)
             {
+            case TPI_MAX_IDLE_TIMEOUT:
+            case TPI_MAX_PACKET_SIZE:
+            case TPI_INIT_MAX_DATA:
+            case TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL:
+            case TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE:
+            case TPI_INIT_MAX_STREAM_DATA_UNI:
+            case TPI_INIT_MAX_STREAMS_BIDI:
+            case TPI_INIT_MAX_STREAMS_UNI:
+            case TPI_ACK_DELAY_EXPONENT:
+            case TPI_MAX_ACK_DELAY:
+            case TPI_ACTIVE_CONNECTION_ID_LIMIT:
+            case TPI_LOSS_BITS:
+                WRITE_UINT_TO_P(1 << bits[tpi], 16);
+                vint_write(p, params->tp_numerics[tpi], bits[tpi],
+                                                                1 << bits[tpi]);
+                p += 1 << bits[tpi];
+                break;
             case TPI_ORIGINAL_CONNECTION_ID:
-                if (params->tp_flags & TRAPA_ORIGINAL_CID)
-                {
-                    WRITE_UINT_TO_P(TPI_ORIGINAL_CONNECTION_ID, 16);
-                    WRITE_UINT_TO_P(params->tp_original_cid.len, 16);
-                    WRITE_TO_P(params->tp_original_cid.idbuf,
-                                                params->tp_original_cid.len);
-                }
+                WRITE_UINT_TO_P(params->tp_original_cid.len, 16);
+                WRITE_TO_P(params->tp_original_cid.idbuf,
+                                            params->tp_original_cid.len);
                 break;
             case TPI_STATELESS_RESET_TOKEN:
-                if (params->tp_flags & TRAPA_RESET_TOKEN)
-                {
-                    WRITE_UINT_TO_P(TPI_STATELESS_RESET_TOKEN, 16);
-                    WRITE_UINT_TO_P(sizeof(params->tp_stateless_reset_token),
-                                                                            16);
-                    WRITE_TO_P(params->tp_stateless_reset_token,
-                                    sizeof(params->tp_stateless_reset_token));
-                }
+                WRITE_UINT_TO_P(sizeof(params->tp_stateless_reset_token), 16);
+                WRITE_TO_P(params->tp_stateless_reset_token,
+                                sizeof(params->tp_stateless_reset_token));
                 break;
             case TPI_PREFERRED_ADDRESS:
-                if (params->tp_flags
-                                & (TRAPA_PREFADDR_IPv4|TRAPA_PREFADDR_IPv6))
-                {
-                    WRITE_UINT_TO_P(TPI_PREFERRED_ADDRESS, 16);
-                    WRITE_UINT_TO_P(preferred_address_size(params), 16);
-                    if (params->tp_flags & TRAPA_PREFADDR_IPv4)
-                    {
-                        WRITE_TO_P(&params->tp_preferred_address.ipv4_addr,
-                                sizeof(params->tp_preferred_address.ipv4_addr));
-                        WRITE_UINT_TO_P(params->tp_preferred_address.ipv4_port,
-                                                                            16);
-                    }
-                    else
-                    {
-                        memset(p, 0, 6);
-                        p += 6;
-                    }
-                    if (params->tp_flags & TRAPA_PREFADDR_IPv6)
-                    {
-                        WRITE_TO_P(&params->tp_preferred_address.ipv6_addr,
-                                sizeof(params->tp_preferred_address.ipv6_addr));
-                        WRITE_UINT_TO_P(params->tp_preferred_address.ipv6_port,
-                                                                            16);
-                    }
-                    else
-                    {
-                        memset(p, 0, 18);
-                        p += 18;
-                    }
-                    *p++ = params->tp_preferred_address.cid.len;
-                    WRITE_TO_P(params->tp_preferred_address.cid.idbuf,
-                                        params->tp_preferred_address.cid.len);
-                    WRITE_TO_P(params->tp_preferred_address.srst,
-                                    sizeof(params->tp_preferred_address.srst));
-                }
+                WRITE_UINT_TO_P(preferred_address_size(params), 16);
+                WRITE_TO_P(&params->tp_preferred_address.ipv4_addr,
+                        sizeof(params->tp_preferred_address.ipv4_addr));
+                WRITE_UINT_TO_P(params->tp_preferred_address.ipv4_port, 16);
+                WRITE_TO_P(&params->tp_preferred_address.ipv6_addr,
+                        sizeof(params->tp_preferred_address.ipv6_addr));
+                WRITE_UINT_TO_P(params->tp_preferred_address.ipv6_port, 16);
+                *p++ = params->tp_preferred_address.cid.len;
+                WRITE_TO_P(params->tp_preferred_address.cid.idbuf,
+                                    params->tp_preferred_address.cid.len);
+                WRITE_TO_P(params->tp_preferred_address.srst,
+                                sizeof(params->tp_preferred_address.srst));
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
-                if (params->tp_disable_active_migration != TP_DEF_DISABLE_ACTIVE_MIGRATION)
-                {
-                    WRITE_UINT_TO_P(TPI_DISABLE_ACTIVE_MIGRATION, 16);
-                    WRITE_UINT_TO_P(0, 16);
-                }
+                WRITE_UINT_TO_P(0, 16);
                 break;
-            default:
-                assert(0);
-                return -1;
-            }
-
-    if (params->tp_flags & TRAPA_QL_BITS_OLD)
-    {
-        WRITE_UINT_TO_P(TPI_QL_BITS, 16);
-        WRITE_UINT_TO_P(0, 16);
-    }
-    else if (params->tp_flags & TRAPA_QL_BITS)
-    {
-        WRITE_UINT_TO_P(TPI_QL_BITS, 16);
-        WRITE_UINT_TO_P(1, 16);
-        *p++ = !!params->tp_loss_bits;
-    }
-
 #if LSQUIC_TEST_QUANTUM_READINESS
-    if (params->tp_flags & TRAPA_QUANTUM_READY)
-    {
-        WRITE_UINT_TO_P(TPI_QUANTUM_READINESS, 16);
-        WRITE_UINT_TO_P(QUANTUM_READY_SZ, 16);
-        memset(p, 'Q', QUANTUM_READY_SZ);
-        p += QUANTUM_READY_SZ;
-    }
+            case TPI_QUANTUM_READINESS:
+                WRITE_UINT_TO_P(QUANTUM_READY_SZ, 16);
+                memset(p, 'Q', QUANTUM_READY_SZ);
+                p += QUANTUM_READY_SZ;
+                break;
 #endif
+            }
+        }
 
     assert(buf + need == p);
     return (int) (p - buf);
@@ -298,17 +335,14 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
 {
     const unsigned char *p, *end, *q;
     uint16_t len, param_id, tlen;
+    enum transport_param_id tpi;
     unsigned set_of_ids;
     int s;
-    uint64_t tmp64;
 
     p = buf;
     end = buf + bufsz;
 
     *params = TP_INITIALIZER();
-
-    if (is_server)
-        params->tp_flags |= TRAPA_SERVER;
 
     if (end - p < 2)
         return -1;
@@ -337,43 +371,43 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         p += 2;
         if (len > end - p)
             return -1;
-        /* If we need to support parameter IDs 31 and up, we will need to
-         * change this code:
-         */
-        if (param_id < sizeof(set_of_ids) * 8)
+        tpi = tpi_val_2_enum(param_id);
+        if (tpi <= LAST_TPI)
         {
-            /* Only check duplicates for IDs <= 31: all standard parameters
-             * fit in a bitmask 32 bits wide.
-             */
-            if (set_of_ids & (1 << param_id))
+            if (set_of_ids & (1 << tpi))
                 return -1;
-            set_of_ids |= 1 << param_id;
+            set_of_ids |= 1 << tpi;
         }
-        else
-            goto gt32;
-        if (NUMERIC_TRANS_PARAMS & (1u << param_id))
+        switch (tpi)
         {
+        case TPI_MAX_IDLE_TIMEOUT:
+        case TPI_MAX_PACKET_SIZE:
+        case TPI_INIT_MAX_DATA:
+        case TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL:
+        case TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE:
+        case TPI_INIT_MAX_STREAM_DATA_UNI:
+        case TPI_INIT_MAX_STREAMS_BIDI:
+        case TPI_INIT_MAX_STREAMS_UNI:
+        case TPI_ACK_DELAY_EXPONENT:
+        case TPI_MAX_ACK_DELAY:
+        case TPI_ACTIVE_CONNECTION_ID_LIMIT:
+        case TPI_LOSS_BITS:
             switch (len)
             {
             case 1:
             case 2:
             case 4:
             case 8:
-                s = vint_read(p, p + len,
-                            &params->tp_numerics_u.a[tpi2idx[param_id]]);
+                s = vint_read(p, p + len, &params->tp_numerics[tpi]);
                 if (s == len)
                 {
-                    if (params->tp_numerics_u.a[tpi2idx[param_id]]
-                                                        > max_vals[param_id])
+                    if (params->tp_numerics[tpi] > max_vals[tpi])
                     {
                         LSQ_DEBUG("numeric value of parameter 0x%X is too "
                             "large (%"PRIu64" vs maximum of %"PRIu64,
-                            param_id,
-                            params->tp_numerics_u.a[tpi2idx[param_id]],
-                            max_vals[param_id]);
+                            param_id, params->tp_numerics[tpi], max_vals[tpi]);
                         return -1;
                     }
-                    p += s;
                     break;
                 }
                 else
@@ -383,125 +417,85 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                     return -1;
                 }
             default:
-                LSQ_DEBUG("invalid length=%u for numeric transport parameter",
-                                                                        len);
+                LSQ_DEBUG("invalid length=%u for numeric transport "
+                                            "parameter 0x%X", len, param_id);
                 return -1;
             }
-        }
-        else
-        {
-  gt32:     switch (param_id)
+            break;
+        case TPI_DISABLE_ACTIVE_MIGRATION:
+            EXPECT_LEN(0);
+            break;
+        case TPI_STATELESS_RESET_TOKEN:
+            /* Client MUST not include reset token,
+             * see [draft-ietf-quic-transport-11], Section 6.4.1
+             */
+            if (!is_server)
+                return -1;
+            EXPECT_LEN(sizeof(params->tp_stateless_reset_token));
+            memcpy(params->tp_stateless_reset_token, p,
+                                sizeof(params->tp_stateless_reset_token));
+            break;
+        case TPI_ORIGINAL_CONNECTION_ID:
+            /* Client MUST not original connecti ID,
+             * see [draft-ietf-quic-transport-15], Section 6.6.1
+             */
+            if (!is_server)
+                return -1;
+            if (len > MAX_CID_LEN)
+                return -1;
+            memcpy(params->tp_original_cid.idbuf, p, len);
+            params->tp_original_cid.len = len;
+            break;
+        case TPI_PREFERRED_ADDRESS:
+            /* Client MUST not include preferred address,
+             * see [draft-ietf-quic-transport-12], Section 6.4.1
+             */
+            if (!is_server)
+                return -1;
+            q = p;
+            EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv4_addr));
+            memcpy(params->tp_preferred_address.ipv4_addr, q,
+                        sizeof(params->tp_preferred_address.ipv4_addr));
+            q += sizeof(params->tp_preferred_address.ipv4_addr);
+            EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv4_port));
+            READ_UINT(params->tp_preferred_address.ipv4_port, 16, q, 2);
+            q += 2;
+            EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv6_addr));
+            memcpy(params->tp_preferred_address.ipv6_addr, q,
+                        sizeof(params->tp_preferred_address.ipv6_addr));
+            q += sizeof(params->tp_preferred_address.ipv6_addr);
+            EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv6_port));
+            READ_UINT(params->tp_preferred_address.ipv6_port, 16, q, 2);
+            q += 2;
+            EXPECT_AT_LEAST(1);
+            tlen = *q;
+            q += 1;
+            if (tlen < 4 || tlen > MAX_CID_LEN)
             {
-            case TPI_DISABLE_ACTIVE_MIGRATION:
-                EXPECT_LEN(0);
-                params->tp_disable_active_migration = 1;
-                break;
-            case TPI_STATELESS_RESET_TOKEN:
-                /* Client MUST not include reset token,
-                 * see [draft-ietf-quic-transport-11], Section 6.4.1
-                 */
-                if (!is_server)
-                    return -1;
-                EXPECT_LEN(sizeof(params->tp_stateless_reset_token));
-                memcpy(params->tp_stateless_reset_token, p,
-                                    sizeof(params->tp_stateless_reset_token));
-                params->tp_flags |= TRAPA_RESET_TOKEN;
-                break;
-            case TPI_ORIGINAL_CONNECTION_ID:
-                /* Client MUST not original connecti ID,
-                 * see [draft-ietf-quic-transport-15], Section 6.6.1
-                 */
-                if (!is_server)
-                    return -1;
-                if (len > MAX_CID_LEN)
-                    return -1;
-                memcpy(params->tp_original_cid.idbuf, p, len);
-                params->tp_original_cid.len = len;
-                params->tp_flags |= TRAPA_ORIGINAL_CID;
-                break;
-            case TPI_PREFERRED_ADDRESS:
-                /* Client MUST not include preferred address,
-                 * see [draft-ietf-quic-transport-12], Section 6.4.1
-                 */
-                if (!is_server)
-                    return -1;
-                q = p;
-                EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv4_addr));
-                memcpy(params->tp_preferred_address.ipv4_addr, q,
-                            sizeof(params->tp_preferred_address.ipv4_addr));
-                q += sizeof(params->tp_preferred_address.ipv4_addr);
-                EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv4_port));
-                READ_UINT(params->tp_preferred_address.ipv4_port, 16, q, 2);
-                q += 2;
-                EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv6_addr));
-                memcpy(params->tp_preferred_address.ipv6_addr, q,
-                            sizeof(params->tp_preferred_address.ipv6_addr));
-                q += sizeof(params->tp_preferred_address.ipv6_addr);
-                EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.ipv6_port));
-                READ_UINT(params->tp_preferred_address.ipv6_port, 16, q, 2);
-                q += 2;
-                EXPECT_AT_LEAST(1);
-                tlen = *q;
-                q += 1;
-                if (tlen < 4 || tlen > MAX_CID_LEN)
-                {
-                    LSQ_DEBUG("preferred server address contains invalid "
-                        "CID length of %"PRIu16" bytes", tlen);
-                    return -1;
-                }
-                EXPECT_AT_LEAST(tlen);
-                memcpy(params->tp_preferred_address.cid.idbuf, q, tlen);
-                params->tp_preferred_address.cid.len = tlen;
-                q += tlen;
-                EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.srst));
-                memcpy(params->tp_preferred_address.srst, q,
-                                sizeof(params->tp_preferred_address.srst));
-                q += sizeof(params->tp_preferred_address.srst);
-                if (q != p + len)
-                    return -1;
-                if (params->tp_preferred_address.ipv4_port
-                    && !lsquic_is_zero(params->tp_preferred_address.ipv4_addr,
-                                sizeof(params->tp_preferred_address.ipv4_addr)))
-                    params->tp_flags |= TRAPA_PREFADDR_IPv4;
-                if (params->tp_preferred_address.ipv6_port
-                    && !lsquic_is_zero(params->tp_preferred_address.ipv6_addr,
-                                sizeof(params->tp_preferred_address.ipv6_addr)))
-                    params->tp_flags |= TRAPA_PREFADDR_IPv6;
-                break;
-            case TPI_QL_BITS:
-                switch (len)
-                {
-                case 0:
-                    /* Old-school boolean */
-                    params->tp_flags |= TRAPA_QL_BITS;
-                    params->tp_loss_bits = 1;
-                    break;
-                case 1:
-                case 2:
-                case 4:
-                case 8:
-                    s = vint_read(p, p + len, &tmp64);
-                    if (s != len)
-                    {
-                        LSQ_DEBUG("cannot read the value of numeric transport "
-                                    "param loss_bits of length %u", len);
-                        return -1;
-                    }
-                    if (!(tmp64 == 0 || tmp64 == 1))
-                    {
-                        LSQ_DEBUG("unexpected value of loss_bits TP: %"PRIu64,
-                                                                        tmp64);
-                        return -1;
-                    }
-                    params->tp_loss_bits = tmp64;
-                    params->tp_flags |= TRAPA_QL_BITS;
-                    break;
-                default:
-                    return -1;
-                }
-                break;
+                LSQ_DEBUG("preferred server address contains invalid "
+                    "CID length of %"PRIu16" bytes", tlen);
+                return -1;
             }
-            p += len;
+            EXPECT_AT_LEAST(tlen);
+            memcpy(params->tp_preferred_address.cid.idbuf, q, tlen);
+            params->tp_preferred_address.cid.len = tlen;
+            q += tlen;
+            EXPECT_AT_LEAST(sizeof(params->tp_preferred_address.srst));
+            memcpy(params->tp_preferred_address.srst, q,
+                            sizeof(params->tp_preferred_address.srst));
+            q += sizeof(params->tp_preferred_address.srst);
+            if (q != p + len)
+                return -1;
+            break;
+        default:
+            /* Do nothing: skip this transport parameter */
+            break;
+        }
+        p += len;
+        if (tpi <= LAST_TPI)
+        {
+            params->tp_set |= 1 << tpi;
+            params->tp_decoded |= 1 << tpi;
         }
     }
 
@@ -518,32 +512,40 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
 {
     char *const end = buf + sz;
     int nw;
+    enum transport_param_id tpi;
     char tok_str[sizeof(params->tp_stateless_reset_token) * 2 + 1];
     char addr_str[INET6_ADDRSTRLEN];
 
-#define SEMICOLON "; "
-#define WRITE_ONE_PARAM(name, fmt) do {  \
-    nw = snprintf(buf, end - buf, #name ": " fmt SEMICOLON, params->tp_##name); \
-    buf += nw; \
-    if (buf >= end) \
-        return; \
-} while (0)
-
-    WRITE_ONE_PARAM(init_max_stream_data_bidi_local, "%"PRIu64);
-    WRITE_ONE_PARAM(init_max_stream_data_bidi_remote, "%"PRIu64);
-    WRITE_ONE_PARAM(init_max_stream_data_uni, "%"PRIu64);
-    WRITE_ONE_PARAM(init_max_data, "%"PRIu64);
-    WRITE_ONE_PARAM(max_idle_timeout, "%"PRIu64);
-    WRITE_ONE_PARAM(init_max_streams_bidi, "%"PRIu64);
-    WRITE_ONE_PARAM(init_max_streams_uni, "%"PRIu64);
-    WRITE_ONE_PARAM(max_packet_size, "%"PRIu64);
-    WRITE_ONE_PARAM(ack_delay_exponent, "%"PRIu64);
-    WRITE_ONE_PARAM(active_connection_id_limit, "%"PRIu64);
-    WRITE_ONE_PARAM(disable_active_migration, "%hhd");
-#undef SEMICOLON
-#define SEMICOLON ""
-    WRITE_ONE_PARAM(max_ack_delay, "%"PRIu64);
-    if (params->tp_flags & TRAPA_RESET_TOKEN)
+    for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
+        if (params->tp_set & (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL))
+        {
+            nw = snprintf(buf, end - buf, "%.*s%s: %"PRIu64,
+                (buf + sz > end) << 1, "; ", tpi2str[tpi],
+                params->tp_numerics[tpi]);
+            buf += nw;
+            if (buf >= end)
+                return;
+        }
+    for (; tpi <= MAX_EMPTY_TPI; ++tpi)
+        if (params->tp_set & (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL))
+        {
+            nw = snprintf(buf, end - buf, "%.*s%s",
+                                    (buf + sz > end) << 1, "; ", tpi2str[tpi]);
+            buf += nw;
+            if (buf >= end)
+                return;
+        }
+#if LSQUIC_TEST_QUANTUM_READINESS
+    if (params->tp_set & (1 << TPI_QUANTUM_READINESS))
+    {
+        nw = snprintf(buf, end - buf, "%.*s%s",
+                (buf + sz > end) << 1, "; ", tpi2str[TPI_QUANTUM_READINESS]);
+        buf += nw;
+        if (buf >= end)
+            return;
+    }
+#endif
+    if (params->tp_set & (1 << TPI_STATELESS_RESET_TOKEN))
     {
         lsquic_hexstr(params->tp_stateless_reset_token,
             sizeof(params->tp_stateless_reset_token), tok_str, sizeof(tok_str));
@@ -552,7 +554,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
         if (buf >= end)
             return;
     }
-    if (params->tp_flags & TRAPA_RESET_TOKEN)
+    if (params->tp_set & (1 << TPI_ORIGINAL_CONNECTION_ID))
     {
         char cidbuf_[MAX_CID_LEN * 2 + 1];
         nw = snprintf(buf, end - buf, "; original DCID (ODCID): %"CID_FMT,
@@ -561,7 +563,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
         if (buf >= end)
             return;
     }
-    if (params->tp_flags & TRAPA_PREFADDR_IPv4)
+    if (lsquic_tp_has_pref_ipv4(params))
     {
         if (inet_ntop(AF_INET, params->tp_preferred_address.ipv4_addr,
                                                 addr_str, sizeof(addr_str)))
@@ -573,7 +575,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
                 return;
         }
     }
-    if (params->tp_flags & TRAPA_PREFADDR_IPv6)
+    if (lsquic_tp_has_pref_ipv6(params))
     {
         if (inet_ntop(AF_INET6, params->tp_preferred_address.ipv6_addr,
                                                 addr_str, sizeof(addr_str)))
@@ -585,15 +587,4 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
                 return;
         }
     }
-    if (params->tp_flags & TRAPA_QL_BITS)
-    {
-        nw = snprintf(buf, end - buf, "; QL loss bits: %hhu",
-                                                    params->tp_loss_bits);
-        buf += nw;
-        if (buf >= end)
-            return;
-    }
-
-#undef SEMICOLON
-#undef WRITE_ONE_PARAM
 }
