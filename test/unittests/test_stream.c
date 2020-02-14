@@ -1926,6 +1926,49 @@ test_overlaps (void)
         lsquic_stream_destroy(stream);
     }
 
+    {
+        LSQ_NOTICE("Special test for bug 106 on line %d", __LINE__);
+        char *const data = malloc(5862);
+        init_buf(data, 5862);
+        assert(data);
+        stream = new_stream(&tobjs, __LINE__);
+        /* Insert four frames: */
+        frame = new_frame_in_ext(&tobjs, 0, 1173, 0, data);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        frame = new_frame_in_ext(&tobjs, 1173, 1173, 0, data + 1173);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        frame = new_frame_in_ext(&tobjs, 2346, 1172, 0, data + 2346);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        frame = new_frame_in_ext(&tobjs, 3518, 578, 0, data + 3518);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        /* Read all data: */
+        ssize_t nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 4096);
+        assert(0 == memcmp(data, buf, 4096));
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread < 0);
+        assert(EWOULDBLOCK == errno);
+        /* Insert overlapped frame and one more: */
+        frame = new_frame_in_ext(&tobjs, 3518, 1172, 0, data + 3518);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        frame = new_frame_in_ext(&tobjs, 4690, 1172, 0, data + 4690);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(0 == s);
+        /* Verify that continued read from offset 4096 succeeds and
+         * contains expected data:
+         */
+        nread = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nread == 5862 - 4096);
+        assert(0 == memcmp(data + 4096, buf, 5862 - 4096));
+        lsquic_stream_destroy(stream);
+        free(data);
+    }
+
     deinit_test_objs(&tobjs);
 }
 
