@@ -644,7 +644,7 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     assert(!(packet_out->po_flags & PO_ENCRYPTED));
     ctl->sc_last_sent_time = packet_out->po_sent;
     pns = lsquic_packet_out_pns(packet_out);
-    if (packet_out->po_packno == ctl->sc_gap + 1 && pns == PNS_APP)
+    if (packet_out->po_packno == ctl->sc_gap + 1)
     {
         assert(!(ctl->sc_flags & SC_POISON));
         lsquic_senhist_add(&ctl->sc_senhist, ctl->sc_gap);

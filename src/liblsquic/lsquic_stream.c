@@ -3021,12 +3021,8 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
         }
     }
     else if (!shf->shf_frame_ptr)
-    {
-        LSQ_ERROR("dangling HTTP/3 frame, on stream %"PRIu64, stream->id);
-        stream->conn_pub->lconn->cn_if->ci_internal_error(
-            stream->conn_pub->lconn, "dangling HTTP/3 frame");
-        stream_hq_frame_put(stream, shf);
-    }
+        LSQ_DEBUG("HQ frame of type 0x%X has not yet been written, not "
+            "closing", shf->shf_frame_type);
     else
     {
         assert(stream->sm_n_buffered);

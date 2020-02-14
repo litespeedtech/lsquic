@@ -1,3 +1,9 @@
+2020-02-14
+    - 2.10.6
+    - [BUGFIX] HTTP/3 framing: don't misinterpret rare occurence as error.
+    - [BUGFIX] Send gap warning due to missing poisoned packet.
+    - Stream unit test for scenario in issue #106.
+
 2020-02-13
     - 2.10.5
     - [BUGFIX] BBR: call cci_sent() with correct arguments and at correct

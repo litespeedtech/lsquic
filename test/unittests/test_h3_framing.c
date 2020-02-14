@@ -722,7 +722,8 @@ fuzz_guided_testing (const char *input)
 
 
 static void
-test_frame_header_split (unsigned n_packets)
+test_frame_header_split (unsigned n_packets, unsigned extra_sz,
+                                                        int add_one_more)
 {
     struct test_objs tobjs;
     struct lsquic_stream *stream;
@@ -771,7 +772,7 @@ test_frame_header_split (unsigned n_packets)
     const size_t pad_size = packet_out->po_n_alloc
                           - 2   /* STREAM header */
                           - 5   /* 3-byte HEADERS frame */
-                          - 2;
+                          - extra_sz;
     packet_out->po_data_sz = pad_size;
     lsquic_send_ctl_scheduled_one(&tobjs.send_ctl, packet_out);
 
@@ -783,6 +784,12 @@ test_frame_header_split (unsigned n_packets)
     const ssize_t w = lsquic_stream_write(stream, buf_in, buf_in_sz);
     assert(w >= 0 && (size_t) w == buf_in_sz);
     lsquic_stream_flush(stream);
+
+    if (add_one_more)
+    {
+        ++g_ctl_settings.tcs_can_send;
+        lsquic_stream_flush(stream);
+    }
 
     /* Verify written data: */
     nw = read_from_scheduled_packets(&tobjs.send_ctl, 0, buf_out, buf_out_sz,
@@ -953,7 +960,8 @@ int
 main (int argc, char **argv)
 {
     const char *fuzz_input = NULL;
-    int opt;
+    int opt, add_one_more;
+    unsigned n_packets, extra_sz;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 
@@ -980,8 +988,10 @@ main (int argc, char **argv)
     else
     {
         main_test_hq_framing();
-        test_frame_header_split(1);
-        test_frame_header_split(2);
+        for (n_packets = 1; n_packets <= 2; ++n_packets)
+            for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
+                for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
+                    test_frame_header_split(n_packets, extra_sz, add_one_more);
         test_zero_size_frame();
     }
 
