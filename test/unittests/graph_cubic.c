@@ -11,8 +11,6 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
-#else
-#include <getopt.h>
 #endif
 
 #include "lsquic_types.h"

@@ -1,0 +1,26 @@
+all: http_client.exe md5_client.exe echo_client.exe
+	@cd unittests && $(MAKE) -f Makefile.Windows
+
+COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l ../src/liblsquic/lsquic.lib  -l $(BORINGSSL_LIBS)  -l zlib.lib \
+	-l event_core.lib \
+	-l advapi32.lib 
+
+http_client.exe: http_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	$(COMMON_LIBS) \
+	-o http_client.exe  \
+
+md5_client.exe: md5_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	$(COMMON_LIBS) \
+	-o md5_client.exe  \
+
+echo_client.exe: echo_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	-Wno-incompatible-pointer-types \
+	$(COMMON_LIBS) \
+	-o echo_client.exe  \
+
+clean:
+	cmd //c del   *.exe *.o *.ilk *.pdb
+	@cd unittests && $(MAKE) -f Makefile.Windows clean

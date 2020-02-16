@@ -13,8 +13,8 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <time.h>
-#include <arpa/inet.h>
 #ifndef WIN32
+#include <arpa/inet.h>
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -24,7 +24,17 @@
 #include <netdb.h>
 #endif
 
-#ifndef NDEBUG
+#ifdef WIN32
+
+#define NO_REGEX 1
+
+#elif defined(NDEBUG)
+
+#define NO_REGEX 1
+
+#endif
+
+#ifndef NO_REGEX
 #include <sys/types.h>
 #include <regex.h>      /* For code that loses packets */
 #endif
@@ -231,7 +241,7 @@ struct lsquic_engine
      * priority lower than that of existing connections.
      */
     lsquic_time_t                      last_sent;
-#ifndef NDEBUG
+#ifndef NO_REGEX
     regex_t                            lose_packets_re;
     const char                        *lose_packets_str;
 #endif
@@ -580,7 +590,7 @@ lsquic_engine_new (unsigned flags,
         }
     }
 
-#ifndef NDEBUG
+#ifndef NO_REGEX
     {
         const char *env;
         env = getenv("LSQUIC_LOSE_PACKETS_RE");
@@ -1373,7 +1383,7 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
         stock_shared_hash_destroy(engine->pub.enp_shi_ctx);
     lsquic_mm_cleanup(&engine->pub.enp_mm);
     free(engine->conns_tickable.mh_elems);
-#ifndef NDEBUG
+#ifndef NO_REGEX
     if (engine->flags & ENG_LOSE_PACKETS)
         regfree(&engine->lose_packets_re);
 #endif
@@ -1968,7 +1978,7 @@ coi_reheap (struct conns_out_iter *iter, lsquic_engine_t *engine)
 }
 
 
-#ifndef NDEBUG
+#ifndef NO_REGEX
 static void
 lose_matching_packets (const lsquic_engine_t *engine, struct out_batch *batch,
                                                                     unsigned n)
@@ -2099,7 +2109,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
 
-#ifndef NDEBUG
+#ifndef NO_REGEX
     if (engine->flags & ENG_LOSE_PACKETS)
         lose_matching_packets(engine, batch, n_to_send);
 #endif

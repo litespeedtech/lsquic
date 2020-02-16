@@ -14,6 +14,14 @@
 #include "lsquic_hash.h"
 #include "lsquic_conn.h"
 
+#ifdef WIN32
+#pragma message("This test cannot be  used because open_memstream does not exist on Windows")
+int
+main (void)
+{
+	return 0;
+}
+#else
 struct test
 {
     int             lineno;
@@ -215,3 +223,4 @@ main (void)
 
     return 0;
 }
+#endif //!WIN32

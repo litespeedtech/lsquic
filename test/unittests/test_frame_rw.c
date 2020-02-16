@@ -15,11 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef WIN32
 #include <unistd.h>
-#else
-#include "getopt.h"
-#endif
 #include <sys/queue.h>
 
 #include "lsquic.h"

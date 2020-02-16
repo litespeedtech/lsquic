@@ -8,11 +8,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <limits.h>
-#ifndef WIN32
 #include <unistd.h>
-#else
-#include <getopt.h>
-#endif
 
 #include "lsquic.h"
 

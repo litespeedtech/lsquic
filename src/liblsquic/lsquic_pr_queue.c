@@ -14,10 +14,8 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#ifndef WIN32
 #include <openssl/aead.h>
 #include <openssl/rand.h>
-#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"

@@ -1,0 +1,15 @@
+
+lsquic_stat_sources:=$(shell powershell.exe .\gensourcelist.ps1)
+objects:=$(lsquic_stat_sources:.c=.o)
+
+all: lsquic.lib
+
+
+lsquic.lib:  lsquic_versions_to_string.o lsquic_xxhash.o ls-qpack/lsqpack.o ../lshpack/lshpack.o $(objects)
+	$(LLVM_DIR)/llvm-ar r lsquic.lib $?
+
+lsquic_versions_to_string.c : gen-verstrs.pl
+	$(PERL_DIR)/perl.exe gen-verstrs.pl ../../include/lsquic.h lsquic_versions_to_string.c
+
+%.o : %.c 
+	$(LLVM_DIR)/clang -c $(LSQUIC_CXXFLAGS) -Wno-uninitialized -I${CURDIR} -Ils-qpack -DXXH_HEADER_NAME="\"lsquic_xxhash.h\"" -o $*.o $<

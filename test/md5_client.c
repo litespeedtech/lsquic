@@ -10,7 +10,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include <getopt.h>
+#include <io.h>
+#endif
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>

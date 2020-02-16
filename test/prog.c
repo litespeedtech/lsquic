@@ -16,6 +16,7 @@
 #ifndef WIN32
 #include <unistd.h>
 #else
+#include <vc_compat.h>
 #include <getopt.h>
 #pragma warning(disable:4028)
 #endif// WIN32
@@ -464,7 +465,11 @@ prog_process_conns (struct prog *prog)
 
 
 static void
+#ifdef WIN32
+prog_timer_handler (long long fd, short what, void *arg)
+#else
 prog_timer_handler (int fd, short what, void *arg)
+#endif
 {
     struct prog *const prog = arg;
     if (!prog_is_stopped())

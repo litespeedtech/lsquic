@@ -12,12 +12,10 @@
 #include <sys/queue.h>
 #include <time.h>
 
-#ifndef WIN32
 #include <openssl/aead.h>
 #include <openssl/hkdf.h>
 #include <openssl/rand.h>
 #include <openssl/ssl.h>
-#endif
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"
