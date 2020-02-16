@@ -6,6 +6,10 @@
  * @file
  * LSQUIC types.
  */
+ 
+#ifdef WIN32
+#include <vc_compat.h>
+#endif
 
 #include <stdint.h>
 #include <sys/types.h>

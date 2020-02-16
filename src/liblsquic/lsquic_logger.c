@@ -420,7 +420,7 @@ end:
 
 void
 lsquic_logger_init (const struct lsquic_logger_if *lif, void *lctx,
-                    unsigned llts)
+                    enum lsquic_logger_timestamp_style llts)
 {
     logger_if  = lif;
     logger_ctx = lctx;
@@ -434,7 +434,7 @@ enum lsquic_logger_module
 lsquic_str_to_logger_module (const char *str)
 {
     enum lsquic_logger_module i;
-    for (i = 0; i < sizeof(lsqlm_to_str) / sizeof(lsqlm_to_str[0]); ++i)
+    for (i = 0; i < (int)(sizeof(lsqlm_to_str) / sizeof(lsqlm_to_str[0])); ++i)
         if (0 == strcasecmp(lsqlm_to_str[i], str))
             return i;
     return -1;

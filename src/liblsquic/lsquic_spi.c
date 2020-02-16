@@ -311,7 +311,7 @@ static int
 popcount (unsigned long long v)
 {
     int count, i;
-    for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
+    for (i = 0, count = 0; i < (int)sizeof(v) * 8; ++i)
         if (v & (1 << i))
             ++count;
     return count;

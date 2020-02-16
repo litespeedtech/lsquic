@@ -61,6 +61,15 @@
 #include "lsquic_headers.h"
 #include "lsquic_push_promise.h"
 
+#ifdef WIN32
+#pragma message("This test cannot be  used because clang does not support weak linking on Windows")
+int
+main (void)
+{
+	return 0;
+}
+#else
+
 static int s_call_wantwrite_in_ctor;
 static int s_wantwrite_arg;
 static int s_onwrite_called;
@@ -671,3 +680,4 @@ main (int argc, char **argv)
 
     return 0;
 }
+#endif //!WIN32

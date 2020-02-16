@@ -22,8 +22,12 @@
 #include <WinSock2.h>
 #include <MSWSock.h>
 #include<io.h>
-#pragma warning(disable:4996)//posix name deprecated
 #define close closesocket
+#define IPV6_RECVPKTINFO IPV6_PKTINFO
+
+#pragma clang diagnostic ignored "-Wunused-label"
+#pragma clang diagnostic ignored "-Wincompatible-pointer-types"
+#pragma clang diagnostic ignored "-Wsign-compare"
 #endif
 #include <sys/stat.h>
 #include <sys/queue.h>
@@ -829,6 +833,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
     }
 
     /* Make socket non-blocking */
+#ifndef WIN32
     flags = fcntl(sockfd, F_GETFL);
     if (-1 == flags) {
         saved_errno = errno;
@@ -843,6 +848,12 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         errno = saved_errno;
         return -1;
     }
+#else
+	{
+	  u_long on = 1;
+	  ioctlsocket(sockfd,FIONBIO,&on);
+	}
+#endif
 
     on = 1;
     if (AF_INET == sa_local->sa_family)
@@ -879,7 +890,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
             return -1;
         }
     }
-#elif IP_RECVDSTADDR != IP_SENDSRCADDR
+#elif (IP_RECVDSTADDR != IP_SENDSRCADDR) && !defined(WIN32)
     /* On FreeBSD, IP_RECVDSTADDR is the same as IP_SENDSRCADDR, but I do not
      * know about other BSD systems.
      */

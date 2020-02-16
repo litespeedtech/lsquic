@@ -1,0 +1,40 @@
+export BORINGSSL_INCLUDE=h:/github/boringssl/include
+export BORINGSSL_DIR=h:/github/boringssl/output
+export VCPKG_ROOT=h:/github/vcpkg/installed/x64-windows-static
+export ZLIB_INCLUDE_DIR=h:/github/vcpkg/installed/x64-windows-static/include
+export EVENT_INCLUDE_DIR=h:/github/vcpkg/installed/x64-windows-static/include
+export LLVM_DIR=F:/llvm/bin
+export PERL_DIR=I:/perl/bin
+
+export BORINGSSL_LIBS=$(BORINGSSL_DIR)/ssl/ssl.lib $(BORINGSSL_DIR)/crypto/crypto.lib
+export VCPKG_LIB_PATH=$(VCPKG_ROOT)/lib
+
+CXXFLAGS_EXTRA=-Wall -Wextra -Wno-unused-parameter -fno-omit-frame-pointer -Wno-implicit-fallthrough \
+				-Wno-microsoft-enum-forward-reference -Wno-unused-function \
+				-Wno-unused-variable \
+				-DWIN32 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS \
+				-D_CRT_NONSTDC_NO_DEPRECATE \
+				-I${CURDIR}/include \
+				-I${CURDIR}/wincompat \
+				-I${BORINGSSL_INCLUDE} \
+				-I${ZLIB_INCLUDE_DIR} \
+				-I${CURDIR}/src/lshpack
+
+CXXFLAGS_DEBUG=${CXXFLAGS_EXTRA} -O0  -Werror -fsanitize -fsanitize=address
+
+CXXFLAGS_RELEASE=${CXXFLAGS_EXTRA} -O2  # O3 is not compatible with -g and clang
+
+export LSQUIC_CXXFLAGS=$(CXXFLAGS_RELEASE) -m64 -g
+
+all: lsquic test/http_client.exe test/md5_client.exe test/echo_client.exe #echo_server http_server md5_server 
+
+lsquic:
+	@cd src/liblsquic && $(MAKE) -f Makefile.Windows
+	@cd test && $(MAKE) -f Makefile.Windows
+
+	
+clean:
+	cmd //c del *.o *.pdb *.ilk //s
+	@cd test && $(MAKE) -f Makefile.Windows clean
+
+

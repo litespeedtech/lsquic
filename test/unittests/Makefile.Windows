@@ -1,0 +1,44 @@
+
+test_names:=$(shell powershell.exe .\gentestlist.ps1)
+
+exe_names:=$(addsuffix .exe,${test_names})
+
+INCLUDE_PATHS:= -I../../src/liblsquic -I../../src/liblsquic/ls-qpack
+
+COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l ../../src/liblsquic/lsquic.lib  -l $(BORINGSSL_LIBS)  -l zlib.lib \
+	-l event_core.lib \
+	-l advapi32.lib 
+
+all: getoptobjs ${exe_names} graph_cubic.exe mini_parse.exe test_min_heap.exe test_minmax.exe test_malo_pooled.exe test_malo_nopool.exe 
+
+getoptobjs : 
+	@$(LLVM_DIR)/clang -c ../../wincompat/getopt1.c ../../wincompat/getopt.c $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) 
+
+%.exe : %.c 
+	echo Building $< 
+	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
+	-Wno-unused-value -Wno-initializer-overrides \
+	-DLSQUIC_TEST=1 \
+	-include getopt.h \
+	$(COMMON_LIBS) getopt1.o getopt.o \
+	$< -o $*.exe
+
+test_malo_pooled.exe: test_malo.c
+	echo Building $@ 
+	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
+	-Wno-unused-value -Wno-initializer-overrides \
+	-DLSQUIC_TEST=1 -DLSQUIC_USE_POOLS=1 \
+	-include getopt.h \
+	$(COMMON_LIBS) getopt1.o getopt.o \
+	$< -o $*.exe
+
+test_malo_nopool.exe: test_malo.c
+	echo Building $@ 
+	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
+	-Wno-unused-value -Wno-initializer-overrides \
+	-DLSQUIC_TEST=1 -DLSQUIC_USE_POOLS=0 \
+	-include getopt.h \
+	$(COMMON_LIBS) getopt1.o getopt.o \
+	$< -o $*.exe
+clean:
+	cmd //c del  *.exe *.o *.ilk *.pdb

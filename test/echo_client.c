@@ -9,7 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include <getopt.h>
+#include <io.h>
+#define STDIN_FILENO _fileno(stdin)
+#endif
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -217,6 +223,7 @@ main (int argc, char **argv)
         }
     }
 
+#ifndef WIN32
     int flags = fcntl(STDIN_FILENO, F_GETFL);
     flags |= O_NONBLOCK;
     if (0 != fcntl(STDIN_FILENO, F_SETFL, flags))
@@ -224,6 +231,7 @@ main (int argc, char **argv)
         perror("fcntl");
         exit(1);
     }
+#endif
 
     if (0 != prog_prep(&prog))
     {

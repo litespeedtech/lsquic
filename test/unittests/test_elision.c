@@ -25,6 +25,16 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_logger.h"
 
+#ifdef WIN32
+#pragma message("This test cannot be  used because clang does not support weak linking on Windows")
+int
+main (void)
+{
+	return 0;
+}
+#else
+
+
 
 static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
 
@@ -411,3 +421,4 @@ main (void)
 
     return 0;
 }
+#endif //!WIN32

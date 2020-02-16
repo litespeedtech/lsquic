@@ -64,11 +64,8 @@ You can contact the author at :
 // Compiler Specific Options
 //**************************************
 // Disable some Visual warning messages
-#ifdef _MSC_VER  // Visual Studio
-#  pragma warning(disable : 4127)      // disable: C4127: conditional expression is constant
-#endif
 
-#ifdef _MSC_VER    // Visual Studio
+#ifdef WIN32
 #  define FORCE_INLINE static __forceinline
 #else
 #  ifdef __GNUC__

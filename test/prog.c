@@ -467,7 +467,11 @@ prog_process_conns (struct prog *prog)
 
 
 static void
+#ifdef WIN32
+prog_timer_handler (long long fd, short what, void *arg)
+#else
 prog_timer_handler (int fd, short what, void *arg)
+#endif
 {
     struct prog *const prog = arg;
     if (!prog_is_stopped())
