@@ -68,6 +68,12 @@ Some open source code required to be installed to build the code include:
      platform to *64-bit*.  Compile the project.
    - Repeat the cmake and compile steps replacing *Debug* with *Release*.
 
+   - Download gnu make for Windows from your preferred  source. One source [here](https://github.com/amoldeshpande/make)
+   	 has a 64-bit compiled binary in the github releases tab.
+   - Download perl for Windows (from https://www.perl.org/get.html for example)
+   - LLVM Clang from http://releases.llvm.org/download.html. Download the 64-bit Windows version and install it.
+
+
 Make and Compile LSQUIC-Client
 ------------------------------
 
@@ -79,28 +85,19 @@ Clone lsquic-client:
    cd lsquic-client
    ```
 
-Configure the build using cmake (you can specify `Release` instead of `Debug`
-to build an optimized version of the library, but that won't build tests):
-
-   ```
-   cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DBUILD_SHARED_LIBS=OFF ^
-        -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_BUILD_TYPE=Debug ^
-        -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-        -DBORINGSSL_DIR=%boringssl% .
-   ```
-
-Compile everything (add `/m` flag if you have processors to spare):
-
-   ```
-   msbuild ALL_BUILD.vcxproj
-   ```
+Update the top Makefile.Windows to reflect your locations of the various libraries and vcpkg discussed above.
+Run 
+	```
+	gnumake -f Makefile.Windows
+	```
+Note that parallel make (-j <n>) may or may not work reliably. 
 
 `http_client.exe` should be found in the `Debug` (or `Release`) directory.
    
 Run tests (assuming `Debug` build):
 
    ```
-   msbuild RUN_TESTS.vcxproj
+   TBD
    ```
 
 Have fun,
