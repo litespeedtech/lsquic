@@ -39,7 +39,7 @@ static int
 popcount (unsigned v)
 {
     int count, i;
-    for (i = 0, count = 0; i < sizeof(v) * 8; ++i)
+    for (i = 0, count = 0; i < (int)sizeof(v) * 8; ++i)
         if (v & (1 << i))
             ++count;
     return count;
@@ -120,7 +120,7 @@ main (void)
                 ++n;
             }
         }
-        lsquic_time_t found_min_t = lsquic_alarmset_mintime(&alset, &ids[1]);
+        lsquic_time_t found_min_t = lsquic_alarmset_mintime(&alset, (enum alarm_id*)&ids[1]);
         assert(min_t == found_min_t);
         assert(ids[0] == ids[1]);
     }

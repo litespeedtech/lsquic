@@ -11,7 +11,7 @@ export VCPKG_LIB_PATH=$(VCPKG_ROOT)/lib
 
 CXXFLAGS_EXTRA=-Wall -Wextra -Wno-unused-parameter -fno-omit-frame-pointer -Wno-implicit-fallthrough \
 				-Wno-microsoft-enum-forward-reference -Wno-unused-function \
-				-Wno-unused-variable \
+				-Wno-unused-variable -Werror\
 				-g -gcodeview \
 				-m64 \
 				-DWIN32 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS \

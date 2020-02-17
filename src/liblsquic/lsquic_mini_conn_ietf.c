@@ -276,7 +276,7 @@ imico_find_stream_frame (const struct ietf_mini_conn *conn,
         return conn->imc_last_in.frame;
 
     TAILQ_FOREACH(frame, &conn->imc_crypto_frames, next_frame)
-        if (enc_level == (int)frame->stream_id && read_off == DF_ROFF(frame))
+        if ((lsquic_stream_id_t)enc_level == frame->stream_id && read_off == DF_ROFF(frame))
             return frame;
 
     return NULL;
