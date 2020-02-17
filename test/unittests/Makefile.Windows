@@ -17,7 +17,7 @@ getoptobjs : $(LSQUIC_LIB)
 	@$(LLVM_DIR)/clang -c ../../wincompat/getopt1.c ../../wincompat/getopt.c $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) 
 
 %.exe : %.c 
-	echo Building $< 
+	@echo Building $(CURDIR)/$< 
 	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
 	-Wno-unused-value -Wno-initializer-overrides \
 	-DLSQUIC_TEST=1 \
@@ -26,7 +26,7 @@ getoptobjs : $(LSQUIC_LIB)
 	$< -o $*.exe
 
 test_malo_pooled.exe: test_malo.c
-	echo Building $@ 
+	@echo Building $(CURDIR)/$@ 
 	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
 	-Wno-unused-value -Wno-initializer-overrides \
 	-DLSQUIC_TEST=1 -DLSQUIC_USE_POOLS=1 \
@@ -35,7 +35,7 @@ test_malo_pooled.exe: test_malo.c
 	$< -o $*.exe
 
 test_malo_nopool.exe: test_malo.c
-	echo Building $@ 
+	@echo Building $(CURDIR)/$@ 
 	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
 	-Wno-unused-value -Wno-initializer-overrides \
 	-DLSQUIC_TEST=1 -DLSQUIC_USE_POOLS=0 \

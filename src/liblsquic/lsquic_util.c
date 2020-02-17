@@ -8,15 +8,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #ifndef WIN32
 #include <sys/time.h>
-#include <unistd.h>
-#else
-#include <vc_compat.h>
-#endif
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#else
+#include <vc_compat.h>
+#endif
 
 #if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
 #include <mach/mach_time.h>

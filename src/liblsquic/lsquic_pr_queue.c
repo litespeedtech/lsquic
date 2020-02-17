@@ -6,11 +6,13 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#ifndef WIN32
 #include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/socket.h>
 
 #include <openssl/aead.h>
 #include <openssl/rand.h>
