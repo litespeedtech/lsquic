@@ -1505,6 +1505,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #else
     DWORD bytes;
     WSAMSG msg;
+    WSABUF wsaBuf;
 #endif
     union {
         /* cmsg(3) recommends union for proper alignment */
@@ -1565,12 +1566,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         msg.msg_iovlen     = specs[n].iovlen;
         msg.msg_flags      = 0;
 #else
+        wsaBuf.buf = specs[n].iov->iov_base;
+        wsaBuf.len = specs[n].iov->iov_len;
         msg.name           = (void *) specs[n].dest_sa;
         msg.namelen        = (AF_INET == specs[n].dest_sa->sa_family ?
                                             sizeof(struct sockaddr_in) :
-                                            sizeof(struct sockaddr_in6)),
-        msg.lpBuffers      = specs[n].iov;
-        msg.dwBufferCount  = specs[n].iovlen;
+                                            sizeof(struct sockaddr_in6));
+        msg.dwBufferCount  = 1;
+        msg.lpBuffers = &wsaBuf;
         msg.dwFlags        = 0;
 #endif
         if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)

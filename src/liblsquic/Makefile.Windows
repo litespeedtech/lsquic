@@ -12,4 +12,5 @@ lsquic_versions_to_string.c : gen-verstrs.pl
 	$(PERL_DIR)/perl.exe gen-verstrs.pl ../../include/lsquic.h lsquic_versions_to_string.c
 
 %.o : %.c 
-	$(LLVM_DIR)/clang -c $(LSQUIC_CXXFLAGS) -Wno-uninitialized -I${CURDIR} -Ils-qpack -DXXH_HEADER_NAME="\"lsquic_xxhash.h\"" -o $*.o $<
+	echo compiling $<
+	@$(LLVM_DIR)/clang -c $(LSQUIC_CXXFLAGS) -Wno-uninitialized -I${CURDIR} -Ils-qpack -DXXH_HEADER_NAME="\"lsquic_xxhash.h\"" -o $*.o $<

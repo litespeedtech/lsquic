@@ -6,20 +6,20 @@ COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l ../src/liblsquic/lsquic.l
 	-l advapi32.lib 
 
 http_client.exe: http_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
 	$(COMMON_LIBS) \
-	-o http_client.exe  \
+	-o http_client.exe  
 
 md5_client.exe: md5_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
 	$(COMMON_LIBS) \
-	-o md5_client.exe  \
+	-o  md5_client.exe 
 
 echo_client.exe: echo_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $? \
+	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
 	-Wno-incompatible-pointer-types \
 	$(COMMON_LIBS) \
-	-o echo_client.exe  \
+	-o echo_client.exe
 
 clean:
 	cmd //c del   *.exe *.o *.ilk *.pdb
