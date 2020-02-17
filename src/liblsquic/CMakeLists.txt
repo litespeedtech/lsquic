@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc.  See LICENSE.
 SET(lsquic_STAT_SRCS
     ls-qpack/lsqpack.c
     lsquic_alarmset.c
@@ -9,7 +9,6 @@ SET(lsquic_STAT_SRCS
     lsquic_cfcw.c
     lsquic_chsk_stream.c
     lsquic_conn.c
-    lsquic_crand.c
     lsquic_crt_compress.c
     lsquic_crypto.c
     lsquic_cubic.c
@@ -95,7 +94,7 @@ ENDIF()
 
 ADD_CUSTOM_COMMAND(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl
+    COMMAND  ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl
     ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
     DEPENDS ./gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
