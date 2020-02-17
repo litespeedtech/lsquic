@@ -460,7 +460,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *);
 static unsigned
 highest_bit_set (unsigned sz)
 {
-#if __GNUC__
+#if __GNUC__ || __clang__
     unsigned clz = __builtin_clz(sz);
     return 31 - clz;
 #else
@@ -6342,7 +6342,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
                          s = lsquic_packet_in_ver_next(&vi, &ver_tag))
         {
             version = lsquic_tag2ver(ver_tag);
-            if (version < N_LSQVER)
+            if (version >0 && version < N_LSQVER)
             {
                 versions |= 1 << version;
                 LSQ_DEBUG("server supports version %s", lsquic_ver2str[version]);

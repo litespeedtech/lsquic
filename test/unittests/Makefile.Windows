@@ -5,13 +5,15 @@ exe_names:=$(addsuffix .exe,${test_names})
 
 INCLUDE_PATHS:= -I../../src/liblsquic -I../../src/liblsquic/ls-qpack
 
-COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l ../../src/liblsquic/lsquic.lib  -l $(BORINGSSL_LIBS)  -l zlib.lib \
+LSQUIC_LIB:=../../src/liblsquic/lsquic.lib  
+
+COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l $(LSQUIC_LIB) -l $(BORINGSSL_LIBS)  -l zlib.lib \
 	-l event_core.lib \
 	-l advapi32.lib 
 
 all: getoptobjs ${exe_names} graph_cubic.exe mini_parse.exe test_min_heap.exe test_minmax.exe test_malo_pooled.exe test_malo_nopool.exe 
 
-getoptobjs : 
+getoptobjs : $(LSQUIC_LIB) 
 	@$(LLVM_DIR)/clang -c ../../wincompat/getopt1.c ../../wincompat/getopt.c $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) 
 
 %.exe : %.c 
