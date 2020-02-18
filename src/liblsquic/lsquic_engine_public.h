@@ -59,11 +59,13 @@ struct lsquic_engine_public {
                                  * functions.
                                  */
         ENPUB_CAN_SEND = (1 << 1),
+        ENPUB_HTTP  = (1 << 2), /* Engine in HTTP mode */
     }                               enp_flags;
     unsigned char                   enp_ver_tags_buf[ sizeof(lsquic_ver_tag_t) * N_LSQVER ];
     unsigned                        enp_ver_tags_len;
     struct crand                   *enp_crand;
     struct evp_aead_ctx_st         *enp_retry_aead_ctx;
+    unsigned char                  *enp_alpn;   /* May be set if not HTTP */
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

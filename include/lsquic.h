@@ -1019,6 +1019,12 @@ struct lsquic_engine_api
      */
     const struct lsquic_keylog_if       *ea_keylog_if;
     void                                *ea_keylog_ctx;
+
+    /**
+     * The optional ALPN string is used by the client @ref LSENG_HTTP
+     * is not set.
+     */
+    const char                          *ea_alpn;
 };
 
 /**

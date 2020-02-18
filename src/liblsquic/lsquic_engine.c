@@ -463,6 +463,7 @@ lsquic_engine_new (unsigned flags,
                    const struct lsquic_engine_api *api)
 {
     lsquic_engine_t *engine;
+    size_t alpn_len;
     char err_buf[100];
 
     if (!api->ea_packets_out)
@@ -476,6 +477,18 @@ lsquic_engine_new (unsigned flags,
         LSQ_ERROR("stream interface is not specified");
         return NULL;
     }
+
+    if (!(flags & LSENG_HTTP) && api->ea_alpn)
+    {
+        alpn_len = strlen(api->ea_alpn);
+        if (alpn_len < 1 || alpn_len > 255)
+        {
+            LSQ_ERROR("ALPN string length invalid: %zd bytes", alpn_len);
+            return NULL;
+        }
+    }
+    else
+        alpn_len = 0;
 
     if (api->ea_settings &&
                 0 != lsquic_engine_check_settings(api->ea_settings, flags,
@@ -604,6 +617,21 @@ lsquic_engine_new (unsigned flags,
             return NULL;
         }
     }
+
+    if (alpn_len)
+    {
+        engine->pub.enp_alpn = malloc(alpn_len + 1);
+        if (!engine->pub.enp_alpn)
+        {
+            lsquic_engine_destroy(engine);
+            return NULL;
+        }
+        engine->pub.enp_alpn[0] = alpn_len;
+        memcpy(engine->pub.enp_alpn + 1, api->ea_alpn, alpn_len);
+    }
+
+    if (flags & LSENG_HTTP)
+        engine->pub.enp_flags |= ENPUB_HTTP;
 
 #ifndef NDEBUG
     {
@@ -1458,6 +1486,7 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
 #endif
     if (engine->pub.enp_retry_aead_ctx)
         EVP_AEAD_CTX_cleanup(engine->pub.enp_retry_aead_ctx);
+    free(engine->pub.enp_alpn);
     free(engine);
 }
 

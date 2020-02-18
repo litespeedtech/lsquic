@@ -70,7 +70,7 @@
 static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
-} s_alpns[] = {
+} s_h3_alpns[] = {
     {   LSQVER_ID25, (unsigned char *) "\x05h3-25",     },
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
     {   LSQVER_VERNEG, (unsigned char *) "\x05h3-27",     },
@@ -1097,17 +1097,19 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         unsigned char trans_params[sizeof(struct transport_params)];
     } u;
 
-    for (am = s_alpns; am < s_alpns + sizeof(s_alpns)
-                                                / sizeof(s_alpns[0]); ++am)
-        if (am->version == enc_sess->esi_conn->cn_version)
-            goto ok;
-
-    LSQ_ERROR("version %s has no matching ALPN",
-                            lsquic_ver2str[enc_sess->esi_conn->cn_version]);
-    return -1;
-
-  ok:
-    enc_sess->esi_alpn = am->alpn;
+    if (enc_sess->esi_enpub->enp_alpn)
+        enc_sess->esi_alpn = enc_sess->esi_enpub->enp_alpn;
+    else if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+    {
+        for (am = s_h3_alpns; am < s_h3_alpns + sizeof(s_h3_alpns)
+                                                / sizeof(s_h3_alpns[0]); ++am)
+            if (am->version == enc_sess->esi_conn->cn_version)
+                goto ok;
+        LSQ_ERROR("version %s has no matching ALPN",
+                                lsquic_ver2str[enc_sess->esi_conn->cn_version]);
+        return -1;
+  ok:   enc_sess->esi_alpn = am->alpn;
+    }
 
     ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(
                     lsquic_conn_get_peer_ctx(enc_sess->esi_conn, NULL));
@@ -1261,17 +1263,20 @@ init_client (struct enc_sess_iquic *const enc_sess)
 #endif
     ];
 
-    for (am = s_alpns; am < s_alpns + sizeof(s_alpns)
-                                                / sizeof(s_alpns[0]); ++am)
-        if (am->version == enc_sess->esi_ver_neg->vn_ver)
-            goto ok;
+    if (enc_sess->esi_enpub->enp_alpn)
+        enc_sess->esi_alpn = enc_sess->esi_enpub->enp_alpn;
+    else if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+    {
+        for (am = s_h3_alpns; am < s_h3_alpns + sizeof(s_h3_alpns)
+                                                / sizeof(s_h3_alpns[0]); ++am)
+            if (am->version == enc_sess->esi_ver_neg->vn_ver)
+                goto ok;
+        LSQ_ERROR("version %s has no matching ALPN",
+                                lsquic_ver2str[enc_sess->esi_ver_neg->vn_ver]);
+        return -1;
+  ok:   enc_sess->esi_alpn = am->alpn;
+    }
 
-    LSQ_ERROR("version %s has no matching ALPN",
-                            lsquic_ver2str[enc_sess->esi_ver_neg->vn_ver]);
-    return -1;
-
-  ok:
-    enc_sess->esi_alpn = am->alpn;
     LSQ_DEBUG("Create new SSL_CTX");
     ssl_ctx = SSL_CTX_new(TLS_method());
     if (!ssl_ctx)
@@ -1320,7 +1325,9 @@ init_client (struct enc_sess_iquic *const enc_sess)
             ERR_error_string(ERR_get_error(), errbuf));
         goto err;
     }
-    if (0 != SSL_set_alpn_protos(enc_sess->esi_ssl, am->alpn, am->alpn[0] + 1))
+    if (enc_sess->esi_alpn &&
+            0 != SSL_set_alpn_protos(enc_sess->esi_ssl, enc_sess->esi_alpn,
+                                                    enc_sess->esi_alpn[0] + 1))
     {
         LSQ_ERROR("cannot set ALPN: %s",
             ERR_error_string(ERR_get_error(), errbuf));
@@ -2437,7 +2444,8 @@ cry_sm_set_encryption_secret (SSL *ssl, enum ssl_encryption_level_t level,
     if (!enc_sess)
         return 0;
 
-    if ((enc_sess->esi_flags & (ESI_ALPN_CHECKED|ESI_SERVER)) == ESI_SERVER)
+    if ((enc_sess->esi_flags & (ESI_ALPN_CHECKED|ESI_SERVER)) == ESI_SERVER
+                                                        && enc_sess->esi_alpn)
     {
         enc_sess->esi_flags |= ESI_ALPN_CHECKED;
         SSL_get0_alpn_selected(enc_sess->esi_ssl, &alpn, &alpn_len);
