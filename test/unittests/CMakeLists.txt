@@ -19,6 +19,7 @@ ELSE()
 ENDIF()
 
 include_directories(../../src/liblsquic/ls-qpack)
+INCLUDE_DIRECTORIES(../../src/lshpack)
 
 SET(TESTS
     ack

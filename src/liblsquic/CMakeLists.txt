@@ -87,6 +87,7 @@ include_directories(ls-qpack)
 IF(PROJECT_NAME STREQUAL "openlitespeed")
     INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src/spdy)
 ELSE()
+    INCLUDE_DIRECTORIES(../lshpack)
     SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS}
         lsquic_xxhash.c
         ../lshpack/lshpack.c
