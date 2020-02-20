@@ -187,14 +187,6 @@ lsquic_conn_is_push_enabled (lsquic_conn_t *lconn)
 }
 
 
-struct lsquic_stream *
-lsquic_conn_get_stream_by_id (struct lsquic_conn *lconn,
-                              lsquic_stream_id_t stream_id)
-{
-    return lconn->cn_if->ci_get_stream_by_id(lconn, stream_id);
-}
-
-
 struct lsquic_engine *
 lsquic_conn_get_engine (struct lsquic_conn *lconn)
 {

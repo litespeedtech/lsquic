@@ -4026,15 +4026,6 @@ find_stream_by_id (struct id24_full_conn *conn, lsquic_stream_id_t stream_id)
 }
 
 
-static struct lsquic_stream *
-ieft_full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
-                               lsquic_stream_id_t stream_id)
-{
-    struct id24_full_conn *conn = (struct id24_full_conn *) lconn;
-    return find_stream_by_id(conn, stream_id);
-}
-
-
 static void
 maybe_schedule_ss_for_stream (struct id24_full_conn *conn,
                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
@@ -6610,7 +6601,6 @@ id24_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
     .ci_get_engine           =  id24_full_conn_ci_get_engine, \
     .ci_get_log_cid          =  id24_full_conn_ci_get_log_cid, \
     .ci_get_path             =  id24_full_conn_ci_get_path, \
-    .ci_get_stream_by_id     =  ieft_full_conn_ci_get_stream_by_id, \
     .ci_going_away           =  id24_full_conn_ci_going_away, \
     .ci_hsk_done             =  id24_full_conn_ci_hsk_done, \
     .ci_internal_error       =  id24_full_conn_ci_internal_error, \

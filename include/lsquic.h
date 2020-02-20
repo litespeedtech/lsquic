@@ -34,9 +34,7 @@ extern "C" {
 /** Server mode */
 #define LSENG_SERVER (1 << 0)
 
-/** Treat stream 3 as headers stream and, in general, behave like the
- *  regular QUIC.
- */
+/** Use HTTP behavior */
 #define LSENG_HTTP  (1 << 1)
 
 #define LSENG_HTTP_SERVER (LSENG_SERVER|LSENG_HTTP)
@@ -47,67 +45,12 @@ extern "C" {
  */
 enum lsquic_version
 {
-
-    /** Q035.  This is the first version to be supported by LSQUIC. */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
-    /*
-     * Q037.  This version is like Q035, except the way packet hashes are
-     * generated is different for clients and servers.  In addition, new
-     * option NSTP (no STOP_WAITING frames) is rumored to be supported at
-     * some point in the future.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
-    /*
-     * Q038.  Based on Q037, supports PADDING frames in the middle of packet
-     * and NSTP (no STOP_WAITING frames) option.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
-    /**
-     * Q039.  Switch to big endian.  Do not ack acks.  Send connection level
-     * WINDOW_UPDATE frame every 20 sent packets which do not contain
-     * retransmittable frames.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
-    /*
-     * Q041.  RST_STREAM, ACK and STREAM frames match IETF format.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
-    /*
-     * Q042.  Receiving overlapping stream data is allowed.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
-
     /**
      * Q043.  Support for processing PRIORITY frames.  Since this library
      * has supported PRIORITY frames from the beginning, this version is
      * exactly the same as LSQVER_042.
      */
     LSQVER_043,
-
-    /**
-     * Q044.  IETF-like packet headers are used.  Frames are the same as
-     * in Q043.  Server never includes CIDs in short packets.
-     */
-    /* Support for this version has been removed.  The comment remains to
-     * document the changes.
-     */
 
     /**
      * Q046.  Use IETF Draft-17 compatible packet headers.
@@ -153,7 +96,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, and Draft-24
+ * We currently support versions 43, 46, 50, Draft-24, and Draft-25
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -199,7 +142,7 @@ enum lsquic_hsk_status
 
 /**
  * @struct lsquic_stream_if
- * @brief The definition of callback functions call by lsquic_stream to
+ * @brief The definitions of callback functions called by lsquic_stream to
  * process events.
  *
  */
@@ -984,14 +927,29 @@ struct lsquic_keylog_if
     void      (*kli_close) (void *handle);
 };
 
-/* TODO: describe this important data structure */
-typedef struct lsquic_engine_api
+/**
+ * This struct contains a list of all callbacks that are used by the engine
+ * to communicate with the user code.  Most of these are optional, while
+ * the following are mandatory:
+ *
+ *  @ref ea_stream_if       The stream interface.
+ *  @ref ea_packets_out     Function to send packets.
+ *  @ref ea_lookup_cert     Function to look up certificates by SNI (used
+ *                            in server mode).
+ *
+ * A pointer to this structure is passed to engine constructor
+ * @ref lsquic_engine_new().
+ */
+struct lsquic_engine_api
 {
     const struct lsquic_engine_settings *ea_settings;   /* Optional */
+    /** Stream interface is required to manage connections and streams. */
     const struct lsquic_stream_if       *ea_stream_if;
     void                                *ea_stream_if_ctx;
+    /** Function to send packets out is required. */
     lsquic_packets_out_f                 ea_packets_out;
     void                                *ea_packets_out_ctx;
+    /** Function to look up certificates by SNI is used in server mode. */
     lsquic_lookup_cert_f                 ea_lookup_cert;
     void                                *ea_cert_lu_ctx;
     struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx);
@@ -1048,17 +1006,24 @@ typedef struct lsquic_engine_api
      */
     const struct lsquic_keylog_if       *ea_keylog_if;
     void                                *ea_keylog_ctx;
-} lsquic_engine_api_t;
+};
 
 /**
  * Create new engine.
  *
  * @param   lsquic_engine_flags     A bitmask of @ref LSENG_SERVER and
  *                                  @ref LSENG_HTTP
+ *
+ * @param   api                     Required parameter that specifies
+ *                                    various callbacks.
+ *
+ * The engine can be instantiated either in server mode (when LSENG_SERVER
+ * is set) or client mode.  If you need both server and client in your
+ * program, create two engines (or as many as you'd like).
  */
 lsquic_engine_t *
 lsquic_engine_new (unsigned lsquic_engine_flags,
-                   const struct lsquic_engine_api *);
+                   const struct lsquic_engine_api *api);
 
 /**
  * Create a client connection to peer identified by `peer_ctx'.
@@ -1090,8 +1055,8 @@ lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
  *              This may happen with version negotiation and public reset
  *              packets as well as some packets that may be ignored.
  *
- * @retval -1   Some error occurred.  Possible reasons are invalid packet
- *              size or failure to allocate memory.
+ * @retval -1   An error occurred.  Possible reasons are failure to allocate
+ *              memory and invalid @param sa_local in client mode.
  */
 int
 lsquic_engine_packet_in (lsquic_engine_t *,
@@ -1124,6 +1089,10 @@ lsquic_engine_has_unsent_packets (lsquic_engine_t *engine);
 void
 lsquic_engine_send_unsent_packets (lsquic_engine_t *engine);
 
+/**
+ * Destroy engine and all connections and streams in it and free all
+ * memory associated with this engine.
+ */
 void
 lsquic_engine_destroy (lsquic_engine_t *);
 
@@ -1131,6 +1100,18 @@ lsquic_engine_destroy (lsquic_engine_t *);
 unsigned
 lsquic_conn_n_avail_streams (const lsquic_conn_t *);
 
+/**
+ * Create a new request stream.  This causes @ref on_new_stream() callback
+ * to be called.  If creating more requests is not permitted at the moment
+ * (due to number of concurrent streams limit), stream creation is registered
+ * as "pending" and the stream is created later when number of streams dips
+ * under the limit again.  Any number of pending streams can be created.
+ * Use @ref lsquic_conn_n_pending_streams() and
+ * @ref lsquic_conn_cancel_pending_streams() to manage pending streams.
+ *
+ * If connection is going away, @ref on_new_stream() is called with the
+ * stream parameter set to NULL.
+ */
 void
 lsquic_conn_make_stream (lsquic_conn_t *);
 
@@ -1163,14 +1144,41 @@ lsquic_conn_going_away (lsquic_conn_t *);
 void
 lsquic_conn_close (lsquic_conn_t *);
 
-int lsquic_stream_wantread(lsquic_stream_t *s, int is_want);
-ssize_t lsquic_stream_read(lsquic_stream_t *s, void *buf, size_t len);
-ssize_t lsquic_stream_readv(lsquic_stream_t *s, const struct iovec *,
-                                                            int iovcnt);
+/**
+ * Set whether you want to read from stream.  If @param is_want is true,
+ * @ref on_read() will be called when there is readable data in the
+ * stream.  If @param is false, @ref on_read() will not be called.
+ *
+ * Returns previous value of this flag.
+ */
+int
+lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
+
+/**
+ * Read up to @param len bytes from stream into @param buf.  Returns number
+ * of bytes read or -1 on error, in which case errno is set.  Possible
+ * errno values:
+ *
+ *  EBADF           The stream is closed.
+ *  ECONNRESET      The stream has been reset.
+ *  EWOULDBLOCK     There is no data to be read.
+ *
+ * Return value of zero indicates EOF.
+ */
+ssize_t
+lsquic_stream_read (lsquic_stream_t *s, void *buf, size_t len);
+
+/**
+ * Similar to @ref lsquic_stream_read(), but reads data into @param vec.
+ */
+ssize_t
+lsquic_stream_readv (lsquic_stream_t *s, const struct iovec *vec, int iovcnt);
 
 /**
  * This function allows user-supplied callback to read the stream contents.
  * It is meant to be used for zero-copy stream processing.
+ *
+ * Return value and errors are same as in @ref lsquic_stream_read().
  */
 ssize_t
 lsquic_stream_readf (lsquic_stream_t *s,
@@ -1187,15 +1195,31 @@ lsquic_stream_readf (lsquic_stream_t *s,
     size_t (*readf)(void *ctx, const unsigned char *buf, size_t len, int fin),
     void *ctx);
 
-int lsquic_stream_wantwrite(lsquic_stream_t *s, int is_want);
+/**
+ * Set whether you want to write to stream.  If @param is_want is true,
+ * @ref on_write() will be called when it is possible to write data to
+ * the stream.  If @param is false, @ref on_write() will not be called.
+ *
+ * Returns previous value of this flag.
+ */
+int
+lsquic_stream_wantwrite (lsquic_stream_t *s, int is_want);
 
 /**
  * Write `len' bytes to the stream.  Returns number of bytes written, which
  * may be smaller that `len'.
+ *
+ * A negative return value indicates a serious error (the library is likely
+ * to have aborted the connection because of it).
  */
-ssize_t lsquic_stream_write(lsquic_stream_t *s, const void *buf, size_t len);
+ssize_t
+lsquic_stream_write (lsquic_stream_t *s, const void *buf, size_t len);
 
-ssize_t lsquic_stream_writev(lsquic_stream_t *s, const struct iovec *vec, int count);
+/**
+ * Like @ref lsquic_stream_write(), but read data from @param vec.
+ */
+ssize_t
+lsquic_stream_writev (lsquic_stream_t *s, const struct iovec *vec, int count);
 
 /**
  * Used as argument to @ref lsquic_stream_writef()
@@ -1258,8 +1282,13 @@ struct lsquic_http_headers
     lsquic_http_header_t   *headers;
 };
 
-int lsquic_stream_send_headers(lsquic_stream_t *s,
-                               const lsquic_http_headers_t *h, int eos);
+/**
+ * Send headers in @param headers.  This function must be called before
+ * writing to the stream.  The value of @param eos is ignored in IETF QUIC.
+ */
+int
+lsquic_stream_send_headers (lsquic_stream_t *s,
+                               const lsquic_http_headers_t *headers, int eos);
 
 /**
  * Get header set associated with the stream.  The header set is created by
@@ -1383,9 +1412,6 @@ int lsquic_stream_set_priority (lsquic_stream_t *s, unsigned priority);
  * functions.
  */
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
-
-lsquic_stream_t *
-lsquic_conn_get_stream_by_id (lsquic_conn_t *c, lsquic_stream_id_t stream_id);
 
 /** Get connection ID */
 const lsquic_cid_t *
@@ -1557,9 +1583,6 @@ lsquic_alpn2ver (const char *alpn, size_t len);
  */
 void
 lsquic_engine_cooldown (lsquic_engine_t *);
-
-struct ssl_st *
-lsquic_hsk_getssl(lsquic_conn_t *conn);
 
 /**
  * Get user-supplied context associated with the connection.

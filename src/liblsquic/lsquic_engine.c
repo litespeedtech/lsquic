@@ -140,9 +140,14 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
 
 /* A connection can be referenced from one of six places:
  *
- *   1. A hash.  The engine maintains two hash tables -- one for full, and
- *      one for mini connections.  A connection starts its life in one of
- *      those.
+ *   1. A hash is used to find connections in order to dispatch an incoming
+ *      packet.  Connections can be hashed by CIDs or by address.  In the
+ *      former case, each connection has one or more mappings in the hash
+ *      table.  IETF QUIC connections have up to eight (in our implementation)
+ *      source CIDs and each of those would have a mapping.  In client mode,
+ *      depending on QUIC versions and options selected, it is may be
+ *      necessary to hash connections by address, in which case incoming
+ *      packets are delivered to connections based on the address.
  *
  *   2. Outgoing queue.
  *
@@ -216,13 +221,6 @@ struct lsquic_engine
     struct lsquic_hash                *conns_hash;
     struct min_heap                    conns_tickable;
     struct min_heap                    conns_out;
-    /* Use a union because only one iterator is being used at any one time */
-    union {
-        struct {
-            struct cert_susp_head *head;
-        }           resumed;
-        struct lsquic_conn *one_conn;
-    }                                  iter_state;
     struct eng_hist                    history;
     unsigned                           batch_size;
     struct pr_queue                   *pr_queue;
@@ -2611,8 +2609,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
 
     if (engine->flags & ENG_SERVER)
         parse_packet_in_begin = lsquic_parse_packet_in_server_begin;
-    else
-    if (engine->flags & ENG_CONNS_BY_ADDR)
+    else if (engine->flags & ENG_CONNS_BY_ADDR)
     {
         struct lsquic_hash_elem *el;
         const struct lsquic_conn *conn;

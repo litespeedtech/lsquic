@@ -2849,10 +2849,3 @@ const struct lsquic_stream_if lsquic_mini_cry_sm_if =
 };
 
 
-struct ssl_st *
-lsquic_hsk_getssl (lsquic_conn_t *conn)
-{
-    if (!conn || !(conn->cn_flags & LSCONN_IETF))
-        return NULL;
-    return ((struct enc_sess_iquic *)conn->cn_enc_session)->esi_ssl;
-}
