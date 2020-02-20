@@ -184,7 +184,7 @@ struct lsquic_stream_if {
      */
     void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
     /**
-     * When server sends a token in NEW_TOKEN frame, this callback is called.
+     * When client receives a token in NEW_TOKEN frame, this callback is called.
      * The callback is optional.
      */
     void (*on_new_token)(lsquic_conn_t *c, const unsigned char *token,
@@ -1082,7 +1082,7 @@ lsquic_engine_has_unsent_packets (lsquic_engine_t *engine);
  * Send out as many unsent packets as possibe: until we are out of unsent
  * packets or until @ref ea_packets_out() fails.
  *
- * If @ref ea_packets_out() does fail (that is, it returns an error), this
+ * If @ref ea_packets_out() does fail cannot send all packets, this
  * function must be called to signify that sending of packets is possible
  * again.
  */
@@ -1340,9 +1340,6 @@ int lsquic_stream_close(lsquic_stream_t *s);
 /**
  * Get certificate chain returned by the server.  This can be used for
  * server certificate verification.
- *
- * If server certificate cannot be verified, the connection can be closed
- * using lsquic_conn_cert_verification_failed().
  *
  * The caller releases the stack using sk_X509_free().
  */

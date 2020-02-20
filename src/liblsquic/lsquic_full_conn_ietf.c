@@ -5294,6 +5294,8 @@ process_new_token_frame (struct ietf_full_conn *conn,
     char *token_str;
     int parsed_len;
 
+    /* TODO: make receipt of NEW_TOKEN frame an error on the server */
+
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_token_frame(p, len, &token,
                                                                     &token_sz);
     if (parsed_len < 0)

@@ -258,5 +258,13 @@ IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     enable_testing()
 ENDIF()
 
-
-ADD_CUSTOM_TARGET(docs doxygen dox.cfg)
+FIND_PROGRAM(SPHINX NAMES sphinx-build)
+IF(SPHINX)
+    ADD_CUSTOM_TARGET(docs
+        ${SPHINX} -b html
+        docs
+        docs/_build
+    )
+ELSE()
+    MESSAGE(STATUS "sphinx-build not found: docs won't be made")
+ENDIF()
