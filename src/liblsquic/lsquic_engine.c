@@ -470,6 +470,12 @@ lsquic_engine_new (unsigned flags,
         return NULL;
     }
 
+    if (!api->ea_stream_if)
+    {
+        LSQ_ERROR("stream interface is not specified");
+        return NULL;
+    }
+
     if (api->ea_settings &&
                 0 != lsquic_engine_check_settings(api->ea_settings, flags,
                                                     err_buf, sizeof(err_buf)))

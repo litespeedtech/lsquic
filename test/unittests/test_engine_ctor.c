@@ -20,6 +20,7 @@ main (void)
     memset(&api, 0, sizeof(api));
     api.ea_settings = &settings;
     api.ea_packets_out = (void *) (uintptr_t) 1;
+    api.ea_stream_if = (void *) (uintptr_t) 2;
 
     engine = lsquic_engine_new(flags, &api);
     assert(engine);
