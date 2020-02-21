@@ -32,6 +32,7 @@ enum transport_param_id
     /*
      * Numeric transport parameters without default values:
      */
+    TPI_MIN_ACK_DELAY,
     TPI_LOSS_BITS,                          MAX_NUMERIC_TPI = TPI_LOSS_BITS,
 
     /*

@@ -258,6 +258,7 @@ IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     enable_testing()
 ENDIF()
 
+
 FIND_PROGRAM(SPHINX NAMES sphinx-build)
 IF(SPHINX)
     ADD_CUSTOM_TARGET(docs

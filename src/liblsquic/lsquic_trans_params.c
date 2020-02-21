@@ -51,6 +51,7 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0xC37:     return TPI_QUANTUM_READINESS;
 #endif
     case 0x1057:    return TPI_LOSS_BITS;
+    case 0xDE1A:    return TPI_MIN_ACK_DELAY;
     default:        return INT_MAX;
     }
 }
@@ -77,6 +78,7 @@ static const unsigned short enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_QUANTUM_READINESS]                 =  0xC37,
 #endif
     [TPI_LOSS_BITS]                         =  0x1057,
+    [TPI_MIN_ACK_DELAY]                     =  0xDE1A,
 };
 
 
@@ -101,6 +103,7 @@ static const char * const tpi2str[LAST_TPI + 1] =
     [TPI_QUANTUM_READINESS]                 =  "quantum_readiness",
 #endif
     [TPI_LOSS_BITS]                         =  "loss_bits",
+    [TPI_MIN_ACK_DELAY]                     =  "min_ack_delay",
 };
 
 
@@ -134,6 +137,13 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
     [TPI_MAX_ACK_DELAY]                     =  TP_MAX_MAX_ACK_DELAY,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  VINT_MAX_VALUE,
     [TPI_LOSS_BITS]                         =  1,
+    [TPI_MIN_ACK_DELAY]                     =  (1u << 24) - 1u,
+};
+
+
+static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
+{
+    [TPI_MIN_ACK_DELAY]                     =  1,
 };
 
 
@@ -203,16 +213,24 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             if (tpi > MAX_NUM_WITH_DEF_TPI
                         || params->tp_numerics[tpi] != def_vals[tpi])
             {
-                if (params->tp_numerics[tpi] <= max_vals[tpi])
+                if (params->tp_numerics[tpi] >= min_vals[tpi]
+                                && params->tp_numerics[tpi] <= max_vals[tpi])
                 {
                     bits[tpi] = vint_val2bits(params->tp_numerics[tpi]);
                     need += 4 + (1 << bits[tpi]);
                 }
+                else if (params->tp_numerics[tpi] > max_vals[tpi])
+                {
+                    LSQ_DEBUG("numeric value of %s is too large (%"PRIu64" vs "
+                        "maximum of %"PRIu64")", tpi2str[tpi],
+                        params->tp_numerics[tpi], max_vals[tpi]);
+                    return -1;
+                }
                 else
                 {
-                    LSQ_DEBUG("numeric value is too large (%"PRIu64" vs maximum "
-                        "of %"PRIu64")", params->tp_numerics[tpi],
-                        max_vals[tpi]);
+                    LSQ_DEBUG("numeric value of %s is too small (%"PRIu64" vs "
+                        "minimum " "of %"PRIu64")",
+                        tpi2str[tpi], params->tp_numerics[tpi], min_vals[tpi]);
                     return -1;
                 }
             }
@@ -278,6 +296,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             case TPI_MAX_ACK_DELAY:
             case TPI_ACTIVE_CONNECTION_ID_LIMIT:
             case TPI_LOSS_BITS:
+            case TPI_MIN_ACK_DELAY:
                 WRITE_UINT_TO_P(1 << bits[tpi], 16);
                 vint_write(p, params->tp_numerics[tpi], bits[tpi],
                                                                 1 << bits[tpi]);
@@ -392,6 +411,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         case TPI_MAX_ACK_DELAY:
         case TPI_ACTIVE_CONNECTION_ID_LIMIT:
         case TPI_LOSS_BITS:
+        case TPI_MIN_ACK_DELAY:
             switch (len)
             {
             case 1:
@@ -403,9 +423,16 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                 {
                     if (params->tp_numerics[tpi] > max_vals[tpi])
                     {
-                        LSQ_DEBUG("numeric value of parameter 0x%X is too "
-                            "large (%"PRIu64" vs maximum of %"PRIu64,
-                            param_id, params->tp_numerics[tpi], max_vals[tpi]);
+                        LSQ_DEBUG("numeric value of %s is too large "
+                            "(%"PRIu64" vs maximum of %"PRIu64, tpi2str[tpi],
+                            params->tp_numerics[tpi], max_vals[tpi]);
+                        return -1;
+                    }
+                    else if (params->tp_numerics[tpi] < min_vals[tpi])
+                    {
+                        LSQ_DEBUG("numeric value of %s is too small "
+                            "(%"PRIu64" vs minimum of %"PRIu64, tpi2str[tpi],
+                            params->tp_numerics[tpi], min_vals[tpi]);
                         return -1;
                     }
                     break;
@@ -502,6 +529,17 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
     if (p != end)
         return -1;
 
+    if ((params->tp_set & (1 << TPI_MIN_ACK_DELAY))
+            && params->tp_numerics[TPI_MIN_ACK_DELAY]
+                            > params->tp_numerics[TPI_MAX_ACK_DELAY] * 1000)
+    {
+        LSQ_DEBUG("min_ack_delay (%"PRIu64" usec) is larger than "
+            "max_ack_delay (%"PRIu64" ms)",
+            params->tp_numerics[TPI_MIN_ACK_DELAY],
+            params->tp_numerics[TPI_MAX_ACK_DELAY]);
+        return -1;
+    }
+
     return (int) (end - buf);
 #undef EXPECT_LEN
 }
@@ -517,7 +555,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
     char addr_str[INET6_ADDRSTRLEN];
 
     for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
-        if (params->tp_set & (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL))
+        if (params->tp_set & (1 << tpi))
         {
             nw = snprintf(buf, end - buf, "%.*s%s: %"PRIu64,
                 (buf + sz > end) << 1, "; ", tpi2str[tpi],

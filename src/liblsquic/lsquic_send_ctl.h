@@ -381,4 +381,6 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *,
 void
 lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
 
+#define lsquic_send_ctl_n_unacked(ctl_) ((ctl_)->sc_n_in_flight_retx)
+
 #endif

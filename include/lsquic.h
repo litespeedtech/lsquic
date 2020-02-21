@@ -327,6 +327,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn spin bit on by default */
 #define LSQUIC_DF_SPIN 1
 
+/** Turn off delayed ACKs extension by default */
+#define LSQUIC_DF_DELAYED_ACKS 0
+
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 1
 
@@ -711,6 +714,16 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_SPIN
      */
     int             es_spin;
+
+    /**
+     * Enable delayed ACKs extension.  Allowed values are 0 and 1.
+     *
+     * Warning: this is an experimental feature.  Using it will most likely
+     * lead to degraded performance.
+     *
+     * Default value is @ref LSQUIC_DF_DELAYED_ACKS
+     */
+    int             es_delayed_acks;
 };
 
 /* Initialize `settings' to default values */

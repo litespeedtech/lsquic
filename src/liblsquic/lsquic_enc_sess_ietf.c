@@ -559,6 +559,11 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         params.tp_loss_bits = settings->es_ql_bits - 1;
         params.tp_set |= 1 << TPI_LOSS_BITS;
     }
+    if (settings->es_delayed_acks)
+    {
+        params.tp_numerics[TPI_MIN_ACK_DELAY] = 10000;    /* TODO: make into a constant? make configurable? */
+        params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
+    }
 
     len = lsquic_tp_encode(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
     if (len >= 0)
@@ -1445,7 +1450,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     struct transport_params *const trans_params = &enc_sess->esi_peer_tp;
     const uint8_t *params_buf;
     size_t bufsz;
-    char params_str[0x200];
+    char *params_str;
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
     if (!params_buf)
@@ -1459,9 +1464,20 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
                             !(enc_sess->esi_flags & ESI_SERVER),
                                                 trans_params))
     {
-        lsquic_hexdump(params_buf, bufsz, params_str, sizeof(params_str));
-        LSQ_DEBUG("could not parse peer transport parameters (%zd bytes):\n%s",
-            bufsz, params_str);
+        if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+        {
+            params_str = lsquic_mm_get_4k(&enc_sess->esi_enpub->enp_mm);
+            if (params_str)
+            {
+                lsquic_hexdump(params_buf, bufsz, params_str, 0x1000);
+                LSQ_DEBUG("could not parse peer transport parameters "
+                    "(%zd bytes):\n%s", bufsz, params_str);
+                lsquic_mm_put_4k(&enc_sess->esi_enpub->enp_mm, params_str);
+            }
+            else
+                LSQ_DEBUG("could not parse peer transport parameters "
+                    "(%zd bytes)", bufsz);
+        }
         return -1;
     }
 

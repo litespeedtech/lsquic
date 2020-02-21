@@ -676,6 +676,15 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_SPIN`
 
+    .. member:: int             es_delayed_acks
+
+       Enable delayed ACKs extension.  Allowed values are 0 and 1.
+
+       **Warning**: this is an experimental feature.  Using it will most likely
+       lead to degraded performance.
+
+       Default value is :macro:`LSQUIC_DF_DELAYED_ACKS`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -845,6 +854,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_CC_ALGO
 
     Use Cubic by default.
+
+.. macro:: LSQUIC_DF_DELAYED_ACKS
+
+    Delayed ACKs are off by default.
 
 Receiving Packets
 -----------------

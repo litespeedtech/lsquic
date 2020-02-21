@@ -458,9 +458,13 @@ static const enum quic_frame_type byte2frame_type_Q035_thru_Q046[0x100] =
 
 
 enum quic_frame_type
-lsquic_parse_frame_type_gquic_Q035_thru_Q046 (unsigned char b)
+lsquic_parse_frame_type_gquic_Q035_thru_Q046 (const unsigned char *buf,
+                                                                size_t len)
 {
-    return byte2frame_type_Q035_thru_Q046[b];
+    if (len > 0)
+        return byte2frame_type_Q035_thru_Q046[buf[0]];
+    else
+        return QUIC_FRAME_INVALID;
 }
 
 

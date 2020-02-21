@@ -1097,17 +1097,31 @@ ietf_v1_calc_crypto_frame_header_sz (uint64_t offset, unsigned data_sz)
 
 
 static enum quic_frame_type
-ietf_v1_parse_frame_type (unsigned char byte)
+ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
 {
-    return lsquic_iquic_byte2type[byte];
+    uint64_t val;
+    int s;
+
+    if (len > 0 && buf[0] < 0x40)
+        return lsquic_iquic_byte2type[buf[0]];
+
+    s = vint_read(buf, buf + len, &val);
+    if (s > 0 && (unsigned) s == (1u << vint_val2bits(val)))
+        switch (val)
+        {
+        case 0xAF:  return QUIC_FRAME_ACK_FREQUENCY;
+        default:    break;
+        }
+
+    return QUIC_FRAME_INVALID;
 }
 
 
 static enum quic_frame_type
-ietf_id24_parse_frame_type (unsigned char byte)
+ietf_id24_parse_frame_type (const unsigned char *buf, size_t len)
 {
     /* This one does not have QUIC_FRAME_HANDSHAKE_DONE */
-    static const enum quic_frame_type byte2type[0x100] =
+    static const enum quic_frame_type byte2type[0x40] =
     {
         [0x00] = QUIC_FRAME_PADDING,
         [0x01] = QUIC_FRAME_PING,
@@ -1173,200 +1187,12 @@ ietf_id24_parse_frame_type (unsigned char byte)
         [0x3D] = QUIC_FRAME_INVALID,
         [0x3E] = QUIC_FRAME_INVALID,
         [0x3F] = QUIC_FRAME_INVALID,
-        [0x40] = QUIC_FRAME_INVALID,
-        [0x41] = QUIC_FRAME_INVALID,
-        [0x42] = QUIC_FRAME_INVALID,
-        [0x43] = QUIC_FRAME_INVALID,
-        [0x44] = QUIC_FRAME_INVALID,
-        [0x45] = QUIC_FRAME_INVALID,
-        [0x46] = QUIC_FRAME_INVALID,
-        [0x47] = QUIC_FRAME_INVALID,
-        [0x48] = QUIC_FRAME_INVALID,
-        [0x49] = QUIC_FRAME_INVALID,
-        [0x4A] = QUIC_FRAME_INVALID,
-        [0x4B] = QUIC_FRAME_INVALID,
-        [0x4C] = QUIC_FRAME_INVALID,
-        [0x4D] = QUIC_FRAME_INVALID,
-        [0x4E] = QUIC_FRAME_INVALID,
-        [0x4F] = QUIC_FRAME_INVALID,
-        [0x50] = QUIC_FRAME_INVALID,
-        [0x51] = QUIC_FRAME_INVALID,
-        [0x52] = QUIC_FRAME_INVALID,
-        [0x53] = QUIC_FRAME_INVALID,
-        [0x54] = QUIC_FRAME_INVALID,
-        [0x55] = QUIC_FRAME_INVALID,
-        [0x56] = QUIC_FRAME_INVALID,
-        [0x57] = QUIC_FRAME_INVALID,
-        [0x58] = QUIC_FRAME_INVALID,
-        [0x59] = QUIC_FRAME_INVALID,
-        [0x5A] = QUIC_FRAME_INVALID,
-        [0x5B] = QUIC_FRAME_INVALID,
-        [0x5C] = QUIC_FRAME_INVALID,
-        [0x5D] = QUIC_FRAME_INVALID,
-        [0x5E] = QUIC_FRAME_INVALID,
-        [0x5F] = QUIC_FRAME_INVALID,
-        [0x60] = QUIC_FRAME_INVALID,
-        [0x61] = QUIC_FRAME_INVALID,
-        [0x62] = QUIC_FRAME_INVALID,
-        [0x63] = QUIC_FRAME_INVALID,
-        [0x64] = QUIC_FRAME_INVALID,
-        [0x65] = QUIC_FRAME_INVALID,
-        [0x66] = QUIC_FRAME_INVALID,
-        [0x67] = QUIC_FRAME_INVALID,
-        [0x68] = QUIC_FRAME_INVALID,
-        [0x69] = QUIC_FRAME_INVALID,
-        [0x6A] = QUIC_FRAME_INVALID,
-        [0x6B] = QUIC_FRAME_INVALID,
-        [0x6C] = QUIC_FRAME_INVALID,
-        [0x6D] = QUIC_FRAME_INVALID,
-        [0x6E] = QUIC_FRAME_INVALID,
-        [0x6F] = QUIC_FRAME_INVALID,
-        [0x70] = QUIC_FRAME_INVALID,
-        [0x71] = QUIC_FRAME_INVALID,
-        [0x72] = QUIC_FRAME_INVALID,
-        [0x73] = QUIC_FRAME_INVALID,
-        [0x74] = QUIC_FRAME_INVALID,
-        [0x75] = QUIC_FRAME_INVALID,
-        [0x76] = QUIC_FRAME_INVALID,
-        [0x77] = QUIC_FRAME_INVALID,
-        [0x78] = QUIC_FRAME_INVALID,
-        [0x79] = QUIC_FRAME_INVALID,
-        [0x7A] = QUIC_FRAME_INVALID,
-        [0x7B] = QUIC_FRAME_INVALID,
-        [0x7C] = QUIC_FRAME_INVALID,
-        [0x7D] = QUIC_FRAME_INVALID,
-        [0x7E] = QUIC_FRAME_INVALID,
-        [0x7F] = QUIC_FRAME_INVALID,
-        [0x80] = QUIC_FRAME_INVALID,
-        [0x81] = QUIC_FRAME_INVALID,
-        [0x82] = QUIC_FRAME_INVALID,
-        [0x83] = QUIC_FRAME_INVALID,
-        [0x84] = QUIC_FRAME_INVALID,
-        [0x85] = QUIC_FRAME_INVALID,
-        [0x86] = QUIC_FRAME_INVALID,
-        [0x87] = QUIC_FRAME_INVALID,
-        [0x88] = QUIC_FRAME_INVALID,
-        [0x89] = QUIC_FRAME_INVALID,
-        [0x8A] = QUIC_FRAME_INVALID,
-        [0x8B] = QUIC_FRAME_INVALID,
-        [0x8C] = QUIC_FRAME_INVALID,
-        [0x8D] = QUIC_FRAME_INVALID,
-        [0x8E] = QUIC_FRAME_INVALID,
-        [0x8F] = QUIC_FRAME_INVALID,
-        [0x90] = QUIC_FRAME_INVALID,
-        [0x91] = QUIC_FRAME_INVALID,
-        [0x92] = QUIC_FRAME_INVALID,
-        [0x93] = QUIC_FRAME_INVALID,
-        [0x94] = QUIC_FRAME_INVALID,
-        [0x95] = QUIC_FRAME_INVALID,
-        [0x96] = QUIC_FRAME_INVALID,
-        [0x97] = QUIC_FRAME_INVALID,
-        [0x98] = QUIC_FRAME_INVALID,
-        [0x99] = QUIC_FRAME_INVALID,
-        [0x9A] = QUIC_FRAME_INVALID,
-        [0x9B] = QUIC_FRAME_INVALID,
-        [0x9C] = QUIC_FRAME_INVALID,
-        [0x9D] = QUIC_FRAME_INVALID,
-        [0x9E] = QUIC_FRAME_INVALID,
-        [0x9F] = QUIC_FRAME_INVALID,
-        [0xA0] = QUIC_FRAME_INVALID,
-        [0xA1] = QUIC_FRAME_INVALID,
-        [0xA2] = QUIC_FRAME_INVALID,
-        [0xA3] = QUIC_FRAME_INVALID,
-        [0xA4] = QUIC_FRAME_INVALID,
-        [0xA5] = QUIC_FRAME_INVALID,
-        [0xA6] = QUIC_FRAME_INVALID,
-        [0xA7] = QUIC_FRAME_INVALID,
-        [0xA8] = QUIC_FRAME_INVALID,
-        [0xA9] = QUIC_FRAME_INVALID,
-        [0xAA] = QUIC_FRAME_INVALID,
-        [0xAB] = QUIC_FRAME_INVALID,
-        [0xAC] = QUIC_FRAME_INVALID,
-        [0xAD] = QUIC_FRAME_INVALID,
-        [0xAE] = QUIC_FRAME_INVALID,
-        [0xAF] = QUIC_FRAME_INVALID,
-        [0xB0] = QUIC_FRAME_INVALID,
-        [0xB1] = QUIC_FRAME_INVALID,
-        [0xB2] = QUIC_FRAME_INVALID,
-        [0xB3] = QUIC_FRAME_INVALID,
-        [0xB4] = QUIC_FRAME_INVALID,
-        [0xB5] = QUIC_FRAME_INVALID,
-        [0xB6] = QUIC_FRAME_INVALID,
-        [0xB7] = QUIC_FRAME_INVALID,
-        [0xB8] = QUIC_FRAME_INVALID,
-        [0xB9] = QUIC_FRAME_INVALID,
-        [0xBA] = QUIC_FRAME_INVALID,
-        [0xBB] = QUIC_FRAME_INVALID,
-        [0xBC] = QUIC_FRAME_INVALID,
-        [0xBD] = QUIC_FRAME_INVALID,
-        [0xBE] = QUIC_FRAME_INVALID,
-        [0xBF] = QUIC_FRAME_INVALID,
-        [0xC0] = QUIC_FRAME_INVALID,
-        [0xC1] = QUIC_FRAME_INVALID,
-        [0xC2] = QUIC_FRAME_INVALID,
-        [0xC3] = QUIC_FRAME_INVALID,
-        [0xC4] = QUIC_FRAME_INVALID,
-        [0xC5] = QUIC_FRAME_INVALID,
-        [0xC6] = QUIC_FRAME_INVALID,
-        [0xC7] = QUIC_FRAME_INVALID,
-        [0xC8] = QUIC_FRAME_INVALID,
-        [0xC9] = QUIC_FRAME_INVALID,
-        [0xCA] = QUIC_FRAME_INVALID,
-        [0xCB] = QUIC_FRAME_INVALID,
-        [0xCC] = QUIC_FRAME_INVALID,
-        [0xCD] = QUIC_FRAME_INVALID,
-        [0xCE] = QUIC_FRAME_INVALID,
-        [0xCF] = QUIC_FRAME_INVALID,
-        [0xD0] = QUIC_FRAME_INVALID,
-        [0xD1] = QUIC_FRAME_INVALID,
-        [0xD2] = QUIC_FRAME_INVALID,
-        [0xD3] = QUIC_FRAME_INVALID,
-        [0xD4] = QUIC_FRAME_INVALID,
-        [0xD5] = QUIC_FRAME_INVALID,
-        [0xD6] = QUIC_FRAME_INVALID,
-        [0xD7] = QUIC_FRAME_INVALID,
-        [0xD8] = QUIC_FRAME_INVALID,
-        [0xD9] = QUIC_FRAME_INVALID,
-        [0xDA] = QUIC_FRAME_INVALID,
-        [0xDB] = QUIC_FRAME_INVALID,
-        [0xDC] = QUIC_FRAME_INVALID,
-        [0xDD] = QUIC_FRAME_INVALID,
-        [0xDE] = QUIC_FRAME_INVALID,
-        [0xDF] = QUIC_FRAME_INVALID,
-        [0xE0] = QUIC_FRAME_INVALID,
-        [0xE1] = QUIC_FRAME_INVALID,
-        [0xE2] = QUIC_FRAME_INVALID,
-        [0xE3] = QUIC_FRAME_INVALID,
-        [0xE4] = QUIC_FRAME_INVALID,
-        [0xE5] = QUIC_FRAME_INVALID,
-        [0xE6] = QUIC_FRAME_INVALID,
-        [0xE7] = QUIC_FRAME_INVALID,
-        [0xE8] = QUIC_FRAME_INVALID,
-        [0xE9] = QUIC_FRAME_INVALID,
-        [0xEA] = QUIC_FRAME_INVALID,
-        [0xEB] = QUIC_FRAME_INVALID,
-        [0xEC] = QUIC_FRAME_INVALID,
-        [0xED] = QUIC_FRAME_INVALID,
-        [0xEE] = QUIC_FRAME_INVALID,
-        [0xEF] = QUIC_FRAME_INVALID,
-        [0xF0] = QUIC_FRAME_INVALID,
-        [0xF1] = QUIC_FRAME_INVALID,
-        [0xF2] = QUIC_FRAME_INVALID,
-        [0xF3] = QUIC_FRAME_INVALID,
-        [0xF4] = QUIC_FRAME_INVALID,
-        [0xF5] = QUIC_FRAME_INVALID,
-        [0xF6] = QUIC_FRAME_INVALID,
-        [0xF7] = QUIC_FRAME_INVALID,
-        [0xF8] = QUIC_FRAME_INVALID,
-        [0xF9] = QUIC_FRAME_INVALID,
-        [0xFA] = QUIC_FRAME_INVALID,
-        [0xFB] = QUIC_FRAME_INVALID,
-        [0xFC] = QUIC_FRAME_INVALID,
-        [0xFD] = QUIC_FRAME_INVALID,
-        [0xFE] = QUIC_FRAME_INVALID,
-        [0xFF] = QUIC_FRAME_INVALID,
     };
-    return byte2type[byte];
+
+    if (len > 1 && buf[0] < 0x40)
+        return byte2type[buf[0]];
+    else
+        return QUIC_FRAME_INVALID;
 }
 
 
@@ -1667,6 +1493,76 @@ ietf_v1_parse_two_varints (const unsigned char *buf, size_t len, uint64_t *vals[
 
     return p - buf;
 }
+
+
+/* vals[0] is the frame type */
+static unsigned
+ietf_v1_frame_with_varints_size (unsigned n, uint64_t vals[])
+{
+    unsigned vbits, size;
+
+    assert(n > 0);
+    vbits = vint_val2bits(vals[0]);
+    size = 1 << vbits;
+    while (--n)
+    {
+        vbits = vint_val2bits(vals[n]);
+        size += 1 << vbits;
+    }
+
+    return size;
+}
+
+
+/* vals[0] is the frame type */
+static int
+ietf_v1_gen_frame_with_varints (unsigned char *buf, size_t len,
+                                    unsigned count, uint64_t vals[])
+{
+    unsigned vbits, n;
+    unsigned char *p;
+
+    if (ietf_v1_frame_with_varints_size(count, vals) > len)
+        return -1;
+
+    p = buf;
+    for (n = 0; n < count; ++n)
+    {
+        vbits = vint_val2bits(vals[n]);
+        vint_write(p, vals[n], vbits, 1 << vbits);
+        p += 1 << vbits;
+    }
+
+    return p - buf;
+}
+
+
+/* Frame type is checked when frame type is parsed.  The only use here is
+ * to calculate skip length.
+ */
+static int
+ietf_v1_parse_frame_with_varints (const unsigned char *buf, size_t len,
+            const uint64_t frame_type, unsigned count, uint64_t *vals[])
+{
+    const unsigned char *p = buf;
+    const unsigned char *const end = p + len;
+    unsigned vbits, n;
+    int s;
+
+    vbits = vint_val2bits(frame_type);
+    p += 1 << vbits;
+
+    for (n = 0; n < count; ++n)
+    {
+        s = vint_read(p, end, vals[n]);
+        if (s < 0)
+            return s;
+        p += s;
+    }
+
+    return p - buf;
+}
+
 
 
 static int
@@ -2251,6 +2147,49 @@ ietf_v1_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
 }
 
 
+static int
+ietf_v1_gen_ack_frequency_frame (unsigned char *buf, size_t buf_len,
+    uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad)
+{
+    return ietf_v1_gen_frame_with_varints(buf, buf_len, 4,
+                            (uint64_t[]){ 0xAF, seqno, pack_tol, upd_mad });
+}
+
+
+static int
+ietf_v1_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
+    uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad)
+{
+    return ietf_v1_parse_frame_with_varints(buf, buf_len,
+                0xAF, 3, (uint64_t *[]) { seqno, pack_tol, upd_mad });
+}
+
+
+static int
+ietf_id24_gen_ack_frequency_frame (unsigned char *buf, size_t buf_len,
+    uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad)
+{
+    return -1;
+}
+
+
+static int
+ietf_id24_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
+    uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad)
+{
+    return -1;
+}
+
+
+static unsigned
+ietf_v1_ack_frequency_frame_size (uint64_t seqno, uint64_t pack_tol,
+    uint64_t upd_mad)
+{
+    return ietf_v1_frame_with_varints_size(4,
+                            (uint64_t[]){ 0xAF, seqno, pack_tol, upd_mad });
+}
+
+
 static unsigned
 ietf_v1_handshake_done_frame_size (void)
 {
@@ -2339,6 +2278,9 @@ const struct parse_funcs lsquic_parse_funcs_ietf_id24 =
     .pf_gen_handshake_done_frame      =  ietf_id24_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  ietf_id24_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  ietf_v1_handshake_done_frame_size,
+    .pf_gen_ack_frequency_frame       =  ietf_id24_gen_ack_frequency_frame,
+    .pf_parse_ack_frequency_frame     =  ietf_id24_parse_ack_frequency_frame,
+    .pf_ack_frequency_frame_size      =  ietf_v1_ack_frequency_frame_size,
 };
 
 
@@ -2407,4 +2349,7 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_gen_handshake_done_frame      =  ietf_v1_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  ietf_v1_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  ietf_v1_handshake_done_frame_size,
+    .pf_gen_ack_frequency_frame       =  ietf_v1_gen_ack_frequency_frame,
+    .pf_parse_ack_frequency_frame     =  ietf_v1_parse_ack_frequency_frame,
+    .pf_ack_frequency_frame_size      =  ietf_v1_ack_frequency_frame_size,
 };

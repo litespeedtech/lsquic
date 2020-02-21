@@ -1019,7 +1019,7 @@ static unsigned
 imico_process_invalid_frame (IMICO_PROC_FRAME_ARGS)
 {
     LSQ_DEBUG("invalid frame %u (%s)", p[0],
-        frame_type_2_str[ conn->imc_conn.cn_pf->pf_parse_frame_type(p[0]) ]);
+        frame_type_2_str[ conn->imc_conn.cn_pf->pf_parse_frame_type(p, len) ]);
     return 0;
 }
 
@@ -1056,8 +1056,11 @@ static unsigned
 imico_process_packet_frame (struct ietf_mini_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    enum enc_level enc_level = lsquic_packet_in_enc_level(packet_in);
-    enum quic_frame_type type = conn->imc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum enc_level enc_level;
+    enum quic_frame_type type;
+
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    type = conn->imc_conn.cn_pf->pf_parse_frame_type(p, len);
     if (lsquic_legal_frames_by_level[enc_level] & (1 << type))
     {
         packet_in->pi_frame_types |= 1 << type;

@@ -132,6 +132,7 @@ enum ifull_conn_flags
     IFC_PROC_CRYPTO   = 1 << 26,
     IFC_MIGRA         = 1 << 27,
     IFC_SPIN          = 1 << 28, /* Spin bits are enabled */
+    IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
 };
 
 
@@ -161,6 +162,7 @@ enum send
     SEND_MAX_STREAMS_UNI = SEND_MAX_STREAMS + SD_UNI,
     SEND_STOP_SENDING,
     SEND_HANDSHAKE_DONE,
+    SEND_ACK_FREQUENCY,
     N_SEND
 };
 
@@ -185,6 +187,7 @@ enum send_flags
     SF_SEND_MAX_STREAMS_UNI         = 1 << SEND_MAX_STREAMS_UNI,
     SF_SEND_STOP_SENDING            = 1 << SEND_STOP_SENDING,
     SF_SEND_HANDSHAKE_DONE          = 1 << SEND_HANDSHAKE_DONE,
+    SF_SEND_ACK_FREQUENCY           = 1 << SEND_ACK_FREQUENCY,
 };
 
 #define SF_SEND_PATH_CHAL_ALL \
@@ -283,6 +286,14 @@ struct conn_path
 };
 
 
+struct inc_ack_stats        /* Incoming ACK stats */
+{
+    unsigned        n_acks;     /* Number of ACKs between ticks */
+    float           avg_acked;  /* Packets acked between ticks */
+    float           avg_n_acks; /* Average number of ACKs */
+};
+
+
 struct ietf_full_conn
 {
     struct lsquic_conn          ifc_conn;
@@ -336,6 +347,7 @@ struct ietf_full_conn
     /* Number ackable packets received since last ACK was sent: */
     unsigned                    ifc_n_slack_akbl[N_PNS];
     unsigned                    ifc_n_slack_all;    /* App PNS only */
+    unsigned                    ifc_max_retx_since_last_ack;
     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
     uint64_t                    ifc_ecn_counts_out[N_PNS][4];
     lsquic_stream_id_t          ifc_max_req_id;
@@ -368,6 +380,10 @@ struct ietf_full_conn
     unsigned char               ifc_first_active_cid_seqno;
     unsigned char               ifc_ping_unretx_thresh;
     unsigned                    ifc_last_retire_prior_to;
+    unsigned                    ifc_ack_freq_seqno;
+    unsigned                    ifc_last_pack_tol;
+    unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
+    unsigned                    ifc_max_peer_ack_usec;
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
     union {
@@ -394,6 +410,7 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     uint64_t                    ifc_last_max_data_off_sent;
+    struct inc_ack_stats        ifc_ias;
     struct ack_info             ifc_ack;
 };
 
@@ -1073,6 +1090,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 #define valid_stream_id(v) ((v) <= VINT_MAX_VALUE)
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_ping_unretx_thresh = 20;
+    conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
     maybe_enable_spin(conn);
     return 0;
 }
@@ -2992,6 +3010,16 @@ handshake_ok (struct lsquic_conn *lconn)
         conn->ifc_ping_period = 0;
     LSQ_DEBUG("PING period is set to %"PRIu64" usec", conn->ifc_ping_period);
 
+    if (conn->ifc_conn.cn_version > LSQVER_ID24
+            && conn->ifc_settings->es_delayed_acks
+            && (params->tp_set & (1 << TPI_MIN_ACK_DELAY)))
+    {
+        LSQ_DEBUG("delayed ACKs enabled");
+        conn->ifc_flags |= IFC_DELAYED_ACKS;
+    }
+
+    conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
+
     /* TODO: packet size */
 
     dce = get_new_dce(conn);
@@ -3845,6 +3873,40 @@ generate_handshake_done_frame (struct ietf_full_conn *conn,
 
 
 static void
+generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
+{
+    struct lsquic_packet_out *packet_out;
+    unsigned need;
+    int sz;
+
+    need = conn->ifc_conn.cn_pf->pf_ack_frequency_frame_size(
+                                        conn->ifc_ack_freq_seqno, 2, ACK_TIMEOUT);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+    {
+        LSQ_DEBUG("cannot get writeable packet for ACK_FREQUENCY frame");
+        return;
+    }
+
+    conn->ifc_last_pack_tol = conn->ifc_ias.avg_acked;
+    sz = conn->ifc_conn.cn_pf->pf_gen_ack_frequency_frame(
+                            packet_out->po_data + packet_out->po_data_sz,
+                            lsquic_packet_out_avail(packet_out),
+                            conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
+                            conn->ifc_max_peer_ack_usec);
+    if (sz < 0)
+    {
+        ABORT_ERROR("gen_rst_frame failed");
+        return;
+    }
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= QUIC_FTBIT_ACK_FREQUENCY;
+    ++conn->ifc_ack_freq_seqno;
+    conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
+}
+
+
+static void
 generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
@@ -4073,16 +4135,55 @@ handshake_confirmed (struct ietf_full_conn *conn)
 }
 
 
+static void
+update_ema (float *val, unsigned new)
+{
+    if (*val)
+        *val = (new - *val) * 0.4 + *val;
+    else
+        *val = new;
+}
+
+
+static void
+update_target_packet_tolerance (struct ietf_full_conn *conn,
+                                                const unsigned n_newly_acked)
+{
+    update_ema(&conn->ifc_ias.avg_n_acks, conn->ifc_ias.n_acks);
+    update_ema(&conn->ifc_ias.avg_acked, n_newly_acked);
+    LSQ_DEBUG("packtol logic: %u ACK frames (avg: %.2f), %u newly acked "
+        "(avg: %.1f), last sent %u", conn->ifc_ias.n_acks,
+        conn->ifc_ias.avg_n_acks, n_newly_acked, conn->ifc_ias.avg_acked,
+        conn->ifc_last_pack_tol);
+    if (conn->ifc_ias.avg_n_acks > 1.5 && conn->ifc_ias.avg_acked > 2.0
+                && conn->ifc_ias.avg_acked > (float) conn->ifc_last_pack_tol)
+    {
+        LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
+                                        "increase", conn->ifc_last_pack_tol);
+        conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
+    }
+    else if (conn->ifc_ias.avg_n_acks < 1.5
+        && conn->ifc_ias.avg_acked < (float) conn->ifc_last_pack_tol * 3 / 4)
+    {
+        LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
+                                        "decrease", conn->ifc_last_pack_tol);
+        conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
+    }
+}
+
+
 static int
 process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
              lsquic_time_t received, lsquic_time_t now)
 {
     enum packnum_space pns;
     lsquic_packno_t packno;
+    unsigned n_unacked;
     int one_rtt_acked;
 
     LSQ_DEBUG("Processing ACK");
     one_rtt_acked = lsquic_send_ctl_1rtt_acked(&conn->ifc_send_ctl);
+    n_unacked = lsquic_send_ctl_n_unacked(&conn->ifc_send_ctl);
     if (0 == lsquic_send_ctl_got_ack(&conn->ifc_send_ctl, acki, received, now))
     {
         pns = acki->pns;
@@ -4097,6 +4198,9 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
                 ignore_init(conn);
             handshake_confirmed(conn);
         }
+        if (PNS_APP == pns && (conn->ifc_flags & IFC_DELAYED_ACKS))
+            update_target_packet_tolerance(conn,
+                n_unacked - lsquic_send_ctl_n_unacked(&conn->ifc_send_ctl));
         return 0;
     }
     else
@@ -4851,13 +4955,17 @@ process_ack_frame (struct ietf_full_conn *conn,
         LSQ_DEBUG("Saved ACK");
         conn->ifc_flags |= IFC_HAVE_SAVED_ACK;
         conn->ifc_saved_ack_received = packet_in->pi_received;
+        conn->ifc_ias.n_acks = 1;
     }
     else if (pns == PNS_APP)
     {
         if (0 == lsquic_merge_acks(&conn->ifc_ack, new_acki))
+        {
+            ++conn->ifc_ias.n_acks;
             LSQ_DEBUG("merged into saved ACK, getting %s",
                 (lsquic_acki2str(&conn->ifc_ack, conn->ifc_pub.mm->ack_str,
                                 MAX_ACKI_STR_SZ), conn->ifc_pub.mm->ack_str));
+        }
         else
         {
             LSQ_DEBUG("could not merge new ACK into saved ACK");
@@ -5294,8 +5402,6 @@ process_new_token_frame (struct ietf_full_conn *conn,
     char *token_str;
     int parsed_len;
 
-    /* TODO: make receipt of NEW_TOKEN frame an error on the server */
-
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_token_frame(p, len, &token,
                                                                     &token_sz);
     if (parsed_len < 0)
@@ -5454,6 +5560,58 @@ process_handshake_done_frame (struct ietf_full_conn *conn,
 }
 
 
+static unsigned
+process_ack_frequency_frame (struct ietf_full_conn *conn,
+    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    uint64_t seqno, pack_tol, upd_mad;
+    int parsed_len;
+
+    if (!(conn->ifc_flags & IFC_DELAYED_ACKS))
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Received unexpected ACK_FREQUENCY frame (not negotiated)");
+        return 0;
+    }
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_ack_frequency_frame(p, len,
+                                                &seqno, &pack_tol, &upd_mad);
+    if (parsed_len < 0)
+        return 0;
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "ACK_FREQUENCY(seqno: %"PRIu64"; "
+        "pack_tol: %"PRIu64"; upd: %"PRIu64") frame in", seqno, pack_tol,
+        upd_mad);
+    LSQ_DEBUG("ACK_FREQUENCY(seqno: %"PRIu64"; pack_tol: %"PRIu64"; "
+        "upd: %"PRIu64") frame in", seqno, pack_tol, upd_mad);
+
+    if (pack_tol == 0)
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Packet Tolerance of zero is invalid");
+        return 0;
+    }
+
+    if (conn->ifc_max_ack_freq_seqno > 0
+                                    && seqno <= conn->ifc_max_ack_freq_seqno)
+    {
+        LSQ_DEBUG("ignore old ACK_FREQUENCY frame");
+        return parsed_len;
+    }
+    conn->ifc_max_ack_freq_seqno = seqno;
+
+    if (pack_tol < UINT_MAX)
+    {
+        LSQ_DEBUG("set packet tolerance to %"PRIu64, pack_tol);
+        conn->ifc_max_retx_since_last_ack = pack_tol;
+    }
+
+    /* TODO: do something with max ack delay update */
+
+    return parsed_len;
+}
+
+
 typedef unsigned (*process_frame_f)(
     struct ietf_full_conn *, struct lsquic_packet_in *,
     const unsigned char *p, size_t);
@@ -5481,6 +5639,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_STREAM]             =  process_stream_frame,
     [QUIC_FRAME_CRYPTO]             =  process_crypto_frame,
     [QUIC_FRAME_HANDSHAKE_DONE]     =  process_handshake_done_frame,
+    [QUIC_FRAME_ACK_FREQUENCY]      =  process_ack_frequency_frame,
 };
 
 
@@ -5488,8 +5647,12 @@ static unsigned
 process_packet_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    enum enc_level enc_level = lsquic_packet_in_enc_level(packet_in);
-    enum quic_frame_type type = conn->ifc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum enc_level enc_level;
+    enum quic_frame_type type;
+    char str[8 * 2 + 1];
+
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    type = conn->ifc_conn.cn_pf->pf_parse_frame_type(p, len);
     if (lsquic_legal_frames_by_level[enc_level] & (1 << type))
     {
         LSQ_DEBUG("about to process %s frame", frame_type_2_str[type]);
@@ -5498,8 +5661,8 @@ process_packet_frame (struct ietf_full_conn *conn,
     }
     else
     {
-        LSQ_DEBUG("invalid frame %u (byte=0x%02X) at encryption level %s",
-                                    type, p[0], lsquic_enclev2str[enc_level]);
+        LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
+            type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
         return 0;
     }
 }
@@ -5684,7 +5847,7 @@ try_queueing_ack_app (struct ietf_full_conn *conn,
 {
     lsquic_time_t srtt, ack_timeout;
 
-    if (conn->ifc_n_slack_akbl[PNS_APP] >= MAX_RETR_PACKETS_SINCE_LAST_ACK
+    if (conn->ifc_n_slack_akbl[PNS_APP] >= conn->ifc_max_retx_since_last_ack
             || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
                     && was_missing && conn->ifc_n_slack_akbl[PNS_APP] > 0)
             || many_in_and_will_write(conn))
@@ -6363,6 +6526,7 @@ static void (*const send_funcs[N_SEND])(
     [SEND_PATH_RESP_PATH_1]    = generate_path_resp_1,
     [SEND_PING]                = generate_ping_frame,
     [SEND_HANDSHAKE_DONE]      = generate_handshake_done_frame,
+    [SEND_ACK_FREQUENCY]       = generate_ack_frequency_frame,
 };
 
 
@@ -6373,6 +6537,7 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_PATH_CHAL_PATH_0|SF_SEND_PATH_CHAL_PATH_1\
     |SF_SEND_PATH_RESP_PATH_0|SF_SEND_PATH_RESP_PATH_1\
     |SF_SEND_PING|SF_SEND_HANDSHAKE_DONE\
+    |SF_SEND_ACK_FREQUENCY\
     |SF_SEND_STOP_SENDING)
 
 static enum tick_st

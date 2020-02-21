@@ -5182,8 +5182,12 @@ static unsigned
 process_packet_frame (struct id24_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    enum enc_level enc_level = lsquic_packet_in_enc_level(packet_in);
-    enum quic_frame_type type = conn->ifc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum enc_level enc_level;
+    enum quic_frame_type type;
+    char str[8 * 2 + 1];
+
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    type = conn->ifc_conn.cn_pf->pf_parse_frame_type(p, len);
     if (lsquic_legal_frames_by_level[enc_level] & (1 << type))
     {
         LSQ_DEBUG("about to process %s frame", frame_type_2_str[type]);
@@ -5192,8 +5196,8 @@ process_packet_frame (struct id24_full_conn *conn,
     }
     else
     {
-        LSQ_DEBUG("invalid frame %u (byte=0x%02X) at encryption level %s",
-                                    type, p[0], lsquic_enclev2str[enc_level]);
+        LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
+            type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
         return 0;
     }
 }

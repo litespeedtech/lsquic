@@ -334,6 +334,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
     settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
     settings->es_spin            = LSQUIC_DF_SPIN;
+    settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
 }
 
 

@@ -656,7 +656,7 @@ static unsigned
 process_packet_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
                       const unsigned char *p, size_t len)
 {
-    enum quic_frame_type type = mc->mc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum quic_frame_type type = mc->mc_conn.cn_pf->pf_parse_frame_type(p, len);
     packet_in->pi_frame_types |= 1 << type;
     return process_frames[type](mc, packet_in, p, len);
 }
@@ -761,7 +761,7 @@ process_regular_packet (struct mini_conn *mc, lsquic_packet_in_t *packet_in)
             p += len;
         else
         {
-            if (mc->mc_conn.cn_pf->pf_parse_frame_type(p[0]) !=
+            if (mc->mc_conn.cn_pf->pf_parse_frame_type(p, pend - p) !=
                                                     QUIC_FRAME_CONNECTION_CLOSE)
                 LSQ_WARN("error parsing frame: packno %"PRIu64"; sz: %u; type: "
                     "0x%X", packet_in->pi_packno, packet_in->pi_data_sz, p[0]);

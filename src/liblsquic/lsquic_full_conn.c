@@ -2185,7 +2185,9 @@ static unsigned
 process_packet_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                       const unsigned char *p, size_t len)
 {
-    enum quic_frame_type type = conn->fc_conn.cn_pf->pf_parse_frame_type(p[0]);
+    enum quic_frame_type type;
+
+    type = conn->fc_conn.cn_pf->pf_parse_frame_type(p, len);
     packet_in->pi_frame_types |= 1 << type;
     recent_packet_hist_frames(conn, 0, 1 << type);
     return process_frames[type](conn, packet_in, p, len);

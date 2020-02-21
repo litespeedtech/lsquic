@@ -1846,6 +1846,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_handshake_to = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "delayed_acks", 12))
+        {
+            settings->es_delayed_acks = atoi(val);
+            return 0;
+        }
         break;
     case 13:
         if (0 == strncmp(name, "support_tcid0", 13))

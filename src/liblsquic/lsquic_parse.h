@@ -76,7 +76,7 @@ struct parse_funcs
     (*pf_parse_packet_in_finish) (struct lsquic_packet_in *packet_in,
                                                 struct packin_parse_state *);
     enum quic_frame_type
-    (*pf_parse_frame_type) (unsigned char);
+    (*pf_parse_frame_type) (const unsigned char *, size_t);
     /* Return used buffer length or a negative value if there was not enough
      * room to write the stream frame.  In the latter case, the negative of
      * the negative return value is the number of bytes required.  The
@@ -301,6 +301,15 @@ struct parse_funcs
     (*pf_parse_handshake_done_frame) (const unsigned char *buf, size_t buf_len);
     unsigned
     (*pf_handshake_done_frame_size) (void);
+    int
+    (*pf_gen_ack_frequency_frame) (unsigned char *buf, size_t buf_len,
+        uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad);
+    int
+    (*pf_parse_ack_frequency_frame) (const unsigned char *buf, size_t buf_len,
+        uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad);
+    unsigned
+    (*pf_ack_frequency_frame_size) (uint64_t seqno, uint64_t pack_tol,
+        uint64_t upd_mad);
 };
 
 
@@ -339,9 +348,9 @@ lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *, size_t length
                 int is_server, unsigned, struct packin_parse_state *);
 
 enum quic_frame_type
-lsquic_parse_frame_type_gquic_Q035_thru_Q046 (unsigned char first_byte);
+lsquic_parse_frame_type_gquic_Q035_thru_Q046 (const unsigned char *, size_t);
 
-extern const enum quic_frame_type lsquic_iquic_byte2type[0x100];
+extern const enum quic_frame_type lsquic_iquic_byte2type[0x40];
 
 size_t
 calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
