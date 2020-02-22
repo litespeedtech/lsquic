@@ -2219,3 +2219,19 @@ sport_set_token (struct service_port *sport, const char *token_str)
     sport->sp_token_sz = len / 2;
     return 0;
 }
+#ifdef WIN32
+char *
+strndup(const char *s, size_t n)
+{
+    char *copy;
+
+    copy = malloc(n + 1);
+    if (copy)
+    {
+        memcpy(copy, s, n);
+        copy[n] = '\0';
+    }
+
+    return copy;
+}
+#endif

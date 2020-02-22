@@ -1,27 +1,49 @@
-all: http_client.exe md5_client.exe echo_client.exe
+all: http_client.exe md5_client.exe echo_client.exe http_server.exe echo_server.exe md5_server.exe
 	@cd unittests && $(MAKE) -f Makefile.Windows
 
 LSQUIC_LIB:=../src/liblsquic/lsquic.lib  
-COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l $(LSQUIC_LIB) -l $(BORINGSSL_LIBS)  -l zlib.lib \
+COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l $(LSQUIC_LIB) -l $(BORINGSSL_LIBS)  -l zlib.lib -l pcre2-8.lib -l pcre2-posix.lib\
 	-l event_core.lib \
 	-l advapi32.lib 
 
 http_client.exe: $(LSQUIC_LIB) http_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
 	$(COMMON_LIBS) \
 	-o http_client.exe  
 
+http_server.exe: $(LSQUIC_LIB) http_server.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
+	$(COMMON_LIBS) \
+	-o http_server.exe  
+
 md5_client.exe: $(LSQUIC_LIB) md5_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
 	$(COMMON_LIBS) \
 	-o  md5_client.exe 
 
+md5_server.exe: $(LSQUIC_LIB) md5_server.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
+	$(COMMON_LIBS) \
+	-o  md5_server.exe 
+
 echo_client.exe: $(LSQUIC_LIB) echo_client.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
-	$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) $^ \
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
 	-Wno-incompatible-pointer-types \
 	$(COMMON_LIBS) \
 	-o echo_client.exe
 
+echo_server.exe: $(LSQUIC_LIB) echo_server.c prog.c test_common.c ../wincompat/getopt.c test_cert.c ../wincompat/getopt1.c
+	@echo Building $(CURDIR)/$< 
+	@$(LLVM_DIR)/clang $(LSQUIC_CXXFLAGS) -DHAVE_REGEX=1 $^ \
+	-Wno-incompatible-pointer-types \
+	$(COMMON_LIBS) \
+	-o echo_server.exe
+
 clean:
-	cmd //c del   *.exe *.o *.ilk *.pdb
+	@-cmd //c del   *.exe *.o *.ilk *.pdb
 	@cd unittests && $(MAKE) -f Makefile.Windows clean

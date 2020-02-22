@@ -4,7 +4,9 @@
  */
 
 #include <assert.h>
+#ifndef WIN32
 #include <netinet/in.h>
+#endif
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -16,7 +16,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <regex.h>
+#ifndef WIN32
 #include <netinet/in.h>
+#endif
 #include <inttypes.h>
 
 #include <event2/event.h>
@@ -301,7 +303,11 @@ send_headers (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 
 
 static void
+#ifndef WIN32
 resume_response (int fd, short what, void *arg)
+#else
+resume_response (long long fd, short what, void *arg)
+#endif
 {
     struct lsquic_stream_ctx *const st_h = arg;
 
@@ -1402,6 +1408,10 @@ main (int argc, char **argv)
     struct stat st;
     struct server_ctx server_ctx;
     struct prog prog;
+#ifdef WIN32
+    WSADATA wsd;
+    WSAStartup(MAKEWORD(2, 2), &wsd);
+#endif
 
     memset(&server_ctx, 0, sizeof(server_ctx));
     TAILQ_INIT(&server_ctx.sports);

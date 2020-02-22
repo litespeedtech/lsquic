@@ -1,8 +1,6 @@
 export BORINGSSL_INCLUDE=h:/github/boringssl/include
 export BORINGSSL_DIR=h:/github/boringssl/output
 export VCPKG_ROOT=h:/github/vcpkg/installed/x64-windows-static
-export ZLIB_INCLUDE_DIR=h:/github/vcpkg/installed/x64-windows-static/include
-export EVENT_INCLUDE_DIR=h:/github/vcpkg/installed/x64-windows-static/include
 export LLVM_DIR=F:/llvm/bin
 export PERL_DIR=I:/perl/bin
 
@@ -15,11 +13,11 @@ CXXFLAGS_EXTRA=-Wall -Wextra -Wno-unused-parameter -fno-omit-frame-pointer -Wno-
 				-g -gcodeview \
 				-m64 \
 				-DWIN32 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS \
-				-D_CRT_NONSTDC_NO_DEPRECATE \
+				-D_CRT_NONSTDC_NO_DEPRECATE -DPCRE2_STATIC\
 				-I${CURDIR}/include \
 				-I${CURDIR}/wincompat \
 				-I${BORINGSSL_INCLUDE} \
-				-I${ZLIB_INCLUDE_DIR} \
+				-I${VCPKG_ROOT}/include \
 				-I${CURDIR}/src/lshpack
 
 ifeq ("$(BUILD)","debug")
@@ -32,16 +30,18 @@ endif
 export LSQUIC_CXXFLAGS=$(ALL_CXXFLAGS) 
 
 
-
-all: lsquic test/http_client.exe test/md5_client.exe test/echo_client.exe #echo_server http_server md5_server 
+all: lsquic test/http_client.exe test/md5_client.exe test/echo_client.exe test/http_server.exe \
+			test/echo_server.exe test/md5_server.exe
 
 lsquic:
 	@cd src/liblsquic && $(MAKE) -f Makefile.Windows
 	@cd test && $(MAKE) -f Makefile.Windows
 
 	
-clean:
-	cmd //c del *.o *.pdb *.ilk //s
+testclean:
 	@cd test && $(MAKE) -f Makefile.Windows clean
+
+clean: testclean
+	@cd src/liblsquic && $(MAKE) -f Makefile.Windows clean
 
 

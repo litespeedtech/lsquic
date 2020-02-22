@@ -52,6 +52,7 @@ Some open source code required to be installed to build the code include:
         ```
         vcpkg install zlib:x64-windows-static
         vcpkg install libevent:x64-windows-static
+        vcpkg install pcre2:x64-windows-static
         vcpkg integrate install
         ```
    - Clone and compile boringssl.  It can be cloned from [here](https://boringssl.googlesource.com/boringssl).
@@ -90,9 +91,9 @@ Run
 	```
 	gnumake -f Makefile.Windows
 	```
-Note that parallel make (-j <n>) may or may not work reliably. 
+Note that parallel make (-j <n>) may not work reliably.  add `BUILD=debug` on  the command line for debug builds
 
-`http_client.exe` should be found in the `Debug` (or `Release`) directory.
+`http_client.exe` should be found in the `test`  directory.
    
 Run tests (assuming `Debug` build):
 

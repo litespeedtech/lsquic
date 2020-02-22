@@ -8,6 +8,7 @@ INCLUDE_PATHS:= -I../../src/liblsquic -I../../src/liblsquic/ls-qpack
 LSQUIC_LIB:=../../src/liblsquic/lsquic.lib  
 
 COMMON_LIBS:= -L $(VCPKG_LIB_PATH)  -l ws2_32.lib   -l $(LSQUIC_LIB) -l $(BORINGSSL_LIBS)  -l zlib.lib \
+	-l pcre2-8.lib -l pcre2-posix.lib\
 	-l event_core.lib \
 	-l advapi32.lib 
 

@@ -18,3 +18,9 @@ struct iovec {
 #define sleep(n) Sleep(n*1000)
 
 #define STDIN_FILENO _fileno(stdin)
+
+#if !defined S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFDIR) == _S_IFDIR)
+#endif
+
+char * strndup(const char *s, size_t n);
