@@ -341,10 +341,6 @@ struct lsquic_stream
     signed char                     sm_saved_want_write;
     signed char                     sm_has_frame;
 
-    unsigned char                   sm_dup_push_off;
-    unsigned char                   sm_dup_push_len;
-    unsigned char                   sm_dup_push_buf[8];
-
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
@@ -591,9 +587,6 @@ lsquic_stream_qdec_unblocked (struct lsquic_stream *);
 
 int
 lsquic_stream_can_push (const struct lsquic_stream *);
-
-int
-lsquic_stream_duplicate_push (struct lsquic_stream *, uint64_t push_id);
 
 int
 lsquic_stream_push_promise (struct lsquic_stream *, struct push_promise *);

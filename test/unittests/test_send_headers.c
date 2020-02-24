@@ -158,8 +158,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     int s;
     memset(tobjs, 0, sizeof(*tobjs));
     LSCONN_INITIALIZE(&tobjs->lconn);
-    tobjs->lconn.cn_pf = select_pf_by_ver(LSQVER_ID24);
-    tobjs->lconn.cn_version = LSQVER_ID24;
+    tobjs->lconn.cn_pf = select_pf_by_ver(LSQVER_ID25);
+    tobjs->lconn.cn_version = LSQVER_ID25;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     network_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
     tobjs->lconn.cn_if = &our_conn_if;

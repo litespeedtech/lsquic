@@ -148,9 +148,6 @@ static size_t
 active_hq_frame_sizes (const struct lsquic_stream *);
 
 static void
-on_write_dp_wrapper (struct lsquic_stream *, lsquic_stream_ctx_t *);
-
-static void
 on_write_pp_wrapper (struct lsquic_stream *, lsquic_stream_ctx_t *);
 
 static void
@@ -1986,8 +1983,6 @@ static void
         assert(stream->stream_flags & STREAM_PUSHING);
         if (stream_is_pushing_promise(stream))
             return on_write_pp_wrapper;
-        else if (stream->sm_dup_push_off < stream->sm_dup_push_len)
-            return on_write_dp_wrapper;
         else
             return stream->stream_if->on_write;
     }
@@ -4081,7 +4076,6 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
         code = CODE_DATA;
         break;
     case HQFT_PUSH_PROMISE:
-    case HQFT_DUPLICATE_PUSH:
         /* [draft-ietf-quic-http-24], Section 7 */
         if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT
                                     && !(stream->sm_bflags & SMBF_SERVER))
@@ -4563,128 +4557,6 @@ lsquic_stream_can_push (const struct lsquic_stream *stream)
             ;
     else
         return 1;
-}
-
-
-static size_t
-dp_reader_read (void *lsqr_ctx, void *buf, size_t count)
-{
-    struct lsquic_stream *const stream = lsqr_ctx;
-    unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
-    size_t len;
-
-    len = MIN((size_t) (stream->sm_dup_push_len - stream->sm_dup_push_off),
-                                                        (size_t) (end - dst));
-    memcpy(dst, stream->sm_dup_push_buf + stream->sm_dup_push_off, len);
-    stream->sm_dup_push_off += len;
-
-    if (stream->sm_dup_push_len == stream->sm_dup_push_off)
-        LSQ_DEBUG("finish writing duplicate push");
-
-    return len;
-}
-
-
-static size_t
-dp_reader_size (void *lsqr_ctx)
-{
-    struct lsquic_stream *const stream = lsqr_ctx;
-
-    return stream->sm_dup_push_len - stream->sm_dup_push_off;
-}
-
-
-static void
-init_dp_reader (struct lsquic_stream *stream, struct lsquic_reader *reader)
-{
-    reader->lsqr_read = dp_reader_read;
-    reader->lsqr_size = dp_reader_size;
-    reader->lsqr_ctx = stream;
-}
-
-
-static void
-on_write_dp_wrapper (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
-{
-    struct lsquic_reader dp_reader;
-    ssize_t nw;
-    int want_write;
-
-    assert(stream->sm_dup_push_off < stream->sm_dup_push_len);
-
-    init_dp_reader(stream, &dp_reader);
-    nw = stream_write(stream, &dp_reader);
-    if (nw > 0)
-    {
-        LSQ_DEBUG("wrote %zd bytes more of duplicate push (%s)",
-            nw, stream->sm_dup_push_off == stream->sm_dup_push_len ?
-            "done" : "not done");
-        if (stream->sm_dup_push_off == stream->sm_dup_push_len)
-        {
-            /* Restore want_write flag */
-            want_write = !!(stream->sm_qflags & SMQF_WANT_WRITE);
-            if (want_write != stream->sm_saved_want_write)
-                (void) lsquic_stream_wantwrite(stream,
-                                                stream->sm_saved_want_write);
-        }
-    }
-    else if (nw < 0)
-    {
-        LSQ_WARN("could not write duplicate push (wrapper)");
-        /* XXX What should happen if we hit an error? TODO */
-    }
-}
-
-
-int
-lsquic_stream_duplicate_push (struct lsquic_stream *stream, uint64_t push_id)
-{
-    struct lsquic_reader dp_reader;
-    unsigned bits, len;
-    ssize_t nw;
-
-    assert(stream->sm_bflags & SMBF_IETF);
-    assert(lsquic_stream_can_push(stream));
-
-    bits = vint_val2bits(push_id);
-    len = 1 << bits;
-
-    if (!stream_activate_hq_frame(stream,
-            stream->sm_payload + stream->sm_n_buffered, HQFT_DUPLICATE_PUSH,
-            SHF_FIXED_SIZE, len))
-        return -1;
-
-    stream->stream_flags |= STREAM_PUSHING;
-
-    stream->sm_dup_push_len = len;
-    stream->sm_dup_push_off = 0;
-    vint_write(stream->sm_dup_push_buf, push_id, bits, 1 << bits);
-
-    init_dp_reader(stream, &dp_reader);
-    nw = stream_write(stream, &dp_reader);
-    if (nw > 0)
-    {
-        if (stream->sm_dup_push_off == stream->sm_dup_push_len)
-            LSQ_DEBUG("fully wrote DUPLICATE_PUSH %"PRIu64, push_id);
-        else
-        {
-            LSQ_DEBUG("partially wrote DUPLICATE_PUSH %"PRIu64, push_id);
-            stream->stream_flags |= STREAM_NOPUSH;
-            stream->sm_saved_want_write =
-                                    !!(stream->sm_qflags & SMQF_WANT_WRITE);
-            stream_wantwrite(stream, 1);
-        }
-        return 0;
-    }
-    else
-    {
-        if (nw < 0)
-            LSQ_WARN("failure writing DUPLICATE_PUSH");
-        stream->stream_flags |= STREAM_NOPUSH;
-        stream->stream_flags &= ~STREAM_PUSHING;
-        return -1;
-    }
 }
 
 

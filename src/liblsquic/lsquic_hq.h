@@ -1,12 +1,12 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
- * lsquic_hq.h -- HTTP over QUIC (HQ) types
+ * lsquic_hq.h -- HTTP/3 (originally "HTTP over QUIC" or HQ) types
  */
 
 #ifndef LSQUIC_HQ_H
 #define LSQUIC_HQ_H 1
 
-/* [draft-ietf-quic-http-15] Section 4 */
+/* [draft-ietf-quic-http-27] Section 11.2.1 */
 enum hq_frame_type
 {
     HQFT_DATA           = 0,
@@ -16,7 +16,6 @@ enum hq_frame_type
     HQFT_PUSH_PROMISE   = 5,
     HQFT_GOAWAY         = 7,
     HQFT_MAX_PUSH_ID    = 0xD,
-    HQFT_DUPLICATE_PUSH = 0xE,
     /* This frame is made up and its type is never written to stream.
      * Nevertheless, just to be on the safe side, give it a value as
      * described in [draft-ietf-quic-http-20] Section 4.2.10.

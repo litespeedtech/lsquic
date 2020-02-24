@@ -1341,8 +1341,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     assert(mini_conn->cn_flags & LSCONN_HANDSHAKE_DONE);
     conn->ifc_conn.cn_flags      |= LSCONN_HANDSHAKE_DONE;
-    if (mini_conn->cn_version > LSQVER_ID24
-                                    && !(imc->imc_flags & IMC_HSK_DONE_SENT))
+    if (!(imc->imc_flags & IMC_HSK_DONE_SENT))
     {
         LSQ_DEBUG("HANDSHAKE_DONE not yet sent, will process CRYPTO frames");
         conn->ifc_flags |= IFC_PROC_CRYPTO;
@@ -1559,8 +1558,6 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         conn->ifc_n_slack_all = 0;
         lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
     }
-    else
-        assert(!lsquic_alarmset_is_set(&conn->ifc_alset, AL_ACK_INIT + pns));
     lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
     LSQ_DEBUG("%s ACK state reset", lsquic_pns2str[pns]);
 
@@ -3010,8 +3007,7 @@ handshake_ok (struct lsquic_conn *lconn)
         conn->ifc_ping_period = 0;
     LSQ_DEBUG("PING period is set to %"PRIu64" usec", conn->ifc_ping_period);
 
-    if (conn->ifc_conn.cn_version > LSQVER_ID24
-            && conn->ifc_settings->es_delayed_acks
+    if (conn->ifc_settings->es_delayed_acks
             && (params->tp_set & (1 << TPI_MIN_ACK_DELAY)))
     {
         LSQ_DEBUG("delayed ACKs enabled");
@@ -3265,11 +3261,11 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         return -1;
     }
 
-    /* Generate header block.  Using it, we will search for a duplicate push
-     * promise.  If not found, it will be copied to a new push_promise object.
+    /* Generate header block in cheap 4K memory.  It it will be copied to
+     * a new push_promise object.
      */
     p = header_block_buf;
-    end = header_block_buf + 0x1000 - 1;    /* Save one byte for key type */
+    end = header_block_buf + 0x1000;
     pseudo_headers[0].name. iov_base    = ":method";
     pseudo_headers[0].name. iov_len     = 7;
     pseudo_headers[0].value.iov_base    = "GET";
@@ -3326,18 +3322,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     }
     LSQ_DEBUG("generated push promise header block of %ld bytes",
                                             (long) (p - header_block_buf));
-    *p++ = PPKT_CONTENT;
-
-    el = lsquic_hash_find(conn->ifc_pub.u.ietf.promises,
-                                    header_block_buf, p - header_block_buf);
-    if (el)
-    {
-        lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        promise = lsquic_hashelem_getdata(el);
-        LSQ_DEBUG("found push promise %"PRIu64", will issue a duplicate",
-                                                            promise->pp_id);
-        return lsquic_stream_duplicate_push(dep_stream, promise->pp_id);
-    }
 
     own_hset = !hset;
     if (!hset)
@@ -3358,6 +3342,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         if (!hset)
         {
             LSQ_INFO("header set ctor failure");
+            lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
             return -1;
         }
         for (i = 0; i < n_header_sets; ++i)
@@ -3439,30 +3424,16 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     memset(promise, 0, sizeof(*promise));
     promise->pp_refcnt = 1; /* This function itself keeps a reference */
     memcpy(promise->pp_content_buf, header_block_buf, p - header_block_buf);
-    promise->pp_content_len = p - header_block_buf - 1;
+    promise->pp_content_len = p - header_block_buf;
     promise->pp_id = conn->ifc_u.ser.ifser_next_push_id++;
     lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
 
-    promise->pp_u_id.buf[8] = PPKT_ID;
     el = lsquic_hash_insert(conn->ifc_pub.u.ietf.promises,
-            promise->pp_u_id.buf, sizeof(promise->pp_u_id.buf), promise,
+            &promise->pp_id, sizeof(promise->pp_id), promise,
             &promise->pp_hash_id);
     if (!el)
     {
         LSQ_WARN("cannot insert push promise (ID)");
-        undo_stream_creation(conn, pushed_stream);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
-        lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-        free(uh);
-        return -1;
-    }
-    el = lsquic_hash_insert(conn->ifc_pub.u.ietf.promises,
-            promise->pp_content_buf, promise->pp_content_len + 1, promise,
-            &promise->pp_hash_content);
-    if (!el)
-    {
-        LSQ_WARN("cannot insert push promise (content)");
         undo_stream_creation(conn, pushed_stream);
         if (own_hset)
             conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);

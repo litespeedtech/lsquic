@@ -1117,85 +1117,6 @@ ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
 }
 
 
-static enum quic_frame_type
-ietf_id24_parse_frame_type (const unsigned char *buf, size_t len)
-{
-    /* This one does not have QUIC_FRAME_HANDSHAKE_DONE */
-    static const enum quic_frame_type byte2type[0x40] =
-    {
-        [0x00] = QUIC_FRAME_PADDING,
-        [0x01] = QUIC_FRAME_PING,
-        [0x02] = QUIC_FRAME_ACK,
-        [0x03] = QUIC_FRAME_ACK,
-        [0x04] = QUIC_FRAME_RST_STREAM,
-        [0x05] = QUIC_FRAME_STOP_SENDING,
-        [0x06] = QUIC_FRAME_CRYPTO,
-        [0x07] = QUIC_FRAME_NEW_TOKEN,
-        [0x08] = QUIC_FRAME_STREAM,
-        [0x09] = QUIC_FRAME_STREAM,
-        [0x0A] = QUIC_FRAME_STREAM,
-        [0x0B] = QUIC_FRAME_STREAM,
-        [0x0C] = QUIC_FRAME_STREAM,
-        [0x0D] = QUIC_FRAME_STREAM,
-        [0x0E] = QUIC_FRAME_STREAM,
-        [0x0F] = QUIC_FRAME_STREAM,
-        [0x10] = QUIC_FRAME_MAX_DATA,
-        [0x11] = QUIC_FRAME_MAX_STREAM_DATA,
-        [0x12] = QUIC_FRAME_MAX_STREAMS,
-        [0x13] = QUIC_FRAME_MAX_STREAMS,
-        [0x14] = QUIC_FRAME_BLOCKED,
-        [0x15] = QUIC_FRAME_STREAM_BLOCKED,
-        [0x16] = QUIC_FRAME_STREAMS_BLOCKED,
-        [0x17] = QUIC_FRAME_STREAMS_BLOCKED,
-        [0x18] = QUIC_FRAME_NEW_CONNECTION_ID,
-        [0x19] = QUIC_FRAME_RETIRE_CONNECTION_ID,
-        [0x1A] = QUIC_FRAME_PATH_CHALLENGE,
-        [0x1B] = QUIC_FRAME_PATH_RESPONSE,
-        [0x1C] = QUIC_FRAME_CONNECTION_CLOSE,
-        [0x1D] = QUIC_FRAME_CONNECTION_CLOSE,
-        [0x1E] = QUIC_FRAME_INVALID,
-        [0x1F] = QUIC_FRAME_INVALID,
-        [0x20] = QUIC_FRAME_INVALID,
-        [0x21] = QUIC_FRAME_INVALID,
-        [0x22] = QUIC_FRAME_INVALID,
-        [0x23] = QUIC_FRAME_INVALID,
-        [0x24] = QUIC_FRAME_INVALID,
-        [0x25] = QUIC_FRAME_INVALID,
-        [0x26] = QUIC_FRAME_INVALID,
-        [0x27] = QUIC_FRAME_INVALID,
-        [0x28] = QUIC_FRAME_INVALID,
-        [0x29] = QUIC_FRAME_INVALID,
-        [0x2A] = QUIC_FRAME_INVALID,
-        [0x2B] = QUIC_FRAME_INVALID,
-        [0x2C] = QUIC_FRAME_INVALID,
-        [0x2D] = QUIC_FRAME_INVALID,
-        [0x2E] = QUIC_FRAME_INVALID,
-        [0x2F] = QUIC_FRAME_INVALID,
-        [0x30] = QUIC_FRAME_INVALID,
-        [0x31] = QUIC_FRAME_INVALID,
-        [0x32] = QUIC_FRAME_INVALID,
-        [0x33] = QUIC_FRAME_INVALID,
-        [0x34] = QUIC_FRAME_INVALID,
-        [0x35] = QUIC_FRAME_INVALID,
-        [0x36] = QUIC_FRAME_INVALID,
-        [0x37] = QUIC_FRAME_INVALID,
-        [0x38] = QUIC_FRAME_INVALID,
-        [0x39] = QUIC_FRAME_INVALID,
-        [0x3A] = QUIC_FRAME_INVALID,
-        [0x3B] = QUIC_FRAME_INVALID,
-        [0x3C] = QUIC_FRAME_INVALID,
-        [0x3D] = QUIC_FRAME_INVALID,
-        [0x3E] = QUIC_FRAME_INVALID,
-        [0x3F] = QUIC_FRAME_INVALID,
-    };
-
-    if (len > 1 && buf[0] < 0x40)
-        return byte2type[buf[0]];
-    else
-        return QUIC_FRAME_INVALID;
-}
-
-
 static unsigned
 ietf_v1_path_chal_frame_size (void)
 {
@@ -1770,7 +1691,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     const unsigned char *const end = p + length;
     lsquic_ver_tag_t tag;
     enum header_type header_type;
-    unsigned dcil, scil, odcil;
+    unsigned dcil, scil;
     int verneg, r;
     unsigned char first_byte;
     uint64_t payload_len, token_len;
@@ -1865,32 +1786,18 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     case HETY_RETRY:
         if (p >= end)
             return -1;
-        if (LSQVER_ID24 == lsquic_tag2ver(tag))
-        {
-            odcil = *p++;
-            if (p + odcil > end || odcil > MAX_CID_LEN)
+        if (p
+            /* [draft-ietf-quic-transport-25] Section 17.2.5 says that "a
+             * client MUST discard a Retry packet with a zero-length Retry
+             * Token field."  We might as well do it here.
+             */
+            + 1
+            /* Integrity tag length: */
+            + 16 > end)
                 return -1;
-            packet_in->pi_odcid_len = odcil;
-            packet_in->pi_odcid = p - packet_in->pi_data;
-            p += odcil;
-            packet_in->pi_token = p - packet_in->pi_data;
-            packet_in->pi_token_size = end - p;
-        }
-        else
-        {
-            if (p
-                /* [draft-ietf-quic-transport-25] Section 17.2.5 says that "a
-                 * client MUST discard a Retry packet with a zero-length Retry
-                 * Token field."  We might as well do it here.
-                 */
-                + 1
-                /* Integrity tag length: */
-                + 16 > end)
-                    return -1;
-            packet_in->pi_token = p - packet_in->pi_data;
-            packet_in->pi_token_size = end - p - 16;
-            /* Tag validation happens later */
-        }
+        packet_in->pi_token = p - packet_in->pi_data;
+        packet_in->pi_token_size = end - p - 16;
+        /* Tag validation happens later */
         p = end;
         length = end - packet_in->pi_data;
         state->pps_p      = NULL;
@@ -2165,22 +2072,6 @@ ietf_v1_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
 }
 
 
-static int
-ietf_id24_gen_ack_frequency_frame (unsigned char *buf, size_t buf_len,
-    uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad)
-{
-    return -1;
-}
-
-
-static int
-ietf_id24_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
-    uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad)
-{
-    return -1;
-}
-
-
 static unsigned
 ietf_v1_ack_frequency_frame_size (uint64_t seqno, uint64_t pack_tol,
     uint64_t upd_mad)
@@ -2195,93 +2086,6 @@ ietf_v1_handshake_done_frame_size (void)
 {
     return 1;
 }
-
-
-static int
-ietf_id24_gen_handshake_done_frame (unsigned char *buf, size_t buf_len)
-{
-    /* ID-24 does not have HANDSHAKE_DONE frame */
-    return -1;
-}
-
-
-static int
-ietf_id24_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
-{
-    /* ID-24 does not have HANDSHAKE_DONE frame */
-    return -1;
-}
-
-
-const struct parse_funcs lsquic_parse_funcs_ietf_id24 =
-{
-    .pf_gen_reg_pkt_header            =  ietf_v1_gen_reg_pkt_header,
-    .pf_parse_packet_in_finish        =  ietf_v1_parse_packet_in_finish,
-    .pf_gen_stream_frame              =  ietf_v1_gen_stream_frame,
-    .pf_calc_stream_frame_header_sz   =  ietf_v1_calc_stream_frame_header_sz,
-    .pf_parse_stream_frame            =  ietf_v1_parse_stream_frame,
-    .pf_parse_ack_frame               =  ietf_v1_parse_ack_frame,
-    .pf_gen_ack_frame                 =  ietf_v1_gen_ack_frame,
-    .pf_gen_blocked_frame             =  ietf_v1_gen_blocked_frame,
-    .pf_parse_blocked_frame           =  ietf_v1_parse_blocked_frame,
-    .pf_blocked_frame_size            =  ietf_v1_blocked_frame_size,
-    .pf_rst_frame_size                =  ietf_v1_rst_frame_size,
-    .pf_gen_rst_frame                 =  ietf_v1_gen_rst_frame,
-    .pf_parse_rst_frame               =  ietf_v1_parse_rst_frame,
-    .pf_connect_close_frame_size      =  ietf_v1_connect_close_frame_size,
-    .pf_gen_connect_close_frame       =  ietf_v1_gen_connect_close_frame,
-    .pf_parse_connect_close_frame     =  ietf_v1_parse_connect_close_frame,
-    .pf_gen_ping_frame                =  ietf_v1_gen_ping_frame,
-    .pf_parse_frame_type              =  ietf_id24_parse_frame_type,
-    .pf_turn_on_fin                   =  ietf_v1_turn_on_fin,
-    .pf_packout_size                  =  ietf_v1_packout_size,
-    .pf_packout_max_header_size       =  ietf_v1_packout_max_header_size,
-    .pf_path_chal_frame_size          =  ietf_v1_path_chal_frame_size,
-    .pf_parse_path_chal_frame         =  ietf_v1_parse_path_chal_frame,
-    .pf_gen_path_chal_frame           =  ietf_v1_gen_path_chal_frame,
-    .pf_path_resp_frame_size          =  ietf_v1_path_resp_frame_size,
-    .pf_gen_path_resp_frame           =  ietf_v1_gen_path_resp_frame,
-    .pf_parse_path_resp_frame         =  ietf_v1_parse_path_resp_frame,
-    .pf_calc_packno_bits              =  ietf_v1_calc_packno_bits,
-    .pf_packno_bits2len               =  ietf_v1_packno_bits2len,
-    .pf_packno_info                   =  ietf_v1_packno_info,
-    .pf_gen_crypto_frame              =  ietf_v1_gen_crypto_frame,
-    .pf_parse_crypto_frame            =  ietf_v1_parse_crypto_frame,
-    .pf_calc_crypto_frame_header_sz   =  ietf_v1_calc_crypto_frame_header_sz,
-    .pf_parse_max_data                =  ietf_v1_parse_max_data,
-    .pf_gen_max_data_frame            =  ietf_v1_gen_max_data_frame,
-    .pf_max_data_frame_size           =  ietf_v1_max_data_frame_size,
-    .pf_parse_new_conn_id             =  ietf_v1_parse_new_conn_id,
-    .pf_gen_stream_blocked_frame      =  ietf_v1_gen_stream_blocked_frame,
-    .pf_parse_stream_blocked_frame    =  ietf_v1_parse_stream_blocked_frame,
-    .pf_stream_blocked_frame_size     =  ietf_v1_stream_blocked_frame_size,
-    .pf_gen_max_stream_data_frame     =  ietf_v1_gen_max_stream_data_frame,
-    .pf_parse_max_stream_data_frame   =  ietf_v1_parse_max_stream_data_frame,
-    .pf_max_stream_data_frame_size    =  ietf_v1_max_stream_data_frame_size,
-    .pf_parse_stop_sending_frame      =  ietf_v1_parse_stop_sending_frame,
-    .pf_gen_stop_sending_frame        =  ietf_v1_gen_stop_sending_frame,
-    .pf_stop_sending_frame_size       =  ietf_v1_stop_sending_frame_size,
-    .pf_parse_new_token_frame         =  ietf_v1_parse_new_token_frame,
-    .pf_new_connection_id_frame_size  =  ietf_v1_new_connection_id_frame_size,
-    .pf_gen_new_connection_id_frame   =  ietf_v1_gen_new_connection_id_frame,
-    .pf_new_token_frame_size          =  ietf_v1_new_token_frame_size,
-    .pf_gen_new_token_frame           =  ietf_v1_gen_new_token_frame,
-    .pf_parse_retire_cid_frame        =  ietf_v1_parse_retire_cid_frame,
-    .pf_gen_retire_cid_frame          =  ietf_v1_gen_retire_cid_frame,
-    .pf_retire_cid_frame_size         =  ietf_v1_retire_cid_frame_size,
-    .pf_gen_streams_blocked_frame     =  ietf_v1_gen_streams_blocked_frame,
-    .pf_parse_streams_blocked_frame   =  ietf_v1_parse_streams_blocked_frame,
-    .pf_streams_blocked_frame_size    =  ietf_v1_streams_blocked_frame_size,
-    .pf_gen_max_streams_frame         =  ietf_v1_gen_max_streams_frame,
-    .pf_parse_max_streams_frame       =  ietf_v1_parse_max_streams_frame,
-    .pf_max_streams_frame_size        =  ietf_v1_max_streams_frame_size,
-    .pf_gen_handshake_done_frame      =  ietf_id24_gen_handshake_done_frame,
-    .pf_parse_handshake_done_frame    =  ietf_id24_parse_handshake_done_frame,
-    .pf_handshake_done_frame_size     =  ietf_v1_handshake_done_frame_size,
-    .pf_gen_ack_frequency_frame       =  ietf_id24_gen_ack_frequency_frame,
-    .pf_parse_ack_frequency_frame     =  ietf_id24_parse_ack_frequency_frame,
-    .pf_ack_frequency_frame_size      =  ietf_v1_ack_frequency_frame_size,
-};
 
 
 const struct parse_funcs lsquic_parse_funcs_ietf_v1 =

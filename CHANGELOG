@@ -1,3 +1,10 @@
+2020-02-24
+    - 2.11.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 27 support.
+    - [FEATURE] Add experimental delayed ACKs extension.
+    - Drop support for Internet Draft 24.
+    - Code cleanup.
+
 2020-02-14
     - 2.10.6
     - [BUGFIX] HTTP/3 framing: don't misinterpret rare occurence as error.

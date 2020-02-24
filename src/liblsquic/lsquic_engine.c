@@ -900,12 +900,7 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
 
     if (mini_conn->cn_flags & LSCONN_IETF)
-    {
-        if (mini_conn->cn_version == LSQVER_ID24)
-            ctor = lsquic_id24_full_conn_server_new;
-        else
-            ctor = lsquic_ietf_full_conn_server_new;
-    }
+        ctor = lsquic_ietf_full_conn_server_new;
     else
         ctor = lsquic_gquic_full_conn_server_new;
 
@@ -1562,16 +1557,9 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
     else
         versions = 1u << version;
     if (versions & LSQUIC_IETF_VERSIONS)
-    {
-        if (version == LSQVER_ID24)
-            conn = lsquic_id24_full_conn_client_new(&engine->pub, versions,
-                        flags, hostname, max_packet_size,
-                        is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
-        else
-            conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
-                        flags, hostname, max_packet_size,
-                        is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
-    }
+        conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
+                    flags, hostname, max_packet_size,
+                    is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
                             flags, hostname, max_packet_size, is_ipv4,

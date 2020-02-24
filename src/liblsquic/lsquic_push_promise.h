@@ -6,12 +6,6 @@ struct lsquic_hash_elem;
 struct lsquic_stream;
 
 
-enum push_promise_key_type {
-    PPKT_ID,
-    PPKT_CONTENT,
-};
-
-
 struct push_promise
 {
     /* A push promise is associated with a single stream, while a stream can
@@ -21,19 +15,10 @@ struct push_promise
      * frames can be sent out.
      */
     SLIST_ENTRY(push_promise)   pp_next;
-    /* Push promises are stored in the same hash and can be searched either
-     * by ID or by content.  To differentiate the two keys, the key type is
-     * appended at the end PPKT_ID or PPKT_CONTENT.
-     */
-    struct lsquic_hash_elem     pp_hash_id,
-                                pp_hash_content;
-    union {
-        uint64_t        id;
-        unsigned char   buf[9];
-    }                           pp_u_id;
-#define pp_id   pp_u_id.id
+    /* Push promises are stored a hash and can be searched by ID */
+    struct lsquic_hash_elem     pp_hash_id;
+    uint64_t                    pp_id;
     struct lsquic_stream       *pp_pushed_stream;
-    /* This does not include the last key-type byte: */
     size_t                      pp_content_len;
     /* Number of streams holding a reference to this push promise.  When this
      * value becomes zero, the push promise is destroyed.  See lsquic_pp_put().
@@ -64,7 +49,7 @@ struct push_promise
     unsigned                    pp_write_off;
     unsigned char               pp_encoded_push_id[8];
     /* The content buffer is the header block: it does not include Header
-     * Block Prefix.  It is followed by one-byte key type PPKT_CONTENT.
+     * Block Prefix.
      */
     unsigned char               pp_content_buf[0];
 };
@@ -77,9 +62,6 @@ struct push_promise
             LSQ_DEBUG("destroy push promise %"PRIu64, (promise_)->pp_id);   \
             if ((promise_)->pp_hash_id.qhe_flags & QHE_HASHED)              \
                 lsquic_hash_erase(all_promises_, &(promise_)->pp_hash_id);  \
-            if ((promise_)->pp_hash_content.qhe_flags & QHE_HASHED)         \
-                lsquic_hash_erase(all_promises_,                            \
-                                            &(promise_)->pp_hash_content);  \
             free(promise);                                                  \
         }                                                                   \
     }                                                                       \

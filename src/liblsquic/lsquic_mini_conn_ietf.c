@@ -1689,13 +1689,10 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
     else if (conn->imc_flags & IMC_HSK_OK)
     {
-        if (conn->imc_conn.cn_version > LSQVER_ID24)
-        {
-            if (lconn->cn_esf.i->esfi_in_init(lconn->cn_enc_session))
-                LSQ_DEBUG("still in init, defer HANDSHAKE_DONE");
-            else if (0 != imico_generate_handshake_done(conn))
-                goto close_on_error;
-        }
+        if (lconn->cn_esf.i->esfi_in_init(lconn->cn_enc_session))
+            LSQ_DEBUG("still in init, defer HANDSHAKE_DONE");
+        else if (0 != imico_generate_handshake_done(conn))
+            goto close_on_error;
         tick |= TICK_PROMOTE;
     }
 

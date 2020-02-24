@@ -6,7 +6,7 @@
 
 /* See [draft-ietf-quic-transport-11], section-7.1 */
 #define vint_val2bits(val) (    \
-    (val >= (1 << 6)) + (val >= (1 << 14)) + (val >= (1 << 30)))
+    ((val) >= (1 << 6)) + ((val) >= (1 << 14)) + ((val) >= (1 << 30)))
 
 #define vint_size(val) (1u << vint_val2bits(val))
 

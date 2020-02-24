@@ -44,9 +44,8 @@ static const struct trapa_test tests[] =
         .params = {
             TP_DEFAULT_VALUES,
         },
-        .enc_len = 2,
+        .enc_len = 0,
         .encoded =
-     /* Overall length */   "\x00\x00"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -69,15 +68,14 @@ static const struct trapa_test tests[] =
             .tp_active_connection_id_limit = 7,
         },
         .is_server = 0,
-        .enc_len = 39,
+        .enc_len = 25,
         .encoded =
-     /* Overall length */   "\x00\x25"
-     /* Idle timeout */     "\x00\x01\x00\x02\x67\x10"
-     /* Packet size */      "\x00\x03\x00\x01\x00"
-     /* Max data */         "\x00\x04\x00\x04\x80\x00\xAA\xBB"
-     /* Bidi local */       "\x00\x05\x00\x04\x92\x34\x88\x77"
-     /* Ack delay exp */    "\x00\x0A\x00\x01\x00"
-     /* Active CID limit */ "\x00\x0E\x00\x01\x07"
+     /* Idle timeout */     "\x01\x02\x67\x10"
+     /* Packet size */      "\x03\x01\x00"
+     /* Max data */         "\x04\x04\x80\x00\xAA\xBB"
+     /* Bidi local */       "\x05\x04\x92\x34\x88\x77"
+     /* Ack delay exp */    "\x0A\x01\x00"
+     /* Active CID limit */ "\x0E\x01\x07"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -109,13 +107,12 @@ static const struct trapa_test tests[] =
         },
         .is_server = 1,
         .addl_set = 1 << TPI_DISABLE_ACTIVE_MIGRATION,
-        .enc_len = 32,
+        .enc_len = 22,
         .encoded =
-     /* Overall length */   "\x00\x1E"
-     /* Packet size */      "\x00\x03\x00\x02\x43\x33"
-     /* Max data */         "\x00\x04\x00\x04\x80\x12\x34\x56"
-     /* Bidi local */       "\x00\x05\x00\x08\xC0\x00\x00\x00\xAB\xCD\xEF\x88"
-     /* Migration */        "\x00\x0C\x00\x00"
+     /* Packet size */      "\x03\x02\x43\x33"
+     /* Max data */         "\x04\x04\x80\x12\x34\x56"
+     /* Bidi local */       "\x05\x08\xC0\x00\x00\x00\xAB\xCD\xEF\x88"
+     /* Migration */        "\x0C\x00"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -139,11 +136,11 @@ static const struct trapa_test tests[] =
         },
         .is_server = 1,
         .addl_set = 1 << TPI_PREFERRED_ADDRESS,
-        .enc_len = 0x3E + 2,
+        .enc_len = 0x3A,
+        .dec_len = 0x3A,
         .encoded =
-     /* Overall length */   "\x00\x3E"
-     /* Preferred Address */"\x00\x0D"
-                            "\x00\x34"
+     /* Preferred Address */"\x0D"
+                            "\x34"
                             "\x01\x02\x03\x04"
                             "\x12\x34"
                             "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
@@ -151,7 +148,7 @@ static const struct trapa_test tests[] =
                             "\x0B"  /* CID len */
                             "\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2A"
                             "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F"
-     /* Packet size */      "\x00\x03\x00\x02\x43\x33"
+     /* Packet size */      "\x03\x02\x43\x33"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -196,7 +193,7 @@ run_test (const struct trapa_test *test)
     if (test->flags & TEST_ENCODE)
     {
         s = lsquic_tp_encode(&source_params, test->is_server, buf, sizeof(buf));
-        assert(s > 0);
+        assert(s >= 0);
         assert((size_t) s == test->enc_len);
         assert(0 == memcmp(test->encoded, buf, s));
     }
@@ -206,12 +203,12 @@ run_test (const struct trapa_test *test)
         if (test->dec_len)
             dec_len = test->dec_len;
         else
-            dec_len = sizeof(buf);
+            dec_len = test->enc_len;
         s = lsquic_tp_decode(test->encoded, dec_len,
                      test->is_server, &decoded_params);
         if (!test->expect_decode_err)
         {
-            assert(s > 0);
+            assert(s >= 0);
             assert((size_t) s == test->enc_len);
             /* The decoder initializes all default values, so set the flag
              * accordingly:

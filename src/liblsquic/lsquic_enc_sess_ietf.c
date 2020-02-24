@@ -71,9 +71,9 @@ static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
 } s_alpns[] = {
-    {   LSQVER_ID24, (unsigned char *) "\x05h3-24",     },
     {   LSQVER_ID25, (unsigned char *) "\x05h3-25",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-25",     },
+    {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-27",     },
 };
 
 struct enc_sess_iquic;
@@ -546,12 +546,6 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                   |  (1 << TPI_MAX_PACKET_SIZE)
                   |  (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)
                   ;
-    if (enc_sess->esi_conn->cn_version == LSQVER_ID24)
-    {
-        params.tp_active_connection_id_limit = params.tp_active_connection_id_limit
-        - 1 /* One slot is used by peer's SCID */
-        - !!(params.tp_set & (1 << TPI_PREFERRED_ADDRESS));
-    }
     if (!settings->es_allow_migration)
         params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
     if (settings->es_ql_bits)
@@ -565,7 +559,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
     }
 
-    len = lsquic_tp_encode(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
+    len = (enc_sess->esi_conn->cn_version == LSQVER_ID25 ? lsquic_tp_encode_id25 :
+        lsquic_tp_encode)(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
     if (len >= 0)
         LSQ_DEBUG("generated transport parameters buffer of %d bytes", len);
     else
@@ -1460,7 +1455,8 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     }
 
     LSQ_DEBUG("have peer transport parameters (%zu bytes)", bufsz);
-    if (0 > lsquic_tp_decode(params_buf, bufsz,
+    if (0 > (enc_sess->esi_conn->cn_version == LSQVER_ID25
+                ? lsquic_tp_decode_id25 : lsquic_tp_decode)(params_buf, bufsz,
                             !(enc_sess->esi_flags & ESI_SERVER),
                                                 trans_params))
     {
@@ -2674,7 +2670,8 @@ static void
 chsk_ietf_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 {
     struct enc_sess_iquic *const enc_sess = (struct enc_sess_iquic *) ctx;
-    LSQ_DEBUG("crypto stream level %u is closed",
+    if (enc_sess && enc_sess->esi_cryst_if)
+        LSQ_DEBUG("crypto stream level %u is closed",
                 (unsigned) enc_sess->esi_cryst_if->csi_enc_level(stream));
 }
 

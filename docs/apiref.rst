@@ -46,13 +46,13 @@ developed by the IETF.  Both types are included in a single enum:
 
         Google QUIC version Q050
 
-    .. member:: LSQVER_ID24
-
-        IETF QUIC version ID (Internet-Draft) 24
-
     .. member:: LSQVER_ID25
 
-        IETF QUIC version ID 25
+        IETF QUIC version ID (Internet-Draft) 25
+
+    .. member:: LSQVER_ID27
+
+        IETF QUIC version ID 27
 
     .. member:: N_LSQVER
 

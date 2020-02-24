@@ -134,6 +134,14 @@ lsquic_tp_decode (const unsigned char *buf, size_t bufsz,
                   int is_server,
                   struct transport_params *);
 
+int
+lsquic_tp_encode_id25 (const struct transport_params *, int is_server,
+                  unsigned char *buf, size_t bufsz);
+
+int
+lsquic_tp_decode_id25 (const unsigned char *buf, size_t bufsz,
+                  int is_server, struct transport_params *);
+
 void
 lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz);
 
