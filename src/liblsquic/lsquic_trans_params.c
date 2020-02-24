@@ -202,7 +202,11 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                     = vint_val2bits(enum_2_tpi_val[TPI_ORIGINAL_CONNECTION_ID]);
 #if __GNUC__
 #pragma GCC diagnostic ignored "-Wunknown-pragmas"
+#if __clang__
+#pragma GCC diagnostic ignored "-Wtautological-constant-out-of-range-compare"
+#else
 #pragma GCC diagnostic ignored "-Wtype-limits"
+#endif
 #endif
             bits[TPI_ORIGINAL_CONNECTION_ID][1]
                     = vint_val2bits(params->tp_original_cid.len);
