@@ -9,7 +9,7 @@ lsquic.lib:  lsquic_versions_to_string.o lsquic_xxhash.o ls-qpack/lsqpack.o ../l
 	@echo linking $(CURDIR)/$<
 	@$(LLVM_DIR)/llvm-ar r lsquic.lib $?
 
-lsquic_versions_to_string.c : gen-verstrs.pl
+lsquic_versions_to_string.c : gen-verstrs.pl ../../include/lsquic.h 
 	$(PERL_DIR)/perl.exe gen-verstrs.pl ../../include/lsquic.h lsquic_versions_to_string.c
 
 %.o : %.c 

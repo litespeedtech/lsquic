@@ -30,11 +30,12 @@ endif
 export LSQUIC_CXXFLAGS=$(ALL_CXXFLAGS) 
 
 
-all: lsquic test/http_client.exe test/md5_client.exe test/echo_client.exe test/http_server.exe \
-			test/echo_server.exe test/md5_server.exe
+all: lsquic test 
 
 lsquic:
 	@cd src/liblsquic && $(MAKE) -f Makefile.Windows
+
+test:
 	@cd test && $(MAKE) -f Makefile.Windows
 
 	

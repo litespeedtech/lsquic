@@ -17,6 +17,10 @@ all: getoptobjs ${exe_names} graph_cubic.exe mini_parse.exe test_min_heap.exe te
 getoptobjs : $(LSQUIC_LIB) 
 	@$(LLVM_DIR)/clang -c ../../wincompat/getopt1.c ../../wincompat/getopt.c $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) 
 
+%.o : %.c 
+	@echo compiling $(CURDIR)/$<
+	@$(LLVM_DIR)/clang -c $(LSQUIC_CXXFLAGS) -I${CURDIR} -o $*.o $<
+
 %.exe : %.c 
 	@echo Building $(CURDIR)/$< 
 	@$(LLVM_DIR)/clang  $(LSQUIC_CXXFLAGS) $(INCLUDE_PATHS) \
