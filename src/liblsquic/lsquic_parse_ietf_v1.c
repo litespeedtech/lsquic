@@ -46,6 +46,9 @@
 #define CHECK_SPACE(need, pstart, pend)  \
     do { if ((intptr_t) (need) > ((pend) - (pstart))) { return -1; } } while (0)
 
+#define FRAME_TYPE_ACK_FREQUENCY    0xAF
+#define FRAME_TYPE_TIMESTAMP        0x2F5
+
 static int
 ietf_v1_gen_one_varint (unsigned char *, size_t, unsigned char, uint64_t);
 
@@ -1109,7 +1112,8 @@ ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
     if (s > 0 && (unsigned) s == (1u << vint_val2bits(val)))
         switch (val)
         {
-        case 0xAF:  return QUIC_FRAME_ACK_FREQUENCY;
+        case FRAME_TYPE_ACK_FREQUENCY:  return QUIC_FRAME_ACK_FREQUENCY;
+        case FRAME_TYPE_TIMESTAMP:      return QUIC_FRAME_TIMESTAMP;
         default:    break;
         }
 
@@ -2059,7 +2063,7 @@ ietf_v1_gen_ack_frequency_frame (unsigned char *buf, size_t buf_len,
     uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad)
 {
     return ietf_v1_gen_frame_with_varints(buf, buf_len, 4,
-                            (uint64_t[]){ 0xAF, seqno, pack_tol, upd_mad });
+        (uint64_t[]){ FRAME_TYPE_ACK_FREQUENCY, seqno, pack_tol, upd_mad });
 }
 
 
@@ -2068,7 +2072,8 @@ ietf_v1_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
     uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad)
 {
     return ietf_v1_parse_frame_with_varints(buf, buf_len,
-                0xAF, 3, (uint64_t *[]) { seqno, pack_tol, upd_mad });
+                FRAME_TYPE_ACK_FREQUENCY,
+                3, (uint64_t *[]) { seqno, pack_tol, upd_mad });
 }
 
 
@@ -2077,7 +2082,7 @@ ietf_v1_ack_frequency_frame_size (uint64_t seqno, uint64_t pack_tol,
     uint64_t upd_mad)
 {
     return ietf_v1_frame_with_varints_size(4,
-                            (uint64_t[]){ 0xAF, seqno, pack_tol, upd_mad });
+            (uint64_t[]){ FRAME_TYPE_ACK_FREQUENCY, seqno, pack_tol, upd_mad });
 }
 
 
@@ -2085,6 +2090,24 @@ static unsigned
 ietf_v1_handshake_done_frame_size (void)
 {
     return 1;
+}
+
+
+static int
+ietf_v1_gen_timestamp_frame (unsigned char *buf, size_t buf_len,
+                                                            uint64_t timestamp)
+{
+    return ietf_v1_gen_frame_with_varints(buf, buf_len, 2,
+                            (uint64_t[]){ FRAME_TYPE_TIMESTAMP, timestamp });
+}
+
+
+static int
+ietf_v1_parse_timestamp_frame (const unsigned char *buf, size_t buf_len,
+                                                            uint64_t *timestamp)
+{
+    return ietf_v1_parse_frame_with_varints(buf, buf_len,
+                FRAME_TYPE_TIMESTAMP, 1, (uint64_t *[]) { timestamp });
 }
 
 
@@ -2156,4 +2179,6 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_gen_ack_frequency_frame       =  ietf_v1_gen_ack_frequency_frame,
     .pf_parse_ack_frequency_frame     =  ietf_v1_parse_ack_frequency_frame,
     .pf_ack_frequency_frame_size      =  ietf_v1_ack_frequency_frame_size,
+    .pf_gen_timestamp_frame           =  ietf_v1_gen_timestamp_frame,
+    .pf_parse_timestamp_frame         =  ietf_v1_parse_timestamp_frame,
 };

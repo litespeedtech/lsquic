@@ -239,7 +239,7 @@ optional members.
     .. member:: struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx)
 
         Get SSL_CTX associated with a peer context.  Mandatory in server
-        mode.
+        mode.  This is use for default values for SSL instantiation.
 
     .. member:: const struct lsquic_hset_if         *ea_hsi_if
     .. member:: void                                *ea_hsi_ctx
@@ -267,6 +267,8 @@ optional members.
 
         In a multi-process setup, it may be useful to observe the CID
         lifecycle.  This optional set of callbacks makes it possible.
+
+.. _apiref-engine-settings:
 
 Engine Settings
 ---------------
@@ -348,7 +350,7 @@ settings structure:
     .. member:: unsigned        es_max_header_list_size
 
        This corresponds to SETTINGS_MAX_HEADER_LIST_SIZE
-       (RFC 7540, Section 6.5.2).  0 means no limit.  Defaults
+       (:rfc:`7540#section-6.5.2`).  0 means no limit.  Defaults
        to :func:`LSQUIC_DF_MAX_HEADER_LIST_SIZE`.
 
     .. member:: const char     *es_ua
@@ -685,6 +687,12 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_DELAYED_ACKS`
 
+    .. member:: int             es_timestamps
+
+       Enable timestamps extension.  Allowed values are 0 and 1.
+
+       Default value is @ref LSQUIC_DF_TIMESTAMPS
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -940,7 +948,7 @@ that the library uses to send packets.
 
     .. member:: int                    ecn
 
-        ECN: Valid values are 0 - 3. See RFC 3168.
+        ECN: Valid values are 0 - 3. See :rfc:`3168`.
 
         ECN may be set by IETF QUIC connections if ``es_ecn`` is set.
 
@@ -1465,7 +1473,7 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
 
     Get header set associated with the stream.  The header set is created by
     ``hsi_create_header_set()`` callback.  After this call, the ownership of
-    the header set is trasnferred to the caller.
+    the header set is transferred to the caller.
 
     This call must precede calls to :func:`lsquic_stream_read()`,
     :func:`lsquic_stream_readv()`, and :func:`lsquic_stream_readf()`.

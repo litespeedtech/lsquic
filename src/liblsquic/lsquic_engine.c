@@ -335,6 +335,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
     settings->es_spin            = LSQUIC_DF_SPIN;
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
+    settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
 }
 
 
@@ -1636,7 +1637,7 @@ remove_conn_from_hash (lsquic_engine_t *engine, lsquic_conn_t *conn)
 
 
 static void
-refflags2str (enum lsquic_conn_flags flags, char s[6])
+refflags2str (enum lsquic_conn_flags flags, char s[7])
 {
     *s = 'C'; s += !!(flags & LSCONN_CLOSING);
     *s = 'H'; s += !!(flags & LSCONN_HASHED);

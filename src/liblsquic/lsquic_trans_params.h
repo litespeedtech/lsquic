@@ -38,6 +38,7 @@ enum transport_param_id
     /*
      * Empty transport parameters:
      */
+    TPI_TIMESTAMPS,
     TPI_DISABLE_ACTIVE_MIGRATION,           MAX_EMPTY_TPI = TPI_DISABLE_ACTIVE_MIGRATION,
 
     /*

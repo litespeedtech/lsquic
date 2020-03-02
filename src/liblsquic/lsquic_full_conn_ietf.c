@@ -133,6 +133,7 @@ enum ifull_conn_flags
     IFC_MIGRA         = 1 << 27,
     IFC_SPIN          = 1 << 28, /* Spin bits are enabled */
     IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
+    IFC_TIMESTAMPS    = 1 << 30, /* Timestamps are enabled */
 };
 
 
@@ -334,6 +335,7 @@ struct ietf_full_conn
     struct transport_params     ifc_peer_param;
     STAILQ_HEAD(, stream_id_to_ss)
                                 ifc_stream_ids_to_ss;
+    lsquic_time_t               ifc_created;
     lsquic_time_t               ifc_saved_ack_received;
     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
     lsquic_packno_t             ifc_max_non_probing;
@@ -1215,6 +1217,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     LSQ_DEBUG("negotiating version %s",
                         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
     conn->ifc_process_incoming_packet = process_incoming_packet_verneg;
+    conn->ifc_created = now;
     LSQ_DEBUG("logging using %s SCID",
         LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "client" : "server");
     return &conn->ifc_conn;
@@ -1431,6 +1434,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     if (0 != handshake_ok(&conn->ifc_conn))
         goto err3;
 
+    conn->ifc_created = imc->imc_created;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                                         imc->imc_created + conn->ifc_idle_to);
@@ -1506,6 +1510,33 @@ ietf_full_conn_ci_cancel_pending_streams (struct lsquic_conn *lconn, unsigned n)
 }
 
 
+/* Best effort.  If timestamp frame does not fit, oh well */
+static void
+generate_timestamp_frame (struct ietf_full_conn *conn,
+                    struct lsquic_packet_out *packet_out, lsquic_time_t now)
+{
+    uint64_t timestamp;
+    int w;
+
+    timestamp = (now - conn->ifc_created) >> TP_DEF_ACK_DELAY_EXP;
+    w = conn->ifc_conn.cn_pf->pf_gen_timestamp_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), timestamp);
+    if (w < 0)
+    {
+        LSQ_DEBUG("could not generate TIMESTAMP frame");
+        return;
+    }
+    LSQ_DEBUG("generated TIMESTAMP(%"PRIu64" us) frame",
+                                        timestamp << TP_DEF_ACK_DELAY_EXP);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated TIMESTAMP(%"
+                    PRIu64" us) frame", timestamp << TP_DEF_ACK_DELAY_EXP);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_TIMESTAMP;
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    packet_out->po_regen_sz += w;
+}
+
+
 static int
 generate_ack_frame_for_pns (struct ietf_full_conn *conn,
                 struct lsquic_packet_out *packet_out, enum packnum_space pns,
@@ -1560,6 +1591,9 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     }
     lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
     LSQ_DEBUG("%s ACK state reset", lsquic_pns2str[pns]);
+
+    if (pns == PNS_APP && (conn->ifc_flags & IFC_TIMESTAMPS))
+        generate_timestamp_frame(conn, packet_out, now);
 
     return 0;
 }
@@ -3012,6 +3046,12 @@ handshake_ok (struct lsquic_conn *lconn)
     {
         LSQ_DEBUG("delayed ACKs enabled");
         conn->ifc_flags |= IFC_DELAYED_ACKS;
+    }
+    if (conn->ifc_settings->es_timestamps
+            && (params->tp_set & (1 << TPI_TIMESTAMPS)))
+    {
+        LSQ_DEBUG("timestamps enabled");
+        conn->ifc_flags |= IFC_TIMESTAMPS;
     }
 
     conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
@@ -5583,6 +5623,36 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
 }
 
 
+static unsigned
+process_timestamp_frame (struct ietf_full_conn *conn,
+    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    uint64_t timestamp;
+    int parsed_len;
+
+    if (!(conn->ifc_flags & IFC_TIMESTAMPS))
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Received unexpected TIMESTAMP frame (not negotiated)");
+        return 0;
+    }
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_timestamp_frame(p, len,
+                                                                &timestamp);
+    if (parsed_len < 0)
+        return 0;
+
+    timestamp <<= conn->ifc_cfg.ack_exp;
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "TIMESTAMP(%"PRIu64" us)", timestamp);
+    LSQ_DEBUG("TIMESTAMP(%"PRIu64" us) (%"PRIu64" << %"PRIu8")", timestamp,
+        timestamp >> conn->ifc_cfg.ack_exp, conn->ifc_cfg.ack_exp);
+
+    /* We don't do anything with the timestamp */
+
+    return parsed_len;
+}
+
+
 typedef unsigned (*process_frame_f)(
     struct ietf_full_conn *, struct lsquic_packet_in *,
     const unsigned char *p, size_t);
@@ -5611,6 +5681,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_CRYPTO]             =  process_crypto_frame,
     [QUIC_FRAME_HANDSHAKE_DONE]     =  process_handshake_done_frame,
     [QUIC_FRAME_ACK_FREQUENCY]      =  process_ack_frequency_frame,
+    [QUIC_FRAME_TIMESTAMP]          =  process_timestamp_frame,
 };
 
 

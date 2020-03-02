@@ -1049,6 +1049,8 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     /* STREAM frame can only come in the App PNS and we delay those packets: */
     [QUIC_FRAME_STREAM]             =  imico_process_invalid_frame,
     [QUIC_FRAME_HANDSHAKE_DONE]     =  imico_process_invalid_frame,
+    [QUIC_FRAME_ACK_FREQUENCY]      =  imico_process_invalid_frame,
+    [QUIC_FRAME_TIMESTAMP]          =  imico_process_invalid_frame,
 };
 
 

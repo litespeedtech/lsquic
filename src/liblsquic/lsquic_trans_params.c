@@ -52,6 +52,7 @@ tpi_val_2_enum (uint64_t tpi_val)
 #endif
     case 0x1057:    return TPI_LOSS_BITS;
     case 0xDE1A:    return TPI_MIN_ACK_DELAY;
+    case 0x7157:    return TPI_TIMESTAMPS;
     default:        return INT_MAX;
     }
 }
@@ -79,6 +80,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
 #endif
     [TPI_LOSS_BITS]                         =  0x1057,
     [TPI_MIN_ACK_DELAY]                     =  0xDE1A,
+    [TPI_TIMESTAMPS]                        =  0x7157,
 };
 
 
@@ -104,6 +106,7 @@ static const char * const tpi2str[LAST_TPI + 1] =
 #endif
     [TPI_LOSS_BITS]                         =  "loss_bits",
     [TPI_MIN_ACK_DELAY]                     =  "min_ack_delay",
+    [TPI_TIMESTAMPS]                        =  "timestamps",
 };
 
 
@@ -378,6 +381,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                                 sizeof(params->tp_preferred_address.srst));
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
+            case TPI_TIMESTAMPS:
                 *p++ = 0;
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -500,6 +504,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             }
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
+        case TPI_TIMESTAMPS:
             EXPECT_LEN(0);
             break;
         case TPI_STATELESS_RESET_TOKEN:
@@ -615,7 +620,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
                 return;
         }
     for (; tpi <= MAX_EMPTY_TPI; ++tpi)
-        if (params->tp_set & (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL))
+        if (params->tp_set & (1 << tpi))
         {
             nw = snprintf(buf, end - buf, "%.*s%s",
                                     (buf + sz > end) << 1, "; ", tpi2str[tpi]);
@@ -825,6 +830,7 @@ lsquic_tp_encode_id25 (const struct transport_params *params, int is_server,
                                 sizeof(params->tp_preferred_address.srst));
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
+            case TPI_TIMESTAMPS:
                 WRITE_UINT_TO_P(0, 16);
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -948,6 +954,7 @@ lsquic_tp_decode_id25 (const unsigned char *const buf, size_t bufsz,
             }
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
+        case TPI_TIMESTAMPS:
             EXPECT_LEN(0);
             break;
         case TPI_STATELESS_RESET_TOKEN:

@@ -384,8 +384,6 @@ lsquic_mm_put_packet_out (struct lsquic_mm *mm,
     poolst_freed(&mm->packet_out_bstats[idx]);
     if (poolst_has_new_sample(&mm->packet_out_bstats[idx]))
         maybe_shrink_packet_out_bufs(mm, idx);
-    if (packet_out->po_bwp_state)
-        lsquic_malo_put(packet_out->po_bwp_state);
 #else
     free(packet_out->po_data);
 #endif

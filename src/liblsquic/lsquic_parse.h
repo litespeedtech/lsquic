@@ -310,6 +310,10 @@ struct parse_funcs
     unsigned
     (*pf_ack_frequency_frame_size) (uint64_t seqno, uint64_t pack_tol,
         uint64_t upd_mad);
+    int
+    (*pf_gen_timestamp_frame) (unsigned char *buf, size_t buf_len, uint64_t);
+    int
+    (*pf_parse_timestamp_frame) (const unsigned char *buf, size_t, uint64_t *);
 };
 
 

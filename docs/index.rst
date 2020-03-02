@@ -3,9 +3,6 @@ LSQUIC Documentation
 
 This is the documentation for LSQUIC_ |release|, last updated |today|.
 
-Introduction
-------------
-
 LiteSpeed QUIC (LSQUIC) Library is an open-source implementation of QUIC
 and HTTP/3 functionality for servers and clients.  LSQUIC is:
 
@@ -38,7 +35,9 @@ Contents
    :maxdepth: 2
 
    gettingstarted
+   tutorial
    apiref
+   internals
 
 Indices and tables
 ==================

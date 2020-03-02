@@ -134,21 +134,27 @@ struct ssl_ctx_st *
 lookup_cert (void *cert_lu_ctx, const struct sockaddr *sa_UNUSED,
              const char *sni)
 {
+    struct lsquic_hash_elem *el;
+    struct server_cert *server_cert;
+
     if (!cert_lu_ctx)
         return NULL;
-    if (!sni)
+
+    if (sni)
+        el = lsquic_hash_find(cert_lu_ctx, sni, strlen(sni));
+    else
     {
         LSQ_INFO("SNI is not set");
-        return NULL;
+        el = lsquic_hash_first(cert_lu_ctx);
     }
-    struct lsquic_hash_elem *el = lsquic_hash_find(cert_lu_ctx, sni, strlen(sni));
-    struct server_cert *server_cert = NULL;
+
     if (el)
     {
         server_cert = lsquic_hashelem_getdata(el);
         if (server_cert)
             return server_cert->ce_ssl_ctx;
     }
+
     return NULL;
 }
 

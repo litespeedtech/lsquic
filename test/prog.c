@@ -371,7 +371,10 @@ prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
     if (NULL == lsquic_engine_connect(prog->prog_engine, N_LSQVER,
                     (struct sockaddr *) &sport->sp_local_addr,
                     (struct sockaddr *) &sport->sas, sport, NULL,
-                    prog->prog_hostname ? prog->prog_hostname : sport->host,
+                    prog->prog_hostname ? prog->prog_hostname
+                    /* SNI is required for HTTP */
+                  : prog->prog_engine_flags & LSENG_HTTP ? sport->host
+                  : NULL,
                     prog->prog_max_packet_size, zero_rtt, zero_rtt_len,
                     sport->sp_token_buf, sport->sp_token_sz))
         return -1;

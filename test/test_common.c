@@ -1802,6 +1802,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_honor_prst = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "timestamps", 10))
+        {
+            settings->es_timestamps = atoi(val);
+            return 0;
+        }
         break;
     case 11:
         if (0 == strncmp(name, "ping_period", 11))

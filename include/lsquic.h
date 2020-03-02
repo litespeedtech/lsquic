@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 11
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_MINOR_VERSION 12
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -205,6 +205,9 @@ struct ssl_st;
  * constructor.
  */
 
+/* `sni' may be NULL if engine is not HTTP mode and client TLS transport
+ * parameters did not include the SNI.
+ */
 typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
     void *lsquic_cert_lookup_ctx, const struct sockaddr *local, const char *sni);
 
@@ -329,6 +332,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Turn off delayed ACKs extension by default */
 #define LSQUIC_DF_DELAYED_ACKS 0
+
+/** Turn on timestamp extension by default */
+#define LSQUIC_DF_TIMESTAMPS 1
 
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 1
@@ -724,6 +730,13 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_DELAYED_ACKS
      */
     int             es_delayed_acks;
+
+    /**
+     * Enable timestamps extension.  Allowed values are 0 and 1.
+     *
+     * Default value is @ref LSQUIC_DF_TIMESTAMPS
+     */
+    int             es_timestamps;
 };
 
 /* Initialize `settings' to default values */
@@ -1312,7 +1325,7 @@ lsquic_stream_send_headers (lsquic_stream_t *s,
 /**
  * Get header set associated with the stream.  The header set is created by
  * @ref hsi_create_header_set() callback.  After this call, the ownership of
- * the header set is trasnferred to the caller.
+ * the header set is transferred to the caller.
  *
  * This call must precede calls to @ref lsquic_stream_read() and
  * @ref lsquic_stream_readv().

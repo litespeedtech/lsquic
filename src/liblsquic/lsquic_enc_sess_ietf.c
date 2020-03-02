@@ -558,6 +558,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         params.tp_numerics[TPI_MIN_ACK_DELAY] = 10000;    /* TODO: make into a constant? make configurable? */
         params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
     }
+    if (settings->es_timestamps)
+        params.tp_set |= 1 << TPI_TIMESTAMPS;
 
     len = (enc_sess->esi_conn->cn_version == LSQVER_ID25 ? lsquic_tp_encode_id25 :
         lsquic_tp_encode)(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
@@ -1035,8 +1037,10 @@ iquic_lookup_cert (SSL *ssl, void *arg)
 #endif
     if (!server_name)
     {
-        LSQ_DEBUG("cert lookup: server name is not set, skip");
-        return 1;
+        LSQ_DEBUG("cert lookup: server name is not set");
+        /* SNI is required in HTTP/3 */
+        if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+            return 1;
     }
 
     path = enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);
@@ -1049,7 +1053,8 @@ iquic_lookup_cert (SSL *ssl, void *arg)
     {
         if (SSL_set_SSL_CTX(enc_sess->esi_ssl, ssl_ctx))
         {
-            LSQ_DEBUG("looked up cert for %s", server_name);
+            LSQ_DEBUG("looked up cert for %s", server_name
+                                                ? server_name : "<no SNI>");
             if (enc_sess->esi_enpub->enp_kli)
                 SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
             SSL_set_verify(enc_sess->esi_ssl,
@@ -1070,7 +1075,8 @@ iquic_lookup_cert (SSL *ssl, void *arg)
     }
     else
     {
-        LSQ_DEBUG("could not look up cert for %s", server_name);
+        LSQ_DEBUG("could not look up cert for %s", server_name
+                                                ? server_name : "<no SNI>");
         return 0;
     }
 }
