@@ -21,7 +21,7 @@ Support for newer versions will be added soon after they are released.
 Documentation
 -------------
 
-The documentation for this module is admittedly sparse.  The API is
+The documentation for this module is admittedly sparse but is now externally hosted at [Read the Docs](https://lsquic.readthedocs.io/en/latest/).  The API is
 documented in include/lsquic.h.  If you have doxygen, you can run
 `doxygen dox.cfg` or `make docs`.  The example program is
 test/http_client.c: a bare-bones, but working, QUIC client.  Have a look
@@ -143,4 +143,4 @@ Have fun,
 
 LiteSpeed QUIC Team.
 
-Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc
+Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc
