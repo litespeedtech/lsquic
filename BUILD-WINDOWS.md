@@ -50,7 +50,7 @@ Some open source code required to be installed to build the code include:
      install *openssl*.  If it does not, it may need to be manually specified 
      to properly link the lsquic-client executables.
         ```
-        vcpkg install zlib:x86-windows-static
+        vcpkg install zlib:x64-windows-static
         vcpkg install libevent:x64-windows-static
         vcpkg integrate install
         ```
@@ -75,7 +75,7 @@ Make and Compile LSQUIC-Client
 Clone lsquic-client:
 
    ```
-   git clone https://github.com/litespeedtech/lsquic-client.git
+   git clone https://github.com/litespeedtech/lsquic-client.git --recurse-submodules
    cd lsquic-client
    ```
 
