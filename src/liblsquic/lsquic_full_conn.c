@@ -3977,7 +3977,10 @@ synthesize_push_request (struct full_conn *conn, void *hset,
                 xhdr = conn->fc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
                                                                 NULL, extra);
                 if (!xhdr)
+                {
+                    st = -__LINE__;
                     goto err;
+                }
                 memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
                                                         header->name.iov_len);
                 xhdr->name_len = header->name.iov_len;

@@ -3398,7 +3398,10 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
                 xhdr = conn->ifc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
                                                                 NULL, extra);
                 if (!xhdr)
+                {
+                    header_st = -__LINE__;
                     goto header_err;
+                }
                 memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
                                                         header->name.iov_len);
                 xhdr->name_len = header->name.iov_len;
