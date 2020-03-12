@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 12
+#define LSQUIC_MINOR_VERSION 13
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -862,39 +862,6 @@ typedef void (*lsquic_cids_update_f)(void *ctx, void **peer_ctx,
 
 struct stack_st_X509;
 
-/**
- * When headers are processed, various errors may occur.  They are listed
- * in this enum.
- */
-enum lsquic_header_status
-{
-    LSQUIC_HDR_OK,
-    /** Duplicate pseudo-header */
-    LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR,
-    /** Not all request pseudo-headers are present */
-    LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR,
-    /** Unnecessary request pseudo-header present in the response */
-    LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR,
-    /** Prohibited header in request */
-    LSQUIC_HDR_ERR_BAD_REQ_HEADER,
-    /** Not all response pseudo-headers are present */
-    LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR,
-    /** Unnecessary response pseudo-header present in the response. */
-    LSQUIC_HDR_ERR_UNNEC_RESP_PSDO_HDR,
-    /** Unknown pseudo-header */
-    LSQUIC_HDR_ERR_UNKNOWN_PSDO_HDR,
-    /** Uppercase letter in header */
-    LSQUIC_HDR_ERR_UPPERCASE_HEADER,
-    /** Misplaced pseudo-header */
-    LSQUIC_HDR_ERR_MISPLACED_PSDO_HDR,
-    /** Missing pseudo-header */
-    LSQUIC_HDR_ERR_MISSING_PSDO_HDR,
-    /** Header or headers are too large */
-    LSQUIC_HDR_ERR_HEADERS_TOO_LARGE,
-    /** Cannot allocate any more memory. */
-    LSQUIC_HDR_ERR_NOMEM,
-};
-
 struct lsquic_hset_if
 {
     /**
@@ -905,27 +872,35 @@ struct lsquic_hset_if
     void *              (*hsi_create_header_set)(void *hsi_ctx,
                                                         int is_push_promise);
     /**
-     * Process new header.  Return 0 on success, -1 if there is a problem with
-     * the header.  -1 is treated as a stream error: the associated stream is
-     * reset.
+     * Return a header set prepared for decoding.  If `hdr' is NULL, this
+     * means return a new structure with at least `space' bytes available
+     * in the decoder buffer.  If `hdr' is not NULL, it means there was not
+     * enough decoder buffer and it must be increased by `space' bytes.
+     *
+     * If NULL is returned the header set is discarded.
+     */
+    struct lsxpack_header *
+                        (*hsi_prepare_decode)(void *hdr_set,
+                                              struct lsxpack_header *hdr,
+                                              size_t space);
+    /**
+     * Process new header.  Return 0 on success, a positive value if a header
+     * error occured, or a negative value on any other error.
+     *
+     * A positive return value will result in cancellation of associated
+     * stream.
+     *
+     * A negative return value will result in connection being aborted.
      *
      * `hdr_set' is the header set object returned by
      * @ref hsi_create_header_set().
      *
-     * `name_idx' is set to the index in either the HPACK or QPACK static table
-     * whose entry's name element matches `name'.  The values are as follows:
-     *      - if there is no such match, `name_idx' is set to zero;
-     *      - if HPACK is used, the value is between 1 and 61; and
-     *      - if QPACK is used, the value is 62+ (subtract 62 to get the QPACK
-     *        static table index).
+     * `hdr' is the header returned by @ref `hsi_prepare_decode'.
      *
-     * If `name' is NULL, this means that no more header are going to be
+     * If `hdr' is NULL, this means that no more header are going to be
      * added to the set.
      */
-    enum lsquic_header_status (*hsi_process_header)(void *hdr_set,
-                                    unsigned name_idx,
-                                    const char *name, unsigned name_len,
-                                    const char *value, unsigned value_len);
+    int (*hsi_process_header)(void *hdr_set, struct lsxpack_header *hdr);
     /**
      * Discard header set.  This is called for unclaimed header sets and
      * header sets that had an error.

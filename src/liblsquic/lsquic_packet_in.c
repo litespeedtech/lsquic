@@ -14,17 +14,17 @@
 
 
 int
-packet_in_ver_first (const lsquic_packet_in_t *packet_in, struct ver_iter *vi,
-                     lsquic_ver_tag_t *ver_tag)
+lsquic_packet_in_ver_first (const lsquic_packet_in_t *packet_in,
+                            struct ver_iter *vi, lsquic_ver_tag_t *ver_tag)
 {
     vi->packet_in = packet_in;
     vi->off       = packet_in->pi_quic_ver;
-    return packet_in_ver_next(vi, ver_tag);
+    return lsquic_packet_in_ver_next(vi, ver_tag);
 }
 
 
 int
-packet_in_ver_next (struct ver_iter *vi, lsquic_ver_tag_t *ver_tag)
+lsquic_packet_in_ver_next (struct ver_iter *vi, lsquic_ver_tag_t *ver_tag)
 {
     if (vi->off + 4 <= vi->packet_in->pi_header_sz)
     {

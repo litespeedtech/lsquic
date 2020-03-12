@@ -33,30 +33,30 @@ struct pacer
 typedef lsquic_time_t (*tx_time_f)(void *ctx);
 
 void
-pacer_init (struct pacer *, const struct lsquic_conn *,
+lsquic_pacer_init (struct pacer *, const struct lsquic_conn *,
                                             unsigned clock_granularity);
 
 void
-pacer_cleanup (struct pacer *);
+lsquic_pacer_cleanup (struct pacer *);
 
 void
-pacer_tick_in (struct pacer *, lsquic_time_t);
+lsquic_pacer_tick_in (struct pacer *, lsquic_time_t);
 
 void
-pacer_tick_out (struct pacer *);
+lsquic_pacer_tick_out (struct pacer *);
 
 int
-pacer_can_schedule (struct pacer *, unsigned n_in_flight);
+lsquic_pacer_can_schedule (struct pacer *, unsigned n_in_flight);
 
 void
-pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
+lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
                         int in_recovery, tx_time_f tx_time, void *tx_ctx);
 
 void
-pacer_loss_event (struct pacer *);
+lsquic_pacer_loss_event (struct pacer *);
 
-#define pacer_delayed(pacer) ((pacer)->pa_flags & PA_LAST_SCHED_DELAYED)
+#define lsquic_pacer_delayed(pacer) ((pacer)->pa_flags & PA_LAST_SCHED_DELAYED)
 
-#define pacer_next_sched(pacer) (+(pacer)->pa_next_sched)
+#define lsquic_pacer_next_sched(pacer) (+(pacer)->pa_next_sched)
 
 #endif

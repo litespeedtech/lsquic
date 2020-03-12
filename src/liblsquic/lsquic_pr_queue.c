@@ -135,7 +135,7 @@ hash_req (const void *p, size_t len, unsigned seed)
 
 
 struct pr_queue *
-prq_create (unsigned max_elems, unsigned max_conns,
+lsquic_prq_create (unsigned max_elems, unsigned max_conns,
                         const struct lsquic_engine_public *enpub)
 {
     const struct parse_funcs *pf;
@@ -217,7 +217,7 @@ prq_create (unsigned max_elems, unsigned max_conns,
 
 
 void
-prq_destroy (struct pr_queue *prq)
+lsquic_prq_destroy (struct pr_queue *prq)
 {
     struct lsquic_conn *conn;
 
@@ -259,8 +259,8 @@ put_req (struct pr_queue *prq, struct packet_req *req)
 }
 
 
-int
-lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+static int
+lsquic_prq_new_req_ext (struct pr_queue *prq, enum packet_req_type type,
     unsigned flags, enum lsquic_version version, unsigned short data_sz,
     const lsquic_cid_t *dcid, const lsquic_cid_t *scid, void *peer_ctx,
     const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
@@ -334,7 +334,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
 
 
 int
-prq_new_req (struct pr_queue *prq, enum packet_req_type type,
+lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
          const struct lsquic_packet_in *packet_in, void *peer_ctx,
          const struct sockaddr *local_addr, const struct sockaddr *peer_addr)
 {
@@ -358,8 +358,9 @@ prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         version = LSQVER_ID25;
 
     lsquic_scid_from_packet_in(packet_in, &scid);
-    return lsquic_prq_new_req(prq, type, flags, version, packet_in->pi_data_sz,
-                &packet_in->pi_dcid, &scid, peer_ctx, local_addr, peer_addr);
+    return lsquic_prq_new_req_ext(prq, type, flags, version,
+                packet_in->pi_data_sz, &packet_in->pi_dcid, &scid,
+                peer_ctx, local_addr, peer_addr);
 }
 
 
@@ -421,7 +422,7 @@ get_evconn (struct pr_queue *prq)
 
 
 struct lsquic_conn *
-prq_next_conn (struct pr_queue *prq)
+lsquic_prq_next_conn (struct pr_queue *prq)
 {
     struct evanescent_conn *evconn;
     struct lsquic_conn *lconn;
@@ -504,7 +505,7 @@ prq_next_conn (struct pr_queue *prq)
 
 
 int
-prq_have_pending (const struct pr_queue *prq)
+lsquic_prq_have_pending (const struct pr_queue *prq)
 {
     return lsquic_hash_count(prq->prq_reqs_hash) > 0;
 }

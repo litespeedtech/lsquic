@@ -159,11 +159,11 @@ struct ver_iter
 };
 
 int
-packet_in_ver_first (const lsquic_packet_in_t *packet_in, struct ver_iter *,
-                     lsquic_ver_tag_t *ver_tag);
+lsquic_packet_in_ver_first (const lsquic_packet_in_t *packet_in,
+                            struct ver_iter *, lsquic_ver_tag_t *ver_tag);
 
 int
-packet_in_ver_next (struct ver_iter *, lsquic_ver_tag_t *ver_tag);
+lsquic_packet_in_ver_next (struct ver_iter *, lsquic_ver_tag_t *ver_tag);
 
 size_t
 lsquic_packet_in_mem_used (const struct lsquic_packet_in *);

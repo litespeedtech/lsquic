@@ -279,10 +279,10 @@ struct packet_out_srec_iter {
 
 
 struct stream_rec *
-posi_first (struct packet_out_srec_iter *posi, lsquic_packet_out_t *);
+lsquic_posi_first (struct packet_out_srec_iter *posi, lsquic_packet_out_t *);
 
 struct stream_rec *
-posi_next (struct packet_out_srec_iter *posi);
+lsquic_posi_next (struct packet_out_srec_iter *posi);
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,

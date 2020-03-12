@@ -104,7 +104,7 @@ main (int argc, char **argv)
     packet_in.pi_data = buf;
     packet_in.pi_refcnt = 1;
 
-    lconn = mini_conn_new(&enpub, &packet_in, ver);
+    lconn = lsquic_mini_conn_new(&enpub, &packet_in, ver);
     lconn->cn_if->ci_packet_in(lconn, &packet_in);
 
     exit(EXIT_SUCCESS);

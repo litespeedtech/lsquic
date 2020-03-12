@@ -548,7 +548,7 @@ lsquic_engine_new (unsigned flags,
     else
     {
         engine->pub.enp_shi      = &stock_shi;
-        engine->pub.enp_shi_ctx  = stock_shared_hash_new();
+        engine->pub.enp_shi_ctx  = lsquic_stock_shared_hash_new();
         if (!engine->pub.enp_shi_ctx)
         {
             free(engine);
@@ -589,7 +589,7 @@ lsquic_engine_new (unsigned flags,
     engine->pub.enp_crand = &engine->crand;
     if (flags & ENG_SERVER)
     {
-        engine->pr_queue = prq_create(
+        engine->pr_queue = lsquic_prq_create(
             10000 /* TODO: make configurable */, MAX_OUT_BATCH_SIZE,
             &engine->pub);
         if (!engine->pr_queue)
@@ -602,11 +602,11 @@ lsquic_engine_new (unsigned flags,
         if (!engine->purga)
         {
             lsquic_tg_destroy(engine->pub.enp_tokgen);
-            prq_destroy(engine->pr_queue);
+            lsquic_prq_destroy(engine->pr_queue);
             return NULL;
         }
     }
-    engine->attq = attq_create();
+    engine->attq = lsquic_attq_create();
     eng_hist_init(&engine->history);
     engine->batch_size = INITIAL_OUT_BATCH_SIZE;
     if (engine->pub.enp_settings.es_honor_prst)
@@ -1009,7 +1009,7 @@ schedule_req_packet (struct lsquic_engine *engine, enum packet_req_type type,
     const struct sockaddr *sa_peer, void *peer_ctx)
 {
     assert(engine->pr_queue);
-    if (0 == prq_new_req(engine->pr_queue, type, packet_in, peer_ctx,
+    if (0 == lsquic_prq_new_req(engine->pr_queue, type, packet_in, peer_ctx,
                                                             sa_local, sa_peer))
         LSQ_DEBUGC("scheduled %s packet for cid %"CID_FMT,
                     lsquic_preqt2str[type], CID_BITS(&packet_in->pi_conn_id));
@@ -1199,7 +1199,7 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     }
     else
     {
-        conn = mini_conn_new(&engine->pub, packet_in, version);
+        conn = lsquic_mini_conn_new(&engine->pub, packet_in, version);
     }
     if (!conn)
         return NULL;
@@ -1268,12 +1268,12 @@ lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
     {
         if (lsquic_conn_adv_time(conn) != tick_time)
         {
-            attq_remove(engine->attq, conn);
-            if (0 != attq_add(engine->attq, conn, tick_time, why))
+            lsquic_attq_remove(engine->attq, conn);
+            if (0 != lsquic_attq_add(engine->attq, conn, tick_time, why))
                 engine_decref_conn(engine, conn, LSCONN_ATTQ);
         }
     }
-    else if (0 == attq_add(engine->attq, conn, tick_time, why))
+    else if (0 == lsquic_attq_add(engine->attq, conn, tick_time, why))
         engine_incref_conn(conn, LSCONN_ATTQ);
 }
 
@@ -1423,15 +1423,15 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
     assert(0 == engine->n_conns);
     assert(0 == engine->mini_conns_count);
     if (engine->pr_queue)
-        prq_destroy(engine->pr_queue);
+        lsquic_prq_destroy(engine->pr_queue);
     if (engine->purga)
         lsquic_purga_destroy(engine->purga);
-    attq_destroy(engine->attq);
+    lsquic_attq_destroy(engine->attq);
 
     assert(0 == lsquic_mh_count(&engine->conns_out));
     assert(0 == lsquic_mh_count(&engine->conns_tickable));
     if (engine->pub.enp_shi == &stock_shi)
-        stock_shared_hash_destroy(engine->pub.enp_shi_ctx);
+        lsquic_stock_shared_hash_destroy(engine->pub.enp_shi_ctx);
     lsquic_mm_cleanup(&engine->pub.enp_mm);
     free(engine->conns_tickable.mh_elems);
 #ifndef NDEBUG
@@ -1707,7 +1707,7 @@ force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn)
     assert(!(flags & LSCONN_CLOSING));  /* It is in transient queue? */
     if (flags & LSCONN_ATTQ)
     {
-        attq_remove(engine->attq, conn);
+        lsquic_attq_remove(engine->attq, conn);
         (void) engine_decref_conn(engine, conn, LSCONN_ATTQ);
     }
     if (flags & LSCONN_HASHED)
@@ -1740,7 +1740,7 @@ conn_iter_next_tickable (struct lsquic_engine *engine)
         conn = engine_decref_conn(engine, conn, LSCONN_TICKABLE);
     if (conn && (conn->cn_flags & LSCONN_ATTQ))
     {
-        attq_remove(engine->attq, conn);
+        lsquic_attq_remove(engine->attq, conn);
         conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
     }
 
@@ -1830,7 +1830,7 @@ lsquic_engine_process_conns (lsquic_engine_t *engine)
     ENGINE_IN(engine);
 
     now = lsquic_time_now();
-    while ((conn = attq_pop(engine->attq, now)))
+    while ((conn = lsquic_attq_pop(engine->attq, now)))
     {
         conn = engine_decref_conn(engine, conn, LSCONN_ATTQ);
         if (conn && !(conn->cn_flags & LSCONN_TICKABLE))
@@ -1965,7 +1965,7 @@ coi_next (struct conns_out_iter *iter)
 #endif
         return conn;
     }
-    else if (iter->coi_prq && (conn = prq_next_conn(iter->coi_prq)))
+    else if (iter->coi_prq && (conn = lsquic_prq_next_conn(iter->coi_prq)))
     {
         return conn;
     }
@@ -2432,7 +2432,7 @@ int
 lsquic_engine_has_unsent_packets (lsquic_engine_t *engine)
 {
     return lsquic_mh_count(&engine->conns_out) > 0
-             || (engine->pr_queue && prq_have_pending(engine->pr_queue))
+             || (engine->pr_queue && lsquic_prq_have_pending(engine->pr_queue))
     ;
 }
 
@@ -2595,7 +2595,8 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
             next_tick_time = conn->cn_if->ci_next_tick_time(conn, &why);
             if (next_tick_time)
             {
-                if (0 == attq_add(engine->attq, conn, next_tick_time, why))
+                if (0 == lsquic_attq_add(engine->attq, conn, next_tick_time,
+                                                                        why))
                     engine_incref_conn(conn, LSCONN_ATTQ);
             }
             else
@@ -2759,7 +2760,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
         return 1;
     }
 
-    if (engine->pr_queue && prq_have_pending(engine->pr_queue))
+    if (engine->pr_queue && lsquic_prq_have_pending(engine->pr_queue))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         engine->last_logged_conn = 0;
@@ -2784,7 +2785,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
         return 1;
     }
 
-    next_attq = attq_next(engine->attq);
+    next_attq = lsquic_attq_next(engine->attq);
     if (engine->pub.enp_flags & ENPUB_CAN_SEND)
     {
         if (next_attq)
@@ -2847,7 +2848,7 @@ lsquic_engine_count_attq (lsquic_engine_t *engine, int from_now)
         now -= from_now;
     else
         now += from_now;
-    return attq_count_before(engine->attq, now);
+    return lsquic_attq_count_before(engine->attq, now);
 }
 
 

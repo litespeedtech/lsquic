@@ -36,7 +36,7 @@ struct attq
 
 
 struct attq *
-attq_create (void)
+lsquic_attq_create (void)
 {
     struct attq *q;
     struct malo *malo;
@@ -58,7 +58,7 @@ attq_create (void)
 
 
 void
-attq_destroy (struct attq *q)
+lsquic_attq_destroy (struct attq *q)
 {
     lsquic_malo_destroy(q->aq_elem_malo);
     free(q->aq_heap);
@@ -108,7 +108,7 @@ attq_swap (struct attq *q, unsigned a, unsigned b)
 
 
 int
-attq_add (struct attq *q, struct lsquic_conn *conn,
+lsquic_attq_add (struct attq *q, struct lsquic_conn *conn,
                                 lsquic_time_t advisory_time, enum ae_why why)
 {
     struct attq_elem *el, **heap;
@@ -155,7 +155,7 @@ attq_add (struct attq *q, struct lsquic_conn *conn,
 
 
 struct lsquic_conn *
-attq_pop (struct attq *q, lsquic_time_t cutoff)
+lsquic_attq_pop (struct attq *q, lsquic_time_t cutoff)
 {
     struct lsquic_conn *conn;
     struct attq_elem *el;
@@ -168,7 +168,7 @@ attq_pop (struct attq *q, lsquic_time_t cutoff)
         return NULL;
 
     conn = el->ae_conn;
-    attq_remove(q, conn);
+    lsquic_attq_remove(q, conn);
     return conn;
 }
 
@@ -204,7 +204,7 @@ attq_heapify (struct attq *q, unsigned i)
 
 
 void
-attq_remove (struct attq *q, struct lsquic_conn *conn)
+lsquic_attq_remove (struct attq *q, struct lsquic_conn *conn)
 {
     struct attq_elem *el;
     unsigned idx;
@@ -239,7 +239,7 @@ attq_remove (struct attq *q, struct lsquic_conn *conn)
 
 
 unsigned
-attq_count_before (struct attq *q, lsquic_time_t cutoff)
+lsquic_attq_count_before (struct attq *q, lsquic_time_t cutoff)
 {
     unsigned level, total_count, level_count, i, level_max;
 
@@ -260,7 +260,7 @@ attq_count_before (struct attq *q, lsquic_time_t cutoff)
 
 
 const struct attq_elem *
-attq_next (struct attq *q)
+lsquic_attq_next (struct attq *q)
 {
     if (q->aq_nelem > 0)
         return q->aq_heap[0];

@@ -43,14 +43,14 @@ srec_one_posi_first (struct packet_out_srec_iter *posi,
 }
 
 
-struct stream_rec *
+static struct stream_rec *
 srec_one_posi_next (struct packet_out_srec_iter *posi)
 {
     return NULL;
 }
 
 
-struct stream_rec *
+static struct stream_rec *
 srec_arr_posi_next (struct packet_out_srec_iter *posi)
 {
     while (posi->cur_srec_arr)
@@ -96,7 +96,7 @@ static struct stream_rec * (* const posi_nexts[])
 
 
 struct stream_rec *
-posi_first (struct packet_out_srec_iter *posi,
+lsquic_posi_first (struct packet_out_srec_iter *posi,
             lsquic_packet_out_t *packet_out)
 {
     posi->impl_idx = !!(packet_out->po_flags & PO_SREC_ARR);
@@ -105,7 +105,7 @@ posi_first (struct packet_out_srec_iter *posi,
 
 
 struct stream_rec *
-posi_next (struct packet_out_srec_iter *posi)
+lsquic_posi_next (struct packet_out_srec_iter *posi)
 {
     return posi_nexts[posi->impl_idx](posi);
 }
@@ -296,7 +296,8 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
     int n_stream_frames = 0, n_elided = 0;
     int victim;
 
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                            srec = lsquic_posi_next(&posi))
     {
         if (srec->sr_frame_type == QUIC_FRAME_STREAM)
         {
@@ -357,7 +358,8 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
                                                     packet_out->po_data_sz);
     packet_out->po_regen_sz = 0;
 
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
         if (srec->sr_frame_type == QUIC_FRAME_STREAM)
             srec->sr_off -= delta;
 }
@@ -368,7 +370,8 @@ lsquic_packet_out_ack_streams (lsquic_packet_out_t *packet_out)
 {
     struct packet_out_srec_iter posi;
     struct stream_rec *srec;
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
         lsquic_stream_acked(srec->sr_stream, srec->sr_frame_type);
 }
 
@@ -588,11 +591,11 @@ verify_srecs (lsquic_packet_out_t *packet_out, enum quic_frame_type frame_type)
     const struct stream_rec *srec;
     unsigned off;
 
-    srec = posi_first(&posi, packet_out);
+    srec = lsquic_posi_first(&posi, packet_out);
     assert(srec);
 
     off = 0;
-    for ( ; srec; srec = posi_next(&posi))
+    for ( ; srec; srec = lsquic_posi_next(&posi))
     {
         assert(srec->sr_off == off);
         assert(srec->sr_frame_type == frame_type);
@@ -635,7 +638,8 @@ lsquic_packet_out_split_in_two (struct lsquic_mm *mm,
 #ifdef WIN32
     max_idx = 0;
 #endif
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
     {
         assert(srec->sr_frame_type == QUIC_FRAME_STREAM
             || srec->sr_frame_type == QUIC_FRAME_CRYPTO);
@@ -772,7 +776,8 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
     uint64_t last_offset;
     int len;
 
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
         if (srec->sr_frame_type == QUIC_FRAME_STREAM
             && srec->sr_stream == stream)
         {

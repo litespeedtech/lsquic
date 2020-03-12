@@ -218,8 +218,8 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
         expected_type = QUIC_FRAME_STREAM;
 
     TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
-        for (srec = posi_first(&posi, packet_out); srec;
-                                                    srec = posi_next(&posi))
+        for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
         {
             if (fullcheck)
             {
@@ -229,7 +229,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
                     /* First packet may contain two stream frames, do not
                      * check it.
                      */
-                    assert(!posi_next(&posi));
+                    assert(!lsquic_posi_next(&posi));
                     if (TAILQ_NEXT(packet_out, po_next))
                     {
                         assert(packet_out->po_data_sz == packet_out->po_n_alloc);

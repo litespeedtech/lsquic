@@ -8,7 +8,7 @@
 
 
 lsquic_packno_t
-restore_packno (lsquic_packno_t cur_packno,
+lsquic_restore_packno (lsquic_packno_t cur_packno,
                 unsigned len,
                 lsquic_packno_t max_packno)
 {

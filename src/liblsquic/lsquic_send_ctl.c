@@ -347,7 +347,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_ci = &lsquic_cong_cubic_if;
     ctl->sc_ci->cci_init(CGP(ctl), conn_pub, ctl->sc_retx_frames);
     if (ctl->sc_flags & SC_PACE)
-        pacer_init(&ctl->sc_pacer, conn_pub->lconn,
+        lsquic_pacer_init(&ctl->sc_pacer, conn_pub->lconn,
         /* TODO: conn_pub has a pointer to enpub: drop third argument */
                                     enpub->enp_settings.es_clock_granularity);
     for (i = 0; i < sizeof(ctl->sc_buffered_packets) /
@@ -967,7 +967,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
         ctl->sc_ci->cci_loss(CGP(ctl));
         if (ctl->sc_flags & SC_PACE)
-            pacer_loss_event(&ctl->sc_pacer);
+            lsquic_pacer_loss_event(&ctl->sc_pacer);
         ctl->sc_largest_sent_at_cutback =
                                 lsquic_senhist_largest(&ctl->sc_senhist);
     }
@@ -1329,7 +1329,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         }
     }
     if (ctl->sc_flags & SC_PACE)
-        pacer_cleanup(&ctl->sc_pacer);
+        lsquic_pacer_cleanup(&ctl->sc_pacer);
     ctl->sc_ci->cci_cleanup(CGP(ctl));
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
@@ -1362,7 +1362,7 @@ int
 lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 {
     return (ctl->sc_flags & SC_PACE)
-        && !pacer_can_schedule(&ctl->sc_pacer,
+        && !lsquic_pacer_can_schedule(&ctl->sc_pacer,
                                ctl->sc_n_scheduled + ctl->sc_n_in_flight_all);
 }
 
@@ -1383,14 +1383,14 @@ lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
     {
         if (n_out >= ctl->sc_ci->cci_get_cwnd(CGP(ctl)))
             return 0;
-        if (pacer_can_schedule(&ctl->sc_pacer,
+        if (lsquic_pacer_can_schedule(&ctl->sc_pacer,
                                ctl->sc_n_scheduled + ctl->sc_n_in_flight_all))
             return 1;
         if (ctl->sc_flags & SC_SCHED_TICK)
         {
             ctl->sc_flags &= ~SC_SCHED_TICK;
             lsquic_engine_add_conn_to_attq(ctl->sc_enpub,
-                    ctl->sc_conn_pub->lconn, pacer_next_sched(&ctl->sc_pacer),
+                    ctl->sc_conn_pub->lconn, lsquic_pacer_next_sched(&ctl->sc_pacer),
                     AEW_PACER);
         }
         return 0;
@@ -1407,7 +1407,7 @@ send_ctl_could_send (const struct lsquic_send_ctl *ctl)
     uint64_t cwnd;
     unsigned n_out;
 
-    if ((ctl->sc_flags & SC_PACE) && pacer_delayed(&ctl->sc_pacer))
+    if ((ctl->sc_flags & SC_PACE) && lsquic_pacer_delayed(&ctl->sc_pacer))
         return 0;
 
     cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
@@ -1557,7 +1557,7 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
     if (ctl->sc_flags & SC_PACE)
     {
         unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
-        pacer_packet_scheduled(&ctl->sc_pacer, n_out,
+        lsquic_pacer_packet_scheduled(&ctl->sc_pacer, n_out,
             send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
     }
     send_ctl_sched_append(ctl, packet_out);
@@ -1624,13 +1624,16 @@ send_ctl_maybe_zero_pad (struct lsquic_send_ctl *ctl,
     }
 
     LSQ_DEBUG("cum_size: %zu; limit: %zu", cum_size, limit);
-    assert(cum_size < limit);
+    assert(cum_size <= limit);
     size = limit - cum_size;
     if (size > lsquic_packet_out_avail(initial_packet))
         size = lsquic_packet_out_avail(initial_packet);
-    memset(initial_packet->po_data + initial_packet->po_data_sz, 0, size);
-    initial_packet->po_data_sz += size;
-    initial_packet->po_frame_types |= QUIC_FTBIT_PADDING;
+    if (size)
+    {
+        memset(initial_packet->po_data + initial_packet->po_data_sz, 0, size);
+        initial_packet->po_data_sz += size;
+        initial_packet->po_frame_types |= QUIC_FTBIT_PADDING;
+    }
     LSQ_DEBUG("Added %zu bytes of PADDING to packet %"PRIu64, size,
                                                 initial_packet->po_packno);
 }
@@ -2697,7 +2700,8 @@ strip_trailing_padding (struct lsquic_packet_out *packet_out)
     unsigned off;
 
     off = 0;
-    for (srec = posi_first(&posi, packet_out); srec; srec = posi_next(&posi))
+    for (srec = lsquic_posi_first(&posi, packet_out); srec;
+                                                srec = lsquic_posi_next(&posi))
         off = srec->sr_off + srec->sr_len;
 
     assert(off);

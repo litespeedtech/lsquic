@@ -24,6 +24,7 @@
 #include <openssl/md5.h>
 
 #include "lsquic.h"
+#include "lsxpack_header.h"
 #include "test_config.h"
 #include "test_common.h"
 #include "prog.h"
@@ -162,11 +163,18 @@ struct req
     enum method {
         UNSET, GET, POST, UNSUPPORTED,
     }            method;
+    enum {
+        HAVE_XHDR   = 1 << 0,
+    }            flags;
     char        *path;
     char        *method_str;
     char        *authority_str;
     char        *qif_str;
     size_t       qif_sz;
+    struct lsxpack_header
+                 xhdr;
+    size_t       decode_off;
+    char         decode_buf[MIN(LSXPACK_MAX_STRLEN + 1, 64 * 1024)];
 };
 
 
@@ -1167,70 +1175,101 @@ usage (const char *prog)
 static void *
 interop_server_hset_create (void *hsi_ctx, int is_push_promise)
 {
-    return calloc(1, sizeof(struct req));
+    struct req *req;
+
+    req = malloc(sizeof(struct req));
+    memset(req, 0, offsetof(struct req, decode_buf));
+
+    return req;
 }
 
 
-static enum lsquic_header_status
-interop_server_hset_add_header (void *hset_p, unsigned name_idx,
-                 const char *name, unsigned name_len,
-                 const char *value, unsigned value_len)
+static struct lsxpack_header *
+interop_server_hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
+                                                            size_t extra_space)
 {
     struct req *req = hset_p;
 
-    if (name)
+    if (xhdr)
     {
-        req->qif_str = realloc(req->qif_str,
-                            req->qif_sz + name_len + value_len + 2);
-        if (!req->qif_str)
-        {
-            LSQ_ERROR("malloc failed");
-            return LSQUIC_HDR_ERR_NOMEM;
-        }
-        memcpy(req->qif_str + req->qif_sz, name, name_len);
-        req->qif_str[req->qif_sz + name_len] = '\t';
-        memcpy(req->qif_str + req->qif_sz + name_len + 1, value, value_len);
-        req->qif_str[req->qif_sz + name_len + 1 + value_len] = '\n';
-        req->qif_sz += name_len + value_len + 2;
+        LSQ_WARN("we don't reallocate headers: can't give more");
+        return NULL;
     }
+
+    if (req->flags & HAVE_XHDR)
+        req->decode_off += lsxpack_header_get_dec_size(&req->xhdr);
     else
-        return LSQUIC_HDR_OK;
+        req->flags |= HAVE_XHDR;
+
+    lsxpack_header_prepare_decode(&req->xhdr, req->decode_buf,
+                                        req->decode_off, sizeof(req->decode_buf));
+    return &req->xhdr;
+}
+
+
+static int
+interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
+{
+    struct req *req = hset_p;
+    const char *name, *value;
+    unsigned name_len, value_len;
+
+    if (!xhdr)
+        return 0;
+
+    name = lsxpack_header_get_name(xhdr);
+    value = lsxpack_header_get_value(xhdr);
+    name_len = xhdr->name_len;
+    value_len = xhdr->val_len;
+
+    req->qif_str = realloc(req->qif_str,
+                        req->qif_sz + name_len + value_len + 2);
+    if (!req->qif_str)
+    {
+        LSQ_ERROR("malloc failed");
+        return -1;
+    }
+    memcpy(req->qif_str + req->qif_sz, name, name_len);
+    req->qif_str[req->qif_sz + name_len] = '\t';
+    memcpy(req->qif_str + req->qif_sz + name_len + 1, value, value_len);
+    req->qif_str[req->qif_sz + name_len + 1 + value_len] = '\n';
+    req->qif_sz += name_len + value_len + 2;
 
     if (5 == name_len && 0 == strncmp(name, ":path", 5))
     {
         if (req->path)
-            return LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR;
+            return 1;
         req->path = strndup(value, value_len);
         if (!req->path)
-            return LSQUIC_HDR_ERR_NOMEM;
-        return LSQUIC_HDR_OK;
+            return -1;
+        return 0;
     }
 
     if (7 == name_len && 0 == strncmp(name, ":method", 7))
     {
         if (req->method != UNSET)
-            return LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR;
+            return 1;
         req->method_str = strndup(value, value_len);
         if (!req->method_str)
-            return LSQUIC_HDR_ERR_NOMEM;
+            return -1;
         if (0 == strcmp(req->method_str, "GET"))
             req->method = GET;
         else if (0 == strcmp(req->method_str, "POST"))
             req->method = POST;
         else
             req->method = UNSUPPORTED;
-        return LSQUIC_HDR_OK;
+        return 0;
     }
 
     if (10 == name_len && 0 == strncmp(name, ":authority", 10))
     {
         req->authority_str = strndup(value, value_len);
         if (!req->authority_str)
-            return LSQUIC_HDR_ERR_NOMEM;
-        return LSQUIC_HDR_OK;
+            return -1;
+        return 0;
     }
 
-    return LSQUIC_HDR_OK;
+    return 0;
 }
 
 
@@ -1249,6 +1288,7 @@ interop_server_hset_destroy (void *hset_p)
 static const struct lsquic_hset_if header_bypass_api =
 {
     .hsi_create_header_set  = interop_server_hset_create,
+    .hsi_prepare_decode     = interop_server_hset_prepare_decode,
     .hsi_process_header     = interop_server_hset_add_header,
     .hsi_discard_header_set = interop_server_hset_destroy,
 };

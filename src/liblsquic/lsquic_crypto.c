@@ -30,7 +30,7 @@ static const char s_hs_signature[] = "QUIC CHLO and server config signature";
 static int crypto_inited = 0;
 
 
-uint64_t fnv1a_64(const uint8_t * data, int len)
+uint64_t lsquic_fnv1a_64(const uint8_t * data, int len)
 {
     uint64_t hash = UINT64_C(14695981039346656037);
     const uint8_t *end = data + len;
@@ -44,9 +44,9 @@ uint64_t fnv1a_64(const uint8_t * data, int len)
 }
 
 
-void fnv1a_64_s(const uint8_t * data, int len, char *md)
+void lsquic_fnv1a_64_s(const uint8_t * data, int len, char *md)
 {
-    uint64_t hash = fnv1a_64(data, len);
+    uint64_t hash = lsquic_fnv1a_64(data, len);
     memcpy(md, (void *)&hash, 8);
 }
 
@@ -65,7 +65,7 @@ static inline void make_uint128(uint128 *v, uint64_t hi, uint64_t lo)
 }
 
 
-void fnv1a_inc(uint128 *hash, const uint8_t *data, int len)
+void lsquic_fnv1a_inc(uint128 *hash, const uint8_t *data, int len)
 {
     const uint8_t* end = data + len;
     while(data < end)
@@ -75,21 +75,21 @@ void fnv1a_inc(uint128 *hash, const uint8_t *data, int len)
     }
 }
 
-uint128 fnv1a_128_3(const uint8_t *data1, int len1,
+uint128 lsquic_fnv1a_128_3(const uint8_t *data1, int len1,
                       const uint8_t *data2, int len2,
                       const uint8_t *data3, int len3)
 {
     uint128 hash;
     memcpy(&hash, &s_init_hash, 16);
 
-    fnv1a_inc(&hash, data1, len1);
-    fnv1a_inc(&hash, data2, len2);
-    fnv1a_inc(&hash, data3, len3);
+    lsquic_fnv1a_inc(&hash, data1, len1);
+    lsquic_fnv1a_inc(&hash, data2, len2);
+    lsquic_fnv1a_inc(&hash, data3, len3);
     return hash;
 }
 
 /* HS_PKT_HASH_LENGTH bytes of md */
-void serialize_fnv128_short(uint128 v, uint8_t *md)
+void lsquic_serialize_fnv128_short(uint128 v, uint8_t *md)
 {
     memcpy(md, (void *)&v, 12);
 }
@@ -131,7 +131,7 @@ uint128  *uint128_times(uint128 *v, const uint128 *factor)
     return v;
 }
 
-void fnv1a_inc(uint128 *hash, const uint8_t * data, int len)
+void lsquic_fnv1a_inc(uint128 *hash, const uint8_t * data, int len)
 {
     static const uint128 kPrime = {16777216, 315};
     const uint8_t* end = data + len;
@@ -144,20 +144,20 @@ void fnv1a_inc(uint128 *hash, const uint8_t * data, int len)
 }
 
 
-uint128 fnv1a_128_3(const uint8_t * data1, int len1,
+uint128 lsquic_fnv1a_128_3(const uint8_t * data1, int len1,
                       const uint8_t * data2, int len2,
                       const uint8_t * data3, int len3)
 {
     uint128 hash = {UINT64_C(7809847782465536322), UINT64_C(7113472399480571277)};
-    fnv1a_inc(&hash, data1, len1);
-    fnv1a_inc(&hash, data2, len2);
-    fnv1a_inc(&hash, data3, len3);
+    lsquic_fnv1a_inc(&hash, data1, len1);
+    lsquic_fnv1a_inc(&hash, data2, len2);
+    lsquic_fnv1a_inc(&hash, data3, len3);
     return hash;
 }
 
 
 /* HS_PKT_HASH_LENGTH bytes of md */
-void serialize_fnv128_short(uint128 v, uint8_t *md)
+void lsquic_serialize_fnv128_short(uint128 v, uint8_t *md)
 {
     assert(HS_PKT_HASH_LENGTH == 8 + 4);
     memcpy(md, (void *)&v.lo_, 8);
@@ -266,7 +266,8 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
 }
 
 
-int export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
+#ifndef NDEBUG
+int lsquic_export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
                         unsigned char *salt, int salt_len,
                         char *label, uint32_t label_len,
                         const uint8_t *context, uint32_t context_len,
@@ -292,6 +293,7 @@ int export_key_material_simple(unsigned char *ikm, uint32_t ikm_len,
     free(info);
     return 0;
 }
+#endif
 
 
 int
@@ -314,13 +316,13 @@ lsquic_export_key_material(const unsigned char *ikm, uint32_t ikm_len,
     return 0;
 }
 
-void c255_get_pub_key(unsigned char *priv_key, unsigned char pub_key[32])
+void lsquic_c255_get_pub_key(unsigned char *priv_key, unsigned char pub_key[32])
 {
     X25519_public_from_private(pub_key, priv_key);
 }
 
 
-int c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, unsigned char *shared_key)
+int lsquic_c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, unsigned char *shared_key)
 {
     return X25519(shared_key, priv_key, peer_pub_key);
 }
@@ -329,7 +331,7 @@ int c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, uns
 
 /* AEAD nonce is always zero */
 /* return 0 for OK */
-int aes_aead_enc(EVP_AEAD_CTX *key,
+int lsquic_aes_aead_enc(EVP_AEAD_CTX *key,
               const uint8_t *ad, size_t ad_len,
               const uint8_t *nonce, size_t nonce_len, 
               const uint8_t *plain, size_t plain_len,
@@ -340,28 +342,28 @@ int aes_aead_enc(EVP_AEAD_CTX *key,
     max_out_len = *cypher_len;//plain_len + EVP_AEAD_max_overhead(aead_);
     assert(*cypher_len >= max_out_len);
 
-    LSQ_DEBUG("***aes_aead_enc data %s", get_bin_str(plain, plain_len, 40));
+    LSQ_DEBUG("***lsquic_aes_aead_enc data %s", lsquic_get_bin_str(plain, plain_len, 40));
     ret = EVP_AEAD_CTX_seal(key, cypher, cypher_len, max_out_len, 
                             nonce, nonce_len, plain, plain_len, ad, ad_len);
-//     LSQ_DEBUG("***aes_aead_enc nonce: %s", get_bin_str(nonce, nonce_len));
-//     LSQ_DEBUG("***aes_aead_enc AD: %s", get_bin_str(ad, ad_len));
-//     LSQ_DEBUG("***aes_aead_enc return %d", (ret ? 0 : -1));
+//     LSQ_DEBUG("***lsquic_aes_aead_enc nonce: %s", lsquic_get_bin_str(nonce, nonce_len));
+//     LSQ_DEBUG("***lsquic_aes_aead_enc AD: %s", lsquic_get_bin_str(ad, ad_len));
+//     LSQ_DEBUG("***lsquic_aes_aead_enc return %d", (ret ? 0 : -1));
     if (ret)
     {
-        LSQ_DEBUG("***aes_aead_enc succeed, cypher content %s",
-                  get_bin_str(cypher, *cypher_len, 40));
+        LSQ_DEBUG("***lsquic_aes_aead_enc succeed, cypher content %s",
+                  lsquic_get_bin_str(cypher, *cypher_len, 40));
         return 0;
     }
     else
     {
-        LSQ_DEBUG("***aes_aead_enc failed.");
+        LSQ_DEBUG("***lsquic_aes_aead_enc failed.");
         return -1;
     }
 }
 
 
 /* return 0 for OK */
-int aes_aead_dec(EVP_AEAD_CTX *key,
+int lsquic_aes_aead_dec(EVP_AEAD_CTX *key,
               const uint8_t *ad, size_t ad_len,
               const uint8_t *nonce, size_t nonce_len, 
               const uint8_t *cypher, size_t cypher_len,
@@ -371,30 +373,30 @@ int aes_aead_dec(EVP_AEAD_CTX *key,
     size_t max_out_len = *plain_len;
     assert(max_out_len >= cypher_len);
 
-    LSQ_DEBUG("***aes_aead_dec data %s", get_bin_str(cypher, cypher_len, 40));
+    LSQ_DEBUG("***lsquic_aes_aead_dec data %s", lsquic_get_bin_str(cypher, cypher_len, 40));
 
     
     ret = EVP_AEAD_CTX_open(key, plain, plain_len, max_out_len,
                             nonce, nonce_len, cypher, cypher_len, ad, ad_len);
     
-//    LSQ_DEBUG("***aes_aead_dec nonce: %s", get_bin_str(nonce, nonce_len));
-//    LSQ_DEBUG("***aes_aead_dec AD: %s", get_bin_str(ad, ad_len));
-//    LSQ_DEBUG("***aes_aead_dec return %d", (ret ? 0 : -1));
+//    LSQ_DEBUG("***lsquic_aes_aead_dec nonce: %s", lsquic_get_bin_str(nonce, nonce_len));
+//    LSQ_DEBUG("***lsquic_aes_aead_dec AD: %s", lsquic_get_bin_str(ad, ad_len));
+//    LSQ_DEBUG("***lsquic_aes_aead_dec return %d", (ret ? 0 : -1));
     if (ret)
     {
-        LSQ_DEBUG("***aes_aead_dec succeed, plain content %s",
-              get_bin_str(plain, *plain_len, 20));
+        LSQ_DEBUG("***lsquic_aes_aead_dec succeed, plain content %s",
+              lsquic_get_bin_str(plain, *plain_len, 20));
         return 0;
     }
     else
     {
-        LSQ_DEBUG("***aes_aead_dec failed.");
+        LSQ_DEBUG("***lsquic_aes_aead_dec failed.");
         return -1;
     }
 }
 
 /* 32 bytes client nonce with 4 bytes tm, 8 bytes orbit */
-void gen_nonce_c(unsigned char *buf, uint64_t orbit)
+void lsquic_gen_nonce_c(unsigned char *buf, uint64_t orbit)
 {
     time_t tm = time(NULL);
     unsigned char *p = buf;
@@ -407,25 +409,9 @@ void gen_nonce_c(unsigned char *buf, uint64_t orbit)
 }
 
 
-EVP_PKEY *PEM_to_key(const char *buf, int len)
-{
-    RSA *rsa = NULL;
-    EVP_PKEY *key = EVP_PKEY_new();
-    BIO *bio = BIO_new_mem_buf(buf, len);
-    if (!bio || !key)
-        return NULL;
-
-    rsa = PEM_read_bio_RSAPrivateKey(bio, &rsa, NULL, NULL);
-    if (!rsa)
-        return NULL;
-
-    EVP_PKEY_assign_RSA(key, rsa);
-    return key;
-}
-
-
 /* type 0 DER, 1: PEM */
-X509 *bio_to_crt(const void *buf, int len, int type)
+X509 *
+lsquic_bio_to_crt (const void *buf, int len, int type)
 {
     X509 *crt = NULL;
     BIO *bio = BIO_new_mem_buf(buf, len);
@@ -441,7 +427,8 @@ X509 *bio_to_crt(const void *buf, int len, int type)
 }
 
 
-int gen_prof(const uint8_t *chlo_data, size_t chlo_data_len,
+int
+lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
              const uint8_t *scfg_data, uint32_t scfg_data_len,
              const EVP_PKEY *priv_key, uint8_t *buf, size_t *buf_len)
 {
@@ -481,19 +468,9 @@ int gen_prof(const uint8_t *chlo_data, size_t chlo_data_len,
 }
 
 
-int verify_prof(const uint8_t *chlo_data, size_t chlo_data_len, lsquic_str_t * scfg,
-                const EVP_PKEY *pub_key, const uint8_t *buf, size_t len)
-{
-    return verify_prof0(chlo_data, chlo_data_len,
-                        (const uint8_t *)lsquic_str_buf(scfg),
-                        lsquic_str_len(scfg), pub_key, buf, len);
-}
-
-
-
-
 /* -3 internal error, -1: verify failed, 0: Success */
-int verify_prof0(const uint8_t *chlo_data, size_t chlo_data_len,
+static int
+verify_prof0 (const uint8_t *chlo_data, size_t chlo_data_len,
                 const uint8_t *scfg_data, uint32_t scfg_data_len,
                 const EVP_PKEY *pub_key, const uint8_t *buf, size_t len)
 {
@@ -531,7 +508,18 @@ int verify_prof0(const uint8_t *chlo_data, size_t chlo_data_len,
 }
 
 
-void crypto_init(void)
+int
+lsquic_verify_prof (const uint8_t *chlo_data, size_t chlo_data_len,
+    lsquic_str_t *scfg, const EVP_PKEY *pub_key, const uint8_t *buf, size_t len)
+{
+    return verify_prof0(chlo_data, chlo_data_len,
+                        (const uint8_t *)lsquic_str_buf(scfg),
+                        lsquic_str_len(scfg), pub_key, buf, len);
+}
+
+
+void
+lsquic_crypto_init (void)
 {
     if (crypto_inited)
         return ;

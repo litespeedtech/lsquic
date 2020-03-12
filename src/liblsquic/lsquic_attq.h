@@ -31,27 +31,27 @@ struct attq_elem
 
 
 struct attq *
-attq_create (void);
+lsquic_attq_create (void);
 
 void
-attq_destroy (struct attq *);
+lsquic_attq_destroy (struct attq *);
 
 /* Return 0 on success, -1 on failure (malloc) */
 int
-attq_add (struct attq *, struct lsquic_conn *, lsquic_time_t advisory_time,
+lsquic_attq_add (struct attq *, struct lsquic_conn *, lsquic_time_t advisory_time,
                 enum ae_why);
 
 void
-attq_remove (struct attq *, struct lsquic_conn *);
+lsquic_attq_remove (struct attq *, struct lsquic_conn *);
 
 struct lsquic_conn *
-attq_pop (struct attq *, lsquic_time_t cutoff);
+lsquic_attq_pop (struct attq *, lsquic_time_t cutoff);
 
 unsigned
-attq_count_before (struct attq *, lsquic_time_t cutoff);
+lsquic_attq_count_before (struct attq *, lsquic_time_t cutoff);
 
 const struct attq_elem *
-attq_next (struct attq *);
+lsquic_attq_next (struct attq *);
 
 const char *
 lsquic_attq_why2str (enum ae_why);

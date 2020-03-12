@@ -477,7 +477,7 @@ lsquic_turn_on_fin_Q035_thru_Q046 (unsigned char *stream_header)
 
 
 size_t
-calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
+lsquic_calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
                                     uint64_t offset, unsigned data_sz_IGNORED)
 {
     return

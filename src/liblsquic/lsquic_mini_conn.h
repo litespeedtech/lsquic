@@ -149,8 +149,8 @@ struct mini_conn {
 };
 
 lsquic_conn_t *
-mini_conn_new (struct lsquic_engine_public *, const struct lsquic_packet_in *,
-               enum lsquic_version version);
+lsquic_mini_conn_new (struct lsquic_engine_public *,
+            const struct lsquic_packet_in *, enum lsquic_version version);
 
 /* Packet numbers start with 1.  By subtracting 1, we can utilize the full
  * length of the bitmask.

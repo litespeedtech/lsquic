@@ -2211,8 +2211,8 @@ process_ver_neg_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         return;
     }
 
-    for (s = packet_in_ver_first(packet_in, &vi, &ver_tag); s;
-                     s = packet_in_ver_next(&vi, &ver_tag))
+    for (s = lsquic_packet_in_ver_first(packet_in, &vi, &ver_tag); s;
+                     s = lsquic_packet_in_ver_next(&vi, &ver_tag))
     {
         version = lsquic_tag2ver(ver_tag);
         if (version < N_LSQVER)
@@ -2256,7 +2256,8 @@ reconstruct_packet_number (struct full_conn *conn, lsquic_packet_in_t *packet_in
     max_packno = lsquic_rechist_largest_packno(&conn->fc_rechist);
     bits = lsquic_packet_in_packno_bits(packet_in);
     packet_len = conn->fc_conn.cn_pf->pf_packno_bits2len(bits);
-    packet_in->pi_packno = restore_packno(cur_packno, packet_len, max_packno);
+    packet_in->pi_packno = lsquic_restore_packno(cur_packno, packet_len,
+                                                                max_packno);
     LSQ_DEBUG("reconstructed (bits: %u, packno: %"PRIu64", max: %"PRIu64") "
         "to %"PRIu64"", bits, cur_packno, max_packno, packet_in->pi_packno);
 }
@@ -3913,9 +3914,11 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     void *hsi_ctx;
     unsigned idx, i, n_headers;
     const lsquic_http_header_t *header;
-    enum lsquic_header_status st;
+    int st;
     lsquic_http_header_t pseudo_headers[4];
     lsquic_http_headers_t all_headers[2];
+    struct lsxpack_header *xhdr;
+    size_t extra;
 
     if (!hset)
     {
@@ -3970,18 +3973,34 @@ synthesize_push_request (struct full_conn *conn, void *hset,
                     header < all_headers[i].headers + all_headers[i].count;
                         ++header)
             {
-                idx = lshpack_enc_get_stx_tab_id(header->name.iov_base,
-                                header->name.iov_len, header->value.iov_base,
-                                header->value.iov_len);
-                st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, idx,
-                                header->name.iov_base, header->name.iov_len,
-                                header->value.iov_base, header->value.iov_len);
+                extra = header->name.iov_len + header->value.iov_len + 4;
+                xhdr = conn->fc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
+                                                                NULL, extra);
+                if (!xhdr)
+                    goto err;
+                memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
+                                                        header->name.iov_len);
+                xhdr->name_len = header->name.iov_len;
+                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
+                xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
+                memcpy(xhdr->buf + xhdr->val_offset, header->value.iov_base,
+                                                        header->value.iov_len);
+                xhdr->val_len = header->value.iov_len;
+                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
+                            + xhdr->val_len, "\r\n", 2);
+                xhdr->dec_overhead = 4;
+                idx = lshpack_enc_get_stx_tab_id(xhdr);
+                if (idx)
+                {
+                    xhdr->flags |= LSXPACK_HPACK_IDX;
+                    xhdr->hpack_index = idx;
+                }
+                st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
                 if (st)
                     goto err;
             }
 
-        st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, 0, 0, 0,
-                                                            0, 0);
+        st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, NULL);
         if (st)
             goto err;
     }
@@ -3989,7 +4008,7 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     uh = malloc(sizeof(*uh));
     if (!uh)
     {
-        st = LSQUIC_HDR_ERR_NOMEM;
+        st = -__LINE__;
         goto err;
     }
 
@@ -4005,7 +4024,7 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     return uh;
 
   err:
-    LSQ_INFO("%s: error %u", __func__, st);
+    LSQ_INFO("%s: error %d", __func__, st);
     return NULL;
 }
 

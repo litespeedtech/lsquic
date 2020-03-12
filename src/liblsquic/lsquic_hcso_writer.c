@@ -218,7 +218,7 @@ hqft2str (enum hq_frame_type type)
 }
 
 
-int
+static int
 hcso_write_number_frame (struct hcso_writer *writer,
                                     enum hq_frame_type type, uint64_t value)
 {

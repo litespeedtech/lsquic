@@ -12,6 +12,7 @@
 
 #include "lsquic.h"
 #include "lsquic_types.h"
+#include "lsxpack_header.h"
 #include "lsquic_int_types.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -446,14 +447,15 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
             struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
 {
     const struct lsquic_hset_if *const hset_if = qdh->qdh_enpub->enp_hsi_if;
-    const unsigned hpack_static_table_size = 61;
     struct uncompressed_headers *uh = NULL;
     const struct lsqpack_header *header;
-    enum lsquic_header_status st;
+    int st;
     int push_promise;
     unsigned i;
     void *hset;
     struct cont_len cl;
+    struct lsxpack_header *xhdr;
+    size_t extra;
 
     push_promise = lsquic_stream_header_is_pp(stream);
     hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
@@ -471,14 +473,33 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
         header = qlist->qhl_headers[i];
         LSQ_DEBUG("%.*s: %.*s", header->qh_name_len, header->qh_name,
                                         header->qh_value_len, header->qh_value);
-        st = hset_if->hsi_process_header(hset,
-                    header->qh_flags & QH_ID_SET ?
-                        hpack_static_table_size + 1 + header->qh_static_id : 0,
-                    header->qh_name, header->qh_name_len,
-                    header->qh_value, header->qh_value_len);
-        if (st != LSQUIC_HDR_OK)
+        extra = header->qh_name_len + header->qh_value_len + 4;
+        xhdr = hset_if->hsi_prepare_decode(hset, NULL, extra);
+        if (!xhdr)
         {
-            LSQ_INFO("header process returned non-OK code %u", (unsigned) st);
+            LSQ_DEBUG("prepare_decode(%zd) failed", extra);
+            goto err;
+        }
+        memcpy(xhdr->buf + xhdr->name_offset, header->qh_name,
+                                                    header->qh_name_len);
+        xhdr->name_len = header->qh_name_len;
+        memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
+        xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
+        memcpy(xhdr->buf + xhdr->val_offset,
+                                    header->qh_value, header->qh_value_len);
+        xhdr->val_len = header->qh_value_len;
+        memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
+                    + xhdr->val_len, "\r\n", 2);
+        xhdr->dec_overhead = 4;
+        if (header->qh_flags & QH_ID_SET)
+        {
+            xhdr->flags |= LSXPACK_QPACK_IDX;
+            xhdr->qpack_index = header->qh_static_id;
+        }
+        st = hset_if->hsi_process_header(hset, xhdr);
+        if (st != 0)
+        {
+            LSQ_INFO("header process returned non-OK code %d", st);
             goto err;
         }
         if (is_content_length(header))
@@ -488,8 +509,8 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
 
     lsqpack_dec_destroy_header_list(qlist);
     qlist = NULL;
-    st = hset_if->hsi_process_header(hset, 0, 0, 0, 0, 0);
-    if (st != LSQUIC_HDR_OK)
+    st = hset_if->hsi_process_header(hset, NULL);
+    if (st != 0)
         goto err;
 
     uh = calloc(1, sizeof(*uh));

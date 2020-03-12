@@ -128,7 +128,7 @@ static const struct data_in_iface *di_if_nocopy_ptr;
 
 
 struct data_in *
-data_in_nocopy_new (struct lsquic_conn_public *conn_pub,
+lsquic_data_in_nocopy_new (struct lsquic_conn_public *conn_pub,
                                                 lsquic_stream_id_t stream_id)
 {
     struct nocopy_data_in *ncdi;
@@ -459,7 +459,7 @@ nocopy_di_empty (struct data_in *data_in)
 }
 
 
-struct data_in *
+static struct data_in *
 nocopy_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 {
     struct nocopy_data_in *const ncdi = NCDI_PTR(data_in);
@@ -467,16 +467,16 @@ nocopy_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
     stream_frame_t *frame;
     enum ins_frame ins;
 
-    new_data_in = data_in_hash_new(ncdi->ncdi_conn_pub, ncdi->ncdi_stream_id,
-                                                        ncdi->ncdi_byteage);
+    new_data_in = lsquic_data_in_hash_new(ncdi->ncdi_conn_pub,
+                                ncdi->ncdi_stream_id, ncdi->ncdi_byteage);
     if (!new_data_in)
         goto end;
 
     while ((frame = TAILQ_FIRST(&ncdi->ncdi_frames_in)))
     {
         TAILQ_REMOVE(&ncdi->ncdi_frames_in, frame, next_frame);
-        ins = data_in_hash_insert_data_frame(new_data_in, &frame->data_frame,
-                                                                  read_offset);
+        ins = lsquic_data_in_hash_insert_data_frame(new_data_in,
+                                            &frame->data_frame, read_offset);
         lsquic_packet_in_put(ncdi->ncdi_conn_pub->mm, frame->packet_in);
         lsquic_malo_put(frame);
         if (INS_FRAME_ERR == ins)

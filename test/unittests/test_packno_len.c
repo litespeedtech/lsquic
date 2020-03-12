@@ -214,13 +214,13 @@ run_pbt (int i)
     /* Now see if we can restore it back: */
     lsquic_packno_t cur_packno = pbt->pbt_packno &
                         ((1ULL << (packet_len << 3)) - 1);
-    lsquic_packno_t orig_packno = restore_packno(cur_packno, packet_len,
+    lsquic_packno_t orig_packno = lsquic_restore_packno(cur_packno, packet_len,
                                                     pbt->pbt_least_unacked);
     assert(orig_packno == pbt->pbt_packno);
 }
 
 
-struct restore_packno_test {
+struct lsquic_restore_packno_test {
     int                         rpt_lineno;
     /* Input */
     enum packno_bits     rpt_packno_bits;
@@ -230,7 +230,7 @@ struct restore_packno_test {
     lsquic_packno_t             rpt_orig_packno;
 };
 
-static const struct restore_packno_test rp_tests[] =
+static const struct lsquic_restore_packno_test rp_tests[] =
 {
 
     {   .rpt_lineno         = __LINE__,
@@ -246,9 +246,9 @@ static const struct restore_packno_test rp_tests[] =
 static void
 run_rpt (int i)
 {
-    const struct restore_packno_test *const rpt = &rp_tests[i];
+    const struct lsquic_restore_packno_test *const rpt = &rp_tests[i];
     unsigned packet_len = pf->pf_packno_bits2len(rpt->rpt_packno_bits);
-    lsquic_packno_t orig_packno = restore_packno(rpt->rpt_cur_packno,
+    lsquic_packno_t orig_packno = lsquic_restore_packno(rpt->rpt_cur_packno,
                             packet_len, rpt->rpt_max_packno);
     assert(orig_packno == rpt->rpt_orig_packno);
 }
@@ -281,7 +281,7 @@ test_restore (enum packno_bits bits)
             else
                 assert(0);
             cur_packno = orig_packno & (epoch_delta - 1);
-            restored_packno = restore_packno(cur_packno, len, epoch);
+            restored_packno = lsquic_restore_packno(cur_packno, len, epoch);
             assert(orig_packno == restored_packno);
             /* Test in the middle of the epoch */
             if (op == OP_MINUS)
@@ -289,7 +289,7 @@ test_restore (enum packno_bits bits)
             else
                 orig_packno = epoch + n;
             cur_packno = orig_packno & (epoch_delta - 1);
-            restored_packno = restore_packno(cur_packno, len, epoch);
+            restored_packno = lsquic_restore_packno(cur_packno, len, epoch);
             assert(orig_packno == restored_packno);
         }
 
@@ -299,12 +299,12 @@ test_restore (enum packno_bits bits)
         /* Test at the end of the epoch */
         orig_packno = epoch + epoch_delta / 2 - n - 1;
         cur_packno = orig_packno & (epoch_delta - 1);
-        restored_packno = restore_packno(cur_packno, len, epoch - epoch_delta * 3 / 4);
+        restored_packno = lsquic_restore_packno(cur_packno, len, epoch - epoch_delta * 3 / 4);
         assert(orig_packno == restored_packno + epoch_delta);
         /* Test in the middle of the epoch */
         orig_packno = epoch + 2 - n;
         cur_packno = orig_packno & (epoch_delta - 1);
-        restored_packno = restore_packno(cur_packno, len, epoch - epoch_delta * 3 / 4);
+        restored_packno = lsquic_restore_packno(cur_packno, len, epoch - epoch_delta * 3 / 4);
         assert(orig_packno == restored_packno + epoch_delta);
     }
 
@@ -314,12 +314,12 @@ test_restore (enum packno_bits bits)
         /* Test at the end of the epoch */
         orig_packno = epoch - epoch_delta / 2 + n;
         cur_packno = orig_packno & (epoch_delta - 1);
-        restored_packno = restore_packno(cur_packno, len, epoch + epoch_delta * 3 / 4);
+        restored_packno = lsquic_restore_packno(cur_packno, len, epoch + epoch_delta * 3 / 4);
         assert(orig_packno == restored_packno - epoch_delta);
         /* Test in the middle of the epoch */
         orig_packno = epoch + 2 - n;
         cur_packno = orig_packno & (epoch_delta - 1);
-        restored_packno = restore_packno(cur_packno, len, epoch + epoch_delta * 3 / 4);
+        restored_packno = lsquic_restore_packno(cur_packno, len, epoch + epoch_delta * 3 / 4);
         assert(orig_packno == restored_packno - epoch_delta);
     }
 

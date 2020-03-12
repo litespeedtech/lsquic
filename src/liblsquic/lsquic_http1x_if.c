@@ -52,6 +52,9 @@ struct header_writer_ctx
     enum pseudo_header           pseh_mask;
     char                        *pseh_bufs[N_PSEH];
     struct http1x_headers        hwc_h1h;
+    char                        *hwc_header_buf;
+    size_t                       hwc_header_buf_nalloc;
+    struct lsxpack_header        hwc_xhdr;
 };
 
 
@@ -102,7 +105,7 @@ hwc_uh_write (struct header_writer_ctx *hwc, const void *buf, size_t sz)
 }
 
 
-static enum lsquic_header_status
+static int
 save_pseudo_header (struct header_writer_ctx *hwc, enum pseudo_header ph,
                     const char *val, unsigned val_len)
 {
@@ -111,29 +114,36 @@ save_pseudo_header (struct header_writer_ctx *hwc, enum pseudo_header ph,
         assert(!hwc->pseh_bufs[ph]);
         hwc->pseh_bufs[ph] = malloc(val_len + 1);
         if (!hwc->pseh_bufs[ph])
-            return LSQUIC_HDR_ERR_NOMEM;
+            return -1;
         hwc->pseh_mask |= BIT(ph);
         memcpy(hwc->pseh_bufs[ph], val, val_len);
         hwc->pseh_bufs[ph][val_len] = '\0';
-        return LSQUIC_HDR_OK;
+        return 0;
     }
     else
     {
         LSQ_INFO("header %u is already present", ph);
-        return LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR;
+        return 1;
     }
 }
 
 
-static enum lsquic_header_status
-add_pseudo_header (struct header_writer_ctx *hwc, const char *name,
-                         unsigned name_len, const char *val, unsigned val_len)
+static int
+add_pseudo_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
 {
+    const char *name, *val;
+    unsigned name_len, val_len;
+
     if (!(hwc->hwc_flags & HWC_EXPECT_COLON))
     {
         LSQ_INFO("unexpected colon");
-        return LSQUIC_HDR_ERR_MISPLACED_PSDO_HDR;
+        return 1;
     }
+
+    name = lsxpack_header_get_name(xhdr);
+    val = lsxpack_header_get_value(xhdr);
+    name_len = xhdr->name_len;
+    val_len = xhdr->val_len;
 
     switch (name_len)
     {
@@ -165,7 +175,7 @@ add_pseudo_header (struct header_writer_ctx *hwc, const char *name,
     }
 
     LSQ_INFO("unknown pseudo-header `%.*s'", name_len, name);
-    return LSQUIC_HDR_ERR_UNKNOWN_PSDO_HDR;
+    return 1;
 }
 
 
@@ -236,18 +246,18 @@ code_str_to_reason (const char code_str[HTTP_CODE_LEN])
 }
 
 
-static enum lsquic_header_status
+static int
 convert_response_pseudo_headers (struct header_writer_ctx *hwc)
 {
     if ((hwc->pseh_mask & REQUIRED_SERVER_PSEH) != REQUIRED_SERVER_PSEH)
     {
         LSQ_INFO("not all response pseudo-headers are specified");
-        return LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR;
+        return 1;
     }
     if (hwc->pseh_mask & ALL_REQUEST_PSEH)
     {
         LSQ_INFO("response pseudo-headers contain request-only headers");
-        return LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR;
+        return 1;
     }
 
     const char *code_str, *reason;
@@ -258,7 +268,7 @@ convert_response_pseudo_headers (struct header_writer_ctx *hwc)
 
 #define HWC_UH_WRITE(h, buf, sz) do {                                   \
     if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return LSQUIC_HDR_ERR_NOMEM;                                    \
+        return -1;                                                      \
 } while (0)
 
     HWC_UH_WRITE(hwc, "HTTP/1.1 ", 9);
@@ -274,31 +284,31 @@ convert_response_pseudo_headers (struct header_writer_ctx *hwc)
     if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
     {
         LSQ_INFO("headers too large");
-        return LSQUIC_HDR_ERR_HEADERS_TOO_LARGE;
+        return 1;
     }
-    return LSQUIC_HDR_OK;
+    return 0;
 
 #undef HWC_UH_WRITE
 }
 
 
-static enum lsquic_header_status
+static int
 convert_request_pseudo_headers (struct header_writer_ctx *hwc)
 {
     if ((hwc->pseh_mask & REQUIRED_REQUEST_PSEH) != REQUIRED_REQUEST_PSEH)
     {
         LSQ_INFO("not all request pseudo-headers are specified");
-        return LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR;
+        return 1;
     }
     if (hwc->pseh_mask & ALL_SERVER_PSEH)
     {
         LSQ_INFO("request pseudo-headers contain response-only headers");
-        return LSQUIC_HDR_ERR_UNNEC_RESP_PSDO_HDR;
+        return 1;
     }
 
 #define HWC_UH_WRITE(h, buf, sz) do {                                   \
     if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return LSQUIC_HDR_ERR_NOMEM;                                    \
+        return -1;                                                      \
 } while (0)
 
     HWC_UH_WRITE(hwc, HWC_PSEH_VAL(hwc, PSEH_METHOD), HWC_PSEH_LEN(hwc, PSEH_METHOD));
@@ -309,7 +319,7 @@ convert_request_pseudo_headers (struct header_writer_ctx *hwc)
     if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
     {
         LSQ_INFO("headers too large");
-        return LSQUIC_HDR_ERR_HEADERS_TOO_LARGE;
+        return 1;
     }
 
     return 0;
@@ -318,7 +328,7 @@ convert_request_pseudo_headers (struct header_writer_ctx *hwc)
 }
 
 
-static enum lsquic_header_status
+static int
 convert_pseudo_headers (struct header_writer_ctx *hwc)
 {
     /* We are *reading* the message.  Thus, a server expects a request, and a
@@ -332,7 +342,7 @@ convert_pseudo_headers (struct header_writer_ctx *hwc)
 }
 
 
-static enum lsquic_header_status
+static int
 save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
 {
     char *cookie_val;
@@ -342,7 +352,7 @@ save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
         hwc->cookie_nalloc = hwc->cookie_sz = val_len;
         cookie_val = malloc(hwc->cookie_nalloc);
         if (!cookie_val)
-            return LSQUIC_HDR_ERR_NOMEM;
+            return -1;
         hwc->cookie_val = cookie_val;
         memcpy(hwc->cookie_val, val, val_len);
     }
@@ -354,7 +364,7 @@ save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
             hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + val_len + 2;
             cookie_val = realloc(hwc->cookie_val, hwc->cookie_nalloc);
             if (!cookie_val)
-                return LSQUIC_HDR_ERR_NOMEM;
+                return -1;
             hwc->cookie_val = cookie_val;
         }
         memcpy(hwc->cookie_val + hwc->cookie_sz - val_len - 2, "; ", 2);
@@ -365,13 +375,14 @@ save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
 }
 
 
-static enum lsquic_header_status
-add_real_header (struct header_writer_ctx *hwc, const char *name,
-                 unsigned name_len, const char *val, unsigned val_len)
+static int
+add_real_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
 {
-    enum lsquic_header_status err;
+    int err;
     unsigned i;
     int n_upper;
+    const char *name, *val;
+    unsigned name_len, val_len;
 
     if (hwc->hwc_flags & HWC_EXPECT_COLON)
     {
@@ -379,6 +390,11 @@ add_real_header (struct header_writer_ctx *hwc, const char *name,
             return err;
         hwc->hwc_flags &= ~HWC_EXPECT_COLON;
     }
+
+    name = lsxpack_header_get_name(xhdr);
+    val = lsxpack_header_get_value(xhdr);
+    name_len = xhdr->name_len;
+    val_len = xhdr->val_len;
 
     if (4 == name_len && 0 == memcmp(name, "host", 4))
         hwc->hwc_flags |= HWC_SEEN_HOST;
@@ -390,7 +406,7 @@ add_real_header (struct header_writer_ctx *hwc, const char *name,
     {
         LSQ_INFO("Header name `%.*s' contains uppercase letters",
             name_len, name);
-        return LSQUIC_HDR_ERR_UPPERCASE_HEADER;
+        return 1;
     }
 
     if (6 == name_len && memcmp(name, "cookie", 6) == 0)
@@ -400,7 +416,7 @@ add_real_header (struct header_writer_ctx *hwc, const char *name,
 
 #define HWC_UH_WRITE(h, buf, sz) do {                                   \
     if (0 != hwc_uh_write(h, buf, sz))                                  \
-        return LSQUIC_HDR_ERR_NOMEM;                                    \
+        return -1;                                                      \
 } while (0)
 
     HWC_UH_WRITE(hwc, name, name_len);
@@ -411,7 +427,7 @@ add_real_header (struct header_writer_ctx *hwc, const char *name,
     if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
     {
         LSQ_INFO("headers too large");
-        return LSQUIC_HDR_ERR_HEADERS_TOO_LARGE;
+        return 1;
     }
 
     return 0;
@@ -420,22 +436,25 @@ add_real_header (struct header_writer_ctx *hwc, const char *name,
 }
 
 
-static enum lsquic_header_status
-add_header_to_uh (struct header_writer_ctx *hwc, const char *name,
-                  unsigned name_len, const char *val, unsigned val_len)
+static int
+add_header_to_uh (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
 {
-    LSQ_DEBUG("Got header '%.*s': '%.*s'", name_len, name, val_len, val);
+    const char *name;
+
+    name = lsxpack_header_get_name(xhdr);
+    LSQ_DEBUG("Got header '%.*s': '%.*s'", (int) xhdr->name_len, name,
+                        (int) xhdr->val_len, lsxpack_header_get_value(xhdr));
     if (':' == name[0])
-        return add_pseudo_header(hwc, name, name_len, val, val_len);
+        return add_pseudo_header(hwc, xhdr);
     else
-        return add_real_header(hwc, name, name_len, val, val_len);
+        return add_real_header(hwc, xhdr);
 }
 
 
-static enum lsquic_header_status
+static int
 h1h_finish_hset (struct header_writer_ctx *hwc)
 {
-    enum lsquic_header_status st;
+    int st;
 
     if (hwc->hwc_flags & HWC_EXPECT_COLON)
     {
@@ -477,23 +496,65 @@ h1h_finish_hset (struct header_writer_ctx *hwc)
     if (hwc->max_headers_sz && hwc->w_off > hwc->max_headers_sz)
     {
         LSQ_INFO("headers too large");
-        return LSQUIC_HDR_ERR_HEADERS_TOO_LARGE;
+        return 1;
     }
 
-    return LSQUIC_HDR_OK;
+    return 0;
 }
 
 #define HWC_PTR(data_in) (struct header_writer_ctx *) \
     ((unsigned char *) (hset) - offsetof(struct header_writer_ctx, hwc_h1h))
 
-static enum lsquic_header_status
-h1h_process_header (void *hset, unsigned name_idx,
-                    const char *name, unsigned name_len,
-                    const char *value, unsigned value_len)
+
+static struct lsxpack_header *
+h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t extra_space)
 {
     struct header_writer_ctx *const hwc = HWC_PTR(hset);
-    if (name)
-        return add_header_to_uh(hwc, name, name_len, value, value_len);
+    size_t min_space;
+
+    if (0 == extra_space)
+        min_space = 0x100;
+    else
+        min_space = extra_space;
+
+    if (xhdr)
+    {
+        assert(xhdr == &hwc->hwc_xhdr);
+        min_space += xhdr->val_len;
+    }
+
+    if (min_space > MAX_HTTP1X_HEADERS_SIZE || min_space > LSXPACK_MAX_STRLEN)
+    {
+        LSQ_DEBUG("requested space for header is too large: %zd bytes",
+                                                                    min_space);
+        return NULL;
+    }
+
+    if (min_space > hwc->hwc_header_buf_nalloc)
+    {
+        free(hwc->hwc_header_buf);
+        hwc->hwc_header_buf_nalloc = 0;
+        hwc->hwc_header_buf = malloc(min_space);
+        if (!hwc->hwc_header_buf)
+        {
+            LSQ_DEBUG("cannot allocate %zd bytes", min_space);
+            return NULL;
+        }
+        hwc->hwc_header_buf_nalloc = min_space;
+    }
+
+    lsxpack_header_prepare_decode(&hwc->hwc_xhdr, hwc->hwc_header_buf,
+                                            0, hwc->hwc_header_buf_nalloc);
+    return &hwc->hwc_xhdr;
+}
+
+
+static int
+h1h_process_header (void *hset, struct lsxpack_header *xhdr)
+{
+    struct header_writer_ctx *const hwc = HWC_PTR(hset);
+    if (xhdr)
+        return add_header_to_uh(hwc, xhdr);
     else
         return h1h_finish_hset(hwc);
 }
@@ -511,6 +572,7 @@ h1h_discard_header_set (void *hset)
     if (hwc->cookie_val)
         free(hwc->cookie_val);
     free(hwc->hwc_h1h.h1h_buf);
+    free(hwc->hwc_header_buf);
     free(hwc);
 }
 
@@ -518,6 +580,7 @@ h1h_discard_header_set (void *hset)
 static const struct lsquic_hset_if http1x_if =
 {
     .hsi_create_header_set  = h1h_create_header_set,
+    .hsi_prepare_decode     = h1h_prepare_decode,
     .hsi_process_header     = h1h_process_header,
     .hsi_discard_header_set = h1h_discard_header_set,
 };

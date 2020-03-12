@@ -736,14 +736,14 @@ static const struct frame_reader_test tests[] = {
                 .type = CV_ERROR,
                 .u.error = {
                     .stream_id  = 12345,
-                    .code       = FR_ERR_INCOMPL_REQ_PSEH,
+                    .code       = FR_ERR_BAD_HEADER,
                 },
             },
             {
                 .type = CV_ERROR,
                 .u.error = {
                     .stream_id  = 12345,
-                    .code       = FR_ERR_UPPERCASE_HEADER,
+                    .code       = FR_ERR_BAD_HEADER,
                 },
             },
             {
@@ -943,7 +943,7 @@ static const struct frame_reader_test tests[] = {
             {
                 .type = CV_ERROR,
                 .stream_off = 9 + 5 + 4,
-                .u.error.code = FR_ERR_HEADERS_TOO_LARGE,
+                .u.error.code = FR_ERR_BAD_HEADER,
                 .u.error.stream_id = 12345,
             },
             {
@@ -982,7 +982,7 @@ static const struct frame_reader_test tests[] = {
             {
                 .type = CV_ERROR,
                 .stream_off = 9,
-                .u.error.code = FR_ERR_HEADERS_TOO_LARGE,
+                .u.error.code = FR_ERR_BAD_HEADER,
                 .u.error.stream_id = 12345,
             },
             {
@@ -1034,7 +1034,7 @@ static const struct frame_reader_test tests[] = {
             {
                 .type = CV_ERROR,
                 .stream_off = 9 + 0 + 0x10 + 9,
-                .u.error.code = FR_ERR_HEADERS_TOO_LARGE,
+                .u.error.code = FR_ERR_BAD_HEADER,
                 .u.error.stream_id = 12345,
             },
             {
@@ -1124,7 +1124,7 @@ test_one_frt (const struct frame_reader_test *frt)
     conn_pub.lconn = &lconn;
 
     lsquic_mm_init(&mm);
-    lshpack_dec_init(&hdec);
+    lshpack_dec_init(&hdec, LSHPACK_DEC_HTTP1X);
     memset(&input, 0, sizeof(input));
     memcpy(input.in_buf, frt->frt_buf, frt->frt_bufsz);
     input.in_sz  = frt->frt_bufsz;

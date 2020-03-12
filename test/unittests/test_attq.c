@@ -78,18 +78,18 @@ test_attq_ordering (enum sort_action sa)
         break;
     }
 
-    q = attq_create();
+    q = lsquic_attq_create();
 
     for (i = 0; i < sizeof(curiosity); ++i)
     {
-        unsigned count_before = attq_count_before(q, curiosity[i]);
+        unsigned count_before = lsquic_attq_count_before(q, curiosity[i]);
         assert(count_before == 0);
     }
 
     conns = calloc(sizeof(curiosity), sizeof(conns[0]));
     for (i = 0; i < sizeof(curiosity); ++i)
     {
-        s = attq_add(q, &conns[i], (lsquic_time_t) curiosity[i], 0);
+        s = lsquic_attq_add(q, &conns[i], (lsquic_time_t) curiosity[i], 0);
         assert(s == 0);
     }
 
@@ -110,30 +110,30 @@ test_attq_ordering (enum sort_action sa)
         }
         for (i = 1; i < sizeof(curiosity); ++i)
         {
-            count_before = attq_count_before(q, curiosity[i]);
+            count_before = lsquic_attq_count_before(q, curiosity[i]);
             assert(count_before == counts[i]);
         }
     }
 
     for (i = 0; i < sizeof(curiosity); ++i)
     {
-        next_attq = attq_next(q);
+        next_attq = lsquic_attq_next(q);
         assert(next_attq);
         t = next_attq->ae_adv_time;
         if (i > 0)
             assert(t >= prev);
         prev = t;
-        conn = attq_pop(q, ~0ULL);
+        conn = lsquic_attq_pop(q, ~0ULL);
         assert(conn);
     }
 
-    next_attq = attq_next(q);
+    next_attq = lsquic_attq_next(q);
     assert(!next_attq);
-    conn = attq_pop(q, ~0ULL);
+    conn = lsquic_attq_pop(q, ~0ULL);
     assert(!conn);
 
     free(conns);
-    attq_destroy(q);
+    lsquic_attq_destroy(q);
 }
 
 
@@ -144,20 +144,20 @@ test_attq_removal_1 (void)
     struct attq *q;
     struct lsquic_conn *conns;
 
-    q = attq_create();
+    q = lsquic_attq_create();
     conns = calloc(6, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1, 0);
-    attq_add(q, &conns[1], 4, 0);
-    attq_add(q, &conns[2], 2, 0);
-    attq_add(q, &conns[3], 5, 0);
-    attq_add(q, &conns[4], 6, 0);
-    attq_add(q, &conns[5], 3, 0);
+    lsquic_attq_add(q, &conns[0], 1, 0);
+    lsquic_attq_add(q, &conns[1], 4, 0);
+    lsquic_attq_add(q, &conns[2], 2, 0);
+    lsquic_attq_add(q, &conns[3], 5, 0);
+    lsquic_attq_add(q, &conns[4], 6, 0);
+    lsquic_attq_add(q, &conns[5], 3, 0);
 
-    attq_remove(q, &conns[3]);
+    lsquic_attq_remove(q, &conns[3]);
 
     free(conns);
-    attq_destroy(q);
+    lsquic_attq_destroy(q);
 }
 
 
@@ -168,23 +168,23 @@ test_attq_removal_2 (void)
     struct attq *q;
     struct lsquic_conn *conns;
 
-    q = attq_create();
+    q = lsquic_attq_create();
     conns = calloc(9, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1, 0);
-    attq_add(q, &conns[1], 5, 0);
-    attq_add(q, &conns[2], 6, 0);
-    attq_add(q, &conns[3], 9, 0);
-    attq_add(q, &conns[4], 11, 0);
-    attq_add(q, &conns[5], 8, 0);
-    attq_add(q, &conns[6], 15, 0);
-    attq_add(q, &conns[7], 17, 0);
-    attq_add(q, &conns[8], 21, 0);
+    lsquic_attq_add(q, &conns[0], 1, 0);
+    lsquic_attq_add(q, &conns[1], 5, 0);
+    lsquic_attq_add(q, &conns[2], 6, 0);
+    lsquic_attq_add(q, &conns[3], 9, 0);
+    lsquic_attq_add(q, &conns[4], 11, 0);
+    lsquic_attq_add(q, &conns[5], 8, 0);
+    lsquic_attq_add(q, &conns[6], 15, 0);
+    lsquic_attq_add(q, &conns[7], 17, 0);
+    lsquic_attq_add(q, &conns[8], 21, 0);
 
-    attq_remove(q, &conns[1]);
+    lsquic_attq_remove(q, &conns[1]);
 
     free(conns);
-    attq_destroy(q);
+    lsquic_attq_destroy(q);
 }
 
 
@@ -195,23 +195,23 @@ test_attq_removal_3 (void)
     struct attq *q;
     struct lsquic_conn *conns;
 
-    q = attq_create();
+    q = lsquic_attq_create();
     conns = calloc(9, sizeof(conns[0]));
 
-    attq_add(q, &conns[0], 1, 0);
-    attq_add(q, &conns[1], 9, 0);
-    attq_add(q, &conns[2], 22, 0);
-    attq_add(q, &conns[3], 17, 0);
-    attq_add(q, &conns[4], 11, 0);
-    attq_add(q, &conns[5], 33, 0);
-    attq_add(q, &conns[6], 27, 0);
-    attq_add(q, &conns[7], 21, 0);
-    attq_add(q, &conns[8], 19, 0);
+    lsquic_attq_add(q, &conns[0], 1, 0);
+    lsquic_attq_add(q, &conns[1], 9, 0);
+    lsquic_attq_add(q, &conns[2], 22, 0);
+    lsquic_attq_add(q, &conns[3], 17, 0);
+    lsquic_attq_add(q, &conns[4], 11, 0);
+    lsquic_attq_add(q, &conns[5], 33, 0);
+    lsquic_attq_add(q, &conns[6], 27, 0);
+    lsquic_attq_add(q, &conns[7], 21, 0);
+    lsquic_attq_add(q, &conns[8], 19, 0);
 
-    attq_remove(q, &conns[1]);
+    lsquic_attq_remove(q, &conns[1]);
 
     free(conns);
-    attq_destroy(q);
+    lsquic_attq_destroy(q);
 }
 
 

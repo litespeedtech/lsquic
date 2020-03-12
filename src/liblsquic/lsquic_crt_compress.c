@@ -162,7 +162,12 @@ const common_cert_t common_cert_set[common_certs_num] = {
 
 static lsquic_str_t *s_ccsbuf;
 
-lsquic_str_t * get_common_certs_hash()
+static int
+match_common_cert (lsquic_str_t * cert, lsquic_str_t * common_set_hashes,
+        uint64_t* out_hash, uint32_t* out_index);
+
+lsquic_str_t *
+lsquic_get_common_certs_hash()
 {
     int i;
     if (s_ccsbuf == NULL)
@@ -178,7 +183,8 @@ lsquic_str_t * get_common_certs_hash()
 
 
 /* return 0 found, -1 not found */
-int get_common_cert(uint64_t hash, uint32_t index, lsquic_str_t *buf)
+int
+lsquic_get_common_cert(uint64_t hash, uint32_t index, lsquic_str_t *buf)
 {
     int i;
     for (i = 0; i < common_certs_num; i++)
@@ -214,7 +220,8 @@ comp_ls_str (lsquic_str_t * a, const void * b, size_t b_len)
 
 
 /* 0, matched -1, error */
-int match_common_cert(lsquic_str_t * cert, lsquic_str_t * common_set_hashes,
+static int
+match_common_cert (lsquic_str_t * cert, lsquic_str_t * common_set_hashes,
         uint64_t* out_hash, uint32_t* out_index)
 {
     size_t i, j;
@@ -299,12 +306,13 @@ make_zlib_dict_for_entries(cert_entry_t *entries,
 }
 
 
+static
 void get_certs_hash(lsquic_str_t *certs, size_t certs_count, uint64_t *hashs)
 {
     size_t i;
     for(i = 0; i < certs_count; ++i)
     {
-        hashs[i] = fnv1a_64((const uint8_t *)lsquic_str_buf(&certs[i]), lsquic_str_len(&certs[i]));
+        hashs[i] = lsquic_fnv1a_64((const uint8_t *)lsquic_str_buf(&certs[i]), lsquic_str_len(&certs[i]));
     }
 }
 
@@ -331,7 +339,7 @@ static void get_certs_entries(lsquic_str_t **certs, size_t certs_count,
         if (cached_valid)
         {
             cached = false;
-            hash = fnv1a_64((const uint8_t *)lsquic_str_buf(certs[i]), lsquic_str_len(certs[i]));
+            hash = lsquic_fnv1a_64((const uint8_t *)lsquic_str_buf(certs[i]), lsquic_str_len(certs[i]));
 
             for (j = 0; j < (int)lsquic_str_len(client_cached_cert_hashes);
                  j += sizeof(uint64_t))
@@ -362,7 +370,8 @@ static void get_certs_entries(lsquic_str_t **certs, size_t certs_count,
    }
 }
 
-size_t get_entries_size(cert_entry_t *entries, size_t entries_count)
+static size_t
+get_entries_size(cert_entry_t *entries, size_t entries_count)
 {
     size_t i;
     size_t entries_size = 0;
@@ -387,6 +396,7 @@ size_t get_entries_size(cert_entry_t *entries, size_t entries_count)
     return entries_size;
 }
 
+static
 void serialize_cert_entries(uint8_t* out, int *out_len, cert_entry_t *entries,
                             size_t entries_count)
 {
@@ -419,7 +429,8 @@ void serialize_cert_entries(uint8_t* out, int *out_len, cert_entry_t *entries,
 }
 
 
-int get_certs_count(lsquic_str_t *compressed_crt_buf)
+int
+lsquic_get_certs_count(lsquic_str_t *compressed_crt_buf)
 {
     char *in = lsquic_str_buf(compressed_crt_buf);
     char *in_end = in + lsquic_str_len(compressed_crt_buf);
@@ -535,7 +546,7 @@ static int parse_entries(const unsigned char **in_out, const unsigned char *cons
             memcpy(&entry->index, in, sizeof(uint32_t));
             in += sizeof(uint32_t);
 
-            if (0 == get_common_cert(entry->set_hash, entry->index, cert))
+            if (0 == lsquic_get_common_cert(entry->set_hash, entry->index, cert))
                 break;
             else
                 goto err;
@@ -560,7 +571,8 @@ static int parse_entries(const unsigned char **in_out, const unsigned char *cons
 
 
 /* return 0 for OK */
-int compress_certs(lsquic_str_t **certs, size_t certs_count,
+int
+lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
                    lsquic_str_t *client_common_set_hashes,
                    lsquic_str_t *client_cached_cert_hashes,
                    lsquic_str_t *result)
@@ -670,7 +682,8 @@ int compress_certs(lsquic_str_t **certs, size_t certs_count,
 
 
 /* 0: ok */
-int decompress_certs(const unsigned char *in, const unsigned char *in_end,
+int
+lsquic_decompress_certs (const unsigned char *in, const unsigned char *in_end,
                      lsquic_str_t *cached_certs, size_t cached_certs_count,
                      lsquic_str_t **out_certs, size_t *out_certs_count)
 {
@@ -684,7 +697,7 @@ int decompress_certs(const unsigned char *in, const unsigned char *in_end,
     z_stream z;
 
     assert(*out_certs_count > 0 && *out_certs_count < 10000
-            && "Call get_certs_count() to get right certificates count first and make enough room for out_certs_count");
+            && "Call lsquic_get_certs_count() to get right certificates count first and make enough room for out_certs_count");
     
     if (count == 0 || count > 10000)
         return -1;

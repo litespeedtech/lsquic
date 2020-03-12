@@ -125,7 +125,8 @@ lsquic_is_zero (const void *pbuf, size_t bufsz)
 
 
 /* XXX this function uses static buffer.  Replace it with lsquic_hexdump() if possible */
-char *get_bin_str(const void *s, size_t len, size_t max_display_len)
+char *
+lsquic_get_bin_str (const void *s, size_t len, size_t max_display_len)
 {
     const unsigned char *p, *pEnd;
     char *pOutput; 

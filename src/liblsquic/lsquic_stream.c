@@ -348,9 +348,9 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
         return NULL;
 
     if (ctor_flags & SCF_USE_DI_HASH)
-        stream->data_in = data_in_hash_new(conn_pub, id, 0);
+        stream->data_in = lsquic_data_in_hash_new(conn_pub, id, 0);
     else
-        stream->data_in = data_in_nocopy_new(conn_pub, id);
+        stream->data_in = lsquic_data_in_nocopy_new(conn_pub, id);
     if (!stream->data_in)
     {
         free(stream);
@@ -947,7 +947,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
                                         stream->data_in, stream->read_offset);
             if (!stream->data_in)
             {
-                stream->data_in = data_in_error_new();
+                stream->data_in = lsquic_data_in_error_new();
                 goto end_ok;
             }
         }
@@ -972,7 +972,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
                                     stream->data_in, stream->read_offset);
         if (stream->data_in)
             goto insert_frame;
-        stream->data_in = data_in_error_new();
+        stream->data_in = lsquic_data_in_error_new();
         lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
         lsquic_malo_put(frame);
         return -1;
@@ -995,7 +995,7 @@ drop_frames_in (lsquic_stream_t *stream)
          * data-in stream.  It does the right thing after incoming data is
          * dropped.
          */
-        stream->data_in = data_in_error_new();
+        stream->data_in = lsquic_data_in_error_new();
         stream->stream_flags &= ~STREAM_CACHED_FRAME;
     }
 }
@@ -1334,7 +1334,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                                                 stream->data_in, stream->read_offset);
                     if (!stream->data_in)
                     {
-                        stream->data_in = data_in_error_new();
+                        stream->data_in = lsquic_data_in_error_new();
                         return (struct read_frames_status) { .error = 1, };
                     }
                 }
@@ -2468,7 +2468,7 @@ incr_conn_cap (struct lsquic_stream *stream, size_t incr)
 }
 
 
-void
+static void
 incr_sm_payload (struct lsquic_stream *stream, size_t incr)
 {
     stream->sm_payload += incr;

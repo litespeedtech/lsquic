@@ -1185,7 +1185,7 @@ ietf_v1_parse_path_resp_frame (const unsigned char *buf, size_t len,
 }
 
 
-void
+static void
 ietf_v1_turn_on_fin (unsigned char *stream_frame_header)
 {
     *stream_frame_header |= 1;
@@ -1609,7 +1609,7 @@ ietf_v1_new_token_frame_size (size_t token_sz)
 }
 
 
-int
+static int
 ietf_v1_gen_new_token_frame (unsigned char *buf, size_t buf_sz,
                                 const unsigned char *token, size_t token_sz)
 {
@@ -1649,7 +1649,7 @@ ietf_v1_new_connection_id_frame_size (unsigned seqno, unsigned scid_len)
 }
 
 
-int
+static int
 ietf_v1_gen_new_connection_id_frame (unsigned char *buf, size_t buf_sz,
             unsigned seqno, const struct lsquic_cid *cid,
             const unsigned char *token, size_t token_sz)

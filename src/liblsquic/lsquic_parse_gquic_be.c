@@ -43,7 +43,7 @@
 
 /* read 16 bits(2 bytes) time, unit: us */
 uint64_t
-gquic_be_read_float_time16 (const void *mem)
+lsquic_gquic_be_read_float_time16 (const void *mem)
 {
     uint16_t val;
     READ_UINT(val, 16, mem, 2);
@@ -62,7 +62,7 @@ gquic_be_read_float_time16 (const void *mem)
 
 
 void
-gquic_be_write_float_time16 (lsquic_time_t time_us, void *mem)
+lsquic_gquic_be_write_float_time16 (lsquic_time_t time_us, void *mem)
 {
     uint16_t ret = 0;
     uint16_t high, i;
@@ -93,7 +93,7 @@ gquic_be_write_float_time16 (lsquic_time_t time_us, void *mem)
 
 /* Parse out packet number */
 void
-gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
+lsquic_gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
                                             struct packin_parse_state *state)
 {
     lsquic_packno_t packno;
@@ -106,7 +106,7 @@ gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
 
 
 static int
-gquic_be_gen_reg_pkt_header (const struct lsquic_conn *lconn,
+lsquic_gquic_be_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
                                                                 size_t bufsz)
 {
@@ -190,7 +190,7 @@ gquic_be_gen_reg_pkt_header (const struct lsquic_conn *lconn,
 
 
 int
-gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len,
         lsquic_stream_id_t stream_id64, uint64_t offset, int fin, size_t size,
         gsf_read_f gsf_read, void *stream)
 {
@@ -296,7 +296,7 @@ gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len,
 
 /* return parsed (used) buffer length */
 int
-gquic_be_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
+lsquic_gquic_be_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
                        stream_frame_t *stream_frame)
 {
     /* 1fdoooss */
@@ -385,7 +385,7 @@ parse_ack_frame_without_blocks (const unsigned char *buf, size_t buf_len,
     READ_UINT(ack->ranges[0].high, 64, p, largest_obs_len);
     p += largest_obs_len;
 
-    ack->lack_delta = gquic_be_read_float_time16(p);
+    ack->lack_delta = lsquic_gquic_be_read_float_time16(p);
     p += 2;
 
     READ_UINT(tmp_packno, 64, p, ack_block_len);
@@ -432,7 +432,7 @@ parse_ack_frame_with_blocks (const unsigned char *buf, size_t buf_len,
     READ_UINT(ack->ranges[0].high, 64, p, largest_obs_len);
     p += largest_obs_len;
 
-    ack->lack_delta = gquic_be_read_float_time16(p);
+    ack->lack_delta = lsquic_gquic_be_read_float_time16(p);
     p += 2;
 
     unsigned n_blocks;
@@ -484,7 +484,7 @@ parse_ack_frame_with_blocks (const unsigned char *buf, size_t buf_len,
  * If parsing failed, negative value is returned.
  */
 int
-gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len,
                                     struct ack_info *ack, uint8_t UNUSED_exp)
 {
     if (!(buf[0] & 0x20))
@@ -495,7 +495,7 @@ gquic_be_parse_ack_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
                 lsquic_packno_t cur_packno, enum packno_bits bits,
                 lsquic_packno_t least_unacked_packno)
 {
@@ -519,7 +519,7 @@ gquic_be_gen_stop_waiting_frame(unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
                  lsquic_packno_t cur_packno, enum packno_bits bits,
                  lsquic_packno_t *least_unacked)
 {
@@ -538,7 +538,7 @@ gquic_be_parse_stop_waiting_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits)
+lsquic_gquic_be_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits)
 {
     unsigned packnum_len = gquic_packno_bits2len(bits);
     if (buf_len >= 1 + packnum_len)
@@ -549,7 +549,7 @@ gquic_be_skip_stop_waiting_frame (size_t buf_len, enum packno_bits bits)
 
 
 int
-gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len,
+lsquic_gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len,
                             lsquic_stream_id_t stream_id64, uint64_t offset)
 {
     uint32_t stream_id = stream_id64;
@@ -571,7 +571,7 @@ gquic_be_gen_window_update_frame (unsigned char *buf, int buf_len,
 
 
 int
-gquic_be_parse_window_update_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_window_update_frame (const unsigned char *buf, size_t buf_len,
                       lsquic_stream_id_t *stream_id_p, uint64_t *offset)
 {
     uint32_t stream_id;
@@ -587,7 +587,7 @@ gquic_be_parse_window_update_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_gen_blocked_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_blocked_frame (unsigned char *buf, size_t buf_len,
                             lsquic_stream_id_t stream_id64)
 {
     uint32_t stream_id = stream_id64;
@@ -605,7 +605,7 @@ gquic_be_gen_blocked_frame (unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_parse_blocked_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_blocked_frame (const unsigned char *buf, size_t buf_len,
                                             lsquic_stream_id_t *stream_id_p)
 {
     uint32_t stream_id;
@@ -619,7 +619,7 @@ gquic_be_parse_blocked_frame (const unsigned char *buf, size_t buf_len,
 
 
 static unsigned
-gquic_be_rst_frame_size (lsquic_stream_id_t stream_id, uint64_t error_code,
+lsquic_gquic_be_rst_frame_size (lsquic_stream_id_t stream_id, uint64_t error_code,
                                                         uint64_t final_size)
 {
     assert(0);  /* This function is not called */
@@ -628,7 +628,7 @@ gquic_be_rst_frame_size (lsquic_stream_id_t stream_id, uint64_t error_code,
 
 
 int
-gquic_be_gen_rst_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_rst_frame (unsigned char *buf, size_t buf_len,
         lsquic_stream_id_t stream_id64, uint64_t offset, uint64_t error_code64)
 {
     uint32_t stream_id = stream_id64, error_code = error_code64;
@@ -658,7 +658,7 @@ gquic_be_gen_rst_frame (unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len,
     lsquic_stream_id_t *stream_id_p, uint64_t *offset, uint64_t *error_code_p)
 {
     uint32_t stream_id, error_code;
@@ -676,7 +676,7 @@ gquic_be_parse_rst_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_gen_ping_frame (unsigned char *buf, int buf_len)
+lsquic_gquic_be_gen_ping_frame (unsigned char *buf, int buf_len)
 {
     if (buf_len > 0)
     {
@@ -689,7 +689,7 @@ gquic_be_gen_ping_frame (unsigned char *buf, int buf_len)
 
 
 size_t
-gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
+lsquic_gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
                                 unsigned frame_type, size_t reason_len)
 {
     return 1 + 4 + 2 + reason_len;
@@ -697,7 +697,7 @@ gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
 
 
 int
-gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     int app_error_UNUSED, unsigned ecode, const char *reason, int reason_len)
 {
     uint32_t error_code;
@@ -728,7 +728,7 @@ gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
         int *app_error, uint64_t *error_code_p,
         uint16_t *reason_len, uint8_t *reason_offset)
 {
@@ -752,7 +752,7 @@ gquic_be_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
 
 
 int
-gquic_be_gen_goaway_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_goaway_frame (unsigned char *buf, size_t buf_len,
         uint32_t error_code, lsquic_stream_id_t last_good_stream_id64,
         const char *reason, size_t reason_len)
 {
@@ -792,7 +792,7 @@ gquic_be_gen_goaway_frame (unsigned char *buf, size_t buf_len,
 
 /* the reason is buf + *reason_offset, length is *reason_length */
 int
-gquic_be_parse_goaway_frame (const unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_parse_goaway_frame (const unsigned char *buf, size_t buf_len,
                uint32_t *error_code, lsquic_stream_id_t *last_good_stream_id,
                uint16_t *reason_length, const char **reason)
 {
@@ -820,7 +820,7 @@ gquic_be_parse_goaway_frame (const unsigned char *buf, size_t buf_len,
 /* Returns number of bytes written or -1 on failure */
 /* This function makes an assumption that there is at least one range */
 int
-gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
+lsquic_gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         gaf_rechist_first_f rechist_first, gaf_rechist_next_f rechist_next,
         gaf_rechist_largest_recv_f rechist_largest_recv,
         void *rechist, lsquic_time_t now, int *has_missing,
@@ -898,7 +898,7 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
     CHECKOUT(2);
     time_diff = now - rechist_largest_recv(rechist);
-    gquic_be_write_float_time16(time_diff, p);
+    lsquic_gquic_be_write_float_time16(time_diff, p);
     LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, time_diff,
         *(uint16_t*)p);
     p += 2;
@@ -985,7 +985,7 @@ gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
 
 static int
-gquic_be_gen_crypto_frame (unsigned char *buf, size_t buf_len,
+lsquic_gquic_be_gen_crypto_frame (unsigned char *buf, size_t buf_len,
         uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
 {
     assert(0);
@@ -994,7 +994,7 @@ gquic_be_gen_crypto_frame (unsigned char *buf, size_t buf_len,
 
 
 static int
-gquic_be_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
+lsquic_gquic_be_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
                                             struct stream_frame *stream_frame)
 {
     assert(0);
@@ -1003,7 +1003,7 @@ gquic_be_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
 
 
 static void
-gquic_be_packno_info (const struct lsquic_conn *lconn,
+lsquic_gquic_be_packno_info (const struct lsquic_conn *lconn,
         const struct lsquic_packet_out *packet_out, unsigned *packno_off,
         unsigned *packno_len)
 {
@@ -1034,32 +1034,32 @@ gquic_Q043_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
 
 const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
-    .pf_gen_reg_pkt_header            =  gquic_be_gen_reg_pkt_header,
-    .pf_parse_packet_in_finish        =  gquic_be_parse_packet_in_finish,
-    .pf_gen_stream_frame              =  gquic_be_gen_stream_frame,
-    .pf_calc_stream_frame_header_sz   =  calc_stream_frame_header_sz_gquic,
-    .pf_parse_stream_frame            =  gquic_be_parse_stream_frame,
-    .pf_parse_ack_frame               =  gquic_be_parse_ack_frame,
-    .pf_gen_ack_frame                 =  gquic_be_gen_ack_frame,
-    .pf_gen_stop_waiting_frame        =  gquic_be_gen_stop_waiting_frame,
-    .pf_parse_stop_waiting_frame      =  gquic_be_parse_stop_waiting_frame,
-    .pf_skip_stop_waiting_frame       =  gquic_be_skip_stop_waiting_frame,
-    .pf_gen_window_update_frame       =  gquic_be_gen_window_update_frame,
-    .pf_parse_window_update_frame     =  gquic_be_parse_window_update_frame,
-    .pf_gen_blocked_frame             =  gquic_be_gen_blocked_frame,
-    .pf_parse_blocked_frame           =  gquic_be_parse_blocked_frame,
-    .pf_rst_frame_size                =  gquic_be_rst_frame_size,
-    .pf_gen_rst_frame                 =  gquic_be_gen_rst_frame,
-    .pf_parse_rst_frame               =  gquic_be_parse_rst_frame,
-    .pf_connect_close_frame_size      =  gquic_be_connect_close_frame_size,
-    .pf_gen_connect_close_frame       =  gquic_be_gen_connect_close_frame,
-    .pf_parse_connect_close_frame     =  gquic_be_parse_connect_close_frame,
-    .pf_gen_goaway_frame              =  gquic_be_gen_goaway_frame,
-    .pf_parse_goaway_frame            =  gquic_be_parse_goaway_frame,
-    .pf_gen_ping_frame                =  gquic_be_gen_ping_frame,
+    .pf_gen_reg_pkt_header            =  lsquic_gquic_be_gen_reg_pkt_header,
+    .pf_parse_packet_in_finish        =  lsquic_gquic_be_parse_packet_in_finish,
+    .pf_gen_stream_frame              =  lsquic_gquic_be_gen_stream_frame,
+    .pf_calc_stream_frame_header_sz   =  lsquic_calc_stream_frame_header_sz_gquic,
+    .pf_parse_stream_frame            =  lsquic_gquic_be_parse_stream_frame,
+    .pf_parse_ack_frame               =  lsquic_gquic_be_parse_ack_frame,
+    .pf_gen_ack_frame                 =  lsquic_gquic_be_gen_ack_frame,
+    .pf_gen_stop_waiting_frame        =  lsquic_gquic_be_gen_stop_waiting_frame,
+    .pf_parse_stop_waiting_frame      =  lsquic_gquic_be_parse_stop_waiting_frame,
+    .pf_skip_stop_waiting_frame       =  lsquic_gquic_be_skip_stop_waiting_frame,
+    .pf_gen_window_update_frame       =  lsquic_gquic_be_gen_window_update_frame,
+    .pf_parse_window_update_frame     =  lsquic_gquic_be_parse_window_update_frame,
+    .pf_gen_blocked_frame             =  lsquic_gquic_be_gen_blocked_frame,
+    .pf_parse_blocked_frame           =  lsquic_gquic_be_parse_blocked_frame,
+    .pf_rst_frame_size                =  lsquic_gquic_be_rst_frame_size,
+    .pf_gen_rst_frame                 =  lsquic_gquic_be_gen_rst_frame,
+    .pf_parse_rst_frame               =  lsquic_gquic_be_parse_rst_frame,
+    .pf_connect_close_frame_size      =  lsquic_gquic_be_connect_close_frame_size,
+    .pf_gen_connect_close_frame       =  lsquic_gquic_be_gen_connect_close_frame,
+    .pf_parse_connect_close_frame     =  lsquic_gquic_be_parse_connect_close_frame,
+    .pf_gen_goaway_frame              =  lsquic_gquic_be_gen_goaway_frame,
+    .pf_parse_goaway_frame            =  lsquic_gquic_be_parse_goaway_frame,
+    .pf_gen_ping_frame                =  lsquic_gquic_be_gen_ping_frame,
 #ifndef NDEBUG
-    .pf_write_float_time16            =  gquic_be_write_float_time16,
-    .pf_read_float_time16             =  gquic_be_read_float_time16,
+    .pf_write_float_time16            =  lsquic_gquic_be_write_float_time16,
+    .pf_read_float_time16             =  lsquic_gquic_be_read_float_time16,
 #endif
     .pf_generate_simple_prst          =  lsquic_generate_gquic_reset,
     .pf_parse_frame_type              =  lsquic_parse_frame_type_gquic_Q035_thru_Q046,
@@ -1068,9 +1068,9 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_packout_max_header_size       =  lsquic_gquic_packout_header_size,
     .pf_calc_packno_bits              =  lsquic_gquic_calc_packno_bits,
     .pf_packno_bits2len               =  lsquic_gquic_packno_bits2len,
-    .pf_gen_crypto_frame              =  gquic_be_gen_crypto_frame,
-    .pf_parse_crypto_frame            =  gquic_be_parse_crypto_frame,
-    .pf_packno_info                   =  gquic_be_packno_info,
+    .pf_gen_crypto_frame              =  lsquic_gquic_be_gen_crypto_frame,
+    .pf_parse_crypto_frame            =  lsquic_gquic_be_parse_crypto_frame,
+    .pf_packno_info                   =  lsquic_gquic_be_packno_info,
     .pf_gen_handshake_done_frame      =  gquic_Q043_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  gquic_Q043_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  gquic_Q043_handshake_done_frame_size,

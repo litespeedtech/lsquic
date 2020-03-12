@@ -43,7 +43,7 @@ log_hist_slice (const struct hist_slice *slice, time_t t)
 
 
 void
-eng_hist_log (const struct eng_hist *hist)
+lsquic_eng_hist_log (const struct eng_hist *hist)
 {
     unsigned i, idx;
     time_t t0 = time(NULL) - ENG_HIST_NELEMS + 1;

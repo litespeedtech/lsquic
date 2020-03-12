@@ -185,7 +185,7 @@ packet_in_is_ok (enum lsquic_version version,
 
 
 lsquic_conn_t *
-mini_conn_new (struct lsquic_engine_public *enp,
+lsquic_mini_conn_new (struct lsquic_engine_public *enp,
                const struct lsquic_packet_in *packet_in,
                enum lsquic_version version)
 {
@@ -1851,6 +1851,7 @@ mini_conn_ci_Q050_packet_in (struct lsquic_conn *lconn,
         LSQ_DEBUG("error state: ignore packet");
         return;
     }
+
 
     if (!mc->mc_conn.cn_enc_session)
     {

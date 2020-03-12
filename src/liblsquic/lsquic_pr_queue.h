@@ -57,23 +57,23 @@ enum packet_req_type {
 extern const char *const lsquic_preqt2str[N_PREQ_TYPES];
 
 struct pr_queue *
-prq_create (unsigned max_elems, unsigned max_conns,
+lsquic_prq_create (unsigned max_elems, unsigned max_conns,
                 const struct lsquic_engine_public *);
 
 void
-prq_destroy (struct pr_queue *);
+lsquic_prq_destroy (struct pr_queue *);
 
 int
-prq_new_req (struct pr_queue *, enum packet_req_type,
+lsquic_prq_new_req (struct pr_queue *, enum packet_req_type,
              const struct lsquic_packet_in *, void *conn_ctx,
              const struct sockaddr *local_addr,
              const struct sockaddr *peer_addr);
 
 struct lsquic_conn *
-prq_next_conn (struct pr_queue *);
+lsquic_prq_next_conn (struct pr_queue *);
 
 int
-prq_have_pending (const struct pr_queue *);
+lsquic_prq_have_pending (const struct pr_queue *);
 
 void
 lsquic_prq_drop (struct lsquic_conn *);

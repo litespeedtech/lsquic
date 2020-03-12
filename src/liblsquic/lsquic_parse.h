@@ -354,7 +354,7 @@ lsquic_parse_frame_type_gquic_Q035_thru_Q046 (const unsigned char *, size_t);
 extern const enum quic_frame_type lsquic_iquic_byte2type[0x40];
 
 size_t
-calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
+lsquic_calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
                                                     uint64_t offset, unsigned);
 
 size_t

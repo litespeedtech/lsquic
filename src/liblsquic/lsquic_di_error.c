@@ -21,7 +21,7 @@ static const struct data_in *error_data_in_ptr;
 
 
 struct data_in *
-data_in_error_new (struct lsquic_conn_public *conn_pub)
+lsquic_data_in_error_new (struct lsquic_conn_public *conn_pub)
 {
     return (struct data_in *) error_data_in_ptr;
 }
@@ -61,7 +61,7 @@ error_di_empty (struct data_in *data_in)
 }
 
 
-struct data_in *
+static struct data_in *
 error_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 {
     assert(0);

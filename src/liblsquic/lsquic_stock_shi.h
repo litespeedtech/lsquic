@@ -15,10 +15,10 @@ extern "C" {
 struct stock_shared_hash;
 
 struct stock_shared_hash *
-stock_shared_hash_new (void);
+lsquic_stock_shared_hash_new (void);
 
 void
-stock_shared_hash_destroy (struct stock_shared_hash *);
+lsquic_stock_shared_hash_destroy (struct stock_shared_hash *);
 
 
 #ifdef __cplusplus

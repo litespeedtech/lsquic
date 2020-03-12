@@ -268,20 +268,20 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
     if ((ctl)->sc_flags & SC_PACE)                          \
     {                                                       \
         (ctl)->sc_flags |= SC_SCHED_TICK;                   \
-        pacer_tick_in(&(ctl)->sc_pacer, now);               \
+        lsquic_pacer_tick_in(&(ctl)->sc_pacer, now);        \
     }                                                       \
     (ctl)->sc_flags &= ~SC_APP_LIMITED;                     \
 } while (0)
 
 #define lsquic_send_ctl_tick_out(ctl) do {                  \
     if ((ctl)->sc_flags & SC_PACE)                          \
-        pacer_tick_out(&(ctl)->sc_pacer);                   \
+        lsquic_pacer_tick_out(&(ctl)->sc_pacer);            \
 } while (0)
 
 #define lsquic_send_ctl_next_pacer_time(ctl) (              \
     ((ctl)->sc_flags & SC_PACE)                             \
-        && pacer_delayed(&(ctl)->sc_pacer)                  \
-        ? pacer_next_sched(&(ctl)->sc_pacer)                \
+        && lsquic_pacer_delayed(&(ctl)->sc_pacer)           \
+        ? lsquic_pacer_next_sched(&(ctl)->sc_pacer)         \
         : 0 )
 
 enum packno_bits

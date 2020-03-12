@@ -287,7 +287,7 @@ run_di_nocopy_test (const struct nocopy_test *test)
     conn_pub.lconn = &conn;
     conn_pub.mm = &mm;
 
-    di = data_in_nocopy_new(&conn_pub, 3);
+    di = lsquic_data_in_nocopy_new(&conn_pub, 3);
 
     for (i = 0; i < test->n_init_frames; ++i)
     {

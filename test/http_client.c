@@ -53,6 +53,7 @@
 #include "../src/liblsquic/lsquic_stream.h"
 /* include directly for retire_cid testing */
 #include "../src/liblsquic/lsquic_conn.h"
+#include "lsxpack_header.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -218,9 +219,9 @@ struct lsquic_conn_ctx {
 struct hset_elem
 {
     STAILQ_ENTRY(hset_elem)     next;
-    unsigned                    name_idx;
-    char                       *name;
-    char                       *value;
+    struct lsxpack_header       xhdr;
+    size_t                      nalloc;
+    char                       *buf;
 };
 
 
@@ -997,42 +998,77 @@ hset_create (void *hsi_ctx, int is_push_promise)
 }
 
 
-static enum lsquic_header_status
-hset_add_header (void *hset_p, unsigned name_idx,
-                 const char *name, unsigned name_len,
-                 const char *value, unsigned value_len)
+static struct lsxpack_header *
+hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
+                                                        size_t extra_space)
 {
-    struct hset *hset = hset_p;
+    struct hset *const hset = hset_p;
     struct hset_elem *el;
+    size_t min_space;
 
-    if (name)
+    if (0 == extra_space)
+        min_space = 0x100;
+    else
+        min_space = extra_space;
+
+    if (xhdr)
+        min_space += xhdr->val_len;
+
+    if (min_space > LSXPACK_MAX_STRLEN)
+    {
+        LSQ_WARN("requested space for header is too large: %zd bytes",
+                                                                    min_space);
+        return NULL;
+    }
+
+    if (!xhdr)
+    {
+        el = malloc(sizeof(*el));
+        if (!el)
+        {
+            LSQ_WARN("cannot allocate hset_elem");
+            return NULL;
+        }
+        STAILQ_INSERT_TAIL(hset, el, next);
+        el->buf = NULL;
+        el->nalloc = 0;
+        xhdr = &el->xhdr;
+    }
+
+    if (min_space > el->nalloc)
+    {
+        free(el->buf);
+        el->nalloc = 0;
+        el->buf = malloc(min_space);
+        if (!el->buf)
+        {
+            LSQ_DEBUG("cannot allocate %zd bytes", min_space);
+            return NULL;
+        }
+        el->nalloc = min_space;
+    }
+
+    lsxpack_header_prepare_decode(&el->xhdr, el->buf, 0, el->nalloc);
+    return &el->xhdr;
+}
+
+
+static int
+hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
+{
+    unsigned name_len, value_len;
+    /* Not much to do: the header value are in xhdr */
+
+    if (xhdr)
+    {
+        name_len = xhdr->name_len;
+        value_len = xhdr->val_len;
         s_stat_downloaded_bytes += name_len + value_len + 4;    /* ": \r\n" */
+    }
     else
         s_stat_downloaded_bytes += 2;   /* \r\n "*/
 
-    if (s_discard_response)
-        return LSQUIC_HDR_OK;
-
-    if (!name)  /* This signals end of headers.  We do no post-processing. */
-        return LSQUIC_HDR_OK;
-
-    el = malloc(sizeof(*el));
-    if (!el)
-        return LSQUIC_HDR_ERR_NOMEM;
-
-    el->name = strndup(name, name_len);
-    el->value = strndup(value, value_len);
-    if (!(el->name && el->value))
-    {
-        free(el->name);
-        free(el->value);
-        free(el);
-        return LSQUIC_HDR_ERR_NOMEM;
-    }
-
-    el->name_idx = name_idx;
-    STAILQ_INSERT_TAIL(hset, el, next);
-    return LSQUIC_HDR_OK;
+    return 0;
 }
 
 
@@ -1047,8 +1083,7 @@ hset_destroy (void *hset_p)
         for (el = STAILQ_FIRST(hset); el; el = next)
         {
             next = STAILQ_NEXT(el, next);
-            free(el->name);
-            free(el->value);
+            free(el->buf);
             free(el);
         }
         free(hset);
@@ -1062,11 +1097,17 @@ hset_dump (const struct hset *hset, FILE *out)
     const struct hset_elem *el;
 
     STAILQ_FOREACH(el, hset, next)
-        if (el->name_idx)
-            fprintf(out, "%s (static table idx %u): %s\n", el->name,
-                                                    el->name_idx, el->value);
+        if (el->xhdr.flags & (LSXPACK_HPACK_IDX|LSXPACK_QPACK_IDX))
+            fprintf(out, "%.*s (%s static table idx %u): %.*s\n",
+                (int) el->xhdr.name_len, lsxpack_header_get_name(&el->xhdr),
+                el->xhdr.flags & LSXPACK_HPACK_IDX ? "hpack" : "qpack",
+                el->xhdr.flags & LSXPACK_HPACK_IDX ? el->xhdr.hpack_index
+                                                    : el->xhdr.qpack_index,
+                (int) el->xhdr.val_len, lsxpack_header_get_value(&el->xhdr));
         else
-            fprintf(out, "%s: %s\n", el->name, el->value);
+            fprintf(out, "%.*s: %.*s\n",
+                (int) el->xhdr.name_len, lsxpack_header_get_name(&el->xhdr),
+                (int) el->xhdr.val_len, lsxpack_header_get_value(&el->xhdr));
 
     fprintf(out, "\n");
     fflush(out);
@@ -1080,6 +1121,7 @@ hset_dump (const struct hset *hset, FILE *out)
 static const struct lsquic_hset_if header_bypass_api =
 {
     .hsi_create_header_set  = hset_create,
+    .hsi_prepare_decode     = hset_prepare_decode,
     .hsi_process_header     = hset_add_header,
     .hsi_discard_header_set = hset_destroy,
 };

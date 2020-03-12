@@ -70,7 +70,7 @@ test_shi (const struct order *order)
     void *datap;
     struct data *data;
 
-    hash = stock_shared_hash_new();
+    hash = lsquic_stock_shared_hash_new();
 
     for (i = 0; i < N_PAIRS; ++i)
     {
@@ -124,7 +124,7 @@ test_shi (const struct order *order)
         assert(0 == s);
     }
 
-    stock_shared_hash_destroy(hash);
+    lsquic_stock_shared_hash_destroy(hash);
 }
 
 

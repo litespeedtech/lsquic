@@ -92,7 +92,7 @@ enum PACKET_PUBLIC_FLAGS
 #define gquic_packno_bits2len(b) (((b) << 1) + !(b))
 
 lsquic_packno_t
-restore_packno (lsquic_packno_t cur_packno,
+lsquic_restore_packno (lsquic_packno_t cur_packno,
                 unsigned packet_len,
                 lsquic_packno_t max_packno);
 

@@ -81,7 +81,7 @@ static lsquic_stream_ctx_t *
 headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
     struct headers_stream *hs = stream_if_ctx;
-    lshpack_dec_init(&hs->hs_hdec);
+    lshpack_dec_init(&hs->hs_hdec, LSHPACK_DEC_HTTP1X);
     if (0 != lshpack_enc_init(&hs->hs_henc))
     {
         LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
@@ -292,18 +292,8 @@ headers_on_error (void *ctx, lsquic_stream_id_t stream_id,
     struct headers_stream *hs = ctx;
     switch (err)
     {
-    case FR_ERR_DUPLICATE_PSEH:
-    case FR_ERR_INCOMPL_REQ_PSEH:
-    case FR_ERR_UNNEC_REQ_PSEH:
-    case FR_ERR_BAD_REQ_HEADER:
-    case FR_ERR_INCOMPL_RESP_PSEH:
-    case FR_ERR_UNNEC_RESP_PSEH:
-    case FR_ERR_UNKNOWN_PSEH:
-    case FR_ERR_UPPERCASE_HEADER:
-    case FR_ERR_MISPLACED_PSEH:
-    case FR_ERR_MISSING_PSEH:
+    case FR_ERR_BAD_HEADER:
     case FR_ERR_DECOMPRESS:
-    case FR_ERR_HEADERS_TOO_LARGE:
     case FR_ERR_SELF_DEP_STREAM:
         LSQ_INFO("error %u is a stream error (stream %"PRIu64")", err,
                                                                     stream_id);
@@ -313,8 +303,8 @@ headers_on_error (void *ctx, lsquic_stream_id_t stream_id,
     case FR_ERR_NONZERO_STREAM_ID:
     case FR_ERR_UNEXPECTED_PUSH:
     case FR_ERR_ZERO_STREAM_ID:
-    case FR_ERR_NOMEM:
     case FR_ERR_EXPECTED_CONTIN:
+    case FR_ERR_OTHER_ERROR:
         LSQ_INFO("error %u is a connection error (stream %"PRIu64")", err,
                                                                     stream_id);
         hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);

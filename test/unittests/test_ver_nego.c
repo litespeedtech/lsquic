@@ -92,8 +92,8 @@ test_parsing_ver_nego (const struct gen_ver_nego_test *gvnt)
     s = lsquic_parse_packet_in_begin(packet_in, gvnt->gvnt_len, 0, GQUIC_CID_LEN, &ppstate);
     assert(s == 0);
 
-    for (s = packet_in_ver_first(packet_in, &vi, &ver_tag); s;
-                     s = packet_in_ver_next(&vi, &ver_tag))
+    for (s = lsquic_packet_in_ver_first(packet_in, &vi, &ver_tag); s;
+                     s = lsquic_packet_in_ver_next(&vi, &ver_tag))
     {
         version = lsquic_tag2ver(ver_tag);
         assert(version < N_LSQVER);

@@ -218,7 +218,7 @@ test_rw (unsigned max_frame_sz)
 
     lsquic_mm_init(&mm);
     lshpack_enc_init(&henc);
-    lshpack_dec_init(&hdec);
+    lshpack_dec_init(&hdec, LSHPACK_DEC_HTTP1X);
     stream = stream_new();
     stream->sm_max_sz = 1;
 

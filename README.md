@@ -21,11 +21,10 @@ Support for newer versions will be added soon after they are released.
 Documentation
 -------------
 
-The documentation for this module is admittedly sparse but is now externally hosted at [Read the Docs](https://lsquic.readthedocs.io/en/latest/).  The API is
-documented in include/lsquic.h.  If you have doxygen, you can run
-`doxygen dox.cfg` or `make docs`.  The example program is
-test/http_client.c: a bare-bones, but working, QUIC client.  Have a look
-in EXAMPLES.txt to see how it can be used.
+Documentation is available at https://lsquic.readthedocs.io/en/latest/.
+
+In addition, see example programs for API usage and EXAMPLES.txt for
+some compilation and run-time options.
 
 Requirements
 ------------

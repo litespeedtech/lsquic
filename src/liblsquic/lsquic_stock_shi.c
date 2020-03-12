@@ -155,7 +155,7 @@ stock_shi_delete (void *hash_ctx, const void *key, unsigned key_sz)
 
 
 struct stock_shared_hash *
-stock_shared_hash_new (void)
+lsquic_stock_shared_hash_new (void)
 {
     struct malo *malo;
     struct stock_shared_hash *hash;
@@ -179,7 +179,7 @@ stock_shared_hash_new (void)
 
 
 void
-stock_shared_hash_destroy (struct stock_shared_hash *hash)
+lsquic_stock_shared_hash_destroy (struct stock_shared_hash *hash)
 {
     struct hash_elem *he;
     struct lsquic_hash_elem *el;

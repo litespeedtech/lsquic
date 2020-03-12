@@ -25,7 +25,7 @@
 
 
 void
-pacer_init (struct pacer *pacer, const struct lsquic_conn *conn,
+lsquic_pacer_init (struct pacer *pacer, const struct lsquic_conn *conn,
                                                 unsigned clock_granularity)
 {
     memset(pacer, 0, sizeof(*pacer));
@@ -36,7 +36,7 @@ pacer_init (struct pacer *pacer, const struct lsquic_conn *conn,
 
 
 void
-pacer_cleanup (struct pacer *pacer)
+lsquic_pacer_cleanup (struct pacer *pacer)
 {
 #ifndef NDEBUG
     LSQ_DEBUG("scheduled calls: %u", pacer->pa_stats.n_scheduled);
@@ -45,7 +45,7 @@ pacer_cleanup (struct pacer *pacer)
 
 
 void
-pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
+lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
                             int in_recovery, tx_time_f tx_time, void *tx_ctx)
 {
     lsquic_time_t delay, sched_time;
@@ -98,7 +98,7 @@ pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
 
 
 void
-pacer_loss_event (struct pacer *pacer)
+lsquic_pacer_loss_event (struct pacer *pacer)
 {
     pacer->pa_burst_tokens = 0;
     LSQ_DEBUG("%s: tokens: %u", __func__, pacer->pa_burst_tokens);
@@ -106,7 +106,7 @@ pacer_loss_event (struct pacer *pacer)
 
 
 int
-pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
+lsquic_pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 {
     int can;
 
@@ -126,7 +126,7 @@ pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 
 
 void
-pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
+lsquic_pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
 {
     assert(now >= pacer->pa_now);
     pacer->pa_now = now;
@@ -137,7 +137,7 @@ pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
 
 
 void
-pacer_tick_out (struct pacer *pacer)
+lsquic_pacer_tick_out (struct pacer *pacer)
 {
     if ((pacer->pa_flags & PA_DELAYED_ON_TICK_IN)
             && pacer->pa_n_scheduled == 0

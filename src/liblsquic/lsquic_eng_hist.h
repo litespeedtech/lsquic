@@ -59,7 +59,7 @@ struct eng_hist
 
 
 void
-eng_hist_log (const struct eng_hist *);
+lsquic_eng_hist_log (const struct eng_hist *);
 
 
 /* Switch to next slice if necessary */
@@ -70,7 +70,7 @@ eng_hist_log (const struct eng_hist *);
         (eh)->eh_cur_idx = ((now) / 1000000) & (ENG_HIST_NELEMS - 1);       \
     if ((eh)->eh_cur_idx != (eh)->eh_prev_idx)                              \
     {                                                                       \
-        eng_hist_log(eh);                                                   \
+        lsquic_eng_hist_log(eh);                                            \
         eng_hist_clear_cur(eh);                                             \
         (eh)->eh_prev_idx = (eh)->eh_cur_idx;                               \
     }                                                                       \
@@ -89,7 +89,7 @@ eng_hist_log (const struct eng_hist *);
 #define eng_hist_clear_cur(eh)
 #define eng_hist_tick(eh, now)
 #define eng_hist_inc(eh, now, what)
-#define eng_hist_log(eh)
+#define lsquic_eng_hist_log(eh)
 
 #endif  /* ENG_HIST_ENABLED */
 

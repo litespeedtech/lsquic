@@ -389,13 +389,13 @@ write_headers (struct lsquic_frame_writer *fw,
 {
     unsigned char *end;
     int i, s;
-
+    struct lsxpack_header hdr;
     for (i = 0; i < headers->count; ++i)
     {
-        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz,
-                                 LSHPACK_HDR_UNKNOWN,
-                                 (const lshpack_header_t *)&headers->headers[i],
-                                 0);
+        lsquic_http_header_t *h = &headers->headers[i];
+        lsxpack_header_set_ptr(&hdr, h->name.iov_base, h->name.iov_len,
+                               h->value.iov_base, h->value.iov_len);
+        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz, &hdr);
         if (end > buf)
         {
             s = hfc_write(hfc, buf, end - buf);

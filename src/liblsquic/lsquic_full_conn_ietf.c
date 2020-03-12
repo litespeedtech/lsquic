@@ -18,6 +18,7 @@
 #include "fiu-local.h"
 
 #include "lsquic.h"
+#include "lsxpack_header.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_attq.h"
@@ -1177,6 +1178,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (conn->ifc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_HANDSHAKE,
                     lsquic_time_now() + conn->ifc_settings->es_handshake_to);
+    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
     if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
@@ -1435,6 +1437,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         goto err3;
 
     conn->ifc_created = imc->imc_created;
+    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                                         imc->imc_created + conn->ifc_idle_to);
@@ -3274,11 +3277,12 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     void *hsi_ctx;
     struct uncompressed_headers *uh;
     enum lsqpack_enc_status enc_st;
-    enum lsquic_header_status header_st;
-    unsigned i, name_idx, n_header_sets;
+    int header_st;
+    unsigned i, n_header_sets;
     int own_hset, stx_tab_id;
-    const unsigned hpack_static_table_size = 61;
     unsigned char discard[2];
+    struct lsxpack_header *xhdr;
+    size_t extra;
 
     if (!ietf_full_conn_ci_is_push_enabled(lconn)
                                 || !lsquic_stream_can_push(dep_stream))
@@ -3390,32 +3394,47 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
                     header < all_headers[i].headers + all_headers[i].count;
                         ++header)
             {
+                extra = header->name.iov_len + header->value.iov_len + 4;
+                xhdr = conn->ifc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
+                                                                NULL, extra);
+                if (!xhdr)
+                    goto header_err;
+                memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
+                                                        header->name.iov_len);
+                xhdr->name_len = header->name.iov_len;
+                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
+                xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
+                memcpy(xhdr->buf + xhdr->val_offset, header->value.iov_base,
+                                                        header->value.iov_len);
+                xhdr->val_len = header->value.iov_len;
+                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
+                            + xhdr->val_len, "\r\n", 2);
+                xhdr->dec_overhead = 4;
                 stx_tab_id = lsqpack_get_stx_tab_id(header->name.iov_base,
                                 header->name.iov_len, header->value.iov_base,
                                 header->value.iov_len);
                 if (stx_tab_id >= 0)
-                    name_idx = hpack_static_table_size + 1 + stx_tab_id;
-                else
-                    name_idx = 0;
-                header_st = conn->ifc_enpub->enp_hsi_if->hsi_process_header(hset,
-                                name_idx,
-                                header->name.iov_base, header->name.iov_len,
-                                header->value.iov_base, header->value.iov_len);
-                if (header_st != LSQUIC_HDR_OK)
                 {
+                    xhdr->qpack_index = stx_tab_id;
+                    xhdr->flags |= LSXPACK_QPACK_IDX;
+                }
+                header_st = conn->ifc_enpub->enp_hsi_if
+                                            ->hsi_process_header(hset, xhdr);
+                if (header_st != 0)
+                {
+  header_err:
                     lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
                     conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
-                    LSQ_DEBUG("header process error: %u", header_st);
+                    LSQ_DEBUG("header process error: %d", header_st);
                     return -1;
                 }
             }
-        header_st = conn->ifc_enpub->enp_hsi_if->hsi_process_header(hset, 0, 0,
-                                                            0, 0, 0);
-        if (header_st != LSQUIC_HDR_OK)
+        header_st = conn->ifc_enpub->enp_hsi_if->hsi_process_header(hset, NULL);
+        if (header_st != 0)
         {
             lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
             conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
-            LSQ_DEBUG("header process error: %u", header_st);
+            LSQ_DEBUG("header process error: %d", header_st);
             return -1;
         }
     }
@@ -6406,8 +6425,8 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
         }
 
         versions = 0;
-        for (s = packet_in_ver_first(packet_in, &vi, &ver_tag); s;
-                         s = packet_in_ver_next(&vi, &ver_tag))
+        for (s = lsquic_packet_in_ver_first(packet_in, &vi, &ver_tag); s;
+                         s = lsquic_packet_in_ver_next(&vi, &ver_tag))
         {
             version = lsquic_tag2ver(ver_tag);
             if (version < N_LSQVER)

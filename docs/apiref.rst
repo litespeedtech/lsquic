@@ -1418,45 +1418,34 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
         stream by calling :func:`lsquic_stream_get_hset()` before the stream can
         be read.
 
-    .. member:: enum lsquic_header_status (*hsi_process_header)(void *hdr_set, unsigned name_idx, const char *name, unsigned name_len, const char *value, unsigned value_len)
+    .. member:: struct lsxpack_header * (*hsi_prepare_decode)(void *hdr_set, struct lsxpack_header *hdr, size_t space)
+
+        Return a header set prepared for decoding.  If ``hdr`` is NULL, this
+        means return a new structure with at least `space' bytes available
+        in the decoder buffer.  If `hdr' is not NULL, it means there was not
+        enough decoder buffer and it must be increased by ``space`` bytes.
+
+        If NULL is returned the header set is discarded.
+
+    .. member:: int (*hsi_process_header)(void *hdr_set, struct lsxpack_header *hdr)
+
+        Process new header.
 
         :param hdr_set:
 
             Header set to add the new header field to.  This is the object
             returned by ``hsi_create_header_set()``.
 
-        :param name_idx:
+        :param hdr:
 
-            This value is set to the index in either the HPACK or QPACK static table
-            whose entry's name element matches ``name``.  The values are as follows:
-
-            - if there is no such match, this value is zero;
-            - if HPACK is used, the value is between 1 and 61; and
-            - if QPACK is used, the value is 62+ (subtract 62 to get the QPACK
-              static table index).
-
-        :param name:
-
-            Header field name.  If NULL, this means that no more header are going to be
-            added to the set.
-
-        :param name_len:
-
-            Header field name length.
-
-        :param value:
-
-            Header field value.
-
-        :param value_len:
-
-            Header field value length.
+            The header returned by @ref ``hsi_prepare_decode()``.
 
         :return:
 
-            0 on success, non-zero on failure.  The latter is treated as a stream
-            error: the associated stream is reset.  See :type:`lsquic_header_status`
-            for detailed error listing.
+            Return 0 on success, a positive value if a header error occured,
+            or a negative value on any other error.  A positive return value
+            will result in cancellation of associated stream. A negative return
+            value will result in connection being aborted.
 
     .. member:: void                (*hsi_discard_header_set)(void *hdr_set)
 
@@ -1762,63 +1751,6 @@ Miscellaneous Types
     .. member:: void      (*kli_close) (void *handle)
 
         Close handle.
-
-.. type:: enum lsquic_header_status
-
-    When headers are processed, various errors may occur.  They are listed
-    in this enum.
-
-    .. member:: LSQUIC_HDR_OK
-
-        Header was processed OK.
-
-    .. member:: LSQUIC_HDR_ERR_DUPLICATE_PSDO_HDR
-
-        Duplicate pseudo-header
-
-    .. member:: LSQUIC_HDR_ERR_INCOMPL_REQ_PSDO_HDR
-
-        Not all request pseudo-headers are present
-
-    .. member:: LSQUIC_HDR_ERR_UNNEC_REQ_PSDO_HDR
-
-        Unnecessary request pseudo-header present in the response
-
-    .. member:: LSQUIC_HDR_ERR_BAD_REQ_HEADER
-
-        Prohibited header in request
-
-    .. member:: LSQUIC_HDR_ERR_INCOMPL_RESP_PSDO_HDR
-
-        Not all response pseudo-headers are present
-
-    .. member:: LSQUIC_HDR_ERR_UNNEC_RESP_PSDO_HDR
-
-        Unnecessary response pseudo-header present in the response.
-
-    .. member:: LSQUIC_HDR_ERR_UNKNOWN_PSDO_HDR
-
-        Unknown pseudo-header
-
-    .. member:: LSQUIC_HDR_ERR_UPPERCASE_HEADER
-
-        Uppercase letter in header
-
-    .. member:: LSQUIC_HDR_ERR_MISPLACED_PSDO_HDR
-
-        Misplaced pseudo-header
-
-    .. member:: LSQUIC_HDR_ERR_MISSING_PSDO_HDR
-
-        Missing pseudo-header
-
-    .. member:: LSQUIC_HDR_ERR_HEADERS_TOO_LARGE
-
-        Header or headers are too large
-
-    .. member:: LSQUIC_HDR_ERR_NOMEM
-
-        Cannot allocate any more memory.
 
 .. type:: enum lsquic_logger_timestamp_style
 

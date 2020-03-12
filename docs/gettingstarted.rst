@@ -16,6 +16,7 @@ LSQUIC library uses:
 
 - zlib_;
 - BoringSSL_; and
+- `ls-hpack`_ (as a Git submodule).
 - `ls-qpack`_ (as a Git submodule).
 
 The accompanying demo command-line tools use libevent_.
@@ -66,6 +67,7 @@ the :doc:`apiref`.
 
 .. _zlib: https://www.zlib.net/
 .. _BoringSSL: https://boringssl.googlesource.com/boringssl/
+.. _`ls-hpack`: https://github.com/litespeedtech/ls-hpack
 .. _`ls-qpack`: https://github.com/litespeedtech/ls-qpack
 .. _libevent: https://libevent.org/
 .. _README: https://github.com/litespeedtech/lsquic/blob/master/README.md

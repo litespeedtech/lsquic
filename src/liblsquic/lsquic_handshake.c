@@ -338,12 +338,11 @@ static compress_cert_hash_item_t *make_compress_cert_hash_item(struct lsquic_str
 #ifdef NDEBUG
 static
 enum hsk_failure_reason
-verify_stk (enc_session_t *,
+lsquic_verify_stk (enc_session_t *,
                const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk);
-static
-void gen_stk(lsquic_server_config_t *, const struct sockaddr *, uint64_t tm,
-             unsigned char stk_out[STK_LENGTH]);
 #endif
+void lsquic_gen_stk(lsquic_server_config_t *, const struct sockaddr *, uint64_t tm,
+             unsigned char stk_out[STK_LENGTH]);
 
 /* client */
 static c_cert_item_t *make_c_cert_item(struct lsquic_str **certs, int count);
@@ -375,7 +374,7 @@ eshist_append (struct lsquic_enc_session *enc_session,
 static int
 lsquic_handshake_init(int flags)
 {
-    crypto_init();
+    lsquic_crypto_init();
     return init_hs_hash_tables(flags);
 }
 
@@ -467,7 +466,7 @@ make_c_cert_item (lsquic_str_t **certs, int count)
     for (i = 0; i < count; ++i)
     {
         lsquic_str_copy(&item->crts[i], certs[i]);
-        hash = fnv1a_64((const uint8_t *)lsquic_str_cstr(certs[i]),
+        hash = lsquic_fnv1a_64((const uint8_t *)lsquic_str_cstr(certs[i]),
                         lsquic_str_len(certs[i]));
         lsquic_str_append(item->hashs, (char *)&hash, 8);
     }
@@ -694,7 +693,7 @@ lsquic_enc_session_deserialize_zero_rtt(
         lsquic_str_prealloc(&cert_item->crts[i], len);
         lsquic_str_setlen(&cert_item->crts[i], len);
         memcpy(lsquic_str_buf(&cert_item->crts[i]), cert_data, len);
-        hash = fnv1a_64((const uint8_t *)cert_data, len);
+        hash = lsquic_fnv1a_64((const uint8_t *)cert_data, len);
         lsquic_str_append(cert_item->hashs, (char *)&hash, 8);
         cert_len = (uint32_t *)(cert_data + len);
     }
@@ -1493,7 +1492,7 @@ lsquic_enc_session_gen_chlo (enc_session_t *enc_session_p,
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
     int include_pad;
-    const lsquic_str_t *const ccs = get_common_certs_hash();
+    const lsquic_str_t *const ccs = lsquic_get_common_certs_hash();
     const struct lsquic_engine_settings *const settings =
                                         &enc_session->enpub->enp_settings;
     c_cert_item_t *const cert_item = enc_session->cert_item;
@@ -1572,8 +1571,8 @@ lsquic_enc_session_gen_chlo (enc_session_t *enc_session_p,
             MSG_LEN_ADD(msg_len, sizeof(enc_session->hs_ctx.nonc));
                                             ++n_tags;           /* NONC */
             RAND_bytes(enc_session->priv_key, 32);
-            c255_get_pub_key(enc_session->priv_key, pub_key);
-            gen_nonce_c(enc_session->hs_ctx.nonc, enc_session->info->orbt);
+            lsquic_c255_get_pub_key(enc_session->priv_key, pub_key);
+            lsquic_gen_nonce_c(enc_session->hs_ctx.nonc, enc_session->info->orbt);
         }
     }
     include_pad = MSG_LEN_VAL(msg_len) < MIN_CHLO_SIZE;
@@ -1671,7 +1670,7 @@ determine_rtts (struct lsquic_enc_session *enc_session,
         goto fail_1rtt;
     }
 
-    hfr = verify_stk(enc_session, ip_addr, t, &hs_ctx->stk);
+    hfr = lsquic_verify_stk(enc_session, ip_addr, t, &hs_ctx->stk);
     if (hfr != HFR_HANDSHAKE_OK)
     {
         hs_ctx->rrej = hfr;
@@ -1835,7 +1834,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
     RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
     RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
-    c255_get_pub_key(temp_scfg->priv_key, spubs + 3);
+    lsquic_c255_get_pub_key(temp_scfg->priv_key, spubs + 3);
     temp_scfg->aead = settings->es_aead;
     temp_scfg->kexs = settings->es_kexs;
     temp_scfg->pdmd = settings->es_pdmd;
@@ -1926,7 +1925,7 @@ generate_crt (struct lsquic_enc_session *enc_session, int common_case)
         OPENSSL_free(out);
     }
 
-    if (0 != compress_certs(crts, crt_num, &hs_ctx->ccs, &hs_ctx->ccrt,
+    if (0 != lsquic_compress_certs(crts, crt_num, &hs_ctx->ccs, &hs_ctx->ccrt,
                                                             &hs_ctx->crt))
         goto cleanup;
 
@@ -1980,7 +1979,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
      * This is the most common case
      */
     common_case = lsquic_str_len(&hs_ctx->ccrt) == 0
-               && lsquic_str_bcmp(&hs_ctx->ccs, get_common_certs_hash()) == 0;
+               && lsquic_str_bcmp(&hs_ctx->ccs, lsquic_get_common_certs_hash()) == 0;
     if (common_case)
         compress_certs_item = find_compress_certs(&hs_ctx->sni);
     else
@@ -1996,7 +1995,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
 
     LSQ_DEBUG("gQUIC rej1 data");
     LSQ_DEBUG("gQUIC NOT enabled");
-    gen_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
+    lsquic_gen_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
          (size_t)lsquic_str_len(&enc_session->chlo),
          scfg_data, scfg_len,
          rsa_priv_key, (uint8_t *)prof_buf, &prof_len);
@@ -2029,7 +2028,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
         lsquic_str_prealloc(&enc_session->sstk, STK_LENGTH);
         lsquic_str_setlen(&enc_session->sstk, STK_LENGTH);
     }
-    gen_stk(enc_session->server_config, ip, t,
+    lsquic_gen_stk(enc_session->server_config, ip, t,
                         (unsigned char *) lsquic_str_buf(&enc_session->sstk));
 
     if (lsquic_str_len(&enc_session->ssno) != SNO_LENGTH)
@@ -2090,14 +2089,14 @@ gen_shlo_data (uint8_t *buf, size_t buf_len, struct lsquic_enc_session *enc_sess
 
     RAND_bytes(nonce, 32);
     RAND_bytes(enc_session->priv_key, 32);
-    c255_get_pub_key(enc_session->priv_key, (unsigned char *)pub_key);
+    lsquic_c255_get_pub_key(enc_session->priv_key, (unsigned char *)pub_key);
     if (lsquic_str_len(&enc_session->sstk) != STK_LENGTH)
     {
         lsquic_str_d(&enc_session->sstk);
         lsquic_str_prealloc(&enc_session->sstk, STK_LENGTH);
         lsquic_str_setlen(&enc_session->sstk, STK_LENGTH);
     }
-    gen_stk(enc_session->server_config, ip, t,
+    lsquic_gen_stk(enc_session->server_config, ip, t,
                         (unsigned char *) lsquic_str_buf(&enc_session->sstk));
     if (lsquic_str_len(&enc_session->ssno) != SNO_LENGTH)
     {
@@ -2333,15 +2332,15 @@ static int handle_chlo_reply_verify_prof(struct lsquic_enc_session *enc_session,
     size_t i;
     X509 *cert, *server_cert;
     STACK_OF(X509) *chain = NULL;
-    ret = decompress_certs(in, in_end,cached_certs, cached_certs_count,
+    ret = lsquic_decompress_certs(in, in_end,cached_certs, cached_certs_count,
                            out_certs, out_certs_count);
     if (ret)
         return ret;
 
-    server_cert = bio_to_crt((const char *)lsquic_str_cstr(out_certs[0]),
+    server_cert = lsquic_bio_to_crt((const char *)lsquic_str_cstr(out_certs[0]),
                       lsquic_str_len(out_certs[0]), 0);
     pub_key = X509_get_pubkey(server_cert);
-    ret = verify_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
+    ret = lsquic_verify_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
                       (size_t)lsquic_str_len(&enc_session->chlo),
                       &enc_session->info->scfg,
                       pub_key,
@@ -2349,7 +2348,10 @@ static int handle_chlo_reply_verify_prof(struct lsquic_enc_session *enc_session,
                       lsquic_str_len(&enc_session->hs_ctx.prof));
     EVP_PKEY_free(pub_key);
     if (ret != 0)
+    {
+        LSQ_DEBUG("cannot verify server proof");
         goto cleanup;
+    }
 
     if (enc_session->enpub->enp_verify_cert)
     {
@@ -2357,7 +2359,7 @@ static int handle_chlo_reply_verify_prof(struct lsquic_enc_session *enc_session,
         sk_X509_push(chain, server_cert);
         for (i = 1; i < *out_certs_count; ++i)
         {
-            cert = bio_to_crt((const char *)lsquic_str_cstr(out_certs[i]),
+            cert = lsquic_bio_to_crt((const char *)lsquic_str_cstr(out_certs[i]),
                                     lsquic_str_len(out_certs[i]), 0);
             if (cert)
                 sk_X509_push(chain, cert);
@@ -2505,7 +2507,7 @@ determine_keys (struct lsquic_enc_session *enc_session)
         key_flag = 'F';
     }
 
-    c255_gen_share_key(enc_session->priv_key,
+    lsquic_c255_gen_share_key(enc_session->priv_key,
                        enc_session->hs_ctx.pubs,
                        (unsigned char *)shared_key_c);
     if (is_client)
@@ -2563,8 +2565,8 @@ determine_keys (struct lsquic_enc_session *enc_session)
         }
     }
 
-    LSQ_DEBUG("export_key_material c255_gen_share_key %s",
-              get_bin_str(shared_key_c, 32, 512));
+    LSQ_DEBUG("export_key_material lsquic_c255_gen_share_key %s",
+              lsquic_get_bin_str(shared_key_c, 32, 512));
 
     memcpy(hkdf_input_p, enc_session->cid.idbuf, enc_session->cid.len);
     hkdf_input_p += enc_session->cid.len;
@@ -2756,7 +2758,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
 
         if (lsquic_str_len(&enc_session->hs_ctx.crt) > 0)
         {
-            out_certs_count = get_certs_count(&enc_session->hs_ctx.crt);
+            out_certs_count = lsquic_get_certs_count(&enc_session->hs_ctx.crt);
             if (out_certs_count > 0)
             {
                 out_certs = malloc(out_certs_count * sizeof(lsquic_str_t *));
@@ -2821,7 +2823,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
 static
 #endif
 void
-gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
+lsquic_gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
          uint64_t tm, unsigned char stk_out[STK_LENGTH])
 {
     unsigned char stk[STK_LENGTH + 16];
@@ -2835,7 +2837,7 @@ gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
     memcpy(stk + 16, &tm, 8);
     RAND_bytes(stk + 24, STK_LENGTH - 24 - 12);
     RAND_bytes(stk_out + STK_LENGTH - 12, 12);
-    aes_aead_enc(&server_config->lsc_stk_ctx, NULL, 0, stk_out + STK_LENGTH - 12, 12, stk,
+    lsquic_aes_aead_enc(&server_config->lsc_stk_ctx, NULL, 0, stk_out + STK_LENGTH - 12, 12, stk,
                  STK_LENGTH - 12 - 12, stk_out, &out_len);
 }
 
@@ -2845,7 +2847,7 @@ gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip_addr,
 static
 #endif
 enum hsk_failure_reason
-verify_stk0 (const struct lsquic_enc_session *enc_session,
+lsquic_verify_stk0 (const struct lsquic_enc_session *enc_session,
              lsquic_server_config_t *server_config,
              const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk,
              unsigned secs_since_stk_generated)
@@ -2858,12 +2860,12 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
     if (lsquic_str_len(stk) < STK_LENGTH)
         return HFR_SRC_ADDR_TOKEN_INVALID;
 
-    int ret = aes_aead_dec(&server_config->lsc_stk_ctx, NULL, 0,
+    int ret = lsquic_aes_aead_dec(&server_config->lsc_stk_ctx, NULL, 0,
                            stks + STK_LENGTH - 12, 12, stks,
                            STK_LENGTH - 12, stk_out, &out_len);
     if (ret != 0)
     {
-        LSQ_DEBUG("***verify_stk decrypted failed.");
+        LSQ_DEBUG("***lsquic_verify_stk decrypted failed.");
         return HFR_SRC_ADDR_TOKEN_DECRYPTION;
     }
 
@@ -2871,7 +2873,7 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
     {
         if (memcmp(stk_out, &((struct sockaddr_in *)ip_addr)->sin_addr.s_addr, 4) != 0)
         {
-            LSQ_DEBUG("***verify_stk for ipv4 failed.");
+            LSQ_DEBUG("***lsquic_verify_stk for ipv4 failed.");
             return HFR_SRC_ADDR_TOKEN_DIFFERENT_IP_ADDRESS;
         }
     }
@@ -2879,7 +2881,7 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
     {
         if (memcmp(stk_out, &((struct sockaddr_in6 *)ip_addr)->sin6_addr, 16) != 0)
         {
-            LSQ_DEBUG("***verify_stk for ipv6 failed.");
+            LSQ_DEBUG("***lsquic_verify_stk for ipv6 failed.");
             return HFR_SRC_ADDR_TOKEN_DIFFERENT_IP_ADDRESS;
         }
     }
@@ -2887,7 +2889,7 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
     memcpy((void *)&tm0, stk_out + 16, 8);
     if (tm < tm0)
     {
-        LSQ_DEBUG("***verify_stk timestamp is in the future.");
+        LSQ_DEBUG("***lsquic_verify_stk timestamp is in the future.");
         return HFR_SRC_ADDR_TOKEN_CLOCK_SKEW;
     }
 
@@ -2899,11 +2901,11 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
     if (tm > server_config->lsc_scfg->info.expy /* XXX this check does not seem needed */ ||
                                                         tm0 > exp)
     {
-        LSQ_DEBUG("***verify_stk stk expired");
+        LSQ_DEBUG("***lsquic_verify_stk stk expired");
         return HFR_SRC_ADDR_TOKEN_EXPIRED;
     }
 
-    LSQ_DEBUG("***verify_stk pass.");
+    LSQ_DEBUG("***lsquic_verify_stk pass.");
     return HFR_HANDSHAKE_OK;
 }
 
@@ -2913,7 +2915,7 @@ verify_stk0 (const struct lsquic_enc_session *enc_session,
 static
 #endif
 enum hsk_failure_reason
-verify_stk (enc_session_t *enc_session_p,
+lsquic_verify_stk (enc_session_t *enc_session_p,
                const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk)
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
@@ -2926,8 +2928,8 @@ verify_stk (enc_session_t *enc_session_p,
             return HFR_SRC_ADDR_TOKEN_INVALID;
     }
     else
-        return verify_stk0(enc_session, enc_session->server_config, ip_addr,
-                                                                    tm, stk, 0);
+        return lsquic_verify_stk0(enc_session, enc_session->server_config,
+                                                        ip_addr, tm, stk, 0);
 }
 
 
@@ -2954,17 +2956,17 @@ verify_packet_hash (const struct lsquic_enc_session *enc_session,
         return -1;
 
     if (!enc_session || (IS_SERVER(enc_session)))
-        hash = fnv1a_128_3(buf, *header_len,
+        hash = lsquic_fnv1a_128_3(buf, *header_len,
                     buf + *header_len + HS_PKT_HASH_LENGTH,
                     data_len - HS_PKT_HASH_LENGTH,
                     (unsigned char *) "Client", 6);
     else
-        hash = fnv1a_128_3(buf, *header_len,
+        hash = lsquic_fnv1a_128_3(buf, *header_len,
                     buf + *header_len + HS_PKT_HASH_LENGTH,
                     data_len - HS_PKT_HASH_LENGTH,
                     (unsigned char *) "Server", 6);
 
-    serialize_fnv128_short(hash, md);
+    lsquic_serialize_fnv128_short(hash, md);
     ret = memcmp(md, buf + *header_len, HS_PKT_HASH_LENGTH);
     if(ret == 0)
     {
@@ -3017,7 +3019,7 @@ decrypt_packet (struct lsquic_enc_session *enc_session, uint8_t path_id,
                sizeof(path_id_packet_number));
 
         *out_len = data_len;
-        ret = aes_aead_dec(key,
+        ret = lsquic_aes_aead_dec(key,
                            buf, *header_len,
                            nonce, 12,
                            buf + *header_len, data_len,
@@ -3166,13 +3168,13 @@ gquic_encrypt_buf (struct lsquic_enc_session *enc_session,
             return -1;
 
         if (!enc_session || (IS_SERVER(enc_session)))
-            hash = fnv1a_128_3(header, header_len, data, data_len,
+            hash = lsquic_fnv1a_128_3(header, header_len, data, data_len,
                                         (unsigned char *) "Server", 6);
         else
-            hash = fnv1a_128_3(header, header_len, data, data_len,
+            hash = lsquic_fnv1a_128_3(header, header_len, data, data_len,
                                         (unsigned char *) "Client", 6);
 
-        serialize_fnv128_short(hash, md);
+        lsquic_serialize_fnv128_short(hash, md);
         memcpy(buf_out, header, header_len);
         memcpy(buf_out + header_len, md, HS_PKT_HASH_LENGTH);
         memcpy(buf_out + header_len + HS_PKT_HASH_LENGTH, data, data_len);
@@ -3207,7 +3209,7 @@ gquic_encrypt_buf (struct lsquic_enc_session *enc_session,
         memcpy(buf_out, header, header_len);
         *out_len = max_out_len - header_len;
 
-        ret = aes_aead_enc(key, header, header_len, nonce, 12, data,
+        ret = lsquic_aes_aead_enc(key, header, header_len, nonce, 12, data,
                            data_len, buf_out + header_len, out_len);
         if (ret == 0)
         {
@@ -3670,7 +3672,7 @@ lsquic_enc_session_get_server_cert_chain (enc_session_t *enc_session_p)
     chain = sk_X509_new_null();
     for (i = 0; i < item->count; ++i)
     {
-        cert = bio_to_crt(lsquic_str_cstr(&item->crts[i]),
+        cert = lsquic_bio_to_crt(lsquic_str_cstr(&item->crts[i]),
                                 lsquic_str_len(&item->crts[i]), 0);
         if (cert)
             sk_X509_push(chain, cert);

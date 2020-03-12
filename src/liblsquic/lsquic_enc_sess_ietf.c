@@ -1664,7 +1664,7 @@ iquic_esfi_get_peer_transport_params (enc_session_t *enc_session_p)
 }
 
 
-void
+static void
 iquic_esfi_destroy (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
@@ -2288,7 +2288,7 @@ iquic_esfi_in_init (enc_session_t *sess)
 }
 
 
-int
+static int
 iquic_esfi_data_in (enc_session_t *sess, enum enc_level enc_level,
                                     const unsigned char *buf, size_t len)
 {

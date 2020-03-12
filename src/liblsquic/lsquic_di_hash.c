@@ -114,7 +114,7 @@ my_log2 /* silly name to suppress compiler warning */ (unsigned sz)
 
 
 struct data_in *
-data_in_hash_new (struct lsquic_conn_public *conn_pub,
+lsquic_data_in_hash_new (struct lsquic_conn_public *conn_pub,
                         lsquic_stream_id_t stream_id, uint64_t byteage)
 {
     struct hash_data_in *hdi;
@@ -350,7 +350,7 @@ has_bytes_after (const struct data_block *block, unsigned off)
 
 
 enum ins_frame
-data_in_hash_insert_data_frame (struct data_in *data_in,
+lsquic_data_in_hash_insert_data_frame (struct data_in *data_in,
                 const struct data_frame *data_frame, uint64_t read_offset)
 {
     struct hash_data_in *const hdi = HDI_PTR(data_in);
@@ -436,7 +436,8 @@ hash_di_insert_frame (struct data_in *data_in,
     const struct data_frame *const data_frame = &new_frame->data_frame;
     enum ins_frame ins;
 
-    ins = data_in_hash_insert_data_frame(data_in, data_frame, read_offset);
+    ins = lsquic_data_in_hash_insert_data_frame(data_in, data_frame,
+                                                                read_offset);
     assert(ins != INS_FRAME_OVERLAP);
     lsquic_packet_in_put(hdi->hdi_conn_pub->mm, new_frame->packet_in);
     if (ins != INS_FRAME_OK)
@@ -605,7 +606,7 @@ hash_di_empty (struct data_in *data_in)
 }
 
 
-struct data_in *
+static struct data_in *
 hash_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 {
     struct hash_data_in *const hdi = HDI_PTR(data_in);
@@ -613,7 +614,8 @@ hash_di_switch_impl (struct data_in *data_in, uint64_t read_offset)
 
     assert(hdi->hdi_count == 0);
 
-    new_data_in = data_in_nocopy_new(hdi->hdi_conn_pub, hdi->hdi_stream_id);
+    new_data_in = lsquic_data_in_nocopy_new(hdi->hdi_conn_pub,
+                                                    hdi->hdi_stream_id);
     data_in->di_if->di_destroy(data_in);
 
     return new_data_in;

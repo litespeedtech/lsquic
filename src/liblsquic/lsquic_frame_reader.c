@@ -380,7 +380,7 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
             LSQ_WARN("cannot allocate %u bytes for header block",
                                                     fr->fr_header_block_sz);
             fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, stream_id,
-                                                                FR_ERR_NOMEM);
+                                                        FR_ERR_OTHER_ERROR);
             return -1;
         }
         fr->fr_header_block = header_block;
@@ -430,7 +430,7 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
         LSQ_INFO("headers are too large (%u bytes), skipping",
             fr->fr_state.payload_length);
         fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, stream_id,
-                                                FR_ERR_HEADERS_TOO_LARGE);
+                                                FR_ERR_BAD_HEADER);
         /* fallthru */
     continue_skipping:
     default:
@@ -513,29 +513,20 @@ static int
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
     struct headers_state *hs = &fr->fr_state.by_type.headers_state;
-    const uint32_t hpack_static_table_size = 61;
     const unsigned char *comp, *end;
     enum frame_reader_error err;
     int s;
-    uint32_t name_idx;
-    lshpack_strlen_t name_len, val_len;
-    char *buf;
     uint32_t stream_id32;
     struct uncompressed_headers *uh = NULL;
     void *hset = NULL;
-
-    buf = lsquic_mm_get_16k(fr->fr_mm);
-    if (!buf)
-    {
-        err = FR_ERR_NOMEM;
-        goto stream_error;
-    }
+    struct lsxpack_header *hdr = NULL;
+    size_t extra = 0;
 
     hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx,
                             READER_PUSH_PROMISE == fr->fr_state.reader_type);
     if (!hset)
     {
-        err = FR_ERR_NOMEM;
+        err = FR_ERR_OTHER_ERROR;
         goto stream_error;
     }
 
@@ -544,40 +535,54 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
 
     while (comp < end)
     {
-        s = lshpack_dec_decode(fr->fr_hdec, &comp, end,
-                    buf, buf + 16 * 1024, &name_len, &val_len, &name_idx);
+  prepare:
+        hdr = fr->fr_hsi_if->hsi_prepare_decode(hset, hdr, extra);
+        if (!hdr)
+        {
+            err = FR_ERR_OTHER_ERROR;
+            goto stream_error;
+        }
+        s = lshpack_dec_decode(fr->fr_hdec, &comp, end, hdr);
         if (s == 0)
         {
-            if (name_idx > hpack_static_table_size)
-                name_idx = 0;   /* Work around bug in ls-hpack */
-            err = (enum frame_reader_error)
-                fr->fr_hsi_if->hsi_process_header(hset, name_idx, buf,
-                                        name_len, buf + name_len, val_len);
-            if (err == 0)
+            s = fr->fr_hsi_if->hsi_process_header(hset, hdr);
+            if (s == 0)
             {
 #if LSQUIC_CONN_STATS
-                fr->fr_conn_stats->in.headers_uncomp += name_len + val_len;
+                fr->fr_conn_stats->in.headers_uncomp += hdr->name_len +
+                                                        hdr->val_len;
 #endif
+                extra = 0;
+                hdr = NULL;
                 continue;
             }
+            else if (s > 0)
+                err = FR_ERR_BAD_HEADER;
+            else
+                err = FR_ERR_OTHER_ERROR;
+        }
+        else if (s == LSHPACK_ERR_MORE_BUF)
+        {
+            extra = hdr->val_len;
+            goto prepare;
         }
         else
             err = FR_ERR_DECOMPRESS;
         goto stream_error;
     }
     assert(comp == end);
-    lsquic_mm_put_16k(fr->fr_mm, buf);
-    buf = NULL;
 
-    err = (enum frame_reader_error)
-        fr->fr_hsi_if->hsi_process_header(hset, 0, 0, 0, 0, 0);
-    if (err)
+    s = fr->fr_hsi_if->hsi_process_header(hset, NULL);
+    if (s != 0)
+    {
+        err = s < 0 ? FR_ERR_OTHER_ERROR : FR_ERR_BAD_HEADER;
         goto stream_error;
+    }
 
     uh = calloc(1, sizeof(*uh));
     if (!uh)
     {
-        err = FR_ERR_NOMEM;
+        err = FR_ERR_OTHER_ERROR;
         goto stream_error;
     }
 
@@ -620,8 +625,6 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     LSQ_INFO("%s: stream error %u", __func__, err);
     if (hset)
         fr->fr_hsi_if->hsi_discard_header_set(hset);
-    if (buf)
-        lsquic_mm_put_16k(fr->fr_mm, buf);
     fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr), err);
     return 0;
 }
