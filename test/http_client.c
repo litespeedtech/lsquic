@@ -19,6 +19,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1034,6 +1035,9 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         el->nalloc = 0;
         xhdr = &el->xhdr;
     }
+    else
+        el = (struct hset_elem *) ((char *) xhdr
+                                        - offsetof(struct hset_elem, xhdr));
 
     if (min_space > el->nalloc)
     {
