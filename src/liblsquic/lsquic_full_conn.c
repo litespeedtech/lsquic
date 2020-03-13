@@ -3918,7 +3918,7 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     lsquic_http_header_t pseudo_headers[4];
     lsquic_http_headers_t all_headers[2];
     struct lsxpack_header *xhdr;
-    size_t extra;
+    size_t req_space;
 
     if (!hset)
     {
@@ -3973,9 +3973,9 @@ synthesize_push_request (struct full_conn *conn, void *hset,
                     header < all_headers[i].headers + all_headers[i].count;
                         ++header)
             {
-                extra = header->name.iov_len + header->value.iov_len + 4;
+                req_space = header->name.iov_len + header->value.iov_len + 4;
                 xhdr = conn->fc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
-                                                                NULL, extra);
+                                                            NULL, req_space);
                 if (!xhdr)
                 {
                     st = -__LINE__;

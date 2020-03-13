@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 13
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 2
 
 /**
  * Engine flags:
@@ -874,10 +874,15 @@ struct lsquic_hset_if
     /**
      * Return a header set prepared for decoding.  If `hdr' is NULL, this
      * means return a new structure with at least `space' bytes available
-     * in the decoder buffer.  If `hdr' is not NULL, it means there was not
-     * enough decoder buffer and it must be increased by `space' bytes.
+     * in the decoder buffer.  On success, a newly prepared header is
+     * returned.
      *
-     * If NULL is returned the header set is discarded.
+     * If `hdr' is not NULL, it means there was not enough decoder buffer
+     * and it must be increased to at least `space' bytes.  `buf', `val_len',
+     * and `name_offset' member of the `hdr' structure may change.  On
+     * success, the return value is the same as `hdr'.
+     *
+     * If NULL is returned, the space cannot be allocated.
      */
     struct lsxpack_header *
                         (*hsi_prepare_decode)(void *hdr_set,

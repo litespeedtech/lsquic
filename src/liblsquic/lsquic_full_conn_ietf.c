@@ -3282,7 +3282,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     int own_hset, stx_tab_id;
     unsigned char discard[2];
     struct lsxpack_header *xhdr;
-    size_t extra;
+    size_t req_space;
 
     if (!ietf_full_conn_ci_is_push_enabled(lconn)
                                 || !lsquic_stream_can_push(dep_stream))
@@ -3394,9 +3394,9 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
                     header < all_headers[i].headers + all_headers[i].count;
                         ++header)
             {
-                extra = header->name.iov_len + header->value.iov_len + 4;
+                req_space = header->name.iov_len + header->value.iov_len + 4;
                 xhdr = conn->ifc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
-                                                                NULL, extra);
+                                                            NULL, req_space);
                 if (!xhdr)
                 {
                     header_st = -__LINE__;

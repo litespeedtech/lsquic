@@ -520,7 +520,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     struct uncompressed_headers *uh = NULL;
     void *hset = NULL;
     struct lsxpack_header *hdr = NULL;
-    size_t extra = 0;
+    size_t req_space = 0;
 
     hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx,
                             READER_PUSH_PROMISE == fr->fr_state.reader_type);
@@ -536,7 +536,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     while (comp < end)
     {
   prepare:
-        hdr = fr->fr_hsi_if->hsi_prepare_decode(hset, hdr, extra);
+        hdr = fr->fr_hsi_if->hsi_prepare_decode(hset, hdr, req_space);
         if (!hdr)
         {
             err = FR_ERR_OTHER_ERROR;
@@ -552,7 +552,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
                 fr->fr_conn_stats->in.headers_uncomp += hdr->name_len +
                                                         hdr->val_len;
 #endif
-                extra = 0;
+                req_space = 0;
                 hdr = NULL;
                 continue;
             }
@@ -563,7 +563,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         }
         else if (s == LSHPACK_ERR_MORE_BUF)
         {
-            extra = hdr->val_len;
+            req_space = hdr->val_len;
             goto prepare;
         }
         else

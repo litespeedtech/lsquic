@@ -455,7 +455,7 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
     void *hset;
     struct cont_len cl;
     struct lsxpack_header *xhdr;
-    size_t extra;
+    size_t req_space;
 
     push_promise = lsquic_stream_header_is_pp(stream);
     hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
@@ -473,11 +473,11 @@ qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
         header = qlist->qhl_headers[i];
         LSQ_DEBUG("%.*s: %.*s", header->qh_name_len, header->qh_name,
                                         header->qh_value_len, header->qh_value);
-        extra = header->qh_name_len + header->qh_value_len + 4;
-        xhdr = hset_if->hsi_prepare_decode(hset, NULL, extra);
+        req_space = header->qh_name_len + header->qh_value_len + 4;
+        xhdr = hset_if->hsi_prepare_decode(hset, NULL, req_space);
         if (!xhdr)
         {
-            LSQ_DEBUG("prepare_decode(%zd) failed", extra);
+            LSQ_DEBUG("prepare_decode(%zd) failed", req_space);
             goto err;
         }
         memcpy(xhdr->buf + xhdr->name_offset, header->qh_name,

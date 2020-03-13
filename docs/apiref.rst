@@ -1421,11 +1421,16 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
     .. member:: struct lsxpack_header * (*hsi_prepare_decode)(void *hdr_set, struct lsxpack_header *hdr, size_t space)
 
         Return a header set prepared for decoding.  If ``hdr`` is NULL, this
-        means return a new structure with at least `space' bytes available
-        in the decoder buffer.  If `hdr' is not NULL, it means there was not
-        enough decoder buffer and it must be increased by ``space`` bytes.
+        means return a new structure with at least ``space`` bytes available
+        in the decoder buffer.  On success, a newly prepared header is
+        returned.
 
-        If NULL is returned the header set is discarded.
+        If ``hdr`` is not NULL, it means there was not enough decoder buffer
+        and it must be increased to at least ``space`` bytes.  ``buf``, ``val_len``,
+        and ``name_offset`` member of the ``hdr`` structure may change.  On
+        success, the return value is the same as ``hdr``.
+
+        If NULL is returned, the space cannot be allocated.
 
     .. member:: int (*hsi_process_header)(void *hdr_set, struct lsxpack_header *hdr)
 

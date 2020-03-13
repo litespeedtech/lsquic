@@ -1001,24 +1001,18 @@ hset_create (void *hsi_ctx, int is_push_promise)
 
 static struct lsxpack_header *
 hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
-                                                        size_t extra_space)
+                                                        size_t req_space)
 {
     struct hset *const hset = hset_p;
     struct hset_elem *el;
-    size_t min_space;
 
-    if (0 == extra_space)
-        min_space = 0x100;
-    else
-        min_space = extra_space;
+    if (0 == req_space)
+        req_space = 0x100;
 
-    if (xhdr)
-        min_space += xhdr->val_len;
-
-    if (min_space > LSXPACK_MAX_STRLEN)
+    if (req_space > LSXPACK_MAX_STRLEN)
     {
         LSQ_WARN("requested space for header is too large: %zd bytes",
-                                                                    min_space);
+                                                                    req_space);
         return NULL;
     }
 
@@ -1036,20 +1030,27 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         xhdr = &el->xhdr;
     }
     else
+    {
         el = (struct hset_elem *) ((char *) xhdr
                                         - offsetof(struct hset_elem, xhdr));
+        if (req_space <= el->nalloc)
+        {
+            LSQ_ERROR("requested space is smaller than already allocated");
+            return NULL;
+        }
+    }
 
-    if (min_space > el->nalloc)
+    if (req_space > el->nalloc)
     {
         free(el->buf);
         el->nalloc = 0;
-        el->buf = malloc(min_space);
+        el->buf = malloc(req_space);
         if (!el->buf)
         {
-            LSQ_DEBUG("cannot allocate %zd bytes", min_space);
+            LSQ_DEBUG("cannot allocate %zd bytes", req_space);
             return NULL;
         }
-        el->nalloc = min_space;
+        el->nalloc = req_space;
     }
 
     lsxpack_header_prepare_decode(&el->xhdr, el->buf, 0, el->nalloc);

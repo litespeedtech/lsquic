@@ -1186,7 +1186,7 @@ interop_server_hset_create (void *hsi_ctx, int is_push_promise)
 
 static struct lsxpack_header *
 interop_server_hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
-                                                            size_t extra_space)
+                                                                size_t req_space)
 {
     struct req *req = hset_p;
 

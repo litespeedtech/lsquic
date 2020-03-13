@@ -1,3 +1,7 @@
+2020-03-13
+    - 2.13.2
+    - [BUGFIX] Use of new lsxpack_header API's hsi_prepare_decode().
+
 2020-03-12
     - 2.13.1
     - [API] Use lsxpack_header structure to process incoming headers.

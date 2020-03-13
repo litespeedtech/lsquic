@@ -507,40 +507,31 @@ h1h_finish_hset (struct header_writer_ctx *hwc)
 
 
 static struct lsxpack_header *
-h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t extra_space)
+h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t req_space)
 {
     struct header_writer_ctx *const hwc = HWC_PTR(hset);
-    size_t min_space;
 
-    if (0 == extra_space)
-        min_space = 0x100;
-    else
-        min_space = extra_space;
+    if (0 == req_space)
+        req_space = 0x100;
 
-    if (xhdr)
-    {
-        assert(xhdr == &hwc->hwc_xhdr);
-        min_space += xhdr->val_len;
-    }
-
-    if (min_space > MAX_HTTP1X_HEADERS_SIZE || min_space > LSXPACK_MAX_STRLEN)
+    if (req_space > MAX_HTTP1X_HEADERS_SIZE || req_space > LSXPACK_MAX_STRLEN)
     {
         LSQ_DEBUG("requested space for header is too large: %zd bytes",
-                                                                    min_space);
+                                                                    req_space);
         return NULL;
     }
 
-    if (min_space > hwc->hwc_header_buf_nalloc)
+    if (req_space > hwc->hwc_header_buf_nalloc)
     {
         free(hwc->hwc_header_buf);
         hwc->hwc_header_buf_nalloc = 0;
-        hwc->hwc_header_buf = malloc(min_space);
+        hwc->hwc_header_buf = malloc(req_space);
         if (!hwc->hwc_header_buf)
         {
-            LSQ_DEBUG("cannot allocate %zd bytes", min_space);
+            LSQ_DEBUG("cannot allocate %zd bytes", req_space);
             return NULL;
         }
-        hwc->hwc_header_buf_nalloc = min_space;
+        hwc->hwc_header_buf_nalloc = req_space;
     }
 
     lsxpack_header_prepare_decode(&hwc->hwc_xhdr, hwc->hwc_header_buf,
