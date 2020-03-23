@@ -1,3 +1,7 @@
+2020-03-23
+    - 2.12.1
+    - [BUGFIX] ACK ping-pong: TIMESTAMP frame is not to be acked.
+
 2020-03-02
     - 2.12.0
     - [FEATURE] QUIC timestamps extension.
