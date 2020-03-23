@@ -1,3 +1,7 @@
+2020-03-23
+    - 2.13.3
+    - [BUGFIX] ACK ping-pong: TIMESTAMP frame is not to be acked.
+
 2020-03-13
     - 2.13.2
     - [BUGFIX] Use of new lsxpack_header API's hsi_prepare_decode().
