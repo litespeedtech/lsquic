@@ -4013,12 +4013,6 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
         return NULL;
     }
 
-    if (stream->uh->uh_flags & UH_H1H)
-    {
-        LSQ_INFO("%s: uncompressed headers have internal format", __func__);
-        return NULL;
-    }
-
     hset = stream->uh->uh_hset;
     stream->uh->uh_hset = NULL;
     destroy_uh(stream);
@@ -4429,13 +4423,6 @@ hq_decr_left (struct lsquic_stream *stream, size_t read)
     filter->hqfi_left -= read;
     if (0 == filter->hqfi_left)
         filter->hqfi_state = HQFI_STATE_FRAME_HEADER_BEGIN;
-}
-
-
-struct qpack_dec_hdl *
-lsquic_stream_get_qdh (const struct lsquic_stream *stream)
-{
-    return stream->conn_pub->u.ietf.qdh;
 }
 
 

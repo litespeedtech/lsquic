@@ -50,6 +50,7 @@
 #include "lsquic_packet_out.h"
 #include "lsquic_enc_sess.h"
 #include "lsqpack.h"
+#include "lsxpack_header.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_qenc_hdl.h"
 #include "lsquic_varint.h"
@@ -501,10 +502,8 @@ test_hq_framing (int sched_immed, int dispatch_once, unsigned wsize,
      * data-framing writer.  This is simply so that we don't have to
      * expose more stream things only for testing.
      */
-    struct lsquic_http_header header = {
-        .name = { ":method", 7, },
-        .value = { "GET", 3, },
-    };
+    struct lsxpack_header header;
+    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);
@@ -733,10 +732,8 @@ test_frame_header_split (unsigned n_packets, unsigned extra_sz,
     const unsigned wsize = 70;
     const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
 
-    struct lsquic_http_header header = {
-        .name = { ":method", 7, },
-        .value = { "GET", 3, },
-    };
+    struct lsxpack_header header;
+    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);
@@ -851,10 +848,8 @@ test_zero_size_frame (void)
     const unsigned wsize = 7000;
     const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
 
-    struct lsquic_http_header header = {
-        .name = { ":method", 7, },
-        .value = { "GET", 3, },
-    };
+    struct lsxpack_header header;
+    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);

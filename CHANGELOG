@@ -1,3 +1,11 @@
+2020-03-30
+    - 2.14.0
+    - [API] Use lsxpack_header structure to send HTTP headers.
+    - [OPTIMIZATION] nocopy's readable_bytes() function.
+    - http_server: fix typo in error message
+    - Use ls-hpack 2.1.0.
+    - Use ls-qpack 2.0.0.
+
 2020-03-23
     - 2.13.3
     - [BUGFIX] ACK ping-pong: TIMESTAMP frame is not to be acked.

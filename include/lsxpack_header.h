@@ -1,6 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
-#ifndef LSXPACK_HEADER_H_v203
-#define LSXPACK_HEADER_H_v203
+#ifndef LSXPACK_HEADER_H_v204
+#define LSXPACK_HEADER_H_v204
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +21,8 @@ typedef uint32_t lsxpack_strlen_t;
 #else
 #error unexpected LSXPACK_MAX_STRLEN
 #endif
+
+#define LSXPACK_DEL  ((char *)NULL)
 
 enum lsxpack_flag
 {
@@ -52,6 +54,7 @@ struct lsxpack_header
     lsxpack_strlen_t  name_len;     /* the length of name */
     lsxpack_strlen_t  val_offset;   /* the offset for value in the buffer */
     lsxpack_strlen_t  val_len;      /* the length of value */
+    uint16_t          chain_next_idx; /* mainly for cookie value chain */
     uint8_t           hpack_index;  /* HPACK static table index */
     uint8_t           qpack_index;  /* QPACK static table index */
     uint8_t           app_index;    /* APP header index */
@@ -72,6 +75,20 @@ lsxpack_header_set_idx(lsxpack_header_t *hdr, int hpack_idx,
     hdr->hpack_index = hpack_idx;
     assert(hpack_idx != 0);
     hdr->flags = LSXPACK_HPACK_IDX;
+    assert(val_len <= LSXPACK_MAX_STRLEN);
+    hdr->val_len = val_len;
+}
+
+
+static inline void
+lsxpack_header_set_qpack_idx(lsxpack_header_t *hdr, int qpack_idx,
+                       const char *val, size_t val_len)
+{
+    memset(hdr, 0, sizeof(*hdr));
+    hdr->buf = (char *)val;
+    hdr->qpack_index = qpack_idx;
+    assert(qpack_idx != -1);
+    hdr->flags = LSXPACK_QPACK_IDX;
     assert(val_len <= LSXPACK_MAX_STRLEN);
     hdr->val_len = val_len;
 }
@@ -162,4 +179,4 @@ lsxpack_header_get_dec_size(const lsxpack_header_t *hdr)
 }
 #endif
 
-#endif //LSXPACK_HEADER_H_v203
+#endif //LSXPACK_HEADER_H_v204

@@ -52,7 +52,6 @@ struct header_writer_ctx
     enum pseudo_header           pseh_mask;
     char                        *pseh_bufs[N_PSEH];
     struct http1x_headers        hwc_h1h;
-    char                        *hwc_header_buf;
     size_t                       hwc_header_buf_nalloc;
     struct lsxpack_header        hwc_xhdr;
 };
@@ -63,7 +62,7 @@ struct header_writer_ctx
 #define HWC_PSEH_VAL(hwc, ph) ((hwc)->pseh_bufs[ph])
 
 static void *
-h1h_create_header_set (void *ctx, int is_push_promise)
+h1h_create_header_set (void *ctx, lsquic_stream_t *stream, int is_push_promise)
 {
     const struct http1x_ctor_ctx *hcc = ctx;
     struct header_writer_ctx *hwc;
@@ -510,8 +509,10 @@ static struct lsxpack_header *
 h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t req_space)
 {
     struct header_writer_ctx *const hwc = HWC_PTR(hset);
+    size_t nalloc;
+    char *buf;
 
-    if (0 == req_space)
+    if (req_space < 0x100)
         req_space = 0x100;
 
     if (req_space > MAX_HTTP1X_HEADERS_SIZE || req_space > LSXPACK_MAX_STRLEN)
@@ -521,21 +522,47 @@ h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t req_space)
         return NULL;
     }
 
-    if (req_space > hwc->hwc_header_buf_nalloc)
+    if (!xhdr)
     {
-        free(hwc->hwc_header_buf);
-        hwc->hwc_header_buf_nalloc = 0;
-        hwc->hwc_header_buf = malloc(req_space);
-        if (!hwc->hwc_header_buf)
+        if (0 == hwc->hwc_header_buf_nalloc
+                                    || req_space > hwc->hwc_header_buf_nalloc)
         {
-            LSQ_DEBUG("cannot allocate %zd bytes", req_space);
-            return NULL;
+            if (req_space < 0x100)
+                nalloc = 0x100;
+            else
+                nalloc = req_space;
+            buf = malloc(nalloc);
+            if (!buf)
+            {
+                LSQ_DEBUG("cannot allocate %zd bytes", nalloc);
+                return NULL;
+            }
+            hwc->hwc_header_buf_nalloc = nalloc;
         }
-        hwc->hwc_header_buf_nalloc = req_space;
+        else
+            buf = hwc->hwc_xhdr.buf;
+        lsxpack_header_prepare_decode(&hwc->hwc_xhdr, buf, 0, req_space);
+    }
+    else
+    {
+        if (req_space > hwc->hwc_header_buf_nalloc)
+        {
+            if (req_space < hwc->hwc_header_buf_nalloc * 2)
+                nalloc = hwc->hwc_header_buf_nalloc * 2;
+            else
+                nalloc = req_space;
+            buf = realloc(hwc->hwc_xhdr.buf, nalloc);
+            if (!buf)
+            {
+                LSQ_DEBUG("cannot reallocate to %zd bytes", nalloc);
+                return NULL;
+            }
+            hwc->hwc_xhdr.buf = buf;
+            hwc->hwc_header_buf_nalloc = nalloc;
+        }
+        hwc->hwc_xhdr.val_len = req_space;
     }
 
-    lsxpack_header_prepare_decode(&hwc->hwc_xhdr, hwc->hwc_header_buf,
-                                            0, hwc->hwc_header_buf_nalloc);
     return &hwc->hwc_xhdr;
 }
 
@@ -563,7 +590,7 @@ h1h_discard_header_set (void *hset)
     if (hwc->cookie_val)
         free(hwc->cookie_val);
     free(hwc->hwc_h1h.h1h_buf);
-    free(hwc->hwc_header_buf);
+    free(hwc->hwc_xhdr.buf);
     free(hwc);
 }
 

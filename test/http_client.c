@@ -221,8 +221,6 @@ struct hset_elem
 {
     STAILQ_ENTRY(hset_elem)     next;
     struct lsxpack_header       xhdr;
-    size_t                      nalloc;
-    char                       *buf;
 };
 
 
@@ -534,49 +532,16 @@ send_headers (lsquic_stream_ctx_t *st_h)
     const char *hostname = st_h->client_ctx->hostname;
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
-    lsquic_http_header_t headers_arr[] = {
-        {
-            .name  = { .iov_base = ":method",       .iov_len = 7, },
-            .value = { .iov_base = (void *) st_h->client_ctx->method,
-                       .iov_len = strlen(st_h->client_ctx->method), },
-        },
-        {
-            .name  = { .iov_base = ":scheme",       .iov_len = 7, },
-            .value = { .iov_base = "https",         .iov_len = 5, }
-        },
-        {
-            .name  = { .iov_base = ":path",         .iov_len = 5, },
-            .value = { .iov_base = (void *) st_h->path,
-                       .iov_len = strlen(st_h->path), },
-        },
-        {
-            .name  = { ":authority",     10, },
-            .value = { .iov_base = (void *) hostname,
-                       .iov_len = strlen(hostname), },
-        },
-        /*
-        {
-            .name  = { "host",      4 },
-            .value = { .iov_base = (void *) st_h->client_ctx->hostname,
-                       .iov_len = strlen(st_h->client_ctx->hostname), },
-        },
-        */
-        {
-            .name  = { .iov_base = "user-agent",    .iov_len = 10, },
-            .value = { .iov_base = (char *) st_h->client_ctx->prog->prog_settings.es_ua,
-                       .iov_len  = strlen(st_h->client_ctx->prog->prog_settings.es_ua), },
-        },
-        /* The following headers only gets sent if there is request payload: */
-        {
-            .name  = { .iov_base = "content-type", .iov_len = 12, },
-            .value = { .iov_base = "application/octet-stream", .iov_len = 24, },
-        },
-        {
-            .name  = { .iov_base = "content-length", .iov_len = 14, },
-            .value = { .iov_base = (void *) st_h->client_ctx->payload_size,
-                       .iov_len = strlen(st_h->client_ctx->payload_size), },
-        },
-    };
+    struct lsxpack_header headers_arr[7];
+#define V(v) (v), strlen(v)
+    lsxpack_header_set_ptr(&headers_arr[0], V(":method"), V(st_h->client_ctx->method));
+    lsxpack_header_set_ptr(&headers_arr[1], V(":scheme"), V("https"));
+    lsxpack_header_set_ptr(&headers_arr[2], V(":path"), V(st_h->path));
+    lsxpack_header_set_ptr(&headers_arr[3], V(":authority"), V(hostname));
+    lsxpack_header_set_ptr(&headers_arr[4], V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
+    /* The following headers only gets sent if there is request payload: */
+    lsxpack_header_set_ptr(&headers_arr[5], V("content-type"), V("application/octet-stream"));
+    lsxpack_header_set_ptr(&headers_arr[6], V("content-length"), V( st_h->client_ctx->payload_size));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
@@ -983,7 +948,7 @@ verify_server_cert (void *ctx, STACK_OF(X509) *chain)
 
 
 static void *
-hset_create (void *hsi_ctx, int is_push_promise)
+hset_create (void *hsi_ctx, lsquic_stream_t *stream, int is_push_promise)
 {
     struct hset *hset;
 
@@ -1005,6 +970,7 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
 {
     struct hset *const hset = hset_p;
     struct hset_elem *el;
+    char *buf;
 
     if (0 == req_space)
         req_space = 0x100;
@@ -1018,42 +984,41 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
 
     if (!xhdr)
     {
+        buf = malloc(req_space);
+        if (!buf)
+        {
+            LSQ_WARN("cannot allocate buf of %zd bytes", req_space);
+            return NULL;
+        }
         el = malloc(sizeof(*el));
         if (!el)
         {
             LSQ_WARN("cannot allocate hset_elem");
+            free(buf);
             return NULL;
         }
         STAILQ_INSERT_TAIL(hset, el, next);
-        el->buf = NULL;
-        el->nalloc = 0;
-        xhdr = &el->xhdr;
+        lsxpack_header_prepare_decode(&el->xhdr, buf, 0, req_space);
     }
     else
     {
         el = (struct hset_elem *) ((char *) xhdr
                                         - offsetof(struct hset_elem, xhdr));
-        if (req_space <= el->nalloc)
+        if (req_space <= xhdr->val_len)
         {
             LSQ_ERROR("requested space is smaller than already allocated");
             return NULL;
         }
-    }
-
-    if (req_space > el->nalloc)
-    {
-        free(el->buf);
-        el->nalloc = 0;
-        el->buf = malloc(req_space);
-        if (!el->buf)
+        buf = realloc(el->xhdr.buf, req_space);
+        if (!buf)
         {
-            LSQ_DEBUG("cannot allocate %zd bytes", req_space);
+            LSQ_WARN("cannot reallocate hset buf");
             return NULL;
         }
-        el->nalloc = req_space;
+        el->xhdr.buf = buf;
+        el->xhdr.val_len = req_space;
     }
 
-    lsxpack_header_prepare_decode(&el->xhdr, el->buf, 0, el->nalloc);
     return &el->xhdr;
 }
 
@@ -1088,7 +1053,7 @@ hset_destroy (void *hset_p)
         for (el = STAILQ_FIRST(hset); el; el = next)
         {
             next = STAILQ_NEXT(el, next);
-            free(el->buf);
+            free(el->xhdr.buf);
             free(el);
         }
         free(hset);
@@ -1184,7 +1149,7 @@ qif_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     struct http_client_ctx *const client_ctx = stream_if_ctx;
     FILE *const fh = client_ctx->qif_fh;
     struct qif_stream_ctx *ctx;
-    struct lsquic_http_header *header;
+    struct lsxpack_header *header;
     static int reqno;
     size_t nalloc;
     int i;
@@ -1245,20 +1210,18 @@ qif_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
             exit(1);
         }
         header = &ctx->headers.headers[ctx->headers.count++];
-        header->name.iov_base = (void *) ctx->qif_sz;
-        header->name.iov_len = tab - line;
-        header->value.iov_base = (void *) (ctx->qif_sz + (tab - line + 1));
-        header->value.iov_len = end - tab - 1;
+        lsxpack_header_set_ptr(header, (void *) ctx->qif_sz, tab - line,
+                    (void *) (ctx->qif_sz + (tab - line + 1)), end - tab - 1);
 
         ctx->qif_sz += end + 1 - line;
     }
 
     for (i = 0; i < ctx->headers.count; ++i)
     {
-        ctx->headers.headers[i].name.iov_base = ctx->qif_str
-                + (uintptr_t) ctx->headers.headers[i].name.iov_base;
-        ctx->headers.headers[i].value.iov_base = ctx->qif_str
-                + (uintptr_t) ctx->headers.headers[i].value.iov_base;
+        ctx->headers.headers[i].buf = ctx->qif_str
+                + (uintptr_t) ctx->headers.headers[i].buf;
+        ctx->headers.headers[i].name_ptr = ctx->qif_str
+                + (uintptr_t) ctx->headers.headers[i].name_ptr;
     }
 
     lsquic_stream_wantwrite(stream, 1);

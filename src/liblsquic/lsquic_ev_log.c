@@ -29,6 +29,7 @@
 #include "lsquic_util.h"
 #include "lsquic_hash.h"
 #include "lsquic_conn.h"
+#include "lsxpack_header.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_EVENT
 #include "lsquic_logger.h"
@@ -506,19 +507,19 @@ lsquic_ev_log_generated_http_headers (const lsquic_cid_t *cid,
     }
 
     for (i = 0; i < headers->count; ++i)
-        LCID("  %.*s: %.*s",
-            (int)    headers->headers[i].name.iov_len,
-            (char *) headers->headers[i].name.iov_base,
-            (int)    headers->headers[i].value.iov_len,
-            (char *) headers->headers[i].value.iov_base);
+        if (headers->headers[i].buf)
+            LCID("  %.*s: %.*s",
+                (int)    headers->headers[i].name_len,
+                lsxpack_header_get_name(&headers->headers[i]),
+                (int)    headers->headers[i].val_len,
+                lsxpack_header_get_value(&headers->headers[i]));
 }
 
 
 void
 lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *cid,
             lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id, 
-            const struct lsquic_http_headers *headers,
-            const struct lsquic_http_headers *extra_headers)
+            const struct lsquic_http_headers *headers)
 {
     int i;
 
@@ -526,19 +527,12 @@ lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *cid,
         PRIu64, stream_id, promised_stream_id);
 
     for (i = 0; i < headers->count; ++i)
-        LCID("  %.*s: %.*s",
-            (int)    headers->headers[i].name.iov_len,
-            (char *) headers->headers[i].name.iov_base,
-            (int)    headers->headers[i].value.iov_len,
-            (char *) headers->headers[i].value.iov_base);
-
-    if (extra_headers)
-        for (i = 0; i < extra_headers->count; ++i)
+        if (headers->headers[i].buf)
             LCID("  %.*s: %.*s",
-                (int)    extra_headers->headers[i].name.iov_len,
-                (char *) extra_headers->headers[i].name.iov_base,
-                (int)    extra_headers->headers[i].value.iov_len,
-                (char *) extra_headers->headers[i].value.iov_base);
+                (int)    headers->headers[i].name_len,
+                lsxpack_header_get_name(&headers->headers[i]),
+                (int)    headers->headers[i].val_len,
+                lsxpack_header_get_value(&headers->headers[i]));
 }
 
 void

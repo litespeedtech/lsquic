@@ -3261,33 +3261,31 @@ undo_stream_creation (struct ietf_full_conn *conn,
  */
 static int
 ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
-    struct lsquic_stream *dep_stream, const struct iovec *path,
-    const struct iovec *host, const struct lsquic_http_headers *headers)
+    struct lsquic_stream *dep_stream, const struct lsquic_http_headers *headers)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     unsigned char *header_block_buf, *end, *p;
     size_t hea_sz, enc_sz;
     ssize_t prefix_sz;
-    lsquic_http_header_t pseudo_headers[4], *header;
-    lsquic_http_headers_t all_headers[2];
     struct lsquic_hash_elem *el;
     struct push_promise *promise;
     struct lsquic_stream *pushed_stream;
-    struct http1x_ctor_ctx ctor_ctx;
-    void *hsi_ctx;
     struct uncompressed_headers *uh;
     enum lsqpack_enc_status enc_st;
-    int header_st;
-    unsigned i, n_header_sets;
-    int own_hset, stx_tab_id;
+    int i;
     unsigned char discard[2];
     struct lsxpack_header *xhdr;
-    size_t req_space;
 
     if (!ietf_full_conn_ci_is_push_enabled(lconn)
                                 || !lsquic_stream_can_push(dep_stream))
     {
         LSQ_DEBUG("cannot push using stream %"PRIu64, dep_stream->id);
+        return -1;
+    }
+
+    if (!hset)
+    {
+        LSQ_ERROR("header set must be specified when pushing");
         return -1;
     }
 
@@ -3310,51 +3308,25 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
      */
     p = header_block_buf;
     end = header_block_buf + 0x1000;
-    pseudo_headers[0].name. iov_base    = ":method";
-    pseudo_headers[0].name. iov_len     = 7;
-    pseudo_headers[0].value.iov_base    = "GET";
-    pseudo_headers[0].value.iov_len     = 3;
-    pseudo_headers[1].name .iov_base    = ":path";
-    pseudo_headers[1].name .iov_len     = 5;
-    pseudo_headers[1].value             = *path;
-    pseudo_headers[2].name .iov_base    = ":authority";
-    pseudo_headers[2].name .iov_len     = 10;
-    pseudo_headers[2].value             = *host;
-    pseudo_headers[3].name. iov_base    = ":scheme";
-    pseudo_headers[3].name. iov_len     = 7;
-    pseudo_headers[3].value.iov_base    = "https";
-    pseudo_headers[3].value.iov_len     = 5;
-    all_headers[0].headers = pseudo_headers;
-    all_headers[0].count   = sizeof(pseudo_headers)
-                                            / sizeof(pseudo_headers[0]);
-    if (headers)
-    {
-        all_headers[1] = *headers;
-        n_header_sets = 2;
-    }
-    else
-        n_header_sets = 1;
     enc_sz = 0; /* Should not change */
-    for (i = 0; i < n_header_sets; ++i)
-        for (header = all_headers[i].headers;
-                header < all_headers[i].headers + all_headers[i].count;
-                    ++header)
+    for (i = 0; i < headers->count; ++i)
+    {
+        xhdr = &headers->headers[i];
+        if (!xhdr->buf)
+            continue;
+        hea_sz = end - p;
+        enc_st = lsqpack_enc_encode(&conn->ifc_qeh.qeh_encoder, NULL,
+            &enc_sz, p, &hea_sz, xhdr, LQEF_NO_HIST_UPD|LQEF_NO_DYN);
+        if (enc_st == LQES_OK)
+            p += hea_sz;
+        else
         {
-            hea_sz = end - p;
-            enc_st = lsqpack_enc_encode(&conn->ifc_qeh.qeh_encoder, NULL,
-                &enc_sz, p, &hea_sz, header->name.iov_base,
-                header->name.iov_len, header->value.iov_base,
-                header->value.iov_len, LQEF_NO_HIST_UPD|LQEF_NO_DYN);
-            if (enc_st == LQES_OK)
-                p += hea_sz;
-            else
-            {
-                (void) lsqpack_enc_cancel_header(&conn->ifc_qeh.qeh_encoder);
-                lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-                LSQ_DEBUG("cannot encode header field for push %u", enc_st);
-                return -1;
-            }
+            (void) lsqpack_enc_cancel_header(&conn->ifc_qeh.qeh_encoder);
+            lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
+            LSQ_DEBUG("cannot encode header field for push %u", enc_st);
+            return -1;
         }
+    }
     prefix_sz = lsqpack_enc_end_header(&conn->ifc_qeh.qeh_encoder,
                                             discard, sizeof(discard), NULL);
     if (!(prefix_sz == 2 && discard[0] == 0 && discard[1] == 0))
@@ -3367,88 +3339,11 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     LSQ_DEBUG("generated push promise header block of %ld bytes",
                                             (long) (p - header_block_buf));
 
-    own_hset = !hset;
-    if (!hset)
-    {
-        if (conn->ifc_enpub->enp_hsi_if == lsquic_http1x_if)
-        {
-            ctor_ctx = (struct http1x_ctor_ctx)
-            {
-                .conn      = &conn->ifc_conn,
-                .is_server = 1,
-                .max_headers_sz = MAX_HTTP1X_HEADERS_SIZE,
-            };
-            hsi_ctx = &ctor_ctx;
-        }
-        else
-            hsi_ctx = conn->ifc_enpub->enp_hsi_ctx;
-        hset = conn->ifc_enpub->enp_hsi_if->hsi_create_header_set(hsi_ctx, 1);
-        if (!hset)
-        {
-            LSQ_INFO("header set ctor failure");
-            lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-            return -1;
-        }
-        for (i = 0; i < n_header_sets; ++i)
-            for (header = all_headers[i].headers;
-                    header < all_headers[i].headers + all_headers[i].count;
-                        ++header)
-            {
-                req_space = header->name.iov_len + header->value.iov_len + 4;
-                xhdr = conn->ifc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
-                                                            NULL, req_space);
-                if (!xhdr)
-                {
-                    header_st = -__LINE__;
-                    goto header_err;
-                }
-                memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
-                                                        header->name.iov_len);
-                xhdr->name_len = header->name.iov_len;
-                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
-                xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
-                memcpy(xhdr->buf + xhdr->val_offset, header->value.iov_base,
-                                                        header->value.iov_len);
-                xhdr->val_len = header->value.iov_len;
-                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
-                            + xhdr->val_len, "\r\n", 2);
-                xhdr->dec_overhead = 4;
-                stx_tab_id = lsqpack_get_stx_tab_id(header->name.iov_base,
-                                header->name.iov_len, header->value.iov_base,
-                                header->value.iov_len);
-                if (stx_tab_id >= 0)
-                {
-                    xhdr->qpack_index = stx_tab_id;
-                    xhdr->flags |= LSXPACK_QPACK_IDX;
-                }
-                header_st = conn->ifc_enpub->enp_hsi_if
-                                            ->hsi_process_header(hset, xhdr);
-                if (header_st != 0)
-                {
-  header_err:
-                    lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-                    conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
-                    LSQ_DEBUG("header process error: %d", header_st);
-                    return -1;
-                }
-            }
-        header_st = conn->ifc_enpub->enp_hsi_if->hsi_process_header(hset, NULL);
-        if (header_st != 0)
-        {
-            lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
-            LSQ_DEBUG("header process error: %d", header_st);
-            return -1;
-        }
-    }
-
     pushed_stream = create_push_stream(conn);
     if (!pushed_stream)
     {
         LSQ_WARN("could not create push stream");
         lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         return -1;
     }
 
@@ -3457,8 +3352,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     {
         LSQ_WARN("stream push: cannot allocate promise");
         lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         undo_stream_creation(conn, pushed_stream);
         return -1;
     }
@@ -3469,8 +3362,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         LSQ_WARN("stream push: cannot allocate uh");
         free(promise);
         lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         undo_stream_creation(conn, pushed_stream);
         return -1;
     }
@@ -3479,8 +3370,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     uh->uh_weight        = lsquic_stream_priority(dep_stream) / 2 + 1;
     uh->uh_exclusive     = 0;
     uh->uh_flags         = UH_FIN;
-    if (lsquic_http1x_if == conn->ifc_enpub->enp_hsi_if)
-        uh->uh_flags    |= UH_H1H;
     uh->uh_hset          = hset;
 
     memset(promise, 0, sizeof(*promise));
@@ -3497,8 +3386,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     {
         LSQ_WARN("cannot insert push promise (ID)");
         undo_stream_creation(conn, pushed_stream);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
         free(uh);
         return -1;
@@ -3508,8 +3395,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     {
         LSQ_DEBUG("push promise failed");
         undo_stream_creation(conn, pushed_stream);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
         free(uh);
         return -1;
@@ -3519,8 +3404,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     {
         LSQ_WARN("stream barfed when fed synthetic request");
         undo_stream_creation(conn, pushed_stream);
-        if (own_hset)
-            conn->ifc_enpub->enp_hsi_if->hsi_discard_header_set(hset);
         free(uh);
         if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso,
                                                     promise->pp_id))

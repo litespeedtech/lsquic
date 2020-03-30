@@ -314,8 +314,9 @@ calc_headers_size (const struct lsquic_http_headers *headers)
     int i;
     uint32_t size = 0;
     for (i = 0; i < headers->count; ++i)
-        size += 32 + headers->headers[i].name.iov_len +
-                     headers->headers[i].value.iov_len;
+        if (headers->headers[i].buf)
+            size += 32 + headers->headers[i].name_len +
+                         headers->headers[i].val_len;
     return size;
 }
 
@@ -323,25 +324,29 @@ calc_headers_size (const struct lsquic_http_headers *headers)
 static int
 have_oversize_strings (const struct lsquic_http_headers *headers)
 {
+#if LSXPACK_MAX_STRLEN > LSHPACK_MAX_STRLEN
     int i, have;
     for (i = 0, have = 0; i < headers->count; ++i)
     {
-        have |= headers->headers[i].name.iov_len  > LSHPACK_MAX_STRLEN;
-        have |= headers->headers[i].value.iov_len > LSHPACK_MAX_STRLEN;
+        if (headers->headers[i].buf)
+        {
+            have |= headers->headers[i].name_len > LSHPACK_MAX_STRLEN;
+            have |= headers->headers[i].val_len > LSHPACK_MAX_STRLEN;
+        }
     }
     return have;
+#else
+    return 0;
+#endif
 }
 
 
 static int
 check_headers_size (const struct lsquic_frame_writer *fw,
-                    const struct lsquic_http_headers *headers,
-                    const struct lsquic_http_headers *extra_headers)
+                    const struct lsquic_http_headers *headers)
 {
     uint32_t headers_sz;
     headers_sz = calc_headers_size(headers);
-    if (extra_headers)
-        headers_sz += calc_headers_size(extra_headers);
 
     if (headers_sz <= fw->fw_max_header_list_sz)
         return 0;
@@ -369,8 +374,10 @@ check_headers_case (const struct lsquic_frame_writer *fw,
     int i;
     n_uppercase = 0;
     for (i = 0; i < headers->count; ++i)
-        n_uppercase += count_uppercase(headers->headers[i].name.iov_base,
-                                        headers->headers[i].name.iov_len);
+        if (headers->headers[i].buf)
+            n_uppercase += count_uppercase((unsigned char *)
+                                lsxpack_header_get_name(&headers->headers[i]),
+                                headers->headers[i].name_len);
     if (n_uppercase)
     {
         LSQ_INFO("Uppercase letters in header names");
@@ -389,13 +396,12 @@ write_headers (struct lsquic_frame_writer *fw,
 {
     unsigned char *end;
     int i, s;
-    struct lsxpack_header hdr;
     for (i = 0; i < headers->count; ++i)
     {
-        lsquic_http_header_t *h = &headers->headers[i];
-        lsxpack_header_set_ptr(&hdr, h->name.iov_base, h->name.iov_len,
-                               h->value.iov_base, h->value.iov_len);
-        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz, &hdr);
+        if (headers->headers[i].buf == NULL)
+            continue;
+        end = lshpack_enc_encode(fw->fw_henc, buf, buf + buf_sz,
+                                                    &headers->headers[i]);
         if (end > buf)
         {
             s = hfc_write(hfc, buf, end - buf);
@@ -403,8 +409,8 @@ write_headers (struct lsquic_frame_writer *fw,
                 return s;
 #if LSQUIC_CONN_STATS
             fw->fw_conn_stats->out.headers_uncomp +=
-                headers->headers[i].name.iov_len
-                    + headers->headers[i].value.iov_len;
+                headers->headers[i].name_len
+                    + headers->headers[i].val_len;
             fw->fw_conn_stats->out.headers_comp += end - buf;
 #endif
         }
@@ -433,7 +439,7 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
     /* Internal function: weight must be valid here */
     assert(weight >= 1 && weight <= 256);
 
-    if (fw->fw_max_header_list_sz && 0 != check_headers_size(fw, headers, NULL))
+    if (fw->fw_max_header_list_sz && 0 != check_headers_size(fw, headers))
         return -1;
 
     if (0 != check_headers_case(fw, headers))
@@ -482,47 +488,22 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
 int
 lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
-    const struct iovec *path, const struct iovec *host,
-    const struct lsquic_http_headers *extra_headers)
+    const struct lsquic_http_headers *headers)
 {
     uint32_t stream_id = stream_id64;
     uint32_t promised_stream_id = promised_stream_id64;
     struct header_framer_ctx hfc;
     struct http_push_promise_frame push_frame;
-    lsquic_http_header_t mpas_headers[4];
-    struct lsquic_http_headers mpas = {    /* method, path, authority, scheme */
-        .headers = mpas_headers,
-        .count   = 4,
-    };
     unsigned char *buf;
     int s;
 
-    mpas_headers[0].name. iov_base    = ":method";
-    mpas_headers[0].name. iov_len     = 7;
-    mpas_headers[0].value.iov_base    = "GET";
-    mpas_headers[0].value.iov_len     = 3;
-    mpas_headers[1].name .iov_base    = ":path";
-    mpas_headers[1].name .iov_len     = 5;
-    mpas_headers[1].value             = *path;
-    mpas_headers[2].name .iov_base    = ":authority";
-    mpas_headers[2].name .iov_len     = 10;
-    mpas_headers[2].value             = *host;
-    mpas_headers[3].name. iov_base    = ":scheme";
-    mpas_headers[3].name. iov_len     = 7;
-    mpas_headers[3].value.iov_base    = "https";
-    mpas_headers[3].value.iov_len     = 5;
-
-    if (fw->fw_max_header_list_sz &&
-                    0 != check_headers_size(fw, &mpas, extra_headers))
+    if (fw->fw_max_header_list_sz && 0 != check_headers_size(fw, headers))
         return -1;
 
-    if (extra_headers && 0 != check_headers_case(fw, extra_headers))
+    if (0 != check_headers_case(fw, headers))
         return -1;
 
-    if (have_oversize_strings(&mpas))
-        return -1;
-
-    if (extra_headers && have_oversize_strings(extra_headers))
+    if (have_oversize_strings(headers))
         return -1;
 
     hfc_init(&hfc, fw, fw->fw_max_frame_sz, HTTP_FRAME_PUSH_PROMISE,
@@ -538,22 +519,19 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     if (!buf)
         return -1;
 
-    s = write_headers(fw, &mpas, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
+    s = write_headers(fw, headers, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
     if (s != 0)
     {
         free(buf);
         return -1;
     }
 
-    if (extra_headers)
-        s = write_headers(fw, extra_headers, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
-
     free(buf);
 
     if (0 == s)
     {
         EV_LOG_GENERATED_HTTP_PUSH_PROMISE(LSQUIC_LOG_CONN_ID, stream_id,
-                            htonl(promised_stream_id), &mpas, extra_headers);
+                            htonl(promised_stream_id), headers);
         hfc_terminate_frame(&hfc, HFHF_END_HEADERS);
         return lsquic_frame_writer_flush(fw);
     }

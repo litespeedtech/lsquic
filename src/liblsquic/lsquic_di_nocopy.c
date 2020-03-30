@@ -538,6 +538,8 @@ nocopy_di_readable_bytes (struct data_in *data_in, uint64_t read_offset)
     TAILQ_FOREACH(frame, &ncdi->ncdi_frames_in, next_frame)
         if (DF_ROFF(frame) == read_offset)
             read_offset += DF_END(frame) - DF_ROFF(frame);
+        else if (read_offset > starting_offset)
+            break;
 
     return read_offset - starting_offset;
 }

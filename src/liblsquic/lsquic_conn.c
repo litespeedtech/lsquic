@@ -196,11 +196,9 @@ lsquic_conn_get_engine (struct lsquic_conn *lconn)
 
 int
 lsquic_conn_push_stream (struct lsquic_conn *lconn, void *hset,
-    struct lsquic_stream *stream, const struct iovec* url,
-    const struct iovec *authority, const struct lsquic_http_headers *headers)
+    struct lsquic_stream *stream, const struct lsquic_http_headers *headers)
 {
-    return lconn->cn_if->ci_push_stream(lconn, hset, stream, url, authority,
-                                        headers);
+    return lconn->cn_if->ci_push_stream(lconn, hset, stream, headers);
 }
 
 

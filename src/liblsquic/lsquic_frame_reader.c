@@ -522,7 +522,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     struct lsxpack_header *hdr = NULL;
     size_t req_space = 0;
 
-    hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx,
+    hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, fr->fr_stream,
                             READER_PUSH_PROMISE == fr->fr_state.reader_type);
     if (!hset)
     {

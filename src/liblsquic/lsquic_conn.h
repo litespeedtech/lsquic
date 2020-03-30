@@ -194,7 +194,6 @@ struct conn_iface
 
     int
     (*ci_push_stream) (struct lsquic_conn *, void *hset, struct lsquic_stream *,
-        const struct iovec* url, const struct iovec* authority,
         const struct lsquic_http_headers *headers);
 
     /* Use this to abort the connection when unlikely errors occur */

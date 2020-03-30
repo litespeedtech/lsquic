@@ -63,6 +63,7 @@ output_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 
 
 #define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
+#define XHDR(name_, value_) .buf = value_, .name_ptr = name_, .val_len = sizeof(value_) - 1, .name_len = sizeof(name_) - 1
 
 
 static void
@@ -117,9 +118,9 @@ test_one_header (void)
                                 0);
     reset_output(0);
 
-    struct lsquic_http_header header_arr[] =
+    struct lsxpack_header header_arr[] =
     {
-        { .name = IOV(":status"), .value = IOV("302") },
+        { XHDR(":status", "302") },
     };
 
     struct lsquic_http_headers headers = {
@@ -169,7 +170,7 @@ test_oversize_header (void)
     struct lsquic_frame_writer *fw;
     int s;
     struct lsquic_mm mm;
-    const size_t big_len = 100 * 1000;
+    const size_t big_len = LSXPACK_MAX_STRLEN - 20;
     char *value;
 
     lshpack_enc_init(&henc);
@@ -185,12 +186,12 @@ test_oversize_header (void)
     value = malloc(big_len);
     memset(value, 'A', big_len);
 
-    struct lsquic_http_header header_arr[] =
+    struct lsxpack_header header_arr[3] =
     {
-        { .name = IOV(":status"), .value = IOV("302") },
-        { .name = IOV("some-header"),
-          .value = { .iov_base = value, .iov_len = big_len, } },
+        { XHDR(":status", "302") },
     };
+    lsxpack_header_set_ptr(&header_arr[1], "some-header", 10, value, big_len);
+    lsxpack_header_set_ptr(&header_arr[2], "another-header", 10, value, big_len);
 
     struct lsquic_http_headers headers = {
         .count = sizeof(header_arr) / sizeof(header_arr[0]),
@@ -230,10 +231,10 @@ perl tools/henc.pl :status 302 x-some-header some-value | hexdump -C
 00000010  87 41 e9 2a dd c7 45 a5                           |.A.*..E.|
 */
 
-    struct lsquic_http_header header_arr[] =
+    struct lsxpack_header header_arr[] =
     {
-        { .name = IOV(":status"), .value = IOV("302") },
-        {. name = IOV("x-some-header"), .value = IOV("some-value") },
+        { XHDR(":status", "302") },
+        { XHDR("x-some-header", "some-value") },
     };
 
     struct lsquic_http_headers headers = {
@@ -482,10 +483,10 @@ test_errors (void)
     reset_output(0);
 
     {
-        struct lsquic_http_header header_arr[] =
+        struct lsxpack_header header_arr[] =
         {
-            { .name = IOV(":status"), .value = IOV("200") },
-            { .name = IOV("Content-type"), .value = IOV("text/html") },
+            { XHDR(":status", "200") },
+            { XHDR("Content-type", "text/html") },
         };
         struct lsquic_http_headers headers = {
             .count = 2,
@@ -497,10 +498,10 @@ test_errors (void)
     }
 
     {
-        struct lsquic_http_header header_arr[] =
+        struct lsxpack_header header_arr[] =
         {
-            { .name = IOV(":status"), .value = IOV("200") },
-            { .name = IOV("content-type"), .value = IOV("text/html") },
+            { XHDR(":status", "200") },
+            { XHDR("content-type", "text/html") },
         };
         struct lsquic_http_headers headers = {
             .count = 2,
@@ -549,21 +550,21 @@ perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :sc
         0x41, 0xe9, 0x2a, 0xdd, 0xc7, 0x45, 0xa5,
 	};
 
-    struct iovec path = IOV("/index.html");
-    struct iovec host = IOV("www.example.com");
-
-    struct lsquic_http_header header_arr[] =
+    struct lsxpack_header header_arr[] =
     {
-        { .name = IOV("x-some-header"), .value = IOV("some-value") },
+        { XHDR(":method", "GET") },
+        { XHDR(":path", "/index.html") },
+        { XHDR(":authority", "www.example.com") },
+        { XHDR(":scheme", "https") },
+        { XHDR("x-some-header", "some-value") },
     };
 
     struct lsquic_http_headers headers = {
-        .count = 1,
+        .count = 5,
         .headers = header_arr,
     };
 
-    s = lsquic_frame_writer_write_promise(fw, 12345, 0xEEEE, &path, &host,
-                                                                    &headers);
+    s = lsquic_frame_writer_write_promise(fw, 12345, 0xEEEE, &headers);
     assert(0 == s);
 
     struct http_frame_header fh;

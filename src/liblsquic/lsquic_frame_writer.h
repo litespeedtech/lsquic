@@ -59,7 +59,6 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *,
 int
 lsquic_frame_writer_write_promise (struct lsquic_frame_writer *,
         lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-        const struct iovec *path, const struct iovec *host,
         const struct lsquic_http_headers *headers);
 
 void

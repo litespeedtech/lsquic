@@ -3905,115 +3905,15 @@ headers_stream_on_priority (void *ctx, lsquic_stream_id_t stream_id,
 
 static struct uncompressed_headers *
 synthesize_push_request (struct full_conn *conn, void *hset,
-         const struct iovec* path, const struct iovec* host,
-         const lsquic_http_headers_t *headers,
          lsquic_stream_id_t pushed_stream_id, const lsquic_stream_t *dep_stream)
 {
     struct uncompressed_headers *uh;
-    struct http1x_ctor_ctx ctor_ctx;
-    void *hsi_ctx;
-    unsigned idx, i, n_headers;
-    const lsquic_http_header_t *header;
-    int st;
-    lsquic_http_header_t pseudo_headers[4];
-    lsquic_http_headers_t all_headers[2];
-    struct lsxpack_header *xhdr;
-    size_t req_space;
 
-    if (!hset)
-    {
-        if (conn->fc_enpub->enp_hsi_if == lsquic_http1x_if)
-        {
-            ctor_ctx = (struct http1x_ctor_ctx)
-            {
-                .conn      = &conn->fc_conn,
-                .is_server = 1,
-                .max_headers_sz = MAX_HTTP1X_HEADERS_SIZE,
-            };
-            hsi_ctx = &ctor_ctx;
-        }
-        else
-            hsi_ctx = conn->fc_enpub->enp_hsi_ctx;
-
-        hset = conn->fc_enpub->enp_hsi_if->hsi_create_header_set(hsi_ctx, 1);
-        if (!hset)
-        {
-            LSQ_INFO("header set ctor failure");
-            return NULL;
-        }
-
-        pseudo_headers[0].name. iov_base    = ":method";
-        pseudo_headers[0].name. iov_len     = 7;
-        pseudo_headers[0].value.iov_base    = "GET";
-        pseudo_headers[0].value.iov_len     = 3;
-        pseudo_headers[1].name .iov_base    = ":path";
-        pseudo_headers[1].name .iov_len     = 5;
-        pseudo_headers[1].value             = *path;
-        pseudo_headers[2].name .iov_base    = ":authority";
-        pseudo_headers[2].name .iov_len     = 10;
-        pseudo_headers[2].value             = *host;
-        pseudo_headers[3].name. iov_base    = ":scheme";
-        pseudo_headers[3].name. iov_len     = 7;
-        pseudo_headers[3].value.iov_base    = "https";
-        pseudo_headers[3].value.iov_len     = 5;
-
-        all_headers[0].headers = pseudo_headers;
-        all_headers[0].count   = sizeof(pseudo_headers)
-                                                / sizeof(pseudo_headers[0]);
-        if (headers)
-        {
-            all_headers[1]     = *headers;
-            n_headers = 2;
-        }
-        else
-            n_headers = 1;
-
-        for (i = 0; i < n_headers; ++i)
-            for (header = all_headers[i].headers;
-                    header < all_headers[i].headers + all_headers[i].count;
-                        ++header)
-            {
-                req_space = header->name.iov_len + header->value.iov_len + 4;
-                xhdr = conn->fc_enpub->enp_hsi_if->hsi_prepare_decode(hset,
-                                                            NULL, req_space);
-                if (!xhdr)
-                {
-                    st = -__LINE__;
-                    goto err;
-                }
-                memcpy(xhdr->buf + xhdr->name_offset, header->name.iov_base,
-                                                        header->name.iov_len);
-                xhdr->name_len = header->name.iov_len;
-                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
-                xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
-                memcpy(xhdr->buf + xhdr->val_offset, header->value.iov_base,
-                                                        header->value.iov_len);
-                xhdr->val_len = header->value.iov_len;
-                memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
-                            + xhdr->val_len, "\r\n", 2);
-                xhdr->dec_overhead = 4;
-                idx = lshpack_enc_get_stx_tab_id(xhdr);
-                if (idx)
-                {
-                    xhdr->flags |= LSXPACK_HPACK_IDX;
-                    xhdr->hpack_index = idx;
-                }
-                st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
-                if (st)
-                    goto err;
-            }
-
-        st = conn->fc_enpub->enp_hsi_if->hsi_process_header(hset, NULL);
-        if (st)
-            goto err;
-    }
+    assert(hset);
 
     uh = malloc(sizeof(*uh));
     if (!uh)
-    {
-        st = -__LINE__;
-        goto err;
-    }
+        return NULL;
 
     uh->uh_stream_id     = pushed_stream_id;
     uh->uh_oth_stream_id = 0;   /* We don't do dependencies */
@@ -4025,10 +3925,6 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     uh->uh_hset          = hset;
 
     return uh;
-
-  err:
-    LSQ_INFO("%s: error %d", __func__, st);
-    return NULL;
 }
 
 
@@ -4042,8 +3938,7 @@ full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 
 static int
 full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
-    struct lsquic_stream *dep_stream, const struct iovec *path,
-    const struct iovec *host, const struct lsquic_http_headers *headers)
+    struct lsquic_stream *dep_stream, const struct lsquic_http_headers *headers)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     lsquic_stream_t *pushed_stream;
@@ -4070,6 +3965,12 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         return 1;
     }
 
+    if (!hset)
+    {
+        LSQ_ERROR("header set must be specified when pushing");
+        return -1;
+    }
+
     hit_limit = 0;
     if (either_side_going_away(conn) ||
         (hit_limit = 1, count_streams(conn, 0) >= conn->fc_cfg.max_streams_out))
@@ -4080,8 +3981,7 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     }
 
     stream_id = generate_stream_id(conn);
-    uh = synthesize_push_request(conn, hset, path, host, headers, stream_id,
-                                                                dep_stream);
+    uh = synthesize_push_request(conn, hset, stream_id, dep_stream);
     if (!uh)
     {
         ABORT_ERROR("memory allocation failure");
@@ -4104,7 +4004,7 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     }
 
     if (0 != lsquic_headers_stream_push_promise(conn->fc_pub.u.gquic.hs, dep_stream->id,
-                                        pushed_stream->id, path, host, headers))
+                                        pushed_stream->id, headers))
     {
         /* Since the failure to write to HEADERS stream results in aborting
          * the connection, we do not bother rolling back.

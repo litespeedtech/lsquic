@@ -16,6 +16,7 @@ struct frame_gen_ctx;
 struct data_frame;
 enum quic_frame_type;
 struct push_promise;
+union hblock_ctx;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 
@@ -165,7 +166,7 @@ enum stream_q_flags
     SMQF_FREE_STREAM  = 1 << 7,
     SMQF_ABORT_CONN   = 1 << 8,     /* Unrecoverable error occurred */
 
-    SMQF_QPACK_DEC    = 1 << 9,     /* QPACK decoder is holding a reference to this stream */
+    SMQF_QPACK_DEC    = 1 << 9,     /* QPACK decoder handler is holding a reference to this stream */
 };
 
 
@@ -283,6 +284,7 @@ struct lsquic_stream
 
     struct uncompressed_headers    *uh,
                                    *push_req;
+    union hblock_ctx               *sm_hblock_ctx;
 
     unsigned char                  *sm_buf;
     void                           *sm_onnew_arg;
@@ -537,9 +539,6 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *, unsigned);
 void
 lsquic_stream_set_stream_if (struct lsquic_stream *,
                    const struct lsquic_stream_if *, void *stream_if_ctx);
-
-struct qpack_dec_hdl *
-lsquic_stream_get_qdh (const struct lsquic_stream *);
 
 uint64_t
 lsquic_stream_combined_send_off (const struct lsquic_stream *);

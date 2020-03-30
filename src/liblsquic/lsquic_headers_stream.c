@@ -81,7 +81,17 @@ static lsquic_stream_ctx_t *
 headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
     struct headers_stream *hs = stream_if_ctx;
-    lshpack_dec_init(&hs->hs_hdec, LSHPACK_DEC_HTTP1X);
+    enum lshpack_dec_flags flags;
+
+    flags = 0;
+    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HTTP1X)
+        flags |= LSHPACK_DEC_HTTP1X;
+    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAME)
+        flags |= LSHPACK_DEC_HASH_NAME;
+    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAMEVAL)
+        flags |= LSHPACK_DEC_HASH_NAMEVAL;
+
+    lshpack_dec_init(&hs->hs_hdec, flags);
     if (0 != lshpack_enc_init(&hs->hs_henc))
     {
         LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));
@@ -375,7 +385,6 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
 int
 lsquic_headers_stream_push_promise (struct headers_stream *hs,
         lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
-        const struct iovec *path, const struct iovec *host,
         const struct lsquic_http_headers *headers)
 {
     uint32_t stream_id = stream_id64;
@@ -384,7 +393,7 @@ lsquic_headers_stream_push_promise (struct headers_stream *hs,
     LSQ_DEBUG("promising stream %u in response to stream %u",
                                             promised_stream_id, stream_id);
     s = lsquic_frame_writer_write_promise(hs->hs_fw, stream_id,
-                                    promised_stream_id, path, host, headers);
+                                                promised_stream_id, headers);
     if (0 == s)
     {
         lsquic_stream_wantwrite(hs->hs_stream,

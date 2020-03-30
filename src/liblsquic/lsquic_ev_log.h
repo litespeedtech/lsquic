@@ -280,8 +280,7 @@ lsquic_ev_log_generated_http_headers (const lsquic_cid_t *, lsquic_stream_id_t,
 void
 lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *,
         lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-        const struct lsquic_http_headers *headers,
-        const struct lsquic_http_headers *extra_headers);
+        const struct lsquic_http_headers *headers);
 
 #define EV_LOG_GENERATED_HTTP_PUSH_PROMISE(...) do {                        \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \

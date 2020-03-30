@@ -280,17 +280,11 @@ send_headers (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
     const char *content_type;
 
     content_type = select_content_type(st_h);
-    lsquic_http_header_t headers_arr[] = {
-        {
-            .name  = { .iov_base = ":status",       .iov_len = 7, },
-            .value = { .iov_base = "200",           .iov_len = 3, }
-        },
-        {
-            .name  = { .iov_base = "content-type",  .iov_len = 12, },
-            .value = { .iov_base = (void *) content_type,
-                       .iov_len = strlen(content_type), },
-        },
-    };
+    struct lsxpack_header headers_arr[2];
+
+    lsxpack_header_set_ptr(&headers_arr[0], ":status", 7, "200", 3);
+    lsxpack_header_set_ptr(&headers_arr[1], "content-type", 12,
+                                        content_type, strlen(content_type));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
@@ -516,14 +510,47 @@ process_request (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 }
 
 
+static struct hset_fm      /* FM stands for Filesystem Mode */
+{
+    unsigned    id;
+    char       *path;
+} *
+new_hset_fm (const char *path)
+{
+    static unsigned hfm_id;
+    struct hset_fm *const hfm = malloc(sizeof(*hfm));
+    char *const str = strdup(path);
+    if (hfm && path)
+    {
+        hfm->id = hfm_id++;
+        hfm->path = str;
+        return hfm;
+    }
+    else
+    {
+        free(str);
+        free(hfm);
+        return NULL;
+    }
+}
+
+
+static void
+destroy_hset_fm (struct hset_fm *hfm)
+{
+    free(hfm->path);
+    free(hfm);
+}
+
+
 static int
 push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
 {
     lsquic_conn_t *conn;
-    struct iovec path, host;
     int s;
     regex_t re;
     regmatch_t matches[2];
+    struct hset_fm *hfm;
 
     s = regcomp(&re, "\r\nHost: *([[:alnum:].][[:alnum:].]*)\r\n",
                                                     REG_EXTENDED|REG_ICASE);
@@ -542,34 +569,39 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
     }
     regfree(&re);
 
-    host.iov_len = matches[1].rm_eo - matches[1].rm_so;
-    host.iov_base = st_h->req_buf + matches[1].rm_so;
-    path.iov_len = strlen(st_h->server_ctx->push_path);
-    path.iov_base = (void *) st_h->server_ctx->push_path;
+    hfm = new_hset_fm(st_h->server_ctx->push_path);
+    if (!hfm)
+    {
+        LSQ_WARN("Could not allocate hfm");
+        return -1;
+    }
 
-#define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
-    lsquic_http_header_t headers_arr[] = {
-        {
-            .name  = IOV("x-some-header"),
-            .value = IOV("x-some-value"),
-        },
-        {
-            .name  = IOV("x-kenny-status"),
-            .value = IOV("Oh my God!  They killed Kenny!!!  You bastards!"),
-        },
-    };
-    lsquic_http_headers_t extra_headers = {
+#define V(v) (v), strlen(v)
+    struct lsxpack_header headers_arr[6];
+    lsxpack_header_set_ptr(&headers_arr[0], V(":method"), V("GET"));
+    lsxpack_header_set_ptr(&headers_arr[1], V(":path"),
+                                            V(st_h->server_ctx->push_path));
+    lsxpack_header_set_ptr(&headers_arr[2], V(":authority"),
+        st_h->req_buf + matches[1].rm_so, matches[1].rm_eo - matches[1].rm_so);
+    lsxpack_header_set_ptr(&headers_arr[3], V(":scheme"), V("https"));
+    lsxpack_header_set_ptr(&headers_arr[4], V("x-some-header"),
+                                                        V("x-some-value"));
+    lsxpack_header_set_ptr(&headers_arr[5], V("x-kenny-status"),
+                        V("Oh my God!  They killed Kenny!!!  You bastards!"));
+    lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
     };
 
     conn = lsquic_stream_conn(stream);
-    s = lsquic_conn_push_stream(conn, NULL, stream, &path, &host,
-                                                            &extra_headers);
+    s = lsquic_conn_push_stream(conn, hfm, stream, &headers);
     if (0 == s)
         LSQ_NOTICE("pushed stream successfully");
     else
+    {
+        destroy_hset_fm(hfm);
         LSQ_ERROR("could not push stream: %s", strerror(errno));
+    }
 
     return 0;
 }
@@ -577,7 +609,37 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
 
 
 static void
-http_server_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
+http_server_on_read_pushed (struct lsquic_stream *stream,
+                                                    lsquic_stream_ctx_t *st_h)
+{
+    struct hset_fm *hfm;
+
+    hfm = lsquic_stream_get_hset(stream);
+    if (!hfm)
+    {
+        LSQ_ERROR("%s: error fetching hset: %s", __func__, strerror(errno));
+        lsquic_stream_close(stream);
+        return;
+    }
+
+    LSQ_INFO("got push request #%u for %s", hfm->id, hfm->path);
+    st_h->req_path = malloc(strlen(st_h->server_ctx->document_root) + 1 +
+                                strlen(hfm->path) + 1);
+    strcpy(st_h->req_path, st_h->server_ctx->document_root);
+    strcat(st_h->req_path, "/");
+    strcat(st_h->req_path, hfm->path);
+    st_h->req_filename = strdup(st_h->req_path);  /* XXX Only used for ends_with: drop it? */
+
+    process_request(stream, st_h);
+    free(st_h->req_buf);
+    lsquic_stream_shutdown(stream, 0);
+    destroy_hset_fm(hfm);
+}
+
+
+static void
+http_server_on_read_regular (struct lsquic_stream *stream,
+                                                    lsquic_stream_ctx_t *st_h)
 {
 #if HAVE_OPEN_MEMSTREAM
     unsigned char buf[0x400];
@@ -597,7 +659,6 @@ http_server_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         LSQ_INFO("got request: `%.*s'", (int) st_h->req_sz, st_h->req_buf);
         parse_request(stream, st_h);
         if (st_h->server_ctx->push_path &&
-                !lsquic_stream_is_pushed(stream) &&
                 0 != strcmp(st_h->req_path, st_h->server_ctx->push_path))
         {
             s = push_promise(st_h, stream);
@@ -617,6 +678,16 @@ http_server_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     LSQ_ERROR("%s: open_memstream not supported\n", __func__);
     exit(1);
 #endif
+}
+
+
+static void
+http_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
+{
+    if (lsquic_stream_is_pushed(stream))
+        http_server_on_read_pushed(stream, st_h);
+    else
+        http_server_on_read_regular(stream, st_h);
 }
 
 
@@ -807,9 +878,9 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         if (!st_h->req)
             ERROR_RESP(500, "Internal error: cannot fetch header set from stream");
         else if (st_h->req->method == UNSET)
-            ERROR_RESP(400, "Method is not speicified");
+            ERROR_RESP(400, "Method is not specified");
         else if (!st_h->req->path)
-            ERROR_RESP(400, "Path is not speicified");
+            ERROR_RESP(400, "Path is not specified");
         else if (st_h->req->method == UNSUPPORTED)
             ERROR_RESP(501, "Method %s is not supported", st_h->req->method_str);
         else if (!(map = find_handler(st_h->req->method, st_h->req->path, matches)))
@@ -979,25 +1050,11 @@ send_headers2 (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h,
 
     snprintf(clbuf, sizeof(clbuf), "%zd", content_len);
 
-    lsquic_http_header_t headers_arr[] = {
-        {
-            .name  = { .iov_base = ":status", .iov_len = 7, },
-            .value = { .iov_base = (char *) st_h->resp_status,
-                       .iov_len = strlen(st_h->resp_status), },
-        },
-        {
-            .name  = { .iov_base = "server",    .iov_len = 6, },
-            .value = { .iov_base = LITESPEED_ID, .iov_len = sizeof(LITESPEED_ID) - 1, },
-        },
-        {
-            .name  = { .iov_base = "content-type", .iov_len = 12, },
-            .value = { .iov_base = "text/html", .iov_len = 9, },
-        },
-        {
-            .name  = { .iov_base = "content-length", .iov_len = 14, },
-            .value = { .iov_base = clbuf, .iov_len = strlen(clbuf), },
-        },
-    };
+    struct lsxpack_header  headers_arr[4];
+    lsxpack_header_set_ptr(&headers_arr[0], V(":status"), V(st_h->resp_status));
+    lsxpack_header_set_ptr(&headers_arr[1], V("server"), V(LITESPEED_ID));
+    lsxpack_header_set_ptr(&headers_arr[2], V("content-type"), V("text/html"));
+    lsxpack_header_set_ptr(&headers_arr[3], V("content-length"), V(clbuf));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
@@ -1042,12 +1099,39 @@ idle_size (void *lsqr_ctx)
 }
 
 
+static struct req *
+new_req (enum method method, const char *path, const char *authority)
+{
+    struct req *req;
+
+    req = malloc(sizeof(*req));
+    if (!req)
+        return NULL;
+
+    memset(req, 0, offsetof(struct req, decode_buf));
+    req->method = method;
+    req->path = strdup(path);
+    req->authority_str = strdup(authority);
+    if (!(req->path && req->authority_str))
+    {
+        free(req->path);
+        free(req->authority_str);
+        free(req);
+        return NULL;
+    }
+
+    return req;
+}
+
+
 static void
 idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     struct gen_file_ctx *const gfc = &st_h->interop_u.gfc;
     struct interop_push_path *push_path;
-    struct iovec headers[2];
+    struct lsxpack_header header_arr[4];
+    struct lsquic_http_headers headers;
+    struct req *req;
     ssize_t nw;
 
     if (st_h->flags & SH_HEADERS_SENT)
@@ -1074,10 +1158,18 @@ idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             {
                 STAILQ_REMOVE_HEAD(&gfc->push_paths, next);
                 LSQ_DEBUG("pushing promise for %s", push_path->path);
-                headers[0] = (struct iovec) { push_path->path, strlen(push_path->path), };
-                headers[1] = (struct iovec) { st_h->req->authority_str, strlen(st_h->req->authority_str), };
-                (void) lsquic_conn_push_stream(lsquic_stream_conn(stream),
-                                NULL, stream, &headers[0], &headers[1], NULL);
+                lsxpack_header_set_ptr(&header_arr[0], V(":method"), V("GET"));
+                lsxpack_header_set_ptr(&header_arr[1], V(":path"), V(push_path->path));
+                lsxpack_header_set_ptr(&header_arr[2], V(":authority"), V(st_h->req->authority_str));
+                lsxpack_header_set_ptr(&header_arr[3], V(":scheme"), V("https"));
+                headers.headers = header_arr;
+                headers.count = sizeof(header_arr) / sizeof(header_arr[0]);
+                req = new_req(GET, push_path->path, st_h->req->authority_str);
+                if (req)
+                    (void) lsquic_conn_push_stream(lsquic_stream_conn(stream),
+                                req, stream, &headers);
+                else
+                    LSQ_WARN("cannot allocate req for push");
                 free(push_path);
             }
         if (0 == send_headers2(stream, st_h, gfc->remain))
@@ -1173,7 +1265,8 @@ usage (const char *prog)
 
 
 static void *
-interop_server_hset_create (void *hsi_ctx, int is_push_promise)
+interop_server_hset_create (void *hsi_ctx, lsquic_stream_t *stream,
+                            int is_push_promise)
 {
     struct req *req;
 

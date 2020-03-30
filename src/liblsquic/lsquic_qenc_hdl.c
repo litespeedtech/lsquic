@@ -20,6 +20,7 @@
 #include "lsquic_stream.h"
 #include "lsquic_frab_list.h"
 #include "lsqpack.h"
+#include "lsxpack_header.h"
 #include "lsquic_conn.h"
 #include "lsquic_qenc_hdl.h"
 
@@ -354,22 +355,21 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     total_enc_sz = 0;
     for (i = 0; i < headers->count; ++i)
     {
+        if (headers->headers[i].buf == NULL)
+            continue;
         enc_sz = sizeof(enc_buf);
         hea_sz = end - p;
         st = lsqpack_enc_encode(&qeh->qeh_encoder, enc_buf, &enc_sz, p,
-                    &hea_sz, headers->headers[i].name.iov_base,
-                    headers->headers[i].name.iov_len,
-                    headers->headers[i].value.iov_base,
-                    headers->headers[i].value.iov_len, enc_flags);
+                                &hea_sz, &headers->headers[i], enc_flags);
         switch (st)
         {
         case LQES_OK:
             LSQ_DEBUG("encoded `%.*s': `%.*s' -- %zd bytes to header block, "
                 "%zd bytes to encoder stream",
-                (int) headers->headers[i].name.iov_len,
-                                    (char *) headers->headers[i].name.iov_base,
-                (int) headers->headers[i].value.iov_len,
-                                    (char *) headers->headers[i].value.iov_base,
+                (int) headers->headers[i].name_len,
+                    lsxpack_header_get_name(&headers->headers[i]),
+                (int) headers->headers[i].val_len,
+                    lsxpack_header_get_value(&headers->headers[i]),
                 hea_sz, enc_sz);
             total_enc_sz += enc_sz;
             p += hea_sz;

@@ -94,7 +94,7 @@ stream_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 }
 
 
-#define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
+#define XHDR(name_, value_) .buf = value_, .name_ptr = name_, .val_len = sizeof(value_) - 1, .name_len = sizeof(name_) - 1
 
 
 static void
@@ -121,9 +121,9 @@ test_chop (unsigned max_write_sz)
 #endif
                                 0);
 
-    struct lsquic_http_header header_arr[] =
+    struct lsxpack_header header_arr[] =
     {
-        { .name = IOV(":status"), .value = IOV("302") },
+        { XHDR(":status", "302") },
     };
 
     struct lsquic_http_headers headers = {

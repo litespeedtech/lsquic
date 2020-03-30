@@ -32,8 +32,25 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(qdh->qdh_conn)
 #include "lsquic_logger.h"
 
-static void
-qdh_hblock_unblocked (void *);
+static const struct lsqpack_dec_hset_if dhi_if;
+
+
+struct header_ctx
+{
+    void                    *hset;
+    struct qpack_dec_hdl    *qdh;
+};
+
+
+/* We need to allocate struct uncompressed_headers anyway when header set
+ * is complete and we give it to the stream using lsquic_stream_uh_in().
+ * To save a malloc, we reuse context after we're done with it.
+ */
+union hblock_ctx
+{
+    struct header_ctx           ctx;
+    struct uncompressed_headers uh;
+};
 
 
 static int
@@ -129,10 +146,20 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
                     int is_server, const struct lsquic_engine_public *enpub,
                     unsigned dyn_table_size, unsigned max_risked_streams)
 {
+    enum lsqpack_dec_opts dec_opts;
+
+    dec_opts = 0;
+    if (enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HTTP1X)
+        dec_opts |= LSQPACK_DEC_OPT_HTTP1X;
+    if (enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAME)
+        dec_opts |= LSQPACK_DEC_OPT_HASH_NAME;
+    if (enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAMEVAL)
+        dec_opts |= LSQPACK_DEC_OPT_HASH_NAMEVAL;
+
     qdh->qdh_conn = conn;
     lsquic_frab_list_init(&qdh->qdh_fral, 0x400, NULL, NULL, NULL);
     lsqpack_dec_init(&qdh->qdh_decoder, (void *) conn, dyn_table_size,
-                        max_risked_streams, qdh_hblock_unblocked);
+                        max_risked_streams, &dhi_if, dec_opts);
     qdh->qdh_flags |= QDH_INITIALIZED;
     qdh->qdh_enpub = enpub;
     if (qdh->qdh_enpub->enp_hsi_if == lsquic_http1x_if)
@@ -378,7 +405,8 @@ static void
 qdh_hblock_unblocked (void *stream_p)
 {
     struct lsquic_stream *const stream = stream_p;
-    struct qpack_dec_hdl *const qdh = lsquic_stream_get_qdh(stream);
+    union hblock_ctx *const u = stream->sm_hblock_ctx;
+    struct qpack_dec_hdl *qdh = u->ctx.qdh;
 
     LSQ_DEBUG("header block for stream %"PRIu64" unblocked", stream->id);
     lsquic_stream_qdec_unblocked(stream);
@@ -433,159 +461,112 @@ process_content_length (const struct qpack_dec_hdl *qdh /* for logging */,
 
 
 static int
-is_content_length (const struct lsqpack_header *header)
+is_content_length (const struct lsxpack_header *xhdr)
 {
-    return ((header->qh_flags & QH_ID_SET) && header->qh_static_id == 4)
-        || (header->qh_name_len == 14 && header->qh_name[0] == 'c'
-                    && 0 == memcmp(header->qh_name + 1, "ontent-length", 13))
+    return ((xhdr->flags & LSXPACK_QPACK_IDX)
+                        && xhdr->qpack_index == LSQPACK_TNV_CONTENT_LENGTH_0)
+        || (xhdr->name_len == 14 && 0 == memcmp(lsxpack_header_get_name(xhdr),
+                                                        "content-length", 13))
         ;
 }
 
 
-static int
-qdh_supply_hset_to_stream (struct qpack_dec_hdl *qdh,
-            struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
+static struct lsxpack_header *
+qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
 {
-    const struct lsquic_hset_if *const hset_if = qdh->qdh_enpub->enp_hsi_if;
-    struct uncompressed_headers *uh = NULL;
-    const struct lsqpack_header *header;
-    int st;
-    int push_promise;
-    unsigned i;
-    void *hset;
+    struct lsquic_stream *const stream = stream_p;
+    union hblock_ctx *const u = stream->sm_hblock_ctx;
+    struct qpack_dec_hdl *const qdh = u->ctx.qdh;
+
+    return qdh->qdh_enpub->enp_hsi_if->hsi_prepare_decode(
+                                                u->ctx.hset, xhdr, space);
+}
+
+
+static int
+qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
+{
+    struct lsquic_stream *const stream = stream_p;
+    union hblock_ctx *const u = stream->sm_hblock_ctx;
+    struct qpack_dec_hdl *const qdh = u->ctx.qdh;
     struct cont_len cl;
-    struct lsxpack_header *xhdr;
-    size_t req_space;
 
-    push_promise = lsquic_stream_header_is_pp(stream);
-    hset = hset_if->hsi_create_header_set(qdh->qdh_hsi_ctx, push_promise);
-    if (!hset)
+    if (is_content_length(xhdr))
     {
-        LSQ_INFO("call to hsi_create_header_set failed");
-        return -1;
+        cl.has = 0;
+        process_content_length(qdh, &cl, lsxpack_header_get_value(xhdr),
+                                                            xhdr->val_len);
+        if (cl.has > 0)
+            (void) lsquic_stream_verify_len(stream, cl.value);
     }
 
-    LSQ_DEBUG("got header set for stream %"PRIu64, stream->id);
-
-    cl.has = 0;
-    for (i = 0; i < qlist->qhl_count; ++i)
-    {
-        header = qlist->qhl_headers[i];
-        LSQ_DEBUG("%.*s: %.*s", header->qh_name_len, header->qh_name,
-                                        header->qh_value_len, header->qh_value);
-        req_space = header->qh_name_len + header->qh_value_len + 4;
-        xhdr = hset_if->hsi_prepare_decode(hset, NULL, req_space);
-        if (!xhdr)
-        {
-            LSQ_DEBUG("prepare_decode(%zd) failed", req_space);
-            goto err;
-        }
-        memcpy(xhdr->buf + xhdr->name_offset, header->qh_name,
-                                                    header->qh_name_len);
-        xhdr->name_len = header->qh_name_len;
-        memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len, ": ", 2);
-        xhdr->val_offset = xhdr->name_offset + xhdr->name_len + 2;
-        memcpy(xhdr->buf + xhdr->val_offset,
-                                    header->qh_value, header->qh_value_len);
-        xhdr->val_len = header->qh_value_len;
-        memcpy(xhdr->buf + xhdr->name_offset + xhdr->name_len + 2
-                    + xhdr->val_len, "\r\n", 2);
-        xhdr->dec_overhead = 4;
-        if (header->qh_flags & QH_ID_SET)
-        {
-            xhdr->flags |= LSXPACK_QPACK_IDX;
-            xhdr->qpack_index = header->qh_static_id;
-        }
-        st = hset_if->hsi_process_header(hset, xhdr);
-        if (st != 0)
-        {
-            LSQ_INFO("header process returned non-OK code %d", st);
-            goto err;
-        }
-        if (is_content_length(header))
-            process_content_length(qdh, &cl, header->qh_value,
-                                                        header->qh_value_len);
-    }
-
-    lsqpack_dec_destroy_header_list(qlist);
-    qlist = NULL;
-    st = hset_if->hsi_process_header(hset, NULL);
-    if (st != 0)
-        goto err;
-
-    uh = calloc(1, sizeof(*uh));
-    if (!uh)
-        goto err;
-    uh->uh_stream_id = stream->id;
-    uh->uh_oth_stream_id = 0;
-    uh->uh_weight = 0;
-    uh->uh_exclusive = -1;
-    if (hset_if == lsquic_http1x_if)
-        uh->uh_flags    |= UH_H1H;
-    uh->uh_hset = hset;
-    if (0 != lsquic_stream_uh_in(stream, uh))
-        goto err;
-    LSQ_DEBUG("converted qlist to hset and gave it to stream %"PRIu64,
-                                                                stream->id);
-    if (cl.has > 0)
-        (void) lsquic_stream_verify_len(stream, cl.value);
-    return 0;
-
-  err:
-    if (qlist)
-        lsqpack_dec_destroy_header_list(qlist);
-    hset_if->hsi_discard_header_set(hset);
-    free(uh);
-    return -1;
+    return qdh->qdh_enpub->enp_hsi_if->hsi_process_header(u->ctx.hset, xhdr);
 }
 
 
-/* Releases qlist */
-static int
-qdh_process_qlist (struct qpack_dec_hdl *qdh,
-            struct lsquic_stream *stream, struct lsqpack_header_list *qlist)
+static const struct lsqpack_dec_hset_if dhi_if =
 {
-    if (!lsquic_stream_header_is_trailer(stream))
-        return qdh_supply_hset_to_stream(qdh, stream, qlist);
-    else
-    {
-        LSQ_DEBUG("discard trailer header set");
-        lsqpack_dec_destroy_header_list(qlist);
-        return 0;
-    }
-}
+    .dhi_unblocked      = qdh_hblock_unblocked,
+    .dhi_prepare_decode = qdh_prepare_decode,
+    .dhi_process_header = qdh_process_header,
+};
 
 
 static enum lsqpack_read_header_status
 qdh_header_read_results (struct qpack_dec_hdl *qdh,
         struct lsquic_stream *stream, enum lsqpack_read_header_status rhs,
-        struct lsqpack_header_list *qlist, const unsigned char *dec_buf,
-        size_t dec_buf_sz)
+        const unsigned char *dec_buf, size_t dec_buf_sz)
 {
     const struct lsqpack_dec_err *qerr;
+    struct uncompressed_headers *uh;
+    void *hset;
 
     if (rhs == LQRHS_DONE)
     {
-        if (qlist)
+        if (!lsquic_stream_header_is_trailer(stream))
         {
-            if (0 != qdh_process_qlist(qdh, stream, qlist))
-                return LQRHS_ERROR;
-            if (qdh->qdh_dec_sm_out)
+            hset = stream->sm_hblock_ctx->ctx.hset;
+            uh = &stream->sm_hblock_ctx->uh;
+            stream->sm_hblock_ctx = NULL;
+            memset(uh, 0, sizeof(*uh));
+            uh->uh_stream_id = stream->id;
+            uh->uh_oth_stream_id = 0;
+            uh->uh_weight = 0;
+            uh->uh_exclusive = -1;
+            if (qdh->qdh_enpub->enp_hsi_if == lsquic_http1x_if)
+                uh->uh_flags    |= UH_H1H;
+            if (0 != qdh->qdh_enpub->enp_hsi_if
+                                        ->hsi_process_header(hset, NULL))
             {
-                if (dec_buf_sz
-                    && 0 != qdh_write_decoder(qdh, dec_buf, dec_buf_sz))
-                {
-                    return LQRHS_ERROR;
-                }
-                if (dec_buf_sz || lsqpack_dec_ici_pending(&qdh->qdh_decoder))
-                    lsquic_stream_wantwrite(qdh->qdh_dec_sm_out, 1);
+                LSQ_DEBUG("finishing HTTP/1.x hset failed");
+                free(uh);
+                return LQRHS_ERROR;
+            }
+            uh->uh_hset = hset;
+            if (0 == lsquic_stream_uh_in(stream, uh))
+                LSQ_DEBUG("gave hset to stream %"PRIu64, stream->id);
+            else
+            {
+                LSQ_DEBUG("could not give hset to stream %"PRIu64, stream->id);
+                free(uh);
+                return LQRHS_ERROR;
             }
         }
         else
         {
-            LSQ_WARN("read header status is DONE but header list is not set");
-            assert(0);
-            return LQRHS_ERROR;
+            LSQ_DEBUG("discard trailer header set");
+            free(stream->sm_hblock_ctx);
+            stream->sm_hblock_ctx = NULL;
+        }
+        if (qdh->qdh_dec_sm_out)
+        {
+            if (dec_buf_sz
+                && 0 != qdh_write_decoder(qdh, dec_buf, dec_buf_sz))
+            {
+                return LQRHS_ERROR;
+            }
+            if (dec_buf_sz || lsqpack_dec_ici_pending(&qdh->qdh_decoder))
+                lsquic_stream_wantwrite(qdh->qdh_dec_sm_out, 1);
         }
     }
     else if (rhs == LQRHS_ERROR)
@@ -607,24 +588,43 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
                         const unsigned char **buf, size_t bufsz)
 {
     enum lsqpack_read_header_status rhs;
-    struct lsqpack_header_list *qlist;
+    void *hset;
+    int is_pp;
     size_t dec_buf_sz;
+    union hblock_ctx *u;
     unsigned char dec_buf[LSQPACK_LONGEST_HEADER_ACK];
 
-    if (qdh->qdh_flags & QDH_INITIALIZED)
-    {
-        dec_buf_sz = sizeof(dec_buf);
-        rhs = lsqpack_dec_header_in(&qdh->qdh_decoder, stream, stream->id,
-                        header_size, buf, bufsz, &qlist, dec_buf, &dec_buf_sz);
-        return qdh_header_read_results(qdh, stream, rhs, qlist, dec_buf,
-                                                                dec_buf_sz);
-    }
-    else
+    if (!(qdh->qdh_flags & QDH_INITIALIZED))
     {
         LSQ_WARN("not initialized: cannot process header block");
         return LQRHS_ERROR;
     }
 
+    u = malloc(sizeof(*u));
+    if (!u)
+    {
+        LSQ_INFO("cannot allocate hblock_ctx");
+        return LQRHS_ERROR;
+    }
+
+    is_pp = lsquic_stream_header_is_pp(stream);
+    hset = qdh->qdh_enpub->enp_hsi_if->hsi_create_header_set(
+                                          qdh->qdh_hsi_ctx, stream, is_pp);
+    if (!hset)
+    {
+        free(u);
+        LSQ_DEBUG("hsi_create_header_set failure");
+        return LQRHS_ERROR;
+    }
+
+    u->ctx.hset   = hset;
+    u->ctx.qdh    = qdh;
+    stream->sm_hblock_ctx = u;
+
+    dec_buf_sz = sizeof(dec_buf);
+    rhs = lsqpack_dec_header_in(&qdh->qdh_decoder, stream, stream->id,
+                    header_size, buf, bufsz, dec_buf, &dec_buf_sz);
+    return qdh_header_read_results(qdh, stream, rhs, dec_buf, dec_buf_sz);
 }
 
 
@@ -633,7 +633,6 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *qdh,
         struct lsquic_stream *stream, const unsigned char **buf, size_t bufsz)
 {
     enum lsqpack_read_header_status rhs;
-    struct lsqpack_header_list *qlist;
     size_t dec_buf_sz;
     unsigned char dec_buf[LSQPACK_LONGEST_HEADER_ACK];
 
@@ -641,9 +640,8 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *qdh,
     {
         dec_buf_sz = sizeof(dec_buf);
         rhs = lsqpack_dec_header_read(&qdh->qdh_decoder, stream,
-                                    buf, bufsz, &qlist, dec_buf, &dec_buf_sz);
-        return qdh_header_read_results(qdh, stream, rhs, qlist, dec_buf,
-                                                                dec_buf_sz);
+                                    buf, bufsz, dec_buf, &dec_buf_sz);
+        return qdh_header_read_results(qdh, stream, rhs, dec_buf, dec_buf_sz);
     }
     else
     {

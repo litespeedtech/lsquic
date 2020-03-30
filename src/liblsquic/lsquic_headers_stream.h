@@ -60,7 +60,6 @@ lsquic_headers_stream_send_headers (struct headers_stream *hs,
 int
 lsquic_headers_stream_push_promise (struct headers_stream *hs,
             lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-                        const struct iovec *path, const struct iovec *host,
                         const struct lsquic_http_headers *);
 
 int

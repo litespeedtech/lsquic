@@ -151,6 +151,9 @@ static const struct conn_iface our_conn_if =
 };
 
 
+static struct http1x_ctor_ctx ctor_ctx = { .is_server = 0, };
+
+
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         unsigned initial_stream_window, enum stream_ctor_flags addl_ctor_flags)
@@ -193,6 +196,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         assert(0 == s);
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
         tobjs->conn_pub.enpub->enp_hsi_if  = lsquic_http1x_if;
+        tobjs->conn_pub.enpub->enp_hsi_ctx = &ctor_ctx;
         s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
                                     tobjs->conn_pub.enpub, 0, 0);
         tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
