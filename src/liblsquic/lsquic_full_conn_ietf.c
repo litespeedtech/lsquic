@@ -3446,6 +3446,11 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
             LSQ_DEBUG("tickable: send flags: 0x%X", conn->ifc_send_flags);
             goto check_can_send;
         }
+        if (lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl) > 0)
+        {
+            LSQ_DEBUG("tickable: has scheduled packets");
+            return 1;   /* Don't check can_send */
+        }
         if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
         {
             LSQ_DEBUG("tickable: send DATA_BLOCKED frame");

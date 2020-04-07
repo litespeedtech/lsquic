@@ -1658,7 +1658,11 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         prog_sport_cant_send(sport->sp_prog, sport->fd);
 
     if (n > 0)
+    {
+        if (n < orig_count && out_limit)
+            errno = EAGAIN;
         return n;
+    }
     else
     {
         assert(s < 0);
@@ -1909,6 +1913,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "qpack_dec_max_size", 18))
         {
             settings->es_qpack_dec_max_size = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "max_packet_size_rx", 18))
+        {
+            settings->es_max_packet_size_rx = atoi(val);
             return 0;
         }
         break;

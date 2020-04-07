@@ -128,6 +128,9 @@ static const uint64_t def_vals[MAX_NUM_WITH_DEF_TPI + 1] =
 
 static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
 {
+    /* We don't enforce the maximum practical UDP payload value of 65527, as
+     * it is not required by the spec and is not necessary.
+     */
     [TPI_MAX_PACKET_SIZE]                   =  VINT_MAX_VALUE,
     [TPI_ACK_DELAY_EXPONENT]                =  VINT_MAX_VALUE,
     [TPI_INIT_MAX_STREAMS_UNI]              =  VINT_MAX_VALUE,
@@ -146,6 +149,8 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
 
 static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
 {
+    /* On the other hand, we do enforce the lower bound. */
+    [TPI_MAX_PACKET_SIZE]                   =  1200,
     [TPI_MIN_ACK_DELAY]                     =  1,
 };
 

@@ -340,6 +340,8 @@ static
 enum hsk_failure_reason
 lsquic_verify_stk (enc_session_t *,
                const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk);
+
+static
 #endif
 void lsquic_gen_stk(lsquic_server_config_t *, const struct sockaddr *, uint64_t tm,
              unsigned char stk_out[STK_LENGTH]);
