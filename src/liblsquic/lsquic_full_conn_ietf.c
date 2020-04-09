@@ -92,7 +92,7 @@
  * We may have to add a special API for IETF push promises.  That's in the
  * future: right now, we punt it.
  */
-#define CLIENT_PUSH_SUPPORT 0
+#define CLIENT_PUSH_SUPPORT 1
 
 
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER

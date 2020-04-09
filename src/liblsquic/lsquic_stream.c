@@ -1244,6 +1244,7 @@ read_uh (struct lsquic_stream *stream,
 static void
 verify_cl_on_fin (struct lsquic_stream *stream)
 {
+    LSQ_DEBUG("content_length_1");
     struct lsquic_conn *lconn;
 
     /* The rules in RFC7230, Section 3.3.2 are a bit too intricate.  We take
@@ -4134,6 +4135,7 @@ static void
 verify_cl_on_new_data_frame (struct lsquic_stream *stream,
                                                     struct hq_filter *filter)
 {
+    LSQ_DEBUG("content_length_2");
     struct lsquic_conn *lconn;
 
     stream->sm_data_in += filter->hqfi_left;
@@ -4747,6 +4749,7 @@ int
 lsquic_stream_verify_len (struct lsquic_stream *stream,
                                                 unsigned long long cont_len)
 {
+    LSQ_DEBUG("content_length_1");
     if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
                                             == (SMBF_IETF|SMBF_USE_HEADERS))
     {

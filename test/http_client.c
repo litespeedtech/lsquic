@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <event2/event.h>
 #include <math.h>
+#include <stdbool.h>
 
 #include <openssl/bio.h>
 #include <openssl/pem.h>
@@ -76,6 +77,123 @@ static int g_header_bypass;
 
 static int s_discard_response;
 
+// Minh ADD-S
+#define MAX_SEGMENT_ID  200
+
+const int minh_rate_set[] = {1500, 2000, 3500, 5000};   //Kbps
+
+// data record
+lsquic_time_t   start_stream_recorder[MAX_SEGMENT_ID];           
+long double     download_time_recorder[MAX_SEGMENT_ID];
+double          throughput_recorder[MAX_SEGMENT_ID];    // in Kbps
+double          buffer_recorder[MAX_SEGMENT_ID]; // in s
+int             bitrate_recorder[MAX_SEGMENT_ID][2]; //
+
+lsquic_time_t   streaming_start_time;
+
+static int      minh_client_seg = -1;
+static double   minh_cur_buf = 0;   // in milisecon
+static double   minh_throughput = 0; // in Kbps
+
+const int       minh_rebuf_threshold_exit = 5000;
+const int       minh_sd = 1000;
+static bool     minh_rebuf = true;
+static bool     retransmission = false;
+
+
+static char*
+minh_AGG_ABR(){
+    char *requested_file = NULL; // e.g.,"/file-500K";
+    int chosen_bitrate;
+
+    if (minh_rebuf && minh_cur_buf >= minh_rebuf_threshold_exit){
+        minh_rebuf = false;
+    }
+
+    if (minh_cur_buf < minh_sd || minh_rebuf){
+        if (!minh_rebuf){
+            minh_rebuf = true;
+            minh_cur_buf = 0;
+        }
+        bitrate_recorder[minh_client_seg][0] = 800;
+        requested_file = "/file-100K";
+        printf("Chosen bitrate: %d\tpath: %s\n", bitrate_recorder[minh_client_seg][0], requested_file);
+        return requested_file;
+    }
+
+    if (minh_throughput < 2000){
+        chosen_bitrate = minh_rate_set[0];
+        requested_file = "/file-187K";  //187KBytes = 1500Kbits
+    }
+    else if (minh_throughput < 3000){
+        chosen_bitrate = minh_rate_set[1];
+        requested_file = "/file-250K";
+    }
+    else if (minh_throughput < 5000){
+        chosen_bitrate = minh_rate_set[2];
+        requested_file = "/file-437K";
+    }
+    else {
+        chosen_bitrate = minh_rate_set[3];
+        requested_file = "/file-625K";
+    }
+
+    bitrate_recorder[minh_client_seg][0] = chosen_bitrate;
+    // chosen_bitrate = 500;
+    // int a = 500;
+    // char astr[9];
+    // sprintf( astr, "/file-%d", a);
+
+    // char finstr[15]; //final string
+    // strcpy(finstr, astr);
+    // strcat(finstr, "K");
+
+    // printf ("final string: %s\n", finstr);
+    printf("Chosen bitrate: %d\tpath: %s\n", bitrate_recorder[minh_client_seg][0], requested_file);
+    return requested_file;
+}
+
+static void 
+minh_retransmission_technique(){
+    retransmission = false;
+}
+
+static void
+minh_update_stats(lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h){
+    long double m_dowload_time = (long double) (lsquic_time_now()- start_stream_recorder[minh_client_seg])/1000; //ms
+
+    if (minh_rebuf){
+        printf("update_rebuff\n");
+        minh_cur_buf += minh_sd;
+    }
+    else{
+        minh_cur_buf = (minh_cur_buf + minh_sd - m_dowload_time < 0) ? 0 :
+                        minh_cur_buf + minh_sd - m_dowload_time;
+    }
+    
+
+    minh_throughput = (long double) (stream->sm_cont_len-91)*8.0/m_dowload_time;// Kbps
+
+    // recorder
+    download_time_recorder[minh_client_seg] = m_dowload_time;
+    buffer_recorder[minh_client_seg] = minh_cur_buf;
+    throughput_recorder[minh_client_seg] = minh_throughput;
+
+    printf("Update stats: Segment %d current buff %.0f ms \tthroughput %.3f kbps in %.0Lf ms\n", 
+                                minh_client_seg, minh_cur_buf, minh_throughput, m_dowload_time);
+
+}
+
+// static void 
+// minh_terminate_stream(lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h){
+//     long double inst_download_time = (long double) (lsquic_time_now() - st_h->sh_created)/1000000;
+//     double inst_buf = (minh_cur_buf - inst_buf) > 0 ?
+//                        minh_cur_buf - inst_buf :
+//                        0;
+//     printf("instant buffer = %.3f of stream id: %"PRIu64"\n", inst_buf, lsquic_stream_id(stream));
+// }
+// Minh ADD-E
+
 struct sample_stats
 {
     unsigned        n;
@@ -93,7 +211,9 @@ static unsigned long s_stat_downloaded_bytes;
 static void
 update_sample_stats (struct sample_stats *stats, unsigned long val)
 {
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     LSQ_DEBUG("%s: %p: %lu", __func__, stats, val);
+
     if (stats->n)
     {
         if (val < stats->min)
@@ -112,31 +232,32 @@ update_sample_stats (struct sample_stats *stats, unsigned long val)
 }
 
 
-static void
-calc_sample_stats (const struct sample_stats *stats,
-        long double *mean_p, long double *stddev_p)
-{
-    unsigned long mean, tmp;
+// static void
+// calc_sample_stats (const struct sample_stats *stats,
+//         long double *mean_p, long double *stddev_p)
+// {
+//     // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+//     unsigned long mean, tmp;
 
-    if (stats->n)
-    {
-        mean = stats->sum / stats->n;
-        *mean_p = (long double) mean;
-        if (stats->n > 1)
-        {
-            tmp = stats->sum_X2 - stats->n * mean * mean;
-            tmp /= stats->n - 1;
-            *stddev_p = sqrtl((long double) tmp);
-        }
-        else
-            *stddev_p = 0;
-    }
-    else
-    {
-        *mean_p = 0;
-        *stddev_p = 0;
-    }
-}
+//     if (stats->n)
+//     {
+//         mean = stats->sum / stats->n;
+//         *mean_p = (long double) mean;
+//         if (stats->n > 1)
+//         {
+//             tmp = stats->sum_X2 - stats->n * mean * mean;
+//             tmp /= stats->n - 1;
+//             *stddev_p = sqrtl((long double) tmp);
+//         }
+//         else
+//             *stddev_p = 0;
+//     }
+//     else
+//     {
+//         *mean_p = 0;
+//         *stddev_p = 0;
+//     }
+// }
 
 
 #ifdef WIN32
@@ -237,6 +358,7 @@ display_cert_chain (lsquic_conn_t *);
 static void
 create_connections (struct http_client_ctx *client_ctx)
 {
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     size_t len;
     FILE *file;
     unsigned char zero_rtt[0x2000];
@@ -274,18 +396,30 @@ create_connections (struct http_client_ctx *client_ctx)
 static void
 create_streams (struct http_client_ctx *client_ctx, lsquic_conn_ctx_t *conn_h)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+#if 0    
     while (conn_h->ch_n_reqs - conn_h->ch_n_cc_streams &&
             conn_h->ch_n_cc_streams < client_ctx->hcc_cc_reqs_per_conn)
     {
         lsquic_conn_make_stream(conn_h->conn);
         conn_h->ch_n_cc_streams++;
     }
+#else
+    while (conn_h->ch_n_reqs - conn_h->ch_n_cc_streams &&
+            conn_h->ch_n_cc_streams < client_ctx->hcc_cc_reqs_per_conn)
+    {
+        printf("ch_n_cc_streams: %d\n", conn_h->ch_n_cc_streams);
+        lsquic_conn_make_stream(conn_h->conn);
+        conn_h->ch_n_cc_streams++;
+    }   
+#endif    
 }
 
 
 static lsquic_conn_ctx_t *
 http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct http_client_ctx *client_ctx = stream_if_ctx;
     lsquic_conn_ctx_t *conn_h = calloc(1, sizeof(*conn_h));
     conn_h->conn = conn;
@@ -312,6 +446,7 @@ struct create_another_conn_or_stop_ctx
 static void
 create_another_conn_or_stop (evutil_socket_t sock, short events, void *ctx)
 {
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct create_another_conn_or_stop_ctx *const cacos = ctx;
     struct http_client_ctx *const client_ctx = cacos->client_ctx;
 
@@ -331,6 +466,7 @@ create_another_conn_or_stop (evutil_socket_t sock, short events, void *ctx)
 static void
 http_client_on_conn_closed (lsquic_conn_t *conn)
 {
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
     struct create_another_conn_or_stop_ctx *cacos;
     enum LSQUIC_CONN_STATUS status;
@@ -383,6 +519,7 @@ hsk_status_ok (enum lsquic_hsk_status status)
 static void
 http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
     struct http_client_ctx *client_ctx = conn_h->client_ctx;
 
@@ -425,6 +562,7 @@ static void
 http_client_on_zero_rtt_info (lsquic_conn_t *conn, const unsigned char *buf,
                                                                 size_t bufsz)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_conn_ctx_t *const conn_h = lsquic_conn_get_ctx(conn);
     struct http_client_ctx *const client_ctx = conn_h->client_ctx;
     FILE *file;
@@ -482,6 +620,9 @@ struct lsquic_stream_ctx {
 static lsquic_stream_ctx_t *
 http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+    minh_client_seg ++;
+    
     const int pushed = lsquic_stream_is_pushed(stream);
 
     if (pushed)
@@ -491,22 +632,35 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         return NULL;
     }
 
+    
+
     lsquic_stream_ctx_t *st_h = calloc(1, sizeof(*st_h));
     st_h->stream = stream;
     st_h->client_ctx = stream_if_ctx;
     st_h->sh_created = lsquic_time_now();
+
     if (st_h->client_ctx->hcc_cur_pe)
     {
+        // printf("\t[MINH] info: 1 st_h->client_ctx->hcc_cur_pe->next_pe: %s\n", st_h->client_ctx->hcc_cur_pe->path);
         st_h->client_ctx->hcc_cur_pe = TAILQ_NEXT(
                                         st_h->client_ctx->hcc_cur_pe, next_pe);
-        if (!st_h->client_ctx->hcc_cur_pe)  /* Wrap around */
+        if (!st_h->client_ctx->hcc_cur_pe){  /* Wrap around */
+            // printf("\t[MINH] info: 2 st_h->client_ctx->hcc_cur_pe: %s\n", st_h->client_ctx->hcc_cur_pe);
             st_h->client_ctx->hcc_cur_pe =
                                 TAILQ_FIRST(&st_h->client_ctx->hcc_path_elems);
+        }
     }
-    else
+    else{
         st_h->client_ctx->hcc_cur_pe = TAILQ_FIRST(
                                             &st_h->client_ctx->hcc_path_elems);
-    st_h->path = st_h->client_ctx->hcc_cur_pe->path;
+    }
+
+    st_h->path = minh_AGG_ABR();
+    minh_retransmission_technique();
+    // if (minh_client_seg == 23){
+    //     st_h->client_ctx->hcc_cc_reqs_per_conn = 2;
+    // }
+
     if (st_h->client_ctx->payload)
     {
         st_h->reader.lsqr_read = test_reader_read;
@@ -517,7 +671,13 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     }
     else
         st_h->reader.lsqr_ctx = NULL;
-    LSQ_INFO("created new stream, path: %s", st_h->path);
+
+    start_stream_recorder[minh_client_seg] = lsquic_time_now();
+
+    bitrate_recorder[minh_client_seg][1] = lsquic_stream_id(stream);
+    printf("\t[MINH] info: created stream id: %"PRIu64". path: %s. segment: %d At time: %Lf ms\n",
+                lsquic_stream_id(stream),st_h->path, minh_client_seg, (long double)(lsquic_time_now() - streaming_start_time) / 1000);  
+    
     lsquic_stream_wantwrite(stream, 1);
     if (randomly_reprioritize_streams)
         lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
@@ -529,6 +689,7 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 static void
 send_headers (lsquic_stream_ctx_t *st_h)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     const char *hostname = st_h->client_ctx->hostname;
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
@@ -590,6 +751,7 @@ display_cert_chain (lsquic_conn_t *conn)
 static void
 http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     ssize_t nw;
 
     if (st_h->sh_flags & HEADERS_SENT)
@@ -636,6 +798,7 @@ discard (void *ctx, const unsigned char *buf, size_t sz, int fin)
 static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct http_client_ctx *const client_ctx = st_h->client_ctx;
     struct hset *hset;
     ssize_t nread;
@@ -643,7 +806,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     unsigned char buf[0x200];
     unsigned nreads = 0;
 #ifdef WIN32
-	srand(GetTickCount());
+    srand(GetTickCount());
 #endif
 
     do
@@ -670,7 +833,16 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                             : lsquic_stream_read(stream, buf, sizeof(buf))),
                     nread > 0)
         {
+
+            if (minh_cur_buf > 20000){
+                // long double inst_download_time = (long double) (lsquic_time_now() - st_h->sh_created)/1000000;
+                // double inst_buf = (minh_cur_buf - inst_download_time) > 0 ?
+                //                    minh_cur_buf - inst_download_time :
+                //                    0;
+                // printf("instant buffer = %.3f s of stream id: %"PRIu64"\n", inst_buf/1000.0, lsquic_stream_id(stream));
+            }
             s_stat_downloaded_bytes += nread;
+            stream->sm_cont_len += nread;
             /* test stream_reset after some number of read bytes */
             if (client_ctx->hcc_reset_after_nbytes &&
                 s_stat_downloaded_bytes > client_ctx->hcc_reset_after_nbytes)
@@ -694,8 +866,8 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                                     st_h->sh_ttfb - st_h->sh_created);
                 st_h->sh_flags |= PROCESSED_HEADERS;
             }
-            if (!s_discard_response)
-                fwrite(buf, 1, nread, stdout);
+            // if (!s_discard_response)
+            //     fwrite(buf, 1, nread, stdout);
             if (randomly_reprioritize_streams && (st_h->count++ & 0x3F) == 0)
             {
                 old_prio = lsquic_stream_priority(stream);
@@ -737,10 +909,23 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             && nreads++ < 3 /* Emulate just a few reads */);
 }
 
+// static void
+// minh_submit_request(){
+//     struct path_elem *pe;
+
+//     pe = calloc(1, sizeof(*pe));
+//     pe->path = "/file-50K";
+//     TAILQ_INSERT_TAIL(&client_ctx.hcc_path_elems, pe, next_pe);   
+// }
+
 
 static void
 http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    printf("\n\t******************* CLOSE STREAM ***************\n");
+    printf("\t[MINH] closed stream id: %"PRIu64" \tpath: %s \tcontent length: %llu bytes \n", 
+                                    lsquic_stream_id(stream), st_h->path, stream->sm_cont_len - 91);
+    minh_update_stats(stream, st_h);
     const int pushed = lsquic_stream_is_pushed(stream);
     if (pushed)
     {
@@ -873,6 +1058,7 @@ file2cert (const char *path)
 static int
 init_x509_cert_store (const char *path)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct dirent *ent;
     X509 *cert;
     DIR *dir;
@@ -922,6 +1108,7 @@ init_x509_cert_store (const char *path)
 static int
 verify_server_cert (void *ctx, STACK_OF(X509) *chain)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     X509_STORE_CTX store_ctx;
     X509 *cert;
     int ver;
@@ -950,6 +1137,7 @@ verify_server_cert (void *ctx, STACK_OF(X509) *chain)
 static void *
 hset_create (void *hsi_ctx, lsquic_stream_t *stream, int is_push_promise)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct hset *hset;
 
     if (s_discard_response)
@@ -968,6 +1156,7 @@ static struct lsxpack_header *
 hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
                                                         size_t req_space)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct hset *const hset = hset_p;
     struct hset_elem *el;
     char *buf;
@@ -1026,6 +1215,7 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
 static int
 hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     unsigned name_len, value_len;
     /* Not much to do: the header value are in xhdr */
 
@@ -1045,6 +1235,7 @@ hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
 static void
 hset_destroy (void *hset_p)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct hset *hset = hset_p;
     struct hset_elem *el, *next;
 
@@ -1064,6 +1255,7 @@ hset_destroy (void *hset_p)
 static void
 hset_dump (const struct hset *hset, FILE *out)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     const struct hset_elem *el;
 
     STAILQ_FOREACH(el, hset, next)
@@ -1097,16 +1289,16 @@ static const struct lsquic_hset_if header_bypass_api =
 };
 
 
-static void
-display_stat (FILE *out, const struct sample_stats *stats, const char *name)
-{
-    long double mean, stddev;
+// static void
+// display_stat (FILE *out, const struct sample_stats *stats, const char *name)
+// {
+//     long double mean, stddev;
 
-    calc_sample_stats(stats, &mean, &stddev);
-    fprintf(out, "%s: n: %u; min: %.2Lf ms; max: %.2Lf ms; mean: %.2Lf ms; "
-        "sd: %.2Lf ms\n", name, stats->n, (long double) stats->min / 1000,
-        (long double) stats->max / 1000, mean / 1000, stddev / 1000);
-}
+//     calc_sample_stats(stats, &mean, &stddev);
+//     fprintf(out, "%s: n: %u; min: %.2Lf ms; max: %.2Lf ms; mean: %.2Lf ms; "
+//         "sd: %.2Lf ms\n", name, stats->n, (long double) stats->min / 1000,
+//         (long double) stats->max / 1000, mean / 1000, stddev / 1000);
+// }
 
 
 static lsquic_conn_ctx_t *
@@ -1399,9 +1591,9 @@ int
 main (int argc, char **argv)
 {
     int opt, s, was_empty;
-    lsquic_time_t start_time;
+    
     FILE *stats_fh = NULL;
-    long double elapsed;
+    // long double elapsed;
     struct http_client_ctx client_ctx;
     struct stat st;
     struct path_elem *pe;
@@ -1551,6 +1743,9 @@ main (int argc, char **argv)
                 exit(1);
         }
     }
+    printf("DUMMYNET-S\n");
+    // if (system("sudo ./complex_3g.sh &")) {printf("ERROR Cannot start DummyNet\n"); exit(1);};
+    printf("DUMMYNET-E\n");
 
 #if LSQUIC_CONN_STATS
     prog.prog_api.ea_stats_fh = stats_fh;
@@ -1578,7 +1773,7 @@ main (int argc, char **argv)
         exit(1);
     }
 
-    start_time = lsquic_time_now();
+    streaming_start_time = lsquic_time_now();
     was_empty = TAILQ_EMPTY(&sports);
     if (0 != prog_prep(&prog))
     {
@@ -1609,20 +1804,45 @@ main (int argc, char **argv)
 
     s = prog_run(&prog);
 
-    if (stats_fh)
-    {
-        elapsed = (long double) (lsquic_time_now() - start_time) / 1000000;
-        fprintf(stats_fh, "overall statistics as calculated by %s:\n", argv[0]);
-        display_stat(stats_fh, &s_stat_to_conn, "time for connect");
-        display_stat(stats_fh, &s_stat_req, "time for request");
-        display_stat(stats_fh, &s_stat_ttfb, "time to 1st byte");
-        fprintf(stats_fh, "downloaded %lu application bytes in %.3Lf seconds\n",
-            s_stat_downloaded_bytes, elapsed);
-        fprintf(stats_fh, "%.2Lf reqs/sec; %.0Lf bytes/sec\n",
-            (long double) s_stat_req.n / elapsed,
-            (long double) s_stat_downloaded_bytes / elapsed);
-        fprintf(stats_fh, "read handler count %lu\n", prog.prog_read_count);
+    // if (stats_fh)
+    // {
+        // elapsed = (long double) (lsquic_time_now() - streaming_start_time) / 1000000;
+        // fprintf(stats_fh, "\noverall statistics as calculated by %s:\n", argv[0]);
+        // display_stat(stats_fh, &s_stat_to_conn, "time for connect");
+        // display_stat(stats_fh, &s_stat_req, "time for request");
+        // display_stat(stats_fh, &s_stat_ttfb, "time to 1st byte");
+        // fprintf(stats_fh, "downloaded %lu application bytes in %.3Lf seconds\n",
+        //     s_stat_downloaded_bytes, elapsed);
+        // fprintf(stats_fh, "%.2Lf reqs/sec; %.0Lf bytes/sec\n",
+        //     (long double) s_stat_req.n / elapsed,
+        //     (long double) s_stat_downloaded_bytes / elapsed);
+        // fprintf(stats_fh, "read handler count %lu\n", prog.prog_read_count);
+
+    int i;
+    printf("=======================Streaming session status=======================\n");
+    printf("StartTime\t ID\t Bitrate\t Throughput\t Buffer\n");
+    for ( i = 0; i < MAX_SEGMENT_ID && bitrate_recorder[i][0] != 0; i++){
+        printf("%.3Lf\t %d\t %d\t %.0f\t %.1f\n", 
+                (long double)(start_stream_recorder[i]-streaming_start_time)/1000000, 
+                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0);
     }
+    printf("=======================Streaming session status=======================\n");
+    // MINH killall bash ./complex
+    // if (system("sudo killall bash ./complex_3g.sh")) {printf("Killed Dummynet\n");};        
+    // }
+
+    // write on file
+    FILE *stats_file;
+    printf("======================= Writing on files -S =======================\n");
+    stats_file = fopen("./statistics.txt", "w+");
+
+    fprintf(stats_file, "StartTime\t ID\t Bitrate\t Throughput\t Buffer\n");
+    for ( i = 0; i < MAX_SEGMENT_ID  && bitrate_recorder[i][0] != 0; i++){
+        fprintf(stats_file, "%.3Lf\t %d\t %d\t %.0f\t %.1f\n", 
+                (long double)(start_stream_recorder[i]-streaming_start_time)/1000000, 
+                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0);
+    }
+    printf("======================= Writing on files -E =======================\n");
 
     prog_cleanup(&prog);
     if (promise_fd >= 0)
