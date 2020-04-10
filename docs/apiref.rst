@@ -693,6 +693,16 @@ settings structure:
 
        Default value is @ref LSQUIC_DF_TIMESTAMPS
 
+    .. member:: unsigned short  es_max_packet_size_rx
+
+       Maximum packet size we are willing to receive.  This is sent to
+       peer in transport parameters: the library does not enforce this
+       limit for incoming packets.
+
+       If set to zero, limit is not set.
+
+       Default value is :macro:`LSQUIC_DF_MAX_PACKET_SIZE_RX`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -866,6 +876,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_DELAYED_ACKS
 
     Delayed ACKs are off by default.
+
+.. macro:: LSQUIC_DF_MAX_PACKET_SIZE_RX
+
+    By default, incoming packet size is not limited.
 
 Receiving Packets
 -----------------

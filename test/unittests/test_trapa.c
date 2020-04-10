@@ -63,15 +63,16 @@ static const struct trapa_test tests[] =
                     | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT),
             .tp_init_max_stream_data_bidi_local = 0x12348877,
             .tp_init_max_data = 0xAABB,
+            .tp_max_packet_size = 1213,
             .tp_max_idle_timeout = 10 * 1000,
             .tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY,
             .tp_active_connection_id_limit = 7,
         },
         .is_server = 0,
-        .enc_len = 25,
+        .enc_len = 26,
         .encoded =
      /* Idle timeout */     "\x01\x02\x67\x10"
-     /* Packet size */      "\x03\x01\x00"
+     /* Packet size */      "\x03\x02\x44\xBD"
      /* Max data */         "\x04\x04\x80\x00\xAA\xBB"
      /* Bidi local */       "\x05\x04\x92\x34\x88\x77"
      /* Ack delay exp */    "\x0A\x01\x00"
@@ -103,13 +104,13 @@ static const struct trapa_test tests[] =
             TP_DEFAULT_VALUES,
             .tp_init_max_data = 0x123456,
             .tp_init_max_stream_data_bidi_local = 0xABCDEF88,
-            .tp_max_packet_size = 0x333,
+            .tp_max_packet_size = 0x555,
         },
         .is_server = 1,
         .addl_set = 1 << TPI_DISABLE_ACTIVE_MIGRATION,
         .enc_len = 22,
         .encoded =
-     /* Packet size */      "\x03\x02\x43\x33"
+     /* Packet size */      "\x03\x02\x45\x55"
      /* Max data */         "\x04\x04\x80\x12\x34\x56"
      /* Bidi local */       "\x05\x08\xC0\x00\x00\x00\xAB\xCD\xEF\x88"
      /* Migration */        "\x0C\x00"
@@ -124,7 +125,7 @@ static const struct trapa_test tests[] =
         .params = {
             TP_DEFAULT_VALUES,
             .tp_max_ack_delay = 25,
-            .tp_max_packet_size = 0x333,
+            .tp_max_packet_size = 0x555,
             .tp_preferred_address = {
                 .ipv4_addr = "\x01\x02\x03\x04",
                 .ipv4_port = 0x1234,
@@ -148,7 +149,7 @@ static const struct trapa_test tests[] =
                             "\x0B"  /* CID len */
                             "\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2A"
                             "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F"
-     /* Packet size */      "\x03\x02\x43\x33"
+     /* Packet size */      "\x03\x02\x45\x55"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },

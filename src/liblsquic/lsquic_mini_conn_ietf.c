@@ -162,6 +162,50 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len)
 }
 
 
+static int
+imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
+{
+    return conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off > 3
+        && conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off >= conn->imc_ch_len;
+}
+
+
+static int
+imico_maybe_process_params (struct ietf_mini_conn *conn)
+{
+    const struct transport_params *params;
+
+    if (imico_chlo_has_been_consumed(conn)
+        && (conn->imc_flags & (IMC_ENC_SESS_INITED|IMC_HAVE_TP))
+                                                    == IMC_ENC_SESS_INITED)
+    {
+        params = conn->imc_conn.cn_esf.i->esfi_get_peer_transport_params(
+                                                conn->imc_conn.cn_enc_session);
+        if (params)
+        {
+            conn->imc_flags |= IMC_HAVE_TP;
+            conn->imc_ack_exp = params->tp_ack_delay_exponent;
+            if (params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
+            {
+                if (params->tp_numerics[TPI_MAX_PACKET_SIZE]
+                                                < conn->imc_path.np_pack_size)
+                    conn->imc_path.np_pack_size =
+                                    params->tp_numerics[TPI_MAX_PACKET_SIZE];
+            }
+            LSQ_DEBUG("read transport params, packet size is set to %hu bytes",
+                                                conn->imc_path.np_pack_size);
+        }
+        else
+        {
+            conn->imc_flags |= IMC_BAD_TRANS_PARAMS;
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
 static ssize_t
 imico_stream_write (void *stream, const void *bufp, size_t bufsz)
 {
@@ -174,6 +218,9 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
     size_t header_sz, need;
     const unsigned char *p;
     int len;
+
+    if (0 != imico_maybe_process_params(conn))
+        return -1;
 
     if (PNS_INIT == lsquic_enclev2pns[ cryst->mcs_enc_level ]
                                         && (conn->imc_flags & IMC_IGNORE_INIT))
@@ -278,14 +325,6 @@ imico_read_chlo_size (struct ietf_mini_conn *conn, const unsigned char *buf,
             return;
         conn->imc_ch_len |= *buf;
     }
-}
-
-
-static int
-imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
-{
-    return conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off >= conn->imc_ch_len;
 }
 
 
@@ -574,14 +613,24 @@ ietf_mini_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
 }
 
 
+/* A mini connection is only tickable if it has unsent packets.  This can
+ * occur when packet sending is delayed.
+ *
+ * Otherwise, a mini connection is not tickable:  Either there are incoming
+ * packets, in which case, the connection is going to be ticked, or there is
+ * an alarm pending, in which case it will be handled via the attq.
+ */
 static int
 ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
 {
-    /* A mini connection is never tickable:  Either there are incoming
-     * packets, in which case, the connection is going to be ticked, or
-     * there is an alarm pending, in which case it will be handled via
-     * the attq.
-     */
+    struct ietf_mini_conn *const conn = (struct ietf_mini_conn *) lconn;
+    const struct lsquic_packet_out *packet_out;
+
+    if (conn->imc_enpub->enp_flags & ENPUB_CAN_SEND)
+        TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
+            if (!(packet_out->po_flags & PO_SENT))
+                return 1;
+
     return 0;
 }
 
@@ -755,7 +804,6 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
     int parsed_len;
     enum enc_level enc_level, i;
     struct stream_frame stream_frame;
-    const struct transport_params *params;
 
     parsed_len = conn->imc_conn.cn_pf->pf_parse_crypto_frame(p, len,
                                                                 &stream_frame);
@@ -825,25 +873,6 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
             return 0;
     }
 
-
-    if (enc_level == ENC_LEV_CLEAR
-        && imico_chlo_has_been_consumed(conn)
-        && (conn->imc_flags & (IMC_ENC_SESS_INITED|IMC_HAVE_TP))
-                                                    == IMC_ENC_SESS_INITED)
-    {
-        params = conn->imc_conn.cn_esf.i->esfi_get_peer_transport_params(
-                                                conn->imc_conn.cn_enc_session);
-        if (params)
-        {
-            conn->imc_flags |= IMC_HAVE_TP;
-            conn->imc_ack_exp = params->tp_ack_delay_exponent;
-        }
-        else
-        {
-            conn->imc_flags |= IMC_BAD_TRANS_PARAMS;
-            return 0;
-        }
-    }
 
     return parsed_len;
 }

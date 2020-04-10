@@ -1290,12 +1290,20 @@ interop_server_hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
     }
 
     if (req->flags & HAVE_XHDR)
+    {
+        if (req->decode_off + lsxpack_header_get_dec_size(&req->xhdr)
+                                                    >= sizeof(req->decode_buf))
+        {
+            LSQ_WARN("Not enough room in header");
+            return NULL;
+        }
         req->decode_off += lsxpack_header_get_dec_size(&req->xhdr);
+    }
     else
         req->flags |= HAVE_XHDR;
 
     lsxpack_header_prepare_decode(&req->xhdr, req->decode_buf,
-                                        req->decode_off, sizeof(req->decode_buf));
+                req->decode_off, sizeof(req->decode_buf) - req->decode_off);
     return &req->xhdr;
 }
 

@@ -1,3 +1,15 @@
+2020-04-08
+    - 2.14.2
+    - [BUGFIX] Use ls-qpack 2.0.4
+    - [BUGFIX] Honor max packet size on the client and when path changes.
+    - http_server: fix prepare_decode() function.
+
+2020-04-07
+    - 2.14.1
+    - [BUGFIX] Place connections on tickable queue when sending is reenabled.
+    - [BUGFIX] A connection is tickable if it has unsent packets.
+    - [BUGFIX] Heed peer's max_packet_size transport parameter.
+
 2020-03-30
     - 2.14.0
     - [API] Use lsxpack_header structure to send HTTP headers.
