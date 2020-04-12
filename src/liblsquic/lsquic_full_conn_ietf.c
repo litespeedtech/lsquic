@@ -2436,6 +2436,7 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
 static void
 process_streams_ready_to_send (struct ietf_full_conn *conn)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct lsquic_stream *stream;
     struct stream_prio_iter spi;
 
@@ -3589,6 +3590,7 @@ immediate_close (struct ietf_full_conn *conn)
 static void
 process_streams_read_events (struct ietf_full_conn *conn)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct lsquic_stream *stream;
     int iters;
     enum stream_q_flags q_flags, needs_service;
@@ -3686,6 +3688,7 @@ write_is_possible (struct ietf_full_conn *conn)
 static void
 process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 {
+    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     struct lsquic_stream *stream;
     struct stream_prio_iter spi;
 

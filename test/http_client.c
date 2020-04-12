@@ -79,15 +79,21 @@ static int s_discard_response;
 
 // Minh ADD-S
 #define MAX_SEGMENT_ID  200
+#define MAX_LAYER_ID    4   // 1 BL + 3 ELs
+#define TRUE            true
+#define FALSE           false
 
-const int minh_rate_set[] = {1500, 2000, 3500, 5000};   //Kbps
+const int   MINH_BITRATE_SET[] = {1500, 2000, 3500, 5000};   //Kbps
+const int   MINH_SUM_BITRATE_SET[] = {1500, 3500, 7500, 12500}; //Kbps
+const char* MINH_PATH_SET[] = {"/file-187K", "/file-250K", "/file-437K", "/file-625K"};
 
 // data record
-lsquic_time_t   start_stream_recorder[MAX_SEGMENT_ID];           
-long double     download_time_recorder[MAX_SEGMENT_ID];
-double          throughput_recorder[MAX_SEGMENT_ID];    // in Kbps
-double          buffer_recorder[MAX_SEGMENT_ID]; // in s
-int             bitrate_recorder[MAX_SEGMENT_ID][2]; //
+lsquic_time_t   start_stream_recorder   [MAX_SEGMENT_ID];           
+long double     download_time_recorder  [MAX_SEGMENT_ID];
+double          throughput_recorder     [MAX_SEGMENT_ID];    // in Kbps
+double          buffer_recorder         [MAX_SEGMENT_ID]; // in s
+int             bitrate_recorder        [MAX_SEGMENT_ID][2];
+int             retrans_seg_id          [MAX_SEGMENT_ID];
 
 lsquic_time_t   streaming_start_time;
 
@@ -95,80 +101,168 @@ static int      minh_client_seg = -1;
 static double   minh_cur_buf = 0;   // in milisecon
 static double   minh_throughput = 0; // in Kbps
 
-const int       minh_rebuf_threshold_exit = 5000;
-const int       minh_sd = 1000;
+const int       MINH_REBUF_THRESHOLD_EXIT = 5000;
+const int       MINH_SD = 1000;
 static bool     minh_rebuf = true;
-static bool     retransmission = false;
+static bool     retrans_check = false;
+static bool     set_prior_check = false;
 
+static char*    next_path = "/file-123K";
+static char*    retrans_path = "/file-432K";
 
-static char*
+static unsigned termn_seg_id = 0;
+// int             seg_id_stream_id_map[MAX_SEGMENT_ID*2][2]; //[seg_id, stream_id]
+
+int             priority_next = 2;
+int             priority_retrans = 8;
+
+struct seg_layers   // a stream = 1 layer
+{
+   int              bitrate;
+   unsigned long    stream_id;
+   double           throughput;
+
+   lsquic_time_t    start_download;
+   long double      download_time;
+} seg_layer;
+
+struct segments
+{
+    int         num_layers;
+    seg_layers  layer[];
+    // int         id;
+    double      buffer;
+
+} segment;
+
+static void
 minh_AGG_ABR(){
-    char *requested_file = NULL; // e.g.,"/file-500K";
-    int chosen_bitrate;
+    int i;
 
-    if (minh_rebuf && minh_cur_buf >= minh_rebuf_threshold_exit){
+    if (minh_rebuf && minh_cur_buf >= MINH_REBUF_THRESHOLD_EXIT){
         minh_rebuf = false;
     }
 
-    if (minh_cur_buf < minh_sd || minh_rebuf){
+    if (minh_cur_buf < MINH_SD || minh_rebuf){
         if (!minh_rebuf){
             minh_rebuf = true;
             minh_cur_buf = 0;
         }
-        bitrate_recorder[minh_client_seg][0] = 800;
-        requested_file = "/file-100K";
-        printf("Chosen bitrate: %d\tpath: %s\n", bitrate_recorder[minh_client_seg][0], requested_file);
+        bitrate_recorder[minh_client_seg][0] = MINH_BITRATE_SET[0];
+        requested_file = MINH_PATH_SET[0];
+        seg_id_stream_id_map[minh_client_seg][0] = minh_client_seg;
+
+        // printf("Chosen bitrate: %d\tpath: %s\n", bitrate_recorder[minh_client_seg][0], requested_file);
         return requested_file;
     }
 
-    if (minh_throughput < 2000){
-        chosen_bitrate = minh_rate_set[0];
-        requested_file = "/file-187K";  //187KBytes = 1500Kbits
+    if (cur_layer_id == segment[minh_client_seg]->num_layers){ // go to next request.
+        minh_client_seg ++;
+        cur_layer_id = 1;
+
+        for (i = MAX_LAYER_ID; i >=1; i--){
+            if (MINH_SUM_BITRATE_SET[i] < estimated_throughput){
+                segment[minh_client_seg]->num_layers = i+1;
+                break;
+            }
+        }
     }
-    else if (minh_throughput < 3000){
-        chosen_bitrate = minh_rate_set[1];
-        requested_file = "/file-250K";
-    }
-    else if (minh_throughput < 5000){
-        chosen_bitrate = minh_rate_set[2];
-        requested_file = "/file-437K";
-    }
-    else {
-        chosen_bitrate = minh_rate_set[3];
-        requested_file = "/file-625K";
+    else{
+        cur_layer_id ++;
     }
 
-    bitrate_recorder[minh_client_seg][0] = chosen_bitrate;
-    // chosen_bitrate = 500;
-    // int a = 500;
-    // char astr[9];
-    // sprintf( astr, "/file-%d", a);
+    segment[minh_client_seg]->layer[cur_layer_id-1]->bitrate = MINH_BITRATE_SET[cur_layer_id-1];
+    segment[minh_client_seg]->layer[cur_layer_id-1]->start_download = lsquic_time_now();
 
-    // char finstr[15]; //final string
-    // strcpy(finstr, astr);
-    // strcat(finstr, "K");
-
-    // printf ("final string: %s\n", finstr);
-    printf("Chosen bitrate: %d\tpath: %s\n", bitrate_recorder[minh_client_seg][0], requested_file);
-    return requested_file;
+    next_path = MINH_PATH_SET[cur_layer_id-1];
 }
 
 static void 
 minh_retransmission_technique(){
-    retransmission = false;
+    // if (minh_client_seg == 4){
+    //     printf("RETRANS\n");
+    //     retrans_check = true;
+    //     set_prior_check = true;
+    // }
+
+    // trigger retrans
+    if (estimated_throughput > MINH_SUM_BITRATE_SET[segment[minh_client_seg]->num_layers] &&
+        minh_retrans_trigger == FALSE &&
+        minh_client_seg > MINH_REBUF_THRESHOLD_EXIT &&
+        minh_cur_buf >= RETRANS_BUFF_TRIGGER_ON)
+    {
+        minh_retrans_trigger = TRUE;
+        printf("--- TRIGGER ON ---\n");
+    }
+    else if (minh_cur_buf < RETRANS_BUFF_THRES)
+    {
+        minh_retrans_trigger = FALSE;
+    }
+
+    // without retransmission No retrans
+    if (minh_retrans_extension == FALSE)
+    {
+        minh_retrans_trigger = FALSE;
+        printf("-------------------- RETRANS. IS DISABLE ----------------------\n");
+    }
+
+    // if retrans is ON
+    if (minh_retrans_trigger){
+        if (cur_layer_id == 1){ // just jump to the next segment. ??? Chi check retrans trong truong hop nay?
+            // find the highest gap amplitude
+            int i;
+            int m_gap_amplitude = 0;
+            int m_retrans_seg_id = 0;
+            for (i = minh_client_seg-1; i > minh_client_seg - (int) minh_cur_buf; i--){
+                // if num_layers khac vs i-1 thi la gap
+
+                if (i == minh_client_seg-1){
+                    printf("# layers of current segment:%d\n", segment[i]->num_layers);
+                    printf("# layers of previous segment:%d\n", segment[i-1]->num_layers);  
+
+                    if (segment[i-1]->num_layers - segment[i]->num_layers > m_gap_amplitude)
+                    {
+                        m_gap_amplitude = segment[i-1]->num_layers - segment[i]->num_layers;
+                        m_retrans_seg_id = i;
+                    }                 
+                }
+                else
+                {
+                    printf("# layers of latter segment:%d\n", segment[i+1]->num_layers);
+                    printf("# layers of current segment:%d\n", segment[i]->num_layers);
+                    printf("# layers of previous segment:%d\n", segment[i-1]->num_layers);     
+
+                    if (segment[i-1]->num_layers - segment[i]->num_layers > m_gap_amplitude || 
+                        segment[i+1]->num_layers - segment[i]->num_layers > m_gap_amplitude)
+                    {
+                        m_gap_amplitude = segment[i-1]->num_layers - segment[i]->num_layers;
+                        m_retrans_seg_id = i;
+                    }                
+                }
+
+            }
+            // tinh t^a, T^R, B^e
+        }
+        else {
+
+        }
+    }
 }
 
 static void
 minh_update_stats(lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h){
     long double m_dowload_time = (long double) (lsquic_time_now()- start_stream_recorder[minh_client_seg])/1000; //ms
 
+    if (lsquic_stream_id(stream) == termn_seg_id){
+        printf("TERMINATION: this segment was requested for termination\n");
+        return;
+    }
     if (minh_rebuf){
-        printf("update_rebuff\n");
-        minh_cur_buf += minh_sd;
+        minh_cur_buf += MINH_SD;
     }
     else{
-        minh_cur_buf = (minh_cur_buf + minh_sd - m_dowload_time < 0) ? 0 :
-                        minh_cur_buf + minh_sd - m_dowload_time;
+        minh_cur_buf = (minh_cur_buf + MINH_SD - m_dowload_time < 0) ? 0 :
+                        minh_cur_buf + MINH_SD - m_dowload_time;
     }
     
 
@@ -179,7 +273,7 @@ minh_update_stats(lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h){
     buffer_recorder[minh_client_seg] = minh_cur_buf;
     throughput_recorder[minh_client_seg] = minh_throughput;
 
-    printf("Update stats: Segment %d current buff %.0f ms \tthroughput %.3f kbps in %.0Lf ms\n", 
+    printf("\tUpdate stats: Segment %d current buff %.0f ms \tthroughput %.3f kbps in %.0Lf ms\n", 
                                 minh_client_seg, minh_cur_buf, minh_throughput, m_dowload_time);
 
 }
@@ -396,7 +490,7 @@ create_connections (struct http_client_ctx *client_ctx)
 static void
 create_streams (struct http_client_ctx *client_ctx, lsquic_conn_ctx_t *conn_h)
 {
-    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+    printf("\n====================== CREATE STREAM ==================================================================\n");
 #if 0    
     while (conn_h->ch_n_reqs - conn_h->ch_n_cc_streams &&
             conn_h->ch_n_cc_streams < client_ctx->hcc_cc_reqs_per_conn)
@@ -405,10 +499,12 @@ create_streams (struct http_client_ctx *client_ctx, lsquic_conn_ctx_t *conn_h)
         conn_h->ch_n_cc_streams++;
     }
 #else
+    if (retrans_check){
+        client_ctx->hcc_cc_reqs_per_conn = 2;
+    }
     while (conn_h->ch_n_reqs - conn_h->ch_n_cc_streams &&
             conn_h->ch_n_cc_streams < client_ctx->hcc_cc_reqs_per_conn)
     {
-        printf("ch_n_cc_streams: %d\n", conn_h->ch_n_cc_streams);
         lsquic_conn_make_stream(conn_h->conn);
         conn_h->ch_n_cc_streams++;
     }   
@@ -620,7 +716,7 @@ struct lsquic_stream_ctx {
 static lsquic_stream_ctx_t *
 http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
-    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     minh_client_seg ++;
     
     const int pushed = lsquic_stream_is_pushed(stream);
@@ -639,6 +735,8 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     st_h->client_ctx = stream_if_ctx;
     st_h->sh_created = lsquic_time_now();
 
+// Minh [retransmission] MOD-S
+#if 0
     if (st_h->client_ctx->hcc_cur_pe)
     {
         // printf("\t[MINH] info: 1 st_h->client_ctx->hcc_cur_pe->next_pe: %s\n", st_h->client_ctx->hcc_cur_pe->path);
@@ -654,12 +752,22 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         st_h->client_ctx->hcc_cur_pe = TAILQ_FIRST(
                                             &st_h->client_ctx->hcc_path_elems);
     }
+#else
+    if (!retrans_check){
+        st_h->path = next_path;
+        printf("path = NEXT path: %s\n", st_h->path);
+        struct http_client_ctx *const client_ctx = st_h->client_ctx;
+        client_ctx->hcc_cc_reqs_per_conn = 1;
+    }
+    else {
+        st_h->path = retrans_path;
+        retrans_stream_id = lsquic_stream_id(stream);
+        printf("path = RETRANS path: %s in stream_id: %"PRIu64"\n", st_h->path, retrans_stream_id);
 
-    st_h->path = minh_AGG_ABR();
-    minh_retransmission_technique();
-    // if (minh_client_seg == 23){
-    //     st_h->client_ctx->hcc_cc_reqs_per_conn = 2;
-    // }
+        retrans_check = false;
+    }
+#endif    
+// Minh [retransmission] MOD-E
 
     if (st_h->client_ctx->payload)
     {
@@ -679,8 +787,18 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
                 lsquic_stream_id(stream),st_h->path, minh_client_seg, (long double)(lsquic_time_now() - streaming_start_time) / 1000);  
     
     lsquic_stream_wantwrite(stream, 1);
-    if (randomly_reprioritize_streams)
-        lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
+
+    if (set_prior_check){
+        if (st_h->path == retrans_path){
+            printf("PRIORITY_retrans\n");
+            lsquic_stream_set_priority(stream, priority_retrans);
+        }
+        else{
+            printf("PRIORITY_next\n");
+            lsquic_stream_set_priority(stream, priority_next);
+            set_prior_check = false;
+        }
+    }
 
     return st_h;
 }
@@ -689,7 +807,7 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 static void
 send_headers (lsquic_stream_ctx_t *st_h)
 {
-    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     const char *hostname = st_h->client_ctx->hostname;
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
@@ -751,7 +869,7 @@ display_cert_chain (lsquic_conn_t *conn)
 static void
 http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
+    // printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     ssize_t nw;
 
     if (st_h->sh_flags & HEADERS_SENT)
@@ -833,8 +951,16 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                             : lsquic_stream_read(stream, buf, sizeof(buf))),
                     nread > 0)
         {
+            static unsigned long minh_data_downloaded_25  = 0;
+            if (lsquic_stream_id(stream) == 25){
+                minh_data_downloaded_25 += nread;
+                printf("minh_data_downloaded_25: %lu\n", minh_data_downloaded_25);
 
-            if (minh_cur_buf > 20000){
+                if (minh_data_downloaded_25 >20000){
+                    termn_seg_id = 25;
+                    printf("TERMINATION\n");
+                    lsquic_stream_reset(stream, 0x1);
+                }
                 // long double inst_download_time = (long double) (lsquic_time_now() - st_h->sh_created)/1000000;
                 // double inst_buf = (minh_cur_buf - inst_download_time) > 0 ?
                 //                    minh_cur_buf - inst_download_time :
@@ -922,9 +1048,10 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 static void
 http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    unsigned long stream_id = lsquic_stream_id(stream);
     printf("\n\t******************* CLOSE STREAM ***************\n");
     printf("\t[MINH] closed stream id: %"PRIu64" \tpath: %s \tcontent length: %llu bytes \n", 
-                                    lsquic_stream_id(stream), st_h->path, stream->sm_cont_len - 91);
+                                    stream_id, st_h->path, stream->sm_cont_len - 91);
     minh_update_stats(stream, st_h);
     const int pushed = lsquic_stream_is_pushed(stream);
     if (pushed)
@@ -943,6 +1070,25 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     assert(conn_h);
     --conn_h->ch_n_reqs;
     --conn_h->ch_n_cc_streams;
+
+// Minh [retransmission] ADD-S
+    if (retransmitting && !termination_check && (retrans_stream_id == stream_id){   // retransmit successfully (NO termination)
+        retransmitting = FALSE;
+        segment[retrans_seg_id]->num_layers ++;
+        segment[retrans_seg_id]->layer[num_layers-1]->bitrate = MINH_BITRATE_SET[num_layers-1];
+        segment[retrans_seg_id]->layer[num_layers-1]->throughput = ;
+        segment[retrans_seg_id]->layer[num_layers-1]->download_time = ;
+
+       // tuong duong vs minh_update_stats(stream, st_h, seg_id = retrans_seg_id , layer_id = num_layers-1);
+    }
+    else if {next_stream_id == stream_id}{
+        cur_layer_id ++;
+        // minh_update_stats(stream, st_h, seg_id = minh_client_segment, layer_id = cur_layer_id);
+        minh_AGG_ABR();
+        minh_retransmission_technique();
+    }
+// Minh [retransmission] ADD-E
+
     if (0 == conn_h->ch_n_reqs)
     {
         LSQ_INFO("all requests completed, closing connection");
@@ -1743,6 +1889,7 @@ main (int argc, char **argv)
                 exit(1);
         }
     }
+    client_ctx.hcc_reqs_per_conn = 1000;
     printf("DUMMYNET-S\n");
     // if (system("sudo ./complex_3g.sh &")) {printf("ERROR Cannot start DummyNet\n"); exit(1);};
     printf("DUMMYNET-E\n");
@@ -1820,11 +1967,15 @@ main (int argc, char **argv)
 
     int i;
     printf("=======================Streaming session status=======================\n");
-    printf("StartTime\t ID\t Bitrate\t Throughput\t Buffer\n");
+    printf("StartTime\t SegID\t Bitrate\t Throughput\t Buffer\t StreamID\n");
     for ( i = 0; i < MAX_SEGMENT_ID && bitrate_recorder[i][0] != 0; i++){
-        printf("%.3Lf\t %d\t %d\t %.0f\t %.1f\n", 
+        if (!throughput_recorder[i] && !buffer_recorder[i]){
+            continue;
+        }
+        printf("%.3Lf\t %d\t %d\t %.0f\t %.1f\t %d\n", 
                 (long double)(start_stream_recorder[i]-streaming_start_time)/1000000, 
-                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0);
+                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0,
+                bitrate_recorder[i][1]);
     }
     printf("=======================Streaming session status=======================\n");
     // MINH killall bash ./complex
@@ -1836,11 +1987,15 @@ main (int argc, char **argv)
     printf("======================= Writing on files -S =======================\n");
     stats_file = fopen("./statistics.txt", "w+");
 
-    fprintf(stats_file, "StartTime\t ID\t Bitrate\t Throughput\t Buffer\n");
-    for ( i = 0; i < MAX_SEGMENT_ID  && bitrate_recorder[i][0] != 0; i++){
-        fprintf(stats_file, "%.3Lf\t %d\t %d\t %.0f\t %.1f\n", 
+    fprintf(stats_file, "StartTime\t SegID\t Bitrate\t Throughput\t Buffer\t StreamID\n");
+    for ( i = 0; i < MAX_SEGMENT_ID && bitrate_recorder[i][0] != 0; i++){
+        if (!throughput_recorder[i] && !buffer_recorder[i]){
+            continue;
+        }
+        fprintf(stats_file, "%.3Lf\t %d\t %d\t %.0f\t %.1f\t %d\n", 
                 (long double)(start_stream_recorder[i]-streaming_start_time)/1000000, 
-                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0);
+                i, bitrate_recorder[i][0], throughput_recorder[i], buffer_recorder[i]/1000.0,
+                bitrate_recorder[i][1]);
     }
     printf("======================= Writing on files -E =======================\n");
 

@@ -257,6 +257,7 @@ lsquic_spi_first (struct stream_prio_iter *iter)
 lsquic_stream_t *
 lsquic_spi_next (struct stream_prio_iter *iter)
 {
+    //printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_stream_t *stream;
 
     if (iter->spi_prev_stream)

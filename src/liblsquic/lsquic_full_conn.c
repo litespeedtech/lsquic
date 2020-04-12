@@ -2798,6 +2798,7 @@ process_stream_ready_to_send (struct full_conn *conn, lsquic_stream_t *stream)
 static void
 process_streams_ready_to_send (struct full_conn *conn)
 {
+    //printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_stream_t *stream;
     struct stream_prio_iter spi;
 
@@ -2980,6 +2981,7 @@ filter_out_old_streams (void *ctx, lsquic_stream_t *stream)
 static void
 process_streams_read_events (struct full_conn *conn)
 {
+    //printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_stream_t *stream;
     struct filter_stream_ctx fctx;
     enum stream_q_flags q_flags;
@@ -3047,6 +3049,7 @@ maybe_conn_flush_headers_stream (struct full_conn *conn)
 static void
 process_streams_write_events (struct full_conn *conn, int high_prio)
 {
+    //printf("\t[MINH] info: %s:%s():%d\n", __FILE__, __func__, __LINE__);
     lsquic_stream_t *stream;
     struct stream_prio_iter spi;
 
