@@ -2007,7 +2007,7 @@ main (int argc, char **argv)
     }
     client_ctx.hcc_reqs_per_conn = 1000;
     printf("DUMMYNET-S\n");
-    // if (system("sudo ./complex_3g.sh &")) {printf("ERROR Cannot start DummyNet\n"); exit(1);};
+    if (system("sudo ./complex_3g.sh &")) {printf("ERROR Cannot start DummyNet\n"); exit(1);};
     printf("DUMMYNET-E\n");
 
 #if LSQUIC_CONN_STATS
@@ -2105,7 +2105,7 @@ main (int argc, char **argv)
     }
 
     // MINH killall bash ./complex
-    // if (system("sudo killall bash ./complex_3g.sh")) {printf("Killed Dummynet\n");};        
+    if (system("sudo killall bash ./complex_3g.sh")) {printf("Killed Dummynet\n");};        
     // }
 
     // write on file
