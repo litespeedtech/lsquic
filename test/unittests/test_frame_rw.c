@@ -31,10 +31,9 @@
 #include "lsquic_frame_reader.h"
 #include "lsquic_headers.h"
 #include "lsquic_http1x_if.h"
-#if LSQUIC_CONN_STATS
 #include "lsquic_int_types.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
-#endif
 
 
 struct lsquic_stream
@@ -59,6 +58,8 @@ lsquic_conn_id (const lsquic_conn_t *lconn)
     return &my_cid;
 }
 
+static const struct conn_iface s_if;
+static struct lsquic_conn s_conn = { .cn_if = &s_if, };
 
 #if !defined(NDEBUG) && __GNUC__
 __attribute__((weak))
@@ -66,7 +67,7 @@ __attribute__((weak))
 lsquic_conn_t *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
-    return NULL;
+    return &s_conn;
 }
 
 

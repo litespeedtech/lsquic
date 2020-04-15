@@ -950,6 +950,216 @@ test_zero_size_frame (void)
 }
 
 
+/* Create a new stream frame.  Each stream frame has a real packet_in to
+ * back it up, just like in real code.  The contents of the packet do
+ * not matter.
+ */
+static stream_frame_t *
+new_frame_in_ext (struct test_objs *tobjs, size_t off, size_t sz, int fin,
+                                                            const void *data)
+{
+    lsquic_packet_in_t *packet_in;
+    stream_frame_t *frame;
+
+    assert(sz <= 1370);
+
+    packet_in = lsquic_mm_get_packet_in(&tobjs->eng_pub.enp_mm);
+    if (data)
+        packet_in->pi_data = (void *) data;
+    else
+    {
+        packet_in->pi_data = lsquic_mm_get_packet_in_buf(&tobjs->eng_pub.enp_mm, 1370);
+        packet_in->pi_flags |= PI_OWN_DATA;
+        memset(packet_in->pi_data, 'A', sz);
+    }
+    /* This is not how stream frame looks in the packet: we have no
+     * header.  In our test case it does not matter, as we only care
+     * about stream frame.
+     */
+    packet_in->pi_data_sz = sz;
+    packet_in->pi_refcnt = 1;
+
+    frame = lsquic_malo_get(tobjs->eng_pub.enp_mm.malo.stream_frame);
+    memset(frame, 0, sizeof(*frame));
+    frame->packet_in = packet_in;
+    frame->data_frame.df_offset = off;
+    frame->data_frame.df_size = sz;
+    frame->data_frame.df_data = &packet_in->pi_data[0];
+    frame->data_frame.df_fin  = fin;
+
+    return frame;
+}
+
+
+/* Receiving DATA frame with zero payload should result in lsquic_stream_read()
+ * returning -1.
+ */
+static void
+test_reading_zero_size_data_frame (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    ssize_t nr;
+    int s;
+    unsigned char buf[2];
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    /* Fake out reading of HEADERS frame: */
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
+    stream->sm_hq_filter.hqfi_hist_idx++;
+
+    /* One-byte DATA frame */
+    frame = new_frame_in_ext(&tobjs, 0, 3, 0, (uint8_t[3]){ 0, 1, 'a', });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);     /* Self-check */
+
+    /* Zero-length DATA frame */
+    frame = new_frame_in_ext(&tobjs, 3, 2, 0, (uint8_t[2]){ 0, 0, });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);     /* Self-check */
+
+    assert(stream->read_offset == 2);   /* Self-check */
+
+    /* Read 'a' */
+    nr = lsquic_stream_read(stream, buf, 1);
+    assert(nr == 1);
+    assert(buf[0] == 'a');
+
+    /* Check that read returns -1 */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+
+    /* DATA frame was consumed: */
+    assert(stream->read_offset == 5);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+/* Receiving DATA frame with zero payload should result in lsquic_stream_read()
+ * returning -1.
+ */
+static void
+test_reading_zero_size_data_frame_scenario2 (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    ssize_t nr;
+    int s;
+    unsigned char buf[2];
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    /* Fake out reading of HEADERS frame: */
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
+    stream->sm_hq_filter.hqfi_hist_idx++;
+
+    /* Zero-length DATA frame */
+    frame = new_frame_in_ext(&tobjs, 0, 5, 0, (uint8_t[5]){ 0, 1, 'a', 0, 0, });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);     /* Self-check */
+
+    assert(stream->read_offset == 2);   /* Self-check */
+
+    /* Read 'a' */
+    nr = lsquic_stream_read(stream, buf, 1);
+    assert(nr == 1);
+    assert(buf[0] == 'a');
+
+    /* Check that read returns -1 */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+
+    /* DATA frame was consumed: */
+    assert(stream->read_offset == 5);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+/* Receiving DATA frame with zero payload should result in lsquic_stream_read()
+ * returning -1.
+ */
+static void
+test_reading_zero_size_data_frame_scenario3 (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    ssize_t nr;
+    int s;
+    unsigned char buf[2];
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    /* Fake out reading of HEADERS frame: */
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
+    stream->sm_hq_filter.hqfi_hist_idx++;
+
+    /* Zero-length DATA frame */
+    frame = new_frame_in_ext(&tobjs, 0, 4, 0, (uint8_t[4]){ 0, 1, 'a', 0, });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);     /* Self-check */
+
+    assert(stream->read_offset == 2);   /* Self-check */
+
+    /* Read 'a' */
+    nr = lsquic_stream_read(stream, buf, 1);
+    assert(nr == 1);
+    assert(buf[0] == 'a');
+
+    /* Check that read returns -1 */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+
+    /* Zero-length DATA frame */
+    frame = new_frame_in_ext(&tobjs, 4, 1, 0, (uint8_t[1]){ 0, });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);     /* Self-check */
+
+    /* Check that read returns -1 */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+
+    /* DATA frame was consumed: */
+    assert(stream->read_offset == 5);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
 
 int
 main (int argc, char **argv)
@@ -988,6 +1198,9 @@ main (int argc, char **argv)
                 for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                     test_frame_header_split(n_packets, extra_sz, add_one_more);
         test_zero_size_frame();
+        test_reading_zero_size_data_frame();
+        test_reading_zero_size_data_frame_scenario2();
+        test_reading_zero_size_data_frame_scenario3();
     }
 
     return 0;

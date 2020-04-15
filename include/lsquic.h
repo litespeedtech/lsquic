@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 14
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -896,6 +896,8 @@ struct lsquic_hset_if
      * Create a new header set.  This object is (and must be) fetched from a
      * stream by calling @ref lsquic_stream_get_hset() before the stream can
      * be read.
+     *
+     * `stream' may be set to NULL in server mode.
      */
     void * (*hsi_create_header_set)(void *hsi_ctx, lsquic_stream_t *stream,
                                     int is_push_promise);

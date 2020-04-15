@@ -1,3 +1,10 @@
+2020-04-15
+    - 2.14.3
+    - [BUGFIX] gQUIC: pass correct stream to hsi_create_header_set() callback.
+    - [BUGFIX] Use ls-hpack 2.1.1
+    - Improve stream code readability.
+    - Use ls-qpack 2.0.5
+
 2020-04-08
     - 2.14.2
     - [BUGFIX] Use ls-qpack 2.0.4

@@ -1,6 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
-#ifndef LSXPACK_HEADER_H_v204
-#define LSXPACK_HEADER_H_v204
+#ifndef LSXPACK_HEADER_H_v205
+#define LSXPACK_HEADER_H_v205
 
 #ifdef __cplusplus
 extern "C" {
@@ -175,8 +175,14 @@ static inline size_t
 lsxpack_header_get_dec_size(const lsxpack_header_t *hdr)
 {   return hdr->name_len + hdr->val_len + hdr->dec_overhead;    }
 
+static inline void
+lsxpack_header_mark_val_changed(lsxpack_header_t *hdr)
+{
+    hdr->flags = (enum lsxpack_flag)(hdr->flags &
+                ~(LSXPACK_VAL_MATCHED|LSXPACK_NAMEVAL_HASH));
+}
 #ifdef __cplusplus
 }
 #endif
 
-#endif //LSXPACK_HEADER_H_v204
+#endif //LSXPACK_HEADER_H_v205

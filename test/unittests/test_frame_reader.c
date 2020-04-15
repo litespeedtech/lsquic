@@ -1111,6 +1111,7 @@ test_one_frt (const struct frame_reader_test *frt)
     struct lsquic_conn_public conn_pub;
     struct lsquic_stream stream;
     int s;
+    struct conn_iface my_conn_if;
 
 #if LSQUIC_CONN_STATS
     struct conn_stats conn_stats;
@@ -1120,6 +1121,8 @@ test_one_frt (const struct frame_reader_test *frt)
     memset(&stream, 0, sizeof(stream));
     memset(&lconn, 0, sizeof(lconn));
     memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&my_conn_if, 0, sizeof(my_conn_if));
+    lconn.cn_if = &my_conn_if;
     stream.conn_pub = &conn_pub;
     conn_pub.lconn = &lconn;
 

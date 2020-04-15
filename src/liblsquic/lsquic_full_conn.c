@@ -1407,6 +1407,15 @@ find_stream_by_id (struct full_conn *conn, lsquic_stream_id_t stream_id)
 }
 
 
+static struct lsquic_stream *
+full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
+                               lsquic_stream_id_t stream_id)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    return find_stream_by_id(conn, stream_id);
+}
+
+
 static struct lsquic_engine *
 full_conn_ci_get_engine (struct lsquic_conn *lconn)
 {
@@ -4324,6 +4333,7 @@ static const struct conn_iface full_conn_iface = {
     .ci_close                =  full_conn_ci_close,
     .ci_destroy              =  full_conn_ci_destroy,
     .ci_get_ctx              =  full_conn_ci_get_ctx,
+    .ci_get_stream_by_id     =  full_conn_ci_get_stream_by_id,
     .ci_get_engine           =  full_conn_ci_get_engine,
     .ci_get_path             =  full_conn_ci_get_path,
 #if LSQUIC_CONN_STATS

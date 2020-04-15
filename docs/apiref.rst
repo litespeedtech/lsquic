@@ -1477,7 +1477,8 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
     .. member::  void * (*hsi_create_header_set)(void *hsi_ctx, lsquic_stream_t *stream, int is_push_promise)
 
         :param hsi_ctx: User context.  This is the pointer specifed in ``ea_hsi_ctx``.
-        :param stream: Stream with which the header set is associated.
+        :param stream: Stream with which the header set is associated.  May be set
+                       to NULL in server mode.
         :param is_push_promise: Boolean value indicating whether this header set is
                                 for a push promise.
         :return: Pointer to user-defined header set object.

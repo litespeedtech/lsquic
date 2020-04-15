@@ -509,6 +509,21 @@ skip_headers_padding (struct lsquic_frame_reader *fr)
 }
 
 
+static struct lsquic_stream *
+find_target_stream (const struct lsquic_frame_reader *fr)
+{
+    lsquic_stream_id_t stream_id;
+    struct lsquic_conn *lconn;
+
+    stream_id = fr_get_stream_id(fr);
+    lconn = lsquic_stream_conn(fr->fr_stream);
+    if (lconn->cn_if->ci_get_stream_by_id)
+        return lconn->cn_if->ci_get_stream_by_id(lconn, stream_id);
+
+    return NULL;
+}
+
+
 static int
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
@@ -521,8 +536,11 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     void *hset = NULL;
     struct lsxpack_header *hdr = NULL;
     size_t req_space = 0;
+    lsquic_stream_t *target_stream = NULL;
 
-    hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, fr->fr_stream,
+    if (!(fr->fr_flags & FRF_SERVER))
+        target_stream = find_target_stream(fr);
+    hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, target_stream,
                             READER_PUSH_PROMISE == fr->fr_state.reader_type);
     if (!hset)
     {

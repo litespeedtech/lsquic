@@ -1276,15 +1276,7 @@ stream_consumed_bytes (struct lsquic_stream *stream)
 }
 
 
-struct read_frames_status
-{
-    int     error;
-    int     processed_frames;
-    size_t  total_nread;
-};
-
-
-static struct read_frames_status
+static ssize_t
 read_data_frames (struct lsquic_stream *stream, int do_filtering,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
@@ -1335,7 +1327,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                     if (!stream->data_in)
                     {
                         stream->data_in = lsquic_data_in_error_new();
-                        return (struct read_frames_status) { .error = 1, };
+                        return -1;
                     }
                 }
                 if (fin)
@@ -1356,11 +1348,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
     if (processed_frames)
         stream_consumed_bytes(stream);
 
-    return (struct read_frames_status) {
-        .error = 0,
-        .processed_frames = processed_frames,
-        .total_nread = total_nread,
-    };
+    return total_nread;
 }
 
 
@@ -1368,8 +1356,8 @@ static ssize_t
 stream_readf (struct lsquic_stream *stream,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
-    size_t total_nread, nread;
-    int read_unc_headers;
+    size_t total_nread;
+    ssize_t nread;
 
     total_nread = 0;
 
@@ -1399,9 +1387,7 @@ stream_readf (struct lsquic_stream *stream,
     {
         if (stream->uh->uh_flags & UH_H1H)
         {
-            nread = read_uh(stream, readf, ctx);
-            read_unc_headers = nread > 0;
-            total_nread += nread;
+            total_nread += read_uh(stream, readf, ctx);
             if (stream->uh)
                 return total_nread;
         }
@@ -1418,25 +1404,22 @@ stream_readf (struct lsquic_stream *stream,
         errno = EWOULDBLOCK;
         return -1;
     }
-    else
-        read_unc_headers = 0;
 
-    const struct read_frames_status rfs
-                        = read_data_frames(stream, 1, readf, ctx);
-    if (rfs.error)
-        return -1;
-    total_nread += rfs.total_nread;
+    nread = read_data_frames(stream, 1, readf, ctx);
+    if (nread < 0)
+        return nread;
+    total_nread += (size_t) nread;
 
-    LSQ_DEBUG("%s: read %zd bytes, read offset %"PRIu64, __func__,
-                                        total_nread, stream->read_offset);
+    LSQ_DEBUG("%s: read %zd bytes, read offset %"PRIu64", reached fin: %d",
+        __func__, total_nread, stream->read_offset,
+        !!(stream->stream_flags & STREAM_FIN_REACHED));
 
-    if (rfs.processed_frames || read_unc_headers)
-    {
+    if (total_nread)
         return total_nread;
-    }
+    else if (stream->stream_flags & STREAM_FIN_REACHED)
+        return 0;
     else
     {
-        assert(0 == total_nread);
         errno = EWOULDBLOCK;
         return -1;
     }
@@ -4342,17 +4325,17 @@ static int
 hq_filter_readable (struct lsquic_stream *stream)
 {
     struct hq_filter *const filter = &stream->sm_hq_filter;
-    struct read_frames_status rfs;
+    ssize_t nread;
 
     if (filter->hqfi_flags & HQFI_FLAG_BLOCKED)
         return 0;
 
     if (!hq_filter_readable_now(stream))
     {
-        rfs = read_data_frames(stream, 0, hq_read, stream);
-        if (rfs.total_nread == 0)
+        nread = read_data_frames(stream, 0, hq_read, stream);
+        if (nread <= 0)
         {
-            if (rfs.error)
+            if (nread < 0)
             {
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
                 abort_connection(stream);   /* XXX Overkill? */
