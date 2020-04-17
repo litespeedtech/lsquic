@@ -532,7 +532,6 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                             = TP_DEF_ACK_DELAY_EXP;
     params.tp_max_idle_timeout = settings->es_idle_timeout * 1000;
     params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
-    params.tp_max_packet_size = 1370 /* XXX: based on socket */;
     params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
     params.tp_set |= (1 << TPI_INIT_MAX_DATA)
                   |  (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)
@@ -543,9 +542,13 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                   |  (1 << TPI_ACK_DELAY_EXPONENT)
                   |  (1 << TPI_MAX_IDLE_TIMEOUT)
                   |  (1 << TPI_MAX_ACK_DELAY)
-                  |  (1 << TPI_MAX_PACKET_SIZE)
                   |  (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)
                   ;
+    if (settings->es_max_packet_size_rx)
+    {
+        params.tp_max_packet_size = settings->es_max_packet_size_rx;
+        params.tp_set |= 1 << TPI_MAX_PACKET_SIZE;
+    }
     if (!settings->es_allow_migration)
         params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
     if (settings->es_ql_bits)

@@ -339,6 +339,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /* 1: Cubic; 2: BBR */
 #define LSQUIC_DF_CC_ALGO 1
 
+/** By default, incoming packet size is not limited. */
+#define LSQUIC_DF_MAX_PACKET_SIZE_RX 0
+
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -737,6 +740,17 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_TIMESTAMPS
      */
     int             es_timestamps;
+
+    /**
+     * Maximum packet size we are willing to receive.  This is sent to
+     * peer in transport parameters: the library does not enforce this
+     * limit for incoming packets.
+     *
+     * If set to zero, limit is not set.
+     *
+     * Default value is @ref LSQUIC_DF_MAX_PACKET_SIZE_RX
+     */
+    unsigned short  es_max_packet_size_rx;
 };
 
 /* Initialize `settings' to default values */
