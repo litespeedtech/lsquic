@@ -2445,6 +2445,32 @@ reset_deadline (lsquic_engine_t *engine, lsquic_time_t now)
 }
 
 
+static void
+check_tickable_conns_again (struct lsquic_engine *engine)
+{
+    struct lsquic_hash_elem *el;
+    struct lsquic_conn *conn;
+    unsigned count;
+
+    count = 0;
+    for (el = lsquic_hash_first(engine->conns_hash); el;
+                                el = lsquic_hash_next(engine->conns_hash))
+    {
+        conn = lsquic_hashelem_getdata(el);
+        if (!(conn->cn_flags & LSCONN_TICKABLE)
+            && conn->cn_if->ci_is_tickable(conn))
+        {
+            lsquic_mh_insert(&engine->conns_tickable, conn,
+                                                    conn->cn_last_ticked);
+            engine_incref_conn(conn, LSCONN_TICKABLE);
+            ++count;
+        }
+    }
+    LSQ_DEBUG("%u connection%s tickable again after sending has been "
+        "re-enabled", count, count == 1 ? " is" : "s are");
+}
+
+
 void
 lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 {
@@ -2462,6 +2488,7 @@ lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
         LSQ_DEBUG("can send again");
         EV_LOG_GENERIC_EVENT("can send again");
         engine->pub.enp_flags |= ENPUB_CAN_SEND;
+        check_tickable_conns_again(engine);
     }
 
     send_packets_out(engine, &ticked_conns, &closed_conns);
