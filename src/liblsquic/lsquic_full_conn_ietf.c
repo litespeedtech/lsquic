@@ -632,7 +632,8 @@ migra_is_on (const struct ietf_full_conn *conn)
 
 static void
 migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
-                struct dcid_elem *dce, const struct sockaddr *dest_sa)
+                struct dcid_elem *dce, const struct sockaddr *dest_sa,
+                const struct transport_params *params)
 {
     assert(!(migra_is_on(conn)));
 
@@ -644,6 +645,11 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
         copath->cop_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
     else
         copath->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
+    if ((params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
+            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+                                            < copath->cop_path.np_pack_size)
+        copath->cop_path.np_pack_size
+                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
     memcpy(&copath->cop_path.np_local_addr, NP_LOCAL_SA(CUR_NPATH(conn)),
                                     sizeof(copath->cop_path.np_local_addr));
     memcpy(&copath->cop_path.np_peer_addr, dest_sa,
@@ -2892,7 +2898,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
     copath = &conn->ifc_paths[1];
     assert(!(conn->ifc_used_paths & (1 << (copath - conn->ifc_paths))));
 
-    migra_begin(conn, copath, dce, (struct sockaddr *) &sockaddr);
+    migra_begin(conn, copath, dce, (struct sockaddr *) &sockaddr, params);
     return 0;
 }
 
@@ -3056,7 +3062,15 @@ handshake_ok (struct lsquic_conn *lconn)
 
     conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
-    /* TODO: packet size */
+    if ((params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
+            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+                                            < CUR_NPATH(conn)->np_pack_size)
+    {
+        CUR_NPATH(conn)->np_pack_size
+                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
+        LSQ_DEBUG("decrease packet size to %hu bytes",
+                                                CUR_NPATH(conn)->np_pack_size);
+    }
 
     dce = get_new_dce(conn);
     if (!dce)
@@ -5747,6 +5761,8 @@ static int
 init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
                                                             int dcid_changed)
 {
+    struct lsquic_conn *const lconn = &conn->ifc_conn;
+    const struct transport_params *params;
     struct dcid_elem *dce;
 
     dce = find_unassigned_dcid(conn);
@@ -5778,6 +5794,13 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
         path->cop_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
     else
         path->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
+    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                        lconn->cn_enc_session);
+    if (params && (params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
+            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+                                            < path->cop_path.np_pack_size)
+        path->cop_path.np_pack_size
+                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
 
     LSQ_DEBUG("initialized path %u", (unsigned) (path - conn->ifc_paths));
 
