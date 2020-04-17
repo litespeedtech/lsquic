@@ -2071,14 +2071,24 @@ mini_conn_ci_hsk_done (struct lsquic_conn *lconn, enum lsquic_hsk_status status)
 }
 
 
+/* A mini connection is only tickable if it has unsent packets.  This can
+ * occur when packet sending is delayed.
+ *
+ * Otherwise, a mini connection is not tickable:  Either there are incoming
+ * packets, in which case, the connection is going to be ticked, or there is
+ * an alarm pending, in which case it will be handled via the attq.
+ */
 static int
 mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
 {
-    /* A mini connection is never tickable:  Either there are incoming
-     * packets, in which case, the connection is going to be ticked, or
-     * there is an alarm pending, in which case it will be handled via
-     * the attq.
-     */
+    struct mini_conn *const mc = (struct mini_conn *) lconn;
+    const struct lsquic_packet_out *packet_out;
+
+    if (mc->mc_enpub->enp_flags & ENPUB_CAN_SEND)
+        TAILQ_FOREACH(packet_out, &mc->mc_packets_out, po_next)
+            if (!(packet_out->po_flags & PO_SENT))
+                return 1;
+
     return 0;
 }
 

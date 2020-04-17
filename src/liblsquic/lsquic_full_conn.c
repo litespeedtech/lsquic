@@ -4193,6 +4193,11 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             LSQ_DEBUG("tickable: flags: 0x%X", conn->fc_flags & send_flags);
             goto check_can_send;
         }
+        if (lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl) > 0)
+        {
+            LSQ_DEBUG("tickable: has scheduled packets");
+            return 1;   /* Don't check can_send */
+        }
         if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
                 && lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))
         {

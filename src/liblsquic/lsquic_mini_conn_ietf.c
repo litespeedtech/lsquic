@@ -574,14 +574,24 @@ ietf_mini_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
 }
 
 
+/* A mini connection is only tickable if it has unsent packets.  This can
+ * occur when packet sending is delayed.
+ *
+ * Otherwise, a mini connection is not tickable:  Either there are incoming
+ * packets, in which case, the connection is going to be ticked, or there is
+ * an alarm pending, in which case it will be handled via the attq.
+ */
 static int
 ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
 {
-    /* A mini connection is never tickable:  Either there are incoming
-     * packets, in which case, the connection is going to be ticked, or
-     * there is an alarm pending, in which case it will be handled via
-     * the attq.
-     */
+    struct ietf_mini_conn *const conn = (struct ietf_mini_conn *) lconn;
+    const struct lsquic_packet_out *packet_out;
+
+    if (conn->imc_enpub->enp_flags & ENPUB_CAN_SEND)
+        TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
+            if (!(packet_out->po_flags & PO_SENT))
+                return 1;
+
     return 0;
 }
 
