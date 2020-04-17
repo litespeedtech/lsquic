@@ -1,3 +1,10 @@
+2020-04-17
+    - 2.12.2
+    - [BUGFIX] Place connections on tickable queue when sending is reenabled.
+    - [BUGFIX] A connection is tickable if it has unsent packets.
+    - [BUGFIX] Heed peer's max_packet_size transport parameter.
+    - [BUGFIX] Honor max packet size on the client and when path changes.
+
 2020-03-23
     - 2.12.1
     - [BUGFIX] ACK ping-pong: TIMESTAMP frame is not to be acked.
