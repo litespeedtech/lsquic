@@ -424,6 +424,7 @@ capped_reader_read (void *void_ctx, void *buf, size_t count)
     return size;
 }
 
+#define V(v) (v), strlen(v)
 
 #if HAVE_OPEN_MEMSTREAM
 static void
@@ -582,7 +583,6 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
         return -1;
     }
 
-#define V(v) (v), strlen(v)
     struct lsxpack_header headers_arr[6];
     lsxpack_header_set_ptr(&headers_arr[0], V(":method"), V("GET"));
     lsxpack_header_set_ptr(&headers_arr[1], V(":path"),
@@ -618,6 +618,7 @@ static void
 http_server_on_read_pushed (struct lsquic_stream *stream,
                                                     lsquic_stream_ctx_t *st_h)
 {
+#if HAVE_OPEN_MEMSTREAM
     struct hset_fm *hfm;
 
     hfm = lsquic_stream_get_hset(stream);
@@ -640,6 +641,10 @@ http_server_on_read_pushed (struct lsquic_stream *stream,
     free(st_h->req_buf);
     lsquic_stream_shutdown(stream, 0);
     destroy_hset_fm(hfm);
+#else
+    LSQ_ERROR("%s: open_memstream not supported\n", __func__);
+    exit(1);
+#endif
 }
 
 

@@ -30,12 +30,14 @@ endif
 export LSQUIC_CXXFLAGS=$(ALL_CXXFLAGS) 
 
 
+.PHONY: test lsquic
+
 all: lsquic test 
 
 lsquic:
 	@cd src/liblsquic && $(MAKE) -f Makefile.Windows
 
-test:
+test: 
 	@cd test && $(MAKE) -f Makefile.Windows
 
 	

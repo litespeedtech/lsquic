@@ -6,6 +6,9 @@ Get-Content CMakeLists.txt | %{
     }
     elseif ($set_found){
         if($_ -match "\)") { write-host $file_list; exit}
-        $file_list += $_.Trim()
+		if( test-path $_.Trim())
+		{
+		  $file_list += $_.Trim()
+		}
     }
 }
