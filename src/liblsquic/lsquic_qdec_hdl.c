@@ -594,6 +594,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
     union hblock_ctx *u;
     unsigned char dec_buf[LSQPACK_LONGEST_HEADER_ACK];
 
+    assert(!(stream->stream_flags & STREAM_U_READ_DONE));
+
     if (!(qdh->qdh_flags & QDH_INITIALIZED))
     {
         LSQ_WARN("not initialized: cannot process header block");
@@ -636,6 +638,8 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *qdh,
     size_t dec_buf_sz;
     unsigned char dec_buf[LSQPACK_LONGEST_HEADER_ACK];
 
+    assert(!(stream->stream_flags & STREAM_U_READ_DONE));
+
     if (qdh->qdh_flags & QDH_INITIALIZED)
     {
         dec_buf_sz = sizeof(dec_buf);
@@ -651,7 +655,7 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *qdh,
 }
 
 
-void
+static void
 lsquic_qdh_unref_stream (struct qpack_dec_hdl *qdh,
                                                 struct lsquic_stream *stream)
 {
@@ -669,6 +673,9 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
     ssize_t nw;
     unsigned char buf[LSQPACK_LONGEST_CANCEL];
 
+    if (!qdh->qdh_dec_sm_out)
+        return;
+
     nw = lsqpack_dec_cancel_stream(&qdh->qdh_decoder, stream, buf, sizeof(buf));
     if (nw > 0)
     {
@@ -684,6 +691,33 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
             "to encode Cancel Stream instructin", stream->id);
         lsquic_qdh_unref_stream(qdh, stream);
     }
+}
+
+
+void
+lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *qdh,
+                                                lsquic_stream_id_t stream_id)
+{
+    ssize_t nw;
+    unsigned char buf[LSQPACK_LONGEST_CANCEL];
+
+    if (!qdh->qdh_dec_sm_out)
+        return;
+
+    nw = lsqpack_dec_cancel_stream_id(&qdh->qdh_decoder, stream_id, buf,
+                                                                sizeof(buf));
+    if (nw > 0)
+    {
+        if (0 == qdh_write_decoder(qdh, buf, nw))
+            LSQ_DEBUG("wrote %zd-byte Cancel Stream instruction for "
+                "stream %"PRIu64" to the decoder stream", stream_id, nw);
+    }
+    else if (nw == 0)
+        LSQ_DEBUG("not generating Cancel Stream instruction for "
+            "stream %"PRIu64, stream_id);
+    else
+        LSQ_WARN("cannot generate Cancel Stream instruction for "
+            "stream %"PRIu64" -- not enough buffer space", stream_id);
 }
 
 

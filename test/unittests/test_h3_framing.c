@@ -53,6 +53,8 @@
 #include "lsxpack_header.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_qenc_hdl.h"
+#include "lsquic_http1x_if.h"
+#include "lsquic_qdec_hdl.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
@@ -264,6 +266,8 @@ struct test_objs {
     unsigned                  initial_stream_window;
     enum stream_ctor_flags    ctor_flags;
     struct qpack_enc_hdl      qeh;
+    struct qpack_dec_hdl      qdh;
+    struct lsquic_hset_if     hsi_if;
 };
 
 
@@ -320,6 +324,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.path = &network_path;
     tobjs->initial_stream_window = initial_stream_window;
     tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
+    tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
     tobjs->send_ctl.sc_cong_u.cubic.cu_cwnd = ~0ull;
@@ -332,6 +337,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
         assert(0 == s);
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
+        lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub, 0, 0);
+        tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
     }
 }
 

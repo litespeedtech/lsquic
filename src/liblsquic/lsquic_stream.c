@@ -572,7 +572,11 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     if (stream->sm_qflags & SMQF_SERVICE_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->service_streams, stream, next_service_stream);
     if (stream->sm_qflags & SMQF_QPACK_DEC)
-        lsquic_qdh_unref_stream(stream->conn_pub->u.ietf.qdh, stream);
+        lsquic_qdh_cancel_stream(stream->conn_pub->u.ietf.qdh, stream);
+    else if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
+                                            == (SMBF_IETF|SMBF_USE_HEADERS)
+            && !(stream->stream_flags & STREAM_FIN_REACHED))
+        lsquic_qdh_cancel_stream_id(stream->conn_pub->u.ietf.qdh, stream->id);
     drop_buffered_data(stream);
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
@@ -728,6 +732,44 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
             && (/* Running the filter may result in hitting FIN: */
                 (stream->stream_flags & STREAM_FIN_REACHED)
                 || stream_has_frame_at_read_offset(stream)));
+}
+
+
+static int
+maybe_switch_data_in (struct lsquic_stream *stream)
+{
+    if ((stream->sm_bflags & SMBF_AUTOSWITCH) &&
+            (stream->data_in->di_flags & DI_SWITCH_IMPL))
+    {
+        stream->data_in = stream->data_in->di_if->di_switch_impl(
+                                    stream->data_in, stream->read_offset);
+        if (!stream->data_in)
+        {
+            stream->data_in = lsquic_data_in_error_new();
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
+/* Drain and discard any incoming data */
+static int
+stream_readable_discard (struct lsquic_stream *stream)
+{
+    struct data_frame *data_frame;
+
+    while ((data_frame = stream->data_in->di_if->di_get_frame(
+                                    stream->data_in, stream->read_offset)))
+    {
+        data_frame->df_read_off = data_frame->df_size;
+        stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
+    }
+
+    (void) maybe_switch_data_in(stream);
+
+    return 0;   /* Never readable */
 }
 
 
@@ -940,17 +982,8 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
             stream->sm_fin_off = DF_END(frame);
             maybe_finish_stream(stream);
         }
-        if ((stream->sm_bflags & SMBF_AUTOSWITCH) &&
-                (stream->data_in->di_flags & DI_SWITCH_IMPL))
-        {
-            stream->data_in = stream->data_in->di_if->di_switch_impl(
-                                        stream->data_in, stream->read_offset);
-            if (!stream->data_in)
-            {
-                stream->data_in = lsquic_data_in_error_new();
-                goto end_ok;
-            }
-        }
+        if (0 != maybe_switch_data_in(stream))
+            goto end_ok;
         if (got_next_offset)
             /* Checking the offset saves di_get_frame() call */
             maybe_conn_to_tickable_if_readable(stream);
@@ -1319,17 +1352,8 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 const int fin = data_frame->df_fin;
                 stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
                 data_frame = NULL;
-                if ((stream->sm_bflags & SMBF_AUTOSWITCH) &&
-                        (stream->data_in->di_flags & DI_SWITCH_IMPL))
-                {
-                    stream->data_in = stream->data_in->di_if->di_switch_impl(
-                                                stream->data_in, stream->read_offset);
-                    if (!stream->data_in)
-                    {
-                        stream->data_in = lsquic_data_in_error_new();
-                        return -1;
-                    }
-                }
+                if (0 != maybe_switch_data_in(stream))
+                    return -1;
                 if (fin)
                 {
                     stream->stream_flags |= STREAM_FIN_REACHED;
@@ -1525,6 +1549,7 @@ stream_shutdown_read (lsquic_stream_t *stream)
     {
         SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
         stream->stream_flags |= STREAM_U_READ_DONE;
+        stream->sm_readable = stream_readable_discard;
         stream_wantread(stream, 0);
         maybe_finish_stream(stream);
     }

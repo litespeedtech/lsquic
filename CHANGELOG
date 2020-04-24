@@ -1,3 +1,12 @@
+2020-04-24
+    - 2.14.4
+    - [BUGFIX] Heed es_rw_once for pushed HTTP/3 streams.
+    - [BUGFIX] IETF client: set correct flags on bidirectional streams.
+    - [BUGFIX] Generate Cancel Stream QPACK instructions for abandoned
+      streams.
+    - [BUGFIX] Do not call header callbacks after stream is closed.
+    - Use ls-qpack 2.1.1
+
 2020-04-15
     - 2.14.3
     - [BUGFIX] gQUIC: pass correct stream to hsi_create_header_set() callback.

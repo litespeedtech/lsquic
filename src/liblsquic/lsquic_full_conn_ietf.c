@@ -896,14 +896,20 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
 {
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
+
+    flags = SCF_IETF|SCF_DI_AUTOSWITCH;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_flags & IFC_HTTP)
+        flags |= SCF_HTTP;
 
     stream_id = generate_stream_id(conn, SD_BIDI);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, SCF_IETF
-                | (conn->ifc_flags & IFC_HTTP ? SCF_HTTP : 0));
+                conn->ifc_cfg.max_stream_send, flags);
     if (!stream)
         return -1;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -922,15 +928,20 @@ create_push_stream (struct ietf_full_conn *conn)
 {
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
 
     assert((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == (IFC_SERVER|IFC_HTTP));
+
+    flags = SCF_IETF|SCF_HTTP;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
 
     stream_id = generate_stream_id(conn, SD_UNI);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, SCF_IETF|SCF_HTTP);
+                conn->ifc_cfg.max_stream_send, flags);
     if (!stream)
         return NULL;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,

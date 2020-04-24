@@ -63,11 +63,11 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *, struct lsquic_stream *,
                                 const unsigned char **, size_t);
 
 void
-lsquic_qdh_unref_stream (struct qpack_dec_hdl *, struct lsquic_stream *);
-
-void
 lsquic_qdh_cancel_stream (struct qpack_dec_hdl *,
                                                 struct lsquic_stream *);
+
+void
+lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *, lsquic_stream_id_t);
 
 int
 lsquic_qdh_arm_if_unsent (struct qpack_dec_hdl *, void (*)(void *), void *);
