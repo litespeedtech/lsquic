@@ -709,8 +709,8 @@ lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *qdh,
     if (nw > 0)
     {
         if (0 == qdh_write_decoder(qdh, buf, nw))
-            LSQ_DEBUG("wrote %"PRIi64"-byte Cancel Stream instruction for "
-                "stream %zd to the decoder stream", stream_id, nw);
+            LSQ_DEBUG("wrote %zd-byte Cancel Stream instruction for "
+                "stream %"PRIu64" to the decoder stream", nw, stream_id);
     }
     else if (nw == 0)
         LSQ_DEBUG("not generating Cancel Stream instruction for "
