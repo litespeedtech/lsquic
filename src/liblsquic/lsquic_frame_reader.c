@@ -524,6 +524,44 @@ find_target_stream (const struct lsquic_frame_reader *fr)
 }
 
 
+static void
+skip_headers (struct lsquic_frame_reader *fr)
+{
+    const unsigned char *comp, *end;
+    void *buf;
+    int s;
+    struct lsxpack_header xhdr;
+    const size_t buf_len = 64 * 1024;
+
+    buf = malloc(buf_len);
+    if (!buf)
+    {
+        fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr),
+                                                        FR_ERR_OTHER_ERROR);
+        goto end;
+    }
+
+    comp = fr->fr_header_block;
+    end = comp + fr->fr_header_block_sz;
+    while (comp < end)
+    {
+        lsxpack_header_prepare_decode(&xhdr, buf, 0, buf_len);
+        s = lshpack_dec_decode(fr->fr_hdec, &comp, end, &xhdr);
+        if (s != 0)
+        {
+            fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr),
+                                                            FR_ERR_OTHER_ERROR);
+            break;
+        }
+    }
+
+  end:
+    if (buf)
+        free(buf);
+}
+
+
+/* TODO: this function always returns 0.  Make it void */
 static int
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
@@ -539,7 +577,20 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     lsquic_stream_t *target_stream = NULL;
 
     if (!(fr->fr_flags & FRF_SERVER))
+    {
         target_stream = find_target_stream(fr);
+        /* If the response is for a stream that cannot be found, one of two
+         * things is true: a) the stream has been closed or b) this is an
+         * error.  If (a), we discard this header block.  We choose to do the
+         * same for (b) instead of erroring out for the sake of simplicity.
+         * There is no way to exploit this behavior.
+         */
+        if (!target_stream)
+        {
+            skip_headers(fr);
+            return 0;
+        }
+    }
     hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, target_stream,
                             READER_PUSH_PROMISE == fr->fr_state.reader_type);
     if (!hset)

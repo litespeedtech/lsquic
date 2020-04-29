@@ -2650,13 +2650,15 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
     const struct sockaddr *sa_local, const struct sockaddr *sa_peer,
     void *peer_ctx, int ecn)
 {
+    const unsigned char *const packet_begin = packet_in_data;
     const unsigned char *const packet_end = packet_in_data + packet_in_size;
     struct packin_parse_state ppstate;
     lsquic_packet_in_t *packet_in;
     int (*parse_packet_in_begin) (struct lsquic_packet_in *, size_t length,
                 int is_server, unsigned cid_len, struct packin_parse_state *);
     unsigned n_zeroes;
-    int s;
+    int s, is_ietf;
+    lsquic_cid_t cid;
 
     ENGINE_CALLS_INCR(engine);
 
@@ -2691,6 +2693,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         parse_packet_in_begin = lsquic_parse_packet_in_begin;
 
     n_zeroes = 0;
+    is_ietf = 0;
     do
     {
         packet_in = lsquic_mm_get_packet_in(&engine->pub.enp_mm);
@@ -2711,7 +2714,24 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             break;
         }
 
+        /* [draft-ietf-quic-transport-27] Section 12.2:
+         * " Receivers SHOULD ignore any subsequent packets with a different
+         * " Destination Connection ID than the first packet in the datagram.
+         */
+        if (is_ietf && packet_in_data > packet_begin)
+        {
+            if (!((packet_in->pi_flags & (PI_GQUIC|PI_CONN_ID)) == PI_CONN_ID
+                                && LSQUIC_CIDS_EQ(&packet_in->pi_dcid, &cid)))
+            {
+                packet_in_data += packet_in->pi_data_sz;
+                continue;
+            }
+        }
+
+        is_ietf = 0 == (packet_in->pi_flags & PI_GQUIC);
         packet_in_data += packet_in->pi_data_sz;
+        if (is_ietf && packet_in_data < packet_end)
+            cid = packet_in->pi_dcid;
         packet_in->pi_received = lsquic_time_now();
         packet_in->pi_flags |= (3 & ecn) << PIBIT_ECN_SHIFT;
         eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);

@@ -1100,6 +1100,13 @@ static const struct frame_reader_test tests[] = {
 };
 
 
+static struct lsquic_stream *
+my_get_stream_by_id (struct lsquic_conn *conn, lsquic_stream_id_t stream_id)
+{
+    return (void *) my_get_stream_by_id;
+}
+
+
 static void
 test_one_frt (const struct frame_reader_test *frt)
 {
@@ -1122,10 +1129,12 @@ test_one_frt (const struct frame_reader_test *frt)
     memset(&lconn, 0, sizeof(lconn));
     memset(&conn_pub, 0, sizeof(conn_pub));
     memset(&my_conn_if, 0, sizeof(my_conn_if));
+    my_conn_if.ci_get_stream_by_id = my_get_stream_by_id;
     lconn.cn_if = &my_conn_if;
     stream.conn_pub = &conn_pub;
     conn_pub.lconn = &lconn;
 
+  top:
     lsquic_mm_init(&mm);
     lshpack_dec_init(&hdec, LSHPACK_DEC_HTTP1X);
     memset(&input, 0, sizeof(input));
@@ -1154,11 +1163,14 @@ test_one_frt (const struct frame_reader_test *frt)
 
         assert(frt->frt_err || 0 == s);
 
-        assert(g_cb_ctx.n_cb_vals == frt->frt_n_cb_vals);
+        if (my_conn_if.ci_get_stream_by_id)
+        {
+            assert(g_cb_ctx.n_cb_vals == frt->frt_n_cb_vals);
 
-        unsigned i;
-        for (i = 0; i < g_cb_ctx.n_cb_vals; ++i)
-            compare_cb_vals(&g_cb_ctx.cb_vals[i], &frt->frt_cb_vals[i]);
+            unsigned i;
+            for (i = 0; i < g_cb_ctx.n_cb_vals; ++i)
+                compare_cb_vals(&g_cb_ctx.cb_vals[i], &frt->frt_cb_vals[i]);
+        }
 
         exp_off = frt->frt_in_off;
         if (!exp_off)
@@ -1169,6 +1181,14 @@ test_one_frt (const struct frame_reader_test *frt)
     }
     while (input.in_max_sz < input.in_max_req_sz);
     lshpack_dec_cleanup(&hdec);
+
+    if (!(frt->frt_fr_flags & FRF_SERVER) && my_conn_if.ci_get_stream_by_id)
+    {
+        /* Do it again, but this time test header block skip logic */
+        my_conn_if.ci_get_stream_by_id = NULL;
+        goto top;
+    }
+
     lsquic_mm_cleanup(&mm);
 }
 

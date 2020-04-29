@@ -58,7 +58,13 @@ lsquic_conn_id (const lsquic_conn_t *lconn)
     return &my_cid;
 }
 
-static const struct conn_iface s_if;
+static struct lsquic_stream *
+my_get_stream_by_id (struct lsquic_conn *conn, lsquic_stream_id_t stream_id)
+{
+    return (void *) my_get_stream_by_id;
+}
+
+static const struct conn_iface s_if = { .ci_get_stream_by_id = my_get_stream_by_id, };
 static struct lsquic_conn s_conn = { .cn_if = &s_if, };
 
 #if !defined(NDEBUG) && __GNUC__
