@@ -119,6 +119,12 @@ send_ctl_all_bytes_out (const struct lsquic_send_ctl *ctl);
 static void
 send_ctl_reschedule_poison (struct lsquic_send_ctl *ctl);
 
+static int
+send_ctl_can_send_pre_hsk (struct lsquic_send_ctl *ctl);
+
+static int
+send_ctl_can_send (struct lsquic_send_ctl *ctl);
+
 #ifdef NDEBUG
 static
 #elif __GNUC__
@@ -363,6 +369,11 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_flags |= SC_SANITY_CHECK;
 #endif
     ctl->sc_gap = UINT64_MAX - 1 /* Can't have +1 == 0 */;
+    if ((ctl->sc_conn_pub->lconn->cn_flags & (LSCONN_IETF|LSCONN_SERVER))
+                                                == (LSCONN_IETF|LSCONN_SERVER))
+        ctl->sc_can_send = send_ctl_can_send_pre_hsk;
+    else
+        ctl->sc_can_send = send_ctl_can_send;
 }
 
 
@@ -1367,13 +1378,8 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 }
 
 
-#ifndef NDEBUG
-#if __GNUC__
-__attribute__((weak))
-#endif
-#endif
-int
-lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
+static int
+send_ctl_can_send (struct lsquic_send_ctl *ctl)
 {
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
     LSQ_DEBUG("%s: n_out: %u (unacked_all: %u); cwnd: %"PRIu64, __func__,
@@ -1397,6 +1403,37 @@ lsquic_send_ctl_can_send (lsquic_send_ctl_t *ctl)
     }
     else
         return n_out < ctl->sc_ci->cci_get_cwnd(CGP(ctl));
+}
+
+
+static int
+send_ctl_can_send_pre_hsk (struct lsquic_send_ctl *ctl)
+{
+    unsigned bytes_in, bytes_out;
+
+    bytes_in = ctl->sc_conn_pub->bytes_in;
+    bytes_out = ctl->sc_conn_pub->bytes_out + ctl->sc_bytes_scheduled;
+    if (bytes_out >= bytes_in * 2 + bytes_in / 2 /* This should work out
+                                                to around 3 on average */)
+    {
+        LSQ_DEBUG("%s: amplification block: %u bytes in, %u bytes out",
+                                            __func__, bytes_in, bytes_out);
+        return 0;
+    }
+    else
+        return send_ctl_can_send(ctl);
+}
+
+
+#ifndef NDEBUG
+#if __GNUC__
+__attribute__((weak))
+#endif
+#endif
+int
+lsquic_send_ctl_can_send (struct lsquic_send_ctl *ctl)
+{
+    return ctl->sc_can_send(ctl);
 }
 
 
@@ -2981,4 +3018,12 @@ lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *ctl)
 
     rand = lsquic_crand_get_byte(ctl->sc_enpub->enp_crand);
     ctl->sc_gap = ctl->sc_cur_packno + 1 + rand;
+}
+
+
+void
+lsquic_send_ctl_path_validated (struct lsquic_send_ctl *ctl)
+{
+    LSQ_DEBUG("path validated: switch to regular can_send");
+    ctl->sc_can_send = send_ctl_can_send;
 }

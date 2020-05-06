@@ -214,7 +214,7 @@ typedef struct lsquic_packet_out
     lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags, dcid_len))
 
 #define lsquic_packet_out_total_sz(lconn, p) (\
-    lconn->cn_pf->pf_packout_size(lconn, p))
+    (lconn)->cn_pf->pf_packout_size(lconn, p))
 
 #if __GNUC__
 #if LSQUIC_EXTRA_CHECKS

@@ -64,6 +64,7 @@ typedef struct lsquic_send_ctl {
     lsquic_time_t                   sc_largest_acked_sent_time;
     lsquic_time_t                   sc_last_sent_time;
     lsquic_time_t                   sc_last_rto_time;
+    int                           (*sc_can_send)(struct lsquic_send_ctl *);
     unsigned                        sc_bytes_unacked_retx;
     unsigned                        sc_bytes_scheduled;
     union {
@@ -382,5 +383,8 @@ void
 lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
 
 #define lsquic_send_ctl_n_unacked(ctl_) ((ctl_)->sc_n_in_flight_retx)
+
+void
+lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);
 
 #endif
