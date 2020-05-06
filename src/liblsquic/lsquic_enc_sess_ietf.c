@@ -1019,9 +1019,15 @@ verify_server_cert_callback (SSL *ssl, uint8_t *out_alert)
         return ssl_verify_invalid;
     }
 
-    s = enc_sess->esi_enpub->enp_verify_cert(
-                                enc_sess->esi_enpub->enp_verify_ctx, chain);
-    return s == 0 ? ssl_verify_ok : ssl_verify_invalid;
+    EV_LOG_CERT_CHAIN(LSQUIC_LOG_CONN_ID, chain);
+    if (enc_sess->esi_enpub->enp_verify_cert)
+    {
+        s = enc_sess->esi_enpub->enp_verify_cert(
+                                    enc_sess->esi_enpub->enp_verify_ctx, chain);
+        return s == 0 ? ssl_verify_ok : ssl_verify_invalid;
+    }
+    else
+        return ssl_verify_ok;
 }
 
 
@@ -1302,7 +1308,9 @@ init_client (struct enc_sess_iquic *const enc_sess)
         SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
     if (enc_sess->esi_enpub->enp_kli)
         SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
-    if (enc_sess->esi_enpub->enp_verify_cert)
+    if (enc_sess->esi_enpub->enp_verify_cert
+            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
+            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
         SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
             verify_server_cert_callback);
     SSL_CTX_set_early_data_enabled(ssl_ctx, 1);

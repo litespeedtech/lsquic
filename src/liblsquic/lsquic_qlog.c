@@ -14,6 +14,9 @@
 #include <arpa/inet.h>
 #endif
 
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -200,6 +203,46 @@ lsquic_qlog_check_certs (const lsquic_cid_t* cid, const lsquic_str_t **certs,
     }
     if (buf)
         free(buf);
+}
+
+
+void
+lsquic_qlog_cert_chain (const lsquic_cid_t* cid, struct stack_st_X509 *chain)
+{
+    X509 *cert;
+    unsigned i;
+    unsigned char *buf;
+    char *hexbuf, *newbuf;
+    size_t hexbuf_sz;
+    int len;
+    lsquic_time_t now;
+
+    now = lsquic_time_now();
+    hexbuf = NULL;
+    hexbuf_sz = 0;
+    for (i = 0; i < sk_X509_num(chain); ++i)
+    {
+        cert = sk_X509_value(chain, i);
+        buf = NULL;
+        len = i2d_X509(cert, &buf);
+        if (len <= 0)
+            break;
+        if ((size_t) len * 2 + 1 > hexbuf_sz)
+        {
+            hexbuf_sz = len * 2 + 1;
+            newbuf = realloc(hexbuf, hexbuf_sz);
+            if (!newbuf)
+                break;
+            hexbuf = newbuf;
+        }
+        lsquic_hexstr(buf, (size_t) len, hexbuf, hexbuf_sz);
+        LCID("[%" PRIu64 ",\"SECURITY\",\"CHECK_CERT\",\"CERTLOG\","
+                "{\"certificate\":\"%s\"}]", now, hexbuf);
+        OPENSSL_free(buf);
+    }
+
+    if (hexbuf)
+        free(hexbuf);
 }
 
 

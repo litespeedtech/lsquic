@@ -10,6 +10,8 @@
 #include "lsquic_packet_common.h"
 #include "lsquic_str.h"
 
+struct stack_st_X509;
+
 /*
 EventCategory
     CONNECTIVITY
@@ -82,6 +84,9 @@ lsquic_qlog_zero_rtt (const lsquic_cid_t *);
 
 void
 lsquic_qlog_check_certs (const lsquic_cid_t *, const lsquic_str_t **, size_t);
+
+void
+lsquic_qlog_cert_chain (const lsquic_cid_t *, struct stack_st_X509 *);
 
 void
 lsquic_qlog_version_negotiation (const lsquic_cid_t *, const char *, const char *);

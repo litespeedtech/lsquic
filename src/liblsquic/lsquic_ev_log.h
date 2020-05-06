@@ -17,6 +17,7 @@ struct lsquic_packet_out;
 struct parse_funcs;
 struct stream_frame;
 struct uncompressed_headers;
+struct stack_st_X509;
 
 
 /* Log a generic event not tied to any particular connection */
@@ -327,6 +328,16 @@ lsquic_ev_log_check_certs (const lsquic_cid_t *, const lsquic_str_t **, size_t);
         lsquic_ev_log_check_certs(__VA_ARGS__);                             \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
         lsquic_qlog_check_certs(__VA_ARGS__);                               \
+} while (0)
+
+void
+lsquic_ev_log_cert_chain (const lsquic_cid_t *, struct stack_st_X509 *);
+
+#define EV_LOG_CERT_CHAIN(...) do {                                         \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
+        lsquic_ev_log_cert_chain(__VA_ARGS__);                              \
+    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
+        lsquic_qlog_cert_chain(__VA_ARGS__);                                \
 } while (0)
 
 void

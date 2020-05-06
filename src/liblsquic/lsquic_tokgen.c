@@ -92,11 +92,18 @@ get_or_generate_state (struct lsquic_engine_public *enpub, time_t now,
     size_t bufsz;
     struct {
         time_t        now;
-        unsigned char buf[20];
-    } srst_ikm;
+        unsigned char buf[24];
+    }
+#if __GNUC__
+    /* This is more of a documentation note: this struct should already
+     * have a multiple-of-eight size.
+     */
+    __attribute__((packed))
+#endif
+    srst_ikm;
 
     data = shm_state;
-    sz = sizeof(shm_state);
+    sz = sizeof(*shm_state);
     s = shi->shi_lookup(ctx, TOKGEN_SHM_KEY, TOKGEN_SHM_KEY_SIZE, &data, &sz);
 
     if (s == 1)

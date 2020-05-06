@@ -67,6 +67,7 @@ SET(TESTS
     stop_waiting_gquic_be
     streamgen
     streamparse
+    tokgen
     trapa
     varint
     ver_nego

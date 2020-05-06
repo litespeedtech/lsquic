@@ -152,6 +152,7 @@ static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
     /* On the other hand, we do enforce the lower bound. */
     [TPI_MAX_PACKET_SIZE]                   =  1200,
     [TPI_MIN_ACK_DELAY]                     =  1,
+    [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  2,
 };
 
 

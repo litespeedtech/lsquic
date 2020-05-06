@@ -138,6 +138,12 @@ enum ifull_conn_flags
 };
 
 
+enum more_flags
+{
+    MF_VALIDATE_PATH    = 1 << 0,
+};
+
+
 #define N_PATHS 2
 
 enum send
@@ -315,6 +321,7 @@ struct ietf_full_conn
     unsigned                    ifc_max_streams_in[N_SDS];
     uint64_t                    ifc_max_stream_data_uni;
     enum ifull_conn_flags       ifc_flags;
+    enum more_flags             ifc_mflags;
     enum send_flags             ifc_send_flags;
     enum send_flags             ifc_delayed_send;
     struct {
@@ -1318,6 +1325,12 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_paths[0].cop_path = imc->imc_path;
     conn->ifc_paths[0].cop_flags = COP_VALIDATED;
     conn->ifc_used_paths = 1 << 0;
+    if (imc->imc_flags & IMC_ADDR_VALIDATED)
+        lsquic_send_ctl_path_validated(&conn->ifc_send_ctl);
+    else
+        conn->ifc_mflags |= MF_VALIDATE_PATH;
+    conn->ifc_pub.bytes_out = imc->imc_bytes_out;
+    conn->ifc_pub.bytes_in = imc->imc_bytes_in;
     if (imc->imc_flags & IMC_PATH_CHANGED)
     {
         LSQ_DEBUG("path changed during mini conn: schedule PATH_CHALLENGE");
@@ -6284,6 +6297,14 @@ process_regular_packet (struct ietf_full_conn *conn,
             else
                 conn->ifc_spin_bit = !lsquic_packet_in_spin_bit(packet_in);
         }
+        conn->ifc_pub.bytes_in += packet_in->pi_data_sz;
+        if ((conn->ifc_mflags & MF_VALIDATE_PATH) &&
+                (packet_in->pi_header_type == HETY_NOT_SET
+              || packet_in->pi_header_type == HETY_HANDSHAKE))
+        {
+            conn->ifc_mflags &= ~MF_VALIDATE_PATH;
+            lsquic_send_ctl_path_validated(&conn->ifc_send_ctl);
+        }
         return 0;
     case REC_ST_DUP:
         LSQ_INFO("packet %"PRIu64" is a duplicate", packet_in->pi_packno);
@@ -6482,6 +6503,8 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
         lsquic_alarmset_set(&conn->ifc_alset, AL_BLOCKED_KA,
             packet_out->po_sent + (1 + (7 & lsquic_crand_get_nybble(
                                 conn->ifc_enpub->enp_crand))) * 1000000);
+    conn->ifc_pub.bytes_out += lsquic_packet_out_sent_sz(&conn->ifc_conn,
+                                                                packet_out);
 }
 
 

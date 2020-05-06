@@ -10,6 +10,8 @@
 #include <string.h>
 #include <sys/queue.h>
 
+#include <openssl/x509.h>
+
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -563,6 +565,24 @@ lsquic_ev_log_check_certs (const lsquic_cid_t *cid, const lsquic_str_t **certs,
                                                                 size_t count)
 {
     LCID("check certs");
+}
+
+
+void
+lsquic_ev_log_cert_chain (const lsquic_cid_t *cid, struct stack_st_X509 *chain)
+{
+    X509_NAME *name;
+    X509 *cert;
+    unsigned i;
+    char buf[0x100];
+
+    for (i = 0; i < sk_X509_num(chain); ++i)
+    {
+        cert = sk_X509_value(chain, i);
+        name = X509_get_subject_name(cert);
+        LCID("cert #%u: name: %s", i,
+                                X509_NAME_oneline(name, buf, sizeof(buf)));
+    }
 }
 
 

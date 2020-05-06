@@ -1,3 +1,13 @@
+2020-05-06
+    - 2.14.6
+    - [BUGFIX] Fix amplification mitigation in 0-RTT case.
+    - [BUGFIX] IETF mini connection should not tickable if cannot send
+      a packet due to amplification.
+    - [BUGFIX] Fail if active_connection_id_limit TP is smaller than 2.
+    - [BUGFIX] Qlog server certificates for IETF QUIC connections.
+    - [BUGFIX] Uninitialized struct padding usage in tokgen (benign).
+    - [BUGFIX] Incorrect argument to shi_lookup() (benign).
+
 2020-04-29
     - 2.14.5
     - [BUGFIX] In coalesced datagram, ignore packets whose CID does not match.

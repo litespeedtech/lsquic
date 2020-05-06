@@ -57,6 +57,11 @@ struct lsquic_conn_public {
 #if LSQUIC_EXTRA_CHECKS
     unsigned long                   stream_frame_bytes;
 #endif
+    /* "unsigned" is wide enough: these values are only used for amplification
+     * limit before initial path is validated.
+     */
+    unsigned                        bytes_in;   /* successfully processed */
+    unsigned                        bytes_out;
 };
 
 #endif
