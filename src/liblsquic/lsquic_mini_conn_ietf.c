@@ -46,6 +46,9 @@ static const struct conn_iface mini_conn_ietf_iface;
 
 static unsigned highest_bit_set (unsigned long long);
 
+static int
+imico_can_send (const struct ietf_mini_conn *, size_t);
+
 
 static const enum header_type el2hety[] =
 {
@@ -625,11 +628,15 @@ ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
 {
     struct ietf_mini_conn *const conn = (struct ietf_mini_conn *) lconn;
     const struct lsquic_packet_out *packet_out;
+    size_t packet_size;
 
     if (conn->imc_enpub->enp_flags & ENPUB_CAN_SEND)
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
             if (!(packet_out->po_flags & PO_SENT))
-                return 1;
+            {
+                packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
+                return imico_can_send(conn, packet_size + IQUIC_TAG_LEN);
+            }
 
     return 0;
 }
