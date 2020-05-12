@@ -1412,7 +1412,13 @@ full_conn_ci_get_stream_by_id (struct lsquic_conn *lconn,
                                lsquic_stream_id_t stream_id)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    return find_stream_by_id(conn, stream_id);
+    struct lsquic_stream *stream;
+
+    stream = find_stream_by_id(conn, stream_id);
+    if (stream && !lsquic_stream_is_closed(stream))
+        return stream;
+    else
+        return NULL;
 }
 
 

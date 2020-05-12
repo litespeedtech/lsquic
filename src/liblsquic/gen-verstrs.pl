@@ -142,12 +142,8 @@ lsquic_alpn2ver (const char *alpn, size_t len)
     } map[] = {
 C_CODE
 
-for ($i = 0; $i < @versions; ++$i) {
-    print OUT "        {sizeof(\"h3-Q0$versions[$i]\")-1,\"h3-Q0$versions[$i]\", $enums[$i]},\n";
-}
-
-for ($i = 0; $i < @draft_versions; ++$i) {
-    print OUT "        {sizeof(\"h3-$draft_versions[$i]\")-1,\"h3-$draft_versions[$i]\", LSQVER_ID$draft_versions[$i]},\n";
+for ($i = 0; $i < @all_alpns; ++$i) {
+    print OUT "        {sizeof(\"$all_alpns[$i]\")-1,\"$all_alpns[$i]\", $all_versions[$i]},\n";
 }
 
 print OUT <<'C_CODE';

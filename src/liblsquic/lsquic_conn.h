@@ -157,6 +157,7 @@ struct conn_iface
     (*ci_is_push_enabled) (struct lsquic_conn *);
 
     /* Optional: only used by gQUIC frames reader */
+    /* If stream is already closed, NULL is returned */
     struct lsquic_stream *
     (*ci_get_stream_by_id) (struct lsquic_conn *, lsquic_stream_id_t stream_id);
 

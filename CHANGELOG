@@ -1,3 +1,8 @@
+2020-05-12
+    - 2.14.7
+    - [BUGFIX] ALPN-to-version mapping: do not skip h3-Q050.
+    - [BUGFIX] Frame reader: skip headers if target stream is closed.
+
 2020-05-06
     - 2.14.6
     - [BUGFIX] Fix amplification mitigation in 0-RTT case.
