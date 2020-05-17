@@ -12,6 +12,11 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
         SET(LIBS ${LIBS} rt)
     ENDIF()
+ELSEIF (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # for android-ndk >= r19b
+    set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY "BOTH")
+    set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE "BOTH")
+    set(CMAKE_FIND_ROOT_PATH_MODE_PATH "BOTH")
 ENDIF()
 
 IF("${CMAKE_BUILD_TYPE}" STREQUAL "")
@@ -166,6 +171,7 @@ IF(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     link_directories( /usr/local/lib )
 ENDIF()
 
+IF (NOT TESTS STREQUAL "NO")
 # Find zlib and libevent header files and library files
 # TODO: libevent is not strictly necessary to build the library.
 FIND_PATH(ZLIB_INCLUDE_DIR NAMES zlib.h)
@@ -247,11 +253,12 @@ TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
 TARGET_LINK_LIBRARIES(echo_server ${LIBS})
 TARGET_LINK_LIBRARIES(echo_client ${LIBS})
 
+add_subdirectory(test)
+ENDIF() # TESTS
+
 add_subdirectory(src)
 
-add_subdirectory(test)
-
-IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
+IF(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT TESTS STREQUAL "NO")
     # Our test framework relies on assertions, only compile if assertions are
     # enabled.
     #
