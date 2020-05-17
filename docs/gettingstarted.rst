@@ -4,8 +4,8 @@ Getting Started
 Supported Platforms
 -------------------
 
-LSQUIC compiles and runs on Linux, FreeBSD, and Mac OS.  It has been
-tested on i386, x86_64, as well as Raspberry Pi.
+LSQUIC compiles and runs on Linux, FreeBSD, Mac OS, and Android.  It has been
+tested on i386, x86_64, and ARM (Raspberry Pi and Android).
 
 Windows support is on the TODO list.
 

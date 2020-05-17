@@ -9,6 +9,7 @@ to the LiteSpeed Client Library:
     - Zhang Chi -- libevent build fix on Darwin
     - Omar Roth -- Alpine Linux build and Crystal language bindings
     - initlife (?) -- XCode build
+    - Rahul Jadhav -- Android support
 
 Thank you!
 

@@ -10,14 +10,14 @@ framework and share many options.
 Echo client and server
 ----------------------
 
-Echo client and server (see test/echo_{client,server}.c) are for simple
+Echo client and server (see bin/echo_{client,server}.c) are for simple
 line-based request and reply communication.  Only one stream per connection
 is supported for simplicity.  The client reads input from stdin.
 
 MD5 client and server
 ---------------------
 
-See test/md5_{client,server}.c
+See bin/md5_{client,server}.c
 
 MD5 server accepts connections, computes MD5 sum of streams' (one or more)
 payload, and sends back the checksum.  MD5 client sends one or more file
@@ -27,7 +27,7 @@ exercise different aspects of LSQUIC.
 HTTP client and server
 ----------------------
 
-See test/http_{client,server}.c
+See bin/http_{client,server}.c
 
 This pair of programs is to demonstrate how to use HTTP features of QUIC.
 HTTP server is interoperable with proto-quic's quic_client.

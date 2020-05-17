@@ -1,12 +1,12 @@
 # Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE.
-INCLUDE_DIRECTORIES(../../src/liblsquic)
+INCLUDE_DIRECTORIES(../src/liblsquic)
 
 ENABLE_TESTING()
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_TEST=1")
 
 IF (MSVC)
-    SET(ADDL_SOURCES ../../wincompat/getopt.c ../../wincompat/getopt1.c)
+    SET(ADDL_SOURCES ../wincompat/getopt.c ../wincompat/getopt1.c)
     SET(LIB_FLAGS "-FORCE:MULTIPLE")
 ELSE()
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
@@ -18,8 +18,8 @@ ELSE()
     ENDIF()
 ENDIF()
 
-include_directories(../../src/liblsquic/ls-qpack)
-INCLUDE_DIRECTORIES(../../src/lshpack)
+include_directories(../src/liblsquic/ls-qpack)
+INCLUDE_DIRECTORIES(../src/lshpack)
 
 SET(TESTS
     ack
@@ -104,18 +104,18 @@ TARGET_LINK_LIBRARIES(graph_cubic ${LIBS})
 ADD_EXECUTABLE(mini_parse mini_parse.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(mini_parse ${LIBS})
 
-ADD_EXECUTABLE(test_min_heap test_min_heap.c ../../src/liblsquic/lsquic_min_heap.c)
+ADD_EXECUTABLE(test_min_heap test_min_heap.c ../src/liblsquic/lsquic_min_heap.c)
 ADD_TEST(min_heap test_min_heap)
 
-ADD_EXECUTABLE(test_malo_pooled test_malo.c ../../src/liblsquic/lsquic_malo.c)
+ADD_EXECUTABLE(test_malo_pooled test_malo.c ../src/liblsquic/lsquic_malo.c)
 SET_TARGET_PROPERTIES(test_malo_pooled
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=1")
 ADD_TEST(malo_pooled test_malo_pooled)
 
-ADD_EXECUTABLE(test_malo_nopool test_malo.c ../../src/liblsquic/lsquic_malo.c)
+ADD_EXECUTABLE(test_malo_nopool test_malo.c ../src/liblsquic/lsquic_malo.c)
 SET_TARGET_PROPERTIES(test_malo_nopool
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=0")
 ADD_TEST(malo_nopool test_malo_nopool)
 
-ADD_EXECUTABLE(test_minmax test_minmax.c ../../src/liblsquic/lsquic_minmax.c)
+ADD_EXECUTABLE(test_minmax test_minmax.c ../src/liblsquic/lsquic_minmax.c)
 ADD_TEST(minmax test_minmax)

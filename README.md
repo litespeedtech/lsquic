@@ -135,6 +135,8 @@ The library has been tested on the following platforms:
   - i386
 - MacOS
   - x86_64
+- Android
+  - ARM
 - Windows (this needs updating for the server part, now broken)
   - x86_64
 
