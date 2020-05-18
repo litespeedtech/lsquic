@@ -152,7 +152,7 @@ ELSE()
         ELSE()
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
                 NAMES lib${LIB_NAME}.a
-                PATHS ${BORINGSSL_LIB}
+                PATHS ${BORINGSSL_LIB}/${LIB_NAME}
                 NO_DEFAULT_PATH)
         ENDIF()
         IF(BORINGSSL_LIB_${LIB_NAME})
