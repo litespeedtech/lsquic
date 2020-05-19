@@ -162,7 +162,6 @@ ELSE()
             MESSAGE(STATUS "${BORINGSSL_LIB} library not found")
         ENDIF()
     ENDFOREACH()
-#endif
 
 ENDIF()
 

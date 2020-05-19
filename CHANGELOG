@@ -1,3 +1,9 @@
+2020-05-19
+    - 2.14.8
+    - Support Android.
+    - Rerrange tree: move command-line examples into bin/ and unit
+      tests into tests/ from test/unittests/.
+
 2020-05-12
     - 2.14.7
     - [BUGFIX] ALPN-to-version mapping: do not skip h3-Q050.
