@@ -125,4 +125,16 @@ destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 #define LITESPEED_ID "lsquic" "/" TOSTRING(LSQUIC_MAJOR_VERSION) "." \
             TOSTRING(LSQUIC_MINOR_VERSION) "." TOSTRING(LSQUIC_PATCH_VERSION)
 
+#ifndef WIN32
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
+#endif
+
+#ifndef HAVE_GSO
+#if defined(SOL_UDP) && defined(UDP_SEGMENT)
+#define HAVE_GSO 1
+#endif
+#endif
+
 #endif

@@ -14,6 +14,7 @@
 #ifndef WIN32
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -1234,6 +1235,7 @@ enum ctl_what
 #if ECN_SUPPORTED
     CW_ECN          = 1 << 1,
 #endif
+    CW_PKTLEN       = 1 << 2,
 };
 
 static void
@@ -1243,7 +1245,7 @@ setup_control_msg (
 #else
                    WSAMSG
 #endif
-                                 *msg, enum ctl_what cw,
+                                 *msg, enum ctl_what cw, uint16_t pktlen,
         const struct lsquic_out_spec *spec, unsigned char *buf, size_t bufsz)
 {
     struct cmsghdr *cmsg;
@@ -1348,6 +1350,17 @@ setup_control_msg (
             cw &= ~CW_ECN;
         }
 #endif
+#if HAVE_GSO
+        else if (cw & CW_PKTLEN)
+        {
+            cmsg->cmsg_level = SOL_UDP;
+            cmsg->cmsg_type  = UDP_SEGMENT;
+            cmsg->cmsg_len   = CMSG_LEN(sizeof(uint16_t));
+            ctl_len += CMSG_SPACE(sizeof(uint16_t));
+            *(uint16_t *)CMSG_DATA(cmsg) = pktlen;
+            cw &= ~CW_PKTLEN;
+        }
+#endif
         else
             assert(0);
     }
@@ -1359,6 +1372,18 @@ setup_control_msg (
 #endif
 }
 
+#ifndef NDEBUG
+void check_if_single_peer(const struct lsquic_out_spec *specs,
+                          unsigned count)
+{
+    void *ctx;
+    unsigned i;
+    for (i = 1, ctx = specs[i].peer_ctx;
+            i < count;
+                ctx = specs[i].peer_ctx, ++i)
+        assert(ctx == specs[i - 1].peer_ctx);
+}
+#endif
 
 #if HAVE_SENDMMSG
 static int
@@ -1366,18 +1391,11 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
                                                         unsigned count)
 {
 #ifndef NDEBUG
-    {
-        /* This only works for a single port!  If the specs contain more
-         * than one socket, this function does *NOT* work.  We check it
-         * here just in case:
-         */
-        void *ctx;
-        unsigned i;
-        for (i = 1, ctx = specs[i].peer_ctx;
-                i < count;
-                    ctx = specs[i].peer_ctx, ++i)
-            assert(ctx == specs[i - 1].peer_ctx);
-    }
+    /* This only works for a single port!  If the specs contain more
+     * than one socket, this function does *NOT* work.  We check it
+     * here just in case:
+     */
+    check_if_single_peer(specs, count);
 #endif
 
     const struct service_port *const sport = specs[0].peer_ctx;
@@ -1448,7 +1466,7 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
         else if (cw)
         {
             prev_ancil_key = ancil_key;
-            setup_control_msg(&mmsgs[i].msg_hdr, cw, &specs[i], ancil[i].buf,
+            setup_control_msg(&mmsgs[i].msg_hdr, cw, 0, &specs[i], ancil[i].buf,
                                                     sizeof(ancil[i].buf));
         }
         else
@@ -1514,9 +1532,13 @@ find_sport (struct prog *prog, const struct sockaddr *local_sa)
 
 #endif
 
-
+/*
+ * Non-zero pktlen indicates use of UDP GSO. pktlen is used to create gso_size
+ * CMSG needed for UDP GSO.
+ */
 static int
-send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
+send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count,
+                        uint16_t pktlen)
 {
     const struct service_port *sport;
     enum ctl_what cw;
@@ -1540,6 +1562,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #if ECN_SUPPORTED
             + CMSG_SPACE(sizeof(int))
 #endif
+            + CMSG_SPACE(sizeof(uint16_t))
         ];
         struct cmsghdr cmsg;
     } ancil;
@@ -1615,6 +1638,10 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
             ancil_key |= specs[n].ecn;
         }
 #endif
+        if (pktlen)
+        {
+            cw |= CW_PKTLEN;
+        }
         if (cw && prev_ancil_key == ancil_key)
         {
             /* Reuse previous ancillary message */
@@ -1623,7 +1650,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         else if (cw)
         {
             prev_ancil_key = ancil_key;
-            setup_control_msg(&msg, cw, &specs[n], ancil.buf, sizeof(ancil.buf));
+            setup_control_msg(&msg, cw, pktlen, &specs[n], ancil.buf, sizeof(ancil.buf));
         }
         else
         {
@@ -1673,18 +1700,125 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
     }
 }
 
+#if HAVE_GSO
+/* UDP GSO
+ * Refs: 
+ * https://lwn.net/Articles/752956/
+ * http://vger.kernel.org/lpc_net2018_talks/willemdebruijn-lpc2018-udpgso-paper-DRAFT-1.pdf
+ */
+
+static int send_iovecs_gso(struct lsquic_out_spec *spec, 
+                           struct iovec *vecs, unsigned vcnt)
+{
+    spec->iov    = vecs;
+    spec->iovlen = vcnt;
+    LSQ_DEBUG("GSO with burst:%d", vcnt);
+    return send_packets_one_by_one (spec, 1, vcnt > 1? vecs[0].iov_len: 0);
+}
+
+/* return true if specs match */
+int match_spec(const struct lsquic_out_spec *s1,
+               const struct lsquic_out_spec *s2)
+{
+    if (s1->local_sa != s2->local_sa ||
+        s1->dest_sa  != s2->dest_sa  ||
+        s1->peer_ctx != s2->peer_ctx ||
+        s1->ecn      != s2->ecn)
+        return 0;
+    return 1;
+}
+
+/*
+ * To use GSO the flow here is:
+ * a. Check all the equal length iovs and batch them in single iovec array and
+ *    pass it in spec.
+ * b. Batching inter-spec iovs can happen only if all the spec parameters
+ *    (peer_ctx, sa, ecn) match.
+ * c. The last packet in the iovec array can be of smaller length then all the
+ *    earlier packets.
+ */
+static int
+send_packets_using_gso (const unsigned burst,
+                        const struct lsquic_out_spec *specs,
+                        unsigned count)
+{
+    struct iovec vecs[burst];
+    struct iovec *inv;
+    struct lsquic_out_spec newspec;
+    unsigned i, j, vcnt = 0;
+    int ret;
+
+    if (count == 0 || specs[0].iovlen == 0) {
+        LSQ_ERROR("Sanity failed. count=%d, specs iovlen=%zu",
+                count, specs[0].iovlen);
+        return 0;
+    }
+
+    /* Coalesce packets with same lengths, except that the last packet can be
+     * of smaller length. Colasece max gso_burst packets. */
+    for (i = 0; i < count; ++i)
+    {
+        if (vcnt == 0) {
+            memcpy(&newspec, &specs[i], sizeof(struct lsquic_out_spec));
+        } else if(!match_spec(&newspec, &specs[i])) {
+            // new specs dont match prev ones, so send the previous iovec batch
+            ret = send_iovecs_gso (&newspec, vecs, vcnt);
+            if(ret == 0) {
+                LSQ_ERROR("Partial send1");
+                return i-1;
+            }
+            vcnt = 0;
+            continue;
+        }
+        for (j = 0; j < specs[i].iovlen; ++j)
+        {
+            inv = &specs[i].iov[j];
+            if (vcnt == 0) {
+                vecs[vcnt++] = *inv;
+                continue;
+            }
+            if (inv->iov_len > vecs[0].iov_len) {
+                ret = send_iovecs_gso (&newspec, vecs, vcnt);
+                vcnt = 0;
+            } else if ((inv->iov_len != vecs[0].iov_len) || (vcnt >= (burst-1))) {
+                vecs[vcnt++] = *inv;
+                ret = send_iovecs_gso (&newspec, vecs, vcnt);
+                vcnt = 0;
+            } else {
+                vecs[vcnt++] = *inv;
+            }
+            if(vcnt == 0 && ret == 0) {
+                LSQ_ERROR("Partial send2");
+                return i-1;
+            }
+        }
+    }
+    if (vcnt) {
+        ret = send_iovecs_gso (&newspec, vecs, vcnt);
+        if(ret == 0) {
+            LSQ_ERROR("Partial send3");
+            return count-1;
+        }
+    }
+    return count;
+}
+#endif // HAVE_GSO
 
 int
 sport_packets_out (void *ctx, const struct lsquic_out_spec *specs,
                    unsigned count)
 {
-#if HAVE_SENDMMSG
     const struct prog *prog = ctx;
-    if (prog->prog_use_sendmmsg)
-        return send_packets_using_sendmmsg(specs, count);
+#if HAVE_GSO
+    if (prog->prog_gso_burst > 0)
+        return send_packets_using_gso(prog->prog_gso_burst, specs, count);
     else
 #endif
-        return send_packets_one_by_one(specs, count);
+#if HAVE_SENDMMSG
+    if (prog->prog_use_sendmmsg)
+        return send_packets_using_sendmmsg(specs, count);
+#endif
+    return send_packets_one_by_one(specs, count, 0);
 }
 
 
