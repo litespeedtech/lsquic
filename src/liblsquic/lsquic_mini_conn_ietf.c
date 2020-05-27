@@ -188,12 +188,12 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
         {
             conn->imc_flags |= IMC_HAVE_TP;
             conn->imc_ack_exp = params->tp_ack_delay_exponent;
-            if (params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
+            if (params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
             {
-                if (params->tp_numerics[TPI_MAX_PACKET_SIZE]
+                if (params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
                                                 < conn->imc_path.np_pack_size)
                     conn->imc_path.np_pack_size =
-                                    params->tp_numerics[TPI_MAX_PACKET_SIZE];
+                                params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
             }
             LSQ_DEBUG("read transport params, packet size is set to %hu bytes",
                                                 conn->imc_path.np_pack_size);
@@ -493,6 +493,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_conn.cn_cur_cce_idx = 1;
 
     conn->imc_conn.cn_flags = LSCONN_MINI|LSCONN_IETF|LSCONN_SERVER;
+    conn->imc_conn.cn_version = version;
 
     for (i = 0; i < N_ENC_LEVS; ++i)
     {
@@ -503,7 +504,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     esfi = select_esf_iquic_by_ver(version);
     enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
                 &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
-                odcid);
+                &conn->imc_cces[0].cce_cid, &conn->imc_path.np_dcid);
     if (!enc_sess)
     {
         lsquic_malo_put(conn);
@@ -518,7 +519,6 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     if (getenv("LSQUIC_CN_PACK_SIZE"))
         conn->imc_path.np_pack_size = atoi(getenv("LSQUIC_CN_PACK_SIZE"));
 #endif
-    conn->imc_conn.cn_version = version;
     conn->imc_conn.cn_pf = select_pf_by_ver(version);
     conn->imc_conn.cn_esf.i = esfi;
     conn->imc_conn.cn_enc_session = enc_sess;
@@ -1099,7 +1099,8 @@ imico_process_packet_frame (struct ietf_mini_conn *conn,
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
     type = conn->imc_conn.cn_pf->pf_parse_frame_type(p, len);
-    if (lsquic_legal_frames_by_level[enc_level] & (1 << type))
+    if (lsquic_legal_frames_by_level[conn->imc_conn.cn_version][enc_level]
+                                                                & (1 << type))
     {
         packet_in->pi_frame_types |= 1 << type;
         return imico_process_frames[type](conn, packet_in, p, len);
@@ -1193,6 +1194,17 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     enum dec_packin dec_packin;
     enum packnum_space pns;
 
+    /* Update "bytes in" count as early as possible.  From
+     * [draft-ietf-quic-transport-28] Section 8.1:
+     "                                                 For the purposes of
+     " avoiding amplification prior to address validation, servers MUST
+     " count all of the payload bytes received in datagrams that are
+     " uniquely attributed to a single connection.  This includes datagrams
+     " that contain packets that are successfully processed and datagrams
+     " that contain packets that are all discarded.
+     */
+    conn->imc_bytes_in += packet_in->pi_data_sz;
+
     if (conn->imc_flags & IMC_ERROR)
     {
         LSQ_DEBUG("ignore incoming packet: connection is in error state");
@@ -1216,7 +1228,6 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     }
 
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
-    conn->imc_bytes_in += packet_in->pi_data_sz + IQUIC_TAG_LEN;
 
     if (pns == PNS_APP)
     {
@@ -1580,7 +1591,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     else if (conn->imc_flags & IMC_BAD_TRANS_PARAMS)
     {
         is_app = 0;
-        error_code = TEC_NO_ERROR;
+        error_code = TEC_PROTOCOL_VIOLATION;
         reason = "bad transport parameters";
         rlen = 24;
     }
@@ -1607,7 +1618,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     }
 
 
-/* [draft-ietf-quic-transport-23] Section 12.2:
+/* [draft-ietf-quic-transport-28] Section 10.3.1:
  *
  " A client will always know whether the server has Handshake keys (see
  " Section 17.2.2.1), but it is possible that a server does not know
@@ -1615,7 +1626,25 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
  " server SHOULD send a CONNECTION_CLOSE frame in both Handshake and
  " Initial packets to ensure that at least one of them is processable by
  " the client.
+--- 8< ---
+ " Sending a CONNECTION_CLOSE of type 0x1d in an Initial or Handshake
+ " packet could expose application state or be used to alter application
+ " state.  A CONNECTION_CLOSE of type 0x1d MUST be replaced by a
+ " CONNECTION_CLOSE of type 0x1c when sending the frame in Initial or
+ " Handshake packets.  Otherwise, information about the application
+ " state might be revealed.  Endpoints MUST clear the value of the
+ " Reason Phrase field and SHOULD use the APPLICATION_ERROR code when
+ " converting to a CONNECTION_CLOSE of type 0x1c.
  */
+    LSQ_DEBUG("sending CONNECTION_CLOSE, is_app: %d, error code: %u, "
+        "reason: %.*s", is_app, error_code, rlen, reason);
+    if (is_app && conn->imc_conn.cn_version > LSQVER_ID27)
+    {
+        LSQ_DEBUG("convert to 0x1C, replace code and reason");
+        is_app = 0;
+        error_code = TEC_APPLICATION_ERROR;
+        rlen = 0;
+    }
 
     pns = (conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3;
     switch ((!!(conn->imc_flags & IMC_HSK_PACKET_SENT) << 1)
@@ -1844,9 +1873,21 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 }
 
 
+void
+ietf_mini_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
+{
+    struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
+
+    conn->imc_bytes_in += garbage_sz;
+    LSQ_DEBUG("count %zd bytes of garbage, new value: %u bytes", garbage_sz,
+        conn->imc_bytes_in);
+}
+
+
 static const struct conn_iface mini_conn_ietf_iface = {
     .ci_abort_error          =  ietf_mini_conn_ci_abort_error,
     .ci_client_call_on_new   =  ietf_mini_conn_ci_client_call_on_new,
+    .ci_count_garbage        =  ietf_mini_conn_ci_count_garbage,
     .ci_destroy              =  ietf_mini_conn_ci_destroy,
     .ci_get_engine           =  ietf_mini_conn_ci_get_engine,
     .ci_get_log_cid          =  ietf_mini_conn_ci_get_log_cid,

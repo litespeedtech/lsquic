@@ -31,7 +31,7 @@
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
-#define TOKGEN_VERSION 1
+#define TOKGEN_VERSION 2
 
 #define CRYPTER_KEY_SIZE        16
 #define SRST_MAX_PRK_SIZE       EVP_MAX_MD_SIZE
@@ -63,6 +63,8 @@ struct crypter
     size_t          nonce_prk_sz;
     uint8_t         nonce_prk_buf[EVP_MAX_MD_SIZE];
 };
+
+
 
 
 struct token_generator

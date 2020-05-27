@@ -1915,11 +1915,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_qpack_dec_max_size = atoi(val);
             return 0;
         }
-        if (0 == strncmp(name, "max_packet_size_rx", 18))
-        {
-            settings->es_max_packet_size_rx = atoi(val);
-            return 0;
-        }
         break;
     case 20:
         if (0 == strncmp(name, "max_header_list_size", 20))
@@ -1942,6 +1937,13 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "qpack_dec_max_blocked", 21))
         {
             settings->es_qpack_dec_max_blocked = atoi(val);
+            return 0;
+        }
+        break;
+    case 23:
+        if (0 == strncmp(name, "max_udp_payload_size_rx", 18))
+        {
+            settings->es_max_udp_payload_size_rx = atoi(val);
             return 0;
         }
         break;

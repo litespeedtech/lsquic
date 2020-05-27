@@ -355,7 +355,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         version = lsquic_tag2ver(ver_tag);
     }
     else /* Got to set it to something sensible... */
-        version = LSQVER_ID25;
+        version = LSQVER_ID27;
 
     lsquic_scid_from_packet_in(packet_in, &scid);
     return lsquic_prq_new_req_ext(prq, type, flags, version,

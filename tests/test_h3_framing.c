@@ -59,7 +59,7 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 
-static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_ID25);
+static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_ID27);
 
 struct test_ctl_settings
 {
@@ -302,7 +302,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     memset(tobjs, 0, sizeof(*tobjs));
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = g_pf;
-    tobjs->lconn.cn_version = LSQVER_ID25;
+    tobjs->lconn.cn_version = LSQVER_ID27;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     network_path.np_pack_size = packet_sz;
     tobjs->lconn.cn_if = &our_conn_if;

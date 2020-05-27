@@ -223,6 +223,7 @@ struct lsquic_engine
     struct min_heap                    conns_out;
     struct eng_hist                    history;
     unsigned                           batch_size;
+    struct lsquic_conn                *curr_conn;
     struct pr_queue                   *pr_queue;
     struct attq                       *attq;
     /* Track time last time a packet was sent to give new connections
@@ -1320,8 +1321,12 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     }
 
     if (engine->flags & ENG_SERVER)
+    {
         conn = find_or_create_conn(engine, packet_in, ppstate, sa_local,
                                             sa_peer, peer_ctx, packet_in_size);
+        if (!engine->curr_conn)
+            engine->curr_conn = conn;
+    }
     else
         conn = find_conn(engine, packet_in, ppstate, sa_local);
 
@@ -2641,6 +2646,20 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
 }
 
 
+static void
+maybe_count_garbage (struct lsquic_engine *engine, size_t garbage_sz)
+{
+    /* This is not very pretty (action at a distance via engine->curr_conn),
+     * but it's the cheapest I can come up with to handle the "count garbage
+     * toward amplification limit" requirement in
+     * [draft-ietf-quic-transport-28] Section 8.1.
+     */
+    if (engine->curr_conn && engine->curr_conn->cn_if->ci_count_garbage)
+        engine->curr_conn->cn_if->ci_count_garbage(engine->curr_conn,
+                                                                garbage_sz);
+}
+
+
 /* Return 0 if packet is being processed by a real connection, 1 if the
  * packet was processed, but not by a connection, and -1 on error.
  */
@@ -2692,6 +2711,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
     else
         parse_packet_in_begin = lsquic_parse_packet_in_begin;
 
+    engine->curr_conn = NULL;
     n_zeroes = 0;
     is_ietf = 0;
     do
@@ -2709,6 +2729,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
                                 engine->pub.enp_settings.es_scid_len, &ppstate))
         {
             LSQ_DEBUG("Cannot parse incoming packet's header");
+            maybe_count_garbage(engine, packet_end - packet_in_data);
             lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
             s = 1;
             break;
@@ -2724,6 +2745,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
                                 && LSQUIC_CIDS_EQ(&packet_in->pi_dcid, &cid)))
             {
                 packet_in_data += packet_in->pi_data_sz;
+                maybe_count_garbage(engine, packet_in->pi_data_sz);
                 continue;
             }
         }

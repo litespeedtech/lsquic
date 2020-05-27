@@ -1,3 +1,13 @@
+2020-05-27
+    - 2.15.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 28 support.
+    - [BUGFIX] Ignore Retry packets after other packets are decrypted
+      successfully.
+    - [BUGFIX] Transport parameter decoding: CID no longer has 4-byte
+      length minimum.
+    - http_client: fix and optimize lsxpack_header allocator.
+    - Drop support for Internet Draft 25.
+
 2020-05-19
     - 2.14.8
     - Support Android.

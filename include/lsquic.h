@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 14
-#define LSQUIC_PATCH_VERSION 8
+#define LSQUIC_MINOR_VERSION 15
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -77,14 +77,14 @@ enum lsquic_version
 #endif
 
     /**
-     * IETF QUIC Draft-25
-     */
-    LSQVER_ID25,
-
-    /**
      * IETF QUIC Draft-27
      */
     LSQVER_ID27,
+
+    /**
+     * IETF QUIC Draft-28
+     */
+    LSQVER_ID28,
 
     /**
      * Special version to trigger version negotiation.
@@ -96,7 +96,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-25, and Draft-27.
+ * We currently support versions 43, 46, 50, Draft-27, and Draft-28.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -113,10 +113,10 @@ enum lsquic_version
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID25) | (1 << LSQVER_ID27) \
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
                                                     | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID25) | (1 << LSQVER_ID27) \
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
                                                     | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
@@ -341,7 +341,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_CC_ALGO 1
 
 /** By default, incoming packet size is not limited. */
-#define LSQUIC_DF_MAX_PACKET_SIZE_RX 0
+#define LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX 0
 
 struct lsquic_engine_settings {
     /**
@@ -749,9 +749,9 @@ struct lsquic_engine_settings {
      *
      * If set to zero, limit is not set.
      *
-     * Default value is @ref LSQUIC_DF_MAX_PACKET_SIZE_RX
+     * Default value is @ref LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
      */
-    unsigned short  es_max_packet_size_rx;
+    unsigned short  es_max_udp_payload_size_rx;
 };
 
 /* Initialize `settings' to default values */
@@ -1078,7 +1078,7 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
  * To let the engine specify QUIC version, use N_LSQVER.  If zero-rtt info
  * is supplied, version is picked from there instead.
  *
- * If `max_packet_size' is set to zero, it is inferred based on `peer_sa':
+ * If `max_udp_payload_size' is set to zero, it is inferred based on `peer_sa':
  * 1350 for IPv6 and 1370 for IPv4.
  */
 lsquic_conn_t *
@@ -1086,7 +1086,7 @@ lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
                        const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
-                       const char *hostname, unsigned short max_packet_size,
+                       const char *hostname, unsigned short max_udp_payload_size,
                        const unsigned char *zero_rtt, size_t zero_rtt_len,
                        /** Resumption token: optional */
                        const unsigned char *token, size_t token_sz);
@@ -1174,12 +1174,7 @@ lsquic_conn_cancel_pending_streams (lsquic_conn_t *, unsigned n);
  * Mark connection as going away: send GOAWAY frame and do not accept
  * any more incoming streams, nor generate streams of our own.
  *
- * In the server mode, of course, we can call this function just fine in both
- * Google and IETF QUIC.
- *
- * In client mode, calling this function in for an IETF QUIC connection does
- * not do anything, as the client MUST NOT send GOAWAY frames.
- * See [draft-ietf-quic-http-17] Section 4.2.7.
+ * Only applicable to HTTP/3 and GQUIC connections.  Otherwise a no-op.
  */
 void
 lsquic_conn_going_away (lsquic_conn_t *);

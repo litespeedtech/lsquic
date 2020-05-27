@@ -220,6 +220,7 @@ struct lsquic_conn_ctx {
 struct hset_elem
 {
     STAILQ_ENTRY(hset_elem)     next;
+    size_t                      nalloc;
     struct lsxpack_header       xhdr;
 };
 
@@ -999,16 +1000,19 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         }
         STAILQ_INSERT_TAIL(hset, el, next);
         lsxpack_header_prepare_decode(&el->xhdr, buf, 0, req_space);
+        el->nalloc = req_space;
     }
     else
     {
         el = (struct hset_elem *) ((char *) xhdr
                                         - offsetof(struct hset_elem, xhdr));
-        if (req_space <= xhdr->val_len)
+        if (req_space <= el->nalloc)
         {
             LSQ_ERROR("requested space is smaller than already allocated");
             return NULL;
         }
+        if (req_space < el->nalloc * 2)
+            req_space = el->nalloc * 2;
         buf = realloc(el->xhdr.buf, req_space);
         if (!buf)
         {
@@ -1017,6 +1021,7 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         }
         el->xhdr.buf = buf;
         el->xhdr.val_len = req_space;
+        el->nalloc = req_space;
     }
 
     return &el->xhdr;

@@ -693,7 +693,7 @@ settings structure:
 
        Default value is @ref LSQUIC_DF_TIMESTAMPS
 
-    .. member:: unsigned short  es_max_packet_size_rx
+    .. member:: unsigned short  es_max_udp_payload_size_rx
 
        Maximum packet size we are willing to receive.  This is sent to
        peer in transport parameters: the library does not enforce this
@@ -701,7 +701,7 @@ settings structure:
 
        If set to zero, limit is not set.
 
-       Default value is :macro:`LSQUIC_DF_MAX_PACKET_SIZE_RX`
+       Default value is :macro:`LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX`
 
 To initialize the settings structure to library defaults, use the following
 convenience function:
@@ -877,7 +877,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     Delayed ACKs are off by default.
 
-.. macro:: LSQUIC_DF_MAX_PACKET_SIZE_RX
+.. macro:: LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
 
     By default, incoming packet size is not limited.
 
@@ -1099,7 +1099,7 @@ callback.
 
 In client mode, a new connection is created by
 
-.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short max_packet_size, const unsigned char *zero_rtt, size_t zero_rtt_len, const unsigned char *token, size_t token_sz)
+.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short max_udp_payload_size, const unsigned char *zero_rtt, size_t zero_rtt_len, const unsigned char *token, size_t token_sz)
 
     :param engine: Engine to use.
 
@@ -1132,7 +1132,7 @@ In client mode, a new connection is created by
         The SNI is required for Google QUIC connections; it is optional for
         IETF QUIC and may be set to NULL.
 
-    :param max_packet_size:
+    :param max_udp_payload_size:
 
         Maximum packet size.  If set to zero, it is inferred based on `peer_sa`
         and `version`.
@@ -1168,11 +1168,7 @@ Closing Connections
     Mark connection as going away: send GOAWAY frame and do not accept
     any more incoming streams, nor generate streams of our own.
 
-    In the server mode, of course, we can call this function just fine in both
-    Google and IETF QUIC.
-
-    In client mode, calling this function in for an IETF QUIC connection does
-    not do anything, as the client MUST NOT send GOAWAY frames.
+    Only applicable to HTTP/3 and GQUIC connections.  Otherwise a no-op.
 
 .. function:: void lsquic_conn_close (lsquic_conn_t *conn)
 

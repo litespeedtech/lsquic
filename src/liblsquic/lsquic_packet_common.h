@@ -238,6 +238,6 @@ extern const char *const lsquic_pns2str[];
     ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_PADDING|QUIC_FTBIT_PATH_RESPONSE    \
             |QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_ACK|QUIC_FTBIT_TIMESTAMP))
 
-extern const enum quic_ft_bit lsquic_legal_frames_by_level[];
+extern const enum quic_ft_bit lsquic_legal_frames_by_level[][4];
 
 #endif
