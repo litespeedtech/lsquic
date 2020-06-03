@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 15
+#define LSQUIC_MINOR_VERSION 16
 #define LSQUIC_PATCH_VERSION 0
 
 /**

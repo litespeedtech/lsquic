@@ -1,3 +1,15 @@
+2020-06-03
+    - 2.16.0
+    - [API] Use lsxpack_header v206.
+    - [FEATURE] Windows supported.
+    - [BUGFIX] Fix uninitialized variable use in client (regression in
+      2.15.0).
+    - Use ls-hpack 2.2.0.
+    - Use ls-qpack 2.2.0.
+    - Sample programs: fix the way maximum number of packets is
+      calculated.
+    - Remove some dead code.
+
 2020-05-27
     - 2.15.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 28 support.
