@@ -1,6 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
-#ifndef LSXPACK_HEADER_H_v205
-#define LSXPACK_HEADER_H_v205
+#ifndef LSXPACK_HEADER_H_v206
+#define LSXPACK_HEADER_H_v206
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,7 +26,7 @@ typedef uint32_t lsxpack_strlen_t;
 
 enum lsxpack_flag
 {
-    LSXPACK_HPACK_IDX = 1,
+    LSXPACK_HPACK_VAL_MATCHED = 1,
     LSXPACK_QPACK_IDX = 2,
     LSXPACK_APP_IDX   = 4,
     LSXPACK_NAME_HASH = 8,
@@ -47,7 +47,6 @@ enum lsxpack_flag
 struct lsxpack_header
 {
     char             *buf;          /* the buffer for headers */
-    const char       *name_ptr;     /* the name pointer can be optionally set for encoding */
     uint32_t          name_hash;    /* hash value for name */
     uint32_t          nameval_hash; /* hash value for name + value */
     lsxpack_strlen_t  name_offset;  /* the offset for name in the buffer */
@@ -74,7 +73,6 @@ lsxpack_header_set_idx(lsxpack_header_t *hdr, int hpack_idx,
     hdr->buf = (char *)val;
     hdr->hpack_index = hpack_idx;
     assert(hpack_idx != 0);
-    hdr->flags = LSXPACK_HPACK_IDX;
     assert(val_len <= LSXPACK_MAX_STRLEN);
     hdr->val_len = val_len;
 }
@@ -91,21 +89,6 @@ lsxpack_header_set_qpack_idx(lsxpack_header_t *hdr, int qpack_idx,
     hdr->flags = LSXPACK_QPACK_IDX;
     assert(val_len <= LSXPACK_MAX_STRLEN);
     hdr->val_len = val_len;
-}
-
-
-static inline void
-lsxpack_header_set_ptr(lsxpack_header_t *hdr,
-                       const char *name, size_t name_len,
-                       const char *val, size_t val_len)
-{
-    memset(hdr, 0, sizeof(*hdr));
-    hdr->buf = (char *)val;
-    assert(val_len <= LSXPACK_MAX_STRLEN);
-    hdr->val_len = val_len;
-    hdr->name_ptr = name;
-    assert(name_len <= LSXPACK_MAX_STRLEN);
-    hdr->name_len = name_len;
 }
 
 
@@ -161,9 +144,7 @@ lsxpack_header_prepare_decode(lsxpack_header_t *hdr,
 static inline const char *
 lsxpack_header_get_name(const lsxpack_header_t *hdr)
 {
-    return hdr->name_ptr ? hdr->name_ptr
-                         : (hdr->name_len) ? hdr->buf + hdr->name_offset
-                                           : NULL;
+    return (hdr->name_len)? hdr->buf + hdr->name_offset : NULL;
 }
 
 
@@ -179,10 +160,10 @@ static inline void
 lsxpack_header_mark_val_changed(lsxpack_header_t *hdr)
 {
     hdr->flags = (enum lsxpack_flag)(hdr->flags &
-                ~(LSXPACK_VAL_MATCHED|LSXPACK_NAMEVAL_HASH));
+       ~(LSXPACK_HPACK_VAL_MATCHED|LSXPACK_VAL_MATCHED|LSXPACK_NAMEVAL_HASH));
 }
 #ifdef __cplusplus
 }
 #endif
 
-#endif //LSXPACK_HEADER_H_v205
+#endif //LSXPACK_HEADER_H_v206

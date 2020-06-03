@@ -1527,7 +1527,9 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
     .. member:: enum lsquic_hsi_flag hsi_flags
 
         These flags specify properties of decoded headers passed to
-        ``hsi_process_header()``.
+        ``hsi_process_header()``.  This is only applicable to QPACK headers;
+        HPACK library header properties are based on compilation, not
+        run-time, options.
 
 .. function:: void * lsquic_stream_get_hset (lsquic_stream_t *stream)
 

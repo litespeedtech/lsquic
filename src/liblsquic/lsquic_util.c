@@ -9,14 +9,15 @@
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
 #else
 #include <vc_compat.h>
+#include <ws2tcpip.h>
 #endif
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
 
 #if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
 #include <mach/mach_time.h>

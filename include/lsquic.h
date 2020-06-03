@@ -943,7 +943,9 @@ struct lsquic_hset_if
     void                (*hsi_discard_header_set)(void *hdr_set);
     /**
      * These flags specify properties of decoded headers passed to
-     * hsi_process_header().
+     * hsi_process_header().  This is only applicable to QPACK headers;
+     * HPACK library header properties are based on compilation, not
+     * run-time, options.
      */
     enum lsquic_hsi_flag hsi_flags;
 };

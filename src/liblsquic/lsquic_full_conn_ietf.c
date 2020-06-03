@@ -7740,4 +7740,4 @@ static const struct lsquic_stream_if unicla_if =
 
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
-typedef char dcid_elem_fits_in_128_bytes[(sizeof(struct dcid_elem) <= 128) - 1];
+typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];

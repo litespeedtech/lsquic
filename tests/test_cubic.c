@@ -38,7 +38,7 @@ test_post_quiescence_explosion (void)
     struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
     struct lsquic_conn_public conn_pub = { .lconn = &lconn, };
     int i;
-    struct lsquic_packet_out packet_out = {};
+    struct lsquic_packet_out packet_out; memset(&packet_out, 0, sizeof(packet_out));
 
     cci->cci_init(&cubic, &conn_pub, 0);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;
@@ -72,7 +72,7 @@ test_post_quiescence_explosion2 (void)
     struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
     struct lsquic_conn_public conn_pub = { .lconn = &lconn, };
     int i;
-    struct lsquic_packet_out packet_out = {};
+    struct lsquic_packet_out packet_out; memset(&packet_out, 0, sizeof(packet_out));
 
     cci->cci_init(&cubic, &conn_pub, 0);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;

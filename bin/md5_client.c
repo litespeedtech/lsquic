@@ -10,11 +10,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifndef WIN32
+#include <unistd.h>
 #include <fcntl.h>
+#else
+#include "vc_compat.h"
+#include "getopt.h"
+#endif
 
 #include <event2/event.h>
 #include <openssl/md5.h>

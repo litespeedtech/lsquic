@@ -5,6 +5,8 @@
 #include <string.h>
 #ifndef WIN32
 #include <sys/time.h>
+#else
+#include "vc_compat.h"
 #endif
 
 #include "lsquic_types.h"

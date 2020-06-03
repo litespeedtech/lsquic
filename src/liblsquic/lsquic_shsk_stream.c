@@ -12,9 +12,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <time.h>
+
+#ifndef WIN32
+#include <netdb.h>
+#include <sys/socket.h>
+#endif
 
 #include "lsquic_int_types.h"
 #include "lsquic.h"

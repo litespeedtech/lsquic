@@ -442,6 +442,8 @@ run_ekt_test (const struct export_key_test *test)
 
     for (i = 0; i < 2; ++i)
     {
+        if (i && !(test->ekt_ikm_sz == 32 && test->ekt_client_key_sz == 16 && test->ekt_server_key_sz == 16))
+            continue;
         s = lsquic_export_key_material(test->ekt_ikm,       (uint32_t)test->ekt_ikm_sz,
                                 test->ekt_salt,             (int)test->ekt_salt_sz,
                                 test->ekt_context,          (uint32_t)test->ekt_context_sz,

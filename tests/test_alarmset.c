@@ -105,7 +105,8 @@ main (void)
         unsigned const count = popcount(i);
         unsigned const min_n = i % count;
         unsigned const min_t = t++;
-        unsigned j, n, ids[2];
+        unsigned j, n;
+        enum alarm_id ids[2];
         for (j = 0, n = 0; j < MAX_LSQUIC_ALARMS; ++j)
         {
             if ((1u << j) & i)

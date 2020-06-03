@@ -1,12 +1,15 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
-#include <netinet/in.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/socket.h>
 #include <time.h>
+
+#ifndef WIN32
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 #include <openssl/aead.h>
 #include <openssl/hkdf.h>

@@ -1,0 +1,63 @@
+version: 1.{branch}.{build}
+
+image: Visual Studio 2017
+
+cache: c:\tools\vcpkg\installed
+
+init:
+
+- cmd: ''
+
+install:
+
+- cmd: >-
+
+    vcpkg install zlib:x64-windows-static
+
+    vcpkg install libevent:x64-windows-static
+
+    vcpkg install pcre:x64-windows-static
+
+    vcpkg integrate install
+
+build_script:
+
+- cmd: >-
+
+    vcpkg list
+
+    git clone https://boringssl.googlesource.com/boringssl
+
+    cd boringssl
+
+    git checkout bfe527fa35735e8e045cbfb42b012e13ca68f9cf
+
+    cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF -DOPENSSL_NO_ASM=1 .
+
+
+
+    msbuild /m ALL_BUILD.vcxproj
+
+
+
+    cd ..
+
+
+
+    git submodule init
+
+
+
+    git submodule update
+
+
+
+    cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DBUILD_SHARED_LIBS=OFF -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DBORINGSSL_DIR=%cd%\boringssl .
+
+
+
+    msbuild /m ALL_BUILD.vcxproj
+
+test_script:
+
+- cmd: msbuild /m RUN_TESTS.vcxproj

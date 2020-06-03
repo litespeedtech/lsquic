@@ -137,7 +137,7 @@ The library has been tested on the following platforms:
   - x86_64
 - Android
   - ARM
-- Windows (this needs updating for the server part, now broken)
+- Windows
   - x86_64
 
 Have fun,

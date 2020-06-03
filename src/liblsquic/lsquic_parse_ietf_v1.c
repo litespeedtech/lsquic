@@ -353,6 +353,10 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
     unsigned slen, olen, dlen;
     unsigned char *p = buf + 1;
 
+#if _MSC_VER
+    obits = 0, dbits = 0;
+#endif
+
     assert(!!fin ^ !!size);
 
     /* We do not check that stream_id, offset, and size are smaller

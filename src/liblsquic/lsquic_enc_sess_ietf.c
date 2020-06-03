@@ -1545,6 +1545,8 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     }
     else if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
         must_have = 1 << TPI_ORIGINAL_DEST_CID;
+    else
+        must_have = 0;
 
     enum transport_param_id tpi;
     for (tpi = FIRST_TP_CID; tpi <= LAST_TP_CID; ++tpi)

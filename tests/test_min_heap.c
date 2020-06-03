@@ -46,6 +46,9 @@ test_min_heap (void)
     for (i = 0; i < MAX_ELEMS; ++i)
         lsquic_mh_insert(&heap, (void *) i, i);
     verify_min_heap(&heap);
+#ifdef _MSC_VER
+    prev_val = 0;
+#endif
     for (i = 0; i < MAX_ELEMS; ++i)
     {
         p = lsquic_mh_pop(&heap);

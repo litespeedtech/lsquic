@@ -35,7 +35,7 @@ main (int argc, char **argv)
     else
         nelems = 1000000;
 
-    widgets = malloc(sizeof(widgets[0]) * nelems);
+    widgets = calloc(nelems, sizeof(widgets[0]));
 
     for (n = 0; n < nelems; ++n)
     {

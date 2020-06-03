@@ -10,12 +10,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
+#include <fcntl.h>
 #include <unistd.h>
+#else
+#include "getopt.h"
+#endif
 
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"

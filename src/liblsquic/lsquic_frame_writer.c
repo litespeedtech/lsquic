@@ -528,15 +528,10 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
 
     free(buf);
 
-    if (0 == s)
-    {
-        EV_LOG_GENERATED_HTTP_PUSH_PROMISE(LSQUIC_LOG_CONN_ID, stream_id,
-                            htonl(promised_stream_id), headers);
-        hfc_terminate_frame(&hfc, HFHF_END_HEADERS);
-        return lsquic_frame_writer_flush(fw);
-    }
-    else
-        return -1;
+    EV_LOG_GENERATED_HTTP_PUSH_PROMISE(LSQUIC_LOG_CONN_ID, stream_id,
+                                        htonl(promised_stream_id), headers);
+    hfc_terminate_frame(&hfc, HFHF_END_HEADERS);
+    return lsquic_frame_writer_flush(fw);
 }
 
 

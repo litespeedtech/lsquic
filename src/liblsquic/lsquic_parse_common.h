@@ -6,6 +6,10 @@
 #ifndef LSQUIC_PARSE_COMMON_H
 #define LSQUIC_PARSE_COMMON_H 1
 
+#ifdef WIN32
+#include "vc_compat.h"
+#endif
+
 struct lsquic_packet_in;
 struct packin_parse_state;
 

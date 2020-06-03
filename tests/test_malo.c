@@ -6,7 +6,7 @@
 #ifndef WIN32
 #include <unistd.h>
 #else
-#include <getopt.h>
+#include "getopt.h"
 #endif
 
 #include "lsquic_malo.h"

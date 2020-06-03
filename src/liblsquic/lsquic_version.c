@@ -5,6 +5,10 @@
 #include "lsquic_int_types.h"
 #include "lsquic_version.h"
 
+#if _MSC_VER
+#include "vc_compat.h"
+#endif
+
 
 static const unsigned char version_tags[N_LSQVER][4] =
 {

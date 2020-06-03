@@ -493,6 +493,8 @@ static const struct lsquic_stream_if packetization_inside_many_stream_if = {
 };
 
 
+#define XHDR(name_, value_) .buf = name_ value_, .name_offset = 0, .name_len = sizeof(name_) - 1, .val_offset = sizeof(name_) - 1, .val_len = sizeof(value_) - 1,
+
 static void
 test_hq_framing (int sched_immed, int dispatch_once, unsigned wsize,
                     int flush_after_each_write, size_t conn_limit,
@@ -509,8 +511,7 @@ test_hq_framing (int sched_immed, int dispatch_once, unsigned wsize,
      * data-framing writer.  This is simply so that we don't have to
      * expose more stream things only for testing.
      */
-    struct lsxpack_header header;
-    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
+    struct lsxpack_header header = { XHDR(":method", "GET") };
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);
@@ -739,8 +740,7 @@ test_frame_header_split (unsigned n_packets, unsigned extra_sz,
     const unsigned wsize = 70;
     const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
 
-    struct lsxpack_header header;
-    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
+    struct lsxpack_header header = { XHDR(":method", "GET") };
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);
@@ -855,8 +855,7 @@ test_zero_size_frame (void)
     const unsigned wsize = 7000;
     const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
 
-    struct lsxpack_header header;
-    lsxpack_header_set_ptr(&header, ":method", 7, "GET", 3);
+    struct lsxpack_header header = { XHDR(":method", "GET") };
     struct lsquic_http_headers headers = { 1, &header, };
 
     buf_in = malloc(buf_in_sz);
