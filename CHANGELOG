@@ -1,3 +1,8 @@
+2020-06-04
+    - 2.12.4
+    - [BUGFIX] Don't double-count tag length in amplification logic.
+    - [BUGFIX] Consider amplification when deciding to return TICK_SEND.
+
 2020-05-06
     - 2.12.3
     - [BUGFIX] Fix amplification mitigation in 0-RTT case.
