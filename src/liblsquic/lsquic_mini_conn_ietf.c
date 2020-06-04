@@ -635,7 +635,7 @@ ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
             if (!(packet_out->po_flags & PO_SENT))
             {
                 packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
-                return imico_can_send(conn, packet_size + IQUIC_TAG_LEN);
+                return imico_can_send(conn, packet_size);
             }
 
     return 0;
@@ -665,15 +665,15 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
         if (size == 0 || packet_size + size <= conn->imc_path.np_pack_size)
         {
-            if (!imico_can_send(conn, packet_size + IQUIC_TAG_LEN))
+            if (!imico_can_send(conn, packet_size))
             {
                 LSQ_DEBUG("cannot send packet %"PRIu64" of size %zu: client "
                     "address has not been validated", packet_out->po_packno,
-                    packet_size + IQUIC_TAG_LEN);
+                    packet_size);
                 return NULL;
             }
             packet_out->po_flags |= PO_SENT;
-            conn->imc_bytes_out += packet_size + IQUIC_TAG_LEN;
+            conn->imc_bytes_out += packet_size;
             if (size == 0)
                 LSQ_DEBUG("packet_to_send: %"PRIu64, packet_out->po_packno);
             else
@@ -1299,7 +1299,7 @@ ietf_mini_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 
     packet_out->po_flags &= ~PO_SENT;
     packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
-    conn->imc_bytes_out -= packet_size + IQUIC_TAG_LEN;
+    conn->imc_bytes_out -= packet_size;
     LSQ_DEBUG("%s: packet %"PRIu64" not sent", __func__, packet_out->po_packno);
 }
 
