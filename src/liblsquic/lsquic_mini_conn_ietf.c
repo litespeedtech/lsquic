@@ -1345,9 +1345,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
 {
     TAILQ_HEAD(, lsquic_packet_out) lost_packets =
                                     TAILQ_HEAD_INITIALIZER(lost_packets);
+    const struct lsquic_conn *const lconn = &conn->imc_conn;
     lsquic_packet_out_t *packet_out, *next;
     lsquic_time_t retx_to = 0;
     unsigned n_to_send = 0;
+    size_t packet_size;
 
     for (packet_out = TAILQ_FIRST(&conn->imc_packets_out); packet_out;
                                                         packet_out = next)
@@ -1365,8 +1367,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
                 TAILQ_INSERT_TAIL(&lost_packets, packet_out, po_next);
             }
         }
-        else
+        else if (packet_size = lsquic_packet_out_total_sz(lconn, packet_out),
+                                                imico_can_send(conn, packet_size))
             ++n_to_send;
+        else
+            break;
     }
 
     conn->imc_hsk_count += !TAILQ_EMPTY(&lost_packets);
@@ -1376,7 +1381,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
         TAILQ_REMOVE(&lost_packets, packet_out, po_next);
         if ((packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
                             && 0 == imico_repackage_packet(conn, packet_out))
-            ++n_to_send;
+        {
+            packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
+            if (imico_can_send(conn, packet_size))
+                ++n_to_send;
+        }
         else
             imico_destroy_packet(conn, packet_out);
     }
