@@ -205,4 +205,4 @@ const struct lsquic_shared_hash_if stock_shi =
 
 /* Need this to save one malloc using malo: */
 typedef char hash_not_larger_than_hash_elem [
-            (sizeof(struct stock_shared_hash) <= sizeof(struct hash_elem)) - 1];
+            (sizeof(struct stock_shared_hash) <= sizeof(struct hash_elem)) ? 1 : -1];

@@ -144,7 +144,7 @@ enum more_flags
 };
 
 
-#define N_PATHS 2
+#define N_PATHS 4
 
 enum send
 {
@@ -154,9 +154,13 @@ enum send
     SEND_PATH_CHAL,
     SEND_PATH_CHAL_PATH_0 = SEND_PATH_CHAL + 0,
     SEND_PATH_CHAL_PATH_1 = SEND_PATH_CHAL + 1,
+    SEND_PATH_CHAL_PATH_2 = SEND_PATH_CHAL + 2,
+    SEND_PATH_CHAL_PATH_3 = SEND_PATH_CHAL + 3,
     SEND_PATH_RESP,
     SEND_PATH_RESP_PATH_0 = SEND_PATH_RESP + 0,
     SEND_PATH_RESP_PATH_1 = SEND_PATH_RESP + 1,
+    SEND_PATH_RESP_PATH_2 = SEND_PATH_RESP + 2,
+    SEND_PATH_RESP_PATH_3 = SEND_PATH_RESP + 3,
     SEND_MAX_DATA,
     SEND_PING,
     SEND_NEW_CID,
@@ -181,9 +185,13 @@ enum send_flags
     SF_SEND_PATH_CHAL               = 1 << SEND_PATH_CHAL,
     SF_SEND_PATH_CHAL_PATH_0        = 1 << SEND_PATH_CHAL_PATH_0,
     SF_SEND_PATH_CHAL_PATH_1        = 1 << SEND_PATH_CHAL_PATH_1,
+    SF_SEND_PATH_CHAL_PATH_2        = 1 << SEND_PATH_CHAL_PATH_2,
+    SF_SEND_PATH_CHAL_PATH_3        = 1 << SEND_PATH_CHAL_PATH_3,
     SF_SEND_PATH_RESP               = 1 << SEND_PATH_RESP,
     SF_SEND_PATH_RESP_PATH_0        = 1 << SEND_PATH_RESP_PATH_0,
     SF_SEND_PATH_RESP_PATH_1        = 1 << SEND_PATH_RESP_PATH_1,
+    SF_SEND_PATH_RESP_PATH_2        = 1 << SEND_PATH_RESP_PATH_2,
+    SF_SEND_PATH_RESP_PATH_3        = 1 << SEND_PATH_RESP_PATH_3,
     SF_SEND_NEW_CID                 = 1 << SEND_NEW_CID,
     SF_SEND_RETIRE_CID              = 1 << SEND_RETIRE_CID,
     SF_SEND_CONN_CLOSE              = 1 << SEND_CONN_CLOSE,
@@ -464,6 +472,10 @@ ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 static void
 ietf_full_conn_ci_destroy (struct lsquic_conn *);
 
+static int
+insert_new_dcid (struct ietf_full_conn *, uint64_t seqno,
+    const lsquic_cid_t *, const unsigned char *token, int update_cur_dcid);
+
 static unsigned
 highest_bit_set (unsigned sz)
 {
@@ -652,11 +664,11 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
         copath->cop_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
     else
         copath->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
-    if ((params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
-            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+    if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
                                             < copath->cop_path.np_pack_size)
         copath->cop_path.np_pack_size
-                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
+                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
     memcpy(&copath->cop_path.np_local_addr, NP_LOCAL_SA(CUR_NPATH(conn)),
                                     sizeof(copath->cop_path.np_local_addr));
     memcpy(&copath->cop_path.np_peer_addr, dest_sa,
@@ -1113,6 +1125,8 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_ack_packno[PNS_APP] = IQUIC_INVALID_PACKNO;
     conn->ifc_paths[0].cop_path.np_path_id = 0;
     conn->ifc_paths[1].cop_path.np_path_id = 1;
+    conn->ifc_paths[2].cop_path.np_path_id = 2;
+    conn->ifc_paths[3].cop_path.np_path_id = 3;
 #define valid_stream_id(v) ((v) <= VINT_MAX_VALUE)
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_ping_unretx_thresh = 20;
@@ -2740,7 +2754,7 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == (IFC_SERVER|IFC_HTTP))
+    if (conn->ifc_flags & IFC_HTTP)
     {
         if (!(conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY)))
         {
@@ -2760,7 +2774,7 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
         }
     }
     else
-        LSQ_NOTICE("going away has no effect in IETF QUIC");
+        LSQ_NOTICE("going away has no effect in non-HTTP mode");
 }
 
 
@@ -2834,8 +2848,8 @@ retire_cid_from_tp (struct ietf_full_conn *conn,
 }
 
 
-static int
-begin_migra_or_retire_cid (struct ietf_full_conn *conn,
+static enum { BM_MIGRATING, BM_NOT_MIGRATING, BM_ERROR, }
+try_to_begin_migration (struct ietf_full_conn *conn,
                                         const struct transport_params *params)
 {
     struct conn_path *copath;
@@ -2853,8 +2867,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
             LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
         else
             LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
-        retire_cid_from_tp(conn, params);
-        return 0;
+        return BM_NOT_MIGRATING;
     }
 
     is_ipv6 = NP_IS_IPv6(CUR_NPATH(conn));
@@ -2867,8 +2880,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
          */
         LSQ_DEBUG("Cannot migrate from IPv%u to IPv%u", is_ipv6 ? 6 : 4,
             is_ipv6 ? 4 : 6);
-        retire_cid_from_tp(conn, params);
-        return 0;
+        return BM_NOT_MIGRATING;
     }
 
     if (0 == params->tp_preferred_address.cid.len)
@@ -2877,15 +2889,14 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
          * DCID becomes available.
          */
         LSQ_DEBUG("Cannot migrate using zero-length DCID");
-        retire_cid_from_tp(conn, params);
-        return 0;
+        return BM_NOT_MIGRATING;
     }
 
     dce = get_new_dce(conn);
     if (!dce)
     {
         ABORT_WARN("cannot allocate DCE");
-        return -1;
+        return BM_ERROR;
     }
 
     memset(dce, 0, sizeof(*dce));
@@ -2902,7 +2913,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
         {
             lsquic_malo_put(dce);
             ABORT_WARN("cannot insert DCE");
-            return -1;
+            return BM_ERROR;
         }
     }
 
@@ -2925,7 +2936,7 @@ begin_migra_or_retire_cid (struct ietf_full_conn *conn,
     assert(!(conn->ifc_used_paths & (1 << (copath - conn->ifc_paths))));
 
     migra_begin(conn, copath, dce, (struct sockaddr *) &sockaddr, params);
-    return 0;
+    return BM_MIGRATING;
 }
 
 
@@ -2938,10 +2949,33 @@ maybe_start_migration (struct ietf_full_conn *conn)
     params = lconn->cn_esf.i->esfi_get_peer_transport_params(
                                                         lconn->cn_enc_session);
     if (params->tp_set & (1 << TPI_PREFERRED_ADDRESS))
-    {
-        if (0 != begin_migra_or_retire_cid(conn, params))
+        switch (try_to_begin_migration(conn, params))
+        {
+        case BM_MIGRATING:
+            break;
+        case BM_NOT_MIGRATING:
+            if (lconn->cn_version == LSQVER_ID27)
+                retire_cid_from_tp(conn, params);
+            else
+            {
+/*
+ * [draft-ietf-quic-transport-28] Section 5.1.1:
+ "                         Connection IDs that are issued and not
+ " retired are considered active; any active connection ID is valid for
+ " use with the current connection at any time, in any packet type.
+ " This includes the connection ID issued by the server via the
+ " preferred_address transport parameter.
+ */
+                LSQ_DEBUG("not migrating: save DCID from transport params");
+                (void) insert_new_dcid(conn, 1,
+                            &params->tp_preferred_address.cid,
+                            params->tp_preferred_address.srst, 0);
+            }
+            break;
+        case BM_ERROR:
             ABORT_QUIETLY(0, TEC_INTERNAL_ERROR, "error initiating migration");
-    }
+            break;
+        }
 }
 
 
@@ -2955,7 +2989,7 @@ handshake_ok (struct lsquic_conn *lconn)
     const struct transport_params *params;
     enum stream_id_type sit;
     uint64_t limit;
-    char buf[0x200];
+    char buf[MAX_TP_STR_SZ];
 
     fiu_return_on("full_conn_ietf/handshake_ok", -1);
 
@@ -2973,7 +3007,8 @@ handshake_ok (struct lsquic_conn *lconn)
     }
 
     LSQ_DEBUG("peer transport parameters: %s",
-                        (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
+                    ((lconn->cn_version == LSQVER_ID27 ? lsquic_tp_to_str_27
+                    : lsquic_tp_to_str)(params, buf, sizeof(buf)), buf));
 
     if ((params->tp_set & (1 << TPI_LOSS_BITS))
                                     && conn->ifc_settings->es_ql_bits == 2)
@@ -3088,12 +3123,12 @@ handshake_ok (struct lsquic_conn *lconn)
 
     conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
-    if ((params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
-            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+    if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
                                             < CUR_NPATH(conn)->np_pack_size)
     {
         CUR_NPATH(conn)->np_pack_size
-                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
+                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
         LSQ_DEBUG("decrease packet size to %hu bytes",
                                                 CUR_NPATH(conn)->np_pack_size);
     }
@@ -3938,6 +3973,20 @@ generate_path_chal_1 (struct ietf_full_conn *conn, lsquic_time_t now)
 
 
 static void
+generate_path_chal_2 (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    generate_path_chal_frame(conn, now, 2);
+}
+
+
+static void
+generate_path_chal_3 (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    generate_path_chal_frame(conn, now, 3);
+}
+
+
+static void
 generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
@@ -3983,6 +4032,20 @@ static void
 generate_path_resp_1 (struct ietf_full_conn *conn, lsquic_time_t now)
 {
     generate_path_resp_frame(conn, now, 1);
+}
+
+
+static void
+generate_path_resp_2 (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    generate_path_resp_frame(conn, now, 2);
+}
+
+
+static void
+generate_path_resp_3 (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    generate_path_resp_frame(conn, now, 3);
 }
 
 
@@ -5140,17 +5203,91 @@ retire_dcids_prior_to (struct ietf_full_conn *conn, unsigned retire_prior_to)
 }
 
 
+static int
+insert_new_dcid (struct ietf_full_conn *conn, uint64_t seqno,
+    const lsquic_cid_t *cid, const unsigned char *token, int update_cur_dcid)
+{
+    struct dcid_elem **dce, **el;
+    char tokstr[IQUIC_SRESET_TOKEN_SZ * 2 + 1];
+
+    dce = NULL;
+    for (el = conn->ifc_dces; el < conn->ifc_dces + sizeof(conn->ifc_dces)
+                                            / sizeof(conn->ifc_dces[0]); ++el)
+        if (*el)
+        {
+            if ((*el)->de_seqno == seqno)
+            {
+                if (!LSQUIC_CIDS_EQ(&(*el)->de_cid, cid))
+                {
+                    ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                        "NEW_CONNECTION_ID: already have CID seqno %"PRIu64
+                        " but with a different CID", seqno);
+                    return -1;
+                }
+                else
+                {
+                    LSQ_DEBUG("Ignore duplicate CID seqno %"PRIu64, seqno);
+                    return 0;
+                }
+            }
+            else if (LSQUIC_CIDS_EQ(&(*el)->de_cid, cid))
+            {
+                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                    "NEW_CONNECTION_ID: received the same CID with sequence "
+                    "numbers %u and %"PRIu64, (*el)->de_seqno, seqno);
+                return -1;
+            }
+            else if (((*el)->de_flags & DE_SRST)
+                    && 0 == memcmp((*el)->de_srst, token,
+                                                    IQUIC_SRESET_TOKEN_SZ))
+            {
+                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                    "NEW_CONNECTION_ID: received second instance of reset "
+                    "token %s in seqno %"PRIu64", same as in seqno %u",
+                    (lsquic_hexstr(token, IQUIC_SRESET_TOKEN_SZ, tokstr,
+                                                    sizeof(tokstr)), tokstr),
+                    seqno, (*el)->de_seqno);
+                return -1;
+            }
+        }
+        else if (!dce)
+            dce = el;
+
+    if (!dce)
+    {
+        ABORT_QUIETLY(0, TEC_CONNECTION_ID_LIMIT_ERROR,
+            "NEW_CONNECTION_ID: received connection ID that is going over the "
+            "limit of %u CIDs", MAX_IETF_CONN_DCIDS);
+        return -1;
+    }
+
+    *dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
+    if (*dce)
+    {
+        memset(*dce, 0, sizeof(**dce));
+        (*dce)->de_seqno = seqno;
+        (*dce)->de_cid = *cid;
+        memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
+        (*dce)->de_flags |= DE_SRST;
+        if (update_cur_dcid)
+            *CUR_DCID(conn) = *cid;
+    }
+    else
+        LSQ_WARN("cannot allocate dce to insert DCID seqno %"PRIu64, seqno);
+
+    return 0;
+}
+
+
 static unsigned
 process_new_connection_id_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    struct dcid_elem **dce, **el;
     const unsigned char *token;
     const char *action_str;
     lsquic_cid_t cid;
     uint64_t seqno, retire_prior_to;
     int parsed_len, update_cur_dcid;
-    char tokstr[IQUIC_SRESET_TOKEN_SZ * 2 + 1];
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_new_conn_id(p, len,
                                         &seqno, &retire_prior_to, &cid, &token);
@@ -5194,71 +5331,9 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
     else
         update_cur_dcid = 0;
 
-    dce = NULL;
-    for (el = conn->ifc_dces; el < conn->ifc_dces + sizeof(conn->ifc_dces)
-                                            / sizeof(conn->ifc_dces[0]); ++el)
-        if (*el)
-        {
-            if ((*el)->de_seqno == seqno)
-            {
-                if (!LSQUIC_CIDS_EQ(&(*el)->de_cid, &cid))
-                {
-                    ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-                        "NEW_CONNECTION_ID: already have CID seqno %"PRIu64
-                        " but with a different CID", seqno);
-                    return 0;
-                }
-                else
-                {
-                    LSQ_DEBUG("Ignore duplicate CID seqno %"PRIu64, seqno);
-                    return parsed_len;
-                }
-            }
-            else if (LSQUIC_CIDS_EQ(&(*el)->de_cid, &cid))
-            {
-                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-                    "NEW_CONNECTION_ID: received the same CID with sequence "
-                    "numbers %u and %"PRIu64, (*el)->de_seqno, seqno);
-                return 0;
-            }
-            else if (((*el)->de_flags & DE_SRST)
-                    && 0 == memcmp((*el)->de_srst, token,
-                                                    IQUIC_SRESET_TOKEN_SZ))
-            {
-                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-                    "NEW_CONNECTION_ID: received second instance of reset "
-                    "token %s in seqno %"PRIu64", same as in seqno %u",
-                    (lsquic_hexstr(token, IQUIC_SRESET_TOKEN_SZ, tokstr,
-                                                    sizeof(tokstr)), tokstr),
-                    seqno, (*el)->de_seqno);
-                return 0;
-            }
-        }
-        else if (!dce)
-            dce = el;
-
-    if (!dce)
-    {
-        ABORT_QUIETLY(0, TEC_CONNECTION_ID_LIMIT_ERROR,
-            "NEW_CONNECTION_ID: received connection ID that is going over the "
-            "limit of %u CIDs", MAX_IETF_CONN_DCIDS);
+    if (0 != insert_new_dcid(conn, seqno, &cid, token, update_cur_dcid))
         return 0;
-    }
-
-    *dce = lsquic_malo_get(conn->ifc_pub.mm->malo.dcid_elem);
-    if (*dce)
-    {
-        memset(*dce, 0, sizeof(**dce));
-        (*dce)->de_seqno = seqno;
-        (*dce)->de_cid = cid;
-        memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
-        (*dce)->de_flags |= DE_SRST;
-        action_str = "Saved";
-        if (update_cur_dcid)
-            *CUR_DCID(conn) = cid;
-    }
-    else
-        action_str = "Ignored (alloc failure)";
+    action_str = "Saved";
 
   end:
     LSQ_DEBUGC("Got new connection ID from peer: seq=%"PRIu64"; "
@@ -5642,7 +5717,8 @@ process_packet_frame (struct ietf_full_conn *conn,
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
     type = conn->ifc_conn.cn_pf->pf_parse_frame_type(p, len);
-    if (lsquic_legal_frames_by_level[enc_level] & (1 << type))
+    if (lsquic_legal_frames_by_level[conn->ifc_conn.cn_version][enc_level]
+                                                                & (1 << type))
     {
         LSQ_DEBUG("about to process %s frame", frame_type_2_str[type]);
         packet_in->pi_frame_types |= 1 << type;
@@ -5724,11 +5800,11 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
         path->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
     params = lconn->cn_esf.i->esfi_get_peer_transport_params(
                                                         lconn->cn_enc_session);
-    if (params && (params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
-            && params->tp_numerics[TPI_MAX_PACKET_SIZE]
+    if (params && (params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
                                             < path->cop_path.np_pack_size)
         path->cop_path.np_pack_size
-                                = params->tp_numerics[TPI_MAX_PACKET_SIZE];
+                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
 
     LSQ_DEBUG("initialized path %u", (unsigned) (path - conn->ifc_paths));
 
@@ -6158,6 +6234,9 @@ process_regular_packet (struct ietf_full_conn *conn,
         return process_retry_packet(conn, packet_in);
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
+    if (pns == PNS_INIT)
+        conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
+                                                                    packet_in);
     if ((pns == PNS_INIT && (conn->ifc_flags & IFC_IGNORE_INIT))
                     || (pns == PNS_HSK  && (conn->ifc_flags & IFC_IGNORE_HSK)))
     {
@@ -6241,6 +6320,10 @@ process_regular_packet (struct ietf_full_conn *conn,
                                     "decrypter reports protocol violation");
             return -1;
         case DECPI_OK:
+            /* Receiving any other type of packet precludes subsequent retries.
+             * We only set it if decryption is successful.
+             */
+            conn->ifc_flags |= IFC_RETRIED;
             break;
         }
     }
@@ -6344,13 +6427,6 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
 
     if (lsquic_packet_in_is_verneg(packet_in))
     {
-        if (!verneg_ok(conn))
-        {
-            ABORT_ERROR("version negotiation not permitted in this version "
-                                                                    "of QUIC");
-            return -1;
-        }
-
         LSQ_DEBUG("Processing version-negotiation packet");
 
         if (conn->ifc_u.cli.ifcli_ver_neg.vn_state != VN_START)
@@ -6383,10 +6459,26 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
             }
         }
 
+        /* [draft-ietf-quic-transport-28] Section 6.2:
+         " A client MUST discard a Version Negotiation packet that lists the
+         " QUIC version selected by the client.
+         */
         if (versions & (1 << conn->ifc_u.cli.ifcli_ver_neg.vn_ver))
         {
-            ABORT_ERROR("server replied with version we support: %s",
+            LSQ_DEBUG("server replied with version we sent, %s, ignore",
                         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
+            return 0;
+        }
+
+        /* [draft-ietf-quic-transport-28] Section 6.2:
+         " A client that supports only this version of QUIC MUST abandon the
+         " current connection attempt if it receives a Version Negotiation
+         " packet [...]
+         */
+        if (!verneg_ok(conn))
+        {
+            ABORT_ERROR("version negotiation not permitted in this version "
+                                                                    "of QUIC");
             return -1;
         }
 
@@ -6530,8 +6622,12 @@ static void (*const send_funcs[N_SEND])(
     [SEND_STOP_SENDING] = generate_stop_sending_frames,
     [SEND_PATH_CHAL_PATH_0]    = generate_path_chal_0,
     [SEND_PATH_CHAL_PATH_1]    = generate_path_chal_1,
+    [SEND_PATH_CHAL_PATH_2]    = generate_path_chal_2,
+    [SEND_PATH_CHAL_PATH_3]    = generate_path_chal_3,
     [SEND_PATH_RESP_PATH_0]    = generate_path_resp_0,
     [SEND_PATH_RESP_PATH_1]    = generate_path_resp_1,
+    [SEND_PATH_RESP_PATH_2]    = generate_path_resp_2,
+    [SEND_PATH_RESP_PATH_3]    = generate_path_resp_3,
     [SEND_PING]                = generate_ping_frame,
     [SEND_HANDSHAKE_DONE]      = generate_handshake_done_frame,
     [SEND_ACK_FREQUENCY]       = generate_ack_frequency_frame,
@@ -6543,7 +6639,9 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_STREAMS_BLOCKED_UNI|SF_SEND_STREAMS_BLOCKED_BIDI\
     |SF_SEND_MAX_STREAMS_UNI|SF_SEND_MAX_STREAMS_BIDI\
     |SF_SEND_PATH_CHAL_PATH_0|SF_SEND_PATH_CHAL_PATH_1\
+    |SF_SEND_PATH_CHAL_PATH_2|SF_SEND_PATH_CHAL_PATH_3\
     |SF_SEND_PATH_RESP_PATH_0|SF_SEND_PATH_RESP_PATH_1\
+    |SF_SEND_PATH_RESP_PATH_2|SF_SEND_PATH_RESP_PATH_3\
     |SF_SEND_PING|SF_SEND_HANDSHAKE_DONE\
     |SF_SEND_ACK_FREQUENCY\
     |SF_SEND_STOP_SENDING)
@@ -7119,6 +7217,17 @@ ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
 }
 
 
+void
+ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    conn->ifc_pub.bytes_in = garbage_sz;
+    LSQ_DEBUG("count %zd bytes of garbage, new value: %u bytes", garbage_sz,
+        conn->ifc_pub.bytes_in);
+}
+
+
 #define IETF_FULL_CONN_FUNCS \
     .ci_abort                =  ietf_full_conn_ci_abort, \
     .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
@@ -7127,6 +7236,7 @@ ietf_full_conn_ci_drop_crypto_streams (struct lsquic_conn *lconn)
     .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams, \
     .ci_client_call_on_new   =  ietf_full_conn_ci_client_call_on_new, \
     .ci_close                =  ietf_full_conn_ci_close, \
+    .ci_count_garbage        =  ietf_full_conn_ci_count_garbage, \
     .ci_destroy              =  ietf_full_conn_ci_destroy, \
     .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
     .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
@@ -7630,4 +7740,4 @@ static const struct lsquic_stream_if unicla_if =
 
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
-typedef char dcid_elem_fits_in_128_bytes[(sizeof(struct dcid_elem) <= 128) - 1];
+typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];

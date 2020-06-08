@@ -10,6 +10,11 @@
 #   include <net/if.h>  /* For IFNAMSIZ */
 #endif
 
+#ifdef WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 struct lsquic_engine;
 struct lsquic_engine_settings;
 struct lsquic_out_spec;
@@ -19,6 +24,19 @@ struct packets_in;
 struct lsquic_conn;
 struct prog;
 struct reader_ctx;
+struct lsxpack_header;
+
+#ifndef WIN32
+#   define SOCKOPT_VAL int
+#   define SOCKET_TYPE int
+#   define CLOSE_SOCKET close
+#   define CHAR_CAST
+#else
+#   define SOCKOPT_VAL DWORD
+#   define SOCKET_TYPE SOCKET
+#   define CLOSE_SOCKET closesocket
+#   define CHAR_CAST (char *)
+#endif
 
 enum sport_flags
 {
@@ -51,8 +69,8 @@ struct service_port {
     struct sockaddr_storage    sp_local_addr;
     struct packets_in         *packs_in;
     enum sport_flags           sp_flags;
-    int                        sp_sndbuf;   /* If SPORT_SET_SNDBUF is set */
-    int                        sp_rcvbuf;   /* If SPORT_SET_RCVBUF is set */
+    SOCKOPT_VAL                sp_sndbuf;   /* If SPORT_SET_SNDBUF is set */
+    SOCKOPT_VAL                sp_rcvbuf;   /* If SPORT_SET_RCVBUF is set */
     struct prog               *sp_prog;
     unsigned char             *sp_token_buf;
     size_t                     sp_token_sz;
@@ -139,5 +157,16 @@ destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 #endif
 #endif
 #endif
+
+struct header_buf
+{
+    unsigned    off;
+    char        buf[UINT16_MAX];
+};
+
+int
+header_set_ptr (struct lsxpack_header *hdr, struct header_buf *header_buf,
+                const char *name, size_t name_len,
+                const char *val, size_t val_len);
 
 #endif

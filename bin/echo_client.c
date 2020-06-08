@@ -9,11 +9,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifndef WIN32
 #include <fcntl.h>
+#include <unistd.h>
+#define Read read
+#else
+#include "vc_compat.h"
+#include "getopt.h"
+#include <io.h>
+#define Read _read
+#define STDIN_FILENO 0
+#endif
 
 #include <event2/event.h>
 
@@ -69,12 +79,12 @@ struct lsquic_stream_ctx {
 
 
 static void
-read_stdin (int fd, short what, void *ctx)
+read_stdin (evutil_socket_t fd, short what, void *ctx)
 {
     ssize_t nr;
     lsquic_stream_ctx_t *st_h = ctx;
 
-    nr = read(fd, st_h->buf + st_h->buf_off++, 1);
+    nr = Read(fd, st_h->buf + st_h->buf_off++, 1);
     LSQ_DEBUG("read %zd bytes from stdin", nr);
     if (0 == nr)
     {
@@ -217,6 +227,7 @@ main (int argc, char **argv)
         }
     }
 
+#ifndef WIN32
     int flags = fcntl(STDIN_FILENO, F_GETFL);
     flags |= O_NONBLOCK;
     if (0 != fcntl(STDIN_FILENO, F_SETFL, flags))
@@ -224,6 +235,12 @@ main (int argc, char **argv)
         perror("fcntl");
         exit(1);
     }
+#else
+    {
+        u_long on = 1;
+        ioctlsocket(STDIN_FILENO, FIONBIO, &on);
+    }
+#endif
 
     if (0 != prog_prep(&prog))
     {

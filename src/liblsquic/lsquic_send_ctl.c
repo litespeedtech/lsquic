@@ -1542,6 +1542,9 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     unsigned count, bytes;
     enum packnum_space pns;
 
+#if _MSC_VER
+    prev_packno = 0;
+#endif
     count = 0, bytes = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
     {

@@ -126,12 +126,12 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     unsigned bits;
     int was_empty;
 #ifdef NDEBUG
-    const unsigned frame_size_len = 1;
+#   define frame_size_len 1
 #else
     /* Need to use two bytes for frame length, as randomization may require
      * more than 63 bytes.
      */
-    const unsigned frame_size_len = 2;
+#   define frame_size_len 2
 #endif
     unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
         /* There are maximum three settings that need to be written out and

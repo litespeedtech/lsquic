@@ -5,6 +5,8 @@
 #include <string.h>
 #ifndef WIN32
 #include <sys/time.h>
+#else
+#include "vc_compat.h"
 #endif
 
 #include "lsquic_types.h"
@@ -17,7 +19,7 @@
 
 static struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 0);
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID25);
+static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID27);
 
 
 static void

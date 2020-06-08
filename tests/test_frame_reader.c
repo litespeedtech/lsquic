@@ -1136,7 +1136,7 @@ test_one_frt (const struct frame_reader_test *frt)
 
   top:
     lsquic_mm_init(&mm);
-    lshpack_dec_init(&hdec, LSHPACK_DEC_HTTP1X);
+    lshpack_dec_init(&hdec);
     memset(&input, 0, sizeof(input));
     memcpy(input.in_buf, frt->frt_buf, frt->frt_bufsz);
     input.in_sz  = frt->frt_bufsz;

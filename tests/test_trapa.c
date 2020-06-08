@@ -10,7 +10,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include "getopt.h"
+#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -58,18 +62,20 @@ static const struct trapa_test tests[] =
                     | (1 << TPI_INIT_MAX_DATA)
                     | (1 << TPI_MAX_IDLE_TIMEOUT)
                     | (1 << TPI_MAX_ACK_DELAY)
-                    | (1 << TPI_MAX_PACKET_SIZE)
+                    | (1 << TPI_MAX_UDP_PAYLOAD_SIZE)
                     | (1 << TPI_ACK_DELAY_EXPONENT)
+                    | (1 << TPI_INITIAL_SOURCE_CID)
                     | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT),
             .tp_init_max_stream_data_bidi_local = 0x12348877,
             .tp_init_max_data = 0xAABB,
-            .tp_max_packet_size = 1213,
+            .tp_max_udp_payload_size = 1213,
             .tp_max_idle_timeout = 10 * 1000,
             .tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY,
             .tp_active_connection_id_limit = 7,
+            .tp_initial_source_cid = { .len = 8, .u_cid.id = 0x0807060504030201ull, },
         },
         .is_server = 0,
-        .enc_len = 26,
+        .enc_len = 36,
         .encoded =
      /* Idle timeout */     "\x01\x02\x67\x10"
      /* Packet size */      "\x03\x02\x44\xBD"
@@ -77,6 +83,7 @@ static const struct trapa_test tests[] =
      /* Bidi local */       "\x05\x04\x92\x34\x88\x77"
      /* Ack delay exp */    "\x0A\x01\x00"
      /* Active CID limit */ "\x0E\x01\x07"
+     /* Initial SCID */     "\x0F\x08\x01\x02\x03\x04\x05\x06\x07\x08"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -104,7 +111,7 @@ static const struct trapa_test tests[] =
             TP_DEFAULT_VALUES,
             .tp_init_max_data = 0x123456,
             .tp_init_max_stream_data_bidi_local = 0xABCDEF88,
-            .tp_max_packet_size = 0x555,
+            .tp_max_udp_payload_size = 0x555,
         },
         .is_server = 1,
         .addl_set = 1 << TPI_DISABLE_ACTIVE_MIGRATION,
@@ -125,7 +132,7 @@ static const struct trapa_test tests[] =
         .params = {
             TP_DEFAULT_VALUES,
             .tp_max_ack_delay = 25,
-            .tp_max_packet_size = 0x555,
+            .tp_max_udp_payload_size = 0x555,
             .tp_preferred_address = {
                 .ipv4_addr = "\x01\x02\x03\x04",
                 .ipv4_port = 0x1234,
@@ -172,8 +179,8 @@ params_are_equal (const struct transport_params *a,
         && a->tp_preferred_address.ipv4_port == b->tp_preferred_address.ipv4_port
         && a->tp_preferred_address.ipv6_port == b->tp_preferred_address.ipv6_port
         && a->tp_preferred_address.cid.len == b->tp_preferred_address.cid.len
-        && MCMP(tp_original_cid.idbuf)
-        && a->tp_original_cid.len == b->tp_original_cid.len
+        && MCMP(tp_original_dest_cid.idbuf)
+        && a->tp_original_dest_cid.len == b->tp_original_dest_cid.len
         ;
 #undef MCMP
 }

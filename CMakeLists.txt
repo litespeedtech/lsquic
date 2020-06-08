@@ -85,7 +85,22 @@ ENDIF()
 
 #MSVC
 ELSE()
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4100")	# unreferenced formal parameter
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4115")	# unnamed type definition in parentheses
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4116")	# named type definition in parentheses
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4146")	# unary minus operator applied to unsigned type, result still unsigned
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4132")	# const initialization
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4200")	# zero-sized array
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4204")	# non-constant aggregate initializer
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4244")	# integer conversion
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4245")	# conversion from 'int' to 'unsigned int', signed/unsigned mismatch
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4267")	# integer conversion
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4214")	# nonstandard extension used: bit field types other than int
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4295")	# array is too small to include a terminating null character
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4334")	# result of 32-bit shift implicitly converted to 64 bits (was 64-bit shift intended?)
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4456")	# hide previous local declaration
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4459")	# hide global declaration
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4706")	# assignment within conditional expression
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
 IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -Od")
@@ -102,6 +117,11 @@ ENDIF() #MSVC
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
 
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
+
+find_package(Perl)
+IF(NOT PERL_FOUND)
+    MESSAGE(FATAL_ERROR "Perl not found -- need it to generate source code")
+ENDIF()
 
 IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
     FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
@@ -124,7 +144,7 @@ IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
                 NAMES ${LIB_NAME}
                 PATHS ${BORINGSSL_DIR}/${LIB_NAME}
-                PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+		PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
                 NO_DEFAULT_PATH)
         ELSE()
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
@@ -195,7 +215,7 @@ ELSE()
     MESSAGE(STATUS "zlib not found")
 ENDIF()
 
-IF (LSQUIC_BIN)
+IF (LSQUIC_BIN OR LSQUIC_TESTS)
 FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h)
 IF (EVENT_INCLUDE_DIR)
     INCLUDE_DIRECTORIES(${EVENT_INCLUDE_DIR})
@@ -215,15 +235,38 @@ IF(EVENT_LIB)
 ELSE()
     MESSAGE(STATUS "libevent not found")
 ENDIF()
-
-add_executable(http_server bin/http_server.c bin/prog.c bin/test_common.c bin/test_cert.c)
-add_executable(md5_server bin/md5_server.c bin/prog.c bin/test_common.c bin/test_cert.c)
-add_executable(md5_client bin/md5_client.c bin/prog.c bin/test_common.c bin/test_cert.c)
-add_executable(echo_server bin/echo_server.c bin/prog.c bin/test_common.c bin/test_cert.c)
-add_executable(echo_client bin/echo_client.c bin/prog.c bin/test_common.c bin/test_cert.c)
-
-
 SET(LIBS lsquic ${EVENT_LIB} ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
+IF(MSVC)
+FIND_LIBRARY(PCRE_LIB pcre)
+IF(PCRE_LIB)
+    MESSAGE(STATUS "Found pcre: ${PCRE_LIB}")
+    LIST(APPEND LIBS ${PCRE_LIB})
+ELSE()
+    MESSAGE(STATUS "pcre not found: http_server won't work")
+ENDIF()
+FIND_LIBRARY(PCREPOSIX_LIB pcreposix)
+IF(PCREPOSIX_LIB)
+    MESSAGE(STATUS "Found pcreposix: ${PCREPOSIX_LIB}")
+    LIST(APPEND LIBS ${PCREPOSIX_LIB})
+ELSE()
+    MESSAGE(STATUS "pcreposix not found: http_server won't work")
+ENDIF()
+LIST(APPEND LIBS ws2_32)
+ENDIF()
+ENDIF()	# LSQUIC_BIN OR LSQUIC_TESTS
+
+IF(LSQUIC_BIN)
+IF(MSVC)
+    SET(GETOPT_C wincompat/getopt.c)
+ENDIF()
+add_executable(http_server bin/http_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+IF(NOT MSVC)   #   TODO: port MD5 server and client to Windows
+add_executable(md5_server bin/md5_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+add_executable(md5_client bin/md5_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+ENDIF()
+add_executable(echo_server bin/echo_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+add_executable(echo_client bin/echo_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+
 
 IF (NOT MSVC)
 
@@ -242,6 +285,7 @@ add_executable(http_client
     bin/http_client.c
     bin/prog.c
     bin/test_common.c
+    bin/test_cert.c
     wincompat/getopt.c
     wincompat/getopt1.c
 )
@@ -251,8 +295,10 @@ ENDIF()
 
 TARGET_LINK_LIBRARIES(http_client ${LIBS})
 TARGET_LINK_LIBRARIES(http_server ${LIBS})
+IF(NOT MSVC)
 TARGET_LINK_LIBRARIES(md5_server  ${LIBS})
 TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
+ENDIF()
 TARGET_LINK_LIBRARIES(echo_server ${LIBS})
 TARGET_LINK_LIBRARIES(echo_client ${LIBS})
 

@@ -160,7 +160,7 @@ static const unsigned char simple_prst_payload[] = {
 
 
 typedef char correct_simple_prst_size[(GQUIC_RESET_SZ ==
-                1 + GQUIC_CID_LEN + sizeof(simple_prst_payload)) - 1];
+                1 + GQUIC_CID_LEN + sizeof(simple_prst_payload)) ? 1 : -1 ];
 
 
 ssize_t

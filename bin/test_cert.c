@@ -21,7 +21,7 @@ static int
 select_alpn (SSL *ssl, const unsigned char **out, unsigned char *outlen,
                     const unsigned char *in, unsigned int inlen, void *arg)
 {
-    const unsigned char alpn[] = "\x5h3-25\x5h3-27";
+    const unsigned char alpn[] = "\x5h3-27\x5h3-28";
     int r;
 
     r = SSL_select_next_proto((unsigned char **) out, outlen, in, inlen,

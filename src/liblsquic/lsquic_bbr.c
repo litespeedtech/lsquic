@@ -180,7 +180,7 @@ init_bbr (struct lsquic_bbr *bbr)
     bbr->bbr_min_cwnd = kDefaultMinimumCongestionWindow;
     bbr->bbr_high_gain = kDefaultHighGain;
     bbr->bbr_high_cwnd_gain = kDefaultHighGain;
-    bbr->bbr_drain_gain = 1.0 / kDefaultHighGain;
+    bbr->bbr_drain_gain = 1.0f / kDefaultHighGain;
     bbr->bbr_pacing_rate = BW_ZERO();
     bbr->bbr_pacing_gain = 1.0;
     bbr->bbr_cwnd_gain = 1.0;
@@ -298,7 +298,7 @@ is_pipe_sufficiently_full (struct lsquic_bbr *bbr, uint64_t bytes_in_flight)
     else
         // If bytes_in_flight are above the target congestion window, it should
         // be possible to observe the same or more bandwidth if it's available.
-        return bytes_in_flight >= get_target_cwnd(bbr, 1.1);
+        return bytes_in_flight >= get_target_cwnd(bbr, 1.1f);
 }
 
 

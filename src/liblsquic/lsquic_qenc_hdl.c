@@ -10,6 +10,10 @@
 #include <string.h>
 #include <sys/queue.h>
 
+#ifdef WIN32
+#include <malloc.h>
+#endif
+
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -333,13 +337,22 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     enum lsqpack_enc_status st;
     int i, s, write_to_stream;
     enum lsqpack_enc_flags enc_flags;
+    enum qwh_status retval;
+#ifndef WIN32
     unsigned char enc_buf[ qeh->qeh_encoder.qpe_cur_max_capacity * 2 ];
+#else
+    unsigned char *enc_buf;
+    enc_buf = _malloca(qeh->qeh_encoder.qpe_cur_max_capacity * 2);
+    if (!enc_buf)
+        return QWH_ERR;
+#endif
 
     s = lsqpack_enc_start_header(&qeh->qeh_encoder, stream_id, 0);
     if (s != 0)
     {
         LSQ_WARN("cannot start header");
-        return QWH_ERR;
+        retval = QWH_ERR;
+        goto end;
     }
     LSQ_DEBUG("begin encoding headers for stream %"PRIu64, stream_id);
 
@@ -384,7 +397,8 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
                     {
                         LSQ_INFO("could not write to encoder stream: %s",
                                                                 strerror(errno));
-                        return QWH_ERR;
+                        retval = QWH_ERR;
+                        goto end;
                     }
                     write_to_stream = 0;
                     enc_p = enc_buf + (size_t) nw;
@@ -395,18 +409,22 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
                 if (0 != lsquic_frab_list_write(&qeh->qeh_fral, enc_p, enc_sz))
                 {
                     LSQ_INFO("could not write to frab list");
-                    return QWH_ERR;
+                    retval = QWH_ERR;
+                    goto end;
                 }
             }
             break;
         case LQES_NOBUF_HEAD:
-            return QWH_ENOBUF;
+            retval = QWH_ENOBUF;
+            goto end;
         default:
             assert(0);
-            return QWH_ERR;
+            retval = QWH_ERR;
+            goto end;
         case LQES_NOBUF_ENC:
             LSQ_DEBUG("not enough room to write encoder stream data");
-            return QWH_ERR;
+            retval = QWH_ERR;
+            goto end;
         }
     }
 
@@ -415,7 +433,8 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     if (nw <= 0)
     {
         LSQ_WARN("could not end header: %zd", nw);
-        return QWH_ERR;
+        retval = QWH_ERR;
+        goto end;
     }
 
     if ((size_t) nw < *prefix_sz)
@@ -429,7 +448,8 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         LSQ_DEBUG("all %zd bytes of encoder stream written out; header block "
             "is %zd bytes; estimated compression ratio %.3f", total_enc_sz,
             *headers_sz, lsqpack_enc_ratio(&qeh->qeh_encoder));
-        return QWH_FULL;
+        retval = QWH_FULL;
+        goto end;
     }
     else
     {
@@ -439,8 +459,15 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
             "buffered; header block is %zd bytes; estimated compression ratio "
             "%.3f", total_enc_sz, lsquic_frab_list_size(&qeh->qeh_fral),
             *headers_sz, lsqpack_enc_ratio(&qeh->qeh_encoder));
-        return QWH_PARTIAL;
+        retval = QWH_PARTIAL;
+        goto end;
     }
+
+  end:
+#ifdef WIN32
+    _freea(enc_buf);
+#endif
+    return retval;
 }
 
 

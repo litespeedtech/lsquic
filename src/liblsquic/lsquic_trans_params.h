@@ -18,7 +18,7 @@ enum transport_param_id
      * Numeric transport parameters that have default values:
      */
     TPI_MAX_IDLE_TIMEOUT,
-    TPI_MAX_PACKET_SIZE,
+    TPI_MAX_UDP_PAYLOAD_SIZE,
     TPI_INIT_MAX_DATA,
     TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL,
     TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE,
@@ -45,7 +45,12 @@ enum transport_param_id
      * Custom handlers:
      */
     TPI_PREFERRED_ADDRESS,
-    TPI_ORIGINAL_CONNECTION_ID,
+        /* CIDs must be in a contiguous range for tp_cids array to work */
+#define FIRST_TP_CID TPI_ORIGINAL_DEST_CID
+    TPI_ORIGINAL_DEST_CID,
+    TPI_INITIAL_SOURCE_CID,
+#define LAST_TP_CID TPI_RETRY_SOURCE_CID
+    TPI_RETRY_SOURCE_CID,
 #if LSQUIC_TEST_QUANTUM_READINESS
     /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
 #define QUANTUM_READY_SZ 1200
@@ -53,6 +58,8 @@ enum transport_param_id
 #endif
     TPI_STATELESS_RESET_TOKEN,              LAST_TPI = TPI_STATELESS_RESET_TOKEN
 };
+
+#define TP_CID_IDX(tpi_) ((tpi_) - FIRST_TP_CID)
 
 
 struct transport_params
@@ -72,7 +79,7 @@ struct transport_params
 #define tp_max_idle_timeout                 tp_numerics[TPI_MAX_IDLE_TIMEOUT]
 #define tp_init_max_streams_bidi            tp_numerics[TPI_INIT_MAX_STREAMS_BIDI]
 #define tp_init_max_streams_uni             tp_numerics[TPI_INIT_MAX_STREAMS_UNI]
-#define tp_max_packet_size                  tp_numerics[TPI_MAX_PACKET_SIZE]
+#define tp_max_udp_payload_size             tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
 #define tp_ack_delay_exponent               tp_numerics[TPI_ACK_DELAY_EXPONENT]
 #define tp_max_ack_delay                    tp_numerics[TPI_MAX_ACK_DELAY]
 #define tp_active_connection_id_limit       tp_numerics[TPI_ACTIVE_CONNECTION_ID_LIMIT]
@@ -87,10 +94,20 @@ struct transport_params
         lsquic_cid_t    cid;
         uint8_t         srst[IQUIC_SRESET_TOKEN_SZ];
     }           tp_preferred_address;
-    lsquic_cid_t    tp_original_cid;
+    lsquic_cid_t    tp_cids[3];
+#define tp_original_dest_cid tp_cids[TP_CID_IDX(TPI_ORIGINAL_DEST_CID)]
+#define tp_initial_source_cid tp_cids[TP_CID_IDX(TPI_INITIAL_SOURCE_CID)]
+#define tp_retry_source_cid tp_cids[TP_CID_IDX(TPI_RETRY_SOURCE_CID)]
 };
 
-#define TP_DEF_MAX_PACKET_SIZE 65527
+#define MAX_TP_STR_SZ ((LAST_TPI + 1) *                                     \
+    (34 /* longest entry in tt2str */ + 2 /* semicolon */ + 2 /* colon */)  \
+  + INET_ADDRSTRLEN + INET6_ADDRSTRLEN + 5 /* Port */ * 2                   \
+  + MAX_CID_LEN * 2 * 4 /* there are four CIDs */                           \
+  + 11 * (MAX_NUMERIC_TPI + 1)                                              \
+  + IQUIC_SRESET_TOKEN_SZ * 2 * 2 /* there are two reset tokens */)
+
+#define TP_DEF_MAX_UDP_PAYLOAD_SIZE 65527
 #define TP_DEF_ACK_DELAY_EXP 3
 #define TP_DEF_INIT_MAX_STREAMS_UNI 0
 #define TP_DEF_INIT_MAX_STREAMS_BIDI 0
@@ -111,7 +128,7 @@ struct transport_params
     .tp_active_connection_id_limit        =  TP_DEF_ACTIVE_CONNECTION_ID_LIMIT,       \
     .tp_max_idle_timeout                  =  TP_DEF_MAX_IDLE_TIMEOUT,                 \
     .tp_max_ack_delay                     =  TP_DEF_MAX_ACK_DELAY,                    \
-    .tp_max_packet_size                   =  TP_DEF_MAX_PACKET_SIZE,                  \
+    .tp_max_udp_payload_size              =  TP_DEF_MAX_UDP_PAYLOAD_SIZE,             \
     .tp_ack_delay_exponent                =  TP_DEF_ACK_DELAY_EXP,                    \
     .tp_init_max_streams_bidi             =  TP_DEF_INIT_MAX_STREAMS_BIDI,            \
     .tp_init_max_streams_uni              =  TP_DEF_INIT_MAX_STREAMS_UNI,             \
@@ -124,10 +141,10 @@ struct transport_params
 
 int
 lsquic_tp_encode (const struct transport_params *, int is_server,
-                  unsigned char *buf, size_t bufsz);
+                  unsigned char *const buf, size_t bufsz);
 
 int
-lsquic_tp_decode (const unsigned char *buf, size_t bufsz,
+lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
     /* This argument specifies whose transport parameters we are parsing.  If
      * true, we are parsing parameters sent by the server; if false, we are
      * parsing parameteres sent by the client.
@@ -135,21 +152,27 @@ lsquic_tp_decode (const unsigned char *buf, size_t bufsz,
                   int is_server,
                   struct transport_params *);
 
-int
-lsquic_tp_encode_id25 (const struct transport_params *, int is_server,
-                  unsigned char *buf, size_t bufsz);
-
-int
-lsquic_tp_decode_id25 (const unsigned char *buf, size_t bufsz,
-                  int is_server, struct transport_params *);
-
 void
 lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz);
+
+int
+lsquic_tp_encode_27 (const struct transport_params *, int is_server,
+                  unsigned char *const buf, size_t bufsz);
+
+int
+lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
+                  int is_server,
+                  struct transport_params *);
+
+void
+lsquic_tp_to_str_27 (const struct transport_params *params, char *buf, size_t sz);
 
 int
 lsquic_tp_has_pref_ipv4 (const struct transport_params *);
 
 int
 lsquic_tp_has_pref_ipv6 (const struct transport_params *);
+
+extern const char * const lsquic_tpi2str[LAST_TPI + 1];
 
 #endif

@@ -1,12 +1,15 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
-#include <netinet/in.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <sys/socket.h>
 #include <time.h>
+
+#ifndef WIN32
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 
 #include <openssl/aead.h>
 #include <openssl/hkdf.h>
@@ -31,7 +34,7 @@
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
 
-#define TOKGEN_VERSION 1
+#define TOKGEN_VERSION 2
 
 #define CRYPTER_KEY_SIZE        16
 #define SRST_MAX_PRK_SIZE       EVP_MAX_MD_SIZE
@@ -63,6 +66,8 @@ struct crypter
     size_t          nonce_prk_sz;
     uint8_t         nonce_prk_buf[EVP_MAX_MD_SIZE];
 };
+
+
 
 
 struct token_generator

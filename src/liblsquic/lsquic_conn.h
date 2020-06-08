@@ -243,6 +243,10 @@ struct conn_iface
     /* Optional method.  Only used by the IETF client code. */
     void
     (*ci_drop_crypto_streams) (struct lsquic_conn *);
+
+    /* Optional method.  Only used by IETF connections */
+    void
+    (*ci_count_garbage) (struct lsquic_conn *, size_t);
 };
 
 #define LSCONN_CCE_BITS 3

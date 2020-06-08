@@ -26,6 +26,10 @@
 #include <sys/queue.h>
 #include <stddef.h>
 
+#ifdef WIN32
+#include <malloc.h>
+#endif
+
 #include "fiu-local.h"
 
 #include "lsquic.h"
@@ -3173,6 +3177,10 @@ update_buffered_hq_frames (struct lsquic_stream *stream, size_t len,
     uint64_t cur_off, end;
     size_t frame_sz;
     unsigned extendable;
+#if _MSC_VER
+    end = 0;
+    extendable = 0;
+#endif
 
     cur_off = stream->sm_payload + stream->sm_n_buffered;
     STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
@@ -3437,7 +3445,15 @@ send_headers_ietf (struct lsquic_stream *stream,
     ssize_t nw;
     unsigned char *header_block;
     enum lsqpack_enc_header_flags hflags;
-    unsigned char buf[max_push_size + max_prefix_size + MAX_HEADERS_SIZE];
+    int rv;
+    const size_t buf_sz = max_push_size + max_prefix_size + MAX_HEADERS_SIZE;
+#ifndef WIN32
+    unsigned char buf[buf_sz];
+#else
+    unsigned char *buf = _malloca(buf_sz);
+    if (!buf)
+        return -1;
+#endif
 
     stream->stream_flags &= ~STREAM_PUSHING;
     stream->stream_flags |= STREAM_NOPUSH;
@@ -3446,7 +3462,7 @@ send_headers_ietf (struct lsquic_stream *stream,
      * back to a larger buffer if that fails.
      */
     prefix_sz = max_prefix_size;
-    headers_sz = sizeof(buf) - max_prefix_size - max_push_size;
+    headers_sz = buf_sz - max_prefix_size - max_push_size;
     qwh = lsquic_qeh_write_headers(stream->conn_pub->u.ietf.qeh, stream->id, 0,
                 headers, buf + max_push_size + max_prefix_size, &prefix_sz,
                 &headers_sz, &stream->sm_hb_compl, &hflags);
@@ -3457,7 +3473,7 @@ send_headers_ietf (struct lsquic_stream *stream,
             LSQ_INFO("not enough room for header block");
         else
             LSQ_WARN("internal error encoding and sending HTTP headers");
-        return -1;
+        goto err;
     }
 
     if (hflags & LSQECH_REF_NEW_ENTRIES)
@@ -3471,7 +3487,7 @@ send_headers_ietf (struct lsquic_stream *stream,
         if (!stream_activate_hq_frame(stream,
                 stream->sm_payload + stream->sm_n_buffered, HQFT_PUSH_PREAMBLE,
                 SHF_FIXED_SIZE|SHF_PHANTOM, push_sz))
-            return -1;
+            goto err;
         buf[max_push_size + max_prefix_size - prefix_sz - push_sz] = HQUST_PUSH;
         vint_write(buf + max_push_size + max_prefix_size - prefix_sz
                     - push_sz + 1,stream->sm_promise->pp_id, bits, 1 << bits);
@@ -3485,7 +3501,7 @@ send_headers_ietf (struct lsquic_stream *stream,
     if (!stream_activate_hq_frame(stream,
                 stream->sm_payload + stream->sm_n_buffered + push_sz,
                 HQFT_HEADERS, SHF_FIXED_SIZE, hblock_sz - push_sz))
-        return -1;
+        goto err;
 
     if (qwh == QWH_FULL)
     {
@@ -3496,14 +3512,14 @@ send_headers_ietf (struct lsquic_stream *stream,
             if (nw < 0)
             {
                 LSQ_WARN("cannot write to stream: %s", strerror(errno));
-                return -1;
+                goto err;
             }
             if ((size_t) nw == hblock_sz)
             {
                 stream->stream_flags |= STREAM_HEADERS_SENT;
                 stream_hblock_sent(stream);
                 LSQ_DEBUG("wrote all %zu bytes of header block", hblock_sz);
-                return 0;
+                goto end;
             }
             LSQ_DEBUG("wrote only %zd bytes of header block, stash", nw);
         }
@@ -3528,14 +3544,25 @@ send_headers_ietf (struct lsquic_stream *stream,
     {
         LSQ_WARN("cannot allocate %zd bytes to stash %s header block",
             hblock_sz - (size_t) nw, qwh == QWH_FULL ? "full" : "partial");
-        return -1;
+        goto err;
     }
     memcpy(stream->sm_header_block, header_block + (size_t) nw,
                                                 hblock_sz - (size_t) nw);
     stream->sm_hblock_sz = hblock_sz - (size_t) nw;
     stream->sm_hblock_off = 0;
     LSQ_DEBUG("stashed %u bytes of header block", stream->sm_hblock_sz);
-    return 0;
+
+  end:
+    rv = 0;
+  clean:
+#ifdef WIN32
+    _freea(buf);
+#endif
+    return rv;
+
+  err:
+    rv = -1;
+    goto clean;
 }
 
 
@@ -4560,7 +4587,7 @@ pp_reader_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct push_promise *const promise = lsqr_ctx;
     unsigned char *dst = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = dst + count;
     size_t len;
 
     while (dst < end)

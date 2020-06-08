@@ -115,6 +115,9 @@ test_attq_ordering (enum sort_action sa)
         }
     }
 
+#ifdef _MSC_VER
+    prev = 0;
+#endif
     for (i = 0; i < sizeof(curiosity); ++i)
     {
         next_attq = lsquic_attq_next(q);

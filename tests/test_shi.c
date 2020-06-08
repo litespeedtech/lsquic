@@ -3,7 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include "vc_compat.h"
+#include <winbase.h>
+#endif
 
 #include "lsquic.h"
 #include "lsquic_stock_shi.h"
@@ -85,7 +90,11 @@ test_shi (const struct order *order)
         assert(0 == s);
     }
 
+#ifndef WIN32
     sleep(2);       /* Let the thing expire */
+#else
+    Sleep(2000);       /* Let the thing expire */
+#endif
 
     for (i = 0; i < N_PAIRS; ++i)
     {

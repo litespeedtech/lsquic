@@ -79,7 +79,9 @@ SET(lsquic_STAT_SRCS
     lsquic_version.c
 )
 
+IF(NOT MSVC)
 set_source_files_properties(ls-qpack/lsqpack.c PROPERTIES COMPILE_FLAGS -Wno-uninitialized)
+ENDIF()
 
 include_directories(ls-qpack)
 
@@ -95,8 +97,8 @@ ENDIF()
 
 ADD_CUSTOM_COMMAND(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl
-    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
+    COMMAND ${PERL}
+    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
     DEPENDS ./gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
 SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} lsquic_versions_to_string.c)

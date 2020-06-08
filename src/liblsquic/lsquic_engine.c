@@ -25,6 +25,15 @@
 
 #ifndef NDEBUG
 #include <sys/types.h>
+#endif
+
+#if defined(WIN32) || defined(NDEBUG)
+#define CAN_LOSE_PACKETS 0
+#else
+#define CAN_LOSE_PACKETS 1
+#endif
+
+#if CAN_LOSE_PACKETS
 #include <regex.h>      /* For code that loses packets */
 #endif
 
@@ -208,7 +217,11 @@ struct lsquic_engine
                         = (1 <<  9),    /* Connections are hashed by address */
 #ifndef NDEBUG
         ENG_COALESCE    = (1 << 24),    /* Packet coalescing is enabled */
+#endif
+#if CAN_LOSE_PACKETS
         ENG_LOSE_PACKETS= (1 << 25),    /* Lose *some* outgoing packets */
+#endif
+#ifndef NDEBUG
         ENG_DTOR        = (1 << 26),    /* Engine destructor */
 #endif
     }                                  flags;
@@ -223,13 +236,14 @@ struct lsquic_engine
     struct min_heap                    conns_out;
     struct eng_hist                    history;
     unsigned                           batch_size;
+    struct lsquic_conn                *curr_conn;
     struct pr_queue                   *pr_queue;
     struct attq                       *attq;
     /* Track time last time a packet was sent to give new connections
      * priority lower than that of existing connections.
      */
     lsquic_time_t                      last_sent;
-#ifndef NDEBUG
+#if CAN_LOSE_PACKETS
     regex_t                            lose_packets_re;
     const char                        *lose_packets_str;
 #endif
@@ -638,6 +652,7 @@ lsquic_engine_new (unsigned flags,
     {
         const char *env;
         env = getenv("LSQUIC_LOSE_PACKETS_RE");
+#if CAN_LOSE_PACKETS
         if (env)
         {
             if (0 != regcomp(&engine->lose_packets_re, env,
@@ -651,6 +666,7 @@ lsquic_engine_new (unsigned flags,
             LSQ_WARN("will lose packets that match the following regex: %s",
                                                                         env);
         }
+#endif
         env = getenv("LSQUIC_COALESCE");
         if (env)
         {
@@ -1320,8 +1336,12 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     }
 
     if (engine->flags & ENG_SERVER)
+    {
         conn = find_or_create_conn(engine, packet_in, ppstate, sa_local,
                                             sa_peer, peer_ctx, packet_in_size);
+        if (!engine->curr_conn)
+            engine->curr_conn = conn;
+    }
     else
         conn = find_conn(engine, packet_in, ppstate, sa_local);
 
@@ -1434,7 +1454,7 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
         lsquic_stock_shared_hash_destroy(engine->pub.enp_shi_ctx);
     lsquic_mm_cleanup(&engine->pub.enp_mm);
     free(engine->conns_tickable.mh_elems);
-#ifndef NDEBUG
+#if CAN_LOSE_PACKETS
     if (engine->flags & ENG_LOSE_PACKETS)
         regfree(&engine->lose_packets_re);
 #endif
@@ -2032,7 +2052,7 @@ coi_reheap (struct conns_out_iter *iter, lsquic_engine_t *engine)
 }
 
 
-#ifndef NDEBUG
+#if CAN_LOSE_PACKETS
 static void
 lose_matching_packets (const lsquic_engine_t *engine, struct out_batch *batch,
                                                                     unsigned n)
@@ -2131,7 +2151,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
 
-#ifndef NDEBUG
+#if CAN_LOSE_PACKETS
     if (engine->flags & ENG_LOSE_PACKETS)
         lose_matching_packets(engine, batch, n_to_send);
 #endif
@@ -2641,6 +2661,20 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
 }
 
 
+static void
+maybe_count_garbage (struct lsquic_engine *engine, size_t garbage_sz)
+{
+    /* This is not very pretty (action at a distance via engine->curr_conn),
+     * but it's the cheapest I can come up with to handle the "count garbage
+     * toward amplification limit" requirement in
+     * [draft-ietf-quic-transport-28] Section 8.1.
+     */
+    if (engine->curr_conn && engine->curr_conn->cn_if->ci_count_garbage)
+        engine->curr_conn->cn_if->ci_count_garbage(engine->curr_conn,
+                                                                garbage_sz);
+}
+
+
 /* Return 0 if packet is being processed by a real connection, 1 if the
  * packet was processed, but not by a connection, and -1 on error.
  */
@@ -2680,20 +2714,25 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             parse_packet_in_begin = lsquic_Q050_parse_packet_in_begin;
         else
         {
-            assert(conn->cn_version == LSQVER_046
 #if LSQUIC_USE_Q098
-                   || conn->cn_version == LSQVER_098
+            assert(conn->cn_version == LSQVER_046 || conn->cn_version == LSQVER_098);
+#else
+            assert(conn->cn_version == LSQVER_046);
 #endif
-
-                                                    );
             parse_packet_in_begin = lsquic_Q046_parse_packet_in_begin;
         }
     }
     else
         parse_packet_in_begin = lsquic_parse_packet_in_begin;
 
+    engine->curr_conn = NULL;
     n_zeroes = 0;
     is_ietf = 0;
+#ifdef _MSC_VER
+    s = 0;
+    cid.len = 0;
+    cid.idbuf[0] = 0;
+#endif
     do
     {
         packet_in = lsquic_mm_get_packet_in(&engine->pub.enp_mm);
@@ -2709,6 +2748,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
                                 engine->pub.enp_settings.es_scid_len, &ppstate))
         {
             LSQ_DEBUG("Cannot parse incoming packet's header");
+            maybe_count_garbage(engine, packet_end - packet_in_data);
             lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
             s = 1;
             break;
@@ -2724,6 +2764,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
                                 && LSQUIC_CIDS_EQ(&packet_in->pi_dcid, &cid)))
             {
                 packet_in_data += packet_in->pi_data_sz;
+                maybe_count_garbage(engine, packet_in->pi_data_sz);
                 continue;
             }
         }

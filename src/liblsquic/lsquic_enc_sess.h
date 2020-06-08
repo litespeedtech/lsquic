@@ -276,6 +276,9 @@ struct enc_session_funcs_iquic
     (*esfi_reset_dcid) (enc_session_t *, const struct lsquic_cid *,
                                                 const struct lsquic_cid *);
 
+    void
+    (*esfi_set_iscid) (enc_session_t *, const struct lsquic_packet_in *);
+
     int
     (*esfi_init_server) (enc_session_t *);
 
@@ -288,7 +291,8 @@ struct enc_session_funcs_iquic
                                                     const struct lsquic_cid *,
                            void *(crypto_streams)[4],
                            const struct crypto_stream_if *,
-                           const struct lsquic_cid *odcid);
+                           const struct lsquic_cid *odcid,
+                           const struct lsquic_cid *iscid );
 
     void
     (*esfi_shake_stream)(enc_session_t *, struct lsquic_stream *,
@@ -328,8 +332,8 @@ struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1;
 extern const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
 
 #define select_esf_common_by_ver(ver) ( \
-    ver == LSQVER_ID25 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_ID27 ? &lsquic_enc_session_common_ietf_v1 : \
+    ver == LSQVER_ID28 ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_VERNEG ? &lsquic_enc_session_common_ietf_v1 : \
     ver == LSQVER_050 ? &lsquic_enc_session_common_gquic_2 : \
     &lsquic_enc_session_common_gquic_1 )

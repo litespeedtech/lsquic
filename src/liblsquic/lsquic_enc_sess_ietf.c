@@ -71,9 +71,9 @@ static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
 } s_h3_alpns[] = {
-    {   LSQVER_ID25, (unsigned char *) "\x05h3-25",     },
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-27",     },
+    {   LSQVER_ID28, (unsigned char *) "\x05h3-28",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-28",     },
 };
 
 struct enc_sess_iquic;
@@ -221,6 +221,8 @@ struct enc_sess_iquic
     struct header_prot  *esi_hsk_hps;
     lsquic_packno_t      esi_max_packno[N_PNS];
     lsquic_cid_t         esi_odcid;
+    lsquic_cid_t         esi_rscid; /* Retry SCID */
+    lsquic_cid_t         esi_iscid; /* Initial SCID */
     unsigned             esi_key_phase;
     enum {
         ESI_INITIALIZED  = 1 << 0,
@@ -237,6 +239,9 @@ struct enc_sess_iquic
         ESI_WANT_TICKET  = 1 << 11,
         ESI_RECV_QL_BITS = 1 << 12,
         ESI_SEND_QL_BITS = 1 << 13,
+        ESI_RSCID        = 1 << 14,
+        ESI_ISCID        = 1 << 15,
+        ESI_RETRY        = 1 << 16, /* Connection was retried */
     }                    esi_flags;
     enum evp_aead_direction_t
                          esi_dir[2];        /* client, server */
@@ -429,9 +434,15 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     const struct lsquic_engine_settings *const settings =
                                     &enc_sess->esi_enpub->enp_settings;
     struct transport_params params;
+    const enum lsquic_version version = enc_sess->esi_conn->cn_version;
     int len;
 
     memset(&params, 0, sizeof(params));
+    if (version > LSQVER_ID27)
+    {
+        params.tp_initial_source_cid = *CN_SCID(enc_sess->esi_conn);
+        params.tp_set |= 1 << TPI_INITIAL_SOURCE_CID;
+    }
     if (enc_sess->esi_flags & ESI_SERVER)
     {
         const struct lsquic_conn *const lconn = enc_sess->esi_conn;
@@ -442,8 +453,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
 
         if (enc_sess->esi_flags & ESI_ODCID)
         {
-            params.tp_original_cid = enc_sess->esi_odcid;
-            params.tp_set |= 1 << TPI_ORIGINAL_CONNECTION_ID;
+            params.tp_original_dest_cid = enc_sess->esi_odcid;
+            params.tp_set |= 1 << TPI_ORIGINAL_DEST_CID;
         }
 #if LSQUIC_PREFERRED_ADDR
         char addr_buf[INET6_ADDRSTRLEN + 6 /* port */ + 1];
@@ -544,10 +555,10 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                   |  (1 << TPI_MAX_ACK_DELAY)
                   |  (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)
                   ;
-    if (settings->es_max_packet_size_rx)
+    if (settings->es_max_udp_payload_size_rx)
     {
-        params.tp_max_packet_size = settings->es_max_packet_size_rx;
-        params.tp_set |= 1 << TPI_MAX_PACKET_SIZE;
+        params.tp_max_udp_payload_size = settings->es_max_udp_payload_size_rx;
+        params.tp_set |= 1 << TPI_MAX_UDP_PAYLOAD_SIZE;
     }
     if (!settings->es_allow_migration)
         params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
@@ -564,10 +575,15 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     if (settings->es_timestamps)
         params.tp_set |= 1 << TPI_TIMESTAMPS;
 
-    len = (enc_sess->esi_conn->cn_version == LSQVER_ID25 ? lsquic_tp_encode_id25 :
-        lsquic_tp_encode)(&params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
+    len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
+                        &params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
     if (len >= 0)
+    {
+        char str[MAX_TP_STR_SZ];
         LSQ_DEBUG("generated transport parameters buffer of %d bytes", len);
+        LSQ_DEBUG("%s", ((version == LSQVER_ID27 ? lsquic_tp_to_str_27
+                        : lsquic_tp_to_str)(&params, str, sizeof(str)), str));
+    }
     else
         LSQ_WARN("cannot generate transport parameters: %d", errno);
     return len;
@@ -726,6 +742,9 @@ iquic_esfi_create_client (const char *hostname,
     enc_sess->esi_dir[0] = evp_aead_seal;
     enc_sess->esi_dir[1] = evp_aead_open;
 
+    enc_sess->esi_odcid = *dcid;
+    enc_sess->esi_flags |= ESI_ODCID;
+
     LSQ_DEBUGC("created client, DCID: %"CID_FMT, CID_BITS(dcid));
     {
         const char *log;
@@ -793,7 +812,8 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
                     struct lsquic_conn *lconn, const lsquic_cid_t *first_dcid,
                     void *(crypto_streams)[4],
                     const struct crypto_stream_if *cryst_if,
-                    const struct lsquic_cid *odcid)
+                    const struct lsquic_cid *odcid,
+                    const struct lsquic_cid *iscid )
 {
     struct enc_sess_iquic *enc_sess;
 
@@ -819,6 +839,8 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
         enc_sess->esi_odcid = *odcid;
         enc_sess->esi_flags |= ESI_ODCID;
     }
+    enc_sess->esi_iscid = *iscid;
+    enc_sess->esi_flags |= ESI_ISCID;
 
     init_frals(enc_sess);
 
@@ -1470,6 +1492,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     const uint8_t *params_buf;
     size_t bufsz;
     char *params_str;
+    const enum lsquic_version version = enc_sess->esi_conn->cn_version;
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
     if (!params_buf)
@@ -1479,8 +1502,8 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     }
 
     LSQ_DEBUG("have peer transport parameters (%zu bytes)", bufsz);
-    if (0 > (enc_sess->esi_conn->cn_version == LSQVER_ID25
-                ? lsquic_tp_decode_id25 : lsquic_tp_decode)(params_buf, bufsz,
+    if (0 > (version == LSQVER_ID27 ? lsquic_tp_decode_27
+                : lsquic_tp_decode)(params_buf, bufsz,
                             !(enc_sess->esi_flags & ESI_SERVER),
                                                 trans_params))
     {
@@ -1501,29 +1524,71 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         return -1;
     }
 
-    if ((enc_sess->esi_flags & (ESI_ODCID|ESI_SERVER)) == ESI_ODCID)
+    const lsquic_cid_t *const cids[LAST_TPI + 1] = {
+        [TP_CID_IDX(TPI_ORIGINAL_DEST_CID)]  = enc_sess->esi_flags & ESI_ODCID ? &enc_sess->esi_odcid : NULL,
+        [TP_CID_IDX(TPI_RETRY_SOURCE_CID)]   = enc_sess->esi_flags & ESI_RSCID ? &enc_sess->esi_rscid : NULL,
+        [TP_CID_IDX(TPI_INITIAL_SOURCE_CID)] = enc_sess->esi_flags & ESI_ISCID ? &enc_sess->esi_iscid : NULL,
+    };
+
+    unsigned must_have, must_not_have = 0;
+    if (version > LSQVER_ID27)
     {
-        if (!(trans_params->tp_set & (1 << TPI_ORIGINAL_CONNECTION_ID)))
+        must_have = 1 << TPI_INITIAL_SOURCE_CID;
+        if (enc_sess->esi_flags & ESI_SERVER)
+            must_not_have |= 1 << TPI_ORIGINAL_DEST_CID;
+        else
+            must_have |= 1 << TPI_ORIGINAL_DEST_CID;
+        if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
+            must_have |= 1 << TPI_RETRY_SOURCE_CID;
+        else
+            must_not_have |= 1 << TPI_RETRY_SOURCE_CID;
+    }
+    else if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
+        must_have = 1 << TPI_ORIGINAL_DEST_CID;
+    else
+        must_have = 0;
+
+    enum transport_param_id tpi;
+    for (tpi = FIRST_TP_CID; tpi <= LAST_TP_CID; ++tpi)
+    {
+        if (!(must_have & (1 << tpi)))
+            continue;
+        if (!(trans_params->tp_set & (1 << tpi)))
         {
-            LSQ_DEBUG("server did not produce original DCID (ODCID)");
+            LSQ_DEBUG("server did not produce %s", lsquic_tpi2str[tpi]);
             return -1;
         }
-        if (LSQUIC_CIDS_EQ(&enc_sess->esi_odcid,
-                                        &trans_params->tp_original_cid))
-            LSQ_DEBUG("ODCID values match");
+        if (!cids[TP_CID_IDX(tpi)])
+        {
+            LSQ_WARN("do not have CID %s for checking",
+                                                    lsquic_tpi2str[tpi]);
+            return -1;
+        }
+        if (LSQUIC_CIDS_EQ(cids[TP_CID_IDX(tpi)],
+                                &trans_params->tp_cids[TP_CID_IDX(tpi)]))
+            LSQ_DEBUG("%s values match", lsquic_tpi2str[tpi]);
         else
         {
             if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
             {
                 char cidbuf[2][MAX_CID_LEN * 2 + 1];
-                lsquic_cid2str(&enc_sess->esi_odcid, cidbuf[0]);
-                lsquic_cid2str(&trans_params->tp_original_cid, cidbuf[1]);
-                LSQ_DEBUG("server provided ODCID %s that does not match "
-                    "our ODCID %s", cidbuf[1], cidbuf[0]);
+                LSQ_DEBUG("server provided %s %"CID_FMT" that does not "
+                    "match ours %"CID_FMT, lsquic_tpi2str[tpi],
+                    CID_BITS_B(&trans_params->tp_cids[TP_CID_IDX(tpi)],
+                                                            cidbuf[0]),
+                    CID_BITS_B(cids[TP_CID_IDX(tpi)], cidbuf[1]));
             }
             return -1;
         }
     }
+
+    for (tpi = FIRST_TP_CID; tpi <= LAST_TP_CID; ++tpi)
+        if (must_not_have & (1 << tpi) & trans_params->tp_set)
+        {
+            LSQ_DEBUG("server transport parameters unexpectedly contain %s",
+                                        lsquic_tpi2str[tpi]);
+            return -1;
+        }
 
     if ((trans_params->tp_set & (1 << TPI_LOSS_BITS))
                             && enc_sess->esi_enpub->enp_settings.es_ql_bits)
@@ -2239,6 +2304,21 @@ iquic_esf_zero_rtt_enabled (enc_session_t *enc_session_p)
 }
 
 
+static void
+iquic_esfi_set_iscid (enc_session_t *enc_session_p,
+                                    const struct lsquic_packet_in *packet_in)
+{
+    struct enc_sess_iquic *const enc_sess = enc_session_p;
+
+    if (!(enc_sess->esi_flags & ESI_ISCID))
+    {
+        lsquic_scid_from_packet_in(packet_in, &enc_sess->esi_iscid);
+        enc_sess->esi_flags |= ESI_ISCID;
+        LSQ_DEBUGC("set ISCID to %"CID_FMT, CID_BITS(&enc_sess->esi_iscid));
+    }
+}
+
+
 static int
 iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
         const lsquic_cid_t *old_dcid, const lsquic_cid_t *new_dcid)
@@ -2247,7 +2327,8 @@ iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
     struct crypto_ctx_pair *pair;
 
     enc_sess->esi_odcid = *old_dcid;
-    enc_sess->esi_flags |= ESI_ODCID;
+    enc_sess->esi_rscid = *new_dcid;
+    enc_sess->esi_flags |= ESI_ODCID|ESI_RSCID|ESI_RETRY;
 
     /* Free previous handshake keys */
     assert(enc_sess->esi_hsk_pairs);
@@ -2340,6 +2421,7 @@ const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1 =
                          = iquic_esfi_get_peer_transport_params,
     .esfi_reset_dcid     = iquic_esfi_reset_dcid,
     .esfi_init_server    = iquic_esfi_init_server,
+    .esfi_set_iscid      = iquic_esfi_set_iscid,
     .esfi_set_streams    = iquic_esfi_set_streams,
     .esfi_create_server  = iquic_esfi_create_server,
     .esfi_shake_stream   = iquic_esfi_shake_stream,

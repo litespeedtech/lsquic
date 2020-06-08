@@ -94,7 +94,7 @@ stream_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 }
 
 
-#define XHDR(name_, value_) .buf = value_, .name_ptr = name_, .val_len = sizeof(value_) - 1, .name_len = sizeof(name_) - 1
+#define XHDR(name_, value_) .buf = name_ value_, .name_offset = 0, .name_len = sizeof(name_) - 1, .val_offset = sizeof(name_) - 1, .val_len = sizeof(value_) - 1,
 
 
 static void

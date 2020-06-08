@@ -5,6 +5,10 @@
 #include "lsquic_int_types.h"
 #include "lsquic_version.h"
 
+#if _MSC_VER
+#include "vc_compat.h"
+#endif
+
 
 static const unsigned char version_tags[N_LSQVER][4] =
 {
@@ -14,8 +18,8 @@ static const unsigned char version_tags[N_LSQVER][4] =
 #if LSQUIC_USE_Q098
     [LSQVER_098] = { 'Q', '0', '9', '8', },
 #endif
-    [LSQVER_ID25] = { 0xFF, 0, 0, 25, },
     [LSQVER_ID27] = { 0xFF, 0, 0, 27, },
+    [LSQVER_ID28] = { 0xFF, 0, 0, 28, },
     [LSQVER_VERNEG] = { 0xFA, 0xFA, 0xFA, 0xFA, },
 };
 
@@ -52,8 +56,8 @@ const char *const lsquic_ver2str[N_LSQVER] = {
 #if LSQUIC_USE_Q098
     [LSQVER_098] = "Q098",
 #endif
-    [LSQVER_ID25] = "FF000019",
     [LSQVER_ID27] = "FF00001B",
+    [LSQVER_ID28] = "FF00001C",
     [LSQVER_VERNEG] = "FAFAFAFA",
 };
 

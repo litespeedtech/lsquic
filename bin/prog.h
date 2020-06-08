@@ -55,7 +55,7 @@ struct prog
     }                               prog_flags;
 };
 
-void
+int
 prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
                     const struct lsquic_stream_if *, void *stream_if_ctx);
 

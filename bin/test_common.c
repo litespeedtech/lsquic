@@ -31,8 +31,13 @@
 #include <fcntl.h>
 
 #include "test_config.h"
+
 #if HAVE_REGEX
+#ifndef WIN32
 #include <regex.h>
+#else
+#include <pcreposix.h>
+#endif
 #endif
 
 #include <event2/event.h>
@@ -40,6 +45,7 @@
 #include "test_common.h"
 #include "lsquic.h"
 #include "prog.h"
+#include "lsxpack_header.h"
 
 #include "../src/liblsquic/lsquic_logger.h"
 
@@ -48,16 +54,6 @@
 
 #ifndef LSQUIC_USE_POOLS
 #define LSQUIC_USE_POOLS 1
-#endif
-
-#ifndef WIN32
-#   define SOCKET_TYPE int
-#   define CLOSE_SOCKET close
-#   define CHAR_CAST
-#else
-#   define SOCKET_TYPE SOCKET
-#   define CLOSE_SOCKET closesocket
-#   define CHAR_CAST (char *)
 #endif
 
 #if __linux__
@@ -178,9 +174,10 @@ allocate_packets_in (SOCKET_TYPE fd)
         return NULL;
     }
 
-    n_alloc = (unsigned) recvsz / MAX_PACKET_SZ * 2;
+    n_alloc = (unsigned) recvsz / 1370;
     LSQ_INFO("socket buffer size: %d bytes; max # packets is set to %u",
         recvsz, n_alloc);
+    recvsz += MAX_PACKET_SZ;
 
     packs_in = malloc(sizeof(*packs_in));
     packs_in->data_sz = recvsz;
@@ -521,7 +518,9 @@ read_one_packet (struct read_iter *iter)
     packs_in->vecs[iter->ri_idx].len = MAX_PACKET_SZ;
 #endif
 
+#ifndef WIN32
   top:
+#endif
     ctl_buf = packs_in->ctlmsg_data + iter->ri_idx * CTL_SZ;
 
 #ifndef WIN32
@@ -800,7 +799,11 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
                    struct event_base *eb)
 {
     const struct sockaddr *sa_local = (struct sockaddr *) &sport->sas;
-    int sockfd, saved_errno, flags, s, on;
+    int sockfd, saved_errno, s;
+#ifndef WIN32
+    int flags;
+#endif
+    SOCKOPT_VAL on;
     socklen_t socklen;
     char addr_str[0x20];
 
@@ -817,6 +820,9 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         return -1;
     }
 
+#if WIN32
+    getExtensionPtrs();
+#endif
     sockfd = socket(sa_local->sa_family, SOCK_DGRAM, 0);
     if (-1 == sockfd)
         return -1;
@@ -830,6 +836,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
     }
 
     /* Make socket non-blocking */
+#ifndef WIN32
     flags = fcntl(sockfd, F_GETFL);
     if (-1 == flags) {
         saved_errno = errno;
@@ -844,20 +851,33 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         errno = saved_errno;
         return -1;
     }
+#else
+    {
+        u_long on = 1;
+        ioctlsocket(sockfd, FIONBIO, &on);
+    }
+#endif
 
     on = 1;
     if (AF_INET == sa_local->sa_family)
         s = setsockopt(sockfd, IPPROTO_IP,
 #if __linux__ && defined(IP_RECVORIGDSTADDR)
                                            IP_RECVORIGDSTADDR,
-#elif __linux__ || __APPLE__
+#elif __linux__ || __APPLE__ || defined(WIN32)
                                            IP_PKTINFO,
 #else
                                            IP_RECVDSTADDR,
 #endif
-                                                               &on, sizeof(on));
+                                                               CHAR_CAST &on, sizeof(on));
     else
+    {
+#ifndef WIN32
         s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
+#else
+        s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_PKTINFO, CHAR_CAST &on, sizeof(on));
+#endif
+    }
+
     if (0 != s)
     {
         saved_errno = errno;
@@ -866,12 +886,12 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         return -1;
     }
 
-#if (__linux__ && !defined(IP_RECVORIGDSTADDR)) || __APPLE__
+#if (__linux__ && !defined(IP_RECVORIGDSTADDR)) || __APPLE__ || defined(WIN32)
     /* Need to set IP_PKTINFO for sending */
     if (AF_INET == sa_local->sa_family)
     {
         on = 1;
-        s = setsockopt(sockfd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
+        s = setsockopt(sockfd, IPPROTO_IP, IP_PKTINFO, CHAR_CAST &on, sizeof(on));
         if (0 != s)
         {
             saved_errno = errno;
@@ -933,7 +953,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
                                                                 sizeof(on));
 #else
             on = 1;
-            s = setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &on, sizeof(on));
+            s = setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, CHAR_CAST &on, sizeof(on));
 #endif
             if (0 != s)
             {
@@ -949,9 +969,9 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 #if ECN_SUPPORTED
     on = 1;
     if (AF_INET == sa_local->sa_family)
-        s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS, &on, sizeof(on));
+        s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS, CHAR_CAST &on, sizeof(on));
     else
-        s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS, &on, sizeof(on));
+        s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS, CHAR_CAST &on, sizeof(on));
     if (0 != s)
     {
         saved_errno = errno;
@@ -963,7 +983,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 
     if (sport->sp_flags & SPORT_SET_SNDBUF)
     {
-        s = setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &sport->sp_sndbuf,
+        s = setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, CHAR_CAST &sport->sp_sndbuf,
                                                     sizeof(sport->sp_sndbuf));
         if (0 != s)
         {
@@ -976,7 +996,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 
     if (sport->sp_flags & SPORT_SET_RCVBUF)
     {
-        s = setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &sport->sp_rcvbuf,
+        s = setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, CHAR_CAST &sport->sp_rcvbuf,
                                                     sizeof(sport->sp_rcvbuf));
         if (0 != s)
         {
@@ -1122,7 +1142,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
                                                                 sizeof(on));
 #elif WIN32
             on = 1;
-            s = setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAGMENT, (char*)&on, sizeof(on));
+            s = setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAGMENT, CHAR_CAST &on, sizeof(on));
 #else
             on = 1;
             s = setsockopt(sockfd, IPPROTO_IP, IP_DONTFRAG, &on, sizeof(on));
@@ -1142,10 +1162,11 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
     {
         int on = 1;
         if (AF_INET == sa_local->sa_family)
-            s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS, &on, sizeof(on));
+            s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS,
+                                            CHAR_CAST &on, sizeof(on));
         else
-            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS, &on,
-                                                                sizeof(on));
+            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS,
+                                            CHAR_CAST &on, sizeof(on));
         if (0 != s)
         {
             saved_errno = errno;
@@ -1549,6 +1570,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count,
 #else
     DWORD bytes;
     WSAMSG msg;
+    WSABUF wsaBuf;
 #endif
     union {
         /* cmsg(3) recommends union for proper alignment */
@@ -1612,12 +1634,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count,
         msg.msg_iovlen     = specs[n].iovlen;
         msg.msg_flags      = 0;
 #else
+        wsaBuf.buf = specs[n].iov->iov_base;
+        wsaBuf.len = specs[n].iov->iov_len;
         msg.name           = (void *) specs[n].dest_sa;
         msg.namelen        = (AF_INET == specs[n].dest_sa->sa_family ?
                                             sizeof(struct sockaddr_in) :
-                                            sizeof(struct sockaddr_in6)),
-        msg.lpBuffers      = specs[n].iov;
-        msg.dwBufferCount  = specs[n].iovlen;
+                                            sizeof(struct sockaddr_in6));
+        msg.dwBufferCount  = 1;
+        msg.lpBuffers      = &wsaBuf;
         msg.dwFlags        = 0;
 #endif
         if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)
@@ -1882,13 +1906,13 @@ set_engine_option (struct lsquic_engine_settings *settings,
                 settings->es_versions = 0;
             }
             enum lsquic_version ver = lsquic_str2ver(val, strlen(val));
-            if (ver < N_LSQVER)
+            if ((unsigned) ver < N_LSQVER)
             {
                 settings->es_versions |= 1 << ver;
                 return 0;
             }
             ver = lsquic_alpn2ver(val, strlen(val));
-            if (ver < N_LSQVER)
+            if ((unsigned) ver < N_LSQVER)
             {
                 settings->es_versions |= 1 << ver;
                 return 0;
@@ -2049,11 +2073,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_qpack_dec_max_size = atoi(val);
             return 0;
         }
-        if (0 == strncmp(name, "max_packet_size_rx", 18))
-        {
-            settings->es_max_packet_size_rx = atoi(val);
-            return 0;
-        }
         break;
     case 20:
         if (0 == strncmp(name, "max_header_list_size", 20))
@@ -2076,6 +2095,13 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "qpack_dec_max_blocked", 21))
         {
             settings->es_qpack_dec_max_blocked = atoi(val);
+            return 0;
+        }
+        break;
+    case 23:
+        if (0 == strncmp(name, "max_udp_payload_size_rx", 18))
+        {
+            settings->es_max_udp_payload_size_rx = atoi(val);
             return 0;
         }
         break;
@@ -2338,4 +2364,23 @@ sport_set_token (struct service_port *sport, const char *token_str)
     sport->sp_token_buf = token;
     sport->sp_token_sz = len / 2;
     return 0;
+}
+
+
+int
+header_set_ptr (struct lsxpack_header *hdr, struct header_buf *header_buf,
+                const char *name, size_t name_len,
+                const char *val, size_t val_len)
+{
+    if (header_buf->off + name_len + val_len <= sizeof(header_buf->buf))
+    {
+        memcpy(header_buf->buf + header_buf->off, name, name_len);
+        memcpy(header_buf->buf + header_buf->off + name_len, val, val_len);
+        lsxpack_header_set_offset2(hdr, header_buf->buf + header_buf->off,
+                                            0, name_len, name_len, val_len);
+        header_buf->off += name_len + val_len;
+        return 0;
+    }
+    else
+        return -1;
 }

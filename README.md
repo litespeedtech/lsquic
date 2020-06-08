@@ -1,6 +1,6 @@
 [![Build Status](https://travis-ci.org/litespeedtech/lsquic.svg?branch=master)](https://travis-ci.org/litespeedtech/lsquic)
 [![Build Status](https://api.cirrus-ci.com/github/litespeedtech/lsquic.svg)](https://cirrus-ci.com/github/litespeedtech/lsquic)
-[![Build status](https://ci.appveyor.com/api/projects/status/kei9649t9leoqicr?svg=true)](https://ci.appveyor.com/project/litespeedtech/lsquic)
+[![Build status](https://ci.appveyor.com/api/projects/status/ij4n3vy343pkgm1j?svg=true)](https://ci.appveyor.com/project/litespeedtech/lsquic)
 
 LiteSpeed QUIC (LSQUIC) Library README
 =============================================
@@ -15,7 +15,7 @@ and OpenLiteSpeed.  We think it is free of major problems.  Nevertheless, do
 not hesitate to report bugs back to us.  Even better, send us fixes and
 improvements!
 
-Currently supported QUIC versions are Q043, Q046, Q050, ID-25, and ID-27.
+Currently supported QUIC versions are Q043, Q046, Q050, ID-27, and ID-28.
 Support for newer versions will be added soon after they are released.
 
 Documentation
@@ -137,7 +137,7 @@ The library has been tested on the following platforms:
   - x86_64
 - Android
   - ARM
-- Windows (this needs updating for the server part, now broken)
+- Windows
   - x86_64
 
 Have fun,

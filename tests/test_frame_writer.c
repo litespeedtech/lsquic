@@ -63,7 +63,7 @@ output_write (struct lsquic_stream *stream, struct lsquic_reader *reader)
 
 
 #define IOV(v) { .iov_base = (v), .iov_len = sizeof(v) - 1, }
-#define XHDR(name_, value_) .buf = value_, .name_ptr = name_, .val_len = sizeof(value_) - 1, .name_len = sizeof(name_) - 1
+#define XHDR(name_, value_) .buf = name_ value_, .name_offset = 0, .name_len = sizeof(name_) - 1, .val_offset = sizeof(name_) - 1, .val_len = sizeof(value_) - 1,
 
 
 static void
@@ -162,6 +162,31 @@ test_one_header (void)
     lsquic_mm_cleanup(&mm);
 }
 
+struct header_buf
+{
+    unsigned    off;
+    char        buf[UINT16_MAX];
+};
+
+
+int
+header_set_ptr (struct lsxpack_header *hdr, struct header_buf *header_buf,
+                const char *name, size_t name_len,
+                const char *val, size_t val_len)
+{
+    if (header_buf->off + name_len + val_len <= sizeof(header_buf->buf))
+    {
+        memcpy(header_buf->buf + header_buf->off, name, name_len);
+        memcpy(header_buf->buf + header_buf->off + name_len, val, val_len);
+        lsxpack_header_set_offset2(hdr, header_buf->buf + header_buf->off,
+                                            0, name_len, name_len, val_len);
+        header_buf->off += name_len + val_len;
+        return 0;
+    }
+    else
+        return -1;
+}
+
 
 static void
 test_oversize_header (void)
@@ -172,6 +197,7 @@ test_oversize_header (void)
     struct lsquic_mm mm;
     const size_t big_len = LSXPACK_MAX_STRLEN - 20;
     char *value;
+    struct header_buf hbuf;
 
     lshpack_enc_init(&henc);
     lsquic_mm_init(&mm);
@@ -190,8 +216,9 @@ test_oversize_header (void)
     {
         { XHDR(":status", "302") },
     };
-    lsxpack_header_set_ptr(&header_arr[1], "some-header", 10, value, big_len);
-    lsxpack_header_set_ptr(&header_arr[2], "another-header", 10, value, big_len);
+    hbuf.off = 0;
+    header_set_ptr(&header_arr[1], &hbuf, "some-header", 10, value, big_len);
+    header_set_ptr(&header_arr[2], &hbuf, "another-header", 10, value, big_len);
 
     struct lsquic_http_headers headers = {
         .count = sizeof(header_arr) / sizeof(header_arr[0]),

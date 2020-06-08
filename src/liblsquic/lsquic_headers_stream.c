@@ -81,17 +81,8 @@ static lsquic_stream_ctx_t *
 headers_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
     struct headers_stream *hs = stream_if_ctx;
-    enum lshpack_dec_flags flags;
 
-    flags = 0;
-    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HTTP1X)
-        flags |= LSHPACK_DEC_HTTP1X;
-    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAME)
-        flags |= LSHPACK_DEC_HASH_NAME;
-    if (hs->hs_enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAMEVAL)
-        flags |= LSHPACK_DEC_HASH_NAMEVAL;
-
-    lshpack_dec_init(&hs->hs_hdec, flags);
+    lshpack_dec_init(&hs->hs_hdec);
     if (0 != lshpack_enc_init(&hs->hs_henc))
     {
         LSQ_WARN("could not initialize HPACK encoder: %s", strerror(errno));

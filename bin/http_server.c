@@ -10,14 +10,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <regex.h>
-#include <netinet/in.h>
 #include <inttypes.h>
+
+#ifndef WIN32
+#include <netinet/in.h>
+#include <unistd.h>
+#include <fcntl.h>
+#else
+#include "vc_compat.h"
+#include "getopt.h"
+#endif
 
 #include <event2/event.h>
 
@@ -29,12 +34,243 @@
 #include "test_common.h"
 #include "prog.h"
 
+#if HAVE_REGEX
+#ifndef WIN32
+#include <regex.h>
+#else
+#include <pcreposix.h>
+#endif
+#endif
+
 #include "../src/liblsquic/lsquic_logger.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
 
-static const char on_being_idle[];
-static const size_t IDLE_SIZE;
+#if HAVE_REGEX
+static const char on_being_idle[] =
+"ON BEING IDLE.\n"
+"\n"
+"Now, this is a subject on which I flatter myself I really am _au fait_.\n"
+"The gentleman who, when I was young, bathed me at wisdom's font for nine\n"
+"guineas a term--no extras--used to say he never knew a boy who could\n"
+"do less work in more time; and I remember my poor grandmother once\n"
+"incidentally observing, in the course of an instruction upon the use\n"
+"of the Prayer-book, that it was highly improbable that I should ever do\n"
+"much that I ought not to do, but that she felt convinced beyond a doubt\n"
+"that I should leave undone pretty well everything that I ought to do.\n"
+"\n"
+"I am afraid I have somewhat belied half the dear old lady's prophecy.\n"
+"Heaven help me! I have done a good many things that I ought not to have\n"
+"done, in spite of my laziness. But I have fully confirmed the accuracy\n"
+"of her judgment so far as neglecting much that I ought not to have\n"
+"neglected is concerned. Idling always has been my strong point. I take\n"
+"no credit to myself in the matter--it is a gift. Few possess it. There\n"
+"are plenty of lazy people and plenty of slow-coaches, but a genuine\n"
+"idler is a rarity. He is not a man who slouches about with his hands in\n"
+"his pockets. On the contrary, his most startling characteristic is that\n"
+"he is always intensely busy.\n"
+"\n"
+"It is impossible to enjoy idling thoroughly unless one has plenty of\n"
+"work to do. There is no fun in doing nothing when you have nothing to\n"
+"do. Wasting time is merely an occupation then, and a most exhausting\n"
+"one. Idleness, like kisses, to be sweet must be stolen.\n"
+"\n"
+"Many years ago, when I was a young man, I was taken very ill--I never\n"
+"could see myself that much was the matter with me, except that I had\n"
+"a beastly cold. But I suppose it was something very serious, for the\n"
+"doctor said that I ought to have come to him a month before, and that\n"
+"if it (whatever it was) had gone on for another week he would not have\n"
+"answered for the consequences. It is an extraordinary thing, but I\n"
+"never knew a doctor called into any case yet but what it transpired\n"
+"that another day's delay would have rendered cure hopeless. Our medical\n"
+"guide, philosopher, and friend is like the hero in a melodrama--he\n"
+"always comes upon the scene just, and only just, in the nick of time. It\n"
+"is Providence, that is what it is.\n"
+"\n"
+"Well, as I was saying, I was very ill and was ordered to Buxton for a\n"
+"month, with strict injunctions to do nothing whatever all the while\n"
+"that I was there. \"Rest is what you require,\" said the doctor, \"perfect\n"
+"rest.\"\n"
+"\n"
+"It seemed a delightful prospect. \"This man evidently understands my\n"
+"complaint,\" said I, and I pictured to myself a glorious time--a four\n"
+"weeks' _dolce far niente_ with a dash of illness in it. Not too much\n"
+"illness, but just illness enough--just sufficient to give it the flavor\n"
+"of suffering and make it poetical. I should get up late, sip chocolate,\n"
+"and have my breakfast in slippers and a dressing-gown. I should lie out\n"
+"in the garden in a hammock and read sentimental novels with a melancholy\n"
+"ending, until the books should fall from my listless hand, and I should\n"
+"recline there, dreamily gazing into the deep blue of the firmament,\n"
+"watching the fleecy clouds floating like white-sailed ships across\n"
+"its depths, and listening to the joyous song of the birds and the low\n"
+"rustling of the trees. Or, on becoming too weak to go out of doors,\n"
+"I should sit propped up with pillows at the open window of the\n"
+"ground-floor front, and look wasted and interesting, so that all the\n"
+"pretty girls would sigh as they passed by.\n"
+"\n"
+"And twice a day I should go down in a Bath chair to the Colonnade to\n"
+"drink the waters. Oh, those waters! I knew nothing about them then,\n"
+"and was rather taken with the idea. \"Drinking the waters\" sounded\n"
+"fashionable and Queen Anne-fied, and I thought I should like them. But,\n"
+"ugh! after the first three or four mornings! Sam Weller's description of\n"
+"them as \"having a taste of warm flat-irons\" conveys only a faint idea of\n"
+"their hideous nauseousness. If anything could make a sick man get well\n"
+"quickly, it would be the knowledge that he must drink a glassful of them\n"
+"every day until he was recovered. I drank them neat for six consecutive\n"
+"days, and they nearly killed me; but after then I adopted the plan of\n"
+"taking a stiff glass of brandy-and-water immediately on the top of them,\n"
+"and found much relief thereby. I have been informed since, by various\n"
+"eminent medical gentlemen, that the alcohol must have entirely\n"
+"counteracted the effects of the chalybeate properties contained in the\n"
+"water. I am glad I was lucky enough to hit upon the right thing.\n"
+"\n"
+"But \"drinking the waters\" was only a small portion of the torture I\n"
+"experienced during that memorable month--a month which was, without\n"
+"exception, the most miserable I have ever spent. During the best part of\n"
+"it I religiously followed the doctor's mandate and did nothing whatever,\n"
+"except moon about the house and garden and go out for two hours a day in\n"
+"a Bath chair. That did break the monotony to a certain extent. There is\n"
+"more excitement about Bath-chairing--especially if you are not used to\n"
+"the exhilarating exercise--than might appear to the casual observer. A\n"
+"sense of danger, such as a mere outsider might not understand, is ever\n"
+"present to the mind of the occupant. He feels convinced every minute\n"
+"that the whole concern is going over, a conviction which becomes\n"
+"especially lively whenever a ditch or a stretch of newly macadamized\n"
+"road comes in sight. Every vehicle that passes he expects is going to\n"
+"run into him; and he never finds himself ascending or descending a\n"
+"hill without immediately beginning to speculate upon his chances,\n"
+"supposing--as seems extremely probable--that the weak-kneed controller\n"
+"of his destiny should let go.\n"
+"\n"
+"But even this diversion failed to enliven after awhile, and the _ennui_\n"
+"became perfectly unbearable. I felt my mind giving way under it. It is\n"
+"not a strong mind, and I thought it would be unwise to tax it too far.\n"
+"So somewhere about the twentieth morning I got up early, had a good\n"
+"breakfast, and walked straight off to Hayfield, at the foot of the\n"
+"Kinder Scout--a pleasant, busy little town, reached through a lovely\n"
+"valley, and with two sweetly pretty women in it. At least they were\n"
+"sweetly pretty then; one passed me on the bridge and, I think, smiled;\n"
+"and the other was standing at an open door, making an unremunerative\n"
+"investment of kisses upon a red-faced baby. But it is years ago, and I\n"
+"dare say they have both grown stout and snappish since that time.\n"
+"Coming back, I saw an old man breaking stones, and it roused such strong\n"
+"longing in me to use my arms that I offered him a drink to let me take\n"
+"his place. He was a kindly old man and he humored me. I went for those\n"
+"stones with the accumulated energy of three weeks, and did more work in\n"
+"half an hour than he had done all day. But it did not make him jealous.\n"
+"\n"
+"Having taken the plunge, I went further and further into dissipation,\n"
+"going out for a long walk every morning and listening to the band in\n"
+"the pavilion every evening. But the days still passed slowly\n"
+"notwithstanding, and I was heartily glad when the last one came and I\n"
+"was being whirled away from gouty, consumptive Buxton to London with its\n"
+"stern work and life. I looked out of the carriage as we rushed through\n"
+"Hendon in the evening. The lurid glare overhanging the mighty city\n"
+"seemed to warm my heart, and when, later on, my cab rattled out of St.\n"
+"Pancras' station, the old familiar roar that came swelling up around me\n"
+"sounded the sweetest music I had heard for many a long day.\n"
+"\n"
+"I certainly did not enjoy that month's idling. I like idling when I\n"
+"ought not to be idling; not when it is the only thing I have to do. That\n"
+"is my pig-headed nature. The time when I like best to stand with my\n"
+"back to the fire, calculating how much I owe, is when my desk is heaped\n"
+"highest with letters that must be answered by the next post. When I like\n"
+"to dawdle longest over my dinner is when I have a heavy evening's work\n"
+"before me. And if, for some urgent reason, I ought to be up particularly\n"
+"early in the morning, it is then, more than at any other time, that I\n"
+"love to lie an extra half-hour in bed.\n"
+"\n"
+"Ah! how delicious it is to turn over and go to sleep again: \"just for\n"
+"five minutes.\" Is there any human being, I wonder, besides the hero of\n"
+"a Sunday-school \"tale for boys,\" who ever gets up willingly? There\n"
+"are some men to whom getting up at the proper time is an utter\n"
+"impossibility. If eight o'clock happens to be the time that they should\n"
+"turn out, then they lie till half-past. If circumstances change and\n"
+"half-past eight becomes early enough for them, then it is nine before\n"
+"they can rise. They are like the statesman of whom it was said that he\n"
+"was always punctually half an hour late. They try all manner of schemes.\n"
+"They buy alarm-clocks (artful contrivances that go off at the wrong time\n"
+"and alarm the wrong people). They tell Sarah Jane to knock at the door\n"
+"and call them, and Sarah Jane does knock at the door and does call them,\n"
+"and they grunt back \"awri\" and then go comfortably to sleep again. I\n"
+"knew one man who would actually get out and have a cold bath; and even\n"
+"that was of no use, for afterward he would jump into bed again to warm\n"
+"himself.\n"
+"\n"
+"I think myself that I could keep out of bed all right if I once got\n"
+"out. It is the wrenching away of the head from the pillow that I find so\n"
+"hard, and no amount of over-night determination makes it easier. I say\n"
+"to myself, after having wasted the whole evening, \"Well, I won't do\n"
+"any more work to-night; I'll get up early to-morrow morning;\" and I am\n"
+"thoroughly resolved to do so--then. In the morning, however, I feel less\n"
+"enthusiastic about the idea, and reflect that it would have been much\n"
+"better if I had stopped up last night. And then there is the trouble of\n"
+"dressing, and the more one thinks about that the more one wants to put\n"
+"it off.\n"
+"\n"
+"It is a strange thing this bed, this mimic grave, where we stretch our\n"
+"tired limbs and sink away so quietly into the silence and rest. \"O bed,\n"
+"O bed, delicious bed, that heaven on earth to the weary head,\" as sang\n"
+"poor Hood, you are a kind old nurse to us fretful boys and girls. Clever\n"
+"and foolish, naughty and good, you take us all in your motherly lap and\n"
+"hush our wayward crying. The strong man full of care--the sick man\n"
+"full of pain--the little maiden sobbing for her faithless lover--like\n"
+"children we lay our aching heads on your white bosom, and you gently\n"
+"soothe us off to by-by.\n"
+"\n"
+"Our trouble is sore indeed when you turn away and will not comfort us.\n"
+"How long the dawn seems coming when we cannot sleep! Oh! those hideous\n"
+"nights when we toss and turn in fever and pain, when we lie, like living\n"
+"men among the dead, staring out into the dark hours that drift so slowly\n"
+"between us and the light. And oh! those still more hideous nights when\n"
+"we sit by another in pain, when the low fire startles us every now and\n"
+"then with a falling cinder, and the tick of the clock seems a hammer\n"
+"beating out the life that we are watching.\n"
+"\n"
+"But enough of beds and bedrooms. I have kept to them too long, even for\n"
+"an idle fellow. Let us come out and have a smoke. That wastes time just\n"
+"as well and does not look so bad. Tobacco has been a blessing to us\n"
+"idlers. What the civil-service clerk before Sir Walter's time found\n"
+"to occupy their minds with it is hard to imagine. I attribute the\n"
+"quarrelsome nature of the Middle Ages young men entirely to the want of\n"
+"the soothing weed. They had no work to do and could not smoke, and\n"
+"the consequence was they were forever fighting and rowing. If, by any\n"
+"extraordinary chance, there was no war going, then they got up a deadly\n"
+"family feud with the next-door neighbor, and if, in spite of this, they\n"
+"still had a few spare moments on their hands, they occupied them with\n"
+"discussions as to whose sweetheart was the best looking, the arguments\n"
+"employed on both sides being battle-axes, clubs, etc. Questions of taste\n"
+"were soon decided in those days. When a twelfth-century youth fell in\n"
+"love he did not take three paces backward, gaze into her eyes, and tell\n"
+"her she was too beautiful to live. He said he would step outside and see\n"
+"about it. And if, when he got out, he met a man and broke his head--the\n"
+"other man's head, I mean--then that proved that his--the first\n"
+"fellow's--girl was a pretty girl. But if the other fellow broke _his_\n"
+"head--not his own, you know, but the other fellow's--the other fellow\n"
+"to the second fellow, that is, because of course the other fellow would\n"
+"only be the other fellow to him, not the first fellow who--well, if he\n"
+"broke his head, then _his_ girl--not the other fellow's, but the fellow\n"
+"who _was_ the--Look here, if A broke B's head, then A's girl was a\n"
+"pretty girl; but if B broke A's head, then A's girl wasn't a pretty\n"
+"girl, but B's girl was. That was their method of conducting art\n"
+"criticism.\n"
+"\n"
+"Nowadays we light a pipe and let the girls fight it out among\n"
+"themselves.\n"
+"\n"
+"They do it very well. They are getting to do all our work. They are\n"
+"doctors, and barristers, and artists. They manage theaters, and promote\n"
+"swindles, and edit newspapers. I am looking forward to the time when we\n"
+"men shall have nothing to do but lie in bed till twelve, read two novels\n"
+"a day, have nice little five-o'clock teas all to ourselves, and tax\n"
+"our brains with nothing more trying than discussions upon the latest\n"
+"patterns in trousers and arguments as to what Mr. Jones' coat was\n"
+"made of and whether it fitted him. It is a glorious prospect--for idle\n"
+"fellows.\n"
+"\n\n\n"
+;
+static const size_t IDLE_SIZE = sizeof(on_being_idle) - 1;
+#endif
 
 /* This is the "LSWS" mode: first write is performed immediately, outside
  * of the on_write() callback.  This makes it possible to play with buffered
@@ -43,10 +279,12 @@ static const size_t IDLE_SIZE;
 static int s_immediate_write;
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define V(v) (v), strlen(v)
 
 struct lsquic_conn_ctx;
 
 static void interop_server_hset_destroy (void *);
+
 
 struct server_ctx {
     struct lsquic_conn_ctx  *conn_h;
@@ -278,12 +516,14 @@ static int
 send_headers (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 {
     const char *content_type;
+    struct header_buf hbuf;
 
     content_type = select_content_type(st_h);
     struct lsxpack_header headers_arr[2];
 
-    lsxpack_header_set_ptr(&headers_arr[0], ":status", 7, "200", 3);
-    lsxpack_header_set_ptr(&headers_arr[1], "content-type", 12,
+    hbuf.off = 0;
+    header_set_ptr(&headers_arr[0], &hbuf, ":status", 7, "200", 3);
+    header_set_ptr(&headers_arr[1], &hbuf, "content-type", 12,
                                         content_type, strlen(content_type));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
@@ -301,7 +541,7 @@ send_headers (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 
 
 static void
-resume_response (int fd, short what, void *arg)
+resume_response (evutil_socket_t fd, short what, void *arg)
 {
     struct lsquic_stream_ctx *const st_h = arg;
 
@@ -551,6 +791,7 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
     regex_t re;
     regmatch_t matches[2];
     struct hset_fm *hfm;
+    struct header_buf hbuf;
 
     s = regcomp(&re, "\r\nHost: *([[:alnum:].][[:alnum:].]*)\r\n",
                                                     REG_EXTENDED|REG_ICASE);
@@ -577,16 +818,17 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
     }
 
 #define V(v) (v), strlen(v)
+    hbuf.off = 0;
     struct lsxpack_header headers_arr[6];
-    lsxpack_header_set_ptr(&headers_arr[0], V(":method"), V("GET"));
-    lsxpack_header_set_ptr(&headers_arr[1], V(":path"),
+    header_set_ptr(&headers_arr[0], &hbuf, V(":method"), V("GET"));
+    header_set_ptr(&headers_arr[1], &hbuf, V(":path"),
                                             V(st_h->server_ctx->push_path));
-    lsxpack_header_set_ptr(&headers_arr[2], V(":authority"),
+    header_set_ptr(&headers_arr[2], &hbuf, V(":authority"),
         st_h->req_buf + matches[1].rm_so, matches[1].rm_eo - matches[1].rm_so);
-    lsxpack_header_set_ptr(&headers_arr[3], V(":scheme"), V("https"));
-    lsxpack_header_set_ptr(&headers_arr[4], V("x-some-header"),
+    header_set_ptr(&headers_arr[3], &hbuf, V(":scheme"), V("https"));
+    header_set_ptr(&headers_arr[4], &hbuf, V("x-some-header"),
                                                         V("x-some-value"));
-    lsxpack_header_set_ptr(&headers_arr[5], V("x-kenny-status"),
+    header_set_ptr(&headers_arr[5], &hbuf, V("x-kenny-status"),
                         V("Oh my God!  They killed Kenny!!!  You bastards!"));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
@@ -605,7 +847,6 @@ push_promise (lsquic_stream_ctx_t *st_h, lsquic_stream_t *stream)
 
     return 0;
 }
-#endif
 
 
 static void
@@ -641,7 +882,6 @@ static void
 http_server_on_read_regular (struct lsquic_stream *stream,
                                                     lsquic_stream_ctx_t *st_h)
 {
-#if HAVE_OPEN_MEMSTREAM
     unsigned char buf[0x400];
     ssize_t nread;
     int s;
@@ -674,20 +914,22 @@ http_server_on_read_regular (struct lsquic_stream *stream,
         LSQ_ERROR("error reading: %s", strerror(errno));
         lsquic_stream_close(stream);
     }
-#else
-    LSQ_ERROR("%s: open_memstream not supported\n", __func__);
-    exit(1);
-#endif
 }
+#endif
 
 
 static void
 http_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 {
+#if HAVE_OPEN_MEMSTREAM
     if (lsquic_stream_is_pushed(stream))
         http_server_on_read_pushed(stream, st_h);
     else
         http_server_on_read_regular(stream, st_h);
+#else
+    LSQ_ERROR("%s: open_memstream not supported\n", __func__);
+    exit(1);
+#endif
 }
 
 
@@ -716,6 +958,7 @@ const struct lsquic_stream_if http_server_if = {
 };
 
 
+#if HAVE_REGEX
 struct req_map
 {
     enum method             method;
@@ -848,12 +1091,12 @@ read_md5 (void *ctx, const unsigned char *buf, size_t sz, int fin)
 static void
 http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-#define ERROR_RESP(code, args...) do {  \
-    LSQ_WARN(args);                                     \
+#define ERROR_RESP(code, ...) do {  \
+    LSQ_WARN(__VA_ARGS__);                                     \
     st_h->interop_handler = IOH_ERROR; \
     st_h->resp_status = #code;  \
     st_h->interop_u.err.resp.sz = snprintf(st_h->interop_u.err.buf, \
-                                    sizeof(st_h->interop_u.err.buf), args); \
+                            sizeof(st_h->interop_u.err.buf), __VA_ARGS__);  \
     if (st_h->interop_u.err.resp.sz >= sizeof(st_h->interop_u.err.buf))     \
         st_h->interop_u.err.resp.sz = sizeof(st_h->interop_u.err.buf) - 1;  \
     st_h->interop_u.err.resp.buf = st_h->interop_u.err.buf;                 \
@@ -1047,14 +1290,16 @@ send_headers2 (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h,
                     size_t content_len)
 {
     char clbuf[0x20];
+    struct header_buf hbuf;
 
     snprintf(clbuf, sizeof(clbuf), "%zd", content_len);
 
+    hbuf.off = 0;
     struct lsxpack_header  headers_arr[4];
-    lsxpack_header_set_ptr(&headers_arr[0], V(":status"), V(st_h->resp_status));
-    lsxpack_header_set_ptr(&headers_arr[1], V("server"), V(LITESPEED_ID));
-    lsxpack_header_set_ptr(&headers_arr[2], V("content-type"), V("text/html"));
-    lsxpack_header_set_ptr(&headers_arr[3], V("content-length"), V(clbuf));
+    header_set_ptr(&headers_arr[0], &hbuf, V(":status"), V(st_h->resp_status));
+    header_set_ptr(&headers_arr[1], &hbuf, V("server"), V(LITESPEED_ID));
+    header_set_ptr(&headers_arr[2], &hbuf, V("content-type"), V("text/html"));
+    header_set_ptr(&headers_arr[3], &hbuf, V("content-length"), V(clbuf));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
@@ -1070,7 +1315,7 @@ idle_read (void *lsqr_ctx, void *buf, size_t count)
 {
     struct gen_file_ctx *const gfc = lsqr_ctx;
     unsigned char *p = buf;
-    unsigned char *const end = buf + count;
+    unsigned char *const end = p + count;
     size_t towrite;
 
     while (p < end && gfc->remain > 0)
@@ -1133,6 +1378,7 @@ idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     struct lsquic_http_headers headers;
     struct req *req;
     ssize_t nw;
+    struct header_buf hbuf;
 
     if (st_h->flags & SH_HEADERS_SENT)
     {
@@ -1158,10 +1404,11 @@ idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             {
                 STAILQ_REMOVE_HEAD(&gfc->push_paths, next);
                 LSQ_DEBUG("pushing promise for %s", push_path->path);
-                lsxpack_header_set_ptr(&header_arr[0], V(":method"), V("GET"));
-                lsxpack_header_set_ptr(&header_arr[1], V(":path"), V(push_path->path));
-                lsxpack_header_set_ptr(&header_arr[2], V(":authority"), V(st_h->req->authority_str));
-                lsxpack_header_set_ptr(&header_arr[3], V(":scheme"), V("https"));
+                hbuf.off = 0;
+                header_set_ptr(&header_arr[0], &hbuf, V(":method"), V("GET"));
+                header_set_ptr(&header_arr[1], &hbuf, V(":path"), V(push_path->path));
+                header_set_ptr(&header_arr[2], &hbuf, V(":authority"), V(st_h->req->authority_str));
+                header_set_ptr(&header_arr[3], &hbuf, V(":scheme"), V("https"));
                 headers.headers = header_arr;
                 headers.count = sizeof(header_arr) / sizeof(header_arr[0]);
                 req = new_req(GET, push_path->path, st_h->req->authority_str);
@@ -1243,6 +1490,7 @@ const struct lsquic_stream_if interop_http_server_if = {
     .on_write               = http_server_interop_on_write,
     .on_close               = http_server_on_close,
 };
+#endif /* HAVE_REGEX */
 
 
 static void
@@ -1306,6 +1554,23 @@ interop_server_hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
                 req->decode_off, sizeof(req->decode_buf) - req->decode_off);
     return &req->xhdr;
 }
+
+
+#ifdef WIN32
+char *
+strndup (const char *s, size_t n)
+{
+    char *copy;
+
+    copy = malloc(n + 1);
+    if (!copy)
+        return NULL;
+
+    memcpy(copy, s, n);
+    copy[n] = '\0';
+    return copy;
+}
+#endif
 
 
 static int
@@ -1403,6 +1668,11 @@ main (int argc, char **argv)
     struct server_ctx server_ctx;
     struct prog prog;
 
+#if !(HAVE_OPEN_MEMSTREAM || HAVE_REGEX)
+    fprintf(stderr, "cannot run server without regex or open_memstream\n");
+    return 1;
+#endif
+
     memset(&server_ctx, 0, sizeof(server_ctx));
     TAILQ_INIT(&server_ctx.sports);
     server_ctx.prog = &prog;
@@ -1425,11 +1695,13 @@ main (int argc, char **argv)
                 perror("stat");
                 exit(2);
             }
+#ifndef WIN32
             if (!S_ISDIR(st.st_mode))
             {
                 fprintf(stderr, "`%s' is not a directory\n", optarg);
                 exit(2);
             }
+#endif
             server_ctx.document_root = optarg;
             break;
         case 'w':
@@ -1450,11 +1722,16 @@ main (int argc, char **argv)
 
     if (!server_ctx.document_root)
     {
+#if HAVE_REGEX
         LSQ_NOTICE("Document root is not set: start in Interop Mode");
         init_map_regexes();
         prog.prog_api.ea_stream_if = &interop_http_server_if;
         prog.prog_api.ea_hsi_if = &header_bypass_api;
         prog.prog_api.ea_hsi_ctx = NULL;
+#else
+        LSQ_ERROR("Document root is not set: use -r option");
+        exit(EXIT_FAILURE);
+#endif
     }
 
     if (0 != prog_prep(&prog))
@@ -1468,233 +1745,10 @@ main (int argc, char **argv)
     s = prog_run(&prog);
     prog_cleanup(&prog);
 
+#if HAVE_REGEX
     if (!server_ctx.document_root)
         free_map_regexes();
+#endif
 
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }
-
-
-static const char on_being_idle[] =
-"ON BEING IDLE.\n"
-"\n"
-"Now, this is a subject on which I flatter myself I really am _au fait_.\n"
-"The gentleman who, when I was young, bathed me at wisdom's font for nine\n"
-"guineas a term--no extras--used to say he never knew a boy who could\n"
-"do less work in more time; and I remember my poor grandmother once\n"
-"incidentally observing, in the course of an instruction upon the use\n"
-"of the Prayer-book, that it was highly improbable that I should ever do\n"
-"much that I ought not to do, but that she felt convinced beyond a doubt\n"
-"that I should leave undone pretty well everything that I ought to do.\n"
-"\n"
-"I am afraid I have somewhat belied half the dear old lady's prophecy.\n"
-"Heaven help me! I have done a good many things that I ought not to have\n"
-"done, in spite of my laziness. But I have fully confirmed the accuracy\n"
-"of her judgment so far as neglecting much that I ought not to have\n"
-"neglected is concerned. Idling always has been my strong point. I take\n"
-"no credit to myself in the matter--it is a gift. Few possess it. There\n"
-"are plenty of lazy people and plenty of slow-coaches, but a genuine\n"
-"idler is a rarity. He is not a man who slouches about with his hands in\n"
-"his pockets. On the contrary, his most startling characteristic is that\n"
-"he is always intensely busy.\n"
-"\n"
-"It is impossible to enjoy idling thoroughly unless one has plenty of\n"
-"work to do. There is no fun in doing nothing when you have nothing to\n"
-"do. Wasting time is merely an occupation then, and a most exhausting\n"
-"one. Idleness, like kisses, to be sweet must be stolen.\n"
-"\n"
-"Many years ago, when I was a young man, I was taken very ill--I never\n"
-"could see myself that much was the matter with me, except that I had\n"
-"a beastly cold. But I suppose it was something very serious, for the\n"
-"doctor said that I ought to have come to him a month before, and that\n"
-"if it (whatever it was) had gone on for another week he would not have\n"
-"answered for the consequences. It is an extraordinary thing, but I\n"
-"never knew a doctor called into any case yet but what it transpired\n"
-"that another day's delay would have rendered cure hopeless. Our medical\n"
-"guide, philosopher, and friend is like the hero in a melodrama--he\n"
-"always comes upon the scene just, and only just, in the nick of time. It\n"
-"is Providence, that is what it is.\n"
-"\n"
-"Well, as I was saying, I was very ill and was ordered to Buxton for a\n"
-"month, with strict injunctions to do nothing whatever all the while\n"
-"that I was there. \"Rest is what you require,\" said the doctor, \"perfect\n"
-"rest.\"\n"
-"\n"
-"It seemed a delightful prospect. \"This man evidently understands my\n"
-"complaint,\" said I, and I pictured to myself a glorious time--a four\n"
-"weeks' _dolce far niente_ with a dash of illness in it. Not too much\n"
-"illness, but just illness enough--just sufficient to give it the flavor\n"
-"of suffering and make it poetical. I should get up late, sip chocolate,\n"
-"and have my breakfast in slippers and a dressing-gown. I should lie out\n"
-"in the garden in a hammock and read sentimental novels with a melancholy\n"
-"ending, until the books should fall from my listless hand, and I should\n"
-"recline there, dreamily gazing into the deep blue of the firmament,\n"
-"watching the fleecy clouds floating like white-sailed ships across\n"
-"its depths, and listening to the joyous song of the birds and the low\n"
-"rustling of the trees. Or, on becoming too weak to go out of doors,\n"
-"I should sit propped up with pillows at the open window of the\n"
-"ground-floor front, and look wasted and interesting, so that all the\n"
-"pretty girls would sigh as they passed by.\n"
-"\n"
-"And twice a day I should go down in a Bath chair to the Colonnade to\n"
-"drink the waters. Oh, those waters! I knew nothing about them then,\n"
-"and was rather taken with the idea. \"Drinking the waters\" sounded\n"
-"fashionable and Queen Anne-fied, and I thought I should like them. But,\n"
-"ugh! after the first three or four mornings! Sam Weller's description of\n"
-"them as \"having a taste of warm flat-irons\" conveys only a faint idea of\n"
-"their hideous nauseousness. If anything could make a sick man get well\n"
-"quickly, it would be the knowledge that he must drink a glassful of them\n"
-"every day until he was recovered. I drank them neat for six consecutive\n"
-"days, and they nearly killed me; but after then I adopted the plan of\n"
-"taking a stiff glass of brandy-and-water immediately on the top of them,\n"
-"and found much relief thereby. I have been informed since, by various\n"
-"eminent medical gentlemen, that the alcohol must have entirely\n"
-"counteracted the effects of the chalybeate properties contained in the\n"
-"water. I am glad I was lucky enough to hit upon the right thing.\n"
-"\n"
-"But \"drinking the waters\" was only a small portion of the torture I\n"
-"experienced during that memorable month--a month which was, without\n"
-"exception, the most miserable I have ever spent. During the best part of\n"
-"it I religiously followed the doctor's mandate and did nothing whatever,\n"
-"except moon about the house and garden and go out for two hours a day in\n"
-"a Bath chair. That did break the monotony to a certain extent. There is\n"
-"more excitement about Bath-chairing--especially if you are not used to\n"
-"the exhilarating exercise--than might appear to the casual observer. A\n"
-"sense of danger, such as a mere outsider might not understand, is ever\n"
-"present to the mind of the occupant. He feels convinced every minute\n"
-"that the whole concern is going over, a conviction which becomes\n"
-"especially lively whenever a ditch or a stretch of newly macadamized\n"
-"road comes in sight. Every vehicle that passes he expects is going to\n"
-"run into him; and he never finds himself ascending or descending a\n"
-"hill without immediately beginning to speculate upon his chances,\n"
-"supposing--as seems extremely probable--that the weak-kneed controller\n"
-"of his destiny should let go.\n"
-"\n"
-"But even this diversion failed to enliven after awhile, and the _ennui_\n"
-"became perfectly unbearable. I felt my mind giving way under it. It is\n"
-"not a strong mind, and I thought it would be unwise to tax it too far.\n"
-"So somewhere about the twentieth morning I got up early, had a good\n"
-"breakfast, and walked straight off to Hayfield, at the foot of the\n"
-"Kinder Scout--a pleasant, busy little town, reached through a lovely\n"
-"valley, and with two sweetly pretty women in it. At least they were\n"
-"sweetly pretty then; one passed me on the bridge and, I think, smiled;\n"
-"and the other was standing at an open door, making an unremunerative\n"
-"investment of kisses upon a red-faced baby. But it is years ago, and I\n"
-"dare say they have both grown stout and snappish since that time.\n"
-"Coming back, I saw an old man breaking stones, and it roused such strong\n"
-"longing in me to use my arms that I offered him a drink to let me take\n"
-"his place. He was a kindly old man and he humored me. I went for those\n"
-"stones with the accumulated energy of three weeks, and did more work in\n"
-"half an hour than he had done all day. But it did not make him jealous.\n"
-"\n"
-"Having taken the plunge, I went further and further into dissipation,\n"
-"going out for a long walk every morning and listening to the band in\n"
-"the pavilion every evening. But the days still passed slowly\n"
-"notwithstanding, and I was heartily glad when the last one came and I\n"
-"was being whirled away from gouty, consumptive Buxton to London with its\n"
-"stern work and life. I looked out of the carriage as we rushed through\n"
-"Hendon in the evening. The lurid glare overhanging the mighty city\n"
-"seemed to warm my heart, and when, later on, my cab rattled out of St.\n"
-"Pancras' station, the old familiar roar that came swelling up around me\n"
-"sounded the sweetest music I had heard for many a long day.\n"
-"\n"
-"I certainly did not enjoy that month's idling. I like idling when I\n"
-"ought not to be idling; not when it is the only thing I have to do. That\n"
-"is my pig-headed nature. The time when I like best to stand with my\n"
-"back to the fire, calculating how much I owe, is when my desk is heaped\n"
-"highest with letters that must be answered by the next post. When I like\n"
-"to dawdle longest over my dinner is when I have a heavy evening's work\n"
-"before me. And if, for some urgent reason, I ought to be up particularly\n"
-"early in the morning, it is then, more than at any other time, that I\n"
-"love to lie an extra half-hour in bed.\n"
-"\n"
-"Ah! how delicious it is to turn over and go to sleep again: \"just for\n"
-"five minutes.\" Is there any human being, I wonder, besides the hero of\n"
-"a Sunday-school \"tale for boys,\" who ever gets up willingly? There\n"
-"are some men to whom getting up at the proper time is an utter\n"
-"impossibility. If eight o'clock happens to be the time that they should\n"
-"turn out, then they lie till half-past. If circumstances change and\n"
-"half-past eight becomes early enough for them, then it is nine before\n"
-"they can rise. They are like the statesman of whom it was said that he\n"
-"was always punctually half an hour late. They try all manner of schemes.\n"
-"They buy alarm-clocks (artful contrivances that go off at the wrong time\n"
-"and alarm the wrong people). They tell Sarah Jane to knock at the door\n"
-"and call them, and Sarah Jane does knock at the door and does call them,\n"
-"and they grunt back \"awri\" and then go comfortably to sleep again. I\n"
-"knew one man who would actually get out and have a cold bath; and even\n"
-"that was of no use, for afterward he would jump into bed again to warm\n"
-"himself.\n"
-"\n"
-"I think myself that I could keep out of bed all right if I once got\n"
-"out. It is the wrenching away of the head from the pillow that I find so\n"
-"hard, and no amount of over-night determination makes it easier. I say\n"
-"to myself, after having wasted the whole evening, \"Well, I won't do\n"
-"any more work to-night; I'll get up early to-morrow morning;\" and I am\n"
-"thoroughly resolved to do so--then. In the morning, however, I feel less\n"
-"enthusiastic about the idea, and reflect that it would have been much\n"
-"better if I had stopped up last night. And then there is the trouble of\n"
-"dressing, and the more one thinks about that the more one wants to put\n"
-"it off.\n"
-"\n"
-"It is a strange thing this bed, this mimic grave, where we stretch our\n"
-"tired limbs and sink away so quietly into the silence and rest. \"O bed,\n"
-"O bed, delicious bed, that heaven on earth to the weary head,\" as sang\n"
-"poor Hood, you are a kind old nurse to us fretful boys and girls. Clever\n"
-"and foolish, naughty and good, you take us all in your motherly lap and\n"
-"hush our wayward crying. The strong man full of care--the sick man\n"
-"full of pain--the little maiden sobbing for her faithless lover--like\n"
-"children we lay our aching heads on your white bosom, and you gently\n"
-"soothe us off to by-by.\n"
-"\n"
-"Our trouble is sore indeed when you turn away and will not comfort us.\n"
-"How long the dawn seems coming when we cannot sleep! Oh! those hideous\n"
-"nights when we toss and turn in fever and pain, when we lie, like living\n"
-"men among the dead, staring out into the dark hours that drift so slowly\n"
-"between us and the light. And oh! those still more hideous nights when\n"
-"we sit by another in pain, when the low fire startles us every now and\n"
-"then with a falling cinder, and the tick of the clock seems a hammer\n"
-"beating out the life that we are watching.\n"
-"\n"
-"But enough of beds and bedrooms. I have kept to them too long, even for\n"
-"an idle fellow. Let us come out and have a smoke. That wastes time just\n"
-"as well and does not look so bad. Tobacco has been a blessing to us\n"
-"idlers. What the civil-service clerk before Sir Walter's time found\n"
-"to occupy their minds with it is hard to imagine. I attribute the\n"
-"quarrelsome nature of the Middle Ages young men entirely to the want of\n"
-"the soothing weed. They had no work to do and could not smoke, and\n"
-"the consequence was they were forever fighting and rowing. If, by any\n"
-"extraordinary chance, there was no war going, then they got up a deadly\n"
-"family feud with the next-door neighbor, and if, in spite of this, they\n"
-"still had a few spare moments on their hands, they occupied them with\n"
-"discussions as to whose sweetheart was the best looking, the arguments\n"
-"employed on both sides being battle-axes, clubs, etc. Questions of taste\n"
-"were soon decided in those days. When a twelfth-century youth fell in\n"
-"love he did not take three paces backward, gaze into her eyes, and tell\n"
-"her she was too beautiful to live. He said he would step outside and see\n"
-"about it. And if, when he got out, he met a man and broke his head--the\n"
-"other man's head, I mean--then that proved that his--the first\n"
-"fellow's--girl was a pretty girl. But if the other fellow broke _his_\n"
-"head--not his own, you know, but the other fellow's--the other fellow\n"
-"to the second fellow, that is, because of course the other fellow would\n"
-"only be the other fellow to him, not the first fellow who--well, if he\n"
-"broke his head, then _his_ girl--not the other fellow's, but the fellow\n"
-"who _was_ the--Look here, if A broke B's head, then A's girl was a\n"
-"pretty girl; but if B broke A's head, then A's girl wasn't a pretty\n"
-"girl, but B's girl was. That was their method of conducting art\n"
-"criticism.\n"
-"\n"
-"Nowadays we light a pipe and let the girls fight it out among\n"
-"themselves.\n"
-"\n"
-"They do it very well. They are getting to do all our work. They are\n"
-"doctors, and barristers, and artists. They manage theaters, and promote\n"
-"swindles, and edit newspapers. I am looking forward to the time when we\n"
-"men shall have nothing to do but lie in bed till twelve, read two novels\n"
-"a day, have nice little five-o'clock teas all to ourselves, and tax\n"
-"our brains with nothing more trying than discussions upon the latest\n"
-"patterns in trousers and arguments as to what Mr. Jones' coat was\n"
-"made of and whether it fitted him. It is a glorious prospect--for idle\n"
-"fellows.\n"
-"\n\n\n"
-;
-static const size_t IDLE_SIZE = sizeof(on_being_idle) - 1;

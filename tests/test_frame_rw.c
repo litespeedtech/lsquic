@@ -225,7 +225,7 @@ test_rw (unsigned max_frame_sz)
 
     lsquic_mm_init(&mm);
     lshpack_enc_init(&henc);
-    lshpack_dec_init(&hdec, LSHPACK_DEC_HTTP1X);
+    lshpack_dec_init(&hdec);
     stream = stream_new();
     stream->sm_max_sz = 1;
 
@@ -340,7 +340,7 @@ main (int argc, char **argv)
 }
 
 
-#define XHDR(name_, value_) .buf = value_, .name_ptr = name_, .val_len = sizeof(value_) - 1, .name_len = sizeof(name_) - 1
+#define XHDR(name_, value_) .buf = name_ value_, .name_offset = 0, .name_len = sizeof(name_) - 1, .val_offset = sizeof(name_) - 1, .val_len = sizeof(value_) - 1,
 
 /* This list is hardcoded to make the test deterministic */
 static struct lsxpack_header header_arr[N_HEADERS] =

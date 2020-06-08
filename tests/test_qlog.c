@@ -38,7 +38,7 @@ main (void)
         .sin_port = htons(443),
         .sin_addr = peer_addr,
     };
-    lsquic_cid_t cid = {};
+    lsquic_cid_t cid;   memset(&cid, 0, sizeof(cid));
     lsquic_qlog_create_connection(&cid, (const struct sockaddr *)&local,
                                         (const struct sockaddr *)&peer);
 

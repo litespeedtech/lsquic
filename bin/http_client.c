@@ -220,6 +220,7 @@ struct lsquic_conn_ctx {
 struct hset_elem
 {
     STAILQ_ENTRY(hset_elem)     next;
+    size_t                      nalloc;
     struct lsxpack_header       xhdr;
 };
 
@@ -530,18 +531,20 @@ static void
 send_headers (lsquic_stream_ctx_t *st_h)
 {
     const char *hostname = st_h->client_ctx->hostname;
+    struct header_buf hbuf;
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
+    hbuf.off = 0;
     struct lsxpack_header headers_arr[7];
 #define V(v) (v), strlen(v)
-    lsxpack_header_set_ptr(&headers_arr[0], V(":method"), V(st_h->client_ctx->method));
-    lsxpack_header_set_ptr(&headers_arr[1], V(":scheme"), V("https"));
-    lsxpack_header_set_ptr(&headers_arr[2], V(":path"), V(st_h->path));
-    lsxpack_header_set_ptr(&headers_arr[3], V(":authority"), V(hostname));
-    lsxpack_header_set_ptr(&headers_arr[4], V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
+    header_set_ptr(&headers_arr[0], &hbuf, V(":method"), V(st_h->client_ctx->method));
+    header_set_ptr(&headers_arr[1], &hbuf, V(":scheme"), V("https"));
+    header_set_ptr(&headers_arr[2], &hbuf, V(":path"), V(st_h->path));
+    header_set_ptr(&headers_arr[3], &hbuf, V(":authority"), V(hostname));
+    header_set_ptr(&headers_arr[4], &hbuf, V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
     /* The following headers only gets sent if there is request payload: */
-    lsxpack_header_set_ptr(&headers_arr[5], V("content-type"), V("application/octet-stream"));
-    lsxpack_header_set_ptr(&headers_arr[6], V("content-length"), V( st_h->client_ctx->payload_size));
+    header_set_ptr(&headers_arr[5], &hbuf, V("content-type"), V("application/octet-stream"));
+    header_set_ptr(&headers_arr[6], &hbuf, V("content-length"), V( st_h->client_ctx->payload_size));
     lsquic_http_headers_t headers = {
         .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
         .headers = headers_arr,
@@ -999,16 +1002,19 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         }
         STAILQ_INSERT_TAIL(hset, el, next);
         lsxpack_header_prepare_decode(&el->xhdr, buf, 0, req_space);
+        el->nalloc = req_space;
     }
     else
     {
         el = (struct hset_elem *) ((char *) xhdr
                                         - offsetof(struct hset_elem, xhdr));
-        if (req_space <= xhdr->val_len)
+        if (req_space <= el->nalloc)
         {
             LSQ_ERROR("requested space is smaller than already allocated");
             return NULL;
         }
+        if (req_space < el->nalloc * 2)
+            req_space = el->nalloc * 2;
         buf = realloc(el->xhdr.buf, req_space);
         if (!buf)
         {
@@ -1017,6 +1023,7 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         }
         el->xhdr.buf = buf;
         el->xhdr.val_len = req_space;
+        el->nalloc = req_space;
     }
 
     return &el->xhdr;
@@ -1067,11 +1074,11 @@ hset_dump (const struct hset *hset, FILE *out)
     const struct hset_elem *el;
 
     STAILQ_FOREACH(el, hset, next)
-        if (el->xhdr.flags & (LSXPACK_HPACK_IDX|LSXPACK_QPACK_IDX))
+        if (el->xhdr.flags & (LSXPACK_HPACK_VAL_MATCHED|LSXPACK_QPACK_IDX))
             fprintf(out, "%.*s (%s static table idx %u): %.*s\n",
                 (int) el->xhdr.name_len, lsxpack_header_get_name(&el->xhdr),
-                el->xhdr.flags & LSXPACK_HPACK_IDX ? "hpack" : "qpack",
-                el->xhdr.flags & LSXPACK_HPACK_IDX ? el->xhdr.hpack_index
+                el->xhdr.flags & LSXPACK_HPACK_VAL_MATCHED ? "hpack" : "qpack",
+                el->xhdr.flags & LSXPACK_HPACK_VAL_MATCHED ? el->xhdr.hpack_index
                                                     : el->xhdr.qpack_index,
                 (int) el->xhdr.val_len, lsxpack_header_get_value(&el->xhdr));
         else
@@ -1152,7 +1159,6 @@ qif_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     struct lsxpack_header *header;
     static int reqno;
     size_t nalloc;
-    int i;
     char *end, *tab, *line;
     char line_buf[0x1000];
 
@@ -1210,18 +1216,9 @@ qif_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
             exit(1);
         }
         header = &ctx->headers.headers[ctx->headers.count++];
-        lsxpack_header_set_ptr(header, (void *) ctx->qif_sz, tab - line,
-                    (void *) (ctx->qif_sz + (tab - line + 1)), end - tab - 1);
-
+        lsxpack_header_set_offset2(header, ctx->qif_str + ctx->qif_sz, 0,
+                                    tab - line, tab - line + 1, end - tab - 1);
         ctx->qif_sz += end + 1 - line;
-    }
-
-    for (i = 0; i < ctx->headers.count; ++i)
-    {
-        ctx->headers.headers[i].buf = ctx->qif_str
-                + (uintptr_t) ctx->headers.headers[i].buf;
-        ctx->headers.headers[i].name_ptr = ctx->qif_str
-                + (uintptr_t) ctx->headers.headers[i].name_ptr;
     }
 
     lsquic_stream_wantwrite(stream, 1);
@@ -1421,10 +1418,6 @@ main (int argc, char **argv)
     client_ctx.hcc_reset_after_nbytes = 0;
     client_ctx.hcc_retire_cid_after_nbytes = 0;
     client_ctx.prog = &prog;
-#ifdef WIN32
-    WSADATA wsd;
-    WSAStartup(MAKEWORD(2, 2), &wsd);
-#endif
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 

@@ -1,9 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 #define _GNU_SOURCE         /* for memmem */
 
-#include <netinet/in.h>
-#include <netdb.h>
-
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -11,6 +8,8 @@
 #include <string.h>
 #include <sys/queue.h>
 #ifndef WIN32
+#include <netinet/in.h>
+#include <netdb.h>
 #include <sys/socket.h>
 #endif
 

@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#include <time.h>
 
 #include "lsquic.h"
 #include "lsquic_int_types.h"
@@ -95,7 +96,7 @@ process_deferred_packets (struct mini_conn *mc);
 
 /* If this is not true, highest_bit_set() may be broken */
 typedef char packno_set_is_unsigned_long[
-        (sizeof(unsigned long long) == sizeof(mconn_packno_set_t)) - 1];
+        sizeof(unsigned long long) == sizeof(mconn_packno_set_t) ? 1 : -1 ];
 
 static unsigned
 highest_bit_set (unsigned long long sz)
@@ -2030,7 +2031,10 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
             (int) (sizeof(mc->mc_hist_buf) - hist_idx),
             mc->mc_hist_buf + hist_idx, (int) hist_idx, mc->mc_hist_buf);
 #else
-    LSQ_LOG(log_level, "destroyed.  Diagnostics: conn flags: 0x%X, "
+    if (LSQ_LOG_ENABLED(log_level))
+        lsquic_logger_log2(log_level, LSQUIC_LOGGER_MODULE,
+                                   LSQUIC_LOG_CONN_ID,
+        "destroyed.  Diagnostics: conn flags: 0x%X, "
         "mc flags: 0x%X, "
 #if LSQUIC_RECORD_INORD_HIST
         "incoming-history (trunc: %d) %s, "
@@ -2235,8 +2239,8 @@ static const struct conn_iface mini_conn_iface_standard_Q050 = {
 
 typedef char largest_recv_holds_at_least_16_seconds[
     ((1 << (sizeof(((struct mini_conn *) 0)->mc_largest_recv) * 8)) / 1000000
-                                                                    >= 16) - 1];
+                                                                    >= 16) ? 1 : -1];
 
 typedef char max_lifespan_smaller_than_largest_recv[
     ((1 << (sizeof(((struct mini_conn *) 0)->mc_largest_recv) * 8)) >
-                                           MAX_MINI_CONN_LIFESPAN_IN_USEC) - 1];
+                                           MAX_MINI_CONN_LIFESPAN_IN_USEC) ? 1 : -1];

@@ -248,8 +248,10 @@ lsquic_logger_lopt (const char *optarg);
 
 #define CID_FMT ".*s"
 
-#define CID_BITS(cid) 2 * (int) (cid)->len, \
-                                    (lsquic_cid2str(cid, cidbuf_), cidbuf_)
+#define CID_BITS_B(cid, b) 2 * (int) (cid)->len, \
+                                    (lsquic_cid2str(cid, b), b)
+
+#define CID_BITS(cid) CID_BITS_B(cid, cidbuf_)
 
 void
 lsquic_cid2str (const struct lsquic_cid *, char *out);

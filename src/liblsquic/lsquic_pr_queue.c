@@ -6,11 +6,14 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+
+#ifndef WIN32
+#include <netinet/in.h>
 #include <sys/socket.h>
+#endif
 
 #include <openssl/aead.h>
 #include <openssl/rand.h>
@@ -355,7 +358,7 @@ lsquic_prq_new_req (struct pr_queue *prq, enum packet_req_type type,
         version = lsquic_tag2ver(ver_tag);
     }
     else /* Got to set it to something sensible... */
-        version = LSQVER_ID25;
+        version = LSQVER_ID27;
 
     lsquic_scid_from_packet_in(packet_in, &scid);
     return lsquic_prq_new_req_ext(prq, type, flags, version,

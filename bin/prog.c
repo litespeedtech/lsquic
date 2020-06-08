@@ -16,7 +16,8 @@
 #ifndef WIN32
 #include <unistd.h>
 #else
-#include <getopt.h>
+#include "vc_compat.h"
+#include "getopt.h"
 #pragma warning(disable:4028)
 #endif// WIN32
 
@@ -47,11 +48,20 @@ static const struct lsquic_packout_mem_if pmi = {
 };
 
 
-void
+int
 prog_init (struct prog *prog, unsigned flags,
            struct sport_head *sports,
            const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
 {
+#ifdef WIN32
+    WSADATA wsd;
+    int s = WSAStartup(MAKEWORD(2, 2), &wsd);
+    if (s != 0)
+    {
+        LSQ_ERROR("WSAStartup failed: %d", s);
+        return -1;
+    }
+#endif
     /* prog-specific initialization: */
     memset(prog, 0, sizeof(*prog));
     prog->prog_engine_flags = flags;
@@ -82,6 +92,7 @@ prog_init (struct prog *prog, unsigned flags,
                                                     LSQUIC_GLOBAL_CLIENT);
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
     lsquic_logger_lopt("=notice");
+    return 0;
 }
 
 
@@ -245,8 +256,10 @@ int supports_gso(void)
 int
 prog_set_opt (struct prog *prog, int opt, const char *arg)
 {
+#ifndef WIN32
     struct stat st;
     int s;
+#endif
 
     switch (opt)
     {
