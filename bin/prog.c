@@ -3,7 +3,6 @@
 #ifndef WIN32
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <netinet/udp.h>
 #include <signal.h>
 #endif
 #include <errno.h>
