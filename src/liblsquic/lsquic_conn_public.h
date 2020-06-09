@@ -56,12 +56,15 @@ struct lsquic_conn_public {
     const struct network_path      *path;
 #if LSQUIC_EXTRA_CHECKS
     unsigned long                   stream_frame_bytes;
+    unsigned                        wtp_level;  /* wtp: Write To Packets */
 #endif
     /* "unsigned" is wide enough: these values are only used for amplification
      * limit before initial path is validated.
      */
     unsigned                        bytes_in;   /* successfully processed */
     unsigned                        bytes_out;
+    /* Used for no-progress timeout */
+    lsquic_time_t                   last_tick, last_prog;
 };
 
 #endif

@@ -79,6 +79,7 @@ sampler_test_send_packet (struct sampler_test *stest, lsquic_packno_t packno,
     memset(packet_out, 0, sizeof(*packet_out));
     packet_out->po_packno = packno;
     packet_out->po_flags |= PO_SENT_SZ;
+    packet_out->po_flags |= PO_HELLO;   /* Bypass sanity check */
     packet_out->po_sent_sz = kRegularPacketSize;
     packet_out->po_sent = stest->time;
     if (retx)

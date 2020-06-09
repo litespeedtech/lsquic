@@ -141,6 +141,7 @@ enum ifull_conn_flags
 enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
+    MF_NOPROG_TIMEOUT   = 1 << 1,
 };
 
 
@@ -476,6 +477,9 @@ static int
 insert_new_dcid (struct ietf_full_conn *, uint64_t seqno,
     const lsquic_cid_t *, const unsigned char *token, int update_cur_dcid);
 
+static struct conn_cid_elem *
+find_cce_by_cid (struct ietf_full_conn *, const lsquic_cid_t *);
+
 static unsigned
 highest_bit_set (unsigned sz)
 {
@@ -533,9 +537,22 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
                                                             lsquic_time_t now)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
-    LSQ_DEBUG("connection timed out");
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
-    conn->ifc_flags |= IFC_TIMED_OUT;
+
+    if ((conn->ifc_mflags & MF_NOPROG_TIMEOUT)
+        && conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout < now)
+    {
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out due to "
+                                                            "lack of progress");
+        /* Different flag so that CONNECTION_CLOSE frame is sent */
+        ABORT_QUIETLY(0, TEC_APPLICATION_ERROR,
+                                "connection timed out due to lack of progress");
+    }
+    else
+    {
+        LSQ_DEBUG("connection timed out");
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
+        conn->ifc_flags |= IFC_TIMED_OUT;
+    }
 }
 
 
@@ -565,6 +582,14 @@ cid_throt_alarm_expired (enum alarm_id al_id, void *ctx,
 
 
 static void
+wipe_path (struct ietf_full_conn *conn, unsigned path_id)
+{
+    memset(&conn->ifc_paths[path_id], 0, sizeof(conn->ifc_paths[0]));
+    conn->ifc_paths[path_id].cop_path.np_path_id = path_id;
+}
+
+
+static void
 path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
                     lsquic_time_t expiry, lsquic_time_t now, unsigned path_id)
 {
@@ -577,12 +602,15 @@ path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
         LSQ_DEBUG("path #%u challenge expired, schedule another one", path_id);
         conn->ifc_send_flags |= SF_SEND_PATH_CHAL << path_id;
     }
-    else
+    else if (conn->ifc_cur_path_id != path_id)
     {
         LSQ_INFO("migration to path #%u failed after none of %u path "
             "challenges received responses", path_id, copath->cop_n_chals);
-        memset(copath, 0, sizeof(*copath));
+        wipe_path(conn, path_id);
     }
+    else
+        LSQ_INFO("no path challenge responses on current path %u, stop "
+            "sending path challenges", path_id);
 }
 
 
@@ -1132,6 +1160,8 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_ping_unretx_thresh = 20;
     conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
     maybe_enable_spin(conn);
+    if (conn->ifc_settings->es_noprogress_timeout)
+        conn->ifc_mflags |= MF_NOPROG_TIMEOUT;
     return 0;
 }
 
@@ -1422,14 +1452,21 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
      */
     have_outgoing_ack = 0;
     next_packno = ~0ULL;
+    /* mini conn may drop Init packets, making gaps; don't warn about them: */
+    conn->ifc_send_ctl.sc_senhist.sh_flags |= SH_GAP_OK;
     while ((packet_out = TAILQ_FIRST(&imc->imc_packets_out)))
     {
         TAILQ_REMOVE(&imc->imc_packets_out, packet_out, po_next);
 
-        /* Holes in the sequence signify ACKed or lost packets */
+        /* Holes in the sequence signify no-longer-relevant Initial packets or
+         * ACKed or lost packets.
+         */
         ++next_packno;
         for ( ; next_packno < packet_out->po_packno; ++next_packno)
+        {
             lsquic_senhist_add(&conn->ifc_send_ctl.sc_senhist, next_packno);
+            conn->ifc_send_ctl.sc_senhist.sh_warn_thresh = next_packno;
+        }
 
         packet_out->po_path = CUR_NPATH(conn);
         if (imc->imc_sent_packnos & (1ULL << packet_out->po_packno))
@@ -1453,6 +1490,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                                                 (1 << QUIC_FRAME_ACK);
         }
     }
+    conn->ifc_send_ctl.sc_senhist.sh_flags &= ~SH_GAP_OK;
+    /* ...Yes, that's a bunch of little annoying steps to suppress the gap
+     * warnings, but it would have been even more annoying (and expensive)
+     * to add packet renumbering logic to the mini conn.
+     */
 
     for (pns = 0; pns < N_PNS; ++pns)
         for (i = 0; i < 4; ++i)
@@ -4307,10 +4349,7 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << old_path_id);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + old_path_id);
     if (conn->ifc_flags & IFC_SERVER)
-    {
-        memset(&conn->ifc_paths[old_path_id], 0, sizeof(conn->ifc_paths[0]));
-        conn->ifc_paths[old_path_id].cop_path.np_path_id = old_path_id;
-    }
+        wipe_path(conn, old_path_id);
 }
 
 
@@ -5417,6 +5456,24 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
             return 0;
         }
         retire_cid(conn, cce, packet_in->pi_received);
+        if (lconn->cn_cur_cce_idx == cce - lconn->cn_cces)
+        {
+            cce = find_cce_by_cid(conn, &packet_in->pi_dcid);
+            if (cce)
+            {
+                LSQ_DEBUGC("current SCID was retired; set current SCID to "
+                    "%"CID_FMT" based on DCID in incoming packet",
+                    CID_BITS(&packet_in->pi_dcid));
+                cce->cce_flags |= CCE_USED;
+                lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
+            }
+            else
+                LSQ_WARN("current SCID was retired; no new SCID candidate");
+                /* This could theoretically happen when zero-length CIDs were
+                 * used.  Currently, there should be no way lsquic could get
+                 * into this situation.
+                 */
+        }
     }
     else
         LSQ_DEBUG("cannot retire CID seqno=%"PRIu64": not found", seqno);
@@ -6522,14 +6579,28 @@ process_incoming_packet_fast (struct ietf_full_conn *conn,
 
 
 static void
+set_earliest_idle_alarm (struct ietf_full_conn *conn, lsquic_time_t idle_conn_to)
+{
+    lsquic_time_t exp;
+
+    if (conn->ifc_pub.last_prog
+        && (assert(conn->ifc_mflags & MF_NOPROG_TIMEOUT),
+            exp = conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout,
+            exp < idle_conn_to))
+        idle_conn_to = exp;
+    if (idle_conn_to)
+        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, idle_conn_to);
+}
+
+
+static void
 ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
                              struct lsquic_packet_in *packet_in)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
 
-    if (conn->ifc_idle_to)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
-                packet_in->pi_received + conn->ifc_idle_to);
+    set_earliest_idle_alarm(conn, conn->ifc_idle_to
+                    ? packet_in->pi_received + conn->ifc_idle_to : 0);
     if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
         if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
             conn->ifc_flags |= IFC_ERROR;
@@ -6646,6 +6717,32 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_ACK_FREQUENCY\
     |SF_SEND_STOP_SENDING)
 
+
+/* This should be called before lsquic_alarmset_ring_expired() */
+static void
+maybe_set_noprogress_alarm (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    lsquic_time_t exp;
+
+    if (conn->ifc_mflags & MF_NOPROG_TIMEOUT)
+    {
+        if (conn->ifc_pub.last_tick)
+        {
+            exp = conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout;
+            if (!lsquic_alarmset_is_set(&conn->ifc_alset, AL_IDLE)
+                                    || exp < conn->ifc_alset.as_expiry[AL_IDLE])
+                lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, exp);
+            conn->ifc_pub.last_tick = now;
+        }
+        else
+        {
+            conn->ifc_pub.last_tick = now;
+            conn->ifc_pub.last_prog = now;
+        }
+    }
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -6687,6 +6784,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         process_ack(conn, &conn->ifc_ack, conn->ifc_saved_ack_received, now);
         conn->ifc_flags &= ~IFC_HAVE_SAVED_ACK;
     }
+
+    maybe_set_noprogress_alarm(conn, now);
 
     lsquic_send_ctl_tick_in(&conn->ifc_send_ctl, now);
     lsquic_send_ctl_set_buffer_stream_packets(&conn->ifc_send_ctl, 1);

@@ -143,11 +143,17 @@ get_network_path (struct lsquic_conn *lconn, const struct sockaddr *sa)
     return &network_path;
 }
 
+static void
+abort_error (struct lsquic_conn *lconn, int is_app,
+                                unsigned error_code, const char *fmt, ...)
+{
+}
 
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = unit_test_doesnt_write_ack,
     .ci_get_path      = get_network_path,
+    .ci_abort_error   = abort_error,
 };
 
 

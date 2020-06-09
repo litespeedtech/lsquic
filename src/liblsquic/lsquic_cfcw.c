@@ -99,7 +99,7 @@ lsquic_cfcw_incr_max_recv_off (struct lsquic_cfcw *fc, uint64_t incr)
     }
     else
     {
-        LSQ_WARN("flow control violation: received at offset %"PRIu64", while "
+        LSQ_INFO("flow control violation: received at offset %"PRIu64", while "
             "flow control receive offset is %"PRIu64,
             fc->cf_max_recv_off + incr, fc->cf_recv_off);
         return 0;

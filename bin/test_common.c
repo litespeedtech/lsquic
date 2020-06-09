@@ -1939,6 +1939,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_qpack_dec_max_size = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "noprogress_timeout", 18))
+        {
+            settings->es_noprogress_timeout = atoi(val);
+            return 0;
+        }
         break;
     case 20:
         if (0 == strncmp(name, "max_header_list_size", 20))

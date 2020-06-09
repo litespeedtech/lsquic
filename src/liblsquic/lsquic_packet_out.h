@@ -220,7 +220,8 @@ typedef struct lsquic_packet_out
 #if LSQUIC_EXTRA_CHECKS
 #define lsquic_packet_out_sent_sz(lconn, p) (                               \
         __builtin_expect(((p)->po_flags & PO_SENT_SZ), 1) ?                 \
-        (assert((p)->po_sent_sz == lsquic_packet_out_total_sz(lconn, p)),   \
+        (assert(((p)->po_flags & PO_HELLO /* Avoid client DCID change */)   \
+            || (p)->po_sent_sz == lsquic_packet_out_total_sz(lconn, p)),    \
             (p)->po_sent_sz) : lsquic_packet_out_total_sz(lconn, p))
 #   else
 #define lsquic_packet_out_sent_sz(lconn, p) (                               \

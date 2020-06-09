@@ -1,3 +1,27 @@
+2020-06-09
+    - 2.16.1
+    - [FEATURE] Use "no-progress timeout" after which connection is closed.
+    - [BUGFIX] Select new SCID when current SCID is retired.
+    - [BUGFIX] Don't warn about dropped Initial packet sequence gaps during
+      mini/full handoff.
+    - [BUGFIX] Send correct conn error when HTTP/3 frame is truncated.
+    - [BUGFIX] Mini conn: consider amplification when deciding to return
+      TICK_SEND.
+    - [BUGFIX] Don't double-count tag length in amplification logic.
+    - [BUGFIX] Don't squeeze out lone path challenges.
+    - [BUGFIX] Log messages dealing with scheduled packet queue squeezing.
+    - [BUGFIX] don't wipe current path if no path challenge responses
+      come back.
+    - [BUGFIX] When path is reset, don't lose path_id which is used for
+      logging.
+    - Downgrade flow control violations to info log level from warnings.
+    - Fix connection cap extra check, avoid checks in nested calls.
+    - Fix some unit tests when extra checks are enabled.
+    - Use ls-hpack 2.2.1.
+    - Turn off unconditional extra checks for IETF clients.
+    - Extra checks: don't verify sent size of hello packets.  Client
+      changes DCID length and this check will fail.
+
 2020-06-03
     - 2.16.0
     - [API] Use lsxpack_header v206.

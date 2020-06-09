@@ -259,6 +259,26 @@ stream_inside_callback (const lsquic_stream_t *stream)
 }
 
 
+/* This is an approximation.  If data is written or read outside of the
+ * event loop, last_prog will be somewhat out of date, but it's close
+ * enough for our purposes.
+ */
+static void
+maybe_update_last_progress (struct lsquic_stream *stream)
+{
+    if (stream->conn_pub && !lsquic_stream_is_critical(stream))
+    {
+        if (stream->conn_pub->last_prog != stream->conn_pub->last_tick)
+            LSQ_DEBUG("update last progress to %"PRIu64,
+                                            stream->conn_pub->last_tick);
+        stream->conn_pub->last_prog = stream->conn_pub->last_tick;
+#ifndef NDEBUG
+        stream->sm_last_prog = stream->conn_pub->last_tick;
+#endif
+    }
+}
+
+
 static void
 maybe_conn_to_tickable (lsquic_stream_t *stream)
 {
@@ -1460,6 +1480,8 @@ ssize_t
 lsquic_stream_readf (struct lsquic_stream *stream,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
+    ssize_t nread;
+
     SM_HISTORY_APPEND(stream, SHE_USER_READ);
 
     if (lsquic_stream_is_reset(stream))
@@ -1485,7 +1507,11 @@ lsquic_stream_readf (struct lsquic_stream *stream,
            return 0;
     }
 
-    return stream_readf(stream, readf, ctx);
+    nread = stream_readf(stream, readf, ctx);
+    if (nread >= 0)
+        maybe_update_last_progress(stream);
+
+    return nread;
 }
 
 
@@ -2745,6 +2771,9 @@ verify_conn_cap (const struct lsquic_conn_public *conn_pub)
     struct lsquic_hash_elem *el;
     unsigned n_buffered;
 
+    if (conn_pub->wtp_level > 1)
+        return;
+
     if (!conn_pub->all_streams)
         /* TODO: enable this check for unit tests as well */
         return;
@@ -2760,6 +2789,7 @@ verify_conn_cap (const struct lsquic_conn_public *conn_pub)
 
     assert(n_buffered + conn_pub->stream_frame_bytes
                                             == conn_pub->conn_cap.cc_sent);
+    LSQ_DEBUG("%s: cc_sent: %"PRIu64, __func__, conn_pub->conn_cap.cc_sent);
 }
 
 
@@ -3056,6 +3086,10 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         .fgc_nread_from_reader = 0,
     };
 
+#if LSQUIC_EXTRA_CHECKS
+    if (stream->conn_pub)
+        ++stream->conn_pub->wtp_level;
+#endif
     use_framing = (stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
                                        == (SMBF_IETF|SMBF_USE_HEADERS);
     if (use_framing)
@@ -3079,7 +3113,10 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         {
         case SWTP_OK:
             if (!seen_ok++)
+            {
                 maybe_conn_to_tickable_if_writeable(stream, 0);
+                maybe_update_last_progress(stream);
+            }
             if (fg_ctx.fgc_fin(&fg_ctx))
             {
                 if (use_framing && seen_ok)
@@ -3097,7 +3134,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         default:
             abort_connection(stream);
             stream->stream_flags &= ~STREAM_LAST_WRITE_OK;
-            return -1;
+            goto err;
         }
     }
 
@@ -3113,7 +3150,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         {
             nw = save_to_buffer(stream, reader, size);
             if (nw < 0)
-                return -1;
+                goto err;
             fg_ctx.fgc_nread_from_reader += nw; /* Make this cleaner? */
         }
     }
@@ -3129,7 +3166,18 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
     maybe_mark_as_blocked(stream);
 
   end:
+#if LSQUIC_EXTRA_CHECKS
+    if (stream->conn_pub)
+        --stream->conn_pub->wtp_level;
+#endif
     return fg_ctx.fgc_nread_from_reader;
+
+  err:
+#if LSQUIC_EXTRA_CHECKS
+    if (stream->conn_pub)
+        --stream->conn_pub->wtp_level;
+#endif
+    return -1;
 }
 
 
@@ -4056,6 +4104,7 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
         stream->stream_flags |= STREAM_FIN_REACHED;
         SM_HISTORY_APPEND(stream, SHE_REACH_FIN);
     }
+    maybe_update_last_progress(stream);
     LSQ_DEBUG("return header set");
     return hset;
 }
@@ -4347,12 +4396,15 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
         LSQ_INFO("FIN at unexpected place in filter; state: %u",
                                                         filter->hqfi_state);
         filter->hqfi_flags |= HQFI_FLAG_ERROR;
-/* From [draft-ietf-quic-http-16] Section 3.1:
- *               When a stream terminates cleanly, if the last frame on
- * the stream was truncated, this MUST be treated as a connection error
- * (see HTTP_MALFORMED_FRAME in Section 8.1).
+/* From [draft-ietf-quic-http-28] Section 7.1:
+ " When a stream terminates cleanly, if the last frame on the stream was
+ " truncated, this MUST be treated as a connection error (Section 8) of
+ " type H3_FRAME_ERROR.  Streams which terminate abruptly may be reset
+ " at any point in a frame.
  */
-        abort_connection(stream);
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 1, HEC_FRAME_ERROR,
+            "last HTTP/3 frame on stream %"PRIu64" was truncated", stream->id);
     }
 
     return p - buf;

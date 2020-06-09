@@ -295,6 +295,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_init_max_streams_uni
                          = LSQUIC_DF_INIT_MAX_STREAMS_UNI_SERVER;
         settings->es_ping_period = 0;
+        settings->es_noprogress_timeout
+                         = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
     }
     else
     {
@@ -311,6 +313,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_init_max_streams_uni
                          = LSQUIC_DF_INIT_MAX_STREAMS_UNI_CLIENT;
         settings->es_ping_period = LSQUIC_DF_PING_PERIOD;
+        settings->es_noprogress_timeout
+                         = LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT;
     }
     settings->es_max_streams_in  = LSQUIC_DF_MAX_STREAMS_IN;
     settings->es_idle_conn_to    = LSQUIC_DF_IDLE_CONN_TO;
@@ -601,6 +605,9 @@ lsquic_engine_new (unsigned flags,
     if (!engine->pub.enp_tokgen)
         return NULL;
     engine->pub.enp_crand = &engine->crand;
+    if (engine->pub.enp_settings.es_noprogress_timeout)
+        engine->pub.enp_noprog_timeout
+            = engine->pub.enp_settings.es_noprogress_timeout * 1000000;
     if (flags & ENG_SERVER)
     {
         engine->pr_queue = lsquic_prq_create(

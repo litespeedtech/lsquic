@@ -46,13 +46,13 @@ developed by the IETF.  Both types are included in a single enum:
 
         Google QUIC version Q050
 
-    .. member:: LSQVER_ID25
-
-        IETF QUIC version ID (Internet-Draft) 25
-
     .. member:: LSQVER_ID27
 
-        IETF QUIC version ID 27
+        IETF QUIC version ID (Internet-Draft) 27
+
+    .. member:: LSQVER_ID28
+
+        IETF QUIC version ID 28
 
     .. member:: N_LSQVER
 
@@ -703,6 +703,19 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX`
 
+    .. member:: unsigned        es_noprogress_timeout
+
+       No progress timeout.
+
+       If connection does not make progress for this number of seconds, the
+       connection is dropped.  Here, progress is defined as user streams
+       being written to or read from.
+
+       If this value is zero, this timeout is disabled.
+
+       Default value is :macro:`LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER` in server
+       mode and :macro:`LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT` in client mode.
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -880,6 +893,14 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
 
     By default, incoming packet size is not limited.
+
+.. macro:: LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER
+
+    By default, drop no-progress connections after 60 seconds on the server.
+
+.. macro:: LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT
+
+    By default, do not use no-progress timeout on the client.
 
 Receiving Packets
 -----------------

@@ -16,11 +16,14 @@
 
 typedef struct lsquic_senhist {
     lsquic_packno_t             sh_last_sent;
+    lsquic_packno_t             sh_warn_thresh;
     enum {
 #if !LSQUIC_SENHIST_FATAL
         SH_WARNED   = 1 << 0,   /* Warn once */
 #endif
-        SH_GAP_OK   = 1 << 1,   /* Before connection is just about to close */
+        SH_GAP_OK   = 1 << 1,   /* Before connection is just about to close or
+                                 * during mini/full packet handoff.
+                                 */
     }                           sh_flags;
 } lsquic_senhist_t;
 
@@ -35,7 +38,8 @@ typedef struct lsquic_senhist {
 
 #if LSQUIC_SENHIST_FATAL
 #define lsquic_senhist_add(hist, packno) do {                           \
-    if (!((hist)->sh_flags & SH_GAP_OK))                                \
+    if (!((hist)->sh_flags & SH_GAP_OK)                                 \
+                        && (packno) > (hist)->sh_warn_thresh)           \
         assert((hist)->sh_last_sent == packno - 1);                     \
     if ((int64_t) (packno) > (int64_t) (hist)->sh_last_sent)            \
         (hist)->sh_last_sent = packno;                                  \
@@ -44,7 +48,8 @@ typedef struct lsquic_senhist {
 #define lsquic_senhist_add(hist, packno) do {                           \
     if ((hist)->sh_last_sent != packno - 1)                             \
     {                                                                   \
-        if (!((hist)->sh_flags & (SH_WARNED|SH_GAP_OK)))                \
+        if (!((hist)->sh_flags & (SH_WARNED|SH_GAP_OK))                 \
+                        && (packno) > (hist)->sh_warn_thresh)           \
         {                                                               \
             LSQ_WARN("send history gap %"PRIu64" - %"PRIu64,            \
                 (hist)->sh_last_sent, packno);                          \

@@ -14,7 +14,7 @@
 int
 main (void)
 {
-    struct lsquic_senhist hist = { 0
+    struct lsquic_senhist hist = { 0, 0
 #if !LSQUIC_SENHIST_FATAL
         , 0
 #endif        

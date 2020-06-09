@@ -635,7 +635,7 @@ ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
             if (!(packet_out->po_flags & PO_SENT))
             {
                 packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
-                return imico_can_send(conn, packet_size + IQUIC_TAG_LEN);
+                return imico_can_send(conn, packet_size);
             }
 
     return 0;
@@ -665,15 +665,15 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
         if (size == 0 || packet_size + size <= conn->imc_path.np_pack_size)
         {
-            if (!imico_can_send(conn, packet_size + IQUIC_TAG_LEN))
+            if (!imico_can_send(conn, packet_size))
             {
                 LSQ_DEBUG("cannot send packet %"PRIu64" of size %zu: client "
                     "address has not been validated", packet_out->po_packno,
-                    packet_size + IQUIC_TAG_LEN);
+                    packet_size);
                 return NULL;
             }
             packet_out->po_flags |= PO_SENT;
-            conn->imc_bytes_out += packet_size + IQUIC_TAG_LEN;
+            conn->imc_bytes_out += packet_size;
             if (size == 0)
                 LSQ_DEBUG("packet_to_send: %"PRIu64, packet_out->po_packno);
             else
@@ -1310,7 +1310,7 @@ ietf_mini_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 
     packet_out->po_flags &= ~PO_SENT;
     packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
-    conn->imc_bytes_out -= packet_size + IQUIC_TAG_LEN;
+    conn->imc_bytes_out -= packet_size;
     LSQ_DEBUG("%s: packet %"PRIu64" not sent", __func__, packet_out->po_packno);
 }
 
@@ -1356,9 +1356,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
 {
     TAILQ_HEAD(, lsquic_packet_out) lost_packets =
                                     TAILQ_HEAD_INITIALIZER(lost_packets);
+    const struct lsquic_conn *const lconn = &conn->imc_conn;
     lsquic_packet_out_t *packet_out, *next;
     lsquic_time_t retx_to = 0;
     unsigned n_to_send = 0;
+    size_t packet_size;
 
     for (packet_out = TAILQ_FIRST(&conn->imc_packets_out); packet_out;
                                                         packet_out = next)
@@ -1376,8 +1378,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
                 TAILQ_INSERT_TAIL(&lost_packets, packet_out, po_next);
             }
         }
-        else
+        else if (packet_size = lsquic_packet_out_total_sz(lconn, packet_out),
+                                                imico_can_send(conn, packet_size))
             ++n_to_send;
+        else
+            break;
     }
 
     conn->imc_hsk_count += !TAILQ_EMPTY(&lost_packets);
@@ -1387,7 +1392,11 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
         TAILQ_REMOVE(&lost_packets, packet_out, po_next);
         if ((packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
                             && 0 == imico_repackage_packet(conn, packet_out))
-            ++n_to_send;
+        {
+            packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
+            if (imico_can_send(conn, packet_size))
+                ++n_to_send;
+        }
         else
             imico_destroy_packet(conn, packet_out);
     }

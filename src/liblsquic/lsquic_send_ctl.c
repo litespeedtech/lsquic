@@ -363,10 +363,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     ctl->sc_cached_bpt.stream_id = UINT64_MAX;
 #if LSQUIC_EXTRA_CHECKS
     ctl->sc_flags |= SC_SANITY_CHECK;
-#else
-    if ((ctl->sc_conn_pub->lconn->cn_flags & (LSCONN_IETF|LSCONN_SERVER))
-                                                                == LSCONN_IETF)
-        ctl->sc_flags |= SC_SANITY_CHECK;
+    LSQ_DEBUG("sanity checks enabled");
 #endif
     ctl->sc_gap = UINT64_MAX - 1 /* Can't have +1 == 0 */;
     if ((ctl->sc_conn_pub->lconn->cn_flags & (LSCONN_IETF|LSCONN_SERVER))
@@ -2227,7 +2224,8 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
                                                             packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
-        if (packet_out->po_regen_sz < packet_out->po_data_sz)
+        if (packet_out->po_regen_sz < packet_out->po_data_sz
+                || packet_out->po_frame_types == QUIC_FTBIT_PATH_CHALLENGE)
         {
             if (packet_out->po_flags & PO_ENCRYPTED)
                 send_ctl_return_enc_data(ctl, packet_out);
@@ -2238,7 +2236,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
             /* Log the whole list before we squeeze for the first time */
             if (!pre_squeeze_logged++)
                 LOG_PACKET_Q(&ctl->sc_scheduled_packets,
-                                        "unacked packets before squeezing");
+                                        "scheduled packets before squeezing");
 #endif
             send_ctl_sched_remove(ctl, packet_out);
             LSQ_DEBUG("Dropping packet %"PRIu64" from scheduled queue",
@@ -2255,7 +2253,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
 #ifndef NDEBUG
     if (pre_squeeze_logged)
         LOG_PACKET_Q(&ctl->sc_scheduled_packets,
-                                        "unacked packets after squeezing");
+                                        "scheduled packets after squeezing");
     else if (ctl->sc_n_scheduled > 0)
         LOG_PACKET_Q(&ctl->sc_scheduled_packets, "delayed packets");
 #endif

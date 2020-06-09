@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 16
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:
@@ -342,6 +342,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** By default, incoming packet size is not limited. */
 #define LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX 0
+
+/** By default, drop no-progress connections after 60 seconds on the server */
+#define LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER 60
+
+/** By default, do not use no-progress timeout on the client */
+#define LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT 0
 
 struct lsquic_engine_settings {
     /**
@@ -752,6 +758,20 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
      */
     unsigned short  es_max_udp_payload_size_rx;
+
+    /**
+     * No progress timeout.
+     *
+     * If connection does not make progress for this number of seconds, the
+     * connection is dropped.  Here, progress is defined as user streams
+     * being written to or read from.
+     *
+     * If this value is zero, this timeout is disabled.
+     *
+     * Default value is @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER in server
+     * mode and @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT in client mode.
+     */
+    unsigned        es_noprogress_timeout;
 };
 
 /* Initialize `settings' to default values */
