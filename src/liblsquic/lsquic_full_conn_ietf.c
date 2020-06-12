@@ -464,6 +464,9 @@ ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 static void
 ietf_full_conn_ci_destroy (struct lsquic_conn *);
 
+static struct conn_cid_elem *
+find_cce_by_cid (struct ietf_full_conn *, const lsquic_cid_t *);
+
 static unsigned
 highest_bit_set (unsigned sz)
 {
@@ -5427,6 +5430,24 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
             return 0;
         }
         retire_cid(conn, cce, packet_in->pi_received);
+        if (lconn->cn_cur_cce_idx == cce - lconn->cn_cces)
+        {
+            cce = find_cce_by_cid(conn, &packet_in->pi_dcid);
+            if (cce)
+            {
+                LSQ_DEBUGC("current SCID was retired; set current SCID to "
+                    "%"CID_FMT" based on DCID in incoming packet",
+                    CID_BITS(&packet_in->pi_dcid));
+                cce->cce_flags |= CCE_USED;
+                lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
+            }
+            else
+                LSQ_WARN("current SCID was retired; no new SCID candidate");
+                /* This could theoretically happen when zero-length CIDs were
+                 * used.  Currently, there should be no way lsquic could get
+                 * into this situation.
+                 */
+        }
     }
     else
         LSQ_DEBUG("cannot retire CID seqno=%"PRIu64": not found", seqno);
