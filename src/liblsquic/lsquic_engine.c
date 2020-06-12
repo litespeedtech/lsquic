@@ -1420,6 +1420,9 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
     }
     lsquic_hash_destroy(engine->conns_hash);
 
+    while ((conn = attq_pop(engine->attq, UINT64_MAX)))
+        (void) engine_decref_conn(engine, conn, LSCONN_ATTQ);
+
     assert(0 == engine->n_conns);
     assert(0 == engine->mini_conns_count);
     if (engine->pr_queue)
