@@ -4140,6 +4140,7 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
         0123,   /* HD+  */
         012,    /* HD   */
         01,     /* H    */
+        013,    /* H+   */ /* Really HH, but we don't record it like this */
         01231,  /* HD+H */
         0121,   /* HDH  */
     };

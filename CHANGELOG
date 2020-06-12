@@ -1,3 +1,14 @@
+2020-06-12
+    - 2.16.2
+    - [BUGFIX] ID-28: do not use TLS middlebox compatibility mode in
+      ClientHello.  This change requires using a newer version of BoringSSL.
+    - [BUGFIX] Free connections in Advisory Tick Time Queue in engine dtor.
+    - [BUGFIX] IETF QUIC client: narrow migration check to a single path.
+    - [BUGFIX] NULL dereference: set function pointers for alarm for path
+      challenges 2 and 3.
+    - [BUGFIX] HTTP/3 headers may be followed immediately by trailers.
+    - [BUGFIX] Log messages when SCID changes.
+
 2020-06-09
     - 2.16.1
     - [FEATURE] Use "no-progress timeout" after which connection is closed.

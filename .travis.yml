@@ -31,7 +31,7 @@ before_script:
     - cd boringssl
     # This is so that both GQUIC and IETF branches build.  Just picking
     # a known good revision:
-    - git checkout bfe527fa35735e8e045cbfb42b012e13ca68f9cf
+    - git checkout 251b5169fd44345f455438312ec4e18ae07fd58c
     - cmake .
     - make
     - cd -

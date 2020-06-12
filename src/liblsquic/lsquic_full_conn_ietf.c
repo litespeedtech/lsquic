@@ -591,9 +591,10 @@ wipe_path (struct ietf_full_conn *conn, unsigned path_id)
 
 static void
 path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
-                    lsquic_time_t expiry, lsquic_time_t now, unsigned path_id)
+                                lsquic_time_t expiry, lsquic_time_t now)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    const unsigned path_id = al_id - AL_PATH_CHAL;
     struct conn_path *const copath = &conn->ifc_paths[path_id];
 
     if (copath->cop_n_chals < sizeof(copath->cop_path_chals)
@@ -611,22 +612,6 @@ path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
     else
         LSQ_INFO("no path challenge responses on current path %u, stop "
             "sending path challenges", path_id);
-}
-
-
-static void
-path_chal_0_alarm_expired (enum alarm_id al_id, void *ctx,
-                                    lsquic_time_t expiry, lsquic_time_t now)
-{
-    path_chal_alarm_expired(al_id, ctx, expiry, now, 0);
-}
-
-
-static void
-path_chal_1_alarm_expired (enum alarm_id al_id, void *ctx,
-                                    lsquic_time_t expiry, lsquic_time_t now)
-{
-    path_chal_alarm_expired(al_id, ctx, expiry, now, 1);
 }
 
 
@@ -670,10 +655,10 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
 
 
 static int
-migra_is_on (const struct ietf_full_conn *conn)
+migra_is_on (const struct ietf_full_conn *conn, unsigned path_id)
 {
-    return (conn->ifc_send_flags & SF_SEND_PATH_CHAL_ALL)
-        || lsquic_alarmset_are_set(&conn->ifc_alset, ALBIT_PATH_CHAL_0|ALBIT_PATH_CHAL_1);
+    return (conn->ifc_send_flags & (SF_SEND_PATH_CHAL << path_id))
+        || lsquic_alarmset_is_set(&conn->ifc_alset, AL_PATH_CHAL + path_id);
 }
 
 
@@ -682,7 +667,7 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
                 struct dcid_elem *dce, const struct sockaddr *dest_sa,
                 const struct transport_params *params)
 {
-    assert(!(migra_is_on(conn)));
+    assert(!(migra_is_on(conn, copath - conn->ifc_paths)));
 
     dce->de_flags |= DE_ASSIGNED;
     copath->cop_flags |= COP_INITIALIZED;
@@ -1126,8 +1111,10 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PING, ping_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_CID_THROT, cid_throt_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_0, path_chal_0_alarm_expired, conn);
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_1, path_chal_1_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_0, path_chal_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_1, path_chal_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_2, path_chal_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], &conn->ifc_conn, 1);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], &conn->ifc_conn, 1);
@@ -5461,11 +5448,11 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
             cce = find_cce_by_cid(conn, &packet_in->pi_dcid);
             if (cce)
             {
+                cce->cce_flags |= CCE_USED;
+                lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
                 LSQ_DEBUGC("current SCID was retired; set current SCID to "
                     "%"CID_FMT" based on DCID in incoming packet",
                     CID_BITS(&packet_in->pi_dcid));
-                cce->cce_flags |= CCE_USED;
-                lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
             }
             else
                 LSQ_WARN("current SCID was retired; no new SCID candidate");
@@ -6310,7 +6297,7 @@ process_regular_packet (struct ietf_full_conn *conn,
     if (packet_in->pi_path_id != conn->ifc_cur_path_id
         && 0 == (conn->ifc_flags & IFC_SERVER)
         && !(packet_in->pi_path_id == conn->ifc_mig_path_id
-                && migra_is_on(conn)))
+                && migra_is_on(conn, conn->ifc_mig_path_id)))
     {
         /* The "known server address" is recorded in the current path. */
         switch ((NP_IS_IPv6(CUR_NPATH(conn)) << 1) |
