@@ -1,3 +1,11 @@
+2020-06-12
+    - 2.12.5
+    - [BUGFIX] ID-28: do not use TLS middlebox compatibility mode in
+      ClientHello.  This change requires using a newer version of BoringSSL.
+    - [BUGFIX] Free connections in Advisory Tick Time Queue in engine dtor.
+    - [BUGFIX] HTTP/3 headers may be followed immediately by trailers.
+    - [BUGFIX] Log messages when SCID changes.
+
 2020-06-04
     - 2.12.4
     - [BUGFIX] Don't double-count tag length in amplification logic.
