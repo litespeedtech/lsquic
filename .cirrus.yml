@@ -8,7 +8,7 @@ task:
         - cd boringssl
         # This is so that both GQUIC and IETF branches build.  Just picking
         # a known good revision:
-        - git checkout 49de1fc2910524c888866c7e2b0db1ba8af2a530
+        - git checkout 251b5169fd44345f455438312ec4e18ae07fd58c
         - cmake .
         - make
         - cd -
