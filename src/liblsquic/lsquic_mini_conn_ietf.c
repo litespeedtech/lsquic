@@ -1185,6 +1185,31 @@ ignore_init (struct ietf_mini_conn *conn)
 }
 
 
+static void
+imico_maybe_delay_processing (struct ietf_mini_conn *conn,
+                                            struct lsquic_packet_in *packet_in)
+{
+    unsigned max_delayed;
+
+    if (conn->imc_flags & IMC_ADDR_VALIDATED)
+        max_delayed = IMICO_MAX_DELAYED_PACKETS_VALIDATED;
+    else
+        max_delayed = IMICO_MAX_DELAYED_PACKETS_UNVALIDATED;
+
+    if (conn->imc_delayed_packets_count < max_delayed)
+    {
+        ++conn->imc_delayed_packets_count;
+        lsquic_packet_in_upref(packet_in);
+        TAILQ_INSERT_TAIL(&conn->imc_app_packets, packet_in, pi_next);
+        LSQ_DEBUG("delay processing of packet (now delayed %hhu)",
+            conn->imc_delayed_packets_count);
+    }
+    else
+        LSQ_DEBUG("drop packet, already delayed %hhu packets",
+                                            conn->imc_delayed_packets_count);
+}
+
+
 /* Only a single packet is supported */
 static void
 ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
@@ -1222,8 +1247,9 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
                                 conn->imc_enpub, &conn->imc_conn, packet_in);
     if (dec_packin != DECPI_OK)
     {
-        /* TODO: handle reordering perhaps? */
         LSQ_DEBUG("could not decrypt packet");
+        if (DECPI_NOT_YET == dec_packin)
+            imico_maybe_delay_processing(conn, packet_in);
         return;
     }
 
@@ -1231,10 +1257,7 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
 
     if (pns == PNS_APP)
     {
-        lsquic_packet_in_upref(packet_in);
-        TAILQ_INSERT_TAIL(&conn->imc_app_packets, packet_in, pi_next);
-        LSQ_DEBUG("delay processing of packet %"PRIu64" in pns %u",
-            packet_in->pi_packno, pns);
+        imico_maybe_delay_processing(conn, packet_in);
         return;
     }
     else if (pns == PNS_HSK)

@@ -1,3 +1,10 @@
+2020-06-15
+    - 2.16.3
+    - [OPTIMIZATION] Stash up to two reordered packets in IETF mini conn
+      instead of dropping them.
+    - [BUGFIX] Crash: check decrypt context before using it.  This regression
+      was introduced in 2.16.2.
+
 2020-06-12
     - 2.16.2
     - [BUGFIX] ID-28: do not use TLS middlebox compatibility mode in

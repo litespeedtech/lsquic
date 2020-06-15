@@ -94,6 +94,9 @@ struct ietf_mini_conn
     uint8_t                         imc_ecn_counts_out[N_PNS][4];
     uint8_t                         imc_incoming_ecn;
     uint8_t                         imc_tls_alert;
+#define IMICO_MAX_DELAYED_PACKETS_UNVALIDATED 1u
+#define IMICO_MAX_DELAYED_PACKETS_VALIDATED 2u
+    unsigned char                   imc_delayed_packets_count;
 #define IMICO_MAX_STASHED_FRAMES 10u
     unsigned char                   imc_n_crypto_frames;
     struct network_path             imc_path;
