@@ -1,3 +1,8 @@
+2020-06-15
+    - 2.12.6
+    - [BUGFIX] Crash: check decrypt context before using it.  This regression
+      was introduced in 2.12.5.
+
 2020-06-12
     - 2.12.5
     - [BUGFIX] ID-28: do not use TLS middlebox compatibility mode in
