@@ -1149,6 +1149,13 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         LSQ_INFO("could not set stream method");
         return -1;
     }
+    /* TODO: set to transport parameter string instead of the constant string */
+    if (!SSL_set_quic_early_data_context(enc_sess->esi_ssl,
+                                                (unsigned char *) "lsquic", 6))
+    {
+        LSQ_INFO("could not set early data context");
+        return -1;
+    }
     maybe_setup_key_logging(enc_sess);
 
     transpa_len = gen_trans_params(enc_sess, u.trans_params,
