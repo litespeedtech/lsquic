@@ -1653,8 +1653,11 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
                                  callbacks */
                              )));
     conn->cn_flags |= LSCONN_HASHED;
-    lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
-    engine_incref_conn(conn, LSCONN_TICKABLE);
+    if (!(conn->cn_flags & LSCONN_TICKABLE))
+    {
+        lsquic_mh_insert(&engine->conns_tickable, conn, conn->cn_last_ticked);
+        engine_incref_conn(conn, LSCONN_TICKABLE);
+    }
     lsquic_conn_set_ctx(conn, conn_ctx);
     conn->cn_if->ci_client_call_on_new(conn);
   end:

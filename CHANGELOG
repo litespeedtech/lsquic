@@ -1,5 +1,5 @@
 2020-06-18
-    - 2.17.0
+    - 2.17.1
     - [FEATURE] QUIC and HTTP/3 Internet Draft 29 support.
     - [BUGFIX] Check that scheduled packets are also sendable when
       calculating a connection's "tickable" property.
