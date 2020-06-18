@@ -410,6 +410,7 @@ struct ietf_full_conn
             struct ver_neg
                         ifcli_ver_neg;
             uint64_t    ifcli_max_push_id;
+            uint64_t    ifcli_min_goaway_stream_id;
             enum {
                 IFCLI_PUSH_ENABLED    = 1 << 0,
                 IFCLI_HSK_SENT_OR_DEL = 1 << 1,
@@ -2889,13 +2890,19 @@ try_to_begin_migration (struct ietf_full_conn *conn,
         struct sockaddr_in6 v6;
     } sockaddr;
 
-    if ((params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION))
-                                || !conn->ifc_settings->es_allow_migration)
+    if (!conn->ifc_settings->es_allow_migration)
     {
-        if (params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION))
-            LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
-        else
-            LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
+        LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
+        return BM_NOT_MIGRATING;
+    }
+
+    if (conn->ifc_conn.cn_version <= LSQVER_ID28 /* Starting with ID-29,
+        disable_active_migration TP applies only to the time period during
+        the handshake.  Our client does not migrate during the handshake:
+        this code runs only after handshake has succeeded. */
+                && (params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION)))
+    {
+        LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
         return BM_NOT_MIGRATING;
     }
 
@@ -3547,10 +3554,10 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
             LSQ_DEBUG("tickable: send flags: 0x%X", conn->ifc_send_flags);
             goto check_can_send;
         }
-        if (lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl) > 0)
+        if (lsquic_send_ctl_has_sendable(&conn->ifc_send_ctl))
         {
-            LSQ_DEBUG("tickable: has scheduled packets");
-            return 1;   /* Don't check can_send */
+            LSQ_DEBUG("tickable: has sendable packets");
+            return 1;   /* Don't check can_send: already on scheduled queue */
         }
         if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
         {
@@ -6046,6 +6053,7 @@ verify_retry_packet (struct ietf_full_conn *conn,
 {
     unsigned char *pseudo_packet;
     size_t out_len, ad_len;
+    unsigned ret_ver;
     int verified;
 
     if (1 + CUR_DCID(conn)->len + packet_in->pi_data_sz > 0x1000)
@@ -6070,11 +6078,13 @@ verify_retry_packet (struct ietf_full_conn *conn,
     memcpy(pseudo_packet + 1 + CUR_DCID(conn)->len, packet_in->pi_data,
                                                     packet_in->pi_data_sz);
 
+    ret_ver = lsquic_version_2_retryver(conn->ifc_conn.cn_version);
     out_len = 0;
     ad_len = 1 + CUR_DCID(conn)->len + packet_in->pi_data_sz - 16;
-    verified = 1 == EVP_AEAD_CTX_open(conn->ifc_enpub->enp_retry_aead_ctx,
+    verified = 1 == EVP_AEAD_CTX_open(
+                    &conn->ifc_enpub->enp_retry_aead_ctx[ret_ver],
                     pseudo_packet + ad_len, &out_len, out_len,
-                    IETF_RETRY_NONCE_BUF, IETF_RETRY_NONCE_SZ,
+                    lsquic_retry_nonce_buf[ret_ver], IETF_RETRY_NONCE_SZ,
                     pseudo_packet + ad_len, 16, pseudo_packet, ad_len)
             && out_len == 0;
 
@@ -7472,7 +7482,7 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 
 
 static void
-on_goaway_server (void *ctx, uint64_t stream_id)
+on_goaway_server_27 (void *ctx, uint64_t stream_id)
 {
     struct ietf_full_conn *const conn = ctx;
     ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED,
@@ -7481,7 +7491,7 @@ on_goaway_server (void *ctx, uint64_t stream_id)
 
 
 static void
-on_goaway (void *ctx, uint64_t stream_id)
+on_goaway_client_28 (void *ctx, uint64_t stream_id)
 {
     struct ietf_full_conn *const conn = ctx;
     struct lsquic_stream *stream;
@@ -7521,6 +7531,68 @@ on_goaway (void *ctx, uint64_t stream_id)
 
 
 static void
+on_goaway_client (void *ctx, uint64_t stream_id)
+{
+    struct ietf_full_conn *const conn = ctx;
+    struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+    enum stream_id_type sit;
+
+    sit = stream_id & SIT_MASK;
+    if (sit != SIT_BIDI_CLIENT)
+    {
+        ABORT_QUIETLY(1, HEC_ID_ERROR,
+                            "stream ID %"PRIu64" in GOAWAY frame", stream_id);
+        return;
+    }
+
+    LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64, stream_id);
+
+    if (conn->ifc_conn.cn_flags & LSCONN_PEER_GOING_AWAY)
+    {
+        if (stream_id == conn->ifc_u.cli.ifcli_min_goaway_stream_id)
+        {
+            LSQ_DEBUG("ignore duplicate GOAWAY frame");
+            return;
+        }
+        if (stream_id > conn->ifc_u.cli.ifcli_min_goaway_stream_id)
+        {
+            ABORT_QUIETLY(1, HEC_ID_ERROR,
+                "stream ID %"PRIu64" is larger than one already seen in a "
+                "previous GOAWAY frame, %"PRIu64, stream_id,
+                conn->ifc_u.cli.ifcli_min_goaway_stream_id);
+            return;
+        }
+    }
+    else
+    {
+        conn->ifc_u.cli.ifcli_min_goaway_stream_id = stream_id;
+        conn->ifc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
+        if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
+            conn->ifc_enpub->enp_stream_if->on_goaway_received(&conn->ifc_conn);
+    }
+
+    for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
+                             el = lsquic_hash_next(conn->ifc_pub.all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (stream->id >= stream_id
+                            && (stream->id & SIT_MASK) == SIT_BIDI_CLIENT)
+        {
+            lsquic_stream_received_goaway(stream);
+        }
+    }
+}
+
+
+static void
+on_goaway_server (void *ctx, uint64_t max_push_id)
+{
+    /* TODO: cancel pushes? */
+}
+
+
+static void
 on_unexpected_frame (void *ctx, uint64_t frame_type)
 {
     struct ietf_full_conn *const conn = ctx;
@@ -7529,7 +7601,49 @@ on_unexpected_frame (void *ctx, uint64_t frame_type)
 }
 
 
-static const struct hcsi_callbacks hcsi_callbacks_server =
+static const struct hcsi_callbacks hcsi_callbacks_server_27 =
+{
+    .on_cancel_push         = on_cancel_push,
+    .on_max_push_id         = on_max_push_id,
+    .on_settings_frame      = on_settings_frame,
+    .on_setting             = on_setting,
+    .on_goaway              = on_goaway_server_27,
+    .on_unexpected_frame    = on_unexpected_frame,
+};
+
+static const struct hcsi_callbacks hcsi_callbacks_client_27 =
+{
+    .on_cancel_push         = on_cancel_push,
+    .on_max_push_id         = on_max_push_id_client,
+    .on_settings_frame      = on_settings_frame,
+    .on_setting             = on_setting,
+    .on_goaway              = on_goaway_client_28 /* sic */,
+    .on_unexpected_frame    = on_unexpected_frame,
+};
+
+
+static const struct hcsi_callbacks hcsi_callbacks_server_28 =
+{
+    .on_cancel_push         = on_cancel_push,
+    .on_max_push_id         = on_max_push_id,
+    .on_settings_frame      = on_settings_frame,
+    .on_setting             = on_setting,
+    .on_goaway              = on_goaway_server /* sic */,
+    .on_unexpected_frame    = on_unexpected_frame,
+};
+
+static const struct hcsi_callbacks hcsi_callbacks_client_28 =
+{
+    .on_cancel_push         = on_cancel_push,
+    .on_max_push_id         = on_max_push_id_client,
+    .on_settings_frame      = on_settings_frame,
+    .on_setting             = on_setting,
+    .on_goaway              = on_goaway_client_28,
+    .on_unexpected_frame    = on_unexpected_frame,
+};
+
+
+static const struct hcsi_callbacks hcsi_callbacks_server_29 =
 {
     .on_cancel_push         = on_cancel_push,
     .on_max_push_id         = on_max_push_id,
@@ -7539,13 +7653,13 @@ static const struct hcsi_callbacks hcsi_callbacks_server =
     .on_unexpected_frame    = on_unexpected_frame,
 };
 
-static const struct hcsi_callbacks hcsi_callbacks =
+static const struct hcsi_callbacks hcsi_callbacks_client_29 =
 {
     .on_cancel_push         = on_cancel_push,
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
-    .on_goaway              = on_goaway,
+    .on_goaway              = on_goaway_client,
     .on_unexpected_frame    = on_unexpected_frame,
 };
 
@@ -7554,10 +7668,36 @@ static lsquic_stream_ctx_t *
 hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 {
     struct ietf_full_conn *const conn = (void *) stream_if_ctx;
+    const struct hcsi_callbacks *callbacks;
+
     conn->ifc_stream_hcsi = stream;
+
+    switch ((!!(conn->ifc_flags & IFC_SERVER) << 8) | conn->ifc_conn.cn_version)
+    {
+        case (0 << 8) | LSQVER_ID27:
+            callbacks = &hcsi_callbacks_client_27;
+            break;
+        case (1 << 8) | LSQVER_ID27:
+            callbacks = &hcsi_callbacks_server_27;
+            break;
+        case (0 << 8) | LSQVER_ID28:
+            callbacks = &hcsi_callbacks_client_28;
+            break;
+        case (1 << 8) | LSQVER_ID28:
+            callbacks = &hcsi_callbacks_server_28;
+            break;
+        case (0 << 8) | LSQVER_ID29:
+            callbacks = &hcsi_callbacks_client_29;
+            break;
+        default:
+            assert(0);
+            /* fallthru */
+        case (1 << 8) | LSQVER_ID29:
+            callbacks = &hcsi_callbacks_server_29;
+            break;
+    }
     lsquic_hcsi_reader_init(&conn->ifc_hcsi.reader, &conn->ifc_conn,
-        conn->ifc_flags & IFC_SERVER ? &hcsi_callbacks_server : &hcsi_callbacks,
-                            conn);
+                                                            callbacks, conn);
     lsquic_stream_wantread(stream, 1);
     return stream_if_ctx;
 }

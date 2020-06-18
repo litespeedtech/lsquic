@@ -33,7 +33,7 @@ main (void)
     };
 
     HKDF_extract(secret, &secret_len, md, dcid.idbuf, dcid.len,
-                                                HSK_SALT, HSK_SALT_SZ);
+                                                HSK_SALT_PRE29, HSK_SALT_SZ);
 
     assert(sizeof(expected_secret) == secret_len);
     assert(0 == memcmp(secret, expected_secret, sizeof(expected_secret)));

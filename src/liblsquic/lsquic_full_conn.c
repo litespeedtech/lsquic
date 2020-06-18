@@ -4060,7 +4060,7 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         return -1;
     }
 
-    pushed_stream = new_stream(conn, stream_id, SCF_CALL_ON_NEW);
+    pushed_stream = new_stream(conn, stream_id, 0);
     if (!pushed_stream)
     {
         LSQ_WARN("cannot create stream: %s", strerror(errno));
@@ -4085,6 +4085,7 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
         return -1;
     }
 
+    lsquic_stream_call_on_new(pushed_stream);
     return 0;
 }
 
@@ -4187,10 +4188,10 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             LSQ_DEBUG("tickable: flags: 0x%X", conn->fc_flags & send_flags);
             goto check_can_send;
         }
-        if (lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl) > 0)
+        if (lsquic_send_ctl_has_sendable(&conn->fc_send_ctl))
         {
-            LSQ_DEBUG("tickable: has scheduled packets");
-            return 1;   /* Don't check can_send */
+            LSQ_DEBUG("tickable: has sendable packets");
+            return 1;   /* Don't check can_send: already on scheduled queue */
         }
         if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
                 && lsquic_send_ctl_has_buffered(&conn->fc_send_ctl))

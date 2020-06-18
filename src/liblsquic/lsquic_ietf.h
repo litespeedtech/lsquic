@@ -9,7 +9,7 @@ enum trans_error_code
 {
     TEC_NO_ERROR                   =  0x0,
     TEC_INTERNAL_ERROR             =  0x1,
-    TEC_SERVER_BUSY                =  0x2,
+    TEC_CONNECTION_REFUSED         =  0x2,
     TEC_FLOW_CONTROL_ERROR         =  0x3,
     TEC_STREAM_LIMIT_ERROR         =  0x4,
     TEC_STREAM_STATE_ERROR         =  0x5,
@@ -27,11 +27,12 @@ enum trans_error_code
 #define MAX_IETF_CONN_DCIDS 8
 
 /* [draft-ietf-quic-tls-25] Section 5.8 */
-#define IETF_RETRY_KEY_BUF ((unsigned char *) \
-        "\x4d\x32\xec\xdb\x2a\x21\x33\xc8\x41\xe4\x04\x3d\xf2\x7d\x44\x30")
 #define IETF_RETRY_KEY_SZ 16
-#define IETF_RETRY_NONCE_BUF ((unsigned char *) \
-                        "\x4d\x16\x11\xd0\x55\x13\xa5\x52\xc5\x87\xd5\x75")
 #define IETF_RETRY_NONCE_SZ 12
+
+#define N_IETF_RETRY_VERSIONS 2
+extern const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS];
+extern const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS];
+#define lsquic_version_2_retryver(ver_) ((ver_) > LSQVER_ID28)
 
 #endif

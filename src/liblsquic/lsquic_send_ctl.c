@@ -1369,7 +1369,7 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 {
     return (ctl->sc_flags & SC_PACE)
         && !lsquic_pacer_can_schedule(&ctl->sc_pacer,
-                               ctl->sc_n_scheduled + ctl->sc_n_in_flight_all);
+                                               ctl->sc_n_in_flight_all);
 }
 
 
@@ -1674,6 +1674,45 @@ send_ctl_maybe_zero_pad (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Predict whether lsquic_send_ctl_next_packet_to_send() will return a
+ * packet by mimicking its logic.  Returns true if packet will be returned,
+ * false otherwise.
+ */
+int
+lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
+{
+    const struct lsquic_packet_out *packet_out;
+    unsigned n_rtos;
+
+    n_rtos = ~0u;
+    TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+    {
+        if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
+            && 0 == ctl->sc_next_limit
+            && 0 != (n_rtos == ~0u ? /* Initialize once */
+                    (n_rtos = send_ctl_get_n_consec_rtos(ctl)) : n_rtos))
+        {
+            LSQ_DEBUG("send prediction: no, n_rtos: %u", n_rtos);
+            return 0;
+        }
+        if ((packet_out->po_flags & PO_REPACKNO)
+                    && packet_out->po_regen_sz == packet_out->po_data_sz)
+        {
+            LSQ_DEBUG("send prediction: packet %"PRIu64" would be dropped, "
+                "continue", packet_out->po_packno);
+            continue;
+        }
+        LSQ_DEBUG("send prediction: yes, packet %"PRIu64", flags %u, frames 0x%X",
+            packet_out->po_packno, (unsigned) packet_out->po_flags,
+            (unsigned) packet_out->po_frame_types);
+        return 1;
+    }
+
+    LSQ_DEBUG("send prediction: no, no matching scheduled packets");
+    return 0;
+}
+
+
 lsquic_packet_out_t *
 lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
 {
@@ -1685,6 +1724,9 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
     if (!packet_out)
         return NULL;
 
+    /* Note: keep logic in this function and in
+     * lsquic_send_ctl_next_packet_to_send_predict() in synch.
+     */
     if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
                                         && send_ctl_get_n_consec_rtos(ctl))
     {

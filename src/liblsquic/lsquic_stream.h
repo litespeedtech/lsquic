@@ -208,7 +208,7 @@ enum stream_flags {
     STREAM_ONNEW_DONE   = 1 << 17,  /* on_new_stream has been called */
     STREAM_PUSHING      = 1 << 18,
     STREAM_NOPUSH       = 1 << 19,  /* Disallow further push promises */
-    STREAM_UNUSED20     = 1 << 20,  /* Unused */
+    STREAM_GOAWAY_IN    = 1 << 20,  /* Incoming GOAWAY has been processed */
     STREAM_UNUSED21     = 1 << 21,  /* Unused */
     STREAM_RST_ACKED    = 1 << 22,  /* Packet containing RST has been acked */
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */

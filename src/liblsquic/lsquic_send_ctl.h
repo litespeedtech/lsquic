@@ -168,6 +168,9 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *, struct lsquic_packet_out *);
 struct lsquic_packet_out *
 lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *, size_t);
 
+int
+lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *);
+
 void
 lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
 
@@ -386,5 +389,10 @@ lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
 
 void
 lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);
+
+/* Has immediately sendable packets */
+#define lsquic_send_ctl_has_sendable(ctl_) \
+    (lsquic_send_ctl_n_scheduled(ctl_) > 0 \
+                && lsquic_send_ctl_next_packet_to_send_predict(ctl_))
 
 #endif

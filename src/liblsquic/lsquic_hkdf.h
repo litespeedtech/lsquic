@@ -5,7 +5,11 @@
 /* [draft-ietf-quic-tls-23] Section 5.2 */
 #define HSK_SALT_BUF "\xc3\xee\xf7\x12\xc7\x2e\xbb\x5a\x11\xa7" \
                      "\xd2\x43\x2b\xb4\x63\x65\xbe\xf9\xf5\x02"
-#define HSK_SALT ((unsigned char *) HSK_SALT_BUF)
+#define HSK_SALT_PRE29 ((unsigned char *) HSK_SALT_BUF)
+/* [draft-ietf-quic-tls-29] Section 5.2 */
+#define HSK_SALT ((unsigned char *) \
+                     "\xaf\xbf\xec\x28\x99\x93\xd2\x4c\x9e\x97" \
+                     "\x86\xf1\x9c\x61\x11\xe0\x43\x90\xa8\x99")
 #define HSK_SALT_SZ (sizeof(HSK_SALT_BUF) - 1)
 
 #define CLIENT_LABEL "client in"

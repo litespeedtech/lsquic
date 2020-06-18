@@ -1747,6 +1747,14 @@ void
 lsquic_stream_received_goaway (lsquic_stream_t *stream)
 {
     SM_HISTORY_APPEND(stream, SHE_GOAWAY_IN);
+
+    if (stream->stream_flags & STREAM_GOAWAY_IN)
+    {
+        LSQ_DEBUG("ignore duplicate GOAWAY");
+        return;
+    }
+    stream->stream_flags |= STREAM_GOAWAY_IN;
+
     if (0 == stream->read_offset &&
                             stream->data_in->di_if->di_empty(stream->data_in))
         fake_reset_unused_stream(stream);       /* Normal condition */

@@ -1623,7 +1623,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     else if (conn->imc_flags & IMC_BAD_TRANS_PARAMS)
     {
         is_app = 0;
-        error_code = TEC_PROTOCOL_VIOLATION;
+        error_code = TEC_TRANSPORT_PARAMETER_ERROR;
         reason = "bad transport parameters";
         rlen = 24;
     }
