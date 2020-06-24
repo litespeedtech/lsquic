@@ -783,10 +783,13 @@ static int
 stream_readable_discard (struct lsquic_stream *stream)
 {
     struct data_frame *data_frame;
+    uint64_t toread;
 
     while ((data_frame = stream->data_in->di_if->di_get_frame(
                                     stream->data_in, stream->read_offset)))
     {
+        toread = data_frame->df_size - data_frame->df_read_off;
+        stream->read_offset += toread;
         data_frame->df_read_off = data_frame->df_size;
         stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
     }

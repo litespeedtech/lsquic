@@ -146,6 +146,9 @@ typedef struct lsquic_packet_out
         POL_LOG_QL_BITS = 1 << 6,
         POL_SQUARE_BIT = 1 << 7,
         POL_LOSS_BIT = 1 << 8,
+#ifndef NDEBUG
+        POL_HEADER_PROT = 1 << 9,       /* Header protection applied */
+#endif
     }                  po_lflags:16;
     unsigned char     *po_data;
 

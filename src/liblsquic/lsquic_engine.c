@@ -2160,6 +2160,20 @@ close_conn_on_send_error (struct lsquic_engine *engine,
 }
 
 
+static void
+apply_hp (struct conns_out_iter *iter)
+{
+    struct lsquic_conn *conn;
+
+    TAILQ_FOREACH(conn, &iter->coi_active_list, cn_next_out)
+        if (conn->cn_esf_c->esf_flush_encryption && conn->cn_enc_session)
+            conn->cn_esf_c->esf_flush_encryption(conn->cn_enc_session);
+    TAILQ_FOREACH(conn, &iter->coi_inactive_list, cn_next_out)
+        if (conn->cn_esf_c->esf_flush_encryption && conn->cn_enc_session)
+            conn->cn_esf_c->esf_flush_encryption(conn->cn_enc_session);
+}
+
+
 static unsigned
 send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
             unsigned n_to_send)
@@ -2171,6 +2185,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
 
+    apply_hp(sb_ctx->conns_iter);
 #if CAN_LOSE_PACKETS
     if (engine->flags & ENG_LOSE_PACKETS)
         lose_matching_packets(engine, batch, n_to_send);

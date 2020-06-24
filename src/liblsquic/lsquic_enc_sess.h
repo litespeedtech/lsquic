@@ -123,6 +123,12 @@ struct enc_session_funcs_common
     void
     (*esf_set_conn) (enc_session_t *, struct lsquic_conn *);
 
+    /* Optional.  This function gets called after packets are encrypted,
+     * batched, and are about to be sent.
+     */
+    void
+    (*esf_flush_encryption) (enc_session_t *);
+
     unsigned
     esf_tag_len;
 };

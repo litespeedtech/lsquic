@@ -6608,6 +6608,9 @@ static void
 ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
                                    struct lsquic_packet_out *packet_out)
 {
+#ifndef NDEBUG
+    assert(packet_out->po_lflags & POL_HEADER_PROT);
+#endif
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     lsquic_send_ctl_delayed_one(&conn->ifc_send_ctl, packet_out);
 }
@@ -6620,6 +6623,9 @@ static void
 pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
                                const struct lsquic_packet_out *packet_out)
 {
+#ifndef NDEBUG
+    assert(packet_out->po_lflags & POL_HEADER_PROT);
+#endif
     /* Once IFC_IGNORE_INIT is set, the pre-hsk wrapper is removed: */
     assert(!(conn->ifc_flags & IFC_IGNORE_INIT));
     --conn->ifc_u.cli.ifcli_packets_out;
