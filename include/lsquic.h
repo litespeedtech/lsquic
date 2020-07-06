@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 17
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 18
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -131,18 +131,18 @@ enum lsquic_hsk_status
      */
     LSQ_HSK_FAIL,
     /**
-     * The handshake succeeded without 0-RTT.
+     * The handshake succeeded without session resumption.
      */
     LSQ_HSK_OK,
     /**
-     * The handshake succeeded with 0-RTT.
+     * The handshake succeeded with session resumption.
      */
-    LSQ_HSK_0RTT_OK,
+    LSQ_HSK_RESUMED_OK,
     /**
-     * The handshake failed because of 0-RTT (early data rejected).  Retry
-     * the connection without 0-RTT.
+     * Session resumption failed.  Retry the connection without session
+     * resumption.
      */
-    LSQ_HSK_0RTT_FAIL,
+    LSQ_HSK_RESUMED_FAIL,
 };
 
 /**
@@ -181,11 +181,7 @@ struct lsquic_stream_if {
     void (*on_close)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
     /* This callback in only called in client mode */
     /**
-     * When handshake is completed, this callback is called.  `ok' is set
-     * to true if handshake was successful; otherwise, `ok' is set to
-     * false.
-     *
-     * This callback is optional.
+     * When handshake is completed, this optional callback is called.
      */
     void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
     /**
@@ -196,9 +192,9 @@ struct lsquic_stream_if {
                                                         size_t token_size);
     /**
      * This optional callback lets client record information needed to
-     * perform a zero-RTT handshake next time around.
+     * perform a session resumption next time around.
      */
-    void (*on_zero_rtt_info)(lsquic_conn_t *c, const unsigned char *, size_t);
+    void (*on_sess_resume_info)(lsquic_conn_t *c, const unsigned char *, size_t);
 };
 
 struct ssl_ctx_st;
@@ -206,7 +202,7 @@ struct ssl_st;
 struct lsxpack_header;
 
 /**
- * QUIC engine in server role needs access to certificates.  This is
+ * QUIC engine in server mode needs access to certificates.  This is
  * accomplished by providing a callback and a context to the engine
  * constructor.
  */
@@ -397,10 +393,22 @@ struct lsquic_engine_settings {
      * which means that CFCW is not allowed to increase from its initial
      * value.
      *
-     * @see es_cfcw
+     * This setting is applicable to both gQUIC and IETF QUIC.
+     *
+     * @see es_cfcw, @see es_init_max_data.
      */
     unsigned        es_max_cfcw;
 
+    /**
+     * This value is used to specify the maximum value stream flow control
+     * window is allowed to reach due to auto-tuning.  By default, this
+     * value is zero, meaning that auto-tuning is turned off.
+     *
+     * This setting is applicable to both gQUIC and IETF QUIC.
+     *
+     * @see es_sfcw, @see es_init_max_stream_data_bidi_remote,
+     * @see es_init_max_stream_data_bidi_local.
+     */
     unsigned        es_max_sfcw;
 
     /** MIDS */
@@ -470,8 +478,10 @@ struct lsquic_engine_settings {
      * (source-addr, dest-addr) tuple, thereby making it necessary to create
      * a socket for each connection.
      *
-     * This option has no effect in Q046, as the server never includes
+     * This option has no effect in Q046 and Q050, as the server never includes
      * CIDs in the short packets.
+     *
+     * This setting is applicable to gQUIC only.
      *
      * The default is @ref LSQUIC_DF_SUPPORT_TCID0.
      */
@@ -486,6 +496,8 @@ struct lsquic_engine_settings {
      *
      * This option does not affect the server, as it must support NSTP mode
      * if it was specified by the client.
+     *
+     * This setting is applicable to gQUIC only.
      */
     int             es_support_nstp;
 
@@ -493,6 +505,8 @@ struct lsquic_engine_settings {
      * If set to true value, the library will drop connections when it
      * receives corresponding Public Reset packet.  The default is to
      * ignore these packets.
+     *
+     * The default is @ref LSQUIC_DF_HONOR_PRST.
      */
     int             es_honor_prst;
 
@@ -533,7 +547,7 @@ struct lsquic_engine_settings {
     int             es_rw_once;
 
     /**
-     * If set, this value specifies that number of microseconds that
+     * If set, this value specifies the number of microseconds that
      * @ref lsquic_engine_process_conns() and
      * @ref lsquic_engine_send_unsent_packets() are allowed to spend
      * before returning.
@@ -563,6 +577,29 @@ struct lsquic_engine_settings {
      */
     unsigned        es_clock_granularity;
 
+    /**
+     * Congestion control algorithm to use.
+     *
+     *  0:  Use default (@ref LSQUIC_DF_CC_ALGO)
+     *  1:  Cubic
+     *  2:  BBR
+     */
+    unsigned        es_cc_algo;
+
+    /**
+     * No progress timeout.
+     *
+     * If connection does not make progress for this number of seconds, the
+     * connection is dropped.  Here, progress is defined as user streams
+     * being written to or read from.
+     *
+     * If this value is zero, this timeout is disabled.
+     *
+     * Default value is @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER in server
+     * mode and @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT in client mode.
+     */
+    unsigned        es_noprogress_timeout;
+
     /* The following settings are specific to IETF QUIC. */
     /* vvvvvvvvvvv */
 
@@ -578,15 +615,27 @@ struct lsquic_engine_settings {
     unsigned        es_init_max_data;
 
     /**
-     * Initial max stream data.
+     * Initial maximum amount of stream data allowed to be sent on streams
+     * created by remote end (peer).
      *
      * This is a transport parameter.
      *
      * Depending on the engine mode, the default value is either
-     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_CLIENT or
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_CLIENT or
      * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_REMOTE_SERVER.
      */
     unsigned        es_init_max_stream_data_bidi_remote;
+
+    /**
+     * Initial maximum amount of stream data allowed to be sent on streams
+     * created by remote end (peer).
+     *
+     * This is a transport parameter.
+     *
+     * Depending on the engine mode, the default value is either
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_CLIENT or
+     * @ref LSQUIC_DF_INIT_MAX_STREAM_DATA_BIDI_LOCAL_SERVER.
+     */
     unsigned        es_init_max_stream_data_bidi_local;
 
     /**
@@ -711,15 +760,6 @@ struct lsquic_engine_settings {
     int             es_allow_migration;
 
     /**
-     * Congestion control algorithm to use.
-     *
-     *  0:  Use default (@ref LSQUIC_DF_CC_ALGO)
-     *  1:  Cubic
-     *  2:  BBR
-     */
-    unsigned        es_cc_algo;
-
-    /**
      * Use QL loss bits.  Allowed values are:
      *  0:  Do not use loss bits
      *  1:  Allow loss bits
@@ -763,20 +803,6 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
      */
     unsigned short  es_max_udp_payload_size_rx;
-
-    /**
-     * No progress timeout.
-     *
-     * If connection does not make progress for this number of seconds, the
-     * connection is dropped.  Here, progress is defined as user streams
-     * being written to or read from.
-     *
-     * If this value is zero, this timeout is disabled.
-     *
-     * Default value is @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER in server
-     * mode and @ref LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT in client mode.
-     */
-    unsigned        es_noprogress_timeout;
 };
 
 /* Initialize `settings' to default values */
@@ -881,19 +907,19 @@ struct lsquic_packout_mem_if
     /**
      * Allocate buffer for sending.
      */
-    void *  (*pmi_allocate) (void *pmi_ctx, void *conn_ctx, unsigned short sz,
+    void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, unsigned short sz,
                                                                 char is_ipv6);
     /**
      * This function is used to release the allocated buffer after it is
      * sent via @ref ea_packets_out.
      */
-    void    (*pmi_release)  (void *pmi_ctx, void *conn_ctx, void *buf,
+    void    (*pmi_release)  (void *pmi_ctx, void *peer_ctx, void *buf,
                                                                 char is_ipv6);
     /**
      * If allocated buffer is not going to be sent, return it to the caller
      * using this function.
      */
-    void    (*pmi_return)  (void *pmi_ctx, void *conn_ctx, void *buf,
+    void    (*pmi_return)  (void *pmi_ctx, void *peer_ctx, void *buf,
                                                                 char is_ipv6);
 };
 
@@ -1076,7 +1102,7 @@ struct lsquic_engine_api
     void                                *ea_keylog_ctx;
 
     /**
-     * The optional ALPN string is used by the client @ref LSENG_HTTP
+     * The optional ALPN string is used by the client if @ref LSENG_HTTP
      * is not set.
      */
     const char                          *ea_alpn;
@@ -1102,8 +1128,8 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
 /**
  * Create a client connection to peer identified by `peer_ctx'.
  *
- * To let the engine specify QUIC version, use N_LSQVER.  If zero-rtt info
- * is supplied, version is picked from there instead.
+ * To let the engine specify QUIC version, use N_LSQVER.  If session resumption
+ * information is supplied, version is picked from there instead.
  *
  * If `max_udp_payload_size' is set to zero, it is inferred based on `peer_sa':
  * 1350 for IPv6 and 1370 for IPv4.
@@ -1114,7 +1140,7 @@ lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
                        const char *hostname, unsigned short max_udp_payload_size,
-                       const unsigned char *zero_rtt, size_t zero_rtt_len,
+                       const unsigned char *sess_resume, size_t sess_resume_len,
                        /** Resumption token: optional */
                        const unsigned char *token, size_t token_sz);
 
@@ -1147,7 +1173,8 @@ lsquic_engine_process_conns (lsquic_engine_t *engine);
 
 /**
  * Returns true if engine has some unsent packets.  This happens if
- * @ref ea_packets_out() could not send everything out.
+ * @ref ea_packets_out() could not send everything out or if processing
+ * deadline was exceeded (see @ref es_proc_time_thresh).
  */
 int
 lsquic_engine_has_unsent_packets (lsquic_engine_t *engine);
@@ -1452,6 +1479,7 @@ unsigned lsquic_stream_priority (const lsquic_stream_t *s);
 
 /**
  * Set stream priority.  Valid priority values are 1 through 256, inclusive.
+ * Lower value means higher priority.
  *
  * @retval   0  Success.
  * @retval  -1  Priority value is invalid.

@@ -115,10 +115,10 @@ struct enc_session_funcs_common
     (*esf_verify_reset_token) (enc_session_t *, const unsigned char *, size_t);
 
     int
-    (*esf_did_zero_rtt_succeed) (enc_session_t *);
+    (*esf_did_sess_resume_succeed) (enc_session_t *);
 
     int
-    (*esf_is_zero_rtt_enabled) (enc_session_t *);
+    (*esf_is_sess_resume_enabled) (enc_session_t *);
 
     void
     (*esf_set_conn) (enc_session_t *, struct lsquic_conn *);
@@ -231,11 +231,12 @@ struct enc_session_funcs_gquic
     size_t
     (*esf_mem_used)(enc_session_t *);
 
-    /* Zero-rtt serialization needs the knowledge of the QUIC version, that's
-     * why there is a separate method for thus.  Plus, we want to be able to
-     * call it after the "handshake is done" callback is called.
+    /* Session resumption serialization needs the knowledge of the QUIC
+     * version, that's why there is a separate method for thus.  Plus, we
+     * want to be able to call it after the "handshake is done" callback
+     * is called.
      */
-    void (*esf_maybe_dispatch_zero_rtt) (enc_session_t *,
+    void (*esf_maybe_dispatch_sess_resume) (enc_session_t *,
             void (*cb)(struct lsquic_conn *, const unsigned char *, size_t));
 
     void (*esf_reset_cid) (enc_session_t *, const lsquic_cid_t *);
@@ -361,7 +362,7 @@ extern const struct lsquic_stream_if lsquic_mini_cry_sm_if;
 #define ALERT_NO_APPLICATION_PROTOCOL 120
 
 enum lsquic_version
-lsquic_zero_rtt_version (const unsigned char *, size_t);
+lsquic_sess_resume_version (const unsigned char *, size_t);
 
 /* This is seems to be true for all of the ciphers used by IETF QUIC.
  * XXX: Perhaps add a check?

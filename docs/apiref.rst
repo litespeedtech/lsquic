@@ -54,6 +54,10 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID 28
 
+    .. member:: LSQVER_ID29
+
+        IETF QUIC version ID 29
+
     .. member:: N_LSQVER
 
         Special value indicating the number of versions in the enum.  It
@@ -73,7 +77,7 @@ List of versions in which the server never includes CID in short packets.
 
 Experimental versions.
 
-.. macro: LSQUIC_DEPRECATED_VERSIONS
+.. macro:: LSQUIC_DEPRECATED_VERSIONS
 
 Deprecated versions.
 
@@ -114,7 +118,7 @@ LSQUIC declares several types used by many of its public functions.  They are:
 
 .. type:: lsquic_conn_ctx_t
 
-    Connection context.  This is the return value of :func:`on_new_conn()`.
+    Connection context.  This is the return value of :member:`lsquic_stream_if.on_new_conn`.
     To LSQUIC, this is just an opaque pointer.  User code is expected to
     use it for its own purposes.
 
@@ -186,7 +190,8 @@ created:
 
     Create a new engine.
 
-    :param flags: This is is a bitmask of ``LSENG_SERVER``` and ``LSENG_HTTP``.
+    :param flags: This is is a bitmask of :macro:`LSENG_SERVER` and
+                :macro:`LSENG_HTTP`.
     :param api: Pointer to an initialized :type:`lsquic_engine_api`.
 
     The engine can be instantiated either in server mode (when ``LSENG_SERVER``
@@ -196,6 +201,18 @@ created:
     Specifying ``LSENG_HTTP`` flag enables the HTTP functionality: HTTP/2-like
     for Google QUIC connections and HTTP/3 functionality for IETF QUIC
     connections.
+
+.. macro:: LSENG_SERVER
+
+    One of possible bitmask values passed as first argument to
+    :type:`lsquic_engine_new`.  When set, the engine instance
+    will be in the server mode.
+
+.. macro:: LSENG_HTTP
+
+    One of possible bitmask values passed as first argument to
+    :type:`lsquic_engine_new`.  When set, the engine instance
+    will enable HTTP functionality.
 
 .. function:: void lsquic_engine_cooldown (lsquic_engine_t *engine)
 
@@ -268,6 +285,11 @@ optional members.
         In a multi-process setup, it may be useful to observe the CID
         lifecycle.  This optional set of callbacks makes it possible.
 
+    .. member:: const char                          *ea_alpn
+
+        The optional ALPN string is used by the client if :macro:`LSENG_HTTP`
+        is not set.
+
 .. _apiref-engine-settings:
 
 Engine Settings
@@ -307,17 +329,27 @@ settings structure:
 
     .. member:: unsigned        es_max_cfcw
 
-       This value is used to specify maximum allowed value connection flow
-       control window is allowed to reach due to window auto-tuning.  By
-       default, this value is zero, which means that CFCW is not allowed
-       to increase from its initial value.
+       This value is used to specify maximum allowed value CFCW is allowed
+       to reach due to window auto-tuning.  By default, this value is zero,
+       which means that CFCW is not allowed to increase from its initial
+       value.
+
+       This setting is applicable to both gQUIC and IETF QUIC.
+
+       See :member:`lsquic_engine_settings.es_cfcw`,
+       :member:`lsquic_engine_settings.es_init_max_data`.
 
     .. member:: unsigned        es_max_sfcw
 
-       This value is used to specify maximum allowed value stream flow
-       control window is allowed to reach due to window auto-tuning.  By
-       default, this value is zero, which means that CFCW is not allowed
-       to increase from its initial value.
+       This value is used to specify the maximum value stream flow control
+       window is allowed to reach due to auto-tuning.  By default, this
+       value is zero, meaning that auto-tuning is turned off.
+
+       This setting is applicable to both gQUIC and IETF QUIC.
+
+       See :member:`lsquic_engine_settings.es_sfcw`,
+       :member:`lsquic_engine_settings.es_init_max_stream_data_bidi_local`,
+       :member:`lsquic_engine_settings.es_init_max_stream_data_bidi_remote`.
 
     .. member:: unsigned        es_max_streams_in
 
@@ -397,8 +429,10 @@ settings structure:
        (source-addr, dest-addr) tuple, thereby making it necessary to create
        a socket for each connection.
 
-       This option has no effect in Q046, as the server never includes
+       This option has no effect in Q046 and Q050, as the server never includes
        CIDs in the short packets.
+
+       This setting is applicable to gQUIC only.
 
        The default is :func:`LSQUIC_DF_SUPPORT_TCID0`.
 
@@ -420,6 +454,8 @@ settings structure:
        If set to true value, the library will drop connections when it
        receives corresponding Public Reset packet.  The default is to
        ignore these packets.
+
+       The default is :macro:`LSQUIC_DF_HONOR_PRST`.
 
     .. member:: int             es_send_prst
 
@@ -457,7 +493,7 @@ settings structure:
 
     .. member:: unsigned        es_proc_time_thresh
 
-       If set, this value specifies that number of microseconds that
+       If set, this value specifies the number of microseconds that
        :func:`lsquic_engine_process_conns()` and
        :func:`lsquic_engine_send_unsent_packets()` are allowed to spend
        before returning.
@@ -842,7 +878,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     Default clock granularity is 1000 microseconds.
 
-.. macro:: LSQUIC_DF_SCID_LEN 8
+.. macro:: LSQUIC_DF_SCID_LEN
 
     The default value is 8 for simplicity and speed.
 
@@ -987,7 +1023,7 @@ that the library uses to send packets.
 
         ECN may be set by IETF QUIC connections if ``es_ecn`` is set.
 
-.. type: typedef int (*lsquic_packets_out_f)(void *packets_out_ctx, const struct lsquic_out_spec  *out_spec, unsigned n_packets_out)
+.. type:: typedef int (*lsquic_packets_out_f)(void *packets_out_ctx, const struct lsquic_out_spec  *out_spec, unsigned n_packets_out)
 
     Returns number of packets successfully sent out or -1 on error.  -1 should
     only be returned if no packets were sent out.  If -1 is returned or if the
@@ -1010,7 +1046,9 @@ that the library uses to send packets.
 .. function:: int lsquic_engine_has_unsent_packets (lsquic_engine_t *engine)
 
     Returns true if engine has some unsent packets.  This happens if
-    ``ea_packets_out()`` could not send everything out.
+    :member:`lsquic_engine_api.ea_packets_out` could not send everything out
+    or if processing deadline was exceeded (see
+    :member:`lsquic_engine_settings.es_proc_time_thresh`).
 
 .. function:: void lsquic_engine_send_unsent_packets (lsquic_engine_t *engine)
 
@@ -1028,8 +1066,7 @@ the engine to communicate with the user code:
 
 .. type:: struct lsquic_stream_if
 
-    .. member:: lsquic_conn_ctx_t *(*on_new_conn)(void *stream_if_ctx,
-                                                        lsquic_conn_t *);
+    .. member:: lsquic_conn_ctx_t *(*on_new_conn)(void *stream_if_ctx, lsquic_conn_t *)
 
         Called when a new connection has been created.  In server mode,
         this means that the handshake has been successful.  In client mode,
@@ -1104,10 +1141,10 @@ the engine to communicate with the user code:
 
         This callback is optional.
 
-    .. member:: void (*on_zero_rtt_info)(lsquic_conn_t *c, const unsigned char *, size_t)
+    .. member:: void (*on_sess_resume_info)(lsquic_conn_t *c, const unsigned char *, size_t)
 
         This callback lets client record information needed to
-        perform a zero-RTT handshake next time around.
+        perform session resumption next time around.
 
         This callback is optional.
 
@@ -1115,19 +1152,19 @@ Creating Connections
 --------------------
 
 In server mode, the connections are created by the library based on incoming
-packets.  After handshake is completed, the library calls :func:`on_new_conn()`
+packets.  After handshake is completed, the library calls :member:`lsquic_stream_if.on_new_conn`
 callback.
 
 In client mode, a new connection is created by
 
-.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short max_udp_payload_size, const unsigned char *zero_rtt, size_t zero_rtt_len, const unsigned char *token, size_t token_sz)
+.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short max_udp_payload_size, const unsigned char *sess_resume, size_t sess_resume_len, const unsigned char *token, size_t token_sz)
 
     :param engine: Engine to use.
 
     :param version:
 
-        To let the engine specify QUIC version, use N_LSQVER.  If zero-rtt info is
-        supplied, version is picked from there instead.
+        To let the engine specify QUIC version, use N_LSQVER.  If session resumption
+        information is supplied, version is picked from there instead.
 
     :param local_sa:
 
@@ -1139,7 +1176,7 @@ In client mode, a new connection is created by
 
     :param peer_ctx:
 
-        Context associated with the connection.  This is what gets passed to TODO.
+        Context associated with the peer.  This is what gets passed to TODO.
 
     :param conn_ctx:
 
@@ -1158,14 +1195,14 @@ In client mode, a new connection is created by
         Maximum packet size.  If set to zero, it is inferred based on `peer_sa`
         and `version`.
 
-    :param zero_rtt:
+    :param sess_resume:
 
-        Pointer to previously saved zero-RTT data needed for TLS resumption.
-        May be NULL.
+        Pointer to previously saved session resumption data needed for
+        TLS resumption.  May be NULL.
 
-    :param zero_rtt_len:
+    :param sess_resume_len:
 
-        Size of zero-RTT data.
+        Size of session resumption data.
 
     :param token:
 
@@ -1173,7 +1210,7 @@ In client mode, a new connection is created by
         packet.  Tokens are used by IETF QUIC to pre-validate client
         connections, potentially avoiding a retry.
 
-        See ``on_new_token`` callback in :type:`lsquic_stream_if`:
+        See :member:`lsquic_stream_if.on_new_token` callback.
 
         May be NULL.
 
@@ -1193,7 +1230,8 @@ Closing Connections
 
 .. function:: void lsquic_conn_close (lsquic_conn_t *conn)
 
-    This closes the connection.  ``on_conn_closed()`` and ``on_close()`` callbacks will be called.
+    This closes the connection.  :member:`lsquic_stream_if.on_conn_closed`
+    and :member:`lsquic_stream_if.on_close` callbacks will be called.
 
 Creating Streams
 ----------------
@@ -1389,10 +1427,6 @@ more information.
     .. member:: char             *buf
 
         the buffer for headers
-
-    .. member:: const char       *name_ptr
-
-        the name pointer can be optionally set for encoding
 
     .. member:: uint32_t          name_hash
 
@@ -1593,7 +1627,7 @@ Push Promises
     Only makes sense in server mode: the client cannot push a stream and this
     function always returns false in client mode.
 
-.. function: int lsquic_stream_is_pushed (const lsquic_stream_t *stream)
+.. function:: int lsquic_stream_is_pushed (const lsquic_stream_t *stream)
 
     :return: Boolean value indicating whether this is a pushed stream.
 
@@ -1621,6 +1655,7 @@ Stream Priorities
 .. function:: int lsquic_stream_set_priority (lsquic_stream_t *stream, unsigned priority)
 
     Set stream priority.  Valid priority values are 1 through 256, inclusive.
+    Lower value means higher priority.
 
     :return: 0 on success of -1 on failure (this happens if priority value is invalid).
 
@@ -1799,16 +1834,16 @@ Miscellaneous Types
 
     If not specified, malloc() and free() are used.
 
-    .. member:: void *  (*pmi_allocate) (void *pmi_ctx, void *conn_ctx, unsigned short sz, char is_ipv6)
+    .. member:: void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, unsigned short sz, char is_ipv6)
 
         Allocate buffer for sending.
 
-    .. member:: void    (*pmi_release)  (void *pmi_ctx, void *conn_ctx, void *buf, char is_ipv6)
+    .. member:: void    (*pmi_release)  (void *pmi_ctx, void *peer_ctx, void *buf, char is_ipv6)
 
         This function is used to release the allocated buffer after it is
         sent via ``ea_packets_out()``.
 
-    .. member:: void    (*pmi_return)  (void *pmi_ctx, void *conn_ctx, void *buf, char is_ipv6)
+    .. member:: void    (*pmi_return)  (void *pmi_ctx, void *peer_ctx, void *buf, char is_ipv6)
 
         If allocated buffer is not going to be sent, return it to the
         caller using this function.

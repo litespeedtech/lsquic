@@ -1580,7 +1580,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
                        const char *hostname, unsigned short max_packet_size,
-                       const unsigned char *zero_rtt, size_t zero_rtt_len,
+                       const unsigned char *sess_resume, size_t sess_resume_len,
                        const unsigned char *token, size_t token_sz)
 {
     lsquic_conn_t *conn;
@@ -1606,14 +1606,14 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
         return NULL;
     flags = engine->flags & (ENG_SERVER|ENG_HTTP);
     is_ipv4 = peer_sa->sa_family == AF_INET;
-    if (zero_rtt && zero_rtt_len)
+    if (sess_resume && sess_resume_len)
     {
-        version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
+        version = lsquic_sess_resume_version(sess_resume, sess_resume_len);
         if (version >= N_LSQVER)
         {
-            LSQ_INFO("zero-rtt version is bad, won't use");
-            zero_rtt = NULL;
-            zero_rtt_len = 0;
+            LSQ_INFO("session resumption version is bad, won't use");
+            sess_resume = NULL;
+            sess_resume_len = 0;
         }
     }
     if (version >= N_LSQVER)
@@ -1627,11 +1627,11 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
     if (versions & LSQUIC_IETF_VERSIONS)
         conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
                     flags, hostname, max_packet_size,
-                    is_ipv4, zero_rtt, zero_rtt_len, token, token_sz);
+                    is_ipv4, sess_resume, sess_resume_len, token, token_sz);
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
                             flags, hostname, max_packet_size, is_ipv4,
-                            zero_rtt, zero_rtt_len);
+                            sess_resume, sess_resume_len);
     if (!conn)
         goto err;
     EV_LOG_CREATE_CONN(lsquic_conn_log_cid(conn), local_sa, peer_sa);

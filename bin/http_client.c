@@ -187,10 +187,10 @@ struct http_client_ctx {
     unsigned                     hcc_reset_after_nbytes;
     unsigned                     hcc_retire_cid_after_nbytes;
     
-    char                        *hcc_zero_rtt_file_name;
+    char                        *hcc_sess_resume_file_name;
 
     enum {
-        HCC_SKIP_0RTT           = (1 << 0),
+        HCC_SKIP_SESS_RESUME    = (1 << 0),
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
     }                            hcc_flags;
@@ -212,7 +212,7 @@ struct lsquic_conn_ctx {
                                              * never exceed hcc_cc_reqs_per_conn in client_ctx.
                                              */
     enum {
-        CH_ZERO_RTT_SAVED   = 1 << 0,
+        CH_SESSION_RESUME_SAVED   = 1 << 0,
     }                    ch_flags;
 };
 
@@ -240,31 +240,31 @@ create_connections (struct http_client_ctx *client_ctx)
 {
     size_t len;
     FILE *file;
-    unsigned char zero_rtt[0x2000];
+    unsigned char sess_resume[0x2000];
 
-    if (0 == (client_ctx->hcc_flags & HCC_SKIP_0RTT)
-                                    && client_ctx->hcc_zero_rtt_file_name)
+    if (0 == (client_ctx->hcc_flags & HCC_SKIP_SESS_RESUME)
+                                    && client_ctx->hcc_sess_resume_file_name)
     {
-        file = fopen(client_ctx->hcc_zero_rtt_file_name, "rb");
+        file = fopen(client_ctx->hcc_sess_resume_file_name, "rb");
         if (!file)
         {
             LSQ_DEBUG("cannot open %s for reading: %s",
-                        client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+                        client_ctx->hcc_sess_resume_file_name, strerror(errno));
             goto no_file;
         }
-        len = fread(zero_rtt, 1, sizeof(zero_rtt), file);
+        len = fread(sess_resume, 1, sizeof(sess_resume), file);
         if (0 == len && !feof(file))
             LSQ_WARN("error reading %s: %s",
-                        client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+                        client_ctx->hcc_sess_resume_file_name, strerror(errno));
         fclose(file);
-        LSQ_INFO("create connection zero_rtt %zu bytes", len);
+        LSQ_INFO("create connection sess_resume %zu bytes", len);
     }
     else no_file:
         len = 0;
 
     while (client_ctx->hcc_n_open_conns < client_ctx->hcc_concurrency &&
            client_ctx->hcc_total_n_reqs > 0)
-        if (0 != prog_connect(client_ctx->prog, len ? zero_rtt : NULL, len))
+        if (0 != prog_connect(client_ctx->prog, len ? sess_resume : NULL, len))
         {
             LSQ_ERROR("connection failed");
             exit(EXIT_FAILURE);
@@ -377,7 +377,7 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
 static int
 hsk_status_ok (enum lsquic_hsk_status status)
 {
-    return status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK;
+    return status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK;
 }
 
 
@@ -389,13 +389,14 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 
     if (hsk_status_ok(status))
         LSQ_INFO("handshake success %s",
-                                status == LSQ_HSK_0RTT_OK ? "with 0-RTT" : "");
+                    status == LSQ_HSK_RESUMED_OK ? "(session resumed)" : "");
     else if (status == LSQ_HSK_FAIL)
         LSQ_INFO("handshake failed");
-    else if (status == LSQ_HSK_0RTT_FAIL)
+    else if (status == LSQ_HSK_RESUMED_FAIL)
     {
-        LSQ_INFO("handshake failed because of 0-RTT, will retry without it");
-        client_ctx->hcc_flags |= HCC_SKIP_0RTT;
+        LSQ_INFO("handshake failed because of session resumption, will retry "
+                                                                "without it");
+        client_ctx->hcc_flags |= HCC_SKIP_SESS_RESUME;
         ++client_ctx->hcc_concurrency;
         ++client_ctx->hcc_total_n_reqs;
     }
@@ -423,7 +424,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 
 
 static void
-http_client_on_zero_rtt_info (lsquic_conn_t *conn, const unsigned char *buf,
+http_client_on_sess_resume_info (lsquic_conn_t *conn, const unsigned char *buf,
                                                                 size_t bufsz)
 {
     lsquic_conn_ctx_t *const conn_h = lsquic_conn_get_ctx(conn);
@@ -431,35 +432,36 @@ http_client_on_zero_rtt_info (lsquic_conn_t *conn, const unsigned char *buf,
     FILE *file;
     size_t nw;
 
-    assert(client_ctx->hcc_zero_rtt_file_name);
+    assert(client_ctx->hcc_sess_resume_file_name);
 
     /* Our client is rather limited: only one file and only one ticket per
      * connection can be saved.
      */
-    if (conn_h->ch_flags & CH_ZERO_RTT_SAVED)
+    if (conn_h->ch_flags & CH_SESSION_RESUME_SAVED)
     {
-        LSQ_DEBUG("zero-rtt already saved for this connection");
+        LSQ_DEBUG("session resumption information already saved for this "
+                                                                "connection");
         return;
     }
 
-    file = fopen(client_ctx->hcc_zero_rtt_file_name, "wb");
+    file = fopen(client_ctx->hcc_sess_resume_file_name, "wb");
     if (!file)
     {
         LSQ_WARN("cannot open %s for writing: %s",
-            client_ctx->hcc_zero_rtt_file_name, strerror(errno));
+            client_ctx->hcc_sess_resume_file_name, strerror(errno));
         return;
     }
 
     nw = fwrite(buf, 1, bufsz, file);
     if (nw == bufsz)
     {
-        LSQ_DEBUG("wrote %zd bytes of zero-rtt information to %s",
-            nw, client_ctx->hcc_zero_rtt_file_name);
-        conn_h->ch_flags |= CH_ZERO_RTT_SAVED;
+        LSQ_DEBUG("wrote %zd bytes of session resumption information to %s",
+            nw, client_ctx->hcc_sess_resume_file_name);
+        conn_h->ch_flags |= CH_SESSION_RESUME_SAVED;
     }
     else
         LSQ_WARN("error: fwrite(%s) returns %zd instead of %zd: %s",
-            client_ctx->hcc_zero_rtt_file_name, nw, bufsz, strerror(errno));
+            client_ctx->hcc_sess_resume_file_name, nw, bufsz, strerror(errno));
 
     fclose(file);
 }
@@ -1536,8 +1538,8 @@ main (int argc, char **argv)
             client_ctx.hcc_retire_cid_after_nbytes = atoi(optarg);
             break;
         case '0':
-            http_client_if.on_zero_rtt_info = http_client_on_zero_rtt_info;
-            client_ctx.hcc_zero_rtt_file_name = optarg;
+            http_client_if.on_sess_resume_info = http_client_on_sess_resume_info;
+            client_ctx.hcc_sess_resume_file_name = optarg;
             break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))

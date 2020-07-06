@@ -376,7 +376,7 @@ prog_eb (struct prog *prog)
 
 
 int
-prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
+prog_connect (struct prog *prog, unsigned char *sess_resume, size_t sess_resume_len)
 {
     struct service_port *sport;
 
@@ -388,7 +388,7 @@ prog_connect (struct prog *prog, unsigned char *zero_rtt, size_t zero_rtt_len)
                     /* SNI is required for HTTP */
                   : prog->prog_engine_flags & LSENG_HTTP ? sport->host
                   : NULL,
-                    prog->prog_max_packet_size, zero_rtt, zero_rtt_len,
+                    prog->prog_max_packet_size, sess_resume, sess_resume_len,
                     sport->sp_token_buf, sport->sp_token_sz))
         return -1;
 

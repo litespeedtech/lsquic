@@ -110,8 +110,8 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         if (c_hsk->lconn->cn_esf.g->esf_is_hsk_done(c_hsk->lconn->cn_enc_session))
         {
             LSQ_DEBUG("handshake is successful, inform connection");
-            status = (c_hsk->lconn->cn_esf_c->esf_did_zero_rtt_succeed(
-                c_hsk->lconn->cn_enc_session)) ? LSQ_HSK_0RTT_OK : LSQ_HSK_OK;
+            status = (c_hsk->lconn->cn_esf_c->esf_did_sess_resume_succeed(
+                c_hsk->lconn->cn_enc_session)) ? LSQ_HSK_RESUMED_OK : LSQ_HSK_OK;
             c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, status);
         }
         else

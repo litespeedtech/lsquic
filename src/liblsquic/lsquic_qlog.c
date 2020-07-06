@@ -83,6 +83,7 @@ lsquic_qlog_create_connection (const lsquic_cid_t* cid,
             lsquic_time_now(), ip_version, srcip, dstip, srcport, dstport);
 }
 
+
 #define QLOG_FRAME_DICT_PREFIX_COMMA ",{\"frame_type\":\""
 #define QLOG_FRAME_DICT_PREFIX "{\"frame_type\":\""
 #define QLOG_FRAME_DICT_SUFFIX "\"}"
@@ -170,7 +171,7 @@ lsquic_qlog_hsk_completed (const lsquic_cid_t* cid)
 
 
 void
-lsquic_qlog_zero_rtt (const lsquic_cid_t* cid)
+lsquic_qlog_sess_resume (const lsquic_cid_t* cid)
 {
     LCID("[%" PRIu64 ",\"RECOVERY\",\"RTT_UPDATE\",\"PACKET_RX\","
             "{\"zero_rtt\":\"successful\"}]", lsquic_time_now());

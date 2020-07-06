@@ -44,7 +44,7 @@ main (void)
 
     lsquic_qlog_packet_rx(&cid, NULL, NULL, 0);
     lsquic_qlog_hsk_completed(&cid);
-    lsquic_qlog_zero_rtt(&cid);
+    lsquic_qlog_sess_resume(&cid);
     lsquic_qlog_check_certs(&cid, NULL, 0);
 
     lsquic_qlog_version_negotiation(&cid, NULL, NULL);

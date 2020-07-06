@@ -717,21 +717,21 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
                       unsigned versions, unsigned flags,
                       const char *hostname, unsigned short max_packet_size,
                       int is_ipv4,
-                      const unsigned char *zero_rtt, size_t zero_rtt_len)
+                      const unsigned char *sess_resume, size_t sess_resume_len)
 {
     struct full_conn *conn;
-    enum lsquic_version version, zero_rtt_version;
+    enum lsquic_version version, sess_resume_version;
     lsquic_cid_t cid;
     const struct enc_session_funcs_gquic *esf_g;
 
     versions &= (~LSQUIC_IETF_VERSIONS & LSQUIC_SUPPORTED_VERSIONS);
     assert(versions);
     version = highest_bit_set(versions);
-    if (zero_rtt)
+    if (sess_resume)
     {
-        zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_len);
-        if (zero_rtt_version < N_LSQVER && ((1 << zero_rtt_version) & versions))
-            version = zero_rtt_version;
+        sess_resume_version = lsquic_sess_resume_version(sess_resume, sess_resume_len);
+        if (sess_resume_version < N_LSQVER && ((1 << sess_resume_version) & versions))
+            version = sess_resume_version;
     }
     esf_g = select_esf_gquic_by_ver(version);
     lsquic_generate_cid_gquic(&cid);
@@ -751,7 +751,7 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->fc_conn.cn_esf.g = esf_g;
     conn->fc_conn.cn_enc_session =
         conn->fc_conn.cn_esf.g->esf_create_client(&conn->fc_conn, hostname,
-                                cid, conn->fc_enpub, zero_rtt, zero_rtt_len);
+                                cid, conn->fc_enpub, sess_resume, sess_resume_len);
     if (!conn->fc_conn.cn_enc_session)
     {
         LSQ_WARN("could not create enc session: %s", strerror(errno));
@@ -1368,10 +1368,10 @@ full_conn_ci_n_avail_streams (const lsquic_conn_t *lconn)
 
 
 static int
-handshake_done_or_doing_zero_rtt (const struct full_conn *conn)
+handshake_done_or_doing_sess_resume (const struct full_conn *conn)
 {
     return (conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-        || conn->fc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
+        || conn->fc_conn.cn_esf_c->esf_is_sess_resume_enabled(
                                                 conn->fc_conn.cn_enc_session);
 }
 
@@ -1380,7 +1380,7 @@ static void
 full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    if (handshake_done_or_doing_zero_rtt(conn)
+    if (handshake_done_or_doing_sess_resume(conn)
                                     && full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (!new_stream(conn, generate_stream_id(conn), SCF_CALL_ON_NEW))
@@ -3463,7 +3463,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 0);
-    if (!handshake_done_or_doing_zero_rtt(conn))
+    if (!handshake_done_or_doing_sess_resume(conn))
     {
         process_hsk_stream_write_events(conn);
         goto end_write;
@@ -3639,12 +3639,12 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     lsquic_alarmset_unset(&conn->fc_alset, AL_HANDSHAKE);
     switch (status)
     {
-        case LSQ_HSK_0RTT_FAIL:
+        case LSQ_HSK_RESUMED_FAIL:
         case LSQ_HSK_FAIL:
             conn->fc_flags |= FC_HSK_FAILED;
             break;
         case LSQ_HSK_OK:
-        case LSQ_HSK_0RTT_OK:
+        case LSQ_HSK_RESUMED_OK:
             if (0 == apply_peer_settings(conn))
             {
                 if (conn->fc_flags & FC_HTTP)
@@ -3658,12 +3658,12 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_hsk_done(lconn,
                                                                         status);
-    if (status == LSQ_HSK_OK || status == LSQ_HSK_0RTT_OK)
+    if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK)
     {
-        if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info)
-            conn->fc_conn.cn_esf.g->esf_maybe_dispatch_zero_rtt(
+        if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_sess_resume_info)
+            conn->fc_conn.cn_esf.g->esf_maybe_dispatch_sess_resume(
                 conn->fc_conn.cn_enc_session,
-                conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_zero_rtt_info);
+                conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_sess_resume_info);
         if (conn->fc_n_delayed_streams)
             create_delayed_streams(conn);
         if (!(conn->fc_flags & FC_SERVER))
@@ -3721,6 +3721,7 @@ full_conn_ci_close (struct lsquic_conn *lconn)
         conn->fc_flags |= FC_CLOSING;
         if (!(conn->fc_flags & FC_GOAWAY_SENT))
             conn->fc_flags |= FC_SEND_GOAWAY;
+        lsquic_engine_add_conn_to_tickable(conn->fc_enpub, lconn);
     }
 }
 
@@ -4204,7 +4205,7 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             LSQ_DEBUG("tickable: there are sending streams");
             goto check_can_send;
         }
-        if (handshake_done_or_doing_zero_rtt(conn))
+        if (handshake_done_or_doing_sess_resume(conn))
         {
             TAILQ_FOREACH(stream, &conn->fc_pub.write_streams,
                                                         next_write_stream)
@@ -4302,7 +4303,7 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
     struct lsquic_stream *stream;
     enum lsquic_version version;
 
-    if (lconn->cn_esf_c->esf_is_zero_rtt_enabled(conn->fc_conn.cn_enc_session))
+    if (lconn->cn_esf_c->esf_is_sess_resume_enabled(conn->fc_conn.cn_enc_session))
     {
         /* We need to do this because we do not clean up any data that may
          * have been already sent.  This is left an optimization for the
@@ -4310,7 +4311,7 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
          */
         LSQ_DEBUG("received SREJ when 0RTT was on: fail handshake and let "
             "caller retry");
-        full_conn_ci_hsk_done(lconn, LSQ_HSK_0RTT_FAIL);
+        full_conn_ci_hsk_done(lconn, LSQ_HSK_RESUMED_FAIL);
         return -1;
     }
 

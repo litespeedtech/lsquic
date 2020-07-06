@@ -1,3 +1,18 @@
+2020-07-06
+    - 2.18.0
+    - [API] Rename "0-RTT" to "session resumption." In IETF QUIC, "0-RTT"
+      always refers to early data, meaning a request that the server can
+      reply to in the very first return flight.  A more appropriate name
+      for what we support on the client site is "session resumption," which
+      is standard TLS terminology.  Later, when we add support for 0-RTT
+      (early data), we can use the 0-RTT terminology again, this time in
+      proper context.
+    - [BUGFIX] Do not set certificate callback if ea_lookup_cert is NULL.
+    - [BUGFIX] Make connection tickable when it's marked as closed.
+    - [BUGFIX] Fail certificate lookup if SNI is not present in HTTP mode.
+    - Several documentation fixes and improvements.
+    - Minor code cleanup.
+
 2020-06-24
     - 2.17.2
     - [BUGFIX] Infinite loop in stream: advance read offset when discarding

@@ -201,7 +201,7 @@ typedef struct c_cert_item_st
 } c_cert_item_t;
 
 
-struct lsquic_zero_rtt_storage
+struct lsquic_sess_resume_storage
 {
     uint32_t    quic_version_tag;
     uint32_t    serializer_version;
@@ -592,7 +592,7 @@ enum rtt_deserialize_return_type
 #define RTT_SERIALIZER_VERSION  (1 << 0)
 
 static void
-lsquic_enc_session_serialize_zero_rtt(struct lsquic_zero_rtt_storage *storage,
+lsquic_enc_session_serialize_sess_resume(struct lsquic_sess_resume_storage *storage,
                                         enum lsquic_version version,
                                         const lsquic_session_cache_info_t *info,
                                                 const c_cert_item_t *cert_item)
@@ -643,8 +643,8 @@ lsquic_enc_session_serialize_zero_rtt(struct lsquic_zero_rtt_storage *storage,
     } while (0) \
 
 static enum rtt_deserialize_return_type
-lsquic_enc_session_deserialize_zero_rtt(
-                                const struct lsquic_zero_rtt_storage *storage,
+lsquic_enc_session_deserialize_sess_resume(
+                                const struct lsquic_sess_resume_storage *storage,
                                                         size_t storage_size,
                                 const struct lsquic_engine_settings *settings,
                                             lsquic_session_cache_info_t *info,
@@ -824,12 +824,12 @@ maybe_log_secrets (struct lsquic_enc_session *enc_session)
 static enc_session_t *
 lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
                     lsquic_cid_t cid, const struct lsquic_engine_public *enpub,
-                                    const unsigned char *zero_rtt, size_t zero_rtt_len)
+                                    const unsigned char *sess_resume, size_t sess_resume_len)
 {
     lsquic_session_cache_info_t *info;
     struct lsquic_enc_session *enc_session;
     c_cert_item_t *item;
-    const struct lsquic_zero_rtt_storage *zero_rtt_storage;
+    const struct lsquic_sess_resume_storage *sess_resume_storage;
 
     if (!domain)
     {
@@ -849,7 +849,7 @@ lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
         return NULL;
     }
 
-    if (zero_rtt && zero_rtt_len > sizeof(struct lsquic_zero_rtt_storage))
+    if (sess_resume && sess_resume_len > sizeof(struct lsquic_sess_resume_storage))
     {
         item = calloc(1, sizeof(*item));
         if (!item)
@@ -858,22 +858,22 @@ lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
             free(info);
             return NULL;
         }
-        zero_rtt_storage = (const struct lsquic_zero_rtt_storage *)zero_rtt;
-        switch (lsquic_enc_session_deserialize_zero_rtt(zero_rtt_storage,
-                                                        zero_rtt_len,
+        sess_resume_storage = (const struct lsquic_sess_resume_storage *)sess_resume;
+        switch (lsquic_enc_session_deserialize_sess_resume(sess_resume_storage,
+                                                        sess_resume_len,
                                                         &enpub->enp_settings,
                                                         info, item))
         {
             case RTT_DESERIALIZE_BAD_QUIC_VER:
-                LSQ_ERROR("provided zero_rtt has unsupported QUIC version");
+                LSQ_ERROR("provided sess_resume has unsupported QUIC version");
                 free(item);
                 break;
             case RTT_DESERIALIZE_BAD_SERIAL_VER:
-                LSQ_ERROR("provided zero_rtt has bad serializer version");
+                LSQ_ERROR("provided sess_resume has bad serializer version");
                 free(item);
                 break;
             case RTT_DESERIALIZE_BAD_CERT_SIZE:
-                LSQ_ERROR("provided zero_rtt has bad cert size");
+                LSQ_ERROR("provided sess_resume has bad cert size");
                 free(item);
                 break;
             case RTT_DESERIALIZE_OK:
@@ -2728,7 +2728,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
         enc_session->hsk_state = HSK_COMPLETED;
         EV_LOG_HSK_COMPLETED(&enc_session->cid);
         if (!(enc_session->es_flags & ES_RECV_REJ))
-            EV_LOG_ZERO_RTT(&enc_session->cid);
+            EV_LOG_SESSION_RESUMPTION(&enc_session->cid);
         break;
     default:
         ret = 1;    /* XXX Why 1? */
@@ -3599,7 +3599,7 @@ lsquic_enc_session_verify_reset_token (enc_session_t *enc_session_p,
 
 
 static int
-lsquic_enc_session_did_zero_rtt_succeed (enc_session_t *enc_session_p)
+lsquic_enc_session_did_sess_resume_succeed (enc_session_t *enc_session_p)
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
     return !(enc_session->es_flags & ES_RECV_REJ);
@@ -3607,7 +3607,7 @@ lsquic_enc_session_did_zero_rtt_succeed (enc_session_t *enc_session_p)
 
 
 static int
-lsquic_enc_session_is_zero_rtt_enabled (enc_session_t *enc_session_p)
+lsquic_enc_session_is_sess_resume_enabled (enc_session_t *enc_session_p)
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
     return enc_session->info && enc_session->cert_item;
@@ -3689,7 +3689,7 @@ lsquic_enc_session_get_server_cert_chain (enc_session_t *enc_session_p)
 
 
 static void
-maybe_dispatch_zero_rtt (enc_session_t *enc_session_p,
+maybe_dispatch_sess_resume (enc_session_t *enc_session_p,
                 void (*cb)(struct lsquic_conn *, const unsigned char *, size_t))
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
@@ -3700,7 +3700,7 @@ maybe_dispatch_zero_rtt (enc_session_t *enc_session_p,
 
     if (!(enc_session->info && enc_session->cert_item && cb))
     {
-        LSQ_DEBUG("no zero-rtt information or callback is not set");
+        LSQ_DEBUG("no session resumption information or callback is not set");
         return;
     }
 
@@ -3709,17 +3709,18 @@ maybe_dispatch_zero_rtt (enc_session_t *enc_session_p,
         sz += sizeof(uint32_t);
         sz += lsquic_str_len(&enc_session->cert_item->crts[i]);
     }
-    sz += sizeof(struct lsquic_zero_rtt_storage);
+    sz += sizeof(struct lsquic_sess_resume_storage);
 
     buf = malloc(sz);
     if (!buf)
     {
-        LSQ_WARN("malloc failed: cannot allocate %zu bytes for zero-rtt", sz);
+        LSQ_WARN("malloc failed: cannot allocate %zu bytes for session "
+                                                            "resumption", sz);
         return;
     }
 
-    lsquic_enc_session_serialize_zero_rtt(
-        (struct lsquic_zero_rtt_storage *) buf, lconn->cn_version,
+    lsquic_enc_session_serialize_sess_resume(
+        (struct lsquic_sess_resume_storage *) buf, lconn->cn_version,
         enc_session->info, enc_session->cert_item);
 
     cb(lconn, buf, sz);
@@ -3796,8 +3797,8 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 =
     .esf_tag_len = GQUIC_PACKET_HASH_SZ,
     .esf_get_server_cert_chain = lsquic_enc_session_get_server_cert_chain,
     .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
-    .esf_did_zero_rtt_succeed = lsquic_enc_session_did_zero_rtt_succeed,
-    .esf_is_zero_rtt_enabled = lsquic_enc_session_is_zero_rtt_enabled,
+    .esf_did_sess_resume_succeed = lsquic_enc_session_did_sess_resume_succeed,
+    .esf_is_sess_resume_enabled = lsquic_enc_session_is_sess_resume_enabled,
     .esf_set_conn        = gquic_esf_set_conn,
 };
 
@@ -4225,8 +4226,8 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_2 =
     .esf_alg_keysize            =  lsquic_enc_session_alg_keysize,
     .esf_get_server_cert_chain  =  lsquic_enc_session_get_server_cert_chain,
     .esf_verify_reset_token     =  lsquic_enc_session_verify_reset_token,
-    .esf_did_zero_rtt_succeed   =  lsquic_enc_session_did_zero_rtt_succeed,
-    .esf_is_zero_rtt_enabled    =  lsquic_enc_session_is_zero_rtt_enabled,
+    .esf_did_sess_resume_succeed   =  lsquic_enc_session_did_sess_resume_succeed,
+    .esf_is_sess_resume_enabled    =  lsquic_enc_session_is_sess_resume_enabled,
     .esf_set_conn               =  gquic_esf_set_conn,
     /* These are different from gquic_1: */
     .esf_encrypt_packet         =  gquic2_esf_encrypt_packet,
@@ -4266,7 +4267,7 @@ struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1 =
     .esf_gen_chlo = lsquic_enc_session_gen_chlo,
     .esf_handle_chlo_reply = lsquic_enc_session_handle_chlo_reply,
     .esf_mem_used = lsquic_enc_session_mem_used,
-    .esf_maybe_dispatch_zero_rtt = maybe_dispatch_zero_rtt,
+    .esf_maybe_dispatch_sess_resume = maybe_dispatch_sess_resume,
     .esf_reset_cid = lsquic_enc_session_reset_cid,
 };
 

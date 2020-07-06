@@ -80,7 +80,7 @@ void
 lsquic_qlog_hsk_completed (const lsquic_cid_t *);
 
 void
-lsquic_qlog_zero_rtt (const lsquic_cid_t *);
+lsquic_qlog_sess_resume (const lsquic_cid_t *);
 
 void
 lsquic_qlog_check_certs (const lsquic_cid_t *, const lsquic_str_t **, size_t);

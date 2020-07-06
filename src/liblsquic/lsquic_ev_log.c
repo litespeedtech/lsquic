@@ -554,9 +554,9 @@ lsquic_ev_log_hsk_completed (const lsquic_cid_t *cid)
 
 
 void
-lsquic_ev_log_zero_rtt (const lsquic_cid_t *cid)
+lsquic_ev_log_sess_resume (const lsquic_cid_t *cid)
 {
-    LCID("zero_rtt successful");
+    LCID("sess_resume successful");
 }
 
 

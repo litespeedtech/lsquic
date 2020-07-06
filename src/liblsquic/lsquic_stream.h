@@ -412,7 +412,7 @@ lsquic_stream_destroy (lsquic_stream_t *);
  * failure.  The latter may be caused by flow control violation or
  * invalid stream frame data, e.g. overlapping segments.
  *
- * Note that the caller does gives up control of `frame' no matter
+ * Note that the caller gives up control of `frame' no matter
  * what this function returns.
  *
  * This data is read by the user using lsquic_stream_read() function.
@@ -436,9 +436,6 @@ lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);
 
-ssize_t
-lsquic_stream_read (lsquic_stream_t *stream, void *buf, size_t len);
-
 uint64_t
 lsquic_stream_read_offset (const lsquic_stream_t *stream);
 
@@ -447,11 +444,6 @@ lsquic_stream_read_offset (const lsquic_stream_t *stream);
  */
 int
 lsquic_stream_tosend_fin (const lsquic_stream_t *stream);
-
-/* Data to be sent out to the network is written using lsquic_stream_write().
- */
-ssize_t
-lsquic_stream_write (lsquic_stream_t *stream, const void *buf, size_t len);
 
 void
 lsquic_stream_window_update (lsquic_stream_t *stream, uint64_t offset);

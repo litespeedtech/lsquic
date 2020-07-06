@@ -91,11 +91,12 @@ Engine instantiation is performed by :func:`lsquic_engine_new()`:
     lsquic_engine_t *engine
         = lsquic_engine_new(LSENG_SERVER|LSENG_HTTP, &engine_api);
 
-The engine mode is selected by using the ``LSENG_SERVER`` flag.  If
-present, the engine will be in server mode; if not, the engine will
-be in client mode.
+The engine mode is selected by using the :macro:`LSENG_SERVER` flag.
+If present, the engine will be in server mode; if not, the engine will
+be in client mode.  If you need both server and client functionality
+in your program, instantiate two engines (or as many as you like).
 
-Using the ``LSENG_HTTP`` flag enables the HTTP behavior:  The library
+Using the :macro:`LSENG_HTTP` flag enables the HTTP behavior:  The library
 hides the interaction between the HTTP application layer and the QUIC
 transport layer and presents a simple, unified (between Google QUIC and
 HTTP/3) way of sending and receiving HTTP messages.  Behind the scenes,

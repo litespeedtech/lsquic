@@ -590,7 +590,7 @@ ietf_mini_conn_ci_hsk_done (struct lsquic_conn *lconn,
     switch (status)
     {
     case LSQ_HSK_OK:
-    case LSQ_HSK_0RTT_OK:
+    case LSQ_HSK_RESUMED_OK:
         conn->imc_flags |= IMC_HSK_OK;
         conn->imc_conn.cn_flags |= LSCONN_HANDSHAKE_DONE;
         LSQ_DEBUG("handshake OK");

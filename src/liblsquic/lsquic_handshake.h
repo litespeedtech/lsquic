@@ -111,6 +111,6 @@ enum hsk_failure_reason
 };
 
 enum lsquic_version
-lsquic_zero_rtt_version (const unsigned char *, size_t);
+lsquic_sess_resume_version (const unsigned char *, size_t);
 
 #endif

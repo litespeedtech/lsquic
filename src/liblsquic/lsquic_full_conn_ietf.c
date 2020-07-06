@@ -1158,12 +1158,12 @@ struct lsquic_conn *
 lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
            unsigned versions, unsigned flags,
            const char *hostname, unsigned short max_packet_size, int is_ipv4,
-           const unsigned char *zero_rtt, size_t zero_rtt_sz,
+           const unsigned char *sess_resume, size_t sess_resume_sz,
            const unsigned char *token, size_t token_sz)
 {
     const struct enc_session_funcs_iquic *esfi;
     struct ietf_full_conn *conn;
-    enum lsquic_version ver, zero_rtt_version;
+    enum lsquic_version ver, sess_resume_version;
     lsquic_time_t now;
 
     conn = calloc(1, sizeof(*conn));
@@ -1181,11 +1181,11 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     assert(versions);
     versions &= LSQUIC_IETF_VERSIONS;
     ver = highest_bit_set(versions);
-    if (zero_rtt)
+    if (sess_resume)
     {
-        zero_rtt_version = lsquic_zero_rtt_version(zero_rtt, zero_rtt_sz);
-        if (zero_rtt_version < N_LSQVER && ((1 << zero_rtt_version) & versions))
-            ver = zero_rtt_version;
+        sess_resume_version = lsquic_sess_resume_version(sess_resume, sess_resume_sz);
+        if (sess_resume_version < N_LSQVER && ((1 << sess_resume_version) & versions))
+            ver = sess_resume_version;
     }
     esfi = select_esf_iquic_by_ver(ver);
 
@@ -1252,7 +1252,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                 conn->ifc_enpub, &conn->ifc_conn, CUR_DCID(conn),
                 &conn->ifc_u.cli.ifcli_ver_neg,
                 (void **) conn->ifc_u.cli.crypto_streams, &crypto_stream_if,
-                zero_rtt, zero_rtt_sz, &conn->ifc_alset,
+                sess_resume, sess_resume_sz, &conn->ifc_alset,
                 conn->ifc_max_streams_in[SD_UNI]);
     if (!conn->ifc_conn.cn_enc_session)
         goto err2;
@@ -2560,6 +2560,7 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
         }
         conn->ifc_flags |= IFC_CLOSING;
         conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
+        lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
     }
 }
 
@@ -3279,7 +3280,7 @@ ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
     switch (status)
     {
     case LSQ_HSK_OK:
-    case LSQ_HSK_0RTT_OK:
+    case LSQ_HSK_RESUMED_OK:
         if (0 == handshake_ok(lconn))
         {
             if (!(conn->ifc_flags & IFC_SERVER))
@@ -3297,7 +3298,7 @@ ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
         assert(0);
         /* fall-through */
     case LSQ_HSK_FAIL:
-    case LSQ_HSK_0RTT_FAIL:
+    case LSQ_HSK_RESUMED_FAIL:
         handshake_failed(lconn);
         break;
     }
@@ -7102,10 +7103,10 @@ ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *lconn)
 
 
 static int
-handshake_done_or_doing_zero_rtt (const struct ietf_full_conn *conn)
+handshake_done_or_doing_sess_resume (const struct ietf_full_conn *conn)
 {
     return (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-        || conn->ifc_conn.cn_esf_c->esf_is_zero_rtt_enabled(
+        || conn->ifc_conn.cn_esf_c->esf_is_sess_resume_enabled(
                                                 conn->ifc_conn.cn_enc_session);
 }
 
@@ -7115,7 +7116,7 @@ ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
 
-    if (handshake_done_or_doing_zero_rtt(conn)
+    if (handshake_done_or_doing_sess_resume(conn)
         && ietf_full_conn_ci_n_avail_streams(lconn) > 0)
     {
         if (0 != create_bidi_stream_out(conn))

@@ -20,7 +20,7 @@ const char *const lsquic_enclev2str[] =
 
 
 enum lsquic_version
-lsquic_zero_rtt_version (const unsigned char *buf, size_t bufsz)
+lsquic_sess_resume_version (const unsigned char *buf, size_t bufsz)
 {
     lsquic_ver_tag_t tag;
 

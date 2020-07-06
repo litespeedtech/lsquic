@@ -311,13 +311,13 @@ lsquic_ev_log_hsk_completed (const lsquic_cid_t *);
 
 
 void
-lsquic_ev_log_zero_rtt (const lsquic_cid_t *);
+lsquic_ev_log_sess_resume (const lsquic_cid_t *);
 
-#define EV_LOG_ZERO_RTT(...) do {                                           \
+#define EV_LOG_SESSION_RESUMPTION(...) do {                                           \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
-        lsquic_ev_log_zero_rtt(__VA_ARGS__);                                \
+        lsquic_ev_log_sess_resume(__VA_ARGS__);                                \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))                     \
-        lsquic_qlog_zero_rtt(__VA_ARGS__);                                  \
+        lsquic_qlog_sess_resume(__VA_ARGS__);                                  \
 } while (0)
 
 void
