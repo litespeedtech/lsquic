@@ -17,7 +17,7 @@ COPY ./ /src/lsquic/
 
 RUN git clone https://boringssl.googlesource.com/boringssl && \
     cd boringssl && \
-    git checkout 49de1fc2910524c888866c7e2b0db1ba8af2a530 && \
+    git checkout 251b5169fd44345f455438312ec4e18ae07fd58c && \
     cmake . && \
     make
 
