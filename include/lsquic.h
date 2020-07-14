@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 18
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:
@@ -101,7 +101,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-27, and Draft-28.
+ * We currently support versions 43, 46, 50, Draft-27, Draft-28, and Draft-29.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -343,6 +343,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** By default, incoming packet size is not limited. */
 #define LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX 0
+
+/**
+ * By default, greasing the QUIC bit is enabled (if peer sent
+ * the "grease_quic_bit" transport parameter).
+ */
+#define LSQUIC_DF_GREASE_QUIC_BIT 1
 
 /** By default, drop no-progress connections after 60 seconds on the server */
 #define LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER 60
@@ -803,6 +809,15 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
      */
     unsigned short  es_max_udp_payload_size_rx;
+
+    /**
+     * Enable the "QUIC bit grease" extension.  When set to a true value,
+     * lsquic will grease the QUIC bit on the outgoing QUIC packets if
+     * the peer sent the "grease_quic_bit" transport parameter.
+     *
+     * Default value is @ref LSQUIC_DF_GREASE_QUIC_BIT
+     */
+    int             es_grease_quic_bit;
 };
 
 /* Initialize `settings' to default values */

@@ -28,4 +28,6 @@
  */
 #define IQUIC_MAX_OUT_PACKET_SZ ((1u << 14) - 1)
 
+#define QUIC_BIT 0x40
+
 #endif

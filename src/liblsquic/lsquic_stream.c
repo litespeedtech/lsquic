@@ -3869,15 +3869,7 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         LSQ_DEBUG("received uncompressed headers");
         stream->stream_flags |= STREAM_HAVE_UH;
         if (uh->uh_flags & UH_FIN)
-        {
-            /* IETF QUIC only sets UH_FIN for a pushed stream on the server to
-             * mark request as done:
-             */
-            if (stream->sm_bflags & SMBF_IETF)
-                assert((stream->sm_bflags & SMBF_SERVER)
-                                            && lsquic_stream_is_pushed(stream));
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
-        }
         stream->uh = uh;
         if (uh->uh_oth_stream_id == 0)
         {

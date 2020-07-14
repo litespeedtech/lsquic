@@ -264,7 +264,7 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
     if (need > bufsz)
         return -1;
 
-    buf[0] = 0x40
+    buf[0] = QUIC_BIT
            | (lsquic_packet_out_spin_bit(packet_out) << 5)
            | (lsquic_packet_out_square_bit(packet_out) << 4)
            | (lsquic_packet_out_loss_bit(packet_out) << 3)
@@ -2007,7 +2007,7 @@ lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     if (need > bufsz)
         return -1;
 
-    *buf++ = 0x80 | 0x40 | rand;
+    *buf++ = 0x80 | QUIC_BIT | rand;
     memset(buf, 0, 4);
     buf += 4;
 

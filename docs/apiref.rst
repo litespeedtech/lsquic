@@ -752,6 +752,14 @@ settings structure:
        Default value is :macro:`LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER` in server
        mode and :macro:`LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT` in client mode.
 
+    .. member:: int             es_grease_quic_bit
+
+       Enable the "QUIC bit grease" extension.  When set to a true value,
+       lsquic will grease the QUIC bit on the outgoing QUIC packets if
+       the peer sent the "grease_quic_bit" transport parameter.
+
+       Default value is :macro:`LSQUIC_DF_GREASE_QUIC_BIT`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -937,6 +945,11 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT
 
     By default, do not use no-progress timeout on the client.
+
+.. macro:: LSQUIC_DF_GREASE_QUIC_BIT
+
+    By default, greasing the QUIC bit is enabled (if peer sent
+    the "grease_quic_bit" transport parameter).
 
 Receiving Packets
 -----------------

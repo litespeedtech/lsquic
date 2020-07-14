@@ -3825,6 +3825,9 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
     struct lsquic_packet_out *packet_out;
     int sz;
 
+    /* FIXME Select PNS based on handshake status (possible on the client): if
+     * appropriate keys are not available, encryption will fail.
+     */
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
                                                                 CUR_NPATH(conn));
     if (!packet_out)
@@ -6610,7 +6613,8 @@ ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
                                    struct lsquic_packet_out *packet_out)
 {
 #ifndef NDEBUG
-    assert(packet_out->po_lflags & POL_HEADER_PROT);
+    if (packet_out->po_flags & PO_ENCRYPTED)
+        assert(packet_out->po_lflags & POL_HEADER_PROT);
 #endif
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     lsquic_send_ctl_delayed_one(&conn->ifc_send_ctl, packet_out);
@@ -6625,7 +6629,8 @@ pre_hsk_packet_sent_or_delayed (struct ietf_full_conn *conn,
                                const struct lsquic_packet_out *packet_out)
 {
 #ifndef NDEBUG
-    assert(packet_out->po_lflags & POL_HEADER_PROT);
+    if (packet_out->po_flags & PO_ENCRYPTED)
+        assert(packet_out->po_lflags & POL_HEADER_PROT);
 #endif
     /* Once IFC_IGNORE_INIT is set, the pre-hsk wrapper is removed: */
     assert(!(conn->ifc_flags & IFC_IGNORE_INIT));
@@ -7192,7 +7197,7 @@ ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
         else
             return CN_SCID(lconn);
     }
-    if (CUR_DCID(conn)->len)
+    if (CN_SCID(lconn)->len)
         return CN_SCID(lconn);
     else
         return CUR_DCID(conn);

@@ -273,6 +273,7 @@ struct enc_sess_iquic
     struct lsquic_packet_out *
                          esi_hp_batch_packets[HP_BATCH_SIZE];
     unsigned char        esi_hp_batch_samples[HP_BATCH_SIZE][SAMPLE_SZ];
+    unsigned char        esi_grease;
 };
 
 
@@ -792,6 +793,7 @@ iquic_esfi_create_client (const char *hostname,
 
     enc_sess->esi_odcid = *dcid;
     enc_sess->esi_flags |= ESI_ODCID;
+    enc_sess->esi_grease = 0xFF;
 
     LSQ_DEBUGC("created client, DCID: %"CID_FMT, CID_BITS(dcid));
     {
@@ -878,6 +880,7 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
     enc_sess->esi_cryst_if = cryst_if;
     enc_sess->esi_enpub = enpub;
     enc_sess->esi_conn = lconn;
+    enc_sess->esi_grease = 0xFF;
 
     if (odcid)
     {
@@ -1259,6 +1262,8 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         return -1;
     }
     maybe_setup_key_logging(enc_sess);
+    if (!enc_sess->esi_enpub->enp_lookup_cert && enc_sess->esi_keylog_handle)
+        SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
 
     transpa_len = gen_trans_params(enc_sess, u.trans_params,
                                                     sizeof(u.trans_params));
@@ -1711,6 +1716,17 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     else
         LSQ_DEBUG("no QL bits");
 
+    if (trans_params->tp_set & (1 << TPI_GREASE_QUIC_BIT))
+    {
+        if (enc_sess->esi_enpub->enp_settings.es_grease_quic_bit)
+        {
+            LSQ_DEBUG("will grease the QUIC bit");
+            enc_sess->esi_grease = ~QUIC_BIT;
+        }
+        else
+            LSQ_DEBUG("greasing turned off: won't grease the QUIC bit");
+    }
+
     return 0;
 }
 
@@ -1980,6 +1996,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
         goto err;
     if (enc_level == ENC_LEV_FORW)
         dst[0] |= enc_sess->esi_key_phase << 2;
+    dst[0] &= enc_sess->esi_grease | packet_out->po_path->np_dcid.idbuf[0];
 
     if (s_log_seal_and_open)
     {

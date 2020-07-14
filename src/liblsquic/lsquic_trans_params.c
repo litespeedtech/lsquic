@@ -58,6 +58,7 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0xC37:     return TPI_QUANTUM_READINESS;
 #endif
     case 0x1057:    return TPI_LOSS_BITS;
+    case 0x2AB2:    return TPI_GREASE_QUIC_BIT;
     case 0xDE1A:    return TPI_MIN_ACK_DELAY;
     case 0x7157:    return TPI_TIMESTAMPS;
     default:        return INT_MAX;
@@ -90,6 +91,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_LOSS_BITS]                         =  0x1057,
     [TPI_MIN_ACK_DELAY]                     =  0xDE1A,
     [TPI_TIMESTAMPS]                        =  0x7157,
+    [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
 };
 
 
@@ -118,6 +120,7 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
     [TPI_LOSS_BITS]                         =  "loss_bits",
     [TPI_MIN_ACK_DELAY]                     =  "min_ack_delay",
     [TPI_TIMESTAMPS]                        =  "timestamps",
+    [TPI_GREASE_QUIC_BIT]                   =  "grease_quic_bit",
 };
 #define tpi2str lsquic_tpi2str
 
@@ -410,6 +413,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
             case TPI_TIMESTAMPS:
+            case TPI_GREASE_QUIC_BIT:
                 *p++ = 0;
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -533,6 +537,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
         case TPI_TIMESTAMPS:
+        case TPI_GREASE_QUIC_BIT:
             EXPECT_LEN(0);
             break;
         case TPI_STATELESS_RESET_TOKEN:
@@ -919,6 +924,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
             case TPI_TIMESTAMPS:
+            case TPI_GREASE_QUIC_BIT:
                 *p++ = 0;
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
