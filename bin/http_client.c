@@ -957,9 +957,7 @@ hset_create (void *hsi_ctx, lsquic_stream_t *stream, int is_push_promise)
 {
     struct hset *hset;
 
-    if (s_discard_response)
-        return (void *) 1;
-    else if ((hset = malloc(sizeof(*hset))))
+    if ((hset = malloc(sizeof(*hset))))
     {
         STAILQ_INIT(hset);
         return hset;
@@ -1057,16 +1055,13 @@ hset_destroy (void *hset_p)
     struct hset *hset = hset_p;
     struct hset_elem *el, *next;
 
-    if (!s_discard_response)
+    for (el = STAILQ_FIRST(hset); el; el = next)
     {
-        for (el = STAILQ_FIRST(hset); el; el = next)
-        {
-            next = STAILQ_NEXT(el, next);
-            free(el->xhdr.buf);
-            free(el);
-        }
-        free(hset);
+        next = STAILQ_NEXT(el, next);
+        free(el->xhdr.buf);
+        free(el);
     }
+    free(hset);
 }
 
 

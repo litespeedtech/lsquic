@@ -1696,7 +1696,8 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
             return 0;
         }
         if ((packet_out->po_flags & PO_REPACKNO)
-                    && packet_out->po_regen_sz == packet_out->po_data_sz)
+                    && packet_out->po_regen_sz == packet_out->po_data_sz
+                    && packet_out->po_frame_types != QUIC_FTBIT_PATH_CHALLENGE)
         {
             LSQ_DEBUG("send prediction: packet %"PRIu64" would be dropped, "
                 "continue", packet_out->po_packno);
