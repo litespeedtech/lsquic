@@ -184,8 +184,8 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
     const struct parse_funcs *const pf_local = send_ctl->sc_conn_pub->lconn->cn_pf;
     unsigned char *p = begin;
     unsigned char *const end = p + bufsz;
-    const struct stream_rec *srec;
-    struct packet_out_srec_iter posi;
+    const struct frame_rec *frec;
+    struct packet_out_frec_iter pofi;
     struct lsquic_packet_out *packet_out;
     struct stream_frame frame;
     enum quic_frame_type expected_type;
@@ -194,38 +194,38 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
     expected_type = QUIC_FRAME_STREAM;
 
     TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
-        for (srec = lsquic_posi_first(&posi, packet_out); srec;
-                                                    srec = lsquic_posi_next(&posi))
+        for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                    frec = lsquic_pofi_next(&pofi))
         {
             if (fullcheck)
             {
-                assert(srec->sr_frame_type == expected_type);
+                assert(frec->fe_frame_type == expected_type);
                 if (0 && packet_out->po_packno != 1)
                 {
                     /* First packet may contain two stream frames, do not
                      * check it.
                      */
-                    assert(!lsquic_posi_next(&posi));
+                    assert(!lsquic_pofi_next(&pofi));
                     if (TAILQ_NEXT(packet_out, po_next))
                     {
                         assert(packet_out->po_data_sz == packet_out->po_n_alloc);
-                        assert(srec->sr_len == packet_out->po_data_sz);
+                        assert(frec->fe_len == packet_out->po_data_sz);
                     }
                 }
             }
-            if (srec->sr_frame_type == expected_type &&
-                                            srec->sr_stream->id == stream_id)
+            if (frec->fe_frame_type == expected_type &&
+                                            frec->fe_stream->id == stream_id)
             {
                 assert(!fin);
                 if (QUIC_FRAME_STREAM == expected_type)
-                    len = pf_local->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
-                        packet_out->po_data_sz - srec->sr_off, &frame);
+                    len = pf_local->pf_parse_stream_frame(packet_out->po_data + frec->fe_off,
+                        packet_out->po_data_sz - frec->fe_off, &frame);
                 else
-                    len = pf_local->pf_parse_crypto_frame(packet_out->po_data + srec->sr_off,
-                        packet_out->po_data_sz - srec->sr_off, &frame);
+                    len = pf_local->pf_parse_crypto_frame(packet_out->po_data + frec->fe_off,
+                        packet_out->po_data_sz - frec->fe_off, &frame);
                 assert(len > 0);
                 if (QUIC_FRAME_STREAM == expected_type)
-                    assert(frame.stream_id == srec->sr_stream->id);
+                    assert(frame.stream_id == frec->fe_stream->id);
                 else
                     assert(frame.stream_id == ~0ULL);
                 /* Otherwise not enough to copy to: */
@@ -238,7 +238,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
                     assert(!fin);
                     fin = 1;
                 }
-                memcpy(p, packet_out->po_data + srec->sr_off + len -
+                memcpy(p, packet_out->po_data + frec->fe_off + len -
                     frame.data_frame.df_size, frame.data_frame.df_size);
                 p += frame.data_frame.df_size;
             }

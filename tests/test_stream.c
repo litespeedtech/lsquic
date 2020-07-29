@@ -205,8 +205,8 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
     const struct parse_funcs *const pf_local = send_ctl->sc_conn_pub->lconn->cn_pf;
     unsigned char *p = begin;
     unsigned char *const end = p + bufsz;
-    const struct stream_rec *srec;
-    struct packet_out_srec_iter posi;
+    const struct frame_rec *frec;
+    struct packet_out_frec_iter pofi;
     struct lsquic_packet_out *packet_out;
     struct stream_frame frame;
     enum quic_frame_type expected_type;
@@ -218,38 +218,38 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
         expected_type = QUIC_FRAME_STREAM;
 
     TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
-        for (srec = lsquic_posi_first(&posi, packet_out); srec;
-                                                srec = lsquic_posi_next(&posi))
+        for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                frec = lsquic_pofi_next(&pofi))
         {
             if (fullcheck)
             {
-                assert(srec->sr_frame_type == expected_type);
+                assert(frec->fe_frame_type == expected_type);
                 if (packet_out->po_packno != 1)
                 {
                     /* First packet may contain two stream frames, do not
                      * check it.
                      */
-                    assert(!lsquic_posi_next(&posi));
+                    assert(!lsquic_pofi_next(&pofi));
                     if (TAILQ_NEXT(packet_out, po_next))
                     {
                         assert(packet_out->po_data_sz == packet_out->po_n_alloc);
-                        assert(srec->sr_len == packet_out->po_data_sz);
+                        assert(frec->fe_len == packet_out->po_data_sz);
                     }
                 }
             }
-            if (srec->sr_frame_type == expected_type &&
-                                            srec->sr_stream->id == stream_id)
+            if (frec->fe_frame_type == expected_type &&
+                                            frec->fe_stream->id == stream_id)
             {
                 assert(!fin);
                 if (QUIC_FRAME_STREAM == expected_type)
-                    len = pf_local->pf_parse_stream_frame(packet_out->po_data + srec->sr_off,
-                        packet_out->po_data_sz - srec->sr_off, &frame);
+                    len = pf_local->pf_parse_stream_frame(packet_out->po_data + frec->fe_off,
+                        packet_out->po_data_sz - frec->fe_off, &frame);
                 else
-                    len = pf_local->pf_parse_crypto_frame(packet_out->po_data + srec->sr_off,
-                        packet_out->po_data_sz - srec->sr_off, &frame);
+                    len = pf_local->pf_parse_crypto_frame(packet_out->po_data + frec->fe_off,
+                        packet_out->po_data_sz - frec->fe_off, &frame);
                 assert(len > 0);
                 if (QUIC_FRAME_STREAM == expected_type)
-                    assert(frame.stream_id == srec->sr_stream->id);
+                    assert(frame.stream_id == frec->fe_stream->id);
                 else
                     assert(frame.stream_id == ~0ULL);
                 /* Otherwise not enough to copy to: */
@@ -262,7 +262,7 @@ read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t str
                     assert(!fin);
                     fin = 1;
                 }
-                memcpy(p, packet_out->po_data + srec->sr_off + len -
+                memcpy(p, packet_out->po_data + frec->fe_off + len -
                     frame.data_frame.df_size, frame.data_frame.df_size);
                 p += frame.data_frame.df_size;
             }
@@ -2366,9 +2366,7 @@ test_window_update1 (void)
 }
 
 
-/* Test two: large frame in the middle -- it is the one that is moved out
- * into new packet.
- */
+/* Test two: large frame in the middle */
 static void
 test_bad_packbits_guess_2 (void)
 {
@@ -2455,8 +2453,8 @@ test_bad_packbits_guess_2 (void)
     assert(1 == streams[2]->n_unacked);
     ack_packet(&tobjs.send_ctl, 1);
     assert(0 == streams[0]->n_unacked);
-    assert(1 == streams[1]->n_unacked);
-    assert(0 == streams[2]->n_unacked);
+    assert(0 == streams[1]->n_unacked);
+    assert(1 == streams[2]->n_unacked);
     ack_packet(&tobjs.send_ctl, 2);
     assert(0 == streams[0]->n_unacked);
     assert(0 == streams[1]->n_unacked);
@@ -2508,7 +2506,7 @@ test_bad_packbits_guess_3 (void)
     assert(1 == streams[0]->n_unacked);
 
     g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_4;
+    g_ctl_settings.tcs_calc_packno_bits = GQUIC_PACKNO_LEN_6;
     s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
                                                 g_ctl_settings.tcs_bp_type);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl));
@@ -2522,12 +2520,12 @@ test_bad_packbits_guess_3 (void)
 
     /* Verify packets */
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
-    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(1 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
     packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs.send_ctl, 0);
-    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_4);
+    assert(lsquic_packet_out_packno_bits(packet_out) == GQUIC_PACKNO_LEN_6);
     assert(2 == packet_out->po_packno);
     assert(packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM));
     lsquic_send_ctl_sent_packet(&tobjs.send_ctl, packet_out);
@@ -2540,6 +2538,128 @@ test_bad_packbits_guess_3 (void)
 
     lsquic_stream_destroy(streams[0]);
     deinit_test_objs(&tobjs);
+}
+
+
+/* Test resizing of buffered packets:
+ *  1. Write data to buffered packets
+ *  2. Reduce packet size
+ *  3. Resize buffered packets
+ *  4. Schedule them
+ *  5. Check contents
+ */
+static void
+test_resize_buffered (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    struct lsquic_stream *streams[1];
+    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID27);
+    char buf[0x10000];
+    unsigned char buf_out[0x10000];
+    int s, fin;
+    unsigned packet_counts[2];
+
+    init_buf(buf, sizeof(buf));
+
+    lsquic_send_ctl_set_max_bpq_count(UINT_MAX);
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    init_test_objs(&tobjs, 0x100000, 0x100000, pf);
+    tobjs.send_ctl.sc_flags |= SC_IETF; /* work around asserts lsquic_send_ctl_resize() */
+    network_path.np_pack_size = 4096;
+    streams[0] = new_stream_ext(&tobjs, 7, 0x100000);
+
+    nw = lsquic_stream_write(streams[0], buf, sizeof(buf));
+    assert(nw == sizeof(buf));
+    s = lsquic_stream_shutdown(streams[0], 1);
+    assert(s == 0);
+    packet_counts[0] = tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type].bpq_count;
+
+    assert(streams[0]->n_unacked > 0);
+
+    network_path.np_pack_size = 1234;
+    lsquic_send_ctl_resize(&tobjs.send_ctl);
+    packet_counts[1] = tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type].bpq_count;
+    assert(packet_counts[1] > packet_counts[0]);
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
+                                                g_ctl_settings.tcs_bp_type);
+    assert(lsquic_send_ctl_n_scheduled(&tobjs.send_ctl) > 0);
+
+    /* Verify written data: */
+    nw = read_from_scheduled_packets(&tobjs.send_ctl, streams[0]->id, buf_out,
+                                                sizeof(buf_out), 0, &fin, 0);
+    assert(nw == sizeof(buf));
+    assert(fin);
+    assert(0 == memcmp(buf, buf_out, nw));
+
+    lsquic_stream_destroy(streams[0]);
+    deinit_test_objs(&tobjs);
+    lsquic_send_ctl_set_max_bpq_count(10);
+}
+
+
+/* Test resizing of buffered packets:
+ *  1. Write data to buffered packets
+ *  2. Schedule them
+ *  3. Reduce packet size
+ *  4. Resize packets
+ *  5. Check contents
+ */
+static void
+test_resize_scheduled (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    struct lsquic_stream *streams[1];
+    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID27);
+    char buf[0x10000];
+    unsigned char buf_out[0x10000];
+    int s, fin;
+    unsigned packet_counts[2];
+
+    init_buf(buf, sizeof(buf));
+
+    lsquic_send_ctl_set_max_bpq_count(UINT_MAX);
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+
+    init_test_objs(&tobjs, 0x100000, 0x100000, pf);
+    tobjs.send_ctl.sc_flags |= SC_IETF; /* work around asserts lsquic_send_ctl_resize() */
+    network_path.np_pack_size = 4096;
+    streams[0] = new_stream_ext(&tobjs, 7, 0x100000);
+
+    nw = lsquic_stream_write(streams[0], buf, sizeof(buf));
+    assert(nw == sizeof(buf));
+    s = lsquic_stream_shutdown(streams[0], 1);
+    assert(s == 0);
+
+    assert(streams[0]->n_unacked > 0);
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    s = lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl,
+                                                g_ctl_settings.tcs_bp_type);
+    packet_counts[0] = lsquic_send_ctl_n_scheduled(&tobjs.send_ctl);
+    assert(packet_counts[0] > 0);
+
+    network_path.np_pack_size = 1234;
+    lsquic_send_ctl_resize(&tobjs.send_ctl);
+    packet_counts[1] = lsquic_send_ctl_n_scheduled(&tobjs.send_ctl);
+    assert(packet_counts[1] > packet_counts[0]);
+
+    /* Verify written data: */
+    nw = read_from_scheduled_packets(&tobjs.send_ctl, streams[0]->id, buf_out,
+                                                sizeof(buf_out), 0, &fin, 0);
+    assert(nw == sizeof(buf));
+    assert(fin);
+    assert(0 == memcmp(buf, buf_out, nw));
+
+    lsquic_stream_destroy(streams[0]);
+    deinit_test_objs(&tobjs);
+    lsquic_send_ctl_set_max_bpq_count(10);
 }
 
 
@@ -3163,6 +3283,9 @@ main (int argc, char **argv)
     test_bad_packbits_guess_1();
     test_bad_packbits_guess_2();
     test_bad_packbits_guess_3();
+
+    test_resize_buffered();
+    test_resize_scheduled();
 
     main_test_packetization();
 

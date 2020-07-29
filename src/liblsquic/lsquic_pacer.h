@@ -59,4 +59,8 @@ lsquic_pacer_loss_event (struct pacer *);
 
 #define lsquic_pacer_next_sched(pacer) (+(pacer)->pa_next_sched)
 
+int
+lsquic_pacer_can_schedule_probe (const struct pacer *,
+                                unsigned n_in_flight, lsquic_time_t tx_time);
+
 #endif

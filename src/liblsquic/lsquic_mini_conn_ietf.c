@@ -154,7 +154,7 @@ struct msg_ctx
 
 
 static size_t
-read_from_msg_ctx (void *ctx, void *buf, size_t len)
+read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 {
     struct msg_ctx *msg_ctx = ctx;
     if (len > (uintptr_t) (msg_ctx->end - msg_ctx->buf))
@@ -244,7 +244,7 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
 
         p = msg_ctx.buf;
         len = pf->pf_gen_crypto_frame(packet_out->po_data + packet_out->po_data_sz,
-                    lsquic_packet_out_avail(packet_out), cryst->mcs_write_off,
+                    lsquic_packet_out_avail(packet_out), 0, cryst->mcs_write_off, 0,
                     msg_ctx.end - msg_ctx.buf, read_from_msg_ctx, &msg_ctx);
         if (len < 0)
             return len;
@@ -513,12 +513,14 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
 
     conn->imc_enpub = enpub;
     conn->imc_created = packet_in->pi_received;
-    conn->imc_path.np_pack_size = is_ipv4 ? IQUIC_MAX_IPv4_PACKET_SZ
-                                                    : IQUIC_MAX_IPv6_PACKET_SZ;
-#ifndef NDEBUG
-    if (getenv("LSQUIC_CN_PACK_SIZE"))
-        conn->imc_path.np_pack_size = atoi(getenv("LSQUIC_CN_PACK_SIZE"));
-#endif
+    if (enpub->enp_settings.es_base_plpmtu)
+        conn->imc_path.np_pack_size = enpub->enp_settings.es_base_plpmtu
+                                    - (is_ipv4 ? 20 : 40)   /* IP header */
+                                    - 8;                    /* UDP header */
+    else if (is_ipv4)
+        conn->imc_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
+    else
+        conn->imc_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
     conn->imc_conn.cn_pf = select_pf_by_ver(version);
     conn->imc_conn.cn_esf.i = esfi;
     conn->imc_conn.cn_enc_session = enc_sess;

@@ -125,6 +125,16 @@ lsquic_pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 }
 
 
+int
+lsquic_pacer_can_schedule_probe (const struct pacer *pacer,
+                                    unsigned n_in_flight, lsquic_time_t tx_time)
+{
+    return pacer->pa_burst_tokens > 1 /* Double packet size, want two tokens */
+        || n_in_flight == 0
+        || pacer->pa_next_sched > pacer->pa_now + tx_time / 2;
+}
+
+
 void
 lsquic_pacer_tick_in (struct pacer *pacer, lsquic_time_t now)
 {

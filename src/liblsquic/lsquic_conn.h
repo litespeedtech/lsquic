@@ -79,7 +79,7 @@ struct network_path
     void           *np_peer_ctx;
     lsquic_cid_t    np_dcid;
     unsigned short  np_pack_size;
-    unsigned char   np_path_id;     /* Used for logging */
+    unsigned char   np_path_id;
 };
 
 #define NP_LOCAL_SA(path_) (&(path_)->np_local_addr_u.sockaddr)
@@ -110,6 +110,9 @@ struct conn_iface
 
     void
     (*ci_packet_not_sent) (struct lsquic_conn *, struct lsquic_packet_out *);
+
+    void
+    (*ci_packet_too_large) (struct lsquic_conn *, struct lsquic_packet_out *);
 
     void
     (*ci_hsk_done) (struct lsquic_conn *, enum lsquic_hsk_status);
@@ -247,6 +250,15 @@ struct conn_iface
     /* Optional method.  Only used by IETF connections */
     void
     (*ci_count_garbage) (struct lsquic_conn *, size_t);
+
+    /* Optional method.  Must be implemented if connection sends MTU probes */
+    void
+    (*ci_mtu_probe_acked) (struct lsquic_conn *,
+                                            const struct lsquic_packet_out *);
+
+    /* Optional method.  It is called when RTO occurs. */
+    void
+    (*ci_retx_timeout) (struct lsquic_conn *);
 };
 
 #define LSCONN_CCE_BITS 3

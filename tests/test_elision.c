@@ -96,7 +96,7 @@ lsquic_stream_acked (lsquic_stream_t *stream, enum quic_frame_type frame_type)
 static void
 elide_single_stream_frame (void)
 {
-    struct packet_out_srec_iter posi;
+    struct packet_out_frec_iter pofi;
     struct lsquic_engine_public enpub;
     lsquic_stream_t streams[1];
     lsquic_packet_out_t *packet_out;
@@ -120,14 +120,14 @@ elide_single_stream_frame (void)
     lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[0],
                                                 QUIC_FRAME_STREAM, off, len);
     assert(1 == streams[0].n_unacked);
-    assert(lsquic_posi_first(&posi, packet_out));
+    assert(lsquic_pofi_first(&pofi, packet_out));
 
     streams[0].stream_flags |= STREAM_RST_SENT;
 
     lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
     assert(0 == streams[0].n_unacked);
     assert(0 == packet_out->po_frame_types);
-    assert(!lsquic_posi_first(&posi, packet_out));
+    assert(!lsquic_pofi_first(&pofi, packet_out));
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     lsquic_mm_cleanup(&enpub.enp_mm);
@@ -142,11 +142,11 @@ elide_single_stream_frame (void)
 static void
 shrink_packet_post_elision (void)
 {
-    struct packet_out_srec_iter posi;
+    struct packet_out_frec_iter pofi;
     struct lsquic_engine_public enpub;
     lsquic_stream_t streams[2];
     lsquic_packet_out_t *packet_out;
-    const struct stream_rec *srec;
+    const struct frame_rec *frec;
     int len, off = 0;
     unsigned char stream2_data[0x1000];
 
@@ -189,7 +189,7 @@ shrink_packet_post_elision (void)
 
     assert(1 == streams[0].n_unacked);
     assert(1 == streams[1].n_unacked);
-    assert(lsquic_posi_first(&posi, packet_out));
+    assert(lsquic_pofi_first(&pofi, packet_out));
 
     streams[0].stream_flags |= STREAM_RST_SENT;
 
@@ -197,8 +197,8 @@ shrink_packet_post_elision (void)
     assert(0 == streams[0].n_unacked);
 
     assert(QUIC_FTBIT_STREAM == packet_out->po_frame_types);
-    srec = lsquic_posi_first(&posi, packet_out);
-    assert(srec->sr_stream == &streams[1]);
+    frec = lsquic_pofi_first(&pofi, packet_out);
+    assert(frec->fe_stream == &streams[1]);
     assert(packet_out->po_data_sz == exp);
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
@@ -222,11 +222,11 @@ shrink_packet_post_elision (void)
 static void
 elide_three_stream_frames (int chop_regen)
 {
-    struct packet_out_srec_iter posi;
+    struct packet_out_frec_iter pofi;
     struct lsquic_engine_public enpub;
     lsquic_stream_t streams[5];
     lsquic_packet_out_t *packet_out, *ref_out;
-    struct stream_rec *srec;
+    struct frame_rec *frec;
     unsigned short b_off, d_off;
     int len;
 
@@ -241,6 +241,8 @@ elide_three_stream_frames (int chop_regen)
         ref_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, GQUIC_MAX_PAYLOAD_SZ);
         /* This is fake data for regeneration */
         strcpy((char *) ref_out->po_data, "REGEN");
+        lsquic_packet_out_add_frame(ref_out, &enpub.enp_mm, 0,
+                                QUIC_FRAME_ACK, ref_out->po_data_sz, 5);
         ref_out->po_data_sz = ref_out->po_regen_sz = 5;
         /* STREAM B */
         setup_stream_contents(123, "BBBBBBBBBB");
@@ -278,6 +280,8 @@ elide_three_stream_frames (int chop_regen)
         packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, GQUIC_MAX_PAYLOAD_SZ);
         /* This is fake data for regeneration */
         strcpy((char *) packet_out->po_data, "REGEN");
+        lsquic_packet_out_add_frame(packet_out, &enpub.enp_mm, 0,
+                                QUIC_FRAME_ACK, packet_out->po_data_sz, 5);
         packet_out->po_data_sz = packet_out->po_regen_sz = 5;
         /* STREAM A */
         setup_stream_contents(123, "AAAAAAAAAA");
@@ -377,22 +381,24 @@ elide_three_stream_frames (int chop_regen)
 
     assert(packet_out->po_frame_types == ((1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM)));
 
-    srec = lsquic_posi_first(&posi, packet_out);
-    assert(srec->sr_stream == &streams[1]);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
-    assert(srec->sr_off == b_off - (chop_regen ? 5 : 0));
+    frec = lsquic_pofi_first(&pofi, packet_out);
+    if (!chop_regen)
+        frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[1]);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
+    assert(frec->fe_off == b_off - (chop_regen ? 5 : 0));
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[0]);
-    assert(srec->sr_frame_type == QUIC_FRAME_RST_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[0]);
+    assert(frec->fe_frame_type == QUIC_FRAME_RST_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[3]);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
-    assert(srec->sr_off == d_off - (chop_regen ? 5 : 0));
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[3]);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
+    assert(frec->fe_off == d_off - (chop_regen ? 5 : 0));
 
-    srec = lsquic_posi_next(&posi);
-    assert(!srec);
+    frec = lsquic_pofi_next(&pofi);
+    assert(!frec);
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     lsquic_packet_out_destroy(ref_out, &enpub, NULL);

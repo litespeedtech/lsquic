@@ -48,6 +48,7 @@ SET(lsquic_STAT_SRCS
     lsquic_packet_gquic.c
     lsquic_packet_in.c
     lsquic_packet_out.c
+    lsquic_packet_resize.c
     lsquic_packints.c
     lsquic_parse_Q046.c
     lsquic_parse_Q050.c

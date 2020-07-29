@@ -94,6 +94,7 @@ enum lsq_log_level lsq_log_levels[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_QPACK_DEC]    = LSQ_LOG_WARN,
     [LSQLM_PRIO]        = LSQ_LOG_WARN,
     [LSQLM_BW_SAMPLER]  = LSQ_LOG_WARN,
+    [LSQLM_PACKET_RESIZE] = LSQ_LOG_WARN,
 };
 
 const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
@@ -136,6 +137,7 @@ const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_QPACK_DEC]    = "qpack-dec",
     [LSQLM_PRIO]        = "prio",
     [LSQLM_BW_SAMPLER]  = "bw-sampler",
+    [LSQLM_PACKET_RESIZE] = "packet-resize",
 };
 
 const char *const lsq_loglevel2str[N_LSQUIC_LOG_LEVELS] = {

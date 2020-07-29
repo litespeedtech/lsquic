@@ -48,6 +48,7 @@ SET(TESTS
     hkdf
     lsquic_hash
     packet_out
+    packet_resize
     packno_len
     parse_packet_in
     purga

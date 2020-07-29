@@ -80,7 +80,7 @@ lsquic_mm_init (struct lsquic_mm *mm)
 
     mm->acki = malloc(sizeof(*mm->acki));
     mm->malo.stream_frame = lsquic_malo_create(sizeof(struct stream_frame));
-    mm->malo.stream_rec_arr = lsquic_malo_create(sizeof(struct stream_rec_arr));
+    mm->malo.frame_rec_arr = lsquic_malo_create(sizeof(struct frame_rec_arr));
     mm->malo.mini_conn = lsquic_malo_create(sizeof(struct mini_conn));
     mm->malo.mini_conn_ietf = lsquic_malo_create(sizeof(struct ietf_mini_conn));
     mm->malo.packet_in = lsquic_malo_create(sizeof(struct lsquic_packet_in));
@@ -98,7 +98,7 @@ lsquic_mm_init (struct lsquic_mm *mm)
     SLIST_INIT(&mm->four_k_pages);
     SLIST_INIT(&mm->sixteen_k_pages);
 #endif
-    if (mm->acki && mm->malo.stream_frame && mm->malo.stream_rec_arr
+    if (mm->acki && mm->malo.stream_frame && mm->malo.frame_rec_arr
         && mm->malo.mini_conn && mm->malo.mini_conn_ietf && mm->malo.packet_in
         && mm->malo.packet_out && mm->malo.dcid_elem
         && mm->malo.stream_hq_frame && mm->ack_str)
@@ -127,7 +127,7 @@ lsquic_mm_cleanup (struct lsquic_mm *mm)
     lsquic_malo_destroy(mm->malo.packet_in);
     lsquic_malo_destroy(mm->malo.packet_out);
     lsquic_malo_destroy(mm->malo.stream_frame);
-    lsquic_malo_destroy(mm->malo.stream_rec_arr);
+    lsquic_malo_destroy(mm->malo.frame_rec_arr);
     lsquic_malo_destroy(mm->malo.mini_conn);
     lsquic_malo_destroy(mm->malo.mini_conn_ietf);
     free(mm->ack_str);
@@ -553,7 +553,7 @@ lsquic_mm_mem_used (const struct lsquic_mm *mm)
     size = sizeof(*mm);
     size += sizeof(*mm->acki);
     size += lsquic_malo_mem_used(mm->malo.stream_frame);
-    size += lsquic_malo_mem_used(mm->malo.stream_rec_arr);
+    size += lsquic_malo_mem_used(mm->malo.frame_rec_arr);
     size += lsquic_malo_mem_used(mm->malo.mini_conn);
     size += lsquic_malo_mem_used(mm->malo.mini_conn_ietf);
     size += lsquic_malo_mem_used(mm->malo.packet_in);

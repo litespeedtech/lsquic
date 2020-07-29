@@ -140,8 +140,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 #if LSQUIC_DONTFRAG_SUPPORTED
 "   -D          Do not set `do not fragment' flag on outgoing UDP packets\n"
 #endif
-"   -z BYTES    Maximum size of outgoing UDP packets.  The default is 1370\n"
-"                 bytes for IPv4 socket and 1350 bytes for IPv6 socket\n"
+"   -z BYTES    Maximum size of outgoing UDP packets (client only).\n"
+"                 Overrides -o base_plpmtu.\n"
 "   -L LEVEL    Log level for all modules.  Possible values are `debug',\n"
 "                 `info', `notice', `warn', `error', `alert', `emerg',\n"
 "                 and `crit'.\n"

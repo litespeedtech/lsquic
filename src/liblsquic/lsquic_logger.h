@@ -85,6 +85,7 @@ enum lsquic_logger_module {
     LSQLM_QPACK_DEC,
     LSQLM_PRIO,
     LSQLM_BW_SAMPLER,
+    LSQLM_PACKET_RESIZE,
     N_LSQUIC_LOGGER_MODULES
 };
 

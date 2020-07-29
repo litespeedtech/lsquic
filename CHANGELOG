@@ -1,3 +1,10 @@
+2020-07-29
+    - 2.19.0
+    - [FEATURE] DPLPMTUD support.  IETF connections now search for the
+      maximum packet size, improving throughput.
+    - [DEBUG] Record event in stream history when on_close() is called
+      in dtor.
+
 2020-07-22
     - 2.18.2
     - [BUGFIX] Send prediction: lone path challenges do not get squeezed out

@@ -796,10 +796,11 @@ gquic_Q050_parse_frame_type (const unsigned char *buf, size_t len)
 
 static int
 gquic_Q050_gen_crypto_frame (unsigned char *buf, size_t buf_len,
-        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+        lsquic_stream_id_t stream_id, uint64_t offset, int fin,
+        size_t size, gsf_read_f gsf_read, void *stream)
 {
-    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x8, buf_len, offset,
-                                                size, gcf_read, stream);
+    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x8, stream_id, buf_len,
+                                        offset, fin, size, gsf_read, stream);
 }
 
 

@@ -443,14 +443,15 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
 
 int
 lsquic_ietf_v1_gen_crypto_frame (unsigned char *buf, unsigned char first_byte,
-            size_t buf_len, uint64_t offset, size_t size, gcf_read_f gcf_read,
-            void *stream)
+            size_t buf_len, lsquic_stream_id_t UNUSED_1, uint64_t offset,
+            int UNUSED_2, size_t size, gsf_read_f gsf_read, void *stream)
 {
     unsigned char *const end = buf + buf_len;
     unsigned char *p;
     unsigned obits, dbits;
     unsigned olen, dlen;
     size_t nr, n_avail;
+    int dummy_fin;
 
     obits = vint_val2bits(offset);
     olen = 1 << obits;
@@ -470,7 +471,7 @@ lsquic_ietf_v1_gen_crypto_frame (unsigned char *buf, unsigned char first_byte,
     vint_write(p, offset, obits, olen);
     p += olen;
 
-    nr = gcf_read(stream, p + dlen, size);
+    nr = gsf_read(stream, p + dlen, size, &dummy_fin);
     assert(nr != 0);    /* This indicates error in the caller */
     assert(nr <= size); /* This also indicates an error in the caller */
 
@@ -483,10 +484,11 @@ lsquic_ietf_v1_gen_crypto_frame (unsigned char *buf, unsigned char first_byte,
 
 static int
 ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
-        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+        lsquic_stream_id_t stream_id, uint64_t offset, int fin,
+        size_t size, gsf_read_f gsf_read, void *stream)
 {
-    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x6, buf_len, offset,
-                                                size, gcf_read, stream);
+    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x6, buf_len, stream_id,
+                                        offset, fin, size, gsf_read, stream);
 }
 
 

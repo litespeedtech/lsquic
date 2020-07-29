@@ -366,6 +366,9 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *, struct network_path *old,
                                 struct network_path *new);
 
 void
+lsquic_send_ctl_resize (struct lsquic_send_ctl *);
+
+void
 lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *);
 
 #define lsquic_send_ctl_1rtt_acked(ctl) ((ctl)->sc_flags & SC_1RTT_ACKED)
@@ -394,5 +397,14 @@ lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);
 #define lsquic_send_ctl_has_sendable(ctl_) \
     (lsquic_send_ctl_n_scheduled(ctl_) > 0 \
                 && lsquic_send_ctl_next_packet_to_send_predict(ctl_))
+
+#define lsquic_send_ctl_in_recovery(ctl_) ((ctl_)->sc_largest_acked_packno \
+    && (ctl_)->sc_largest_acked_packno <= (ctl_)->sc_largest_sent_at_cutback)
+
+#define send_ctl_in_recovery lsquic_send_ctl_in_recovery
+
+int
+lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *,
+                                            const struct network_path *);
 
 #endif

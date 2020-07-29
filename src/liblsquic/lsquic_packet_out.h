@@ -17,14 +17,15 @@ struct network_path;
 struct parse_funcs;
 struct bwp_state;
 
-/* Each stream_rec is associated with one packet_out.  packet_out can have
- * zero or more stream_rec structures.  stream_rec keeps a pointer to a stream
- * that has STREAM or RST_STREAM frames inside packet_out.  `sr_frame_type'
- * specifies the type of the frame; if this value is zero, values of the
- * other struct members are not valid.  `sr_off' indicates where inside
- * packet_out->po_data the frame begins and `sr_len' is its length.
+/* Each frame_rec is associated with one packet_out.  packet_out can have
+ * zero or more frame_rec structures.  frame_rec keeps a pointer to a stream
+ * that has STREAM, CRYPTO, or RST_STREAM frames inside packet_out.
+ * `fe_frame_type' specifies the type of the frame; if this value is zero
+ * (this happens when a frame is elided), values of the other struct members
+ * are not valid.  `fe_off' indicates where inside packet_out->po_data the
+ * frame begins and `fe_len' is its length.
  *
- * We need this information for three reasons:
+ * We need this information for four reasons:
  *   1. A stream is not destroyed until all of its STREAM and RST_STREAM
  *      frames are acknowledged.  This is to make sure that we do not exceed
  *      maximum allowed number of streams.
@@ -34,27 +35,37 @@ struct bwp_state;
  *      occurs if we guessed incorrectly the number of bytes required to
  *      encode the packet number and the actual number would make packet
  *      larger than the max).
+ *   4. A lost or scheduled packet may need to be resized (down) when path
+ *      changes or MTU is reduced due to an RTO.
  *
+ * In IETF, all frames are recorded.  In gQUIC, only STREAM, RST_STREAM,
+ * ACK, and STOP_WAITING are recorded.  The latter two are done so that
+ * ACK-deleting code in send controller (see po_regen_sz) is the same for
+ * both QUIC versions.
  */
-struct stream_rec {
-    struct lsquic_stream    *sr_stream;
-    unsigned short           sr_off,
-                             sr_len;
-    enum quic_frame_type     sr_frame_type:16;
+struct frame_rec {
+    union {
+        struct lsquic_stream   *stream;
+        uintptr_t               data;
+    }                        fe_u;
+#define fe_stream fe_u.stream
+    unsigned short           fe_off,
+                             fe_len;
+    enum quic_frame_type     fe_frame_type;
 };
 
-#define srec_taken(srec) ((srec)->sr_frame_type)
+#define frec_taken(frec) ((frec)->fe_frame_type)
 
-struct stream_rec_arr {
-    TAILQ_ENTRY(stream_rec_arr)     next_stream_rec_arr;
-    struct stream_rec               srecs[
+struct frame_rec_arr {
+    TAILQ_ENTRY(frame_rec_arr)     next_stream_rec_arr;
+    struct frame_rec               frecs[
       ( 64                              /* Efficient size for malo allocator */
-      - sizeof(TAILQ_ENTRY(stream_rec)) /* next_stream_rec_arr */
-      ) / sizeof(struct stream_rec)
+      - sizeof(TAILQ_ENTRY(frame_rec))  /* next_stream_rec_arr */
+      ) / sizeof(struct frame_rec)
     ];
 };
 
-TAILQ_HEAD(stream_rec_arr_tailq, stream_rec_arr);
+TAILQ_HEAD(frame_rec_arr_tailq, frame_rec_arr);
 
 
 typedef struct lsquic_packet_out
@@ -76,14 +87,14 @@ typedef struct lsquic_packet_out
     enum packet_out_flags {
             /* TODO XXX Phase out PO_MINI in favor of a more specialized flag:
              * we only need an indicator that a packet contains STREAM frames
-             * but no associated srecs.  This type of packets in only created
+             * but no associated frecs.  This type of packets in only created
              * by GQUIC mini conn.
              */
         PO_MINI     = (1 << 0),         /* Allocated by mini connection */
         PO_HELLO    = (1 << 1),         /* Packet contains SHLO or CHLO data */
         PO_SENT     = (1 << 2),         /* Packet has been sent (mini only) */
         PO_ENCRYPTED= (1 << 3),         /* po_enc_data has encrypted data */
-        PO_SREC_ARR = (1 << 4),
+        PO_FREC_ARR = (1 << 4),
 #define POBIT_SHIFT 5
         PO_BITS_0   = (1 << 5),         /* PO_BITS_0 and PO_BITS_1 encode the */
         PO_BITS_1   = (1 << 6),         /*   packet number length.  See macros below. */
@@ -104,7 +115,7 @@ typedef struct lsquic_packet_out
         PO_IPv6     = (1 <<20),         /* Set if pmi_allocate was passed is_ipv6=1,
                                          *   otherwise unset.
                                          */
-        PO_LIMITED  = (1 <<21),         /* Used to credit sc_next_limit if needed. */
+        PO_MTU_PROBE= (1 <<21),         /* Special loss and ACK rules apply */
 #define POPNS_SHIFT 22
         PO_PNS_HSK  = (1 <<22),         /* PNS bits contain the value of the */
         PO_PNS_APP  = (1 <<23),         /*   packet number space. */
@@ -124,6 +135,11 @@ typedef struct lsquic_packet_out
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
     unsigned short     po_sent_sz;      /* If PO_SENT_SZ is set, real size of sent buffer. */
+    /* TODO Revisit po_regen_sz once gQUIC is dropped.  Now that all frames
+     * are recorded, we have more flexibility where to place ACK frames; they
+     * no longer really have to be at the beginning of the packet, since we
+     * can locate them.
+     */
     unsigned short     po_regen_sz;     /* Number of bytes at the beginning
                                          * of data containing bytes that are
                                          * not to be retransmitted, e.g. ACK
@@ -132,7 +148,6 @@ typedef struct lsquic_packet_out
     unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
     unsigned short     po_token_len;
     enum header_type   po_header_type:8;
-    unsigned char      po_path_id;
     enum {
         POL_GQUIC    = 1 << 0,         /* Used for logging */
 #define POLEV_SHIFT 1
@@ -149,18 +164,18 @@ typedef struct lsquic_packet_out
 #ifndef NDEBUG
         POL_HEADER_PROT = 1 << 9,       /* Header protection applied */
 #endif
+        POL_LIMITED     = 1 << 10,      /* Used to credit sc_next_limit if needed. */
     }                  po_lflags:16;
     unsigned char     *po_data;
 
-    /* A lot of packets contain data belonging to only one stream.  Thus,
-     * `one' is used first.  If this is not enough, any number of
-     * stream_rec_arr structures can be allocated to handle more stream
-     * records.
+    /* A lot of packets contain only one frame.  Thus, `one' is used first.
+     * If this is not enough, any number of frame_rec_arr structures can be
+     * allocated to handle more frame records.
      */
     union {
-        struct stream_rec               one;
-        struct stream_rec_arr_tailq     arr;
-    }                  po_srecs;
+        struct frame_rec               one;
+        struct frame_rec_arr_tailq     arr;
+    }                  po_frecs;
 
     /* If PO_ENCRYPTED is set, this points to the buffer that holds encrypted
      * data.
@@ -274,19 +289,19 @@ typedef struct lsquic_packet_out
 
 #define lsquic_packet_out_ecn(p)  (((p)->po_lflags >> POECN_SHIFT) & 3)
 
-struct packet_out_srec_iter {
+struct packet_out_frec_iter {
     lsquic_packet_out_t         *packet_out;
-    struct stream_rec_arr       *cur_srec_arr;
-    unsigned                     srec_idx;
+    struct frame_rec_arr        *cur_frec_arr;
+    unsigned                     frec_idx;
     int                          impl_idx;
 };
 
 
-struct stream_rec *
-lsquic_posi_first (struct packet_out_srec_iter *posi, lsquic_packet_out_t *);
+struct frame_rec *
+lsquic_pofi_first (struct packet_out_frec_iter *pofi, lsquic_packet_out_t *);
 
-struct stream_rec *
-lsquic_posi_next (struct packet_out_srec_iter *posi);
+struct frame_rec *
+lsquic_pofi_next (struct packet_out_frec_iter *pofi);
 
 lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
@@ -299,6 +314,11 @@ lsquic_packet_out_destroy (lsquic_packet_out_t *,
                         struct lsquic_engine_public *, void *peer_ctx);
 
 int
+lsquic_packet_out_add_frame (struct lsquic_packet_out *,
+                  struct lsquic_mm *, uintptr_t data, enum quic_frame_type,
+                  unsigned short off, unsigned short len);
+
+int
 lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
                               struct lsquic_mm *mm,
                               struct lsquic_stream *new_stream,
@@ -308,10 +328,6 @@ lsquic_packet_out_add_stream (lsquic_packet_out_t *packet_out,
 unsigned
 lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *,
                                                     lsquic_stream_id_t);
-
-int
-lsquic_packet_out_split_in_two (struct lsquic_mm *, lsquic_packet_out_t *,
-    lsquic_packet_out_t *, const struct parse_funcs *, unsigned excess_bytes);
 
 void
 lsquic_packet_out_chop_regen (lsquic_packet_out_t *);

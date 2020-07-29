@@ -1816,6 +1816,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_scid_len = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "dplpmtud", 8))
+        {
+            settings->es_dplpmtud = atoi(val);
+            return 0;
+        }
         break;
     case 9:
         if (0 == strncmp(name, "send_prst", 9))
@@ -1835,11 +1840,21 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_timestamps = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "max_plpmtu", 10))
+        {
+            settings->es_max_plpmtu = atoi(val);
+            return 0;
+        }
         break;
     case 11:
         if (0 == strncmp(name, "ping_period", 11))
         {
             settings->es_ping_period = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "base_plpmtu", 11))
+        {
+            settings->es_base_plpmtu = atoi(val);
             return 0;
         }
         break;
@@ -1975,7 +1990,7 @@ set_engine_option (struct lsquic_engine_settings *settings,
         }
         break;
     case 23:
-        if (0 == strncmp(name, "max_udp_payload_size_rx", 18))
+        if (0 == strncmp(name, "max_udp_payload_size_rx", 23))
         {
             settings->es_max_udp_payload_size_rx = atoi(val);
             return 0;
@@ -2008,7 +2023,9 @@ set_engine_option (struct lsquic_engine_settings *settings,
 }
 
 
-#define MAX_PACKOUT_BUF_SZ 1370
+/* So that largest allocation in PBA fits in 4KB */
+#define PBA_SIZE_MAX 0x1000
+#define PBA_SIZE_THRESH (PBA_SIZE_MAX - sizeof(uintptr_t))
 
 struct packout_buf
 {
@@ -2032,12 +2049,6 @@ pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
     struct packout_buf_allocator *const pba = packout_buf_allocator;
     struct packout_buf *pb;
 
-    if (size > MAX_PACKOUT_BUF_SZ)
-    {
-        fprintf(stderr, "packout buf size too large: %hu", size);
-        abort();
-    }
-
     if (pba->max && pba->n_out >= pba->max)
     {
         LSQ_DEBUG("# outstanding packout bufs reached the limit of %u, "
@@ -2047,16 +2058,24 @@ pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
 
 #if LSQUIC_USE_POOLS
     pb = SLIST_FIRST(&pba->free_packout_bufs);
-    if (pb)
+    if (pb && size <= PBA_SIZE_THRESH)
         SLIST_REMOVE_HEAD(&pba->free_packout_bufs, next_free_pb);
+    else if (size <= PBA_SIZE_THRESH)
+        pb = malloc(PBA_SIZE_MAX);
     else
+        pb = malloc(sizeof(uintptr_t) + size);
+#else
+    pb = malloc(sizeof(uintptr_t) + size);
 #endif
-        pb = malloc(MAX_PACKOUT_BUF_SZ);
 
     if (pb)
+    {
+        * (uintptr_t *) pb = size;
         ++pba->n_out;
-
-    return pb;
+        return (uintptr_t *) pb + 1;
+    }
+    else
+        return NULL;
 }
 
 
@@ -2064,12 +2083,16 @@ void
 pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
+    obj = (uintptr_t *) obj - 1;
 #if LSQUIC_USE_POOLS
-    struct packout_buf *const pb = obj;
-    SLIST_INSERT_HEAD(&pba->free_packout_bufs, pb, next_free_pb);
-#else
-    free(obj);
+    if (* (uintptr_t *) obj <= PBA_SIZE_THRESH)
+    {
+        struct packout_buf *const pb = obj;
+        SLIST_INSERT_HEAD(&pba->free_packout_bufs, pb, next_free_pb);
+    }
+    else
 #endif
+        free(obj);
     --pba->n_out;
 }
 

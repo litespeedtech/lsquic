@@ -68,6 +68,7 @@ struct lsquic_engine_public {
     unsigned char                  *enp_alpn;   /* May be set if not HTTP */
     /* es_noprogress_timeout converted to microseconds for speed */
     lsquic_time_t                   enp_noprog_timeout;
+    lsquic_time_t                   enp_mtu_probe_timer;
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

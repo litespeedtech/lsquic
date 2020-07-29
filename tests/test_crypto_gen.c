@@ -74,7 +74,7 @@ struct test_ctx {
 
 
 static size_t
-crypto_read (void *ctx, void *buf, size_t len)
+crypto_read (void *ctx, void *buf, size_t len, int *fin)
 {
     struct test_ctx *test_ctx = ctx;
     if (test_ctx->test->data_sz - test_ctx->off < len)
@@ -109,20 +109,20 @@ run_test (int i)
         for (min = 0; min < test->min_sz; ++min)
         {
             init_ctx(&test_ctx, test);
-            len = test->pf->pf_gen_crypto_frame(out, min, test->offset,
+            len = test->pf->pf_gen_crypto_frame(out, min, 0, test->offset, 0,
                         test->data_sz, crypto_read, &test_ctx);
             assert(-1 == len);
         }
 
         /* Test that it succeeds now: */
         init_ctx(&test_ctx, test);
-        len = test->pf->pf_gen_crypto_frame(out, min, test->offset,
+        len = test->pf->pf_gen_crypto_frame(out, min, 0, test->offset, 0,
                     test->data_sz, crypto_read, &test_ctx);
         assert(len == (int) min);
     }
 
     init_ctx(&test_ctx, test);
-    len = test->pf->pf_gen_crypto_frame(out, test->avail, test->offset,
+    len = test->pf->pf_gen_crypto_frame(out, test->avail, 0, test->offset, 0,
                 test->data_sz, crypto_read, &test_ctx);
 
     if (test->len > 0) {

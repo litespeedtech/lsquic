@@ -739,6 +739,29 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX`
 
+    .. member:: int es_dplpmtud
+
+       If set to true value, enable DPLPMTUD -- Datagram Packetization
+       Layer Path MTU Discovery.
+
+       Default value is :macro:`LSQUIC_DF_DPLPMTUD`
+
+    .. member:: unsigned short  es_base_plpmtu
+
+        PLPMTU size expected to work for most paths.
+
+        If set to zero, this value is calculated based on QUIC and IP versions.
+
+        Default value is :macro:`LSQUIC_DF_BASE_PLPMTU`
+
+    .. member:: unsigned short  es_max_plpmtu
+
+        Largest PLPMTU size the engine will try.
+
+        If set to zero, picking this value is left to the engine.
+
+        Default value is :macro:`LSQUIC_DF_MAX_PLPMTU`
+
     .. member:: unsigned        es_noprogress_timeout
 
        No progress timeout.
@@ -937,6 +960,18 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
 
     By default, incoming packet size is not limited.
+
+.. macro:: LSQUIC_DF_DPLPMTUD
+
+    By default, DPLPMTUD is enabled
+
+.. macro:: LSQUIC_DF_BASE_PLPMTU
+
+    By default, this value is left up to the engine.
+
+.. macro:: LSQUIC_DF_MAX_PLPMTU
+
+    By default, this value is left up to the engine.
 
 .. macro:: LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER
 
@@ -1170,7 +1205,7 @@ callback.
 
 In client mode, a new connection is created by
 
-.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short max_udp_payload_size, const unsigned char *sess_resume, size_t sess_resume_len, const unsigned char *token, size_t token_sz)
+.. function:: lsquic_conn_t * lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version, const struct sockaddr *local_sa, const struct sockaddr *peer_sa, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, const char *sni, unsigned short base_plpmtu, const unsigned char *sess_resume, size_t sess_resume_len, const unsigned char *token, size_t token_sz)
 
     :param engine: Engine to use.
 
@@ -1203,10 +1238,12 @@ In client mode, a new connection is created by
         The SNI is required for Google QUIC connections; it is optional for
         IETF QUIC and may be set to NULL.
 
-    :param max_udp_payload_size:
+    :param base_plpmtu:
 
-        Maximum packet size.  If set to zero, it is inferred based on `peer_sa`
-        and `version`.
+        Base PLPMTU.  If set to zero, it is selected based on the
+        engine settings (see
+        :member:`lsquic_engine_settings.es_base_plpmtu`),
+        QUIC version, and IP version.
 
     :param sess_resume:
 

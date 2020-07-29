@@ -52,6 +52,7 @@
 #include "lsquic_conn.h"
 #include "lsquic_data_in_if.h"
 #include "lsquic_parse.h"
+#include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_senhist.h"
@@ -585,6 +586,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
                                                             STREAM_ONNEW_DONE)
     {
         stream->stream_flags |= STREAM_ONCLOSE_DONE;
+        SM_HISTORY_APPEND(stream, SHE_ONCLOSE_CALL);
         stream->stream_if->on_close(stream, stream->st_ctx);
     }
     if (stream->sm_qflags & SMQF_SENDING_FLAGS)
@@ -2752,15 +2754,6 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
 }
 
 
-static size_t
-crypto_frame_gen_read (void *ctx, void *buf, size_t len)
-{
-    int fin_ignored;
-
-    return frame_std_gen_read(ctx, buf, len, &fin_ignored);
-}
-
-
 static void
 check_flush_threshold (lsquic_stream_t *stream)
 {
@@ -2985,8 +2978,8 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
 
     off = packet_out->po_data_sz;
     len = pf->pf_gen_crypto_frame(packet_out->po_data + packet_out->po_data_sz,
-                lsquic_packet_out_avail(packet_out), stream->tosend_off,
-                size, crypto_frame_gen_read, fg_ctx);
+                lsquic_packet_out_avail(packet_out), 0, stream->tosend_off, 0,
+                size, frame_std_gen_read, fg_ctx);
     if (len < 0)
         return len;
 

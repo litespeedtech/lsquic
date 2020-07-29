@@ -65,10 +65,10 @@ int
 lsquic_conn_copy_and_release_pi_data (const lsquic_conn_t *conn,
           struct lsquic_engine_public *enpub, lsquic_packet_in_t *packet_in)
 {
+    unsigned char *copy;
+
     assert(!(packet_in->pi_flags & PI_OWN_DATA));
-    /* The size should be guarded in lsquic_engine_packet_in(): */
-    assert(packet_in->pi_data_sz <= GQUIC_MAX_PACKET_SZ);
-    unsigned char *const copy = lsquic_mm_get_packet_in_buf(&enpub->enp_mm, 1370);
+    copy = lsquic_mm_get_packet_in_buf(&enpub->enp_mm, packet_in->pi_data_sz);
     if (!copy)
     {
         LSQ_WARN("cannot allocate memory to copy incoming packet data");

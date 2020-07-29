@@ -264,7 +264,8 @@ gquic_Q046_parse_packet_in_finish (struct lsquic_packet_in *packet_in,
 
 static int
 gquic_Q046_gen_crypto_frame (unsigned char *buf, size_t buf_len,
-        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+        lsquic_stream_id_t stream_id, uint64_t offset, int fin, size_t size,
+        gsf_read_f gsf_read, void *stream)
 {
     assert(0);
     return -1;

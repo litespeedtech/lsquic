@@ -58,9 +58,6 @@ typedef lsquic_time_t
 /* gsf_: generate stream frame */
 typedef size_t (*gsf_read_f) (void *stream, void *buf, size_t len, int *fin);
 
-/* gcf_: generate CRYPTO frame */
-typedef size_t (*gcf_read_f) (void *stream, void *buf, size_t len);
-
 /* This structure contains functions that parse and generate packets and
  * frames in version-specific manner.  To begin with, there is difference
  * between GQUIC's little-endian (Q038 and lower) and big-endian formats
@@ -83,19 +80,29 @@ struct parse_funcs
      * exception is -1, which is a generic error code, as we always need
      * more than 1 byte to write a STREAM frame.
      */
+    /* pf_gen_stream_frame and pf_gen_crypto_frame must be adjacent so that
+     * they can be cast to an array.
+     */
     int
     (*pf_gen_stream_frame) (unsigned char *buf, size_t bufsz,
                             lsquic_stream_id_t stream_id, uint64_t offset,
                             int fin, size_t size, gsf_read_f, void *stream);
+    /* The two "UNUSED" parameters are here so that it matches
+     * pf_gen_stream_frame.
+     */
+    int
+    (*pf_gen_crypto_frame) (unsigned char *buf, size_t bufsz,
+                            lsquic_stream_id_t UNUSED_1, uint64_t offset,
+                            int UNUSED_2, size_t size, gsf_read_f, void *stream);
+    /* pf_parse_stream_frame and pf_parse_crypto_frame must be adjacent so that
+     * they can be cast to an array.
+     */
     int
     (*pf_parse_stream_frame) (const unsigned char *buf, size_t rem_packet_sz,
                                                     struct stream_frame *);
     int
     (*pf_parse_crypto_frame) (const unsigned char *buf, size_t rem_packet_sz,
                                                     struct stream_frame *);
-    int
-    (*pf_gen_crypto_frame) (unsigned char *buf, size_t bufsz, uint64_t offset,
-                            size_t size, gcf_read_f, void *stream);
     int
     (*pf_parse_ack_frame) (const unsigned char *buf, size_t buf_len,
                                     struct ack_info *ack_info, uint8_t exp);

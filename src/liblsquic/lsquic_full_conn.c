@@ -737,7 +737,11 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     lsquic_generate_cid_gquic(&cid);
     if (!max_packet_size)
     {
-        if (is_ipv4)
+        if (enpub->enp_settings.es_base_plpmtu)
+            max_packet_size = enpub->enp_settings.es_base_plpmtu
+                        - (is_ipv4 ? 20 : 40)   /* IP header */
+                        - 8;                    /* UDP header */
+        else if (is_ipv4)
             max_packet_size = GQUIC_MAX_IPv4_PACKET_SZ;
         else
             max_packet_size = GQUIC_MAX_IPv6_PACKET_SZ;
@@ -1269,6 +1273,12 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl, PNS_APP,
                                                     packet_out->po_ack2ed);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->fc_pub.mm, 0,
+                                QUIC_FRAME_ACK, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
     if (has_missing)
@@ -2529,7 +2539,6 @@ get_writeable_packet (struct full_conn *conn, unsigned need_at_least)
     lsquic_packet_out_t *packet_out;
     int is_err;
 
-    assert(need_at_least <= GQUIC_MAX_PAYLOAD_SZ);
     packet_out = lsquic_send_ctl_get_writeable_packet(&conn->fc_send_ctl,
                             PNS_APP, need_at_least, &conn->fc_path, 0, &is_err);
     if (!packet_out && is_err)
@@ -2709,7 +2718,7 @@ generate_rst_stream_frame (struct full_conn *conn, lsquic_stream_t *stream)
         return 0;
     /* TODO Possible optimization: instead of using stream->tosend_off as the
      * offset, keep track of the offset that was actually sent: include it
-     * into stream_rec and update a new per-stream "maximum offset actually
+     * into frame_rec and update a new per-stream "maximum offset actually
      * sent" field.  Then, if a stream is reset, the connection cap can be
      * increased.
      */
@@ -2800,6 +2809,12 @@ generate_stop_waiting_frame (struct full_conn *conn)
                     lsquic_packet_out_packno_bits(packet_out), least_unacked);
     if (sz < 0) {
         ABORT_ERROR("gen_stop_waiting_frame failed");
+        return;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->fc_pub.mm, 0,
+                        QUIC_FRAME_STOP_WAITING, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);

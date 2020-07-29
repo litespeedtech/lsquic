@@ -986,7 +986,8 @@ lsquic_gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
 
 static int
 lsquic_gquic_be_gen_crypto_frame (unsigned char *buf, size_t buf_len,
-        uint64_t offset, size_t size, gcf_read_f gcf_read, void *stream)
+        lsquic_stream_id_t stream_if, uint64_t offset, int fin,
+        size_t size, gsf_read_f gsf_read, void *stream)
 {
     assert(0);
     return -1;

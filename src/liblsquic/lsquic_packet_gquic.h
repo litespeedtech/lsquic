@@ -16,6 +16,9 @@ enum PACKET_PUBLIC_FLAGS
   PACKET_PUBLIC_FLAGS_TWO_OR_MORE_BYTES = 1 << 7,
 };
 
+/* XXX The name of this macro no longer matches: it applies both to gQUIC and
+ * IETF QUIC.
+ */
 #define GQUIC_FRAME_REGEN_MASK ((1 << QUIC_FRAME_ACK)                \
   | (1 << QUIC_FRAME_PATH_CHALLENGE) | (1 << QUIC_FRAME_PATH_RESPONSE) \
   | (1 << QUIC_FRAME_STOP_WAITING) | (1 << QUIC_FRAME_TIMESTAMP))

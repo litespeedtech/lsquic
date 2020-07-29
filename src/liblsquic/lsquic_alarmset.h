@@ -26,6 +26,7 @@ enum alarm_id {
     AL_RETX_HSK = AL_RETX_INIT + PNS_HSK,
     AL_RETX_APP = AL_RETX_INIT + PNS_APP,
     AL_PING,
+    AL_MTU_PROBE,
     AL_IDLE,
     AL_ACK_APP,
     AL_RET_CIDS,
@@ -57,6 +58,7 @@ enum alarm_id_bit {
     ALBIT_PATH_CHAL_3 = 1 << AL_PATH_CHAL_3,
     ALBIT_SESS_TICKET = 1 << AL_SESS_TICKET,
     ALBIT_BLOCKED_KA  = 1 << AL_BLOCKED_KA,
+    ALBIT_MTU_PROBE = 1 << AL_MTU_PROBE,
 };
 
 

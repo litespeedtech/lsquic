@@ -33,7 +33,7 @@ struct lsquic_mm {
     struct ack_info     *acki;
     struct {
         struct malo     *stream_frame;  /* For struct stream_frame */
-        struct malo     *stream_rec_arr;/* For struct stream_rec_arr */
+        struct malo     *frame_rec_arr; /* For struct frame_rec_arr */
         struct malo     *mini_conn;     /* For struct mini_conn */
         struct malo     *mini_conn_ietf;/* For struct ietf_mini_conn */
         struct malo     *retry_conn;    /* For struct retry_conn */

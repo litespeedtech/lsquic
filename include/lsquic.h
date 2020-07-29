@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 18
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 19
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -350,11 +350,23 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  */
 #define LSQUIC_DF_GREASE_QUIC_BIT 1
 
+/** By default, DPLPMTUD is enabled */
+#define LSQUIC_DF_DPLPMTUD 1
+
+/** By default, this value is left up to the engine. */
+#define LSQUIC_DF_BASE_PLPMTU 0
+
+/** By default, this value is left up to the engine. */
+#define LSQUIC_DF_MAX_PLPMTU 0
+
 /** By default, drop no-progress connections after 60 seconds on the server */
 #define LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER 60
 
 /** By default, do not use no-progress timeout on the client */
 #define LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT 0
+
+/** By default, we use the minimum timer of 1000 milliseconds */
+#define LSQUIC_DF_MTU_PROBE_TIMER 1000
 
 struct lsquic_engine_settings {
     /**
@@ -818,6 +830,49 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_GREASE_QUIC_BIT
      */
     int             es_grease_quic_bit;
+
+    /**
+     * If set to true value, enable DPLPMTUD -- Datagram Packetization
+     * Layer Path MTU Discovery.
+     *
+     * Default value is @ref LSQUIC_DF_DPLPMTUD
+     */
+    int             es_dplpmtud;
+
+    /**
+     * PLPMTU size expected to work for most paths.
+     *
+     * If set to zero, this value is calculated based on QUIC and IP versions.
+     *
+     * Default value is @ref LSQUIC_DF_BASE_PLPMTU.
+     */
+    unsigned short  es_base_plpmtu;
+
+    /**
+     * Largest PLPMTU size the engine will try.
+     *
+     * If set to zero, picking this value is left to the engine.
+     *
+     * Default value is @ref LSQUIC_DF_MAX_PLPMTU.
+     */
+    unsigned short  es_max_plpmtu;
+
+    /**
+     * This value specifies how long the DPLPMTUD probe timer is, in
+     * milliseconds.  [draft-ietf-tsvwg-datagram-plpmtud-17] says:
+     *
+     " PROBE_TIMER:  The PROBE_TIMER is configured to expire after a period
+     "    longer than the maximum time to receive an acknowledgment to a
+     "    probe packet.  This value MUST NOT be smaller than 1 second, and
+     "    SHOULD be larger than 15 seconds.  Guidance on selection of the
+     "    timer value are provided in section 3.1.1 of the UDP Usage
+     "    Guidelines [RFC8085].
+     *
+     * If set to zero, the default is used.
+     *
+     * Default value is @ref LSQUIC_DF_MTU_PROBE_TIMER.
+     */
+    unsigned        es_mtu_probe_timer;
 };
 
 /* Initialize `settings' to default values */
@@ -1146,15 +1201,15 @@ lsquic_engine_new (unsigned lsquic_engine_flags,
  * To let the engine specify QUIC version, use N_LSQVER.  If session resumption
  * information is supplied, version is picked from there instead.
  *
- * If `max_udp_payload_size' is set to zero, it is inferred based on `peer_sa':
- * 1350 for IPv6 and 1370 for IPv4.
+ * If `base_plpmtu' is set to zero, it is selected based on the
+ * engine settings, QUIC version, and IP version.
  */
 lsquic_conn_t *
 lsquic_engine_connect (lsquic_engine_t *, enum lsquic_version,
                        const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx,
-                       const char *hostname, unsigned short max_udp_payload_size,
+                       const char *hostname, unsigned short base_plpmtu,
                        const unsigned char *sess_resume, size_t sess_resume_len,
                        /** Resumption token: optional */
                        const unsigned char *token, size_t token_sz);

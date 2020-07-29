@@ -142,6 +142,7 @@ enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
     MF_NOPROG_TIMEOUT   = 1 << 1,
+    MF_CHECK_MTU_PROBE  = 1 << 2,
 };
 
 
@@ -281,6 +282,21 @@ struct conn_err
 };
 
 
+struct dplpmtud_state
+{
+    lsquic_packno_t     ds_probe_packno;
+#ifndef NDEBUG
+    lsquic_time_t       ds_probe_sent;
+#endif
+    enum {
+        DS_PROBE_SENT   = 1 << 0,
+    }                   ds_flags;
+    unsigned short      ds_probed_size,
+                        ds_failed_size; /* If non-zero, defines ceiling */
+    unsigned char       ds_probe_count;
+};
+
+
 struct conn_path
 {
     struct network_path         cop_path;
@@ -298,8 +314,10 @@ struct conn_path
          */
         COP_GOT_NONPROB = 1 << 2,
     }                           cop_flags;
+    unsigned short              cop_max_plpmtu;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
+    struct dplpmtud_state       cop_dplpmtud;
 };
 
 
@@ -402,6 +420,7 @@ struct ietf_full_conn
     unsigned                    ifc_last_pack_tol;
     unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
     unsigned                    ifc_max_peer_ack_usec;
+    unsigned short              ifc_max_udp_payload;    /* Cached TP */
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
     union {
@@ -480,6 +499,9 @@ insert_new_dcid (struct ietf_full_conn *, uint64_t seqno,
 
 static struct conn_cid_elem *
 find_cce_by_cid (struct ietf_full_conn *, const lsquic_cid_t *);
+
+static void
+mtu_probe_too_large (struct ietf_full_conn *, const struct lsquic_packet_out *);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -655,11 +677,41 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
 }
 
 
+static void
+mtu_probe_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+
+    LSQ_DEBUG("MTU probe alarm expired: set `check MTU probe' flag");
+    assert(!(conn->ifc_mflags & MF_CHECK_MTU_PROBE));
+    conn->ifc_mflags |= MF_CHECK_MTU_PROBE;
+}
+
+
 static int
 migra_is_on (const struct ietf_full_conn *conn, unsigned path_id)
 {
     return (conn->ifc_send_flags & (SF_SEND_PATH_CHAL << path_id))
         || lsquic_alarmset_is_set(&conn->ifc_alset, AL_PATH_CHAL + path_id);
+}
+
+
+#define TRANSPORT_OVERHEAD(is_ipv6) (((is_ipv6) ? 40 : 20) + 8 /* UDP */)
+
+static unsigned short
+calc_base_packet_size (const struct ietf_full_conn *conn, int is_ipv6)
+{
+    unsigned short size;
+
+    if (conn->ifc_settings->es_base_plpmtu)
+        size = conn->ifc_settings->es_base_plpmtu - TRANSPORT_OVERHEAD(is_ipv6);
+    else if (is_ipv6)
+        size = IQUIC_MAX_IPv6_PACKET_SZ;
+    else
+        size = IQUIC_MAX_IPv4_PACKET_SZ;
+
+    return size;
 }
 
 
@@ -674,15 +726,10 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
     copath->cop_flags |= COP_INITIALIZED;
     copath->cop_path.np_dcid = dce->de_cid;
     copath->cop_path.np_peer_ctx = CUR_NPATH(conn)->np_peer_ctx;
-    if (NP_IS_IPv6(CUR_NPATH(conn)))
-        copath->cop_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
-    else
-        copath->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
-    if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
-            && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
-                                            < copath->cop_path.np_pack_size)
-        copath->cop_path.np_pack_size
-                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
+    copath->cop_path.np_pack_size
+                = calc_base_packet_size(conn, NP_IS_IPv6(CUR_NPATH(conn)));
+    if (conn->ifc_max_udp_payload < copath->cop_path.np_pack_size)
+        copath->cop_path.np_pack_size = conn->ifc_max_udp_payload;
     memcpy(&copath->cop_path.np_local_addr, NP_LOCAL_SA(CUR_NPATH(conn)),
                                     sizeof(copath->cop_path.np_local_addr));
     memcpy(&copath->cop_path.np_peer_addr, dest_sa,
@@ -1117,6 +1164,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_2, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_MTU_PROBE, mtu_probe_alarm_expired, conn);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], &conn->ifc_conn, 1);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], &conn->ifc_conn, 1);
     lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], &conn->ifc_conn, 1);
@@ -1157,7 +1205,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 struct lsquic_conn *
 lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
            unsigned versions, unsigned flags,
-           const char *hostname, unsigned short max_packet_size, int is_ipv4,
+           const char *hostname, unsigned short base_plpmtu, int is_ipv4,
            const unsigned char *sess_resume, size_t sess_resume_sz,
            const unsigned char *token, size_t token_sz)
 {
@@ -1189,14 +1237,12 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     }
     esfi = select_esf_iquic_by_ver(ver);
 
-    if (!max_packet_size)
-    {
-        if (is_ipv4)
-            max_packet_size = IQUIC_MAX_IPv4_PACKET_SZ;
-        else
-            max_packet_size = IQUIC_MAX_IPv6_PACKET_SZ;
-    }
-    conn->ifc_paths[0].cop_path.np_pack_size = max_packet_size;
+    if (base_plpmtu)
+        conn->ifc_paths[0].cop_path.np_pack_size
+                                = base_plpmtu - TRANSPORT_OVERHEAD(!is_ipv4);
+    else
+        conn->ifc_paths[0].cop_path.np_pack_size
+                                = calc_base_packet_size(conn, !is_ipv4);
 
     if (0 != ietf_full_conn_init(conn, enpub, flags,
                                                 enpub->enp_settings.es_ecn))
@@ -1368,15 +1414,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         LSQ_DEBUG("path changed during mini conn: schedule PATH_CHALLENGE");
         conn->ifc_send_flags |= SF_SEND_PATH_CHAL_PATH_0;
     }
-#ifndef NDEBUG
-    if (getenv("LSQUIC_CN_PACK_SIZE"))
-    {
-        conn->ifc_paths[0].cop_path.np_pack_size
-                                        = atoi(getenv("LSQUIC_CN_PACK_SIZE"));
-        LSQ_INFO("set packet size to %hu (env)",
-                                    conn->ifc_paths[0].cop_path.np_pack_size);
-    }
-#endif
 
     conn->ifc_max_streams_in[SD_BIDI]
         = enpub->enp_settings.es_init_max_streams_bidi;
@@ -1607,6 +1644,12 @@ generate_timestamp_frame (struct ietf_full_conn *conn,
                                         timestamp << TP_DEF_ACK_DELAY_EXP);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated TIMESTAMP(%"
                     PRIu64" us) frame", timestamp << TP_DEF_ACK_DELAY_EXP);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_TIMESTAMP, packet_out->po_data_sz, w))
+    {
+        LSQ_DEBUG("%s: adding frame to packet failed: %d", __func__, errno);
+        return;
+    }
     packet_out->po_frame_types |= 1 << QUIC_FRAME_TIMESTAMP;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
@@ -1640,6 +1683,12 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     lsquic_send_ctl_scheduled_ack(&conn->ifc_send_ctl, pns,
                                                     packet_out->po_ack2ed);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_ACK, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return -1;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
     if (has_missing)
@@ -1753,6 +1802,12 @@ generate_max_data_frame (struct ietf_full_conn *conn)
     LSQ_DEBUG("generated %d-byte MAX_DATA frame (offset: %"PRIu64")", w, offset);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated MAX_DATA frame, offset=%"
                                                                 PRIu64, offset);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_MAX_DATA, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_frame_types |= QUIC_FTBIT_MAX_DATA;
     conn->ifc_send_flags &= ~SF_SEND_MAX_DATA;
@@ -1822,6 +1877,12 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         w, CID_BITS(&cce->cce_cid));
     EV_LOG_GENERATED_NEW_CONNECTION_ID_FRAME(LSQUIC_LOG_CONN_ID,
         conn->ifc_conn.cn_pf, packet_out->po_data + packet_out->po_data_sz, w);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                    QUIC_FRAME_NEW_CONNECTION_ID, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return -1;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_NEW_CONNECTION_ID;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
 
@@ -1929,6 +1990,12 @@ generate_retire_cid_frame (struct ietf_full_conn *conn)
         w, dce->de_seqno);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RETIRE_CONNECTION_ID "
                                             "frame, seqno=%u", dce->de_seqno);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                QUIC_FRAME_RETIRE_CONNECTION_ID, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return -1;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_RETIRE_CONNECTION_ID;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
 
@@ -1979,6 +2046,12 @@ generate_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
                                 "limit: %"PRIu64")", w, sd == SD_UNI, limit);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte STREAMS_BLOCKED "
                 "frame (uni: %d, limit: %"PRIu64")", w, sd == SD_UNI, limit);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_STREAMS_BLOCKED, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_STREAM_BLOCKED;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     conn->ifc_send_flags &= ~(SF_SEND_STREAMS_BLOCKED << sd);
@@ -2028,6 +2101,12 @@ generate_max_streams_frame (struct ietf_full_conn *conn, enum stream_dir sd)
                                 "limit: %"PRIu64")", w, sd == SD_UNI, limit);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte MAX_STREAMS "
                 "frame (uni: %d, limit: %"PRIu64")", w, sd == SD_UNI, limit);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_MAX_STREAMS, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_MAX_STREAMS;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     conn->ifc_send_flags &= ~(SF_SEND_MAX_STREAMS << sd);
@@ -2078,6 +2157,12 @@ generate_blocked_frame (struct ietf_full_conn *conn)
     LSQ_DEBUG("generated %d-byte BLOCKED frame (offset: %"PRIu64")", w, offset);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated BLOCKED frame, offset=%"
                                                                 PRIu64, offset);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_BLOCKED, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return 0;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_BLOCKED;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
 
@@ -2110,6 +2195,12 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
     }
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte MAX_STREAM_DATA "
         "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_MAX_STREAM_DATA, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return 0;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_MAX_STREAM_DATA;
     lsquic_stream_max_stream_data_sent(stream);
@@ -2142,6 +2233,12 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
     }
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte STREAM_BLOCKED "
         "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_STREAM_BLOCKED, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return 0;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
     lsquic_stream_blocked_frame_sent(stream);
@@ -2176,6 +2273,12 @@ generate_stop_sending_frame (struct ietf_full_conn *conn,
         "error code: %u)", w, stream_id, error_code);
     EV_LOG_GENERATED_STOP_SENDING_FRAME(LSQUIC_LOG_CONN_ID, stream_id,
                                                                 error_code);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_STOP_SENDING, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return -1;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_STOP_SENDING;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
 
@@ -2215,7 +2318,7 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
 {
     lsquic_packet_out_t *packet_out;
     unsigned need;
-    int sz, s;
+    int sz;
 
     need = conn->ifc_conn.cn_pf->pf_rst_frame_size(stream->id,
                                     stream->tosend_off, stream->error_code);
@@ -2234,15 +2337,14 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("gen_rst_frame failed");
         return 0;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
-    s = lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
-                            QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz);
-    if (s != 0)
+    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
+                            QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz))
     {
-        ABORT_ERROR("adding stream to packet failed: %s", strerror(errno));
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
         return 0;
     }
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
     lsquic_stream_rst_frame_sent(stream);
     LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset 0x%"PRIX64"; error code "
               "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
@@ -3161,11 +3263,18 @@ handshake_ok (struct lsquic_conn *lconn)
     conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            /* Second check is so that we don't truncate a large value when
+             * storing it in unsigned short.
+             */
             && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
-                                            < CUR_NPATH(conn)->np_pack_size)
+                                                < TP_DEF_MAX_UDP_PAYLOAD_SIZE)
+        conn->ifc_max_udp_payload = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
+    else
+        conn->ifc_max_udp_payload = TP_DEF_MAX_UDP_PAYLOAD_SIZE;
+
+    if (conn->ifc_max_udp_payload < CUR_NPATH(conn)->np_pack_size)
     {
-        CUR_NPATH(conn)->np_pack_size
-                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
+        CUR_NPATH(conn)->np_pack_size = conn->ifc_max_udp_payload;
         LSQ_DEBUG("decrease packet size to %hu bytes",
                                                 CUR_NPATH(conn)->np_pack_size);
     }
@@ -3260,6 +3369,9 @@ handshake_ok (struct lsquic_conn *lconn)
     else
         conn->ifc_active_cids_limit = params->tp_active_connection_id_limit;
     conn->ifc_first_active_cid_seqno = conn->ifc_scid_seqno;
+
+    if (conn->ifc_settings->es_dplpmtud)
+        conn->ifc_mflags |= MF_CHECK_MTU_PROBE;
 
     if (can_issue_cids(conn) && CN_SCID(&conn->ifc_conn)->len != 0)
         conn->ifc_send_flags |= SF_SEND_NEW_CID;
@@ -3675,6 +3787,12 @@ immediate_close (struct ietf_full_conn *conn)
         LSQ_WARN("%s failed", __func__);
         return TICK_CLOSE;
     }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                    QUIC_FRAME_CONNECTION_CLOSE, packet_out->po_data_sz, sz))
+    {
+        LSQ_WARN("%s: adding frame to packet failed: %d", __func__, errno);
+        return TICK_CLOSE;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
@@ -3844,6 +3962,12 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
         ABORT_ERROR("generate_connection_close_packet failed");
         return;
     }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                    QUIC_FRAME_CONNECTION_CLOSE, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
@@ -3868,6 +3992,12 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
                             lsquic_packet_out_avail(packet_out));
     if (sz < 0) {
         ABORT_ERROR("gen_ping_frame failed");
+        return;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_PING, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
@@ -3898,6 +4028,12 @@ generate_handshake_done_frame (struct ietf_full_conn *conn,
         return;
     }
 
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_HANDSHAKE_DONE, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= QUIC_FTBIT_HANDSHAKE_DONE;
     LSQ_DEBUG("generated HANDSHAKE_DONE frame");
@@ -3929,7 +4065,13 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
                             conn->ifc_max_peer_ack_usec);
     if (sz < 0)
     {
-        ABORT_ERROR("gen_rst_frame failed");
+        ABORT_ERROR("gen_ack_frequency_frame failed");
+        return;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_ACK_FREQUENCY, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
@@ -3989,6 +4131,12 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     ++copath->cop_n_chals;
     EV_LOG_GENERATED_PATH_CHAL_FRAME(LSQUIC_LOG_CONN_ID, conn->ifc_conn.cn_pf,
                         packet_out->po_data + packet_out->po_data_sz, w);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_PATH_CHALLENGE, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_PATH_CHALLENGE;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
@@ -4054,6 +4202,12 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
         w, copath->cop_inc_chal);
     EV_LOG_GENERATED_PATH_RESP_FRAME(LSQUIC_LOG_CONN_ID, conn->ifc_conn.cn_pf,
                         packet_out->po_data + packet_out->po_data_sz, w);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_PATH_RESPONSE, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
     packet_out->po_frame_types |= QUIC_FTBIT_PATH_RESPONSE;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
@@ -5820,8 +5974,6 @@ static int
 init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
                                                             int dcid_changed)
 {
-    struct lsquic_conn *const lconn = &conn->ifc_conn;
-    const struct transport_params *params;
     struct dcid_elem *dce;
 
     dce = find_unassigned_dcid(conn);
@@ -5849,17 +6001,11 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
         return -1;
     }
 
-    if (NP_IS_IPv6(&path->cop_path))
-        path->cop_path.np_pack_size = IQUIC_MAX_IPv6_PACKET_SZ;
-    else
-        path->cop_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
-    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
-                                                        lconn->cn_enc_session);
-    if (params && (params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
-            && params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE]
-                                            < path->cop_path.np_pack_size)
-        path->cop_path.np_pack_size
-                                = params->tp_numerics[TPI_MAX_UDP_PAYLOAD_SIZE];
+    path->cop_path.np_pack_size
+                = calc_base_packet_size(conn, NP_IS_IPv6(&path->cop_path));
+
+    if (conn->ifc_max_udp_payload < path->cop_path.np_pack_size)
+        path->cop_path.np_pack_size = conn->ifc_max_udp_payload;
 
     LSQ_DEBUG("initialized path %u", (unsigned) (path - conn->ifc_paths));
 
@@ -6621,6 +6767,35 @@ ietf_full_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 }
 
 
+static void
+ietf_full_conn_ci_packet_too_large (struct lsquic_conn *lconn,
+                                   struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+#ifndef NDEBUG
+    assert(packet_out->po_lflags & POL_HEADER_PROT);
+#endif
+
+    lsquic_senhist_add(&conn->ifc_send_ctl.sc_senhist, packet_out->po_packno);
+    lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
+    if (packet_out->po_flags & PO_MTU_PROBE)
+    {
+        LSQ_DEBUG("%zu-byte MTU probe in packet %"PRIu64" is too large",
+            lsquic_packet_out_sent_sz(&conn->ifc_conn, packet_out),
+            packet_out->po_packno);
+        mtu_probe_too_large(conn, packet_out);
+    }
+    else
+        ABORT_WARN("non-MTU probe %zu-byte packet %"PRIu64" is too large",
+            lsquic_packet_out_sent_sz(&conn->ifc_conn, packet_out),
+            packet_out->po_packno);
+
+    lsquic_packet_out_destroy(packet_out, conn->ifc_enpub,
+                                            packet_out->po_path->np_peer_ctx);
+}
+
+
 /* Calling of ignore_init() must be delayed until all batched packets have
  * been returned by the engine.
  */
@@ -6752,6 +6927,204 @@ maybe_set_noprogress_alarm (struct ietf_full_conn *conn, lsquic_time_t now)
 }
 
 
+static void
+check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    struct conn_path *const cpath = CUR_CPATH(conn);
+    struct dplpmtud_state *const ds = &cpath->cop_dplpmtud;
+    struct lsquic_packet_out *packet_out;
+    unsigned short saved_packet_sz, avail, mtu_ceiling, net_header_sz, probe_sz;
+    int sz;
+
+    if (ds->ds_flags & DS_PROBE_SENT)
+    {
+        assert(ds->ds_probe_sent + conn->ifc_enpub->enp_mtu_probe_timer < now);
+        LSQ_DEBUG("MTU probe of %hu bytes lost", ds->ds_probed_size);
+        ds->ds_flags &= ~DS_PROBE_SENT;
+        conn->ifc_mflags |= MF_CHECK_MTU_PROBE;
+        if (ds->ds_probe_count >= 3)
+        {
+            LSQ_DEBUG("MTU probe of %hu bytes lost after %hhu tries",
+                ds->ds_probed_size, ds->ds_probe_count);
+            ds->ds_failed_size = ds->ds_probed_size;
+            ds->ds_probe_count = 0;
+        }
+    }
+
+    assert(0 == ds->ds_probe_sent
+        || ds->ds_probe_sent + conn->ifc_enpub->enp_mtu_probe_timer < now);
+
+    if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        || lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist) < 30
+        || lsquic_send_ctl_in_recovery(&conn->ifc_send_ctl)
+        || !lsquic_send_ctl_can_send_probe(&conn->ifc_send_ctl,
+                                                        &cpath->cop_path))
+    {
+        return;
+    }
+
+    net_header_sz = TRANSPORT_OVERHEAD(NP_IS_IPv6(&cpath->cop_path));
+    if (ds->ds_failed_size)
+        mtu_ceiling = ds->ds_failed_size;   /* Don't subtract net_header_sz */
+    else if (conn->ifc_settings->es_max_plpmtu)
+        mtu_ceiling = conn->ifc_settings->es_max_plpmtu - net_header_sz;
+    else
+        mtu_ceiling = 1500 - net_header_sz;
+
+    if (conn->ifc_max_udp_payload < mtu_ceiling)
+    {
+        LSQ_DEBUG("cap MTU ceiling to peer's max_udp_payload_size TP of %hu "
+            "bytes", conn->ifc_max_udp_payload);
+        mtu_ceiling = conn->ifc_max_udp_payload;
+    }
+
+    if (cpath->cop_path.np_pack_size >= mtu_ceiling
+        || (float) cpath->cop_path.np_pack_size / (float) mtu_ceiling >= 0.99)
+    {
+        LSQ_DEBUG("stop MTU probing on path %hhu having achieved about "
+            "%.1f%% efficiency (detected MTU: %hu; failed MTU: %hu)",
+            cpath->cop_path.np_path_id,
+            100. * (float) cpath->cop_path.np_pack_size / (float) mtu_ceiling,
+            cpath->cop_path.np_pack_size, ds->ds_failed_size);
+        conn->ifc_mflags &= ~MF_CHECK_MTU_PROBE;
+        return;
+    }
+
+    LSQ_DEBUG("MTU ratio: %hu / %hu = %.4f",
+        cpath->cop_path.np_pack_size, mtu_ceiling,
+        (float) cpath->cop_path.np_pack_size / (float) mtu_ceiling);
+
+    if (!ds->ds_failed_size && mtu_ceiling < 1500)
+        /* Try the largest ethernet MTU immediately */
+        probe_sz = mtu_ceiling;
+    else if (cpath->cop_path.np_pack_size * 2 >= mtu_ceiling)
+        /* Pick half-way point */
+        probe_sz = (mtu_ceiling + cpath->cop_path.np_pack_size) / 2;
+    else
+        probe_sz = cpath->cop_path.np_pack_size * 2;
+
+    /* XXX Changing np_pack_size is action at a distance */
+    saved_packet_sz = cpath->cop_path.np_pack_size;
+    cpath->cop_path.np_pack_size = probe_sz;
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl,
+                                                        0, PNS_APP, CUR_NPATH(conn));
+    if (!packet_out)
+        goto restore_packet_size;
+    sz = conn->ifc_conn.cn_pf->pf_gen_ping_frame(
+                            packet_out->po_data + packet_out->po_data_sz,
+                            lsquic_packet_out_avail(packet_out));
+    if (sz < 0) {
+        ABORT_ERROR("gen_ping_frame failed");
+        goto restore_packet_size;
+    }
+    /* We don't record frame records for MTU probes as they are never
+     * resized, only discarded.
+     */
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+    avail = lsquic_packet_out_avail(packet_out);
+    if (avail)
+    {
+        memset(packet_out->po_data + packet_out->po_data_sz, 0, avail);
+        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail);
+        packet_out->po_frame_types |= 1 << QUIC_FRAME_PADDING;
+    }
+    packet_out->po_flags |= PO_MTU_PROBE;
+    lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
+    LSQ_DEBUG("generated MTU probe of %hu bytes in packet %"PRIu64,
+                        cpath->cop_path.np_pack_size, packet_out->po_packno);
+#ifndef NDEBUG
+    ds->ds_probe_sent = now;
+#endif
+    ds->ds_probe_packno = packet_out->po_packno;
+    ds->ds_probed_size = probe_sz;
+    ds->ds_flags |= DS_PROBE_SENT;
+    ++ds->ds_probe_count;
+    conn->ifc_mflags &= ~MF_CHECK_MTU_PROBE;
+    assert(!lsquic_alarmset_is_set(&conn->ifc_alset, AL_MTU_PROBE));
+    lsquic_alarmset_set(&conn->ifc_alset, AL_MTU_PROBE,
+                                now + conn->ifc_enpub->enp_mtu_probe_timer);
+  restore_packet_size:
+    cpath->cop_path.np_pack_size = saved_packet_sz;
+}
+
+
+static void
+ietf_full_conn_ci_mtu_probe_acked (struct lsquic_conn *lconn,
+                                   const struct lsquic_packet_out *packet_out)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct conn_path *cpath;
+    struct dplpmtud_state *ds;
+    unsigned char path_id;
+
+    path_id = packet_out->po_path->np_path_id;
+    cpath = &conn->ifc_paths[path_id];
+    ds = &cpath->cop_dplpmtud;
+    if (ds->ds_probe_packno != packet_out->po_packno)
+    {
+        LSQ_DEBUG("Acked MTU probe packet %"PRIu64" on path %hhu, but it is "
+            "old: discard", packet_out->po_packno, path_id);
+        return;
+    }
+    ds->ds_flags &= ~DS_PROBE_SENT;
+    ds->ds_probe_count = 0;
+
+    cpath->cop_path.np_pack_size = lsquic_packet_out_sent_sz(&conn->ifc_conn,
+                                                                    packet_out);
+    LSQ_INFO("update path %hhu MTU to %hu bytes", path_id,
+                                                cpath->cop_path.np_pack_size);
+    conn->ifc_mflags &= ~MF_CHECK_MTU_PROBE;
+    lsquic_alarmset_set(&conn->ifc_alset, AL_MTU_PROBE,
+                packet_out->po_sent + conn->ifc_enpub->enp_mtu_probe_timer);
+    LSQ_DEBUG("set alarm to %"PRIu64" usec ", packet_out->po_sent + conn->ifc_enpub->enp_mtu_probe_timer);
+}
+
+
+static void
+mtu_probe_too_large (struct ietf_full_conn *conn,
+                                const struct lsquic_packet_out *packet_out)
+{
+    struct conn_path *cpath;
+    unsigned char path_id;
+
+    path_id = packet_out->po_path->np_path_id;
+    cpath = &conn->ifc_paths[path_id];
+    cpath->cop_dplpmtud.ds_failed_size
+                    = lsquic_packet_out_sent_sz(&conn->ifc_conn, packet_out);
+}
+
+
+static void
+ietf_full_conn_ci_retx_timeout (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    unsigned short pack_size;
+    struct conn_path *cpath;
+    int resize;
+
+    resize = 0;
+    for (cpath = conn->ifc_paths; cpath < conn->ifc_paths + N_PATHS; ++cpath)
+        if (cpath->cop_flags & COP_INITIALIZED)
+        {
+            pack_size = calc_base_packet_size(conn,
+                                                NP_IS_IPv6(&cpath->cop_path));
+            if (cpath->cop_path.np_pack_size > pack_size)
+            {
+                LSQ_DEBUG("RTO occurred: change packet size of path %hhu "
+                    "to %hu bytes", cpath->cop_path.np_path_id, pack_size);
+                cpath->cop_path.np_pack_size = pack_size;
+                resize |= 1;
+            }
+        }
+
+    if (resize)
+        lsquic_send_ctl_resize(&conn->ifc_send_ctl);
+    else
+        LSQ_DEBUG("RTO occurred, but no MTUs to reset");
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -6877,6 +7250,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
                 CLOSE_IF_NECESSARY();
             }
     }
+
+    if (conn->ifc_mflags & MF_CHECK_MTU_PROBE)
+        check_or_schedule_mtu_probe(conn, now);
 
     n = lsquic_send_ctl_reschedule_packets(&conn->ifc_send_ctl);
     if (n > 0)
@@ -7358,6 +7734,7 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
     .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
     .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
+    .ci_mtu_probe_acked      =  ietf_full_conn_ci_mtu_probe_acked, \
     .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
     .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
     .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time, \
@@ -7365,6 +7742,7 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_push_stream          =  ietf_full_conn_ci_push_stream, \
     .ci_record_addrs         =  ietf_full_conn_ci_record_addrs, \
     .ci_report_live          =  ietf_full_conn_ci_report_live, \
+    .ci_retx_timeout         =  ietf_full_conn_ci_retx_timeout, \
     .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
     .ci_status               =  ietf_full_conn_ci_status, \
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
@@ -7377,6 +7755,7 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send,
     .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
+    .ci_packet_too_large    =  ietf_full_conn_ci_packet_too_large,
 };
 static const struct conn_iface *ietf_full_conn_iface_ptr =
                                                 &ietf_full_conn_iface;

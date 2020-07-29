@@ -357,6 +357,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
     settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
+    settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
+    settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
 }
 
 
@@ -437,6 +439,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid spin value %d",
                 settings->es_spin);
+        return -1;
+    }
+
+    if (settings->es_mtu_probe_timer && settings->es_mtu_probe_timer < 1000)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "mtu probe timer is too small: "
+                "%u ms", settings->es_mtu_probe_timer);
         return -1;
     }
 
@@ -612,6 +622,10 @@ lsquic_engine_new (unsigned flags,
     if (engine->pub.enp_settings.es_noprogress_timeout)
         engine->pub.enp_noprog_timeout
             = engine->pub.enp_settings.es_noprogress_timeout * 1000000;
+    engine->pub.enp_mtu_probe_timer = 1000
+        * (engine->pub.enp_settings.es_mtu_probe_timer
+         ? engine->pub.enp_settings.es_mtu_probe_timer
+         : LSQUIC_DF_MTU_PROBE_TIMER);
     if (flags & ENG_SERVER)
     {
         engine->pr_queue = lsquic_prq_create(
@@ -1580,7 +1594,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
                        const struct sockaddr *local_sa,
                        const struct sockaddr *peer_sa,
                        void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, 
-                       const char *hostname, unsigned short max_packet_size,
+                       const char *hostname, unsigned short base_plpmtu,
                        const unsigned char *sess_resume, size_t sess_resume_len,
                        const unsigned char *token, size_t token_sz)
 {
@@ -1627,11 +1641,11 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
         versions = 1u << version;
     if (versions & LSQUIC_IETF_VERSIONS)
         conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
-                    flags, hostname, max_packet_size,
+                    flags, hostname, base_plpmtu,
                     is_ipv4, sess_resume, sess_resume_len, token, token_sz);
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
-                            flags, hostname, max_packet_size, is_ipv4,
+                            flags, hostname, base_plpmtu, is_ipv4,
                             sess_resume, sess_resume_len);
     if (!conn)
         goto err;
@@ -2181,7 +2195,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
 {
     int n_sent, i, e_val;
     lsquic_time_t now;
-    unsigned off;
+    unsigned off, skip;
     size_t count;
     CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
@@ -2191,9 +2205,11 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     if (engine->flags & ENG_LOSE_PACKETS)
         lose_matching_packets(engine, batch, n_to_send);
 #endif
+    skip = 0;
+  restart_batch:
     /* Set sent time before the write to avoid underestimating RTT */
     now = lsquic_time_now();
-    for (i = 0; i < (int) n_to_send; ++i)
+    for (i = skip; i < (int) (n_to_send - skip); ++i)
     {
         off = batch->pack_off[i];
         count = batch->outs[i].iovlen;
@@ -2204,10 +2220,10 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
             (*packet_out)->po_sent = now;
         while (++packet_out < end);
     }
-    n_sent = engine->packets_out(engine->packets_out_ctx, batch->outs,
-                                                                n_to_send);
+    n_sent = engine->packets_out(engine->packets_out_ctx, batch->outs + skip,
+                                                            n_to_send - skip);
     e_val = errno;
-    if (n_sent < (int) n_to_send)
+    if (n_sent < (int) (n_to_send - skip) && e_val != EMSGSIZE)
     {
         engine->pub.enp_flags &= ~ENPUB_CAN_SEND;
         engine->resume_sending_at = now + 1000000;
@@ -2218,7 +2234,8 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
                                         n_sent < 0 ? 0 : n_sent, e_val);
     }
     if (n_sent >= 0)
-        LSQ_DEBUG("packets out returned %d (out of %u)", n_sent, n_to_send);
+        LSQ_DEBUG("packets out returned %d (out of %u)", n_sent,
+                                                            n_to_send - skip);
     else
     {
         LSQ_DEBUG("packets out returned an error: %s", strerror(e_val));
@@ -2226,7 +2243,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     }
     if (n_sent > 0)
         engine->last_sent = now + n_sent;
-    for (i = 0; i < n_sent; ++i)
+    for (i = skip; i < (int) (skip + n_sent); ++i)
     {
         eng_hist_inc(&engine->history, now, sl_packets_out);
         /* `i' is added to maintain relative order */
@@ -2258,6 +2275,27 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
         }
         while (++packet_out < end);
     }
+    if (i < (int) n_to_send && e_val == EMSGSIZE)
+    {
+        LSQ_DEBUG("packet #%d could not be sent out for being too large", i);
+        if (batch->conns[i]->cn_if->ci_packet_too_large
+                                                && batch->outs[i].iovlen == 1)
+        {
+            off = batch->pack_off[i];
+            packet_out = &batch->packets[off];
+            batch->conns[i]->cn_if->ci_packet_too_large(batch->conns[i],
+                                                                *packet_out);
+            ++i;
+            if (i < (int) n_to_send)
+            {
+                skip = i;
+                LSQ_DEBUG("restart batch starting at packet #%u", skip);
+                goto restart_batch;
+            }
+        }
+        else
+            close_conn_on_send_error(engine, sb_ctx, i, e_val);
+    }
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
         for ( ; i < (int) n_to_send; ++i)
         {
@@ -2274,7 +2312,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     /* Return packets to the connection in reverse order so that the packet
      * ordering is maintained.
      */
-    for (i = (int) n_to_send - 1; i >= n_sent; --i)
+    for (i = (int) n_to_send - 1; i >= (int) (skip + n_sent); --i)
     {
         off = batch->pack_off[i];
         count = batch->outs[i].iovlen;
@@ -2288,7 +2326,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
         if (!(batch->conns[i]->cn_flags & (LSCONN_COI_ACTIVE|LSCONN_EVANESCENT)))
             coi_reactivate(sb_ctx->conns_iter, batch->conns[i]);
     }
-    return n_sent;
+    return skip + n_sent;
 }
 
 

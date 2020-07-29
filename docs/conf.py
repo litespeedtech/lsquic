@@ -24,9 +24,9 @@ copyright = u'2020, LiteSpeed Technologies'
 author = u'LiteSpeed Technologies'
 
 # The short X.Y version
-version = u'2.18'
+version = u'2.19'
 # The full version, including alpha/beta/rc tags
-release = u'2.18.2'
+release = u'2.19.0'
 
 
 # -- General configuration ---------------------------------------------------

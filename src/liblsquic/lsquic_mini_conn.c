@@ -826,7 +826,7 @@ mini_stream_read (void *stream, void *buf, size_t len, int *reached_fin)
 
 /* Wrapper to throw out reached_fin */
 static size_t
-mini_stream_read_for_crypto (void *stream, void *buf, size_t len)
+mini_stream_read_for_crypto (void *stream, void *buf, size_t len, int *fin)
 {
     size_t retval;
     int reached_fin;
@@ -969,7 +969,7 @@ to_packet_Q050plus (struct mini_conn *mc, struct mini_stream_ctx *ms_ctx,
     cur_off = ms_ctx->off;
     len = mc->mc_conn.cn_pf->pf_gen_crypto_frame(
             packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), mc->mc_write_off,
+            lsquic_packet_out_avail(packet_out), 0, mc->mc_write_off, 0,
             mini_stream_size(ms_ctx), mini_stream_read_for_crypto, ms_ctx);
     if (len < 0)
     {

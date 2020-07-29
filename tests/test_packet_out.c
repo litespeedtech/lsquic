@@ -37,10 +37,10 @@ int
 main (void)
 {
     struct lsquic_engine_public enpub;
-    struct packet_out_srec_iter posi;
+    struct packet_out_frec_iter pofi;
     lsquic_packet_out_t *packet_out;
     struct lsquic_stream streams[6];
-    struct stream_rec *srec;
+    struct frame_rec *frec;
 
     memset(&enpub, 0, sizeof(enpub));
     memset(&streams, 0, sizeof(streams));
@@ -55,45 +55,45 @@ main (void)
     lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[4], QUIC_FRAME_STREAM,  12, 1);
     lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &streams[5], QUIC_FRAME_STREAM,  13, 1);
 
-    srec = lsquic_posi_first(&posi, packet_out);
-    assert(srec->sr_stream == &streams[0]);
-    assert(srec->sr_off == 7);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_first(&pofi, packet_out);
+    assert(frec->fe_stream == &streams[0]);
+    assert(frec->fe_off == 7);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[1]);
-    assert(srec->sr_off == 8);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[1]);
+    assert(frec->fe_off == 8);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[2]);
-    assert(srec->sr_off == 9);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[2]);
+    assert(frec->fe_off == 9);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[1]);
-    assert(srec->sr_off == 10);
-    assert(srec->sr_frame_type == QUIC_FRAME_RST_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[1]);
+    assert(frec->fe_off == 10);
+    assert(frec->fe_frame_type == QUIC_FRAME_RST_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[3]);
-    assert(srec->sr_off == 11);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[3]);
+    assert(frec->fe_off == 11);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[4]);
-    assert(srec->sr_off == 12);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[4]);
+    assert(frec->fe_off == 12);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    srec = lsquic_posi_next(&posi);
-    assert(srec->sr_stream == &streams[5]);
-    assert(srec->sr_off == 13);
-    assert(srec->sr_frame_type == QUIC_FRAME_STREAM);
+    frec = lsquic_pofi_next(&pofi);
+    assert(frec->fe_stream == &streams[5]);
+    assert(frec->fe_off == 13);
+    assert(frec->fe_frame_type == QUIC_FRAME_STREAM);
 
-    assert((void *) 0 == lsquic_posi_next(&posi));
+    assert((void *) 0 == lsquic_pofi_next(&pofi));
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
-    assert(!lsquic_malo_first(enpub.enp_mm.malo.stream_rec_arr));
+    assert(!lsquic_malo_first(enpub.enp_mm.malo.frame_rec_arr));
 
     lsquic_mm_cleanup(&enpub.enp_mm);
     return 0;

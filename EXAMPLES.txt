@@ -105,9 +105,8 @@ Compilation
     - Build both the http_client and http_server test programs.
 
 Running Instructions
-    - On the server side, define the environment variable
-      LSQUIC_CN_PACK_SIZE and set it to the intended packet size.
-      Valid sizes are up to 65507 (IPv4).
+    - Specify maximum packet size using -o base_plpmtu=$number.
+      Valid sizes are up to 65535.
     - Use the -W flag for http_client and http_server for the ability
       to send packets of large size.
     - On the client side, use the -z flag to specify the maximum size
@@ -115,9 +114,9 @@ Running Instructions
 
 Example Usage
     ./http_client -p /file-1M -H www.litespeedtech.com -s 192.168.0.85:5443
-        -o version=FF000014 -z 65507 -W
+        -o version=FF000014
     ./http_server -c www.litespeedtech.com,certschain,privkey
-        -s 0.0.0.0:5443 -W
+        -s 0.0.0.0:5443 -W -o base_plpmtu=65535
 
 Additional Notes
     Since this feature does not have MTU discovery enabled at the time of
