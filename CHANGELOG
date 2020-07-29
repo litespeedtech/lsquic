@@ -1,5 +1,5 @@
 2020-07-29
-    - 2.19.0
+    - 2.19.1
     - [FEATURE] DPLPMTUD support.  IETF connections now search for the
       maximum packet size, improving throughput.
     - [DEBUG] Record event in stream history when on_close() is called

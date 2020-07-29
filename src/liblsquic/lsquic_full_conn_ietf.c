@@ -1237,6 +1237,10 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     }
     esfi = select_esf_iquic_by_ver(ver);
 
+    if (0 != ietf_full_conn_init(conn, enpub, flags,
+                                                enpub->enp_settings.es_ecn))
+        goto err2;
+
     if (base_plpmtu)
         conn->ifc_paths[0].cop_path.np_pack_size
                                 = base_plpmtu - TRANSPORT_OVERHEAD(!is_ipv4);
@@ -1244,9 +1248,6 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
         conn->ifc_paths[0].cop_path.np_pack_size
                                 = calc_base_packet_size(conn, !is_ipv4);
 
-    if (0 != ietf_full_conn_init(conn, enpub, flags,
-                                                enpub->enp_settings.es_ecn))
-        goto err2;
     if (token)
     {
         if (0 != lsquic_send_ctl_set_token(&conn->ifc_send_ctl, token,
