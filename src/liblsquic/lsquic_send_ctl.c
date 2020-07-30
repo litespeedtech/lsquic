@@ -3205,7 +3205,7 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
     unsigned count_src = 0, count_dst = 0;
     int idx;
 
-#ifdef MSVC
+#ifdef _MSC_VER
     idx = 0;
 #endif
 

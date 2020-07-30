@@ -705,7 +705,7 @@ calc_base_packet_size (const struct ietf_full_conn *conn, int is_ipv6)
     unsigned short size;
 
     if (conn->ifc_settings->es_base_plpmtu)
-        size = conn->ifc_settings->es_base_plpmtu - TRANSPORT_OVERHEAD(is_ipv6);
+        size = conn->ifc_settings->es_base_plpmtu;
     else if (is_ipv6)
         size = IQUIC_MAX_IPv6_PACKET_SZ;
     else
@@ -6964,13 +6964,15 @@ check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
         return;
     }
 
-    net_header_sz = TRANSPORT_OVERHEAD(NP_IS_IPv6(&cpath->cop_path));
     if (ds->ds_failed_size)
-        mtu_ceiling = ds->ds_failed_size;   /* Don't subtract net_header_sz */
+        mtu_ceiling = ds->ds_failed_size;
     else if (conn->ifc_settings->es_max_plpmtu)
-        mtu_ceiling = conn->ifc_settings->es_max_plpmtu - net_header_sz;
+        mtu_ceiling = conn->ifc_settings->es_max_plpmtu;
     else
+    {
+        net_header_sz = TRANSPORT_OVERHEAD(NP_IS_IPv6(&cpath->cop_path));
         mtu_ceiling = 1500 - net_header_sz;
+    }
 
     if (conn->ifc_max_udp_payload < mtu_ceiling)
     {

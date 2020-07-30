@@ -762,6 +762,22 @@ settings structure:
 
         Default value is :macro:`LSQUIC_DF_MAX_PLPMTU`
 
+    .. member:: unsigned        es_mtu_probe_timer
+
+        This value specifies how long the DPLPMTUD probe timer is, in
+        milliseconds.  `[draft-ietf-tsvwg-datagram-plpmtud-22] <https://tools.ietf.org/html/draft-ietf-tsvwg-datagram-plpmtud-22>`_ says:
+
+            PROBE_TIMER:  The PROBE_TIMER is configured to expire after a period
+            longer than the maximum time to receive an acknowledgment to a
+            probe packet.  This value MUST NOT be smaller than 1 second, and
+            SHOULD be larger than 15 seconds.  Guidance on selection of the
+            timer value are provided in section 3.1.1 of the UDP Usage
+            Guidelines :rfc:`8085#section-3.1`.
+
+        If set to zero, the default is used.
+
+        Default value is :macro:`LSQUIC_DF_MTU_PROBE_TIMER`
+
     .. member:: unsigned        es_noprogress_timeout
 
        No progress timeout.
@@ -972,6 +988,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_MAX_PLPMTU
 
     By default, this value is left up to the engine.
+
+.. macro:: LSQUIC_DF_MTU_PROBE_TIMER
+
+    By default, we use the minimum timer of 1000 milliseconds.
 
 .. macro:: LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER
 

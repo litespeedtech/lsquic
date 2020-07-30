@@ -514,9 +514,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_enpub = enpub;
     conn->imc_created = packet_in->pi_received;
     if (enpub->enp_settings.es_base_plpmtu)
-        conn->imc_path.np_pack_size = enpub->enp_settings.es_base_plpmtu
-                                    - (is_ipv4 ? 20 : 40)   /* IP header */
-                                    - 8;                    /* UDP header */
+        conn->imc_path.np_pack_size = enpub->enp_settings.es_base_plpmtu;
     else if (is_ipv4)
         conn->imc_path.np_pack_size = IQUIC_MAX_IPv4_PACKET_SZ;
     else

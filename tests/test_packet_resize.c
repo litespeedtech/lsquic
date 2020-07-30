@@ -8,7 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#ifndef WIN32
 #include <unistd.h>
+#else
+#include "getopt.h"
+#endif
 
 #define LSQUIC_TEST 1
 #include "lsquic.h"

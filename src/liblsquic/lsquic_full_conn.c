@@ -738,9 +738,7 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (!max_packet_size)
     {
         if (enpub->enp_settings.es_base_plpmtu)
-            max_packet_size = enpub->enp_settings.es_base_plpmtu
-                        - (is_ipv4 ? 20 : 40)   /* IP header */
-                        - 8;                    /* UDP header */
+            max_packet_size = enpub->enp_settings.es_base_plpmtu;
         else if (is_ipv4)
             max_packet_size = GQUIC_MAX_IPv4_PACKET_SZ;
         else

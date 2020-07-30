@@ -10,9 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#ifdef MSVC
-#include <vc_compat.h>
-#endif
 
 #include "lsquic.h"
 #include "lsquic_types.h"
