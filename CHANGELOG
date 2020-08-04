@@ -1,3 +1,7 @@
+2020-08-04
+    - 2.19.3
+    - [BUGFIX] Regression in 2.19.1 that breaks Q050
+
 2020-07-30
     - 2.19.2
     - [BUGFIX] Do not reduce PLPMTU size by network overhead.

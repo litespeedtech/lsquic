@@ -799,7 +799,7 @@ gquic_Q050_gen_crypto_frame (unsigned char *buf, size_t buf_len,
         lsquic_stream_id_t stream_id, uint64_t offset, int fin,
         size_t size, gsf_read_f gsf_read, void *stream)
 {
-    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x8, stream_id, buf_len,
+    return lsquic_ietf_v1_gen_crypto_frame(buf, 0x8, buf_len, stream_id,
                                         offset, fin, size, gsf_read, stream);
 }
 
