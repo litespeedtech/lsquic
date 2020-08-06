@@ -1,3 +1,9 @@
+2020-08-06
+    - 2.19.4
+    - [BUGFIX] Do not return an oversize MTU probe to connection twice.
+    - [FEATURE] Delayed Acks updated to latest draft.  Still experimental.
+    - Minor code cleanup in IETF full connection.
+
 2020-08-04
     - 2.19.3
     - [BUGFIX] Regression in 2.19.1 that breaks Q050

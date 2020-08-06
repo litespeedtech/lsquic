@@ -2292,6 +2292,7 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
                 LSQ_DEBUG("restart batch starting at packet #%u", skip);
                 goto restart_batch;
             }
+            n_sent = n_to_send;
         }
         else
             close_conn_on_send_error(engine, sb_ctx, i, e_val);

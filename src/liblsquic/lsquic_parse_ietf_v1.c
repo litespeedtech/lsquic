@@ -2066,20 +2066,38 @@ ietf_v1_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
 
 static int
 ietf_v1_gen_ack_frequency_frame (unsigned char *buf, size_t buf_len,
-    uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad)
+    uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad, int ignore)
 {
-    return ietf_v1_gen_frame_with_varints(buf, buf_len, 4,
+    int sz;
+
+    sz = ietf_v1_gen_frame_with_varints(buf, buf_len, 4,
         (uint64_t[]){ FRAME_TYPE_ACK_FREQUENCY, seqno, pack_tol, upd_mad });
+    if (sz > 0 && (size_t) sz < buf_len)
+    {
+        buf[sz++] = !!ignore;
+        return sz;
+    }
+    else
+        return -1;
 }
 
 
 static int
 ietf_v1_parse_ack_frequency_frame (const unsigned char *buf, size_t buf_len,
-    uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad)
+    uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad, int *ignore)
 {
-    return ietf_v1_parse_frame_with_varints(buf, buf_len,
+    int sz;
+
+    sz = ietf_v1_parse_frame_with_varints(buf, buf_len,
                 FRAME_TYPE_ACK_FREQUENCY,
                 3, (uint64_t *[]) { seqno, pack_tol, upd_mad });
+    if (sz > 0 && (size_t) sz < buf_len && buf[sz] < 2)
+    {
+        *ignore = buf[sz++];
+        return sz;
+    }
+    else
+        return -1;
 }
 
 
@@ -2087,7 +2105,7 @@ static unsigned
 ietf_v1_ack_frequency_frame_size (uint64_t seqno, uint64_t pack_tol,
     uint64_t upd_mad)
 {
-    return ietf_v1_frame_with_varints_size(4,
+    return 1 + ietf_v1_frame_with_varints_size(4,
             (uint64_t[]){ FRAME_TYPE_ACK_FREQUENCY, seqno, pack_tol, upd_mad });
 }
 

@@ -310,13 +310,13 @@ struct parse_funcs
     (*pf_handshake_done_frame_size) (void);
     int
     (*pf_gen_ack_frequency_frame) (unsigned char *buf, size_t buf_len,
-        uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad);
+        uint64_t seqno, uint64_t pack_tol, uint64_t upd_mad, int ignore);
     int
     (*pf_parse_ack_frequency_frame) (const unsigned char *buf, size_t buf_len,
-        uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad);
+        uint64_t *seqno, uint64_t *pack_tol, uint64_t *upd_mad, int *ignore);
     unsigned
     (*pf_ack_frequency_frame_size) (uint64_t seqno, uint64_t pack_tol,
-        uint64_t upd_mad);
+        uint64_t upd_mad /* Don't need to pass `ignore' */);
     int
     (*pf_gen_timestamp_frame) (unsigned char *buf, size_t buf_len, uint64_t);
     int

@@ -143,6 +143,7 @@ enum more_flags
     MF_VALIDATE_PATH    = 1 << 0,
     MF_NOPROG_TIMEOUT   = 1 << 1,
     MF_CHECK_MTU_PROBE  = 1 << 2,
+    MF_IGNORE_MISSING   = 1 << 3,
 };
 
 
@@ -314,7 +315,6 @@ struct conn_path
          */
         COP_GOT_NONPROB = 1 << 2,
     }                           cop_flags;
-    unsigned short              cop_max_plpmtu;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
     struct dplpmtud_state       cop_dplpmtud;
@@ -1692,7 +1692,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
-    if (has_missing)
+    if (has_missing && !(conn->ifc_mflags & MF_IGNORE_MISSING))
         conn->ifc_flags |= IFC_ACK_HAD_MISS;
     else
         conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
@@ -2232,6 +2232,8 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("Generating STREAM_BLOCKED frame failed");
         return 0;
     }
+    LSQ_DEBUG("generated %d-byte STREAM_BLOCKED "
+        "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte STREAM_BLOCKED "
         "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
@@ -4042,15 +4044,37 @@ generate_handshake_done_frame (struct ietf_full_conn *conn,
 }
 
 
+static unsigned
+packet_tolerance (float avg_acked)
+{
+    if (avg_acked < 3)
+        return 2;
+    if (avg_acked < 10)
+        return 4;
+    if (avg_acked < 20)
+        return 8;
+    if (avg_acked < 40)
+        return 16;
+    if (avg_acked < 80)
+        return 32;
+    return 64;
+}
+
+
 static void
 generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 {
     struct lsquic_packet_out *packet_out;
     unsigned need;
     int sz;
+    /* We tell the peer to ignore reordering because we skip packet numbers to
+     * detect optimistic ACK attacks.
+     */
+    const int ignore = 1;
 
     need = conn->ifc_conn.cn_pf->pf_ack_frequency_frame_size(
-                                        conn->ifc_ack_freq_seqno, 2, ACK_TIMEOUT);
+                        conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
+                        conn->ifc_max_peer_ack_usec);
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
     {
@@ -4058,12 +4082,12 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
         return;
     }
 
-    conn->ifc_last_pack_tol = conn->ifc_ias.avg_acked;
+    conn->ifc_last_pack_tol = packet_tolerance(conn->ifc_ias.avg_acked);
     sz = conn->ifc_conn.cn_pf->pf_gen_ack_frequency_frame(
                             packet_out->po_data + packet_out->po_data_sz,
                             lsquic_packet_out_avail(packet_out),
                             conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
-                            conn->ifc_max_peer_ack_usec);
+                            conn->ifc_max_peer_ack_usec, ignore);
     if (sz < 0)
     {
         ABORT_ERROR("gen_ack_frequency_frame failed");
@@ -4077,6 +4101,9 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= QUIC_FTBIT_ACK_FREQUENCY;
+    LSQ_DEBUG("Generated ACK_FREQUENCY(seqno: %u; pack_tol: %u; "
+        "upd: %u; ignore: %d)", conn->ifc_ack_freq_seqno,
+        conn->ifc_last_pack_tol, conn->ifc_max_peer_ack_usec, ignore);
     ++conn->ifc_ack_freq_seqno;
     conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
 }
@@ -4365,21 +4392,25 @@ static void
 update_target_packet_tolerance (struct ietf_full_conn *conn,
                                                 const unsigned n_newly_acked)
 {
+    unsigned tol;
+
     update_ema(&conn->ifc_ias.avg_n_acks, conn->ifc_ias.n_acks);
     update_ema(&conn->ifc_ias.avg_acked, n_newly_acked);
+
+    tol = packet_tolerance(conn->ifc_ias.avg_acked);
     LSQ_DEBUG("packtol logic: %u ACK frames (avg: %.2f), %u newly acked "
-        "(avg: %.1f), last sent %u", conn->ifc_ias.n_acks,
+        "(avg: %.1f), last sent %u, would-be tol: %u", conn->ifc_ias.n_acks,
         conn->ifc_ias.avg_n_acks, n_newly_acked, conn->ifc_ias.avg_acked,
-        conn->ifc_last_pack_tol);
+        conn->ifc_last_pack_tol, tol);
     if (conn->ifc_ias.avg_n_acks > 1.5 && conn->ifc_ias.avg_acked > 2.0
-                && conn->ifc_ias.avg_acked > (float) conn->ifc_last_pack_tol)
+                && tol > conn->ifc_last_pack_tol)
     {
         LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
                                         "increase", conn->ifc_last_pack_tol);
         conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
     }
     else if (conn->ifc_ias.avg_n_acks < 1.5
-        && conn->ifc_ias.avg_acked < (float) conn->ifc_last_pack_tol * 3 / 4)
+        && (float) tol < (float) conn->ifc_last_pack_tol * 3 / 4)
     {
         LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
                                         "decrease", conn->ifc_last_pack_tol);
@@ -5808,7 +5839,7 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     uint64_t seqno, pack_tol, upd_mad;
-    int parsed_len;
+    int parsed_len, ignore;
 
     if (!(conn->ifc_flags & IFC_DELAYED_ACKS))
     {
@@ -5818,15 +5849,16 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
     }
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_ack_frequency_frame(p, len,
-                                                &seqno, &pack_tol, &upd_mad);
+                                        &seqno, &pack_tol, &upd_mad, &ignore);
     if (parsed_len < 0)
         return 0;
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "ACK_FREQUENCY(seqno: %"PRIu64"; "
-        "pack_tol: %"PRIu64"; upd: %"PRIu64") frame in", seqno, pack_tol,
-        upd_mad);
+        "pack_tol: %"PRIu64"; upd: %"PRIu64"; ignore: %d) frame in", seqno,
+        pack_tol, upd_mad, ignore);
     LSQ_DEBUG("ACK_FREQUENCY(seqno: %"PRIu64"; pack_tol: %"PRIu64"; "
-        "upd: %"PRIu64") frame in", seqno, pack_tol, upd_mad);
+        "upd: %"PRIu64"; ignore: %d) frame in", seqno, pack_tol, upd_mad,
+        ignore);
 
     if (pack_tol == 0)
     {
@@ -5850,6 +5882,14 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
     }
 
     /* TODO: do something with max ack delay update */
+
+    if (ignore)
+    {
+        conn->ifc_mflags |= MF_IGNORE_MISSING;
+        conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
+    }
+    else
+        conn->ifc_mflags &= ~MF_IGNORE_MISSING;
 
     return parsed_len;
 }
