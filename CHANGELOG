@@ -1,3 +1,8 @@
+2020-08-11
+    - 2.19.5
+    - [BUGFIX] Generate frame record when moving an ACK from one buffered
+      packet to another.
+
 2020-08-06
     - 2.19.4
     - [BUGFIX] Do not return an oversize MTU probe to connection twice.

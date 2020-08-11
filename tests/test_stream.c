@@ -60,6 +60,7 @@ struct test_ctl_settings
     int     tcs_schedule_stream_packets_immediately;
     int     tcs_have_delayed_packets;
     int     tcs_can_send;
+    int     tcs_write_ack;
     enum buf_packet_type
             tcs_bp_type;
     enum packno_bits
@@ -82,6 +83,7 @@ init_test_ctl_settings (struct test_ctl_settings *settings)
     settings->tcs_schedule_stream_packets_immediately      = 1;
     settings->tcs_have_delayed_packets = 0;
     settings->tcs_can_send             = 1;
+    settings->tcs_write_ack            = 0;
     settings->tcs_bp_type              = BPT_HIGHEST_PRIO;
     settings->tcs_guess_packno_bits    = GQUIC_PACKNO_LEN_2;
     settings->tcs_calc_packno_bits     = GQUIC_PACKNO_LEN_2;
@@ -278,8 +280,8 @@ static struct test_ctx test_ctx;
 
 
 struct test_objs {
-    struct lsquic_engine_public eng_pub;
     struct lsquic_conn        lconn;
+    struct lsquic_engine_public eng_pub;
     struct lsquic_conn_public conn_pub;
     struct lsquic_send_ctl    send_ctl;
     struct lsquic_alarmset    alset;
@@ -293,13 +295,6 @@ struct test_objs {
 };
 
 
-static int
-unit_test_doesnt_write_ack (struct lsquic_conn *lconn)
-{
-    return 0;
-}
-
-
 static struct network_path network_path;
 
 static struct network_path *
@@ -309,10 +304,35 @@ get_network_path (struct lsquic_conn *lconn, const struct sockaddr *sa)
 }
 
 
+static int
+can_write_ack (struct lsquic_conn *lconn)
+{
+    return g_ctl_settings.tcs_write_ack;
+}
+
+
+static void
+write_ack (struct lsquic_conn *lconn, struct lsquic_packet_out *packet_out)
+{
+    struct test_objs *const tobjs = (void *) lconn;
+    const size_t ack_size = 9;  /* Arbitrary */
+    int s;
+
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
+    s = lsquic_packet_out_add_frame(packet_out, &tobjs->eng_pub.enp_mm, 0,
+                            QUIC_FRAME_ACK, packet_out->po_data_sz, ack_size);
+    assert(s == 0);
+    memcpy(packet_out->po_data + packet_out->po_data_sz, "ACKACKACK", 9);
+    lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet_out, ack_size);
+    packet_out->po_regen_sz += ack_size;
+}
+
+
 static const struct conn_iface our_conn_if =
 {
-    .ci_can_write_ack = unit_test_doesnt_write_ack,
+    .ci_can_write_ack = can_write_ack,
     .ci_get_path      = get_network_path,
+    .ci_write_ack     = write_ack,
 };
 
 
@@ -2228,6 +2248,97 @@ test_writing_to_stream_outside_callback (void)
 
 
 static void
+verify_ack (struct lsquic_packet_out *packet_out)
+{
+    struct packet_out_frec_iter pofi;
+    const struct frame_rec *frec;
+    unsigned short regen_sz;
+    enum quic_ft_bit frame_types;
+
+    assert(packet_out->po_regen_sz > 0);
+    assert(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK));
+
+    regen_sz = 0;
+    frame_types = 0;
+    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                frec = lsquic_pofi_next(&pofi))
+    {
+        frame_types |= 1 << frec->fe_frame_type;
+        if (frec->fe_frame_type == QUIC_FRAME_ACK)
+        {
+            assert(frec->fe_len == 9);
+            assert(0 == memcmp(packet_out->po_data + frec->fe_off, "ACKACKACK", 9));
+            assert(regen_sz == frec->fe_off);
+            regen_sz += frec->fe_len;
+        }
+    }
+
+    assert(frame_types & (1 << QUIC_FRAME_ACK));
+    assert(regen_sz == packet_out->po_regen_sz);
+}
+
+
+/* Write to buffered streams: first to low-priority, then high-priority.  This
+ * should trigger ACK generation and move.
+ */
+static void
+test_stealing_ack (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    struct lsquic_conn *const lconn = &tobjs.lconn;
+    struct lsquic_stream *lo_stream, *hi_stream;;
+    int s;
+    const struct buf_packet_q *bpq;
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    g_ctl_settings.tcs_write_ack = 1;
+    g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+
+    lo_stream = new_stream(&tobjs, 123);
+    assert(("Stream initialized", lo_stream));
+    assert(LSQUIC_STREAM_DEFAULT_PRIO == lsquic_stream_priority(lo_stream));
+    assert(lconn == lsquic_stream_conn(lo_stream));
+    nw = lsquic_stream_write(lo_stream, "Dude, where is", 14);
+    assert(("14 bytes written correctly", nw == 14));
+    s = lsquic_stream_flush(lo_stream);
+    assert(0 == s);
+
+    bpq = &tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type];
+    verify_ack(TAILQ_FIRST(&bpq->bpq_packets));
+
+    g_ctl_settings.tcs_bp_type = BPT_HIGHEST_PRIO;
+
+    hi_stream = new_stream(&tobjs, 1);
+    assert(("Stream initialized", hi_stream));
+    assert(lconn == lsquic_stream_conn(hi_stream));
+    nw = lsquic_stream_write(hi_stream, "DATA", 4);
+    assert(("4 bytes written correctly", nw == 4));
+    s = lsquic_stream_flush(hi_stream);
+    assert(0 == s);
+
+    /* ACK is moved (stolen) from low-priority stream to high-priority stream */
+    /* Check old packet */
+    assert(!(TAILQ_FIRST(&bpq->bpq_packets)->po_frame_types & (1 << QUIC_FRAME_ACK)));
+    /* Check new packet */
+    bpq = &tobjs.send_ctl.sc_buffered_packets[g_ctl_settings.tcs_bp_type];
+    verify_ack(TAILQ_FIRST(&bpq->bpq_packets));
+
+    /* And now chop regen, see if we hit any asserts there */
+    lsquic_packet_out_chop_regen(TAILQ_FIRST(&bpq->bpq_packets));
+    /* And now verify that ACK is gone */
+    assert(!(TAILQ_FIRST(&bpq->bpq_packets)->po_frame_types & (1 << QUIC_FRAME_ACK)));
+
+    lsquic_stream_destroy(lo_stream);
+    lsquic_stream_destroy(hi_stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
 test_changing_pack_size (void)
 {
     ssize_t nw;
@@ -3251,6 +3362,7 @@ main (int argc, char **argv)
 
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
+    test_stealing_ack();
     test_changing_pack_size();
     test_window_update1();
     test_window_update2();

@@ -388,6 +388,7 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
     assert(adj);    /* Otherwise why are we called? */
     assert(packet_out->po_regen_sz == adj);
     packet_out->po_regen_sz = 0;
+    packet_out->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
 }
 
 

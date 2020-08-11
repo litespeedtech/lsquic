@@ -2507,21 +2507,39 @@ send_ctl_max_bpq_count (const lsquic_send_ctl_t *ctl,
 }
 
 
-static void
+/* If error is returned, `src' is not modified */
+static int
 send_ctl_move_ack (struct lsquic_send_ctl *ctl, struct lsquic_packet_out *dst,
                     struct lsquic_packet_out *src)
 {
+    struct packet_out_frec_iter pofi;
+    const struct frame_rec *frec;
     assert(dst->po_data_sz == 0);
 
-    if (lsquic_packet_out_avail(dst) >= src->po_regen_sz)
+    /* This checks that we only ever expect to move an ACK frame from one
+     * buffered packet to another.  We don't generate any other regen frame
+     * types in buffered packets.
+     */
+    assert(!(GQUIC_FRAME_REGEN_MASK & (1 << src->po_frame_types)
+                                                        & ~QUIC_FTBIT_ACK));
+
+    if (lsquic_packet_out_avail(dst) >= src->po_regen_sz
+                && (frec = lsquic_pofi_first(&pofi, src), frec != NULL)
+                    && frec->fe_frame_type == QUIC_FRAME_ACK)
     {
         memcpy(dst->po_data, src->po_data, src->po_regen_sz);
+        if (0 != lsquic_packet_out_add_frame(dst, &ctl->sc_enpub->enp_mm,
+                    frec->fe_frame_type, QUIC_FRAME_ACK, dst->po_data_sz,
+                    src->po_regen_sz))
+            return -1;
         dst->po_data_sz = src->po_regen_sz;
         dst->po_regen_sz = src->po_regen_sz;
         dst->po_frame_types |= (GQUIC_FRAME_REGEN_MASK & src->po_frame_types);
         src->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
         lsquic_packet_out_chop_regen(src);
     }
+
+    return 0;
 }
 
 
@@ -2589,8 +2607,14 @@ send_ctl_get_buffered_packet (lsquic_send_ctl_t *ctl,
     switch (ack_action)
     {
     case AA_STEAL:
-        send_ctl_move_ack(ctl, packet_out,
-            TAILQ_FIRST(&ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets));
+        if (0 != send_ctl_move_ack(ctl, packet_out,
+            TAILQ_FIRST(&ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets)))
+        {
+            LSQ_INFO("cannot move ack");
+            lsquic_packet_out_destroy(packet_out, ctl->sc_enpub,
+                                            packet_out->po_path->np_peer_ctx);
+            return NULL;
+        }
         break;
     case AA_GENERATE:
         lconn->cn_if->ci_write_ack(lconn, packet_out);
