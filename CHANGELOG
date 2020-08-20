@@ -1,3 +1,8 @@
+2020-08-20
+    - 2.19.6
+    - Don't process incoming ECN marks if ECN is not enabled.
+    - Schedule ACK when incoming packet is marked with CE.
+
 2020-08-11
     - 2.19.5
     - [BUGFIX] Generate frame record when moving an ACK from one buffered

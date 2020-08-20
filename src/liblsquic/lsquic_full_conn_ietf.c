@@ -1662,7 +1662,14 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
                 struct lsquic_packet_out *packet_out, enum packnum_space pns,
                 lsquic_time_t now)
 {
+    const uint64_t *ecn_counts;
     int has_missing, w;
+
+    if (conn->ifc_incoming_ecn
+                        && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
+        ecn_counts = conn->ifc_ecn_counts_in[pns];
+    else
+        ecn_counts = NULL;
 
     w = conn->ifc_conn.cn_pf->pf_gen_ack_frame(
             packet_out->po_data + packet_out->po_data_sz,
@@ -1671,7 +1678,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
             (gaf_rechist_next_f)         lsquic_rechist_next,
             (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
             &conn->ifc_rechist[pns], now, &has_missing, &packet_out->po_ack2ed,
-            conn->ifc_incoming_ecn ? conn->ifc_ecn_counts_in[pns] : NULL);
+            ecn_counts);
     if (w < 0) {
         ABORT_ERROR("generating ACK frame failed: %d", errno);
         return -1;
@@ -6159,11 +6166,18 @@ many_in_and_will_write (struct ietf_full_conn *conn)
 
 static void
 try_queueing_ack_app (struct ietf_full_conn *conn,
-                                            int was_missing, lsquic_time_t now)
+                                int was_missing, int ecn, lsquic_time_t now)
 {
     lsquic_time_t srtt, ack_timeout;
 
     if (conn->ifc_n_slack_akbl[PNS_APP] >= conn->ifc_max_retx_since_last_ack
+/* From [draft-ietf-quic-transport-29] Section 13.2.1:
+ " Similarly, packets marked with the ECN Congestion Experienced (CE)
+ " codepoint in the IP header SHOULD be acknowledged immediately, to
+ " reduce the peer's response time to congestion events.
+ */
+            || (ecn == ECN_CE
+                    && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
             || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
                     && was_missing && conn->ifc_n_slack_akbl[PNS_APP] > 0)
             || many_in_and_will_write(conn))
@@ -6208,10 +6222,10 @@ try_queueing_ack_init_or_hsk (struct ietf_full_conn *conn,
 
 static void
 try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
-                                            int was_missing, lsquic_time_t now)
+                                int was_missing, int ecn, lsquic_time_t now)
 {
     if (PNS_APP == pns)
-        try_queueing_ack_app(conn, was_missing, now);
+        try_queueing_ack_app(conn, was_missing, ecn, now);
     else
         try_queueing_ack_init_or_hsk(conn, pns);
 }
@@ -6612,7 +6626,8 @@ process_regular_packet (struct ietf_full_conn *conn,
             else
                 was_missing = 0;
             conn->ifc_n_slack_all += PNS_APP == pns;
-            try_queueing_ack(conn, pns, was_missing, packet_in->pi_received);
+            try_queueing_ack(conn, pns, was_missing,
+                    lsquic_packet_in_ecn(packet_in), packet_in->pi_received);
         }
         conn->ifc_incoming_ecn <<= 1;
         conn->ifc_incoming_ecn |=
