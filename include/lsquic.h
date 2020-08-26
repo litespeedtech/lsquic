@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 19
-#define LSQUIC_PATCH_VERSION 6
+#define LSQUIC_PATCH_VERSION 7
 
 /**
  * Engine flags:
@@ -446,7 +446,12 @@ struct lsquic_engine_settings {
     /** ICSL in microseconds; GQUIC only */
     unsigned long   es_idle_conn_to;
 
-    /** SCLS (silent close) */
+    /**
+     * When true, CONNECTION_CLOSE is not sent when connection times out.
+     * The server will also not send a reply to client's CONNECTION_CLOSE.
+     *
+     * Corresponds to SCLS (silent close) gQUIC option.
+     */
     int             es_silent_close;
 
     /**

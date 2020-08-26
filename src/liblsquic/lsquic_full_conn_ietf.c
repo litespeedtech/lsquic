@@ -144,6 +144,7 @@ enum more_flags
     MF_NOPROG_TIMEOUT   = 1 << 1,
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
+    MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
 };
 
 
@@ -393,8 +394,6 @@ struct ietf_full_conn
     struct qpack_dec_hdl        ifc_qdh;
     struct {
         uint64_t    header_table_size,
-                    num_placeholders,
-                    max_header_list_size,
                     qpack_blocked_streams;
     }                           ifc_peer_hq_settings;
     struct dcid_elem           *ifc_dces[MAX_IETF_CONN_DCIDS];
@@ -1180,7 +1179,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_pub.u.ietf.qdh = &conn->ifc_qdh;
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
-    conn->ifc_peer_hq_settings.max_header_list_size  = HQ_DF_MAX_HEADER_LIST_SIZE;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
 
     conn->ifc_flags = flags | IFC_CREATED_OK | IFC_FIRST_TICK;
@@ -3749,7 +3747,8 @@ immediate_close (struct ietf_full_conn *conn)
      */
     lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
 
-    if (conn->ifc_flags & (IFC_TIMED_OUT|IFC_HSK_FAILED))
+    if ((conn->ifc_flags & (IFC_TIMED_OUT|IFC_HSK_FAILED))
+                                    && conn->ifc_settings->es_silent_close)
         return TICK_CLOSE;
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
@@ -3805,6 +3804,7 @@ immediate_close (struct ietf_full_conn *conn)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
+    conn->ifc_mflags |= MF_CONN_CLOSE_PACK;
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
     return TICK_SEND|TICK_CLOSE;
 }
@@ -3980,6 +3980,7 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
+    conn->ifc_mflags |= MF_CONN_CLOSE_PACK;
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
     conn->ifc_send_flags &= ~SF_SEND_CONN_CLOSE;
 }
@@ -4668,9 +4669,11 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
     {
         iface = unicla_if_ptr;
         stream_ctx = conn;
+#if CLIENT_PUSH_SUPPORT
         /* FIXME: This logic does not work for push streams.  Perhaps one way
          * to address this is to reclassify them later?
          */
+#endif
         flags |= SCF_CRITICAL;
     }
     else
@@ -7011,6 +7014,7 @@ check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
         || ds->ds_probe_sent + conn->ifc_enpub->enp_mtu_probe_timer < now);
 
     if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        || (conn->ifc_flags & IFC_CLOSING)
         || lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist) < 30
         || lsquic_send_ctl_in_recovery(&conn->ifc_send_ctl)
         || !lsquic_send_ctl_can_send_probe(&conn->ifc_send_ctl,
@@ -7369,14 +7373,25 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     {
         LSQ_DEBUG("connection is OK to close");
         conn->ifc_flags |= IFC_TICK_CLOSE;
-        if ((conn->ifc_send_flags & SF_SEND_CONN_CLOSE)
-            /* This is normal termination sequence for the server:
-             *
-             * Generate CONNECTION_CLOSE frame if we are responding to one
-             * or have packets scheduled to send
+        if (!(conn->ifc_mflags & MF_CONN_CLOSE_PACK)
+            /* Generate CONNECTION_CLOSE frame if:
+             *     ... this is a client and handshake was successful;
              */
             && (!(conn->ifc_flags & (IFC_SERVER|IFC_HSK_FAILED))
-                    || (conn->ifc_flags & (IFC_RECV_CLOSE|IFC_GOAWAY_CLOSE))
+                /* or: sent a GOAWAY frame;
+                 */
+                    || (conn->ifc_flags & IFC_GOAWAY_CLOSE)
+                /* or: we received CONNECTION_CLOSE and we are not a server
+                 * that chooses not to send CONNECTION_CLOSE responses.
+                 * From [draft-ietf-quic-transport-29]:
+                 " An endpoint that receives a CONNECTION_CLOSE frame MAY send
+                 " a single packet containing a CONNECTION_CLOSE frame before
+                 " entering the draining state
+                 */
+                    || ((conn->ifc_flags & IFC_RECV_CLOSE)
+                            && !((conn->ifc_flags & IFC_SERVER)
+                                    && conn->ifc_settings->es_silent_close))
+                /* or: we have packets to send. */
                     || 0 != lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl))
                 )
         {
@@ -7829,11 +7844,77 @@ static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr =
 
 
 static void
-on_cancel_push (void *ctx, uint64_t push_id)
+on_cancel_push_client (void *ctx, uint64_t push_id)
 {
     struct ietf_full_conn *const conn = ctx;
-    LSQ_DEBUG("TODO %s: %"PRIu64, __func__, push_id);
-    /* TODO */
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
+                                                                    push_id);
+    if (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
+    {
+        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH but push is "
+                                                                "not enabled");
+        return;
+    }
+
+    if (push_id > conn->ifc_u.cli.ifcli_max_push_id)
+    {
+        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH with ID=%"PRIu64
+            ", which is greater than the maximum Push ID=%"PRIu64, push_id,
+            conn->ifc_u.cli.ifcli_max_push_id);
+        return;
+    }
+
+#if CLIENT_PUSH_SUPPORT
+    LSQ_WARN("TODO: support for CANCEL_PUSH is not implemented");
+#endif
+}
+
+
+/* Careful: this puts promise */
+static void
+cancel_push_promise (struct ietf_full_conn *conn, struct push_promise *promise)
+{
+    LSQ_DEBUG("cancel promise %"PRIu64, promise->pp_id);
+    /* Remove promise from hash to prevent multiple cancellations */
+    lsquic_hash_erase(conn->ifc_pub.u.ietf.promises, &promise->pp_hash_id);
+    lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
+    /* But let stream dtor free the promise object as sm_promise may yet
+     * be used by the stream in some ways.
+     */
+    lsquic_stream_shutdown_internal(promise->pp_pushed_stream);
+    if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso, promise->pp_id))
+        ABORT_WARN("cannot write CANCEL_PUSH");
+}
+
+
+static void
+on_cancel_push_server (void *ctx, uint64_t push_id)
+{
+    struct ietf_full_conn *const conn = ctx;
+    struct lsquic_hash_elem *el;
+    struct push_promise *promise;
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
+                                                                    push_id);
+    if (push_id >= conn->ifc_u.ser.ifser_next_push_id)
+    {
+        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH with ID=%"PRIu64
+            ", which is greater than the maximum Push ID ever generated by "
+            "this connection", push_id);
+        return;
+    }
+
+    el = lsquic_hash_find(conn->ifc_pub.u.ietf.promises, &push_id,
+                                                            sizeof(push_id));
+    if (!el)
+    {
+        LSQ_DEBUG("push promise %"PRIu64" not found", push_id);
+        return;
+    }
+
+    promise = lsquic_hashelem_getdata(el);
+    cancel_push_promise(conn, promise);
 }
 
 
@@ -7918,9 +7999,8 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         conn->ifc_peer_hq_settings.header_table_size = value;
         break;
     case HQSID_MAX_HEADER_LIST_SIZE:
-        LSQ_DEBUG("Peer's SETTINGS_MAX_HEADER_LIST_SIZE=%"PRIu64, value);
-        conn->ifc_peer_hq_settings.max_header_list_size = value;
-        /* TODO: apply it */
+        LSQ_DEBUG("Peer's SETTINGS_MAX_HEADER_LIST_SIZE=%"PRIu64"; "
+                                                        "we ignore it", value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64
@@ -8037,7 +8117,19 @@ on_goaway_client (void *ctx, uint64_t stream_id)
 static void
 on_goaway_server (void *ctx, uint64_t max_push_id)
 {
-    /* TODO: cancel pushes? */
+    struct ietf_full_conn *const conn = ctx;
+    struct push_promise *promise;
+    struct lsquic_hash_elem *el;
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received GOAWAY(%"PRIu64")",
+                                                                max_push_id);
+    for (el = lsquic_hash_first(conn->ifc_pub.u.ietf.promises); el;
+                        el = lsquic_hash_next(conn->ifc_pub.u.ietf.promises))
+    {
+        promise = lsquic_hashelem_getdata(el);
+        if (promise->pp_id >= max_push_id)
+            cancel_push_promise(conn, promise);
+    }
 }
 
 
@@ -8052,7 +8144,7 @@ on_unexpected_frame (void *ctx, uint64_t frame_type)
 
 static const struct hcsi_callbacks hcsi_callbacks_server_27 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_server,
     .on_max_push_id         = on_max_push_id,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
@@ -8062,7 +8154,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_27 =
 
 static const struct hcsi_callbacks hcsi_callbacks_client_27 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_client,
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
@@ -8073,7 +8165,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_27 =
 
 static const struct hcsi_callbacks hcsi_callbacks_server_28 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_server,
     .on_max_push_id         = on_max_push_id,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
@@ -8083,7 +8175,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_28 =
 
 static const struct hcsi_callbacks hcsi_callbacks_client_28 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_client,
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
@@ -8094,7 +8186,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_28 =
 
 static const struct hcsi_callbacks hcsi_callbacks_server_29 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_server,
     .on_max_push_id         = on_max_push_id,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
@@ -8104,7 +8196,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_29 =
 
 static const struct hcsi_callbacks hcsi_callbacks_client_29 =
 {
-    .on_cancel_push         = on_cancel_push,
+    .on_cancel_push         = on_cancel_push_client,
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,

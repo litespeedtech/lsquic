@@ -1704,6 +1704,7 @@ void
 lsquic_stream_shutdown_internal (lsquic_stream_t *stream)
 {
     LSQ_DEBUG("internal shutdown");
+    stream->stream_flags |= STREAM_U_READ_DONE|STREAM_U_WRITE_DONE;
     if (lsquic_stream_is_critical(stream))
     {
         LSQ_DEBUG("add flag to force-finish special stream");
@@ -3825,13 +3826,16 @@ lsquic_stream_is_pushed (const lsquic_stream_t *stream)
 {
     enum stream_id_type sit;
 
-    if (stream->sm_bflags & SMBF_IETF)
+    switch (stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
     {
+    case SMBF_IETF|SMBF_USE_HEADERS:
         sit = stream->id & SIT_MASK;
         return sit == SIT_UNI_SERVER;
-    }
-    else
+    case SMBF_USE_HEADERS:
         return 1 & ~stream->id;
+    default:
+        return 0;
+    }
 }
 
 

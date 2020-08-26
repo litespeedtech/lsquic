@@ -108,7 +108,7 @@ send_ctl_expire (struct lsquic_send_ctl *, enum packnum_space,
 static void
 set_retx_alarm (struct lsquic_send_ctl *, enum packnum_space, lsquic_time_t);
 
-static void
+static int
 send_ctl_detect_losses (struct lsquic_send_ctl *, enum packnum_space,
                                                         lsquic_time_t time);
 
@@ -938,6 +938,18 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
 
 
 static void
+send_ctl_loss_event (struct lsquic_send_ctl *ctl)
+{
+    ctl->sc_ci->cci_loss(CGP(ctl));
+    if (ctl->sc_flags & SC_PACE)
+        lsquic_pacer_loss_event(&ctl->sc_pacer);
+    ctl->sc_largest_sent_at_cutback =
+                            lsquic_senhist_largest(&ctl->sc_senhist);
+}
+
+
+/* Return true if losses were detected, false otherwise */
+static int
 send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                             lsquic_time_t time)
 {
@@ -1002,11 +1014,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     {
         LSQ_DEBUG("detected new loss: packet %"PRIu64"; new lsac: "
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
-        ctl->sc_ci->cci_loss(CGP(ctl));
-        if (ctl->sc_flags & SC_PACE)
-            lsquic_pacer_loss_event(&ctl->sc_pacer);
-        ctl->sc_largest_sent_at_cutback =
-                                lsquic_senhist_largest(&ctl->sc_senhist);
+        send_ctl_loss_event(ctl);
     }
     else if (largest_lost_packno)
         /* Lost packets whose numbers are smaller than the largest packet
@@ -1015,6 +1023,8 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
          */
         LSQ_DEBUG("ignore loss of packet %"PRIu64" smaller than lsac "
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
+
+    return largest_lost_packno > ctl->sc_largest_sent_at_cutback;
 }
 
 
@@ -1043,7 +1053,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     lsquic_packno_t smallest_unacked;
     lsquic_packno_t ack2ed[2];
     unsigned packet_sz;
-    int app_limited;
+    int app_limited, losses_detected;
     signed char do_rtt, skip_checks;
     enum packnum_space pns;
     unsigned ecn_total_acked, ecn_ce_cnt, one_rtt_cnt;
@@ -1188,7 +1198,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     }
 
   detect_losses:
-    send_ctl_detect_losses(ctl, pns, ack_recv_time);
+    losses_detected = send_ctl_detect_losses(ctl, pns, ack_recv_time);
     if (send_ctl_first_unacked_retx_packet(ctl, pns))
         set_retx_alarm(ctl, pns, now);
     else
@@ -1221,7 +1231,18 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             if (acki->ecn_counts[ECN_CE] > ctl->sc_ecn_ce_cnt[pns])
             {
                 ctl->sc_ecn_ce_cnt[pns] = acki->ecn_counts[ECN_CE];
-                LSQ_WARN("TODO: handle ECN CE event");  /* XXX TODO */
+                if (losses_detected)
+                    /* It's either-or.  From [draft-ietf-quic-recovery-29],
+                     * Section 7.4:
+                     " When a loss or ECN-CE marking is detected [...]
+                     */
+                    LSQ_DEBUG("ECN-CE marking detected, but loss event already "
+                        "accounted for");
+                else
+                {
+                    LSQ_DEBUG("ECN-CE marking detected, issue loss event");
+                    send_ctl_loss_event(ctl);
+                }
             }
         }
         else

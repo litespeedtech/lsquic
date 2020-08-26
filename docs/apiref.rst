@@ -377,7 +377,10 @@ settings structure:
 
     .. member:: int             es_silent_close
 
-        SCLS (silent close)
+        When true, ``CONNECTION_CLOSE`` is not sent when connection times out.
+        The server will also not send a reply to client's ``CONNECTION_CLOSE``.
+
+        Corresponds to SCLS (silent close) gQUIC option.
 
     .. member:: unsigned        es_max_header_list_size
 
@@ -868,7 +871,8 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_SILENT_CLOSE
 
     By default, connections are closed silenty when they time out (no
-    CONNECTION_CLOSE frame is sent).
+    ``CONNECTION_CLOSE`` frame is sent) and the server does not reply with
+    own ``CONNECTION_CLOSE`` after it receives one.
 
 .. macro:: LSQUIC_DF_MAX_HEADER_LIST_SIZE
 
