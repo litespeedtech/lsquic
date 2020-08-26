@@ -39,7 +39,7 @@ Application data is transmitted over streams.
 HTTP Mode
 ---------
 
-The HTTP support is included directly into LSQUIC.  The library hides the interaction between the HTTP application layer and the QUIC transport layer and presents a simple, unified way of sending and receiving HTTP messages.  (By "unified way," I mean between Google QUIC and HTTP/3).  Behind the scenes, the library will compress and decompress HTTP headers, add and remove HTTP/3 stream framing, and operate the necessary control streams.
+The HTTP support is included directly into LSQUIC.  The library hides the interaction between the HTTP application layer and the QUIC transport layer and presents a simple, unified way of sending and receiving HTTP messages.  (By "unified way," we mean between Google QUIC and HTTP/3).  Behind the scenes, the library will compress and decompress HTTP headers, add and remove HTTP/3 stream framing, and operate the necessary control streams.
 
 In the following sections, we will describe how to:
 
@@ -61,7 +61,7 @@ It pulls in an auxiliary file "lsquic_types.h".
 Library Initialization
 ======================
 
-Before the first engine object is instantiate, the library must be
+Before the first engine object is instantiated, the library must be
 initialized using :func:`lsquic_global_init()`:
 
 ::
@@ -211,7 +211,7 @@ These can be set using ancillary data in a platform-dependent way.
 When an error occurs
 --------------------
 
-Errnos are examined:
+When an error occurs, the value of ``errno`` is examined:
 
 - ``EAGAIN`` (or ``EWOULDBLOCK``) means that the packets could not be sent and to retry later.  It is up to the caller to call :func:`lsquic_engine_send_unsent_packets()` when sending can resume.
 - ``EMSGSIZE`` means that a packet was too large.  This occurs when lsquic send MTU probes.  In that case, the engine will retry sending without the offending packet immediately.
@@ -246,8 +246,8 @@ There are several ways for a connection to do something productive.  When a conn
 - There are incoming packets to process
 - A user wants to read from a stream and there is data that can be read
 - A user wants to write to a stream and the stream is writeable
-- A stream has buffered packets generated when user wrote to stream outside of the regular callback mechanism.  (This is allowed as an optimization: sometimes data becomes available and it's faster to just write to stream than to buffer it in the user code and wait for the "on write" callback.)
-- Internal QUIC protocol or LSQUIC maintenance action need to be taken, such as sending out a control frame or recycling a stream.
+- A stream has buffered packets generated when a user has written to stream outside of the regular callback mechanism.  (This is allowed as an optimization: sometimes data becomes available and it's faster to just write to stream than to buffer it in the user code and wait for the "on write" callback.)
+- Internal QUIC protocol or LSQUIC maintenance actions need to be taken, such as sending out a control frame or recycling a stream.
 
 ::
 
@@ -309,7 +309,7 @@ Required Engine Callbacks
 =========================
 
 Now we continue to initialize our engine instance.  We have covered the callback to send out packets.  This is one of the required engine callbacks.
-Other required engine callbacks are a set of stream and connection callbacks that get called on various events in connections and stream lifecycles and a callback to get the default TLS context.
+Other required engine callbacks are a set of stream and connection callbacks that get called on various events in then connections and stream lifecycles and a callback to get the default TLS context.
 
 ::
 
@@ -342,7 +342,7 @@ Stream and connection callbacks are the way that the library communicates with u
 They are all collected in :type:`lsquic_stream_if` ("if" here stands
 for "interface").
 The mandatory callbacks include calls when connections and streams are created and destroyed and callbacks when streams can be read from or written to.
-The optional callbacks are used to observe some events in connection lifecycle, such as being informed when handshake has succeeded (or failed) or when a goaway signal is received from peer.
+The optional callbacks are used to observe some events in the connection lifecycle, such as being informed when handshake has succeeded (or failed) or when a goaway signal is received from peer.
 
 ::
 
@@ -392,7 +392,7 @@ On new stream
 
 QUIC allows either endpoint to create streams and send and receive data on them.  There are unidirectional and bidirectional streams.  Thus, there are four stream types.  In our tutorial, however, we use the familiar paradigm of the client sending requests to the server using bidirectional stream.
 
-On the server, new streams are created when client requests arrive.  On the client, streams are created when possible after the user code requested stream creation by calling :func:`lsquic_conn_make_stream()`.
+On the server, new streams are created when client requests arrive.  On the client, streams are created when possible after the user code has requested stream creation by calling :func:`lsquic_conn_make_stream()`.
 
 ::
 
@@ -433,7 +433,7 @@ When the "on read" callback is called, there is data to be read from stream, end
   }
 
 To read the data or to collect the error, call :func:`lsquic_stream_read`.  If a negative value is returned, examine ``errno``.  If it is not ``EWOULDBLOCK``, then an error has occurred, and you should close the stream.  Here, an error means an application error, such as peer resetting the stream.  A protocol error or an internal library error (such as memory allocation failure) lead to the connection being closed outright.
-To reiterate, the "on read" callback is called only when the user registered interest in reading from the stream.
+To reiterate, the "on read" callback is called only when the user has registered interest in reading from the stream.
 
 On write
 --------
@@ -453,7 +453,7 @@ As with the "on read" callback, for this callback to be called, the user must ha
           lsquic_stream_close(stream);
   }
 
-By default, "on read" and "on write" callbacks will be called in a loop as long as there is data to read or the stream can be written to.  If you are done reading from or writing to stream, you should either shutdown the appropriate end, close the stream, or unregister your interest.  The library implements a circuit breaker to stop would-be infinite loops when no reading or writing progress is made.  Both loop dispatch and the circuit breaker are configurable (see :member:`lsquic_engine_settings.es_progress_check` and :member:`lsquic_engine_settings.es_rw_once`).
+By default, "on read" and "on write" callbacks will be called in a loop as long as there is data to read or the stream can be written to.  If you are done reading from or writing to stream, you should either shut down the appropriate end, close the stream, or unregister your interest.  The library implements a circuit breaker to stop would-be infinite loops when no reading or writing progress is made.  Both loop dispatch and the circuit breaker are configurable (see :member:`lsquic_engine_settings.es_progress_check` and :member:`lsquic_engine_settings.es_rw_once`).
 
 On stream close
 ---------------
@@ -477,7 +477,7 @@ In the made-up example above, we free the per-stream context allocated in the "o
 On connection close
 -------------------
 
-When either :func:`lsquic_conn_close()` has been called; or the peer closed the connection; or an error occurred, the "on connection close" callback is called.  At this point, it is time to free the per-connection context, if any.
+When either :func:`lsquic_conn_close()` has been called; or the peer has closed the connection; or an error has occurred, the "on connection close" callback is called.  At this point, it is time to free the per-connection context, if any.
 
 ::
 
@@ -498,7 +498,7 @@ In the example above, you see the call to :func:`lsquic_conn_get_ctx()`.  This r
 Using Streams
 =============
 
-To reduce buffering, most of the time bytes written to stream are written into packets directly.  Bytes are buffered in the stream until a full packet can be created.  Alternatively, one call flush the data by calling :func:`lsquic_stream_flush`.
+To reduce buffering, most of the time bytes written to stream are written into packets directly.  Bytes are buffered in the stream until a full packet can be created.  Alternatively, one could flush the data by calling :func:`lsquic_stream_flush`.
 It is impossible to write more data than the congestion window.  This prevents excessive buffering inside the library.
 Inside the "on read" and "on write" callbacks, reading and writing should succeed.  The exception is error collection inside the "on read" callback.
 Outside of the callbacks, be ready to handle errors.  For reading, it is -1 with ``EWOULDBLOCK`` errno.  For writing, it is the return value of 0.
@@ -532,7 +532,7 @@ Stream return values
 
 The stream read and write functions are modeled on the standard UNIX read and write functions, including the use of the ``errno``.  The most important of these error codes are ``EWOULDBLOCK`` and ``ECONNRESET`` because you may encounter these even if you structure your code correctly.  Other errors typically occur when the user code does something unexpected.
 
-Return value of 0 are different for reads and writes.  For reads, it means that EOF has been reached and you need to stop reading from the stream.  For writes, it means that you should try writing later.
+Return value of 0 is different for reads and writes.  For reads, it means that EOF has been reached and you need to stop reading from the stream.  For writes, it means that you should try writing later.
 
 If writing to stream returns an error, it may mean an internal error.  If the error is not recoverable, the library will abort the connection; if it is recoverable (the only recoverable error is failure to allocate memory), attempting to write later may succeed.
 
@@ -764,8 +764,8 @@ The size callback simply returns the number of bytes left.
   }
 
 
-The read callback (so called because you *read* data from the source) writes no more that ``count`` bytes
-to memory location pointed by "buf" and returns the number of bytes copied.
+The read callback (so called because you *read* data from the source) writes no more than ``count`` bytes
+to memory location pointed by ``buf`` and returns the number of bytes copied.
 In our case, ``count`` is never larger than the number of bytes still left to write.
 This is because the caller - the LSQUIC library - gets the value of ``count`` from the ``lsqr_size()`` callback.  When reading from a file descriptor, on the other hand, this can very well happen that you don't have as much data to write as you thought you had.
 
@@ -1168,7 +1168,7 @@ place different connection IDs in the packets!
 Connection IDs
 ==============
 
-A QUIC connection has two sets of connection IDs: source connection IDs and destination connection IDs.  The source connection IDs is what the peer uses to place in QUIC packets; the destination connection IDs is what this endpoint uses to include in the packets it sends to the peer.  One's source CIDs is the other's destination CIDs and vice versa.
+A QUIC connection has two sets of connection IDs: source connection IDs and destination connection IDs.  The source connection IDs set is what the peer uses to place in QUIC packets; the destination connection IDs is what this endpoint uses to include in the packets it sends to the peer.  One's source CIDs is the other's destination CIDs and vice versa.
 What interesting is that either side of the QUIC connection may change the DCID.  Use CIDs with care.
 
 ::
