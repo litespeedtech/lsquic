@@ -1294,6 +1294,8 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         return;
     }
 
+    if (!(conn->imc_flags & (IMC_QUEUED_ACK_INIT << pns)))
+        LSQ_DEBUG("queued ACK in %s", lsquic_pns2str[pns]);
     conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
     ++conn->imc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
     conn->imc_incoming_ecn <<= 1;
@@ -1567,7 +1569,7 @@ imico_generate_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
     packet_out->po_data_sz += len;
     packet_out->po_regen_sz += len;
     conn->imc_flags &= ~(IMC_QUEUED_ACK_INIT << pns);
-    LSQ_DEBUG("wrote ACK frame of size %d", len);
+    LSQ_DEBUG("wrote ACK frame of size %d in %s", len, lsquic_pns2str[pns]);
     return 0;
 }
 

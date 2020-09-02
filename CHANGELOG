@@ -1,3 +1,16 @@
+2020-09-02
+    - 2.19.8
+    - [FEATURE] Update the timestamp extension to latest version.
+    - [FEATURE] Cope with appearance of ECN blackholes.
+    - [OPTIMIZATION] return packno offset and size when header is generated.
+    - [BUGFIX] ignore old ACK frames in mini conns.
+    - [BUGFIX] Mark initial server path as initialized.
+    - [BUGFIX] Do not merge ACK if ECN counts do not match.
+    - Turn incoming packet number history in mini conn back on.
+    - Record mini conn event history again when compiled in debug mode.
+    - IETF mini conn: log when ACK is queued.
+    - Clean up and refactor code in several places.
+
 2020-08-26
     - 2.19.7
     - Handle ECT-CE event: issue a loss event.

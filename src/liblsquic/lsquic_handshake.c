@@ -3625,7 +3625,7 @@ gquic_really_encrypt_packet (struct lsquic_enc_session *enc_session,
     unsigned char header_buf[GQUIC_MAX_PUBHDR_SZ];
 
     header_sz = lconn->cn_pf->pf_gen_reg_pkt_header(lconn, packet_out,
-                                            header_buf, sizeof(header_buf));
+                                header_buf, sizeof(header_buf), NULL, NULL);
     if (header_sz < 0)
         return -1;
 
@@ -3963,7 +3963,7 @@ gquic2_esf_encrypt_packet (enc_session_t *enc_session_p,
     *((uint64_t *) begin_xor) ^= packno;
 
     header_sz = lconn->cn_pf->pf_gen_reg_pkt_header(lconn, packet_out, dst,
-                                                                        dst_sz);
+                                            dst_sz, &packno_off, &packno_len);
     if (header_sz < 0)
         goto err;
 
@@ -3987,7 +3987,6 @@ gquic2_esf_encrypt_packet (enc_session_t *enc_session_p,
     }
     assert(out_sz == dst_sz - header_sz);
 
-    lconn->cn_pf->pf_packno_info(lconn, packet_out, &packno_off, &packno_len);
     if (!packet_out->po_nonce)
         divers_nonce_len = 0;
     else

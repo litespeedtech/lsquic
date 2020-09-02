@@ -371,7 +371,7 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
                                                 frec = lsquic_pofi_next(&pofi))
     {
         frec->fe_off -= adj;
-        if (GQUIC_FRAME_REGEN_MASK & (1 << frec->fe_frame_type))
+        if (BQUIC_FRAME_REGEN_MASK & (1 << frec->fe_frame_type))
         {
             assert(frec->fe_off == 0);  /* This checks that all the regen
             frames are at the beginning of the packet.  It can be removed
@@ -388,7 +388,7 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
     assert(adj);    /* Otherwise why are we called? */
     assert(packet_out->po_regen_sz == adj);
     packet_out->po_regen_sz = 0;
-    packet_out->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
+    packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
 }
 
 

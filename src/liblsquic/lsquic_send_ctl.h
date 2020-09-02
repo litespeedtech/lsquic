@@ -407,6 +407,9 @@ int
 lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *,
                                             const struct network_path *);
 
-#define lsquic_send_ctl_ecn_turned_on(ctl_) ((ctl_)->sc_flags & SC_ECN)
+#define lsquic_send_ctl_ecn_turned_on(ctl_) ((ctl_)->sc_ecn != ECN_NOT_ECT)
+
+void
+lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *);
 
 #endif

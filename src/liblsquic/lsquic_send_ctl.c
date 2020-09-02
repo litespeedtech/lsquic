@@ -382,13 +382,6 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
 }
 
 
-static int
-send_ctl_ecn_on (const struct lsquic_send_ctl *ctl)
-{
-    return ctl->sc_ecn != ECN_NOT_ECT;
-}
-
-
 static lsquic_time_t
 calculate_packet_rto (lsquic_send_ctl_t *ctl)
 {
@@ -861,13 +854,13 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         ctl->sc_ci->cci_lost(CGP(ctl), packet_out, packet_sz);
 
     /* This is a client-only check, server check happens in mini conn */
-    if (send_ctl_ecn_on(ctl)
+    if (lsquic_send_ctl_ecn_turned_on(ctl)
             && 0 == ctl->sc_ecn_total_acked[PNS_INIT]
                 && HETY_INITIAL == packet_out->po_header_type
                     && 3 == packet_out->po_packno)
     {
         LSQ_DEBUG("possible ECN black hole during handshake, disable ECN");
-        ctl->sc_ecn = ECN_NOT_ECT;
+        lsquic_send_ctl_disable_ecn(ctl);
     }
 
     if (packet_out->po_frame_types & ctl->sc_retx_frames)
@@ -1217,7 +1210,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     if (one_rtt_cnt)
         ctl->sc_flags |= SC_1RTT_ACKED;
 
-    if (send_ctl_ecn_on(ctl))
+    if (lsquic_send_ctl_ecn_turned_on(ctl))
     {
         const uint64_t sum = acki->ecn_counts[ECN_ECT0]
                            + acki->ecn_counts[ECN_ECT1]
@@ -1250,7 +1243,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             LSQ_INFO("ECN total ACKed (%"PRIu64") is greater than the sum "
                 "of ECN counters (%"PRIu64"): disable ECN",
                 ctl->sc_ecn_total_acked[pns], sum);
-            ctl->sc_ecn = ECN_NOT_ECT;
+            lsquic_send_ctl_disable_ecn(ctl);
         }
     }
 
@@ -2145,7 +2138,7 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     packno = send_ctl_next_packno(ctl);
 
     packet_out->po_flags &= ~PO_SENT_SZ;
-    packet_out->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
+    packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
     assert(packet_out->po_frame_types);
     packet_out->po_packno = packno;
     lsquic_packet_out_set_ecn(packet_out, ctl->sc_ecn);
@@ -2541,7 +2534,7 @@ send_ctl_move_ack (struct lsquic_send_ctl *ctl, struct lsquic_packet_out *dst,
      * buffered packet to another.  We don't generate any other regen frame
      * types in buffered packets.
      */
-    assert(!(GQUIC_FRAME_REGEN_MASK & (1 << src->po_frame_types)
+    assert(!(BQUIC_FRAME_REGEN_MASK & (1 << src->po_frame_types)
                                                         & ~QUIC_FTBIT_ACK));
 
     if (lsquic_packet_out_avail(dst) >= src->po_regen_sz
@@ -2555,8 +2548,8 @@ send_ctl_move_ack (struct lsquic_send_ctl *ctl, struct lsquic_packet_out *dst,
             return -1;
         dst->po_data_sz = src->po_regen_sz;
         dst->po_regen_sz = src->po_regen_sz;
-        dst->po_frame_types |= (GQUIC_FRAME_REGEN_MASK & src->po_frame_types);
-        src->po_frame_types &= ~GQUIC_FRAME_REGEN_MASK;
+        dst->po_frame_types |= (BQUIC_FRAME_REGEN_MASK & src->po_frame_types);
+        src->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
         lsquic_packet_out_chop_regen(src);
     }
 
@@ -3516,4 +3509,16 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *ctl,
     }
     else
         return n_out + path->np_pack_size < cwnd;
+}
+
+
+void
+lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out;
+
+    LSQ_INFO("disable ECN");
+    ctl->sc_ecn = ECN_NOT_ECT;
+    TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+        lsquic_packet_out_set_ecn(packet_out, ECN_NOT_ECT);
 }

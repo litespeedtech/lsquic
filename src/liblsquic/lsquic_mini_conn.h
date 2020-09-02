@@ -21,7 +21,7 @@ struct lsquic_engine_public;
 
 #ifndef LSQUIC_KEEP_MINICONN_HISTORY
 #   ifndef NDEBUG
-#       define LSQUIC_KEEP_MINICONN_HISTORY 0   /* XXX */
+#       define LSQUIC_KEEP_MINICONN_HISTORY 1
 #   else
 #       define LSQUIC_KEEP_MINICONN_HISTORY 0
 #   endif
@@ -38,7 +38,7 @@ enum miniconn_history_event
     MCHE_EMPTY              =  '\0',
     MCHE_PLUS               =  '+',
     MCHE_HANDLE_1RTT        =  '1',
-    MCHE_HANDLE_2RTT        =  '2',
+    MCHE_HANDLE_SREJ        =  '2',
     MCHE_PACKET2LARGE_IN    =  'a',
     MCHE_CONN_CLOSE         =  'c',
     MCHE_CREATED            =  'C',
@@ -74,7 +74,7 @@ enum miniconn_history_event
 
 #ifndef LSQUIC_RECORD_INORD_HIST
 #   if __GNUC__
-#       define LSQUIC_RECORD_INORD_HIST 0   /* XXX */
+#       define LSQUIC_RECORD_INORD_HIST 1
 #   else
 #       define LSQUIC_RECORD_INORD_HIST 0
 #   endif
@@ -112,7 +112,6 @@ struct mini_conn {
     unsigned short         mc_read_off, /* Read offset for stream 1 */
                            mc_write_off;/* Write offset for stream 1 */
     unsigned char          mc_max_ack_packno,
-                                /* XXX: mc_max_ack_packno is never set */
                            mc_cutoff,
                            mc_cur_packno;
     unsigned char          mc_hsk_count;

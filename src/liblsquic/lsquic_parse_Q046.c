@@ -188,7 +188,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
 static int
 gquic_Q046_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+        size_t bufsz, unsigned *packno_off_UNUSED, unsigned *packno_len_UNUSED)
 {
     if (0 == (packet_out->po_flags & PO_LONGHEAD))
         return gen_short_pkt_header(lconn, packet_out, buf, bufsz);
@@ -281,15 +281,6 @@ gquic_Q046_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_sz,
 }
 
 
-static void
-gquic_Q046_packno_info (const struct lsquic_conn *lconn,
-        const struct lsquic_packet_out *packet_out, unsigned *packno_off,
-        unsigned *packno_len)
-{
-    assert(0);
-}
-
-
 /* No simple PRST for Q046 */
 static ssize_t
 gquic_Q046_generate_simple_prst (const lsquic_cid_t *cidp, unsigned char *buf,
@@ -357,7 +348,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q046 =
     .pf_packno_bits2len               =  gquic_Q046_packno_bits2len,
     .pf_gen_crypto_frame              =  gquic_Q046_gen_crypto_frame,
     .pf_parse_crypto_frame            =  gquic_Q046_parse_crypto_frame,
-    .pf_packno_info                   =  gquic_Q046_packno_info,
     .pf_gen_handshake_done_frame      =  gquic_Q046_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  gquic_Q046_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  gquic_Q046_handshake_done_frame_size,

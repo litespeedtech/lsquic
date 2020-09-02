@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -291,6 +292,8 @@ process_ack_frame (struct mini_conn *mc, lsquic_packet_in_t *packet_in,
         LSQ_DEBUG("Ignore old ack (max %u)", mc->mc_max_ack_packno);
         return parsed_len;
     }
+    if (packet_in->pi_packno <= UCHAR_MAX)
+        mc->mc_max_ack_packno = packet_in->pi_packno;
 
     /* Verify ACK frame and update list of acked packet numbers: */
     for (n = 0; n < acki->n_ranges; ++n)
@@ -1185,7 +1188,7 @@ continue_handshake (struct mini_conn *mc)
     MCHIST_APPEND(mc, he == DATA_NOT_ENOUGH ? MCHE_HANDLE_NOT_ENOUGH :
                       he == HS_SHLO         ? MCHE_HANDLE_SHLO :
                       he == HS_1RTT         ? MCHE_HANDLE_1RTT :
-                      he == HS_2RTT         ? MCHE_HANDLE_2RTT :
+                      he == HS_SREJ         ? MCHE_HANDLE_SREJ :
                       he == HS_ERROR        ? MCHE_HANDLE_ERROR :
                                               MCHE_HAHDLE_UNKNOWN);
 
@@ -1701,6 +1704,7 @@ process_deferred_packets (struct mini_conn *mc)
 
 
 #if LSQUIC_RECORD_INORD_HIST
+/* FIXME This does not work for Q050, where 0 is a valid packet number. */
 /* Packet number is encoded as a sequence of 1-bits and stored in mc_inord_hist
  * separated by 0 bits.  For example, sequence of packet numbers 3, 2, 1 would
  * be encoded as (starting with LSB) 1110110100000000...  This is not the most
@@ -1731,6 +1735,26 @@ record_inord_packno (struct mini_conn *mc, lsquic_packno_t packno)
 }
 
 
+#if __GNUC__
+#   define ctz __builtin_ctzll
+#else
+static unsigned
+ctz (unsigned long long x)
+{
+    unsigned n = 0;
+    if (0 == (x & ((1ULL << 32) - 1))) { n += 32; x >>= 32; }
+    if (0 == (x & ((1ULL << 16) - 1))) { n += 16; x >>= 16; }
+    if (0 == (x & ((1ULL <<  8) - 1))) { n +=  8; x >>=  8; }
+    if (0 == (x & ((1ULL <<  4) - 1))) { n +=  4; x >>=  4; }
+    if (0 == (x & ((1ULL <<  2) - 1))) { n +=  2; x >>=  2; }
+    if (0 == (x & ((1ULL <<  1) - 1))) { n +=  1; x >>=  1; }
+    return n;
+}
+
+
+#endif
+
+
 static void
 inord_to_str (const struct mini_conn *mc, char *buf, size_t bufsz)
 {
@@ -1747,7 +1771,7 @@ inord_to_str (const struct mini_conn *mc, char *buf, size_t bufsz)
         hist = mc->mc_inord_hist[n];
         while (hist)
         {
-            n_trail = __builtin_ctzll(~hist);
+            n_trail = ctz(~hist);
             nw = snprintf(buf + off, bufsz - off,
                 /* No spaces are included on purpose: this makes it a single
                  * field and thus easy to process log using standard command-
@@ -2001,7 +2025,7 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
             mc->mc_received_packnos, mc->mc_sent_packnos, mc->mc_lost_packnos,
             mc->mc_deferred_packnos, still_deferred,
             mc->mc_dropped_packnos, in_flight, mc->mc_acked_packnos,
-            mc->mc_error_code, mc->mc_n_ticks, mc->mc_conn.cn_pack_size,
+            mc->mc_error_code, mc->mc_n_ticks, mc->mc_path.np_pack_size,
             lsquic_time_now() - mc->mc_created,
             lsquic_ver2str[mc->mc_conn.cn_version],
             (int) hist_idx, mc->mc_hist_buf);
@@ -2025,7 +2049,7 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
             mc->mc_received_packnos, mc->mc_sent_packnos, mc->mc_lost_packnos,
             mc->mc_deferred_packnos, still_deferred,
             mc->mc_dropped_packnos, in_flight, mc->mc_acked_packnos,
-            mc->mc_error_code, mc->mc_n_ticks, mc->mc_conn.cn_pack_size,
+            mc->mc_error_code, mc->mc_n_ticks, mc->mc_path.np_pack_size,
             lsquic_time_now() - mc->mc_created,
             lsquic_ver2str[mc->mc_conn.cn_version],
             (int) (sizeof(mc->mc_hist_buf) - hist_idx),

@@ -561,8 +561,7 @@ skip_headers (struct lsquic_frame_reader *fr)
 }
 
 
-/* TODO: this function always returns 0.  Make it void */
-static int
+static void
 decode_and_pass_payload (struct lsquic_frame_reader *fr)
 {
     struct headers_state *hs = &fr->fr_state.by_type.headers_state;
@@ -588,7 +587,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         if (!target_stream)
         {
             skip_headers(fr);
-            return 0;
+            return;
         }
     }
     hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, target_stream,
@@ -688,14 +687,13 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     fr->fr_conn_stats->in.headers_comp += fr->fr_header_block_sz;
 #endif
 
-    return 0;
+    return;
 
   stream_error:
     LSQ_INFO("%s: stream error %u", __func__, err);
     if (hset)
         fr->fr_hsi_if->hsi_discard_header_set(hset);
     fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr), err);
-    return 0;
 }
 
 
@@ -725,13 +723,12 @@ read_headers_block_fragment (struct lsquic_frame_reader *fr)
     if (hs->nread == payload_length &&
                 (fr->fr_state.header.hfh_flags & HFHF_END_HEADERS))
     {
-        int rv = decode_and_pass_payload(fr);
+        decode_and_pass_payload(fr);
         free(fr->fr_header_block);
         fr->fr_header_block = NULL;
-        return rv;
     }
-    else
-        return 0;
+
+    return 0;
 }
 
 
@@ -865,20 +862,14 @@ read_contin (struct lsquic_frame_reader *fr)
     {
         if (fr->fr_state.header.hfh_flags & HFHF_END_HEADERS)
         {
-            int rv = decode_and_pass_payload(fr);
+            decode_and_pass_payload(fr);
             free(fr->fr_header_block);
             fr->fr_header_block = NULL;
-            reset_state(fr);
-            return rv;
         }
-        else
-        {
-            reset_state(fr);
-            return 0;
-        }
+        reset_state(fr);
     }
-    else
-        return 0;
+
+    return 0;
 }
 
 

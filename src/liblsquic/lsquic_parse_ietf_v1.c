@@ -192,7 +192,7 @@ write_packno (unsigned char *p, lsquic_packno_t packno,
 static int
 gen_long_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off_p, unsigned *packno_len_p)
 {
     unsigned payload_len, bits;
     enum packno_bits packno_bits;
@@ -242,6 +242,8 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
     vint_write(p, payload_len, bits, 1 << bits);
     p += 1 << bits;
 
+    *packno_off_p = p - buf;
+    *packno_len_p = iquic_packno_bits2len(packno_bits);
     p += write_packno(p, packet_out->po_packno, packno_bits);
 
     return p - buf;
@@ -251,7 +253,7 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
 static int
 gen_short_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off_p, unsigned *packno_len_p)
 {
     unsigned packno_len, cid_len, need;
     enum packno_bits packno_bits;
@@ -277,6 +279,8 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
 
     (void) write_packno(buf + 1 + cid_len, packet_out->po_packno, packno_bits);
 
+    *packno_off_p = 1 + cid_len;
+    *packno_len_p = packno_len;
     return need;
 }
 
@@ -284,38 +288,14 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
 static int
 ietf_v1_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off, unsigned *packno_len)
 {
     if (packet_out->po_header_type == HETY_NOT_SET)
-        return gen_short_pkt_header(lconn, packet_out, buf, bufsz);
+        return gen_short_pkt_header(lconn, packet_out, buf, bufsz, packno_off,
+                                                                    packno_len);
     else
-        return gen_long_pkt_header(lconn, packet_out, buf, bufsz);
-}
-
-
-static void
-ietf_v1_packno_info (const struct lsquic_conn *lconn,
-        const struct lsquic_packet_out *packet_out, unsigned *packno_off,
-        unsigned *packno_len)
-{
-    unsigned token_len; /* Need intermediate value to quiet compiler warning */
-
-    if (packet_out->po_header_type == HETY_NOT_SET)
-        *packno_off = 1 +
-            (packet_out->po_flags & PO_CONN_ID ? packet_out->po_path->np_dcid.len : 0);
-    else
-        *packno_off = 1
-                    + 4
-                    + 1
-                    + packet_out->po_path->np_dcid.len
-                    + 1
-                    + CN_SCID(lconn)->len
-                    + (packet_out->po_header_type == HETY_INITIAL ?
-                        (token_len = packet_out->po_token_len,
-                            (1 << vint_val2bits(token_len)) + token_len) : 0)
-                    + 2;
-    *packno_len = iquic_packno_bits2len(
-        lsquic_packet_out_packno_bits(packet_out));
+        return gen_long_pkt_header(lconn, packet_out, buf, bufsz, packno_off,
+                                                                    packno_len);
 }
 
 
@@ -2166,7 +2146,6 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_parse_path_resp_frame         =  ietf_v1_parse_path_resp_frame,
     .pf_calc_packno_bits              =  ietf_v1_calc_packno_bits,
     .pf_packno_bits2len               =  ietf_v1_packno_bits2len,
-    .pf_packno_info                   =  ietf_v1_packno_info,
     .pf_gen_crypto_frame              =  ietf_v1_gen_crypto_frame,
     .pf_parse_crypto_frame            =  ietf_v1_parse_crypto_frame,
     .pf_calc_crypto_frame_header_sz   =  ietf_v1_calc_crypto_frame_header_sz,

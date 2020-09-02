@@ -259,10 +259,11 @@ write_packno (unsigned char *p, lsquic_packno_t packno, enum packno_bits bits)
 static int
 gen_short_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off_p, unsigned *packno_len_p)
 {
     unsigned packno_len, need;
     enum packno_bits bits;
+    unsigned char *p = buf;
 
     bits = lsquic_packet_out_packno_bits(packet_out);
     packno_len = iquic_packno_bits2len(bits);
@@ -275,15 +276,17 @@ gen_short_pkt_header (const struct lsquic_conn *lconn,
     if (need > bufsz)
         return -1;
 
-    *buf++ = 0x40 | bits;
+    *p++ = 0x40 | bits;
 
     if (0 == (lconn->cn_flags & LSCONN_SERVER))
     {
-        memcpy(buf, lconn->cn_cid.idbuf, 8);
-        buf += 8;
+        memcpy(p, lconn->cn_cid.idbuf, 8);
+        p += 8;
     }
 
-    (void) write_packno(buf, packet_out->po_packno, bits);
+    *packno_off_p = p - buf;
+    *packno_len_p = packno_len;
+    (void) write_packno(p, packet_out->po_packno, bits);
 
     return need;
 }
@@ -349,35 +352,10 @@ gquic_Q050_packout_header_size_long_by_packet (const struct lsquic_conn *lconn,
 }
 
 
-static void
-gquic_Q050_packno_info (const struct lsquic_conn *lconn,
-        const struct lsquic_packet_out *packet_out, unsigned *packno_off,
-        unsigned *packno_len)
-{
-    unsigned token_len; /* Need intermediate value to quiet compiler warning */
-
-    if (packet_out->po_header_type == HETY_NOT_SET)
-        *packno_off = 1 +
-            (lconn->cn_flags & LSCONN_SERVER ? 0 : 8);
-    else
-        *packno_off = 1
-                    + 4
-                    + 1
-                    + 1
-                    + lconn->cn_cid.len
-                    + (packet_out->po_header_type == HETY_INITIAL ?
-                        (token_len = packet_out->po_token_len,
-                            (1 << vint_val2bits(token_len)) + token_len) : 0)
-                    + 2;
-    *packno_len = iquic_packno_bits2len(
-        lsquic_packet_out_packno_bits(packet_out));
-}
-
-
 static int
 gquic_Q050_gen_long_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off_p, unsigned *packno_len_p)
 {
     enum packno_bits packno_bits;
     lsquic_ver_tag_t ver_tag;
@@ -434,6 +412,8 @@ gquic_Q050_gen_long_pkt_header (const struct lsquic_conn *lconn,
     bits = 1;   /* Always use two bytes to encode payload length */
     vint_write(p, payload_len, bits, 1 << bits);
     p += 1 << bits;
+    *packno_off_p = p - buf;
+    *packno_len_p = iquic_packno_bits2len(packno_bits);
     p += write_packno(p, packet_out->po_packno, packno_bits);
 
     if (packet_out->po_nonce)
@@ -450,12 +430,14 @@ gquic_Q050_gen_long_pkt_header (const struct lsquic_conn *lconn,
 static int
 gquic_Q050_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+            size_t bufsz, unsigned *packno_off, unsigned *packno_len)
 {
     if (0 == (packet_out->po_flags & PO_LONGHEAD))
-        return gen_short_pkt_header(lconn, packet_out, buf, bufsz);
+        return gen_short_pkt_header(lconn, packet_out, buf, bufsz,
+                                                        packno_off, packno_len);
     else
-        return gquic_Q050_gen_long_pkt_header(lconn, packet_out, buf, bufsz);
+        return gquic_Q050_gen_long_pkt_header(lconn, packet_out, buf, bufsz,
+                                                        packno_off, packno_len);
 }
 
 
@@ -896,7 +878,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q050 =
     .pf_packno_bits2len               =  gquic_Q050_packno_bits2len,
     .pf_gen_crypto_frame              =  gquic_Q050_gen_crypto_frame,
     .pf_parse_crypto_frame            =  gquic_Q050_parse_crypto_frame,
-    .pf_packno_info                   =  gquic_Q050_packno_info,
     .pf_calc_crypto_frame_header_sz   =  gquic_Q050_calc_crypto_frame_header_sz,
     .pf_gen_handshake_done_frame      =  gquic_Q050_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  gquic_Q050_parse_handshake_done_frame,

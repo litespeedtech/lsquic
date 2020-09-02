@@ -623,7 +623,10 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
     }
     if (settings->es_timestamps)
+    {
+        params.tp_numerics[TPI_TIMESTAMPS] = TS_GENERATE_THEM;
         params.tp_set |= 1 << TPI_TIMESTAMPS;
+    }
 
     len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
                         &params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
@@ -1570,15 +1573,6 @@ get_crypto_params (const struct enc_sess_iquic *enc_sess,
         return -1;
     }
 
-    /* FIXME: figure out why this duplicate check is here and either fix it
-     * or get rid of it.
-     */
-    if (key_sz > EVP_MAX_KEY_LENGTH)
-    {
-        LSQ_DEBUG("PN size %u is too large", key_sz);
-        return -1;
-    }
-
     return 0;
 }
 
@@ -1987,11 +1981,8 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
 #endif
     *((uint64_t *) begin_xor) ^= packno;
 
-    /* TODO: have this call return packno_off and packno_len to avoid
-     * another function call.
-     */
     header_sz = lconn->cn_pf->pf_gen_reg_pkt_header(lconn, packet_out, dst,
-                                                                        dst_sz);
+                                            dst_sz, &packno_off, &packno_len);
     if (header_sz < 0)
         goto err;
     if (enc_level == ENC_LEV_FORW)
@@ -2017,7 +2008,6 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     }
     assert(out_sz == dst_sz - header_sz);
 
-    lconn->cn_pf->pf_packno_info(lconn, packet_out, &packno_off, &packno_len);
 #ifndef NDEBUG
     const unsigned sample_off = packno_off + 4;
     assert(sample_off + IQUIC_TAG_LEN <= dst_sz);

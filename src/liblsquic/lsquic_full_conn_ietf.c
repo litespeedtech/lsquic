@@ -145,6 +145,7 @@ enum more_flags
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
+    MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
 };
 
 
@@ -1400,7 +1401,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         conn->ifc_flags |= IFC_IGNORE_INIT;
 
     conn->ifc_paths[0].cop_path = imc->imc_path;
-    conn->ifc_paths[0].cop_flags = COP_VALIDATED;
+    conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED;
     conn->ifc_used_paths = 1 << 0;
     if (imc->imc_flags & IMC_ADDR_VALIDATED)
         lsquic_send_ctl_path_validated(&conn->ifc_send_ctl);
@@ -1540,8 +1541,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
 
-    /* TODO: do something if there is outgoing ACK */
-
     if (0 != handshake_ok(&conn->ifc_conn))
         goto err3;
 
@@ -1666,6 +1665,14 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     if (conn->ifc_incoming_ecn
                         && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
         ecn_counts = conn->ifc_ecn_counts_in[pns];
+    else if ((conn->ifc_mflags & MF_SEND_WRONG_COUNTS) && pns == PNS_APP)
+    {
+        /* We try once.  A more advanced version would wait until we get a
+         * packet from peer and only then stop.
+         */
+        conn->ifc_mflags &= ~MF_SEND_WRONG_COUNTS;
+        ecn_counts = conn->ifc_ecn_counts_in[pns];
+    }
     else
         ecn_counts = NULL;
 
@@ -3262,9 +3269,10 @@ handshake_ok (struct lsquic_conn *lconn)
         conn->ifc_flags |= IFC_DELAYED_ACKS;
     }
     if (conn->ifc_settings->es_timestamps
-            && (params->tp_set & (1 << TPI_TIMESTAMPS)))
+            && (params->tp_set & (1 << TPI_TIMESTAMPS))
+                && (params->tp_numerics[TPI_TIMESTAMPS] & TS_WANT_THEM))
     {
-        LSQ_DEBUG("timestamps enabled");
+        LSQ_DEBUG("timestamps enabled: will send TIMESTAMP frames");
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
 
@@ -5909,29 +5917,9 @@ static unsigned
 process_timestamp_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    uint64_t timestamp;
-    int parsed_len;
-
-    if (!(conn->ifc_flags & IFC_TIMESTAMPS))
-    {
-        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+    ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
             "Received unexpected TIMESTAMP frame (not negotiated)");
-        return 0;
-    }
-
-    parsed_len = conn->ifc_conn.cn_pf->pf_parse_timestamp_frame(p, len,
-                                                                &timestamp);
-    if (parsed_len < 0)
-        return 0;
-
-    timestamp <<= conn->ifc_cfg.ack_exp;
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "TIMESTAMP(%"PRIu64" us)", timestamp);
-    LSQ_DEBUG("TIMESTAMP(%"PRIu64" us) (%"PRIu64" << %"PRIu8")", timestamp,
-        timestamp >> conn->ifc_cfg.ack_exp, conn->ifc_cfg.ack_exp);
-
-    /* We don't do anything with the timestamp */
-
-    return parsed_len;
+    return 0;
 }
 
 
@@ -6164,6 +6152,16 @@ many_in_and_will_write (struct ietf_full_conn *conn)
             || !TAILQ_EMPTY(&conn->ifc_pub.sending_streams)
             || !TAILQ_EMPTY(&conn->ifc_pub.write_streams))
         ;
+}
+
+
+static void
+force_queueing_ack_app (struct ietf_full_conn *conn)
+{
+    lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
+    lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
+    conn->ifc_flags |= IFC_ACK_QUED_APP;
+    LSQ_DEBUG("force-queued ACK");
 }
 
 
@@ -7184,6 +7182,22 @@ ietf_full_conn_ci_retx_timeout (struct lsquic_conn *lconn)
         lsquic_send_ctl_resize(&conn->ifc_send_ctl);
     else
         LSQ_DEBUG("RTO occurred, but no MTUs to reset");
+
+    if (lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
+    {
+        LSQ_INFO("RTO occurred, disable ECN");
+        lsquic_send_ctl_disable_ecn(&conn->ifc_send_ctl);
+        if (lsquic_rechist_first(&conn->ifc_rechist[PNS_APP]))
+        {
+            LSQ_DEBUG("Send wrong ECN counts to peer so that it turns off "
+                                                                "ECN as well");
+            memset(conn->ifc_ecn_counts_in[PNS_APP], 0,
+                                    sizeof(conn->ifc_ecn_counts_in[PNS_APP]));
+            conn->ifc_mflags |= MF_SEND_WRONG_COUNTS;
+            force_queueing_ack_app(conn);
+            conn->ifc_send_flags |= SF_SEND_PING;
+        }
+    }
 }
 
 
@@ -7878,13 +7892,13 @@ cancel_push_promise (struct ietf_full_conn *conn, struct push_promise *promise)
     LSQ_DEBUG("cancel promise %"PRIu64, promise->pp_id);
     /* Remove promise from hash to prevent multiple cancellations */
     lsquic_hash_erase(conn->ifc_pub.u.ietf.promises, &promise->pp_hash_id);
-    lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
     /* But let stream dtor free the promise object as sm_promise may yet
      * be used by the stream in some ways.
      */
     lsquic_stream_shutdown_internal(promise->pp_pushed_stream);
     if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso, promise->pp_id))
         ABORT_WARN("cannot write CANCEL_PUSH");
+    lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
 }
 
 

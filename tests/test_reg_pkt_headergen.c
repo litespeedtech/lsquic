@@ -220,7 +220,7 @@ run_test (int i)
 
     unsigned char out[GQUIC_MAX_PUBHDR_SZ];
     int len = test->pf->pf_gen_reg_pkt_header(&lconn, &packet_out, out,
-                                                                sizeof(out));
+                                                    sizeof(out), NULL, NULL);
 
     assert(("Packet length is correct", len == test->len));
 

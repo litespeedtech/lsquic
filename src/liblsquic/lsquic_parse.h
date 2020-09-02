@@ -68,7 +68,9 @@ struct parse_funcs
     /* Return buf length */
     int
     (*pf_gen_reg_pkt_header) (const struct lsquic_conn *,
-                const struct lsquic_packet_out *, unsigned char *, size_t);
+                const struct lsquic_packet_out *, unsigned char *, size_t,
+                /* In Q050 and IETF QUIC, these are set: */
+                unsigned *packno_off, unsigned *packno_len);
     void
     (*pf_parse_packet_in_finish) (struct lsquic_packet_in *packet_in,
                                                 struct packin_parse_state *);
@@ -223,11 +225,6 @@ struct parse_funcs
     unsigned
     (*pf_packno_bits2len) (enum packno_bits);
 
-    /* Used by IETF QUIC and gQUIC >= Q050 */
-    void
-    (*pf_packno_info) (const struct lsquic_conn *,
-        const struct lsquic_packet_out *, unsigned *packno_off,
-        unsigned *packno_len);
     int
     (*pf_parse_max_data) (const unsigned char *, size_t, uint64_t *);
     int

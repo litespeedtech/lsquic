@@ -334,7 +334,7 @@ make_non_stream_frame (struct test_ctx *ctx,
                 fill_byte, frame_type, packet_out->po_data_sz, nbytes);
     packet_out->po_data_sz += nbytes;
     packet_out->po_frame_types |= 1 << frame_type;
-    if ((1 << frame_type) & GQUIC_FRAME_REGEN_MASK)
+    if ((1 << frame_type) & BQUIC_FRAME_REGEN_MASK)
         packet_out->po_regen_sz += nbytes;
     LSQ_DEBUG("wrote %s frame of %zd bytes", frame_type_2_str[frame_type],
                                                                     nbytes);
@@ -482,7 +482,7 @@ verify_non_stream_frames (struct test_ctx *ctx, const struct test_spec *spec)
         for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
                                             frec = lsquic_pofi_next(&pofi))
         {
-            if ((1 << frec->fe_frame_type) & GQUIC_FRAME_REGEN_MASK)
+            if ((1 << frec->fe_frame_type) & BQUIC_FRAME_REGEN_MASK)
             {
                 assert(regen_sz == 0 || regen_sz == off);
                 regen_sz += frec->fe_len;

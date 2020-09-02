@@ -641,6 +641,7 @@ lsquic_merge_acks (struct ack_info *dst, const struct ack_info *src)
     const struct lsquic_packno_range *a, *a_end, *b, *b_end, **p;
     struct lsquic_packno_range *out, *out_end;
     unsigned i;
+    int ok;
     struct lsquic_packno_range out_ranges[256];
 
     if (!(dst->n_ranges && src->n_ranges))
@@ -687,9 +688,21 @@ lsquic_merge_acks (struct ack_info *dst, const struct ack_info *src)
     }
 
     if (src->flags & AI_ECN)
+    {
+        /* New ACK frame (src) should not contain ECN counts that are smaller
+         * than previous ACK frame, otherwise we cannot merge.
+         */
+        ok = 1;
         for (i = 0; i < sizeof(src->ecn_counts)
                                         / sizeof(src->ecn_counts[0]); ++i)
-            dst->ecn_counts[i] += src->ecn_counts[i];
+            ok &= dst->ecn_counts[i] <= src->ecn_counts[i];
+        if (ok)
+            for (i = 0; i < sizeof(src->ecn_counts)
+                                            / sizeof(src->ecn_counts[0]); ++i)
+                dst->ecn_counts[i] = src->ecn_counts[i];
+        else
+            return -1;
+    }
     dst->flags |= src->flags;
     dst->lack_delta = src->lack_delta;
     dst->n_ranges = out - out_ranges;

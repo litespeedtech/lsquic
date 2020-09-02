@@ -201,7 +201,7 @@ lsquic_packet_resize_next (struct packet_resize_ctx *prctx)
     }
     else if (prctx->prc_cur_frec->fe_len <= lsquic_packet_out_avail(new))
     {
-        if ((1 << frec->fe_frame_type) & GQUIC_FRAME_REGEN_MASK)
+        if ((1 << frec->fe_frame_type) & BQUIC_FRAME_REGEN_MASK)
         {
             if (new->po_regen_sz == new->po_data_sz)
                 new->po_regen_sz += frec->fe_len;

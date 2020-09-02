@@ -33,12 +33,12 @@ enum transport_param_id
      * Numeric transport parameters without default values:
      */
     TPI_MIN_ACK_DELAY,
+    TPI_TIMESTAMPS,
     TPI_LOSS_BITS,                          MAX_NUMERIC_TPI = TPI_LOSS_BITS,
 
     /*
      * Empty transport parameters:
      */
-    TPI_TIMESTAMPS,
     TPI_GREASE_QUIC_BIT,
     TPI_DISABLE_ACTIVE_MIGRATION,           MAX_EMPTY_TPI = TPI_DISABLE_ACTIVE_MIGRATION,
 
@@ -175,5 +175,9 @@ int
 lsquic_tp_has_pref_ipv6 (const struct transport_params *);
 
 extern const char * const lsquic_tpi2str[LAST_TPI + 1];
+
+/* From [draft-huitema-quic-ts-03] */
+#define TS_WANT_THEM            1
+#define TS_GENERATE_THEM        2
 
 #endif

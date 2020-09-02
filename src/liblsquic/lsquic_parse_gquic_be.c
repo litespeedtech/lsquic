@@ -108,7 +108,7 @@ lsquic_gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
 static int
 lsquic_gquic_be_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
-                                                                size_t bufsz)
+        size_t bufsz, unsigned *packno_off_UNUSED, unsigned *packno_len_UNUSED)
 {
     unsigned packnum_len, header_len;
     enum packno_bits bits;
@@ -1003,15 +1003,6 @@ lsquic_gquic_be_parse_crypto_frame (const unsigned char *buf, size_t rem_packet_
 }
 
 
-static void
-lsquic_gquic_be_packno_info (const struct lsquic_conn *lconn,
-        const struct lsquic_packet_out *packet_out, unsigned *packno_off,
-        unsigned *packno_len)
-{
-    assert(0);
-}
-
-
 static unsigned
 gquic_Q043_handshake_done_frame_size (void)
 {
@@ -1071,7 +1062,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_packno_bits2len               =  lsquic_gquic_packno_bits2len,
     .pf_gen_crypto_frame              =  lsquic_gquic_be_gen_crypto_frame,
     .pf_parse_crypto_frame            =  lsquic_gquic_be_parse_crypto_frame,
-    .pf_packno_info                   =  lsquic_gquic_be_packno_info,
     .pf_gen_handshake_done_frame      =  gquic_Q043_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  gquic_Q043_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  gquic_Q043_handshake_done_frame_size,
