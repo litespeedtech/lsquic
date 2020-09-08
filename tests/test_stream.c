@@ -745,7 +745,7 @@ test_rem_FIN_loc_FIN (struct test_objs *tobjs)
 
 
 /* Server: we read data and close the read side before reading FIN, which
- * DOES NOT result in stream being reset.
+ * results in stream being reset.
  */
 static void
 test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
@@ -765,6 +765,13 @@ test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
 
     s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
+    /* Early read shutdown results in different frames on different QUIC
+     * transports:
+     */
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->sm_qflags & SMQF_SEND_STOP_SENDING);
+    else
+        assert(stream->sm_qflags & SMQF_SEND_RST);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert(!((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE));
 
@@ -776,6 +783,7 @@ test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
     assert(0 == s);
 
     assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl)); /* Shutdown performs a flush */
+    assert(stream->n_unacked == 1);
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE);
@@ -783,7 +791,17 @@ test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
     s = lsquic_stream_rst_in(stream, 100, 1);
     assert(0 == s);
 
-    assert(stream->sm_qflags & SMQF_FREE_STREAM);
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* Not yet */
+    assert(stream->sm_qflags & SMQF_CALL_ONCLOSE);
+
+    lsquic_stream_rst_frame_sent(stream);
+    stream->n_unacked++;    /* RESET frame take a reference */
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* Not yet,
+        because: */ assert(stream->n_unacked == 2);
+
+    lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
+    lsquic_stream_acked(stream, QUIC_FRAME_RST_STREAM);
+    assert(stream->sm_qflags & SMQF_FREE_STREAM);       /* OK, now */
 
     lsquic_stream_destroy(stream);
     /* This simply checks that the stream got removed from the queue: */
@@ -795,8 +813,8 @@ test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
 
 
 /* Server: we read data and close the read side before reading FIN.  No
- * FIN or RST arrive from peer.  This should still place the stream on
- * the "streams to be freed" list.
+ * FIN or RST arrive from peer.  This should schedule RST_STREAM to be
+ * sent (this is gQUIC) and add "wait for known FIN" flag.
  */
 static void
 test_rem_data_loc_close (struct test_objs *tobjs)
@@ -833,7 +851,16 @@ test_rem_data_loc_close (struct test_objs *tobjs)
 
     assert(!(stream->sm_qflags & SMQF_FREE_STREAM));
     lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
-    assert(stream->sm_qflags & SMQF_FREE_STREAM);
+
+    lsquic_stream_rst_frame_sent(stream);
+    stream->n_unacked++;    /* RESET frame take a reference */
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* No */
+
+    lsquic_stream_acked(stream, QUIC_FRAME_RST_STREAM);
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* Still no */
+
+    /* Stream will linger until we have the offset: */
+    assert(stream->sm_qflags & SMQF_WAIT_FIN_OFF);
 
     lsquic_stream_destroy(stream);
     /* This simply checks that the stream got removed from the queue: */
@@ -917,6 +944,13 @@ test_loc_FIN_rem_RST (struct test_objs *tobjs)
 
     ack_packet(&tobjs->send_ctl, 1);
     ack_packet(&tobjs->send_ctl, 2);
+
+#if 0
+    /* OK, here we pretend that we sent a RESET and it was acked */
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    stream->sm_qflags |= SMQF_SEND_RST;
+    stream->stream_flags
+#endif
 
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM));
@@ -1044,7 +1078,7 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
     assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
     sss = lsquic_stream_sending_state(stream);
-    assert(SSS_SEND == sss);    /* Reset hasn't been packetized yet */
+    assert(SSS_DATA_SENT == sss);    /* FIN was packetized */
 
     s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 90, 1));
     assert(s == 0);
@@ -1061,9 +1095,12 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     sss = lsquic_stream_sending_state(stream);
     assert(SSS_RESET_RECVD == sss);
 
-    lsquic_stream_call_on_close(stream);
-
     assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+
+    lsquic_stream_call_on_close(stream);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));  /* Not acked yet */
+    lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
+
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_FREE_STREAM);
 
@@ -1317,7 +1354,12 @@ test_data_flush_on_close (struct test_objs *tobjs)
     assert(0 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
 
     lsquic_stream_close(stream);
-    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    /* Nothing is scheduled because STREAM frames are elided */
+    assert(0 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));
+    assert(stream->sm_qflags & SMQF_WAIT_FIN_OFF);
 
     /* We take connection cap hit after stream is flushed: */
     assert(0x4000 - 100 == lsquic_conn_cap_avail(cap)); /* Conn cap hit */

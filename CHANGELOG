@@ -1,3 +1,20 @@
+2020-09-08
+    - 2.19.9
+    - [FEATURE] Add lsquic_stream_pwritev().  This function allows one to
+      reduce the number of system calls required to read a file from disk
+      by using lsquic_stream_pwritev() together with preadv(2).
+    - [BUGFIX] When stream is reset, it is writeable -- let user collect
+      the error.
+    - [BUGFIX] Calculate correct conn flow control if reading ends early.
+    - [BUGFIX] Remove stream from read and write queues on internal
+      shutdown.  This is a regression introduced in 2.19.7.
+    - [BUGFIX] Swapped arguments in IETF RESET_FRAME generation.
+    - Turn off mini conn history when compiling with Visual Studio; this
+      allows the project to compile on Windows again.
+    - http_client: Add -3 flag to stop reading from streams early; code
+      cleanup.
+    - Don't use -Werror.
+
 2020-09-02
     - 2.19.8
     - [FEATURE] Update the timestamp extension to latest version.

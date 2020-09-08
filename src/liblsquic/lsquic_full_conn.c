@@ -42,7 +42,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_send_ctl.h"
 #include "lsquic_set.h"
 #include "lsquic_malo.h"
 #include "lsquic_chsk_stream.h"
@@ -66,6 +65,7 @@
 #include "lsquic_attq.h"
 
 #include "lsquic_conn.h"
+#include "lsquic_send_ctl.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_mini_conn.h"
@@ -1492,6 +1492,18 @@ process_padding_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 }
 
 
+static void
+log_conn_flow_control (struct full_conn *conn)
+{
+    LSQ_DEBUG("connection flow cap: wrote: %"PRIu64
+        "; max: %"PRIu64, conn->fc_pub.conn_cap.cc_sent,
+        conn->fc_pub.conn_cap.cc_max);
+    LSQ_DEBUG("connection flow control window: read: %"PRIu64
+        "; max: %"PRIu64, conn->fc_pub.cfcw.cf_max_recv_off,
+        conn->fc_pub.cfcw.cf_recv_off);
+}
+
+
 static unsigned
 process_ping_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                     const unsigned char *p, size_t len)
@@ -1500,6 +1512,8 @@ process_ping_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
      */
     EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
     LSQ_DEBUG("received PING");
+    if (conn->fc_flags & FC_SERVER)
+        log_conn_flow_control(conn);
     return 1;
 }
 
@@ -2763,6 +2777,8 @@ generate_ping_frame (struct full_conn *conn)
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
     LSQ_DEBUG("wrote PING frame");
+    if (!(conn->fc_flags & FC_SERVER))
+        log_conn_flow_control(conn);
 }
 
 
@@ -3268,6 +3284,53 @@ full_conn_ci_can_write_ack (struct lsquic_conn *lconn)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     return should_generate_ack(conn);
+}
+
+
+struct full_ack_state
+{
+    enum full_conn_flags    conn_flags;
+    enum alarm_id_bit       armed_set;
+    unsigned                n_slack_akbl;
+    unsigned                n_stop_waiting;
+};
+
+
+typedef char ack_state_size[sizeof(struct full_ack_state)
+                                    <= sizeof(struct ack_state) ? 1 : - 1];
+
+static void
+full_conn_ci_ack_snapshot (struct lsquic_conn *lconn, struct ack_state *opaque)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    struct full_ack_state *const ack_state = (struct full_ack_state *) opaque;
+
+    ack_state->conn_flags     = conn->fc_flags;
+    ack_state->armed_set      = conn->fc_alset.as_armed_set;
+    ack_state->n_slack_akbl   = conn->fc_n_slack_akbl;
+    ack_state->n_stop_waiting
+                        = lsquic_send_ctl_n_stop_waiting(&conn->fc_send_ctl);
+    LSQ_DEBUG("take ACK snapshot");
+}
+
+
+static void
+full_conn_ci_ack_rollback (struct lsquic_conn *lconn, struct ack_state *opaque)
+{
+    struct full_ack_state *const ack_state = (struct full_ack_state *) opaque;
+    struct full_conn *conn = (struct full_conn *) lconn;
+
+    conn->fc_flags &= ~(FC_ACK_HAD_MISS|FC_ACK_QUEUED);
+    conn->fc_flags |= (FC_ACK_HAD_MISS|FC_ACK_QUEUED)
+                                        & ack_state->conn_flags;
+
+    conn->fc_alset.as_armed_set &= ~ALBIT_ACK_APP;
+    conn->fc_alset.as_armed_set |= ALBIT_ACK_APP & ack_state->armed_set;
+
+    conn->fc_n_slack_akbl               = ack_state->n_slack_akbl;
+    conn->fc_send_ctl.sc_n_stop_waiting = ack_state->n_stop_waiting;
+
+    LSQ_DEBUG("roll back ACK state");
 }
 
 
@@ -4404,6 +4467,8 @@ static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_c
 static const struct conn_iface full_conn_iface = {
     .ci_abort                =  full_conn_ci_abort,
     .ci_abort_error          =  full_conn_ci_abort_error,
+    .ci_ack_rollback         =  full_conn_ci_ack_rollback,
+    .ci_ack_snapshot         =  full_conn_ci_ack_snapshot,
     .ci_can_write_ack        =  full_conn_ci_can_write_ack,
     .ci_cancel_pending_streams
                              =  full_conn_ci_cancel_pending_streams,

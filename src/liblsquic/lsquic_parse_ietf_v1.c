@@ -472,6 +472,38 @@ ietf_v1_gen_crypto_frame (unsigned char *buf, size_t buf_len,
 }
 
 
+static int
+ietf_v1_dec_stream_frame_size (unsigned char *p, size_t new_size)
+{
+    /* 0b00001XXX
+     *  0x4     OFF
+     *  0x2     LEN
+     *  0x1     FIN
+     */
+    unsigned bits;
+
+    const char type = *p++;
+    if (!(type & 0x2))
+        return 1;
+
+    /* Stream ID */
+    bits = *p >> 6;
+    p += 1 << bits;
+
+    if (type & 0x4)
+    {
+        /* Offset */
+        bits = *p >> 6;
+        p += 1 << bits;
+    }
+
+    /* Write new size */
+    bits = *p >> 6;
+    vint_write(p, new_size, bits, 1 << bits);
+    return 0;
+}
+
+
 /* return parsed (used) buffer length */
 static int
 ietf_v1_parse_stream_frame (const unsigned char *buf, size_t rem_packet_sz,
@@ -697,7 +729,7 @@ ietf_v1_rst_frame_size (lsquic_stream_id_t stream_id, uint64_t error_code,
 
 static int
 ietf_v1_gen_rst_frame (unsigned char *buf, size_t buf_len,
-        lsquic_stream_id_t stream_id, uint64_t error_code, uint64_t final_size)
+        lsquic_stream_id_t stream_id, uint64_t final_size, uint64_t error_code)
 {
     unsigned vbits;
     unsigned char *p;
@@ -2122,6 +2154,7 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_gen_stream_frame              =  ietf_v1_gen_stream_frame,
     .pf_calc_stream_frame_header_sz   =  ietf_v1_calc_stream_frame_header_sz,
     .pf_parse_stream_frame            =  ietf_v1_parse_stream_frame,
+    .pf_dec_stream_frame_size         =  ietf_v1_dec_stream_frame_size,
     .pf_parse_ack_frame               =  ietf_v1_parse_ack_frame,
     .pf_gen_ack_frame                 =  ietf_v1_gen_ack_frame,
     .pf_gen_blocked_frame             =  ietf_v1_gen_blocked_frame,

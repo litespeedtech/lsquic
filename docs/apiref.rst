@@ -1457,6 +1457,45 @@ Writing To Streams
     the write functions -- :func:`lsquic_stream_write()` and
     :func:`lsquic_stream_writev()` utilize the same mechanism.
 
+.. function:: ssize_t lsquic_stream_pwritev (struct lsquic_stream *stream, ssize_t (*preadv)(void *user_data, const struct iovec *iov, int iovcnt), void *user_data, size_t n_to_write)
+
+    :param stream: Stream to write to.
+    :param preadv: Pointer to a custom ``preadv(2)``-like function.
+    :param user_data: Data to pass to ``preadv`` function.
+    :param n_to_write: Number of bytes to write.
+    :return: Number of bytes written or -1 on error.
+
+    Write to stream using user-supplied ``preadv()`` function.
+    The stream allocates one or more packets and calls ``preadv()``,
+    which then fills the array of buffers.  This is a good way to
+    minimize the number of ``read(2)`` system calls; the user can call
+    ``preadv(2)`` instead.
+
+    The number of bytes available in the ``iov`` vector passed back to
+    the user callback may be smaller than ``n_to_write``.  The expected
+    use pattern is to pass the number of bytes remaining in the file
+    and keep on calling ``preadv(2)``.
+
+    Note that, unlike other stream-writing functions above,
+    ``lsquic_stream_pwritev()`` does *not* buffer bytes inside the
+    stream; it only writes to packets.  That means the caller must be
+    prepared for this function to return 0 even inside the "on write"
+    stream callback.  In that case, the caller should fall back to using
+    another write function.
+
+    It is OK for the ``preadv`` callback to write fewer bytes that
+    ``n_to_write``.  (This can happen if the underlying data source
+    is truncated.)
+
+::
+
+    /*
+     * For example, the return value of zero can be handled as follows:
+     */
+    nw = lsquic_stream_pwritev(stream, my_readv, some_ctx, n_to_write);
+    if (nw == 0)
+        nw = lsquic_stream_write(stream, rem_bytes_buf, rem_bytes_len);
+
 .. function:: int lsquic_stream_flush (lsquic_stream_t *stream)
 
     :param stream: Stream to flush.

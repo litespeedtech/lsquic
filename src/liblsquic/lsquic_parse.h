@@ -105,6 +105,11 @@ struct parse_funcs
     int
     (*pf_parse_crypto_frame) (const unsigned char *buf, size_t rem_packet_sz,
                                                     struct stream_frame *);
+    /* Return true if STREAM frame extends to the end of the packet and thus
+     * does not contain a Length field (no update).
+     */
+    int
+    (*pf_dec_stream_frame_size) (unsigned char *buf, size_t new_size);
     int
     (*pf_parse_ack_frame) (const unsigned char *buf, size_t buf_len,
                                     struct ack_info *ack_info, uint8_t exp);

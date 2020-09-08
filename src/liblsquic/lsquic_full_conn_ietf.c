@@ -1654,6 +1654,62 @@ generate_timestamp_frame (struct ietf_full_conn *conn,
 }
 
 
+struct ietf_ack_state
+{
+    enum ifull_conn_flags   conn_flags;
+    enum send_flags         send_flags;
+    enum alarm_id_bit       armed_set;
+    unsigned                n_slack_akbl;
+    unsigned                n_slack_all;
+    unsigned char           unretx_thresh;
+};
+
+
+typedef char ack_state_size[sizeof(struct ietf_ack_state)
+                                    <= sizeof(struct ack_state) ? 1 : - 1];
+
+static void
+ietf_full_conn_ci_ack_snapshot (struct lsquic_conn *lconn,
+                                                    struct ack_state *opaque)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct ietf_ack_state *const ack_state = (struct ietf_ack_state *) opaque;
+
+    ack_state->conn_flags   = conn->ifc_flags;
+    ack_state->send_flags   = conn->ifc_send_flags;
+    ack_state->armed_set    = conn->ifc_alset.as_armed_set;
+    ack_state->n_slack_akbl = conn->ifc_n_slack_akbl[PNS_APP];
+    ack_state->n_slack_all  = conn->ifc_n_slack_all;
+    ack_state->unretx_thresh= conn->ifc_ping_unretx_thresh;
+    LSQ_DEBUG("take ACK snapshot");
+}
+
+
+static void
+ietf_full_conn_ci_ack_rollback (struct lsquic_conn *lconn,
+                                                    struct ack_state *opaque)
+{
+    struct ietf_ack_state *const ack_state = (struct ietf_ack_state *) opaque;
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    conn->ifc_flags &= ~(IFC_ACK_HAD_MISS|IFC_ACK_QUED_APP);
+    conn->ifc_flags |= (IFC_ACK_HAD_MISS|IFC_ACK_QUED_APP)
+                                        & ack_state->conn_flags;
+
+    conn->ifc_send_flags &= ~SF_SEND_PING;
+    conn->ifc_send_flags |= SF_SEND_PING & ack_state->send_flags;
+
+    conn->ifc_alset.as_armed_set &= ~ALBIT_ACK_APP;
+    conn->ifc_alset.as_armed_set |= ALBIT_ACK_APP & ack_state->armed_set;
+
+    conn->ifc_n_slack_akbl[PNS_APP]     = ack_state->n_slack_akbl;
+    conn->ifc_n_slack_all               = ack_state->n_slack_all;
+    conn->ifc_ping_unretx_thresh        = ack_state->unretx_thresh;
+
+    LSQ_DEBUG("roll back ACK state");
+}
+
+
 static int
 generate_ack_frame_for_pns (struct ietf_full_conn *conn,
                 struct lsquic_packet_out *packet_out, enum packnum_space pns,
@@ -2262,7 +2318,7 @@ generate_stream_blocked_frame (struct ietf_full_conn *conn,
 
 
 static int
-generate_stop_sending_frame (struct ietf_full_conn *conn,
+generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
 {
     struct lsquic_packet_out *packet_out;
@@ -2301,6 +2357,21 @@ generate_stop_sending_frame (struct ietf_full_conn *conn,
 }
 
 
+/* Return true if generated, false otherwise */
+static int
+generate_stop_sending_frame (struct ietf_full_conn *conn,
+                                                struct lsquic_stream *stream)
+{
+    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
+    {
+        lsquic_stream_ss_frame_sent(stream);
+        return 1;
+    }
+    else
+        return 0;
+}
+
+
 static void
 generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 {
@@ -2311,7 +2382,7 @@ generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
     while (!STAILQ_EMPTY(&conn->ifc_stream_ids_to_ss))
     {
         sits = STAILQ_FIRST(&conn->ifc_stream_ids_to_ss);
-        if (0 == generate_stop_sending_frame(conn, sits->sits_stream_id,
+        if (0 == generate_stop_sending_frame_by_id(conn, sits->sits_stream_id,
                                                         sits->sits_error_code))
         {
             STAILQ_REMOVE_HEAD(&conn->ifc_stream_ids_to_ss, sits_next);
@@ -2614,6 +2685,8 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
         r &= generate_stream_blocked_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_RST)
         r &= generate_rst_stream_frame(conn, stream);
+    if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)
+        r &= generate_stop_sending_frame(conn, stream);
     return r;
 }
 
@@ -3995,6 +4068,18 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
 
 
 static void
+log_conn_flow_control (struct ietf_full_conn *conn)
+{
+    LSQ_DEBUG("connection flow cap: wrote: %"PRIu64
+        "; max: %"PRIu64, conn->ifc_pub.conn_cap.cc_sent,
+        conn->ifc_pub.conn_cap.cc_max);
+    LSQ_DEBUG("connection flow control window: read: %"PRIu64
+        "; max: %"PRIu64, conn->ifc_pub.cfcw.cf_max_recv_off,
+        conn->ifc_pub.cfcw.cf_recv_off);
+}
+
+
+static void
 generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 {
     struct lsquic_packet_out *packet_out;
@@ -4023,6 +4108,8 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
     packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
     LSQ_DEBUG("wrote PING frame");
     conn->ifc_send_flags &= ~SF_SEND_PING;
+    if (!(conn->ifc_flags & IFC_SERVER))
+        log_conn_flow_control(conn);
 }
 
 
@@ -5268,6 +5355,8 @@ process_ping_frame (struct ietf_full_conn *conn,
      */
     EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
     LSQ_DEBUG("received PING");
+    if (conn->ifc_flags & IFC_SERVER)
+        log_conn_flow_control(conn);
     return 1;
 }
 
@@ -7802,6 +7891,8 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
 #define IETF_FULL_CONN_FUNCS \
     .ci_abort                =  ietf_full_conn_ci_abort, \
     .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
+    .ci_ack_snapshot         =  ietf_full_conn_ci_ack_snapshot, \
+    .ci_ack_rollback         =  ietf_full_conn_ci_ack_rollback, \
     .ci_retire_cid           =  ietf_full_conn_ci_retire_cid, \
     .ci_can_write_ack        =  ietf_full_conn_ci_can_write_ack, \
     .ci_cancel_pending_streams =  ietf_full_conn_ci_cancel_pending_streams, \

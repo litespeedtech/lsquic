@@ -22,11 +22,7 @@ TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 
 
 #ifndef LSQUIC_KEEP_STREAM_HISTORY
-#   ifdef NDEBUG
-#       define LSQUIC_KEEP_STREAM_HISTORY 0
-#   else
-#       define LSQUIC_KEEP_STREAM_HISTORY 1
-#   endif
+#   define LSQUIC_KEEP_STREAM_HISTORY 1
 #endif
 
 
@@ -149,11 +145,13 @@ enum stream_q_flags
      * connections's sending_streams queue.  Note that writing STREAM
      * frames is done separately.
      */
-#define SMQF_SENDING_FLAGS (SMQF_SEND_WUF|SMQF_SEND_RST|SMQF_SEND_BLOCKED)
+#define SMQF_SENDING_FLAGS (SMQF_SEND_WUF|SMQF_SEND_RST|SMQF_SEND_BLOCKED\
+                                                    |SMQF_SEND_STOP_SENDING)
     /* sending_streams: */
     SMQF_SEND_WUF     = 1 << 3,     /* WUF: Window Update Frame */
     SMQF_SEND_BLOCKED = 1 << 4,
     SMQF_SEND_RST     = 1 << 5,     /* Error: want to send RST_STREAM */
+    SMQF_SEND_STOP_SENDING = 1 << 10,
 
     /* The equivalent of WINDOW_UPDATE frame for streams in IETF QUIC is
      * the MAX_STREAM_DATA frame.  Define an alias for use in the IETF
@@ -167,6 +165,10 @@ enum stream_q_flags
     SMQF_ABORT_CONN   = 1 << 8,     /* Unrecoverable error occurred */
 
     SMQF_QPACK_DEC    = 1 << 9,     /* QPACK decoder handler is holding a reference to this stream */
+
+    /* The stream can reference itself, preventing its own destruction: */
+#define SMQF_SELF_FLAGS SMQF_WAIT_FIN_OFF
+    SMQF_WAIT_FIN_OFF = 1 << 11,    /* Waiting for final offset: FIN or RST */
 };
 
 
@@ -209,7 +211,7 @@ enum stream_flags {
     STREAM_PUSHING      = 1 << 18,
     STREAM_NOPUSH       = 1 << 19,  /* Disallow further push promises */
     STREAM_GOAWAY_IN    = 1 << 20,  /* Incoming GOAWAY has been processed */
-    STREAM_UNUSED21     = 1 << 21,  /* Unused */
+    STREAM_SS_SENT      = 1 << 21,  /* STOP_SENDING sent */
     STREAM_RST_ACKED    = 1 << 22,  /* Packet containing RST has been acked */
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
@@ -265,6 +267,9 @@ struct lsquic_stream
     struct stream_hq_frame          sm_hq_frame_arr[NUM_ALLOCED_HQ_FRAMES];
 
     struct hq_filter                sm_hq_filter;
+
+    /* Optional tap for pwritev undo */
+    struct hq_arr                  *sm_hq_arr;
 
     /* We can safely use sm_hq_filter */
 #define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
@@ -601,5 +606,13 @@ lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 
 #define lsquic_stream_is_blocked(stream_) ((stream_)->blocked_off && \
                         (stream_)->blocked_off == (stream_)->max_send_off)
+
+void
+lsquic_stream_ss_frame_sent (struct lsquic_stream *);
+
+#ifndef NDEBUG
+void
+lsquic_stream_set_pwritev_params (unsigned iovecs, unsigned frames);
+#endif
 
 #endif

@@ -412,4 +412,18 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *,
 void
 lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *);
 
+struct send_ctl_state
+{
+    struct pacer        pacer;
+    struct ack_state    ack_state;
+    unsigned            buf_counts[BPT_OTHER_PRIO + 1];
+};
+
+void
+lsquic_send_ctl_snapshot (struct lsquic_send_ctl *, struct send_ctl_state *);
+
+void
+lsquic_send_ctl_rollback (struct lsquic_send_ctl *, struct send_ctl_state *,
+                                                const struct iovec *, size_t);
+
 #endif

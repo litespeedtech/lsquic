@@ -59,6 +59,9 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_ID27);
 
 struct test_ctl_settings
@@ -270,11 +273,24 @@ struct test_objs {
     struct lsquic_hset_if     hsi_if;
 };
 
+static int s_ack_written;
+
+static void
+write_ack (struct lsquic_conn *conn, struct lsquic_packet_out *packet_out)
+{
+    /* We don't need to generate full-blown ACK, as logic in
+     * lsquic_send_ctl_rollback() only looks at po_frame_types.
+     */
+    packet_out->po_frame_types |= QUIC_FRAME_ACK;
+    s_ack_written = 1;
+}
+
+static int s_can_write_ack;
 
 static int
-unit_test_doesnt_write_ack (struct lsquic_conn *lconn)
+can_write_ack (struct lsquic_conn *lconn)
 {
-    return 0;
+    return s_can_write_ack;
 }
 
 
@@ -286,11 +302,31 @@ get_network_path (struct lsquic_conn *lconn, const struct sockaddr *sa)
     return &network_path;
 }
 
+static enum {
+    SNAPSHOT_STATE_NONE         = 0,
+    SNAPSHOT_STATE_TAKEN        = 1 << 0,
+    SNAPSHOT_STATE_ROLLED_BACK  = 1 << 1,
+} s_snapshot_state;
+
+static void
+ack_snapshot (struct lsquic_conn *lconn, struct ack_state *ack_state)
+{
+    s_snapshot_state |= SNAPSHOT_STATE_TAKEN;
+}
+
+static void
+ack_rollback (struct lsquic_conn *lconn, struct ack_state *ack_state)
+{
+    s_snapshot_state |= SNAPSHOT_STATE_ROLLED_BACK;
+}
 
 static const struct conn_iface our_conn_if =
 {
-    .ci_can_write_ack = unit_test_doesnt_write_ack,
+    .ci_can_write_ack = can_write_ack,
+    .ci_write_ack     = write_ack,
     .ci_get_path      = get_network_path,
+    .ci_ack_snapshot  = ack_snapshot,
+    .ci_ack_rollback  = ack_rollback,
 };
 
 
@@ -662,7 +698,7 @@ main_test_hq_framing (void)
  * file.  This allows afl-fuzz explore the code paths.
  */
 void
-fuzz_guided_testing (const char *input)
+fuzz_guided_hq_framing_testing (const char *input)
 {
                                 /* Range */                 /* Bytes from file */
     unsigned short packet_sz;   /* [200, 0x3FFF] */         /* 2 */
@@ -722,6 +758,391 @@ fuzz_guided_testing (const char *input)
 
     test_hq_framing(sched_immed, dispatch_once, wsize,
         flush_after_each_write, conn_limit, n_packets, packet_sz);
+
+  cleanup:
+    (void) fclose(f);
+}
+
+
+struct pwritev_stream_ctx
+{
+    int                      limit;     /* Test limit */
+    size_t                   avail;
+    const unsigned char     *input;
+    size_t                   input_sz;
+    ssize_t                  nw;        /* Number of bytes written */
+};
+
+
+static ssize_t
+my_preadv (void *user_data, const struct iovec *iov, int iovcnt)
+{
+    struct pwritev_stream_ctx *const pw_ctx = user_data;
+    const unsigned char *p;
+    size_t ntoread, tocopy;
+    int i;
+
+    ntoread = 0;
+    for (i = 0; i < iovcnt; ++i)
+        ntoread += iov[i].iov_len;
+
+    if (pw_ctx->limit < 0)
+    {
+        if ((size_t) -pw_ctx->limit < ntoread)
+            ntoread -= (size_t) -pw_ctx->limit;
+    }
+    else if ((size_t) pw_ctx->limit < ntoread)
+        ntoread = (size_t) pw_ctx->limit;
+
+    assert(ntoread <= pw_ctx->input_sz);    /* Self-check */
+
+    p = pw_ctx->input;
+    for (i = 0; i < iovcnt; ++i)
+    {
+        tocopy = MIN(iov[i].iov_len, ntoread - (p - pw_ctx->input));
+        memcpy(iov[i].iov_base, p, tocopy);
+        p += tocopy;
+        if (ntoread == (size_t) (p - pw_ctx->input))
+            break;
+    }
+
+    assert(ntoread == (size_t) (p - pw_ctx->input));
+    return (ssize_t) (p - pw_ctx->input);
+}
+
+
+static void
+pwritev_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx)
+{
+    struct pwritev_stream_ctx *const pw_ctx = (void *) ctx;
+    ssize_t nw;
+
+    nw = lsquic_stream_pwritev(stream, my_preadv, pw_ctx, pw_ctx->input_sz);
+    pw_ctx->nw = nw;
+    lsquic_stream_wantwrite(stream, 0);
+}
+
+
+
+static const struct lsquic_stream_if pwritev_stream_if = {
+    .on_new_stream          = packetization_on_new_stream,
+    .on_close               = packetization_on_close,
+    .on_write               = pwritev_on_write,
+};
+
+
+static void
+test_pwritev (enum lsquic_version version, int http, int sched_immed,
+                    int limit, unsigned short packet_sz, size_t prologue_sz,
+                    unsigned n_packets)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    size_t nw;
+    int fin, s;
+    unsigned char *buf_in, *buf_out;
+    /* Some values that are large enough: */
+    const size_t buf_in_sz = MAX(n_packets * packet_sz, 0x1000),
+                 buf_out_sz = (float) buf_in_sz * 1.1;
+    const int ietf = (1 << version) & LSQUIC_IETF_VERSIONS;
+    const enum stream_ctor_flags ietf_flags = ietf ? SCF_IETF : 0;
+
+    s_snapshot_state = 0;
+    s_ack_written = 0;
+
+    /* We'll write headers first after which stream will switch to using
+     * data-framing writer.  This is simply so that we don't have to
+     * expose more stream things only for testing.
+     */
+    struct lsxpack_header header = { XHDR(":method", "GET") };
+    struct lsquic_http_headers headers = { 1, &header, };
+
+    buf_in = malloc(buf_in_sz);
+    buf_out = malloc(buf_out_sz);
+    assert(buf_in && buf_out);
+
+    struct pwritev_stream_ctx pwritev_stream_ctx =
+    {
+        .input = buf_in + prologue_sz,
+        .input_sz = buf_in_sz - prologue_sz,
+        .limit = limit,
+    };
+
+    init_buf(buf_in, buf_in_sz);
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = sched_immed;
+
+    stream_ctor_flags |= ietf_flags;
+    init_test_objs(&tobjs, buf_out_sz, buf_out_sz, packet_sz);
+    tobjs.lconn.cn_version = version;
+    tobjs.lconn.cn_esf_c = select_esf_common_by_ver(version);
+    tobjs.stream_if_ctx = &pwritev_stream_ctx;
+    tobjs.ctor_flags |= (http ? SCF_HTTP : 0)|ietf_flags;
+    if (sched_immed)
+    {
+        g_ctl_settings.tcs_can_send = n_packets;
+        tobjs.stream_if = &pwritev_stream_if;
+    }
+    else
+    {
+        lsquic_send_ctl_set_max_bpq_count(n_packets);
+        g_ctl_settings.tcs_can_send = INT_MAX;
+        g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+        /* Need this for on_new_stream() callback not to mess with
+         * the context, otherwise this is not used.
+         */
+        tobjs.stream_if = &pwritev_stream_if;
+    }
+
+    stream = new_stream(&tobjs, 0, buf_out_sz);
+
+    if (http)
+    {
+        if (ietf)
+        {
+            s = lsquic_stream_send_headers(stream, &headers, 0);
+            assert(0 == s);
+        }
+        else
+            /* Here we fake it in order not to have to set up frame writer. */
+            stream->stream_flags |= STREAM_HEADERS_SENT;
+    }
+
+    if (prologue_sz)
+    {
+        ssize_t written = lsquic_stream_write(stream, buf_in, prologue_sz);
+        assert(written > 0 && (size_t) written == prologue_sz);
+    }
+
+    if (sched_immed)
+    {
+        lsquic_stream_dispatch_write_events(stream);
+        assert(!(s_snapshot_state & SNAPSHOT_STATE_TAKEN));
+        // lsquic_stream_flush(stream);
+    }
+    else
+    {
+        pwritev_on_write(stream, (void *) &pwritev_stream_ctx);
+        assert(s_snapshot_state & SNAPSHOT_STATE_TAKEN);
+        if (n_packets > 0
+            && s_ack_written
+            && tobjs.send_ctl.sc_buffered_packets[BPT_OTHER_PRIO].bpq_count == 0)
+            assert(s_snapshot_state & SNAPSHOT_STATE_ROLLED_BACK);
+        g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+        lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl, BPT_OTHER_PRIO);
+        g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+        lsquic_send_ctl_set_max_bpq_count(10);
+    }
+
+    assert(pwritev_stream_ctx.nw >= 0);
+
+    /* Verify written data: */
+    nw = read_from_scheduled_packets(&tobjs.send_ctl, 0, buf_out, buf_out_sz,
+                                     0, &fin, 1);
+    assert(nw <= buf_in_sz);
+
+    if (ietf && http)
+    {   /* Remove framing and verify contents */
+        const unsigned char *src;
+        unsigned char *dst;
+        uint64_t sz;
+        unsigned frame_type;
+        int s;
+
+        src = buf_out;
+        dst = buf_out;
+        while (src < buf_out + nw)
+        {
+            frame_type = *src++;
+            s = vint_read(src, buf_out + buf_out_sz, &sz);
+            assert(s > 0);
+            /* In some rare circumstances it is possible to produce zero-length
+             * DATA frames:
+             *
+             * assert(sz > 0);
+             */
+            assert(sz < (1 << 14));
+            src += s;
+            if (src == buf_out + s + 1)
+            {
+                /* Ignore headers */
+                assert(frame_type == HQFT_HEADERS);
+                src += sz;
+            }
+            else
+            {
+                assert(frame_type == HQFT_DATA);
+                if (src + sz > buf_out + nw)    /* Chopped DATA frame (last) */
+                    sz = buf_out + nw - src;
+                memmove(dst, src, sz);
+                dst += sz;
+                src += sz;
+            }
+        }
+        assert(nw <= buf_in_sz);
+        if (n_packets && pwritev_stream_ctx.nw)
+        {
+            assert((size_t) pwritev_stream_ctx.nw + prologue_sz == (uintptr_t) dst - (uintptr_t) buf_out);
+            assert(0 == memcmp(buf_in, buf_out, (uintptr_t) dst - (uintptr_t) buf_out));
+        }
+        else
+            assert((uintptr_t) dst - (uintptr_t) buf_out == 0
+                || (uintptr_t) dst - (uintptr_t) buf_out == prologue_sz);
+    }
+    else
+    {
+        assert(nw <= buf_in_sz);
+        assert(nw <= buf_out_sz);
+        if (n_packets && pwritev_stream_ctx.nw)
+        {
+            assert((size_t) pwritev_stream_ctx.nw + prologue_sz == nw);
+            assert(0 == memcmp(buf_in, buf_out, (size_t) nw));
+        }
+        else
+            assert(nw == 0 || nw == prologue_sz);
+    }
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    free(buf_in);
+    free(buf_out);
+
+    stream_ctor_flags &= ~ietf_flags;
+}
+
+
+static void
+main_test_pwritev (void)
+{
+    const int limits[] = { INT_MAX, -1, -2, -3, -7, -10, -50, -100, -201, -211,
+        -1000, -2003, -3000, -4000, -17803, -20000, 16 * 1024, 16 * 1024 - 1,
+        16 * 1024 - 2, 8000, 273, 65, 63, 10, 5, 1, 0, };
+    unsigned n_packets;
+    const unsigned short packet_sz[] = { 1252, 1370, 0x1000, 0xFF00, };
+    const size_t prologues[] = { 0, 17, 238, };
+    unsigned i, j, k;
+    enum lsquic_version version;
+    int http, sched_immed;
+    const struct { unsigned iovecs, frames; } combos[] =
+    {
+        { 32, 16, },
+        { 16, 16, },
+        { 16, 8, },
+        { 3, 7, },
+        { 7, 3, },
+        { 100, 100, },
+    }, *combo = combos;
+
+    s_can_write_ack = 1;
+
+  run_test:
+    for (version = 0; version < N_LSQVER; ++version)
+        if ((1 << version) & LSQUIC_SUPPORTED_VERSIONS)
+            for (http = 0; http < 2; ++http)
+                for (sched_immed = 0; sched_immed <= 1; ++sched_immed)
+                    for (i = 0; i < sizeof(limits) / sizeof(limits[i]); ++i)
+                        for (j = 0; j < sizeof(packet_sz) / sizeof(packet_sz[0]);
+                                                                                ++j)
+                            for (k = 0; k < sizeof(prologues) / sizeof(prologues[0]); ++k)
+                                for (n_packets = 1; n_packets < 21; ++n_packets)
+                                    test_pwritev(version, http, sched_immed,
+                                            limits[i], packet_sz[j], prologues[k], n_packets);
+
+    if (combo < combos + sizeof(combos) / sizeof(combos[0]))
+    {
+        lsquic_stream_set_pwritev_params(combo->iovecs, combo->frames);
+        ++combo;
+        goto run_test;
+    }
+
+    s_can_write_ack = 0;
+}
+
+
+/* Instead of the not-very-random testing done in main_test_pwritev(),
+ * the fuzz-guided testing initializes parameters based on the fuzz input
+ * file.  This allows afl-fuzz explore the code paths.
+ */
+void
+fuzz_guided_pwritev_testing (const char *input)
+{
+                                /* Range */                 /* Bytes from file */
+    unsigned short packet_sz;   /* [1200, 0xFF00] */        /* 2 */
+    int limit;                  /* [INT_MIN, INT_MAX] */    /* 2 */
+    unsigned n_packets;         /* [0, 255] */              /* 1 */
+    unsigned n_iovecs;          /* [0, 255] */              /* 1 */
+    unsigned n_frames;          /* [0, 255] */              /* 1 */
+    size_t prologue_sz;         /* [0, 170] */              /* 1 */
+    enum lsquic_version version;/* [0,7] */                 /* 1 */
+    int sched_immed;            /* 0 or 1 */                /* 1 (same byte) */
+    int http;                   /* 0 or 1 */                /* 1 (same byte) */
+
+                                                     /* TOTAL: 9 bytes */
+
+    FILE *f;
+    size_t nread;
+    union {
+        uint16_t tmp;
+        int16_t itmp;
+    } u;
+    unsigned char buf[10];
+
+    f = fopen(input, "rb");
+    if (!f)
+    {
+        assert(0);
+        return;
+    }
+
+    nread = fread(buf, 1, sizeof(buf), f);
+    if (nread != 9)
+        goto cleanup;
+
+    memcpy(&u.tmp, &buf[0], 2);
+    if (u.tmp < 1200)
+        u.tmp = 1200;
+    else if (u.tmp > 0xFF00)
+        u.tmp = 0xFF00;
+    packet_sz = u.tmp;
+
+    memcpy(&u.itmp, &buf[2], 2);
+    if (u.itmp < SHRT_MIN / 2)
+        limit = INT_MIN;
+    else if (u.itmp < SHRT_MIN / 4)
+        limit = 0;
+    else if (u.itmp > SHRT_MAX / 2)
+        limit = INT_MAX;
+    else if (u.itmp > SHRT_MAX / 2)
+        limit = 0;
+    else
+        limit = u.itmp;
+
+    n_packets = buf[4];
+    n_iovecs = buf[5];
+    n_frames = buf[6];
+
+    prologue_sz = buf[7];
+    if (prologue_sz > 170)
+        prologue_sz = 170;
+
+    switch (buf[8] & 7)
+    {
+    case 0: version = LSQVER_043; break;
+    case 1: version = LSQVER_046; break;
+    case 2: version = LSQVER_050; break;
+    case 3: version = LSQVER_ID27; break;
+    case 4: version = LSQVER_ID28; break;
+    default:
+    case 5: version = LSQVER_ID29; break;
+    }
+
+    sched_immed = !!(buf[8] & 0x08);
+    http = !!(buf[8] & 0x10);
+
+    lsquic_stream_set_pwritev_params(n_iovecs, n_frames);
+    test_pwritev(version, http, sched_immed, limit, packet_sz, prologue_sz,
+                                                                n_packets);
 
   cleanup:
     (void) fclose(f);
@@ -1170,18 +1591,22 @@ test_reading_zero_size_data_frame_scenario3 (void)
 int
 main (int argc, char **argv)
 {
-    const char *fuzz_input = NULL;
+    const char *fuzz_hq_framing_input = NULL;
+    const char *fuzz_pwritev_input = NULL;
     int opt, add_one_more;
     unsigned n_packets, extra_sz;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 
-    while (-1 != (opt = getopt(argc, argv, "f:l:")))
+    while (-1 != (opt = getopt(argc, argv, "f:p:l:")))
     {
         switch (opt)
         {
         case 'f':
-            fuzz_input = optarg;
+            fuzz_hq_framing_input = optarg;
+            break;
+        case 'p':
+            fuzz_pwritev_input = optarg;
             break;
         case 'l':
             lsquic_log_to_fstream(stderr, 0);
@@ -1194,10 +1619,14 @@ main (int argc, char **argv)
 
     init_test_ctl_settings(&g_ctl_settings);
 
-    if (fuzz_input)
-        fuzz_guided_testing(fuzz_input);
+    if (fuzz_hq_framing_input)
+        fuzz_guided_hq_framing_testing(fuzz_hq_framing_input);
+    else if (fuzz_pwritev_input)
+        fuzz_guided_pwritev_testing(fuzz_pwritev_input);
     else
     {
+        main_test_pwritev();
+        return 0;
         main_test_hq_framing();
         for (n_packets = 1; n_packets <= 2; ++n_packets)
             for (extra_sz = 0; extra_sz <= 2; ++extra_sz)

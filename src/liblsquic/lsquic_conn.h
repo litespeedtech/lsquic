@@ -86,6 +86,11 @@ struct network_path
 #define NP_PEER_SA(path_) ((struct sockaddr *) (path_)->np_peer_addr)
 #define NP_IS_IPv6(path_) (AF_INET6 == NP_LOCAL_SA(path_)->sa_family)
 
+struct ack_state
+{
+    uint32_t    arr[6];
+};
+
 struct conn_iface
 {
     enum tick_st
@@ -259,6 +264,12 @@ struct conn_iface
     /* Optional method.  It is called when RTO occurs. */
     void
     (*ci_retx_timeout) (struct lsquic_conn *);
+
+    void
+    (*ci_ack_snapshot) (struct lsquic_conn *, struct ack_state *);
+
+    void
+    (*ci_ack_rollback) (struct lsquic_conn *, struct ack_state *);
 };
 
 #define LSCONN_CCE_BITS 3

@@ -76,6 +76,11 @@ static int g_header_bypass;
 
 static int s_discard_response;
 
+/* If set to a non-zero value, abandon reading from stream early: read at
+ * most `s_abandon_early' bytes and then close the stream.
+ */
+static long s_abandon_early;
+
 struct sample_stats
 {
     unsigned        n;
@@ -164,8 +169,6 @@ struct path_elem {
 };
 
 struct http_client_ctx {
-    TAILQ_HEAD(, lsquic_conn_ctx)
-                                 conn_ctxs;
     const char                  *hostname;
     const char                  *method;
     const char                  *payload;
@@ -294,7 +297,6 @@ http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
     conn_h->ch_n_reqs = MIN(client_ctx->hcc_total_n_reqs,
                                                 client_ctx->hcc_reqs_per_conn);
     client_ctx->hcc_total_n_reqs -= conn_h->ch_n_reqs;
-    TAILQ_INSERT_TAIL(&client_ctx->conn_ctxs, conn_h, next_ch);
     ++conn_h->client_ctx->hcc_n_open_conns;
     if (!TAILQ_EMPTY(&client_ctx->hcc_path_elems))
         create_streams(client_ctx, conn_h);
@@ -346,7 +348,6 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
         if (!(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN))
             abort();
     }
-    TAILQ_REMOVE(&conn_h->client_ctx->conn_ctxs, conn_h, next_ch);
     --conn_h->client_ctx->hcc_n_open_conns;
 
     cacos = calloc(1, sizeof(*cacos));
@@ -474,9 +475,16 @@ struct lsquic_stream_ctx {
     enum {
         HEADERS_SENT    = (1 << 0),
         PROCESSED_HEADERS = 1 << 1,
+        ABANDON = 1 << 2,   /* Abandon reading from stream after sh_stop bytes
+                             * have been read.
+                             */
     }                    sh_flags;
     lsquic_time_t        sh_created;
     lsquic_time_t        sh_ttfb;
+    size_t               sh_stop;   /* Stop after reading this many bytes if ABANDON is set */
+    size_t               sh_nread;  /* Number of bytes read from stream using one of
+                                     * lsquic_stream_read* functions.
+                                     */
     unsigned             count;
     struct lsquic_reader reader;
 };
@@ -524,6 +532,11 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     lsquic_stream_wantwrite(stream, 1);
     if (randomly_reprioritize_streams)
         lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
+    if (s_abandon_early)
+    {
+        st_h->sh_stop = random() % (s_abandon_early + 1);
+        st_h->sh_flags |= ABANDON;
+    }
 
     return st_h;
 }
@@ -634,6 +647,14 @@ http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 static size_t
 discard (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
+    lsquic_stream_ctx_t *st_h = ctx;
+
+    if (st_h->sh_flags & ABANDON)
+    {
+        if (sz > st_h->sh_stop - st_h->sh_nread)
+            sz = st_h->sh_stop - st_h->sh_nread;
+    }
+
     return sz;
 }
 
@@ -671,10 +692,14 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             st_h->sh_flags |= PROCESSED_HEADERS;
         }
         else if (nread = (s_discard_response
-                            ? lsquic_stream_readf(stream, discard, NULL)
-                            : lsquic_stream_read(stream, buf, sizeof(buf))),
+                            ? lsquic_stream_readf(stream, discard, st_h)
+                            : lsquic_stream_read(stream, buf,
+                                    st_h->sh_flags & ABANDON
+                                  ? MIN(sizeof(buf), st_h->sh_nread - st_h->sh_stop)
+                                  : sizeof(buf))),
                     nread > 0)
         {
+            st_h->sh_nread += (size_t) nread;
             s_stat_downloaded_bytes += nread;
             /* test stream_reset after some number of read bytes */
             if (client_ctx->hcc_reset_after_nbytes &&
@@ -712,6 +737,13 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 assert(s == 0);
                 LSQ_DEBUG("changed stream %"PRIu64" priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
+            }
+            if ((st_h->sh_flags & ABANDON) && st_h->sh_nread >= st_h->sh_stop)
+            {
+                LSQ_DEBUG("closing stream early having read %zd bytes",
+                                                            st_h->sh_nread);
+                lsquic_stream_close(stream);
+                break;
             }
         }
         else if (0 == nread)
@@ -756,11 +788,7 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     LSQ_INFO("%s called", __func__);
     struct http_client_ctx *const client_ctx = st_h->client_ctx;
     lsquic_conn_t *conn = lsquic_stream_conn(stream);
-    lsquic_conn_ctx_t *conn_h;
-    TAILQ_FOREACH(conn_h, &client_ctx->conn_ctxs, next_ch)
-        if (conn_h->conn == conn)
-            break;
-    assert(conn_h);
+    lsquic_conn_ctx_t *const conn_h = lsquic_conn_get_ctx(conn);
     --conn_h->ch_n_reqs;
     --conn_h->ch_n_cc_streams;
     if (0 == conn_h->ch_n_reqs)
@@ -834,6 +862,8 @@ usage (const char *prog)
 "   -q FILE     QIF mode: issue requests from the QIF file and validate\n"
 "                 server responses.\n"
 "   -e TOKEN    Hexadecimal string representing resume token.\n"
+"   -3 MAX      Close stream after reading at most MAX bytes.  The actual\n"
+"                 number of bytes read is randominzed.\n"
             , prog);
 }
 
@@ -1406,7 +1436,6 @@ main (int argc, char **argv)
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
     TAILQ_INIT(&client_ctx.hcc_path_elems);
-    TAILQ_INIT(&client_ctx.conn_ctxs);
     client_ctx.method = "GET";
     client_ctx.hcc_concurrency = 1;
     client_ctx.hcc_cc_reqs_per_conn = 1;
@@ -1420,6 +1449,7 @@ main (int argc, char **argv)
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS
                                     "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
+                            "3:"    /* 3 is 133+ for "e" ("e" for "early") */
 #ifndef WIN32
                                                                       "C:"
 #endif
@@ -1535,6 +1565,9 @@ main (int argc, char **argv)
         case '0':
             http_client_if.on_sess_resume_info = http_client_on_sess_resume_info;
             client_ctx.hcc_sess_resume_file_name = optarg;
+            break;
+        case '3':
+            s_abandon_early = strtol(optarg, NULL, 10);
             break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))

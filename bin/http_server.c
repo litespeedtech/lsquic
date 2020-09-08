@@ -278,6 +278,13 @@ static const size_t IDLE_SIZE = sizeof(on_being_idle) - 1;
  */
 static int s_immediate_write;
 
+/* Use preadv(2) in conjuction with lsquic_stream_pwritev() to reduce
+ * number of system calls required to read from disk.  The actual value
+ * specifies maximum write size.  A negative value indicates always to use
+ * the remaining file size.
+ */
+static ssize_t s_pwritev;
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define V(v) (v), strlen(v)
 
@@ -445,6 +452,7 @@ struct lsquic_stream_ctx {
         SH_HEADERS_READ = (1 << 2),
     }                    flags;
     struct lsquic_reader reader;
+    int                  file_fd;   /* Used by pwritev */
 
     /* Fields below are used by interop callbacks: */
     enum interop_handler {
@@ -469,6 +477,7 @@ struct lsquic_stream_ctx {
     }                    interop_u;
     struct event        *resume_resp;
     size_t               written;
+    size_t               file_size; /* Used by pwritev */
 };
 
 
@@ -556,18 +565,35 @@ resume_response (evutil_socket_t fd, short what, void *arg)
 }
 
 
+static size_t
+bytes_left (lsquic_stream_ctx_t *st_h)
+{
+    if (s_pwritev)
+        return st_h->file_size - st_h->written;
+    else
+        return test_reader_size(st_h->reader.lsqr_ctx);
+}
+
+
+static ssize_t
+my_preadv (void *user_data, const struct iovec *iov, int iovcnt)
+{
+    lsquic_stream_ctx_t *const st_h = user_data;
+    return preadv(st_h->file_fd, iov, iovcnt, st_h->written);
+}
+
+
 static void
 http_server_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     if (st_h->flags & SH_HEADERS_SENT)
     {
         ssize_t nw;
-        if (test_reader_size(st_h->reader.lsqr_ctx) > 0)
+        if (bytes_left(st_h) > 0)
         {
             if (st_h->server_ctx->delay_resp_sec
                     && !(st_h->flags & SH_DELAYED)
-                        && st_h->written > 10000000
-                            && test_reader_size(st_h->reader.lsqr_ctx) > 0)
+                        && st_h->written > 10000000)
             {
                 struct timeval delay = {
                                 .tv_sec = st_h->server_ctx->delay_resp_sec, };
@@ -585,7 +611,20 @@ http_server_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 else
                     LSQ_ERROR("cannot allocate event");
             }
-            nw = lsquic_stream_writef(stream, &st_h->reader);
+            if (s_pwritev)
+            {
+                size_t to_write = bytes_left(st_h);
+                if (s_pwritev > 0 && (size_t) s_pwritev < to_write)
+                    to_write = s_pwritev;
+                nw = lsquic_stream_pwritev(stream, my_preadv, st_h, to_write);
+                if (nw == 0)
+                    goto use_reader;
+            }
+            else
+            {
+  use_reader:
+                nw = lsquic_stream_writef(stream, &st_h->reader);
+            }
             if (nw < 0)
             {
                 struct lsquic_conn *conn = lsquic_stream_conn(stream);
@@ -601,7 +640,7 @@ http_server_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                     exit(1);
                 }
             }
-            if (test_reader_size(st_h->reader.lsqr_ctx) > 0)
+            if (bytes_left(st_h) > 0)
             {
                 st_h->written += (size_t) nw;
                 lsquic_stream_wantwrite(stream, 1);
@@ -702,11 +741,32 @@ parse_request (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 static void
 process_request (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 {
-    st_h->reader.lsqr_read = test_reader_read;
-    st_h->reader.lsqr_size = test_reader_size;
-    st_h->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->req_path);
-    if (!st_h->reader.lsqr_ctx)
-        exit(1);
+    struct stat st;
+
+    if (s_pwritev)
+    {
+        st_h->file_fd = open(st_h->req_path, O_RDONLY);
+        if (st_h->file_fd < 0)
+        {
+            LSQ_ERROR("cannot open %s for reading: %s", st_h->req_path,
+                                                            strerror(errno));
+            exit(1);
+        }
+        if (fstat(st_h->file_fd, &st) < 0)
+        {
+            LSQ_ERROR("fstat: %s", strerror(errno));
+            exit(1);
+        }
+        st_h->file_size = st.st_size;
+    }
+    else
+    {
+        st_h->reader.lsqr_read = test_reader_read;
+        st_h->reader.lsqr_size = test_reader_size;
+        st_h->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->req_path);
+        if (!st_h->reader.lsqr_ctx)
+            exit(1);
+    }
 
     if (s_immediate_write)
     {
@@ -1369,6 +1429,24 @@ new_req (enum method method, const char *path, const char *authority)
 }
 
 
+static ssize_t
+my_interop_preadv (void *user_data, const struct iovec *iov, int iovcnt)
+{
+    struct gen_file_ctx *const gfc = user_data;
+    size_t nread, nr;
+    int i;
+
+    nread = 0;
+    for (i = 0; i < iovcnt; ++i)
+    {
+        nr = idle_read(gfc, iov[i].iov_base, iov[i].iov_len);
+        nread += nr;
+    }
+
+    return (ssize_t) nread;
+}
+
+
 static void
 idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
@@ -1379,16 +1457,25 @@ idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     struct req *req;
     ssize_t nw;
     struct header_buf hbuf;
+    struct lsquic_reader reader;
 
     if (st_h->flags & SH_HEADERS_SENT)
     {
-        struct lsquic_reader reader =
+        if (s_pwritev)
         {
-            .lsqr_read = idle_read,
-            .lsqr_size = idle_size,
-            .lsqr_ctx = gfc,
-        };
-        nw = lsquic_stream_writef(stream, &reader);
+            nw = lsquic_stream_pwritev(stream, my_interop_preadv, gfc,
+                                                            gfc->remain);
+            if (nw == 0)
+                goto with_reader;
+        }
+        else
+        {
+  with_reader:
+            reader.lsqr_read = idle_read,
+            reader.lsqr_size = idle_size,
+            reader.lsqr_ctx = gfc,
+            nw = lsquic_stream_writef(stream, &reader);
+        }
         if (nw < 0)
         {
             LSQ_ERROR("error writing idle thoughts: %s", strerror(errno));
@@ -1507,6 +1594,10 @@ usage (const char *prog)
 "   -p FILE     Push request with this path\n"
 "   -w SIZE     Write immediately (LSWS mode).  Argument specifies maximum\n"
 "                 size of the immediate write.\n"
+"   -P SIZE     Use preadv(2) to read from disk and lsquic_stream_pwritev() to\n"
+"                 write to stream.  Positive SIZE indicate maximum value per\n"
+"                 write; negative means always use remaining file size.\n"
+"                 Incompatible with -w.\n"
 "   -y DELAY    Delay response for this many seconds -- use for debugging\n"
             , prog);
 }
@@ -1680,7 +1771,7 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:h")))
     {
         switch (opt) {
         case 'n':
@@ -1707,6 +1798,9 @@ main (int argc, char **argv)
         case 'w':
             s_immediate_write = atoi(optarg);
             break;
+        case 'P':
+            s_pwritev = strtoull(optarg, NULL, 10);
+            break;
         case 'y':
             server_ctx.delay_resp_sec = atoi(optarg);
             break;
@@ -1732,6 +1826,12 @@ main (int argc, char **argv)
         LSQ_ERROR("Document root is not set: use -r option");
         exit(EXIT_FAILURE);
 #endif
+    }
+
+    if (s_immediate_write && s_pwritev)
+    {
+        LSQ_ERROR("-w and -P are incompatible options");
+        exit(EXIT_FAILURE);
     }
 
     if (0 != prog_prep(&prog))

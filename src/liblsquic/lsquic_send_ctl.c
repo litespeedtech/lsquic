@@ -30,7 +30,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_send_ctl.h"
 #include "lsquic_util.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -40,6 +39,7 @@
 #include "lsquic_ver_neg.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_conn.h"
+#include "lsquic_send_ctl.h"
 #include "lsquic_conn_flow.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_cong_ctl.h"
@@ -482,6 +482,9 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
 
 #define SC_PACK_SIZE(ctl_) (+(ctl_)->sc_conn_pub->path->np_pack_size)
 
+/* XXX can we optimize this by caching the value of this function?  It should
+ * not change within one tick.
+ */
 static lsquic_time_t
 send_ctl_transfer_time (void *ctx)
 {
@@ -3521,4 +3524,187 @@ lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *ctl)
     ctl->sc_ecn = ECN_NOT_ECT;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         lsquic_packet_out_set_ecn(packet_out, ECN_NOT_ECT);
+}
+
+
+void
+lsquic_send_ctl_snapshot (struct lsquic_send_ctl *ctl,
+                                            struct send_ctl_state *ctl_state)
+{
+    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
+    int buffered, repace;
+
+    buffered = !lsquic_send_ctl_schedule_stream_packets_immediately(ctl);
+    repace = !buffered && (ctl->sc_flags & SC_PACE);
+
+    if (repace)
+        ctl_state->pacer = ctl->sc_pacer;
+
+    if (buffered)
+    {
+        lconn->cn_if->ci_ack_snapshot(lconn, &ctl_state->ack_state);
+        ctl_state->buf_counts[BPT_OTHER_PRIO]
+                    = ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_count;
+        ctl_state->buf_counts[BPT_HIGHEST_PRIO]
+                    = ctl->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_count;
+    }
+}
+
+
+static void
+send_ctl_repace (struct lsquic_send_ctl *ctl, const struct pacer *pacer,
+                                                                unsigned count)
+{
+    unsigned n;
+    int in_rec;
+
+    LSQ_DEBUG("repace, count: %u", count);
+    ctl->sc_pacer = *pacer;
+
+    in_rec = send_ctl_in_recovery(ctl);
+    for (n = 0; n < count; ++n)
+        lsquic_pacer_packet_scheduled(&ctl->sc_pacer,
+            ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled + n, in_rec,
+            send_ctl_transfer_time, ctl);
+}
+
+
+void
+lsquic_send_ctl_rollback (struct lsquic_send_ctl *ctl,
+                struct send_ctl_state *ctl_state, const struct iovec *last_iov,
+                size_t shortfall)
+{
+    struct lsquic_conn *const lconn = ctl->sc_conn_pub->lconn;
+    struct lsquic_packet_out *packet_out, *next;
+    struct lsquic_packets_tailq *packets;
+    struct stream_frame stream_frame;
+    struct packet_out_frec_iter pofi;
+    enum buf_packet_type packet_type;
+    unsigned orig_count, new_count;
+    enum quic_ft_bit lost_types;
+    int buffered, repace, len, to_end;
+    unsigned short prev_frec_len;
+    struct frame_rec *frec;
+
+    buffered = !lsquic_send_ctl_schedule_stream_packets_immediately(ctl);
+    repace = !buffered && (ctl->sc_flags & SC_PACE);
+
+    if (!buffered)
+    {
+        orig_count = ctl->sc_n_scheduled;
+        packets = &ctl->sc_scheduled_packets;
+        packet_type = 0;    /* Not necessary, but compiler complains */
+    }
+    else if (ctl_state->buf_counts[BPT_HIGHEST_PRIO]
+                    < ctl->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_count)
+    {
+        packets = &ctl->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets;
+        orig_count = ctl->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_count;
+        packet_type = BPT_HIGHEST_PRIO;
+    }
+    else
+    {
+        packets = &ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets;
+        orig_count = ctl->sc_buffered_packets[BPT_OTHER_PRIO].bpq_count;
+        packet_type = BPT_OTHER_PRIO;
+    }
+
+    /* Now find last packet: */
+    TAILQ_FOREACH(packet_out, packets, po_next)
+        if ((unsigned char *) last_iov->iov_base >= packet_out->po_data
+            && (unsigned char *) last_iov->iov_base
+                < packet_out->po_data + packet_out->po_data_sz)
+            break;
+
+    if (!packet_out)
+    {
+        lconn->cn_if->ci_internal_error(lconn,
+                                    "rollback failed: cannot find packet");
+        return;
+    }
+
+    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                frec = lsquic_pofi_next(&pofi))
+        if (frec->fe_frame_type == QUIC_FRAME_STREAM
+            /* At the time of this writing, pwritev() generates a single STREAM
+             * frame per packet.  To keep code future-proof, we use an extra
+             * check.
+             */
+            && (unsigned char *) last_iov->iov_base
+                    > packet_out->po_data + frec->fe_off
+            && (unsigned char *) last_iov->iov_base
+                    < packet_out->po_data + frec->fe_off + frec->fe_len)
+            break;
+
+    if (!frec)
+    {
+        lconn->cn_if->ci_internal_error(lconn,
+                                "rollback failed: cannot find frame record");
+        return;
+    }
+
+    /* Strictly less because of the STREAM frame header */
+    assert(last_iov->iov_len < frec->fe_len);
+
+    len = lconn->cn_pf->pf_parse_stream_frame(
+            packet_out->po_data + frec->fe_off, frec->fe_len, &stream_frame);
+    if (len < 0)
+    {
+        lconn->cn_if->ci_internal_error(lconn,
+                                            "error parsing own STREAM frame");
+        return;
+    }
+
+    if (stream_frame.data_frame.df_size > last_iov->iov_len - shortfall)
+    {
+        packet_out->po_data_sz = (unsigned char *) last_iov->iov_base
+                        + last_iov->iov_len - shortfall - packet_out->po_data;
+        prev_frec_len = frec->fe_len;
+        frec->fe_len = packet_out->po_data_sz - frec->fe_off;
+        to_end = lconn->cn_pf->pf_dec_stream_frame_size(
+            packet_out->po_data + frec->fe_off,
+            stream_frame.data_frame.df_size - (prev_frec_len - frec->fe_len));
+        if (to_end)
+        {   /* A frame that's too short may be generated when pwritev runs out
+             * of iovecs.  In that case, we adjust it here.
+             */
+            if (!(packet_out->po_flags & PO_STREAM_END))
+                LSQ_DEBUG("set stream-end flag on truncated packet");
+            packet_out->po_flags |= PO_STREAM_END;
+        }
+        if (!buffered)
+            ctl->sc_bytes_scheduled -= prev_frec_len - frec->fe_len;
+    }
+    else
+        assert(stream_frame.data_frame.df_size
+                                            == last_iov->iov_len - shortfall);
+
+    /* Drop any frames that follow */
+    for (frec = lsquic_pofi_next(&pofi); frec; frec = lsquic_pofi_next(&pofi))
+        frec->fe_frame_type = 0;
+
+    /* Return unused packets */
+    new_count = orig_count;
+    lost_types = 0;
+    for (packet_out = TAILQ_NEXT(packet_out, po_next); packet_out != NULL;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        --new_count;
+        lost_types |= packet_out->po_frame_types;
+        /* Undo lsquic_send_ctl_get_packet_for_stream() */
+        if (!buffered)
+            send_ctl_sched_remove(ctl, packet_out);
+        else
+        {
+            TAILQ_REMOVE(packets, packet_out, po_next);
+            --ctl->sc_buffered_packets[packet_type].bpq_count;
+        }
+        send_ctl_destroy_packet(ctl, packet_out);
+    }
+
+    if (new_count < orig_count && repace)
+        send_ctl_repace(ctl, &ctl_state->pacer, new_count);
+    if (buffered && (lost_types & QUIC_FTBIT_ACK))
+        lconn->cn_if->ci_ack_rollback(lconn, &ctl_state->ack_state);
 }

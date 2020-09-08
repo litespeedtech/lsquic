@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 19
-#define LSQUIC_PATCH_VERSION 8
+#define LSQUIC_PATCH_VERSION 9
 
 /**
  * Engine flags:
@@ -1391,6 +1391,14 @@ lsquic_stream_write (lsquic_stream_t *s, const void *buf, size_t len);
  */
 ssize_t
 lsquic_stream_writev (lsquic_stream_t *s, const struct iovec *vec, int count);
+
+/**
+ * Write to streams using a single call to a preadv-like function.
+ */
+ssize_t
+lsquic_stream_pwritev (lsquic_stream_t *s,
+    ssize_t (*preadv)(void *user_data, const struct iovec *iov, int iovcnt),
+    void *user_data, size_t n_to_write);
 
 /**
  * Used as argument to @ref lsquic_stream_writef()

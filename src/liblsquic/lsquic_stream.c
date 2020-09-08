@@ -93,8 +93,15 @@ stream_wantread (lsquic_stream_t *stream, int is_want);
 static int
 stream_wantwrite (lsquic_stream_t *stream, int is_want);
 
+enum stream_write_options
+{
+    SWO_BUFFER  = 1 << 0,       /* Allow buffering in sm_buf */
+};
+
+
 static ssize_t
-stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t);
+stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t,
+                                                    enum stream_write_options);
 
 static ssize_t
 save_to_buffer (lsquic_stream_t *, struct lsquic_reader *, size_t len);
@@ -181,6 +188,7 @@ enum stream_history_event
     SHE_EMPTY              =  '\0',     /* Special entry.  No init besides memset required */
     SHE_PLUS               =  '+',      /* Special entry: previous event occured more than once */
     SHE_REACH_FIN          =  'a',
+    SHE_EARLY_READ_STOP    =  'A',
     SHE_BLOCKED_OUT        =  'b',
     SHE_CREATED            =  'C',
     SHE_FRAME_IN           =  'd',
@@ -197,13 +205,15 @@ enum stream_history_event
     SHE_ONCLOSE_CALL       =  'L',
     SHE_ONNEW              =  'N',
     SHE_SET_PRIO           =  'p',
+    SHE_SHORT_WRITE        =  'q',
     SHE_USER_READ          =  'r',
     SHE_SHUTDOWN_READ      =  'R',
     SHE_RST_IN             =  's',
-    SHE_SS_IN              =  'S',
+    SHE_STOP_SENDIG_IN     =  'S',
     SHE_RST_OUT            =  't',
     SHE_RST_ACKED          =  'T',
     SHE_FLUSH              =  'u',
+    SHE_STOP_SENDIG_OUT    =  'U',
     SHE_USER_WRITE_DATA    =  'w',
     SHE_SHUTDOWN_WRITE     =  'W',
     SHE_CLOSE              =  'X',
@@ -643,10 +653,13 @@ stream_is_finished (const lsquic_stream_t *stream)
             * stream are outstanding:
             */
         && 0 == stream->n_unacked
+        && 0 == (stream->sm_qflags & (
            /* This checks that no packets that reference this stream will
             * become outstanding:
             */
-        && 0 == (stream->sm_qflags & SMQF_SEND_RST)
+                    SMQF_SEND_RST
+           /* Can't finish stream until all "self" flags are unset: */
+                    | SMQF_SELF_FLAGS))
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
           || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT)));
 }
@@ -818,6 +831,22 @@ lsquic_stream_readable (struct lsquic_stream *stream)
         ||  lsquic_stream_is_reset(stream)
         /* Type-dependent readability check: */
         ||  stream->sm_readable(stream);
+    ;
+}
+
+
+static int
+stream_writeable (struct lsquic_stream *stream)
+{
+    /* A stream is writeable if one of the following is true: */
+    return
+        /* - The stream is reset, by either side.  In this case,
+         *   lsquic_stream_write() will return -1 (we want the user to be
+         *   able to collect the error).
+         */
+           lsquic_stream_is_reset(stream)
+        /* - Data can be written to stream: */
+        || lsquic_stream_write_avail(stream)
     ;
 }
 
@@ -1008,6 +1037,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         {
             SM_HISTORY_APPEND(stream, SHE_FIN_IN);
             stream->stream_flags |= STREAM_FIN_RECVD;
+            stream->sm_qflags &= ~SMQF_WAIT_FIN_OFF;
             stream->sm_fin_off = DF_END(frame);
             maybe_finish_stream(stream);
         }
@@ -1127,10 +1157,22 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
-    drop_buffered_data(stream);
-    maybe_elide_stream_frames(stream);
 
-    if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
+    if (!(stream->sm_bflags & SMBF_IETF))
+    {
+        drop_buffered_data(stream);
+        maybe_elide_stream_frames(stream);
+    }
+
+    if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
+    {
+        stream->sm_qflags &= ~SMQF_WAIT_FIN_OFF;
+        LSQ_DEBUG("final offset is now known: %"PRIu64, offset);
+    }
+
+    if (!(stream->stream_flags &
+                        (STREAM_RST_SENT|STREAM_SS_SENT|STREAM_FIN_SENT))
+                            && !(stream->sm_bflags & SMBF_IETF)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
         lsquic_stream_reset_ext(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
 
@@ -1153,7 +1195,7 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
         return;
     }
 
-    SM_HISTORY_APPEND(stream, SHE_SS_IN);
+    SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
     stream->stream_flags |= STREAM_SS_RECVD;
 
     /* Let user collect error: */
@@ -1577,11 +1619,62 @@ lsquic_stream_read (lsquic_stream_t *stream, void *buf, size_t len)
 }
 
 
+void
+lsquic_stream_ss_frame_sent (struct lsquic_stream *stream)
+{
+    assert(stream->sm_qflags & SMQF_SEND_STOP_SENDING);
+    SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_OUT);
+    stream->sm_qflags &= ~SMQF_SEND_STOP_SENDING;
+    stream->stream_flags |= STREAM_SS_SENT;
+    if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+        TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
+}
+
+
+static void
+handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
+{
+    if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+        TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
+                                                    next_send_stream);
+    stream->sm_qflags |= SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF;
+}
+
+
+static void
+handle_early_read_shutdown_gquic (struct lsquic_stream *stream)
+{
+    if (!(stream->stream_flags & STREAM_RST_SENT))
+    {
+        lsquic_stream_reset_ext(stream, 7 /* QUIC_STREAM_CANCELLED */, 0);
+        stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
+    }
+}
+
+
+static void
+handle_early_read_shutdown (struct lsquic_stream *stream)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        handle_early_read_shutdown_ietf(stream);
+    else
+        handle_early_read_shutdown_gquic(stream);
+}
+
+
 static void
 stream_shutdown_read (lsquic_stream_t *stream)
 {
     if (!(stream->stream_flags & STREAM_U_READ_DONE))
     {
+        if (!(stream->stream_flags & STREAM_FIN_REACHED))
+        {
+            LSQ_DEBUG("read shut down before reading FIN.  (FIN received: %d)",
+                !!(stream->stream_flags & STREAM_FIN_RECVD));
+            SM_HISTORY_APPEND(stream, SHE_EARLY_READ_STOP);
+            if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD)))
+                handle_early_read_shutdown(stream);
+        }
         SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
         stream->stream_flags |= STREAM_U_READ_DONE;
         stream->sm_readable = stream_readable_discard;
@@ -1625,7 +1718,9 @@ stream_shutdown_write (lsquic_stream_t *stream)
     if (!(stream->sm_bflags & SMBF_CRYPTO)
             && !(stream->stream_flags & (STREAM_FIN_SENT|STREAM_RST_SENT))
                 && !stream_is_incoming_unidir(stream)
-                                    && !(stream->sm_qflags & SMQF_SEND_RST))
+                        /* In gQUIC, receiving a RESET means "stop sending" */
+                    && !(!(stream->sm_qflags & SMBF_IETF)
+                                && (stream->stream_flags & STREAM_RST_RECVD)))
     {
         if ((stream->sm_bflags & SMBF_USE_HEADERS)
                 && !(stream->stream_flags & STREAM_HEADERS_SENT))
@@ -1705,6 +1800,8 @@ lsquic_stream_shutdown_internal (lsquic_stream_t *stream)
 {
     LSQ_DEBUG("internal shutdown");
     stream->stream_flags |= STREAM_U_READ_DONE|STREAM_U_WRITE_DONE;
+    stream_wantwrite(stream, 0);
+    stream_wantread(stream, 0);
     if (lsquic_stream_is_critical(stream))
     {
         LSQ_DEBUG("add flag to force-finish special stream");
@@ -2054,7 +2151,7 @@ stream_dispatch_write_events_loop (lsquic_stream_t *stream)
     stream->stream_flags |= STREAM_LAST_WRITE_OK;
     while ((stream->sm_qflags & SMQF_WANT_WRITE)
                 && (stream->stream_flags & STREAM_LAST_WRITE_OK)
-                       && lsquic_stream_write_avail(stream))
+                       && stream_writeable(stream))
     {
         progress = stream_progress(stream);
 
@@ -2173,7 +2270,7 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     if (stream->sm_bflags & SMBF_RW_ONCE)
     {
         if ((stream->sm_qflags & SMQF_WANT_WRITE)
-            && lsquic_stream_write_avail(stream))
+            && stream_writeable(stream))
         {
             on_write = select_on_write(stream);
             on_write(stream, stream->st_ctx);
@@ -2229,7 +2326,7 @@ stream_flush (lsquic_stream_t *stream)
     empty_reader.lsqr_size = inner_reader_empty_size;
     empty_reader.lsqr_read = inner_reader_empty_read;
     empty_reader.lsqr_ctx  = NULL;  /* pro forma */
-    nw = stream_write_to_packets(stream, &empty_reader, 0);
+    nw = stream_write_to_packets(stream, &empty_reader, 0, SWO_BUFFER);
 
     if (nw >= 0)
     {
@@ -2655,6 +2752,27 @@ stream_activate_hq_frame (struct lsquic_stream *stream, uint64_t off,
 }
 
 
+struct hq_arr
+{
+    unsigned char     **p;
+    unsigned            count;
+    unsigned            max;
+};
+
+
+static int
+save_hq_ptr (struct hq_arr *hq_arr, void *p)
+{
+    if (hq_arr->count < hq_arr->max)
+    {
+        hq_arr->p[hq_arr->count++] = p;
+        return 0;
+    }
+    else
+        return -1;
+}
+
+
 static size_t
 frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
 {
@@ -2708,6 +2826,11 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
             if (0 == (shf->shf_flags & (SHF_FIXED_SIZE|SHF_PHANTOM)))
             {
                 shf->shf_frame_ptr = p;
+                if (stream->sm_hq_arr && 0 != save_hq_ptr(stream->sm_hq_arr, p))
+                {
+                    stream_hq_frame_put(stream, shf);
+                    break;
+                }
                 memset(p, 0, frame_sz);
                 p += frame_sz;
             }
@@ -3079,7 +3202,7 @@ maybe_close_varsize_hq_frame (struct lsquic_stream *stream)
 
 static ssize_t
 stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
-                         size_t thresh)
+                         size_t thresh, enum stream_write_options swo)
 {
     size_t size;
     ssize_t nw;
@@ -3146,7 +3269,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
     if (use_framing && seen_ok)
         maybe_close_varsize_hq_frame(stream);
 
-    if (thresh)
+    if (thresh && (swo & SWO_BUFFER))
     {
         assert(size < thresh);
         assert(size >= stream->sm_n_buffered);
@@ -3159,7 +3282,8 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
             fg_ctx.fgc_nread_from_reader += nw; /* Make this cleaner? */
         }
     }
-    else
+#ifndef NDEBUG
+    else if (swo & SWO_BUFFER)
     {
         /* We count flushed data towards both stream and connection limits,
          * so we should have been able to packetize all of it:
@@ -3167,6 +3291,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         assert(0 == stream->sm_n_buffered);
         assert(size == 0);
     }
+#endif
 
     maybe_mark_as_blocked(stream);
 
@@ -3333,7 +3458,8 @@ save_to_buffer (lsquic_stream_t *stream, struct lsquic_reader *reader,
 
 
 static ssize_t
-stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader)
+stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
+                                                enum stream_write_options swo)
 {
     const struct stream_hq_frame *shf;
     size_t thresh, len, frames, total_len, n_allowed, nwritten;
@@ -3354,6 +3480,8 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader)
     n_allowed = stream_get_n_allowed(stream);
     if (total_len <= n_allowed && total_len < thresh)
     {
+        if (!(swo & SWO_BUFFER))
+            return 0;
         nwritten = 0;
         do
         {
@@ -3370,7 +3498,7 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader)
         return nwritten;
     }
     else
-        return stream_write_to_packets(stream, reader, thresh);
+        return stream_write_to_packets(stream, reader, thresh, swo);
 }
 
 
@@ -3450,7 +3578,7 @@ lsquic_stream_writev (lsquic_stream_t *stream, const struct iovec *iov,
         .lsqr_ctx  = &iro,
     };
 
-    return stream_write(stream, &reader);
+    return stream_write(stream, &reader, SWO_BUFFER);
 }
 
 
@@ -3459,7 +3587,221 @@ lsquic_stream_writef (lsquic_stream_t *stream, struct lsquic_reader *reader)
 {
     COMMON_WRITE_CHECKS();
     SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
-    return stream_write(stream, reader);
+    return stream_write(stream, reader, SWO_BUFFER);
+}
+
+
+/* Configuration for lsquic_stream_pwritev: */
+#ifndef LSQUIC_PWRITEV_DEF_IOVECS
+#define LSQUIC_PWRITEV_DEF_IOVECS  16
+#endif
+/* This is an overkill, this limit should only be reached during testing: */
+#ifndef LSQUIC_PWRITEV_DEF_FRAMES
+#define LSQUIC_PWRITEV_DEF_FRAMES (LSQUIC_PWRITEV_DEF_IOVECS * 2)
+#endif
+
+#ifdef NDEBUG
+#define PWRITEV_IOVECS  LSQUIC_PWRITEV_DEF_IOVECS
+#define PWRITEV_FRAMES  LSQUIC_PWRITEV_DEF_FRAMES
+#else
+static unsigned
+    PWRITEV_IOVECS  = LSQUIC_PWRITEV_DEF_IOVECS,
+    PWRITEV_FRAMES  = LSQUIC_PWRITEV_DEF_FRAMES;
+
+void
+lsquic_stream_set_pwritev_params (unsigned iovecs, unsigned frames)
+{
+    PWRITEV_IOVECS  = iovecs;
+    PWRITEV_FRAMES  = frames;
+}
+
+
+#endif
+
+struct pwritev_ctx
+{
+    struct iovec *iov;
+    const struct hq_arr *hq_arr;
+    size_t        total_bytes;
+    size_t        n_to_write;
+    unsigned      n_iovecs, max_iovecs;
+};
+
+
+static size_t
+pwritev_size (void *lsqr_ctx)
+{
+    struct pwritev_ctx *const ctx = lsqr_ctx;
+
+    if (ctx->n_iovecs < ctx->max_iovecs
+                                    && ctx->hq_arr->count < ctx->hq_arr->max)
+        return ctx->n_to_write - ctx->total_bytes;
+    else
+        return 0;
+}
+
+
+static size_t
+pwritev_read (void *lsqr_ctx, void *buf, size_t count)
+{
+    struct pwritev_ctx *const ctx = lsqr_ctx;
+
+    assert(ctx->n_iovecs < ctx->max_iovecs);
+    ctx->iov[ctx->n_iovecs].iov_base = buf;
+    ctx->iov[ctx->n_iovecs].iov_len = count;
+    ++ctx->n_iovecs;
+    ctx->total_bytes += count;
+    return count;
+}
+
+
+/* pwritev works as follows: allocate packets via lsquic_stream_writef() call
+ * and record pointers and sizes into an iovec array.  Then issue a single call
+ * to user-supplied preadv() to populate all packets in one shot.
+ *
+ * Unwinding state changes due to a short write is by far the most complicated
+ * part of the machinery that follows.  We optimize the normal path: it should
+ * be cheap to be prepared for the unwinding; unwinding itself can be more
+ * expensive, as we do not expect it to happen often.
+ */
+ssize_t
+lsquic_stream_pwritev (struct lsquic_stream *stream,
+    ssize_t (*preadv)(void *user_data, const struct iovec *iov, int iovcnt),
+    void *user_data, size_t n_to_write)
+{
+    struct lsquic_send_ctl *const ctl = stream->conn_pub->send_ctl;
+    struct iovec iovecs[PWRITEV_IOVECS], *last_iov;
+    unsigned char *hq_frames[PWRITEV_FRAMES];
+    struct pwritev_ctx ctx;
+    struct lsquic_reader reader;
+    struct send_ctl_state ctl_state;
+    struct hq_arr hq_arr;
+    ssize_t nw;
+    size_t n_allocated, sum;
+#ifndef NDEBUG
+    const unsigned short n_buffered = stream->sm_n_buffered;
+#endif
+
+    COMMON_WRITE_CHECKS();
+    SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
+
+    lsquic_send_ctl_snapshot(ctl, &ctl_state);
+
+    ctx.total_bytes = 0;
+    ctx.n_to_write = n_to_write;
+    ctx.n_iovecs = 0;
+    ctx.max_iovecs = sizeof(iovecs) / sizeof(iovecs[0]);
+    ctx.iov = iovecs;
+    ctx.hq_arr = &hq_arr;
+
+    hq_arr.p = hq_frames;
+    hq_arr.count = 0;
+    hq_arr.max = sizeof(hq_frames) / sizeof(hq_frames[0]);
+    stream->sm_hq_arr = &hq_arr;
+
+    reader.lsqr_ctx = &ctx;
+    reader.lsqr_size = pwritev_size;
+    reader.lsqr_read = pwritev_read;
+
+    nw = stream_write(stream, &reader, 0);
+    LSQ_DEBUG("pwritev: stream_write returned %zd, n_iovecs: %d", nw,
+                                                                ctx.n_iovecs);
+    if (nw > 0)
+    {
+        /* Amount of buffered data shouldn't have increased */
+        assert(n_buffered >= stream->sm_n_buffered);
+        n_allocated = (size_t) nw;
+        nw = preadv(user_data, ctx.iov, ctx.n_iovecs);
+        LSQ_DEBUG("pwritev: preadv returned %zd", nw);
+        if (nw >= 0 && (size_t) nw < n_allocated)
+            goto unwind_short_write;
+    }
+
+  cleanup:
+    stream->sm_hq_arr = NULL;
+    return nw;
+
+  unwind_short_write:
+    /* What follows is not the most efficient process.  The emphasis here is
+     * on being simple instead.  We expect short writes to be rare, so being
+     * slower than possible is a good tradeoff for being correct.
+     */
+    LSQ_DEBUG("short write occurred, unwind");
+    SM_HISTORY_APPEND(stream, SHE_SHORT_WRITE);
+
+    /* First, adjust connection cap and stream offsets, and HTTP/3 framing,
+     * if necessary.
+     */
+    if ((stream->sm_bflags & (SMBF_USE_HEADERS|SMBF_IETF))
+                                            == (SMBF_USE_HEADERS|SMBF_IETF))
+    {
+        size_t shortfall, payload_sz, decr;
+        unsigned char *p;
+        unsigned bits;
+
+        assert(hq_arr.count > 0);
+        shortfall = n_allocated - (size_t) nw;
+        do
+        {
+            const unsigned count = hq_arr.count;
+            (void) count;
+            p = hq_frames[--hq_arr.count];
+            assert(p[0] == HQFT_DATA);
+            assert(!(p[1] & 0x80));     /* Only one- and two-byte frame sizes */
+            if (p[1] & 0x40)
+            {
+                payload_sz = (p[1] & 0x3F) << 8;
+                payload_sz |= p[2];
+            }
+            else
+                payload_sz = p[1];
+            if (payload_sz > shortfall)
+            {
+                bits = p[1] >> 6;
+                vint_write(p + 1, payload_sz - shortfall, bits, 1 << bits);
+                decr = shortfall;
+                if (stream->sm_bflags & SMBF_CONN_LIMITED)
+                    stream->conn_pub->conn_cap.cc_sent -= decr;
+                stream->sm_payload -= decr;
+                stream->tosend_off -= decr;
+                shortfall = 0;
+            }
+            else
+            {
+                decr = payload_sz + 2 + (p[1] >> 6);
+                if (stream->sm_bflags & SMBF_CONN_LIMITED)
+                    stream->conn_pub->conn_cap.cc_sent -= decr;
+                stream->sm_payload -= payload_sz;
+                stream->tosend_off -= decr;
+                shortfall -= payload_sz;
+            }
+        }
+        while (hq_arr.count);
+        assert(shortfall == 0);
+    }
+    else
+    {
+        const size_t shortfall = n_allocated - (size_t) nw;
+        if (stream->sm_bflags & SMBF_CONN_LIMITED)
+            stream->conn_pub->conn_cap.cc_sent -= shortfall;
+        stream->sm_payload -= shortfall;
+        stream->tosend_off -= shortfall;
+    }
+
+    /* Find last iovec: */
+    sum = 0;
+    for (last_iov = iovecs; last_iov
+                    < iovecs + sizeof(iovecs)/sizeof(iovecs[0]); ++last_iov)
+    {
+        sum += last_iov->iov_len;
+        if ((last_iov == iovecs || (size_t) nw > sum - last_iov->iov_len)
+                                                        && (size_t) nw <= sum)
+            break;
+    }
+    assert(last_iov < iovecs + sizeof(iovecs)/sizeof(iovecs[0]));
+    lsquic_send_ctl_rollback(ctl, &ctl_state, last_iov, sum - nw);
+
+    goto cleanup;
 }
 
 
@@ -3478,7 +3820,7 @@ stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz)
         .lsqr_size = inner_reader_iovec_size,
         .lsqr_ctx  = &iro,
     };
-    return stream_write(stream, &reader);
+    return stream_write(stream, &reader, SWO_BUFFER);
 }
 
 
@@ -4747,7 +5089,7 @@ on_write_pp_wrapper (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
 
     promise = SLIST_FIRST(&stream->sm_promises);
     init_pp_reader(promise, &pp_reader);
-    nw = stream_write(stream, &pp_reader);
+    nw = stream_write(stream, &pp_reader, SWO_BUFFER);
     if (nw > 0)
     {
         LSQ_DEBUG("wrote %zd bytes more of push promise (%s)",
@@ -4801,7 +5143,7 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
     stream->stream_flags |= STREAM_PUSHING;
 
     init_pp_reader(promise, &pp_reader);
-    nw = stream_write(stream, &pp_reader);
+    nw = stream_write(stream, &pp_reader, SWO_BUFFER);
     if (nw > 0)
     {
         SLIST_INSERT_HEAD(&stream->sm_promises, promise, pp_next);

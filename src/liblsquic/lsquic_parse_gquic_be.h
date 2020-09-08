@@ -111,4 +111,7 @@ lsquic_gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         void *rechist, lsquic_time_t now, int *has_missing, lsquic_packno_t *,
         const uint64_t *);
 
+int
+lsquic_gquic_be_dec_stream_frame_size (unsigned char *buf, size_t new_size);
+
 #endif

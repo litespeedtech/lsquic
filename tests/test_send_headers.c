@@ -340,6 +340,9 @@ test_flushes_and_closes (void)
     assert(s == 0);
     s = lsquic_stream_close(stream);
     assert(s == 0);
+    /* OK, we did not read FIN, expect these flags: */
+    assert((stream->sm_qflags & (SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF)) == (SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF));
+    lsquic_stream_ss_frame_sent(stream);
     assert(stream->sm_hblock_sz == test_vals.prefix_sz + test_vals.headers_sz);
     assert(0 == stream->sm_n_buffered);
     assert(stream->sm_qflags & SMQF_WANT_WRITE);    /* Still set */
@@ -348,6 +351,9 @@ test_flushes_and_closes (void)
     assert(stream->sm_qflags & SMQF_CALL_ONCLOSE);
     lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
     lsquic_stream_call_on_close(stream);
+    assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* Not yet */
+    lsquic_stream_rst_in(stream, 0, 0);
+    assert(!(stream->sm_qflags & (SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF)));
     assert(stream->sm_qflags & SMQF_FREE_STREAM);
     lsquic_stream_destroy(stream);
 
@@ -386,6 +392,7 @@ test_headers_wantwrite_restoration (const int want_write)
     assert(s == 0);
     hset = lsquic_stream_get_hset(stream);
     assert(hset == (void *) 12345);
+    stream->stream_flags |= STREAM_FIN_RECVD;   /* Pretend we received FIN */
     s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
     test_vals.status = QWH_PARTIAL;

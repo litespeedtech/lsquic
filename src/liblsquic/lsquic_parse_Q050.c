@@ -848,6 +848,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q050 =
     .pf_gen_stream_frame              =  lsquic_gquic_be_gen_stream_frame,
     .pf_calc_stream_frame_header_sz   =  lsquic_calc_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  lsquic_gquic_be_parse_stream_frame,
+    .pf_dec_stream_frame_size         =  lsquic_gquic_be_dec_stream_frame_size,
     .pf_parse_ack_frame               =  lsquic_gquic_be_parse_ack_frame,
     .pf_gen_ack_frame                 =  lsquic_gquic_be_gen_ack_frame,
     .pf_gen_stop_waiting_frame        =  lsquic_gquic_be_gen_stop_waiting_frame,

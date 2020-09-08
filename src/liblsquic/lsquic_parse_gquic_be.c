@@ -293,6 +293,26 @@ lsquic_gquic_be_gen_stream_frame (unsigned char *buf, size_t buf_len,
     return p - buf;
 }
 
+int
+lsquic_gquic_be_dec_stream_frame_size (unsigned char *buf, size_t new_size)
+{
+    /* 1fdoooss */
+    const unsigned char type = buf[0];
+
+    if (!(type & 0x20))
+        return 1;
+
+    const unsigned offset_len = ((type >> 2) & 7) + 1 - !((type >> 2) & 7);
+    const unsigned stream_id_len = 1 + (type & 3);
+
+    uint16_t len = new_size;
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+    len = bswap_16(len);
+#endif
+    memcpy(buf + 1 + offset_len + stream_id_len, &len, 2);
+    return 0;
+}
+
 
 /* return parsed (used) buffer length */
 int
@@ -1032,6 +1052,7 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_calc_stream_frame_header_sz   =  lsquic_calc_stream_frame_header_sz_gquic,
     .pf_parse_stream_frame            =  lsquic_gquic_be_parse_stream_frame,
     .pf_parse_ack_frame               =  lsquic_gquic_be_parse_ack_frame,
+    .pf_dec_stream_frame_size         =  lsquic_gquic_be_dec_stream_frame_size,
     .pf_gen_ack_frame                 =  lsquic_gquic_be_gen_ack_frame,
     .pf_gen_stop_waiting_frame        =  lsquic_gquic_be_gen_stop_waiting_frame,
     .pf_parse_stop_waiting_frame      =  lsquic_gquic_be_parse_stop_waiting_frame,

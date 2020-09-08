@@ -20,7 +20,7 @@ struct lsquic_packet_out;
 struct lsquic_engine_public;
 
 #ifndef LSQUIC_KEEP_MINICONN_HISTORY
-#   ifndef NDEBUG
+#   if !defined(NDEBUG) && !defined(_MSC_VER)
 #       define LSQUIC_KEEP_MINICONN_HISTORY 1
 #   else
 #       define LSQUIC_KEEP_MINICONN_HISTORY 0
