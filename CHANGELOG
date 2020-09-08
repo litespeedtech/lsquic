@@ -1,5 +1,5 @@
 2020-09-08
-    - 2.19.9
+    - 2.19.10
     - [FEATURE] Add lsquic_stream_pwritev().  This function allows one to
       reduce the number of system calls required to read a file from disk
       by using lsquic_stream_pwritev() together with preadv(2).

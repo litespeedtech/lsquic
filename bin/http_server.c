@@ -578,8 +578,12 @@ bytes_left (lsquic_stream_ctx_t *st_h)
 static ssize_t
 my_preadv (void *user_data, const struct iovec *iov, int iovcnt)
 {
+#if HAVE_PREADV
     lsquic_stream_ctx_t *const st_h = user_data;
     return preadv(st_h->file_fd, iov, iovcnt, st_h->written);
+#else
+    return -1;
+#endif
 }
 
 
@@ -1594,10 +1598,12 @@ usage (const char *prog)
 "   -p FILE     Push request with this path\n"
 "   -w SIZE     Write immediately (LSWS mode).  Argument specifies maximum\n"
 "                 size of the immediate write.\n"
+#if HAVE_PREADV
 "   -P SIZE     Use preadv(2) to read from disk and lsquic_stream_pwritev() to\n"
 "                 write to stream.  Positive SIZE indicate maximum value per\n"
 "                 write; negative means always use remaining file size.\n"
 "                 Incompatible with -w.\n"
+#endif
 "   -y DELAY    Delay response for this many seconds -- use for debugging\n"
             , prog);
 }
@@ -1799,8 +1805,14 @@ main (int argc, char **argv)
             s_immediate_write = atoi(optarg);
             break;
         case 'P':
+#if HAVE_PREADV
             s_pwritev = strtoull(optarg, NULL, 10);
             break;
+#else
+            fprintf(stderr, "preadv is not supported on this platform, "
+                                                        "cannot use -P\n");
+            exit(EXIT_FAILURE);
+#endif
         case 'y':
             server_ctx.delay_resp_sec = atoi(optarg);
             break;

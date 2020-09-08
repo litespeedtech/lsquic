@@ -19,6 +19,12 @@ CHECK_SYMBOL_EXISTS(
     HAVE_IP_DONTFRAG
 )
 
+CHECK_SYMBOL_EXISTS(
+    preadv
+    "sys/uio.h"
+    HAVE_PREADV
+)
+
 INCLUDE(CheckIncludeFiles)
 
 IF (MSVC AND PCRE_LIB)

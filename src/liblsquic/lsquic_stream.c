@@ -3604,6 +3604,11 @@ lsquic_stream_writef (lsquic_stream_t *stream, struct lsquic_reader *reader)
 #define PWRITEV_IOVECS  LSQUIC_PWRITEV_DEF_IOVECS
 #define PWRITEV_FRAMES  LSQUIC_PWRITEV_DEF_FRAMES
 #else
+#if _MSC_VER
+#define MALLOC_PWRITEV 1
+#else
+#define MALLOC_PWRITEV 0
+#endif
 static unsigned
     PWRITEV_IOVECS  = LSQUIC_PWRITEV_DEF_IOVECS,
     PWRITEV_FRAMES  = LSQUIC_PWRITEV_DEF_FRAMES;
@@ -3670,8 +3675,14 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
     void *user_data, size_t n_to_write)
 {
     struct lsquic_send_ctl *const ctl = stream->conn_pub->send_ctl;
-    struct iovec iovecs[PWRITEV_IOVECS], *last_iov;
+#if MALLOC_PWRITEV
+    struct iovec *iovecs;
+    unsigned char **hq_frames;
+#else
+    struct iovec iovecs[PWRITEV_IOVECS];
     unsigned char *hq_frames[PWRITEV_FRAMES];
+#endif
+    struct iovec *last_iov;
     struct pwritev_ctx ctx;
     struct lsquic_reader reader;
     struct send_ctl_state ctl_state;
@@ -3685,18 +3696,29 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
     COMMON_WRITE_CHECKS();
     SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
 
+#if MALLOC_PWRITEV
+    iovecs = malloc(sizeof(iovecs[0]) * PWRITEV_IOVECS);
+    hq_frames = malloc(sizeof(hq_frames[0]) * PWRITEV_FRAMES);
+    if (!(iovecs && hq_frames))
+    {
+        free(iovecs);
+        free(hq_frames);
+        return -1;
+    }
+#endif
+
     lsquic_send_ctl_snapshot(ctl, &ctl_state);
 
     ctx.total_bytes = 0;
     ctx.n_to_write = n_to_write;
     ctx.n_iovecs = 0;
-    ctx.max_iovecs = sizeof(iovecs) / sizeof(iovecs[0]);
+    ctx.max_iovecs = PWRITEV_IOVECS;
     ctx.iov = iovecs;
     ctx.hq_arr = &hq_arr;
 
     hq_arr.p = hq_frames;
     hq_arr.count = 0;
-    hq_arr.max = sizeof(hq_frames) / sizeof(hq_frames[0]);
+    hq_arr.max = PWRITEV_FRAMES;
     stream->sm_hq_arr = &hq_arr;
 
     reader.lsqr_ctx = &ctx;
@@ -3719,6 +3741,10 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
 
   cleanup:
     stream->sm_hq_arr = NULL;
+#if MALLOC_PWRITEV
+    free(iovecs);
+    free(hq_frames);
+#endif
     return nw;
 
   unwind_short_write:
@@ -3790,15 +3816,14 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
 
     /* Find last iovec: */
     sum = 0;
-    for (last_iov = iovecs; last_iov
-                    < iovecs + sizeof(iovecs)/sizeof(iovecs[0]); ++last_iov)
+    for (last_iov = iovecs; last_iov < iovecs + PWRITEV_IOVECS; ++last_iov)
     {
         sum += last_iov->iov_len;
         if ((last_iov == iovecs || (size_t) nw > sum - last_iov->iov_len)
                                                         && (size_t) nw <= sum)
             break;
     }
-    assert(last_iov < iovecs + sizeof(iovecs)/sizeof(iovecs[0]));
+    assert(last_iov < iovecs + PWRITEV_IOVECS);
     lsquic_send_ctl_rollback(ctl, &ctl_state, last_iov, sum - nw);
 
     goto cleanup;
