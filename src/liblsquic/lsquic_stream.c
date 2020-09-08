@@ -751,6 +751,22 @@ lsquic_stream_readable (struct lsquic_stream *stream)
 }
 
 
+static int
+stream_writeable (struct lsquic_stream *stream)
+{
+    /* A stream is writeable if one of the following is true: */
+    return
+        /* - The stream is reset, by either side.  In this case,
+         *   lsquic_stream_write() will return -1 (we want the user to be
+         *   able to collect the error).
+         */
+           lsquic_stream_is_reset(stream)
+        /* - Data can be written to stream: */
+        || lsquic_stream_write_avail(stream)
+    ;
+}
+
+
 static size_t
 stream_write_avail_no_frames (struct lsquic_stream *stream)
 {
@@ -2002,7 +2018,7 @@ stream_dispatch_write_events_loop (lsquic_stream_t *stream)
     stream->stream_flags |= STREAM_LAST_WRITE_OK;
     while ((stream->sm_qflags & SMQF_WANT_WRITE)
                 && (stream->stream_flags & STREAM_LAST_WRITE_OK)
-                       && lsquic_stream_write_avail(stream))
+                       && stream_writeable(stream))
     {
         progress = stream_progress(stream);
 
@@ -2121,7 +2137,7 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     if (stream->sm_bflags & SMBF_RW_ONCE)
     {
         if ((stream->sm_qflags & SMQF_WANT_WRITE)
-            && lsquic_stream_write_avail(stream))
+            && stream_writeable(stream))
         {
             on_write = select_on_write(stream);
             on_write(stream, stream->st_ctx);
