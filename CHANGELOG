@@ -1,3 +1,8 @@
+2020-09-08
+    - 2.12.8
+    - [BUGFIX] when stream is reset, it is writeable -- let user collect the
+      error.
+
 2020-06-17
     - 2.12.7
     - [BUGFIX] Early data: call new BoringSSL function to set context.
