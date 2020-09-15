@@ -3768,6 +3768,7 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
     packet_out->po_sent_sz     = enc_sz;
     packet_out->po_flags &= ~PO_IPv6;
     packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ|(ipv6 << POIPv6_SHIFT);
+    packet_out->po_dcid_len = GQUIC_CID_LEN;
 
     return ENCPA_OK;
 }

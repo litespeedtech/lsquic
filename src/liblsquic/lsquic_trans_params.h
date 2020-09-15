@@ -34,6 +34,7 @@ enum transport_param_id
      */
     TPI_MIN_ACK_DELAY,
     TPI_TIMESTAMPS,
+    TPI_MAX_DATAGRAM_FRAME_SIZE,
     TPI_LOSS_BITS,                          MAX_NUMERIC_TPI = TPI_LOSS_BITS,
 
     /*
@@ -53,8 +54,6 @@ enum transport_param_id
 #define LAST_TP_CID TPI_RETRY_SOURCE_CID
     TPI_RETRY_SOURCE_CID,
 #if LSQUIC_TEST_QUANTUM_READINESS
-    /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
-#define QUANTUM_READY_SZ 1200
     TPI_QUANTUM_READINESS,
 #endif
     TPI_STATELESS_RESET_TOKEN,              LAST_TPI = TPI_STATELESS_RESET_TOKEN
@@ -179,5 +178,10 @@ extern const char * const lsquic_tpi2str[LAST_TPI + 1];
 /* From [draft-huitema-quic-ts-03] */
 #define TS_WANT_THEM            1
 #define TS_GENERATE_THEM        2
+
+#if LSQUIC_TEST_QUANTUM_READINESS
+size_t
+lsquic_tp_get_quantum_sz (void);
+#endif
 
 #endif

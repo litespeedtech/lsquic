@@ -58,6 +58,10 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID 29
 
+    .. member:: LSQVER_ID30
+
+        IETF QUIC version ID 30
+
     .. member:: N_LSQVER
 
         Special value indicating the number of versions in the enum.  It
@@ -695,11 +699,25 @@ settings structure:
 
        Congestion control algorithm to use.
 
-       - 0:  Use default (:macro:`LSQUIC_DF_CC_ALGO)`
+       - 0:  Use default (:macro:`LSQUIC_DF_CC_ALGO`)
        - 1:  Cubic
-       - 2:  BBR
+       - 2:  BBRv1
+       - 3:  Adaptive congestion control.
 
-       IETF QUIC only.
+       Adaptive congestion control adapts to the environment.  It figures
+       out whether to use Cubic or BBRv1 based on the RTT.
+
+    .. member:: unsigned        es_cc_rtt_thresh
+
+       Congestion controller RTT threshold in microseconds.
+
+       Adaptive congestion control uses BBRv1 until RTT is determined.  At
+       that point a permanent choice of congestion controller is made.  If
+       RTT is smaller than or equal to
+       :member:`lsquic_engine_settings.es_cc_rtt_thresh`, congestion
+       controller is switched to Cubic; otherwise, BBRv1 is picked.
+
+       The default value is :macro:`LSQUIC_DF_CC_RTT_THRESH`
 
     .. member:: int             es_ql_bits
 
@@ -801,6 +819,20 @@ settings structure:
        the peer sent the "grease_quic_bit" transport parameter.
 
        Default value is :macro:`LSQUIC_DF_GREASE_QUIC_BIT`
+
+    .. member:: int             es_datagrams
+
+       Enable datagrams extension.  Allowed values are 0 and 1.
+
+       Default value is :macro:`LSQUIC_DF_DATAGRAMS`
+
+    .. member:: int             es_optimistic_nat
+
+       If set to true, changes in peer port are assumed to be due to a
+       benign NAT rebinding and path characteristics -- MTU, RTT, and
+       CC state -- are not reset.
+
+       Default value is :macro:`LSQUIC_DF_OPTIMISTIC_NAT`
 
 To initialize the settings structure to library defaults, use the following
 convenience function:
@@ -971,7 +1003,11 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_CC_ALGO
 
-    Use Cubic by default.
+    Use Adaptive Congestion Controller by default.
+
+.. macro:: LSQUIC_DF_CC_RTT_THRESH
+
+    Default value of the CC RTT threshold is 1500 microseconds
 
 .. macro:: LSQUIC_DF_DELAYED_ACKS
 
@@ -1009,6 +1045,18 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     By default, greasing the QUIC bit is enabled (if peer sent
     the "grease_quic_bit" transport parameter).
+
+.. macro:: LSQUIC_DF_TIMESTAMPS
+
+    Timestamps are on by default.
+
+.. macro:: LSQUIC_DF_DATAGRAMS
+
+    Datagrams are off by default.
+
+.. macro:: LSQUIC_DF_OPTIMISTIC_NAT
+
+    Assume optimistic NAT by default.
 
 Receiving Packets
 -----------------
@@ -1219,6 +1267,19 @@ the engine to communicate with the user code:
         perform session resumption next time around.
 
         This callback is optional.
+
+    .. member:: ssize_t (*on_dg_write)(lsquic_conn_t *c, void *buf, size_t buf_sz)
+
+        Called when datagram is ready to be written.  Write at most
+        ``buf_sz`` bytes to ``buf`` and  return number of bytes
+        written.
+
+    .. member:: void (*on_datagram)(lsquic_conn_t *c, const void *buf, size_t sz)
+
+        Called when datagram is read from a packet.  This callback is
+        required when :member:`lsquic_engine_settings.es_datagrams` is true.
+        Take care to process it quickly, as this is called during
+        :func:`lsquic_engine_packet_in()`.
 
 Creating Connections
 --------------------
@@ -2077,7 +2138,7 @@ List of Log Modules
 The following log modules are defined:
 
 - *alarmset*: Alarm processing.
-- *bbr*: BBR congestion controller.
+- *bbr*: BBRv1 congestion controller.
 - *bw-sampler*: Bandwidth sampler (used by BBR).
 - *cfcw*: Connection flow control window.
 - *conn*: Connection.
@@ -2115,3 +2176,36 @@ The following log modules are defined:
 - *stream*: Stream operation.
 - *tokgen*: Token generation and validation.
 - *trapa*: Transport parameter processing.
+
+.. _apiref-datagrams:
+
+Datagrams
+---------
+
+lsquic supports the
+`Unreliable Datagram Extension <https://tools.ietf.org/html/draft-pauly-quic-datagram-05>`_.
+To enable datagrams, set :member:`lsquic_engine_settings.es_datagrams` to
+true and specify
+:member:`lsquic_stream_if.on_datagram`
+and
+:member:`lsquic_stream_if.on_dg_write` callbacks.
+
+.. function:: int lsquic_conn_want_datagram_write (lsquic_conn_t *conn, int want)
+
+    Indicate desire (or lack thereof) to write a datagram.
+
+    :param conn: Connection on which to send a datagram.
+    :param want: Boolean value indicating whether the caller wants to write
+                 a datagram.
+    :return: Previous value of ``want`` or ``-1`` if the datagrams cannot be
+             written.
+
+.. function:: size_t lsquic_conn_get_min_datagram_size (lsquic_conn_t *conn)
+
+    Get minimum datagram size.  By default, this value is zero.
+
+.. function:: int lsquic_conn_set_min_datagram_size (lsquic_conn_t *conn, size_t sz)
+
+    Set minimum datagram size.  This is the minumum value of the buffer
+    passed to the :member:`lsquic_stream_if.on_dg_write` callback.
+    Returns 0 on success and -1 on error.

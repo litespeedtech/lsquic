@@ -49,7 +49,7 @@ struct tokgen_shm_state
 {
     uint8_t     tgss_version;
     uint8_t     tgss_magic_top[sizeof(TOKGEN_SHM_MAGIC_TOP) - 1];
-    uint8_t     tgss_crypter_key[N_TOKEN_TYPES][CRYPTER_KEY_SIZE];
+    uint8_t     tgss_padding[2 * CRYPTER_KEY_SIZE];
     uint8_t     tgss_srst_prk_size;
     uint8_t     tgss_srst_prk[SRST_MAX_PRK_SIZE];
     uint8_t     tgss_magic_bottom[sizeof(TOKGEN_SHM_MAGIC_BOTTOM) - 1];
@@ -72,8 +72,6 @@ struct crypter
 
 struct token_generator
 {
-    /* We encrypt different token types using different keys. */
-    struct crypter  tg_crypters[N_TOKEN_TYPES];
 
     /* Stateless reset token is generated using HKDF with CID as the
      * `info' parameter to HKDF-Expand.

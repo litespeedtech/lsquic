@@ -77,4 +77,9 @@ lsquic_rechist_largest_recv (const lsquic_rechist_t *);
 size_t
 lsquic_rechist_mem_used (const struct lsquic_rechist *);
 
+const struct lsquic_packno_range *
+lsquic_rechist_peek (const struct lsquic_rechist *);
+
+#define lsquic_rechist_n_packets(rechist_) (+(rechist_)->rh_n_packets)
+
 #endif

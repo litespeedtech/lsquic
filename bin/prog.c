@@ -357,6 +357,12 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
             }
         }
         prog->prog_keylog_dir = optarg;
+        if (prog->prog_settings.es_ql_bits)
+        {
+            LSQ_NOTICE("QL loss bits turned off because of -G.  If you want "
+                "to turn it on, just override: -G dir -o ql_bits=2");
+            prog->prog_settings.es_ql_bits = 0;
+        }
         return 0;
 #else
         LSQ_ERROR("key logging is not supported on Windows");

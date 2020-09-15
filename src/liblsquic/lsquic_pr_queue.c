@@ -515,10 +515,11 @@ lsquic_prq_have_pending (const struct pr_queue *prq)
 
 
 static struct lsquic_packet_out *
-evanescent_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+evanescent_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
+                                        const struct to_coal *to_coal_UNUSED)
 {
     struct evanescent_conn *const evconn = (struct evanescent_conn *) lconn;
-    assert(size == 0);
+    assert(!to_coal_UNUSED);
     return &evconn->evc_packet_out;
 }
 

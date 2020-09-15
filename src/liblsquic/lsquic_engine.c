@@ -58,6 +58,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_set.h"
 #include "lsquic_conn_flow.h"
 #include "lsquic_sfcw.h"
@@ -359,6 +360,9 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
+    settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
+    settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
+    settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
 }
 
 
@@ -418,7 +422,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_cc_algo > 2)
+    if (settings->es_cc_algo > 3)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
@@ -2472,8 +2476,11 @@ send_packets_out (struct lsquic_engine *engine,
 #endif
             && iov < batch->iov + sizeof(batch->iov) / sizeof(batch->iov[0]))
         {
-            const size_t size = iov_size(packet_iov, iov);
-            packet_out = conn->cn_if->ci_next_packet_to_send(conn, size);
+            const struct to_coal to_coal = {
+                .prev_packet = packet_out,
+                .prev_sz_sum = iov_size(packet_iov, iov),
+            };
+            packet_out = conn->cn_if->ci_next_packet_to_send(conn, &to_coal);
             if (packet_out)
                 goto next_coa;
         }
@@ -2829,7 +2836,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             break;
         }
 
-        /* [draft-ietf-quic-transport-27] Section 12.2:
+        /* [draft-ietf-quic-transport-30] Section 12.2:
          * " Receivers SHOULD ignore any subsequent packets with a different
          * " Destination Connection ID than the first packet in the datagram.
          */

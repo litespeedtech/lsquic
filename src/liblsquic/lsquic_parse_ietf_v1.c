@@ -49,6 +49,8 @@
 #define FRAME_TYPE_ACK_FREQUENCY    0xAF
 #define FRAME_TYPE_TIMESTAMP        0x2F5
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 static int
 ietf_v1_gen_one_varint (unsigned char *, size_t, unsigned char, uint64_t);
 
@@ -2147,6 +2149,82 @@ ietf_v1_parse_timestamp_frame (const unsigned char *buf, size_t buf_len,
 }
 
 
+static int
+ietf_v1_parse_datagram_frame (const unsigned char *buf, size_t buf_len,
+                                        const void **data, size_t *data_len)
+{
+    uint64_t len;
+    int s;
+
+    /* Length and frame type have been checked already */
+    assert(buf_len > 0);
+    assert(buf[0] == 0x30 || buf[0] == 0x31);
+
+    if (buf[0] & 1)
+    {
+        s = vint_read(buf + 1, buf + buf_len, &len);
+        if (s > 0 && 1 + s + len >= buf_len)
+        {
+            *data = buf + 1 + s;
+            *data_len = len;
+            return 1 + buf_len + len;
+        }
+        else
+            return -1;
+    }
+    else
+    {
+        *data = buf + 1;
+        *data_len = buf_len - 1;
+        return buf_len;
+    }
+}
+
+
+static unsigned
+ietf_v1_datagram_frame_size (size_t sz)
+{
+    return 1u + vint_size(sz) + sz;
+}
+
+
+static int
+ietf_v1_gen_datagram_frame (unsigned char *buf, size_t bufsz, size_t min_sz,
+    size_t max_sz,
+    ssize_t (*user_callback)(struct lsquic_conn *, void *, size_t),
+    struct lsquic_conn *lconn)
+{
+    unsigned bits, len_sz;
+    ssize_t nw;
+
+    /* We always generate length.  A more efficient implementation would
+     * complicate the API.
+     */
+    if (min_sz)
+        bits = vint_val2bits(min_sz);
+    else
+        bits = vint_val2bits(bufsz);
+    len_sz = 1u << bits;
+
+    if (1 + len_sz + min_sz > bufsz)
+    {
+        errno = ENOBUFS;
+        return -1;
+    }
+
+    nw = user_callback(lconn, buf + 1 + len_sz, min_sz ? min_sz
+                                            : MIN(bufsz - 1 - len_sz, max_sz));
+    if (nw >= 0)
+    {
+        buf[0] = 0x31;
+        vint_write(&buf[1], (uint64_t) nw, bits, len_sz);
+        return 1 + len_sz + nw;
+    }
+    else
+        return -1;
+}
+
+
 const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
 {
     .pf_gen_reg_pkt_header            =  ietf_v1_gen_reg_pkt_header,
@@ -2217,4 +2295,7 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_ack_frequency_frame_size      =  ietf_v1_ack_frequency_frame_size,
     .pf_gen_timestamp_frame           =  ietf_v1_gen_timestamp_frame,
     .pf_parse_timestamp_frame         =  ietf_v1_parse_timestamp_frame,
+    .pf_parse_datagram_frame          =  ietf_v1_parse_datagram_frame,
+    .pf_gen_datagram_frame            =  ietf_v1_gen_datagram_frame,
+    .pf_datagram_frame_size           =  ietf_v1_datagram_frame_size,
 };

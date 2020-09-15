@@ -54,6 +54,7 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 14:        return TPI_ACTIVE_CONNECTION_ID_LIMIT;
     case 15:        return TPI_INITIAL_SOURCE_CID;
     case 16:        return TPI_RETRY_SOURCE_CID;
+    case 0x20:      return TPI_MAX_DATAGRAM_FRAME_SIZE;
 #if LSQUIC_TEST_QUANTUM_READINESS
     case 0xC37:     return TPI_QUANTUM_READINESS;
 #endif
@@ -85,6 +86,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  0xE,
     [TPI_INITIAL_SOURCE_CID]                =  0xF,
     [TPI_RETRY_SOURCE_CID]                  =  0x10,
+    [TPI_MAX_DATAGRAM_FRAME_SIZE]           =  0x20,
 #if LSQUIC_TEST_QUANTUM_READINESS
     [TPI_QUANTUM_READINESS]                 =  0xC37,
 #endif
@@ -114,6 +116,7 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  "active_connection_id_limit",
     [TPI_INITIAL_SOURCE_CID]                =  "initial_source_connection_id",
     [TPI_RETRY_SOURCE_CID]                  =  "retry_source_connection_id",
+    [TPI_MAX_DATAGRAM_FRAME_SIZE]           =  "max_datagram_frame_size",
 #if LSQUIC_TEST_QUANTUM_READINESS
     [TPI_QUANTUM_READINESS]                 =  "quantum_readiness",
 #endif
@@ -148,8 +151,8 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
      */
     [TPI_MAX_UDP_PAYLOAD_SIZE]              =  VINT_MAX_VALUE,
     [TPI_ACK_DELAY_EXPONENT]                =  VINT_MAX_VALUE,
-    [TPI_INIT_MAX_STREAMS_UNI]              =  VINT_MAX_VALUE,
-    [TPI_INIT_MAX_STREAMS_BIDI]             =  VINT_MAX_VALUE,
+    [TPI_INIT_MAX_STREAMS_UNI]              =  1ull << 60,
+    [TPI_INIT_MAX_STREAMS_BIDI]             =  1ull << 60,
     [TPI_INIT_MAX_DATA]                     =  VINT_MAX_VALUE,
     [TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]   =  VINT_MAX_VALUE,
     [TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE]  =  VINT_MAX_VALUE,
@@ -160,6 +163,7 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
     [TPI_LOSS_BITS]                         =  1,
     [TPI_MIN_ACK_DELAY]                     =  (1u << 24) - 1u,
     [TPI_TIMESTAMPS]                        =  TS_WANT_THEM|TS_GENERATE_THEM,
+    [TPI_MAX_DATAGRAM_FRAME_SIZE]           =  VINT_MAX_VALUE,
 };
 
 
@@ -206,6 +210,23 @@ lsquic_tp_has_pref_ipv6 (const struct transport_params *params)
 }
 
 
+#if LSQUIC_TEST_QUANTUM_READINESS
+#include <stdlib.h>
+size_t
+lsquic_tp_get_quantum_sz (void)
+{
+    const char *str;
+
+    str = getenv("LSQUIC_QUANTUM_SZ");
+    if (str)
+        return atoi(str);
+    else
+        /* https://github.com/quicwg/base-drafts/wiki/Quantum-Readiness-test */
+        return 1200;
+}
+#endif
+
+
 static size_t
 update_cid_bits (unsigned bits[][3], enum transport_param_id tpi,
                                                     const lsquic_cid_t *cid)
@@ -238,6 +259,9 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
     enum transport_param_id tpi;
     unsigned set;
     unsigned bits[LAST_TPI + 1][3 /* ID, length, value */];
+#if LSQUIC_TEST_QUANTUM_READINESS
+    const size_t quantum_sz = lsquic_tp_get_quantum_sz();
+#endif
 
     need = 0;
     set = params->tp_set;   /* Will turn bits off for default values */
@@ -275,14 +299,14 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
         }
     }
 #if LSQUIC_TEST_QUANTUM_READINESS
-    else if (set & (1 << TPI_QUANTUM_READINESS))
+    if (set & (1 << TPI_QUANTUM_READINESS))
     {
         bits[TPI_QUANTUM_READINESS][0]
                 = vint_val2bits(enum_2_tpi_val[TPI_QUANTUM_READINESS]);
-        bits[TPI_QUANTUM_READINESS][1] = vint_val2bits(QUANTUM_READY_SZ);
+        bits[TPI_QUANTUM_READINESS][1] = vint_val2bits(quantum_sz);
         need += (1 << bits[TPI_QUANTUM_READINESS][0])
              +  (1 << bits[TPI_QUANTUM_READINESS][1])
-             +  QUANTUM_READY_SZ;
+             +  quantum_sz;
     }
 #endif
 
@@ -375,6 +399,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             case TPI_LOSS_BITS:
             case TPI_MIN_ACK_DELAY:
             case TPI_TIMESTAMPS:
+            case TPI_MAX_DATAGRAM_FRAME_SIZE:
                 vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
                                                             1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
@@ -420,11 +445,11 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
             case TPI_QUANTUM_READINESS:
-                vint_write(p, QUANTUM_READY_SZ,
-                                            bits[tpi][1], 1 << bits[tpi][1]);
+                LSQ_DEBUG("encoded %zd bytes of quantum readiness", quantum_sz);
+                vint_write(p, quantum_sz, bits[tpi][1], 1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
-                memset(p, 'Q', QUANTUM_READY_SZ);
-                p += QUANTUM_READY_SZ;
+                memset(p, 'Q', quantum_sz);
+                p += quantum_sz;
                 break;
 #endif
             }
@@ -501,6 +526,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         case TPI_LOSS_BITS:
         case TPI_MIN_ACK_DELAY:
         case TPI_TIMESTAMPS:
+        case TPI_MAX_DATAGRAM_FRAME_SIZE:
             switch (len)
             {
             case 1:
@@ -734,6 +760,9 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
     enum transport_param_id tpi;
     unsigned set;
     unsigned bits[LAST_TPI + 1][3 /* ID, length, value */];
+#if LSQUIC_TEST_QUANTUM_READINESS
+    const size_t quantum_sz = lsquic_tp_get_quantum_sz();
+#endif
 
     need = 0;
     set = params->tp_set;   /* Will turn bits off for default values */
@@ -788,10 +817,10 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
     {
         bits[TPI_QUANTUM_READINESS][0]
                 = vint_val2bits(enum_2_tpi_val[TPI_QUANTUM_READINESS]);
-        bits[TPI_QUANTUM_READINESS][1] = vint_val2bits(QUANTUM_READY_SZ);
+        bits[TPI_QUANTUM_READINESS][1] = vint_val2bits(quantum_sz);
         need += (1 << bits[TPI_QUANTUM_READINESS][0])
              +  (1 << bits[TPI_QUANTUM_READINESS][1])
-             +  QUANTUM_READY_SZ;
+             +  quantum_sz;
     }
 #endif
 
@@ -884,6 +913,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
             case TPI_LOSS_BITS:
             case TPI_MIN_ACK_DELAY:
             case TPI_TIMESTAMPS:
+            case TPI_MAX_DATAGRAM_FRAME_SIZE:
                 vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
                                                             1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
@@ -931,11 +961,11 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
             case TPI_QUANTUM_READINESS:
-                vint_write(p, QUANTUM_READY_SZ,
-                                            bits[tpi][1], 1 << bits[tpi][1]);
+                LSQ_DEBUG("encoded %zd bytes of quantum readiness", quantum_sz);
+                vint_write(p, quantum_sz, bits[tpi][1], 1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
-                memset(p, 'Q', QUANTUM_READY_SZ);
-                p += QUANTUM_READY_SZ;
+                memset(p, 'Q', quantum_sz);
+                p += quantum_sz;
                 break;
 #endif
             }
@@ -1012,6 +1042,7 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         case TPI_LOSS_BITS:
         case TPI_MIN_ACK_DELAY:
         case TPI_TIMESTAMPS:
+        case TPI_MAX_DATAGRAM_FRAME_SIZE:
             switch (len)
             {
             case 1:

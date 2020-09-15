@@ -32,6 +32,14 @@ See bin/http_{client,server}.c
 This pair of programs is to demonstrate how to use HTTP features of QUIC.
 HTTP server is interoperable with proto-quic's quic_client.
 
+Duck client and server
+----------------------
+
+See bin/duck_{client,server}.c
+
+This pair of programs implement the siduck-00 protocol.  They provide an
+illustration of using the datagram API.
+
 Usage Examples
 --------------
 

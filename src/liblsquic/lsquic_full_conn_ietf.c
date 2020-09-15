@@ -42,6 +42,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_ver_neg.h"
@@ -132,9 +133,10 @@ enum ifull_conn_flags
     IFC_IGNORE_HSK    = 1 << 25,
     IFC_PROC_CRYPTO   = 1 << 26,
     IFC_MIGRA         = 1 << 27,
-    IFC_SPIN          = 1 << 28, /* Spin bits are enabled */
+    IFC_UNUSED28      = 1 << 28, /* Unused */
     IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
     IFC_TIMESTAMPS    = 1 << 30, /* Timestamps are enabled */
+    IFC_DATAGRAMS     = 1u<< 31, /* Datagrams are enabled */
 };
 
 
@@ -146,6 +148,7 @@ enum more_flags
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
     MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
+    MF_WANT_DATAGRAM_WRITE  = 1 << 6,
 };
 
 
@@ -305,6 +308,7 @@ struct conn_path
     struct network_path         cop_path;
     uint64_t                    cop_path_chals[8];  /* Arbitrary number */
     uint64_t                    cop_inc_chal;       /* Incoming challenge */
+    lsquic_packno_t             cop_max_packno;
     enum {
         /* Initialized covers cop_path.np_pack_size and cop_path.np_dcid */
         COP_INITIALIZED = 1 << 0,
@@ -316,9 +320,12 @@ struct conn_path
          * original path.
          */
         COP_GOT_NONPROB = 1 << 2,
+        /* Spin bit is enabled on this path. */
+        COP_SPIN_BIT    = 1 << 3,
     }                           cop_flags;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
+    unsigned char               cop_spin_bit;
     struct dplpmtud_state       cop_dplpmtud;
 };
 
@@ -336,6 +343,8 @@ struct ietf_full_conn
     struct lsquic_conn          ifc_conn;
     struct conn_cid_elem        ifc_cces[MAX_SCID];
     struct lsquic_rechist       ifc_rechist[N_PNS];
+    /* App PNS only, used to calculate was_missing: */
+    lsquic_packno_t             ifc_max_ackable_packno_in;
     struct lsquic_send_ctl      ifc_send_ctl;
     struct lsquic_stream       *ifc_stream_hcsi;    /* HTTP Control Stream Incoming */
     struct lsquic_stream       *ifc_stream_hcso;    /* HTTP Control Stream Outgoing */
@@ -359,7 +368,6 @@ struct ietf_full_conn
     struct conn_err             ifc_error;
     unsigned                    ifc_n_delayed_streams;
     unsigned                    ifc_n_cons_unretx;
-    int                         ifc_spin_bit;
     const struct lsquic_stream_if
                                *ifc_stream_if;
     void                       *ifc_stream_ctx;
@@ -448,6 +456,8 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     uint64_t                    ifc_last_max_data_off_sent;
+    unsigned short              ifc_min_dg_sz,
+                                ifc_max_dg_sz;
     struct inc_ack_stats        ifc_ias;
     struct ack_info             ifc_ack;
 };
@@ -458,6 +468,9 @@ struct ietf_full_conn
 
 #define DCES_END(conn_) ((conn_)->ifc_dces + (sizeof((conn_)->ifc_dces) \
                                             / sizeof((conn_)->ifc_dces[0])))
+
+#define NPATH2CPATH(npath_) ((struct conn_path *) \
+            ((char *) (npath_) - offsetof(struct conn_path, cop_path)))
 
 static const struct ver_neg server_ver_neg;
 
@@ -1098,20 +1111,16 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
  *  " connection IDs.
  */
 static void
-maybe_enable_spin (struct ietf_full_conn *conn)
+maybe_enable_spin (struct ietf_full_conn *conn, struct conn_path *cpath)
 {
     uint8_t nyb;
 
-    if (!conn->ifc_settings->es_spin)
+    if (conn->ifc_settings->es_spin
+                    && lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand))
     {
-        conn->ifc_flags &= ~IFC_SPIN;
-        LSQ_DEBUG("spin bit disabled via settings");
-    }
-    else if (lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand))
-    {
-        conn->ifc_flags |= IFC_SPIN;
-        conn->ifc_spin_bit = 0;
-        LSQ_DEBUG("spin bit enabled");
+        cpath->cop_flags |= COP_SPIN_BIT;
+        cpath->cop_spin_bit = 0;
+        LSQ_DEBUG("spin bit enabled on path %hhu", cpath->cop_path.np_path_id);
     }
     else
     {
@@ -1120,11 +1129,13 @@ maybe_enable_spin (struct ietf_full_conn *conn)
          * " independently for each connection ID.
          * (ibid.)
          */
-        conn->ifc_flags &= ~IFC_SPIN;
+        cpath->cop_flags &= ~COP_SPIN_BIT;
         nyb = lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand);
-        conn->ifc_spin_bit = nyb & 1;
-        LSQ_DEBUG("spin bit randomly disabled; random spin bit value is %d",
-            conn->ifc_spin_bit);
+        cpath->cop_spin_bit = nyb & 1;
+        LSQ_DEBUG("spin bit disabled %s on path %hhu; random spin bit "
+            "value is %hhu",
+            !conn->ifc_settings->es_spin ? "via settings" : "randomly",
+            cpath->cop_path.np_path_id, cpath->cop_spin_bit);
     }
 }
 
@@ -1186,6 +1197,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
     conn->ifc_max_ack_packno[PNS_HSK] = IQUIC_INVALID_PACKNO;
     conn->ifc_max_ack_packno[PNS_APP] = IQUIC_INVALID_PACKNO;
+    conn->ifc_max_ackable_packno_in = 0;
     conn->ifc_paths[0].cop_path.np_path_id = 0;
     conn->ifc_paths[1].cop_path.np_path_id = 1;
     conn->ifc_paths[2].cop_path.np_path_id = 2;
@@ -1194,7 +1206,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_ping_unretx_thresh = 20;
     conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
-    maybe_enable_spin(conn);
     if (conn->ifc_settings->es_noprogress_timeout)
         conn->ifc_mflags |= MF_NOPROG_TIMEOUT;
     return 0;
@@ -1403,6 +1414,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_paths[0].cop_path = imc->imc_path;
     conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED;
     conn->ifc_used_paths = 1 << 0;
+    maybe_enable_spin(conn, &conn->ifc_paths[0]);
     if (imc->imc_flags & IMC_ADDR_VALIDATED)
         lsquic_send_ctl_path_validated(&conn->ifc_send_ctl);
     else
@@ -2720,6 +2732,28 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
 }
 
 
+static int
+ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    int old;
+
+    if (conn->ifc_flags & IFC_DATAGRAMS)
+    {
+        old = !!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE);
+        if (is_want)
+            conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
+        else
+            conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+        LSQ_DEBUG("turn %s \"want datagram write\" flag",
+                                                    is_want ? "on" : "off");
+        return old;
+    }
+    else
+        return -1;
+}
+
+
 static void
 ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
@@ -2840,6 +2874,8 @@ ietf_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
      * Switch DCID.
      */
     *CUR_DCID(conn) = (*dces[0])->de_cid;
+    if (CUR_CPATH(conn)->cop_flags & COP_SPIN_BIT)
+        CUR_CPATH(conn)->cop_spin_bit = 0;
     LSQ_INFOC("switched DCID to %"CID_FMT, CID_BITS(CUR_DCID(conn)));
     /*
      * Mark old DCID for retirement.
@@ -3348,6 +3384,15 @@ handshake_ok (struct lsquic_conn *lconn)
         LSQ_DEBUG("timestamps enabled: will send TIMESTAMP frames");
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
+    if (conn->ifc_settings->es_datagrams
+            && (params->tp_set & (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)))
+    {
+        LSQ_DEBUG("datagrams enabled");
+        conn->ifc_flags |= IFC_DATAGRAMS;
+        conn->ifc_max_dg_sz =
+            params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] > USHRT_MAX
+            ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
+    }
 
     conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
@@ -3764,6 +3809,11 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
         if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
         {
             LSQ_DEBUG("tickable: send DATA_BLOCKED frame");
+            goto check_can_send;
+        }
+        if (conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
+        {
+            LSQ_DEBUG("tickable: want to write DATAGRAM frame");
             goto check_can_send;
         }
         if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE ?
@@ -4375,26 +4425,32 @@ generate_path_resp_3 (struct ietf_full_conn *conn, lsquic_time_t now)
 
 
 static struct lsquic_packet_out *
-ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
+                                                const struct to_coal *to_coal)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     struct lsquic_packet_out *packet_out;
+    const struct conn_path *cpath;
 
-    packet_out = lsquic_send_ctl_next_packet_to_send(&conn->ifc_send_ctl, size);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&conn->ifc_send_ctl,
+                                                                    to_coal);
     if (packet_out)
-        lsquic_packet_out_set_spin_bit(packet_out, conn->ifc_spin_bit);
+    {
+        cpath = NPATH2CPATH(packet_out->po_path);
+        lsquic_packet_out_set_spin_bit(packet_out, cpath->cop_spin_bit);
+    }
     return packet_out;
 }
 
 
 static struct lsquic_packet_out *
 ietf_full_conn_ci_next_packet_to_send_pre_hsk (struct lsquic_conn *lconn,
-                                                                    size_t size)
+                                                const struct to_coal *to_coal)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     struct lsquic_packet_out *packet_out;
 
-    packet_out = ietf_full_conn_ci_next_packet_to_send(lconn, size);
+    packet_out = ietf_full_conn_ci_next_packet_to_send(lconn, to_coal);
     if (packet_out)
         ++conn->ifc_u.cli.ifcli_packets_out;
     return packet_out;
@@ -4618,16 +4674,55 @@ maybe_retire_dcid (struct ietf_full_conn *conn, const lsquic_cid_t *dcid)
 }
 
 
+/* Return true if the two paths differ only in peer port */
+static int
+only_peer_port_changed (const struct network_path *old,
+                                                    struct network_path *new)
+{
+    const struct sockaddr *old_sa, *new_sa;
+
+    if (!lsquic_sockaddr_eq(NP_LOCAL_SA(old), NP_LOCAL_SA(new)))
+        return 0;
+
+    old_sa = NP_PEER_SA(old);
+    new_sa = NP_PEER_SA(new);
+    if (old_sa->sa_family == AF_INET)
+        return old_sa->sa_family == new_sa->sa_family
+            && ((struct sockaddr_in *) old_sa)->sin_addr.s_addr
+                            == ((struct sockaddr_in *) new_sa)->sin_addr.s_addr
+            && ((struct sockaddr_in *) old_sa)->sin_port
+                        != /* NE! */((struct sockaddr_in *) new_sa)->sin_port;
+    else
+        return old_sa->sa_family == new_sa->sa_family
+            && ((struct sockaddr_in6 *) old_sa)->sin6_port != /* NE! */
+                                ((struct sockaddr_in6 *) new_sa)->sin6_port
+            && 0 == memcmp(&((struct sockaddr_in6 *) old_sa)->sin6_addr,
+                        &((struct sockaddr_in6 *) new_sa)->sin6_addr,
+                        sizeof(((struct sockaddr_in6 *) new_sa)->sin6_addr));
+}
+
+
 static void
 switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
 {
     const unsigned char old_path_id = conn->ifc_cur_path_id;
+    const int keep_path_properties = conn->ifc_settings->es_optimistic_nat
+                    && only_peer_port_changed(CUR_NPATH(conn),
+                                    &conn->ifc_paths[path_id].cop_path);
 
     assert(conn->ifc_cur_path_id != path_id);
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "switched paths");
+    if (keep_path_properties)
+    {
+        conn->ifc_paths[path_id].cop_path.np_pack_size
+                                        = CUR_NPATH(conn)->np_pack_size;
+        LSQ_DEBUG("keep path properties: set MTU to %hu",
+                        conn->ifc_paths[path_id].cop_path.np_pack_size);
+    }
     lsquic_send_ctl_repath(&conn->ifc_send_ctl,
-        CUR_NPATH(conn), &conn->ifc_paths[path_id].cop_path);
+        CUR_NPATH(conn), &conn->ifc_paths[path_id].cop_path,
+        keep_path_properties);
     maybe_retire_dcid(conn, &CUR_NPATH(conn)->np_dcid);
     conn->ifc_cur_path_id = path_id;
     conn->ifc_pub.path = CUR_NPATH(conn);
@@ -5600,7 +5695,11 @@ insert_new_dcid (struct ietf_full_conn *conn, uint64_t seqno,
         memcpy((*dce)->de_srst, token, sizeof((*dce)->de_srst));
         (*dce)->de_flags |= DE_SRST;
         if (update_cur_dcid)
+        {
             *CUR_DCID(conn) = *cid;
+            if (CUR_CPATH(conn)->cop_flags & COP_SPIN_BIT)
+                CUR_CPATH(conn)->cop_spin_bit = 0;
+        }
     }
     else
         LSQ_WARN("cannot allocate dce to insert DCID seqno %"PRIu64, seqno);
@@ -5742,7 +5841,7 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     {
         if (LSQUIC_CIDS_EQ(&cce->cce_cid, &packet_in->pi_dcid))
         {
-            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "cannot retire CID "
+            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "cannot retire CID "
                 "seqno=%"PRIu64", for it is used as DCID in the packet", seqno);
             return 0;
         }
@@ -6012,6 +6111,35 @@ process_timestamp_frame (struct ietf_full_conn *conn,
 }
 
 
+static unsigned
+process_datagram_frame (struct ietf_full_conn *conn,
+    struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    const void *data;
+    size_t data_sz;
+    int parsed_len;
+
+    if (!(conn->ifc_flags & IFC_DATAGRAMS))
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Received unexpected DATAGRAM frame (not negotiated)");
+        return 0;
+    }
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_datagram_frame(p, len,
+                                                            &data, &data_sz);
+    if (parsed_len < 0)
+        return 0;
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "%zd-byte DATAGRAM", data_sz);
+    LSQ_DEBUG("%zd-byte DATAGRAM", data_sz);
+
+    conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
+
+    return parsed_len;
+}
+
+
 typedef unsigned (*process_frame_f)(
     struct ietf_full_conn *, struct lsquic_packet_in *,
     const unsigned char *p, size_t);
@@ -6041,6 +6169,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_HANDSHAKE_DONE]     =  process_handshake_done_frame,
     [QUIC_FRAME_ACK_FREQUENCY]      =  process_ack_frequency_frame,
     [QUIC_FRAME_TIMESTAMP]          =  process_timestamp_frame,
+    [QUIC_FRAME_DATAGRAM]           =  process_datagram_frame,
 };
 
 
@@ -6254,9 +6383,22 @@ force_queueing_ack_app (struct ietf_full_conn *conn)
 }
 
 
+enum was_missing {
+    /* Note that particular enum values matter for speed */
+    WM_NONE    = 0,
+    WM_MAX_GAP = 1, /* Newly arrived ackable packet introduced a gap in incoming
+                     * packet number sequence.
+                     */
+    WM_SMALLER = 2, /* Newly arrived ackable packet is smaller than previously
+                     * seen maximum number.
+                     */
+
+};
+
+
 static void
 try_queueing_ack_app (struct ietf_full_conn *conn,
-                                int was_missing, int ecn, lsquic_time_t now)
+                    enum was_missing was_missing, int ecn, lsquic_time_t now)
 {
     lsquic_time_t srtt, ack_timeout;
 
@@ -6268,8 +6410,10 @@ try_queueing_ack_app (struct ietf_full_conn *conn,
  */
             || (ecn == ECN_CE
                     && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
+            || (was_missing == WM_MAX_GAP)
             || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
-                    && was_missing && conn->ifc_n_slack_akbl[PNS_APP] > 0)
+                    && was_missing == WM_SMALLER
+                    && conn->ifc_n_slack_akbl[PNS_APP] > 0)
             || many_in_and_will_write(conn))
     {
         lsquic_alarmset_unset(&conn->ifc_alset, AL_ACK_APP);
@@ -6279,7 +6423,7 @@ try_queueing_ack_app (struct ietf_full_conn *conn,
             "was_missing: %d",
             lsquic_pns2str[PNS_APP], conn->ifc_n_slack_akbl[PNS_APP],
             conn->ifc_n_slack_all,
-            !!(conn->ifc_flags & IFC_ACK_HAD_MISS), was_missing);
+            !!(conn->ifc_flags & IFC_ACK_HAD_MISS), (int) was_missing);
     }
     else if (conn->ifc_n_slack_akbl[PNS_APP] > 0)
     {
@@ -6307,17 +6451,6 @@ try_queueing_ack_init_or_hsk (struct ietf_full_conn *conn,
         LSQ_DEBUG("%s ACK queued: ackable: %u",
             lsquic_pns2str[pns], conn->ifc_n_slack_akbl[pns]);
     }
-}
-
-
-static void
-try_queueing_ack (struct ietf_full_conn *conn, enum packnum_space pns,
-                                int was_missing, int ecn, lsquic_time_t now)
-{
-    if (PNS_APP == pns)
-        try_queueing_ack_app(conn, was_missing, ecn, now);
-    else
-        try_queueing_ack_init_or_hsk(conn, pns);
 }
 
 
@@ -6437,6 +6570,8 @@ process_retry_packet (struct ietf_full_conn *conn,
         return -1;
 
     *CUR_DCID(conn) = scid;
+    if (CUR_CPATH(conn)->cop_flags & COP_SPIN_BIT)
+        CUR_CPATH(conn)->cop_spin_bit = 0;
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_INIT);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_HSK);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_APP);
@@ -6509,9 +6644,6 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
     LSQ_DEBUGC("%s: set SCID to %"CID_FMT, __func__, CID_BITS(CN_SCID(lconn)));
     LOG_SCIDS(conn);
 
-    /* Reset spin bit, see [draft-ietf-quic-transport-20] Section 17.3.1 */
-    maybe_enable_spin(conn);
-
     return 0;
 }
 
@@ -6569,14 +6701,32 @@ record_dcid (struct ietf_full_conn *conn,
 
 
 static int
+holes_after (struct lsquic_rechist *rechist, lsquic_packno_t packno)
+{
+    const struct lsquic_packno_range *first_range;
+
+    first_range = lsquic_rechist_peek(rechist);
+    /* If it's not in the very first range, there is obviously a gap
+     * between it and the maximum packet number.  If the packet number
+     * in question preceeds the cutoff, we assume that there are no
+     * holes (as we simply have no information).
+     */
+    return first_range
+        && packno < first_range->low
+        && packno > lsquic_rechist_cutoff(rechist);
+}
+
+
+static int
 process_regular_packet (struct ietf_full_conn *conn,
                                         struct lsquic_packet_in *packet_in)
 {
+    struct conn_path *cpath;
     enum packnum_space pns;
     enum received_st st;
     enum dec_packin dec_packin;
-    enum quic_ft_bit frame_types;
-    int was_missing, packno_increased;
+    enum was_missing was_missing;
+    unsigned n_rechist_packets;
     unsigned char saved_path_id;
 
     if (HETY_RETRY == packet_in->pi_header_type)
@@ -6679,8 +6829,7 @@ process_regular_packet (struct ietf_full_conn *conn,
 
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
-    packno_increased = packet_in->pi_packno
-                > lsquic_rechist_largest_packno(&conn->ifc_rechist[pns]);
+    n_rechist_packets = lsquic_rechist_n_packets(&conn->ifc_rechist[pns]);
     st = lsquic_rechist_received(&conn->ifc_rechist[pns], packet_in->pi_packno,
                                                     packet_in->pi_received);
     switch (st) {
@@ -6704,31 +6853,81 @@ process_regular_packet (struct ietf_full_conn *conn,
         if (lsquic_packet_in_non_probing(packet_in)
                         && packet_in->pi_packno > conn->ifc_max_non_probing)
             conn->ifc_max_non_probing = packet_in->pi_packno;
-        if (0 == (conn->ifc_flags & (IFC_ACK_QUED_INIT << pns)))
+        /* From [draft-ietf-quic-transport-30] Section 13.2.1:
+         *
+ " In order to assist loss detection at the sender, an endpoint SHOULD
+ " generate and send an ACK frame without delay when it receives an ack-
+ " eliciting packet either:
+ "
+ " *  when the received packet has a packet number less than another
+ "    ack-eliciting packet that has been received, or
+ "
+ " *  when the packet has a packet number larger than the highest-
+ "    numbered ack-eliciting packet that has been received and there are
+ "    missing packets between that packet and this packet.
+        *
+        */
+        if (packet_in->pi_frame_types & IQUIC_FRAME_ACKABLE_MASK)
         {
-            frame_types = packet_in->pi_frame_types;
-            if (frame_types & IQUIC_FRAME_ACKABLE_MASK)
+            if (PNS_APP == pns /* was_missing is only used in PNS_APP */)
             {
-                was_missing = packet_in->pi_packno !=
-                        lsquic_rechist_largest_packno(&conn->ifc_rechist[pns]);
-                ++conn->ifc_n_slack_akbl[pns];
+                if (packet_in->pi_packno > conn->ifc_max_ackable_packno_in)
+                {
+                    was_missing = (enum was_missing)    /* WM_MAX_GAP is 1 */
+                        n_rechist_packets /* Don't count very first packno */
+                        && conn->ifc_max_ackable_packno_in + 1
+                                                    < packet_in->pi_packno
+                        && holes_after(&conn->ifc_rechist[PNS_APP],
+                            conn->ifc_max_ackable_packno_in);
+                    conn->ifc_max_ackable_packno_in = packet_in->pi_packno;
+                }
+                else
+                    was_missing = (enum was_missing)    /* WM_SMALLER is 2 */
+                    /* The check is necessary (rather setting was_missing to
+                     * WM_SMALLER) because we cannot guarantee that peer does
+                     * not have bugs.
+                     */
+                        ((packet_in->pi_packno
+                                    < conn->ifc_max_ackable_packno_in) << 1);
             }
             else
-                was_missing = 0;
-            conn->ifc_n_slack_all += PNS_APP == pns;
-            try_queueing_ack(conn, pns, was_missing,
+                was_missing = WM_NONE;
+            ++conn->ifc_n_slack_akbl[pns];
+        }
+        else
+            was_missing = WM_NONE;
+        conn->ifc_n_slack_all += PNS_APP == pns;
+        if (0 == (conn->ifc_flags & (IFC_ACK_QUED_INIT << pns)))
+        {
+            if (PNS_APP == pns)
+                try_queueing_ack_app(conn, was_missing,
                     lsquic_packet_in_ecn(packet_in), packet_in->pi_received);
+            else
+                try_queueing_ack_init_or_hsk(conn, pns);
         }
         conn->ifc_incoming_ecn <<= 1;
         conn->ifc_incoming_ecn |=
                             lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
         ++conn->ifc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
-        if (packno_increased && PNS_APP == pns && (conn->ifc_flags & IFC_SPIN))
+        if (PNS_APP == pns
+                && (cpath = &conn->ifc_paths[packet_in->pi_path_id],
+                                            cpath->cop_flags & COP_SPIN_BIT)
+                /* [draft-ietf-quic-transport-30] Section 17.3.1 talks about
+                 * how spin bit value is set.
+                 */
+                && (packet_in->pi_packno > cpath->cop_max_packno
+                    /* Zero means "unset", in which case any incoming packet
+                     * number will do.  On receipt of second packet numbered
+                     * zero, the rechist module will dup it and this code path
+                     * won't hit.
+                     */
+                    || cpath->cop_max_packno == 0))
         {
+            cpath->cop_max_packno = packet_in->pi_packno;
             if (conn->ifc_flags & IFC_SERVER)
-                conn->ifc_spin_bit = lsquic_packet_in_spin_bit(packet_in);
+                cpath->cop_spin_bit = lsquic_packet_in_spin_bit(packet_in);
             else
-                conn->ifc_spin_bit = !lsquic_packet_in_spin_bit(packet_in);
+                cpath->cop_spin_bit = !lsquic_packet_in_spin_bit(packet_in);
         }
         conn->ifc_pub.bytes_in += packet_in->pi_data_sz;
         if ((conn->ifc_mflags & MF_VALIDATE_PATH) &&
@@ -7290,6 +7489,88 @@ ietf_full_conn_ci_retx_timeout (struct lsquic_conn *lconn)
 }
 
 
+static size_t
+ietf_full_conn_ci_get_min_datagram_size (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    return (size_t) conn->ifc_min_dg_sz;
+}
+
+
+static int
+ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
+                                                            size_t new_size)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    const struct transport_params *const params =
+        lconn->cn_esf.i->esfi_get_peer_transport_params(lconn->cn_enc_session);
+
+    if (!(conn->ifc_flags & IFC_DATAGRAMS))
+    {
+        LSQ_WARN("datagrams are not enabled: cannot set minimum size");
+        return -1;
+    }
+
+    if (new_size > USHRT_MAX)
+    {
+        LSQ_DEBUG("min datagram size cannot be larger than %hu", USHRT_MAX);
+        return -1;
+    }
+
+    if (new_size > params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE])
+    {
+        LSQ_DEBUG("maximum datagram frame size is %"PRIu64", cannot change it "
+            "to %zd", params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE],
+            new_size);
+        return -1;
+    }
+
+    conn->ifc_min_dg_sz = new_size;
+    LSQ_DEBUG("set minimum datagram size to %zd bytes", new_size);
+    return 0;
+}
+
+
+/* Return true if datagram was written, false otherwise */
+static int
+write_datagram (struct ietf_full_conn *conn)
+{
+    struct lsquic_packet_out *packet_out;
+    size_t need;
+    int w;
+
+    need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(conn->ifc_min_dg_sz);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+        return 0;
+
+    w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+            conn->ifc_max_dg_sz,
+            conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
+    if (w < 0)
+    {
+        LSQ_DEBUG("could not generate DATAGRAM frame");
+        return 0;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                        QUIC_FRAME_DATAGRAM, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding DATAGRAME frame to packet failed: %d", errno);
+        return 0;
+    }
+    packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    /* XXX The DATAGRAM frame should really be a regen.  Do it when we
+     * no longer require these frame types to be at the beginning of the
+     * packet.
+     */
+
+    return 1;
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -7453,6 +7734,10 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
     if (!write_is_possible(conn))
         goto end_write;
+
+    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
+        if (!write_is_possible(conn))
+            goto end_write;
 
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
     {
@@ -7850,8 +8135,11 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
     {
         record_to_path(conn, first_unused, peer_ctx, local_sa, peer_sa);
         if (0 == conn->ifc_used_paths && !(conn->ifc_flags & IFC_SERVER))
+        {
             /* First path is considered valid immediately */
             first_unused->cop_flags |= COP_VALIDATED;
+            maybe_enable_spin(conn, first_unused);
+        }
         LSQ_DEBUG("record new path ID %d",
                                     (int) (first_unused - conn->ifc_paths));
         conn->ifc_used_paths |= 1 << (first_unused - conn->ifc_paths);
@@ -7905,6 +8193,7 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_get_ctx              =  ietf_full_conn_ci_get_ctx, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
     .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
+    .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
     .ci_get_path             =  ietf_full_conn_ci_get_path, \
     .ci_going_away           =  ietf_full_conn_ci_going_away, \
     .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
@@ -7922,10 +8211,12 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_report_live          =  ietf_full_conn_ci_report_live, \
     .ci_retx_timeout         =  ietf_full_conn_ci_retx_timeout, \
     .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
+    .ci_set_min_datagram_size=  ietf_full_conn_ci_set_min_datagram_size, \
     .ci_status               =  ietf_full_conn_ci_status, \
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
     .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
 
 static const struct conn_iface ietf_full_conn_iface = {
@@ -8110,6 +8401,14 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64
                                         "; ignore it", setting_id, value);
+        break;
+    case 2: /* HTTP/2 SETTINGS_ENABLE_PUSH */
+    case 3: /* HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS */
+    case 4: /* HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE */
+    case 5: /* HTTP/2 SETTINGS_MAX_FRAME_SIZE */
+        /* [draft-ietf-quic-http-30] Section 7.2.4.1 */
+        ABORT_QUIETLY(1, HEC_SETTINGS_ERROR, "unexpected HTTP/2 setting "
+            "%"PRIu64, setting_id);
         break;
     }
 }
@@ -8333,12 +8632,14 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             callbacks = &hcsi_callbacks_server_28;
             break;
         case (0 << 8) | LSQVER_ID29:
+        case (0 << 8) | LSQVER_ID30:
             callbacks = &hcsi_callbacks_client_29;
             break;
         default:
             assert(0);
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
+        case (1 << 8) | LSQVER_ID30:
             callbacks = &hcsi_callbacks_server_29;
             break;
     }

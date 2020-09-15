@@ -30,6 +30,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_util.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -63,7 +64,7 @@
 #define MIN_RTO_DELAY           1000000      /* Microseconds */
 #define N_NACKS_BEFORE_RETX     3
 
-#define CGP(ctl) ((struct cong_ctl *) &(ctl)->sc_cong_u)
+#define CGP(ctl) ((struct cong_ctl *) (ctl)->sc_cong_ctl)
 
 #define packet_out_total_sz(p) \
                 lsquic_packet_out_total_sz(ctl->sc_conn_pub->lconn, p)
@@ -323,7 +324,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
           struct lsquic_engine_public *enpub, const struct ver_neg *ver_neg,
           struct lsquic_conn_public *conn_pub, enum send_ctl_flags flags)
 {
-    unsigned i, algo;
+    unsigned i;
     memset(ctl, 0, sizeof(*ctl));
     TAILQ_INIT(&ctl->sc_scheduled_packets);
     TAILQ_INIT(&ctl->sc_unacked_packets[PNS_INIT]);
@@ -351,14 +352,22 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     lsquic_alarmset_init_alarm(alset, AL_RETX_HSK, retx_alarm_rings, ctl);
     lsquic_alarmset_init_alarm(alset, AL_RETX_APP, retx_alarm_rings, ctl);
     lsquic_senhist_init(&ctl->sc_senhist, ctl->sc_flags & SC_IETF);
-    if (0 == enpub->enp_settings.es_cc_algo)
-        algo = LSQUIC_DF_CC_ALGO;
-    else
-        algo = enpub->enp_settings.es_cc_algo;
-    if (algo == 2)
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-    else
+    switch (enpub->enp_settings.es_cc_algo)
+    {
+    case 1:
         ctl->sc_ci = &lsquic_cong_cubic_if;
+        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
+        break;
+    case 2:
+        ctl->sc_ci = &lsquic_cong_bbr_if;
+        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
+        break;
+    case 3:
+    default:
+        ctl->sc_ci = &lsquic_cong_adaptive_if;
+        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
+        break;
+    }
     ctl->sc_ci->cci_init(CGP(ctl), conn_pub, ctl->sc_retx_frames);
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_init(&ctl->sc_pacer, conn_pub->lconn,
@@ -683,6 +692,33 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
 
 
 static void
+send_ctl_select_cc (struct lsquic_send_ctl *ctl)
+{
+    lsquic_time_t srtt;
+
+    srtt = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
+
+    if (srtt <= ctl->sc_enpub->enp_settings.es_cc_rtt_thresh)
+    {
+        LSQ_INFO("srtt is %"PRIu64" usec, which is smaller than or equal to "
+            "the threshold of %u usec: select Cubic congestion controller",
+            srtt, ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
+        ctl->sc_ci = &lsquic_cong_cubic_if;
+        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
+        ctl->sc_flags |= SC_CLEANUP_BBR;
+    }
+    else
+    {
+        LSQ_INFO("srtt is %"PRIu64" usec, which is greater than the threshold "
+            "of %u usec: select BBRv1 congestion controller", srtt,
+            ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
+        ctl->sc_ci = &lsquic_cong_bbr_if;
+        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
+    }
+}
+
+
+static void
 take_rtt_sample (lsquic_send_ctl_t *ctl,
                  lsquic_time_t now, lsquic_time_t lack_delta)
 {
@@ -696,6 +732,8 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
         LSQ_DEBUG("packno %"PRIu64"; rtt: %"PRIu64"; delta: %"PRIu64"; "
             "new srtt: %"PRIu64, packno, measured_rtt, lack_delta,
             lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats));
+        if (ctl->sc_ci == &lsquic_cong_adaptive_if)
+            send_ctl_select_cc(ctl);
     }
 }
 
@@ -1423,6 +1461,11 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_cleanup(&ctl->sc_pacer);
     ctl->sc_ci->cci_cleanup(CGP(ctl));
+    if (ctl->sc_flags & SC_CLEANUP_BBR)
+    {
+        assert(ctl->sc_ci == &lsquic_cong_cubic_if);
+        lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
+    }
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
         ctl->sc_stats.n_total_sent, ctl->sc_stats.n_resent,
@@ -1801,9 +1844,11 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
 
 
 lsquic_packet_out_t *
-lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
+lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+                                                const struct to_coal *to_coal)
 {
     lsquic_packet_out_t *packet_out;
+    size_t size;
     int dec_limit;
 
   get_packet:
@@ -1843,14 +1888,24 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl, size_t size)
         }
     }
 
-    if (UNLIKELY(size))
+    if (UNLIKELY(to_coal != NULL))
     {
-        if (packet_out_total_sz(packet_out) + size > SC_PACK_SIZE(ctl))
+        /* From [draft-ietf-quic-transport-30], Section-12.2:
+         " Senders MUST NOT coalesce QUIC packets with different connection
+         " IDs into a single UDP datagram.
+         */
+        if (packet_out_total_sz(packet_out) + to_coal->prev_sz_sum
+                                                        > SC_PACK_SIZE(ctl)
+            || !lsquic_packet_out_equal_dcids(to_coal->prev_packet, packet_out))
             return NULL;
         LSQ_DEBUG("packet %"PRIu64" (%zu bytes) will be tacked on to "
             "previous packet(s) (%zu bytes) (coalescing)",
-            packet_out->po_packno, packet_out_total_sz(packet_out), size);
+            packet_out->po_packno, packet_out_total_sz(packet_out),
+            to_coal->prev_sz_sum);
+        size = to_coal->prev_sz_sum;
     }
+    else
+        size = 0;
     send_ctl_sched_remove(ctl, packet_out);
 
     if (dec_limit)
@@ -3336,8 +3391,9 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
 
 
 void
-lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl, struct network_path *old,
-                                                    struct network_path *new)
+lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
+    const struct network_path *old, const struct network_path *new,
+    int keep_path_properties)
 {
     struct lsquic_packet_out *packet_out;
     unsigned count;
@@ -3367,11 +3423,15 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl, struct network_path *old,
 
     LSQ_DEBUG("repathed %u packet%.*s", count, count != 1, "s");
 
-    lsquic_send_ctl_resize(ctl);
-
-    memset(&ctl->sc_conn_pub->rtt_stats, 0,
-                                    sizeof(ctl->sc_conn_pub->rtt_stats));
-    ctl->sc_ci->cci_reinit(CGP(ctl));
+    if (keep_path_properties)
+        LSQ_DEBUG("keeping path properties: MTU, RTT, and CC state");
+    else
+    {
+        lsquic_send_ctl_resize(ctl);
+        memset(&ctl->sc_conn_pub->rtt_stats, 0,
+                                        sizeof(ctl->sc_conn_pub->rtt_stats));
+        ctl->sc_ci->cci_reinit(CGP(ctl));
+    }
 }
 
 

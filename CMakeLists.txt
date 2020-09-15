@@ -265,6 +265,8 @@ add_executable(md5_client bin/md5_client.c bin/prog.c bin/test_common.c bin/test
 ENDIF()
 add_executable(echo_server bin/echo_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
 add_executable(echo_client bin/echo_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+add_executable(duck_server bin/duck_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
+add_executable(duck_client bin/duck_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
 
 
 IF (NOT MSVC)
@@ -300,6 +302,8 @@ TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
 ENDIF()
 TARGET_LINK_LIBRARIES(echo_server ${LIBS})
 TARGET_LINK_LIBRARIES(echo_client ${LIBS})
+TARGET_LINK_LIBRARIES(duck_server ${LIBS})
+TARGET_LINK_LIBRARIES(duck_client ${LIBS})
 
 add_subdirectory(bin)
 ENDIF() # LSQUIC_BIN

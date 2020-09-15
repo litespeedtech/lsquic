@@ -267,3 +267,33 @@ lsquic_conn_log_cid (const struct lsquic_conn *lconn)
         return lconn->cn_if->ci_get_log_cid(lconn);
     return CN_SCID(lconn);
 }
+
+
+int
+lsquic_conn_want_datagram_write (struct lsquic_conn *lconn, int is_want)
+{
+    if (lconn->cn_if && lconn->cn_if->ci_want_datagram_write)
+        return lconn->cn_if->ci_want_datagram_write(lconn, is_want);
+    else
+        return -1;
+}
+
+
+int
+lsquic_conn_set_min_datagram_size (struct lsquic_conn *lconn, size_t sz)
+{
+    if (lconn->cn_if && lconn->cn_if->ci_set_min_datagram_size)
+        return lconn->cn_if->ci_set_min_datagram_size(lconn, sz);
+    else
+        return -1;
+}
+
+
+size_t
+lsquic_conn_get_min_datagram_size (struct lsquic_conn *lconn)
+{
+    if (lconn->cn_if && lconn->cn_if->ci_get_min_datagram_size)
+        return lconn->cn_if->ci_get_min_datagram_size(lconn);
+    else
+        return 0;
+}

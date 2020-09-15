@@ -24,5 +24,7 @@ lookup_cert (void *cert_lu_ctx, const struct sockaddr * /*unused */,
 void
 delete_certs (struct lsquic_hash *);
 
+int
+add_alpn (const char *alpn);
 
 #endif

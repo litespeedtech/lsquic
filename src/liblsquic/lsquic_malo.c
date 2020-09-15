@@ -182,6 +182,7 @@ lsquic_malo_create (size_t obj_size)
     {
         TAILQ_INIT(&malo->elems);
         malo->obj_size = obj_size;
+        malo->next_iter_elem = NULL;
         return malo;
     }
     else

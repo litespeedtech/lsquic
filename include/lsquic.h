@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 19
-#define LSQUIC_PATCH_VERSION 10
+#define LSQUIC_MINOR_VERSION 20
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -92,6 +92,11 @@ enum lsquic_version
     LSQVER_ID29,
 
     /**
+     * IETF QUIC Draft-30
+     */
+    LSQVER_ID30,
+
+    /**
      * Special version to trigger version negotiation.
      * [draft-ietf-quic-transport-11], Section 3.
      */
@@ -101,7 +106,8 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-27, Draft-28, and Draft-29.
+ * We currently support versions 43, 46, 50, Draft-27, Draft-28, Draft-29,
+ * and Draft-30.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -114,15 +120,15 @@ enum lsquic_version
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
                             (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
 
-#define LSQUIC_DEPRECATED_VERSIONS 0
+#define LSQUIC_DEPRECATED_VERSIONS (1 << LSQVER_ID28)
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
 #define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
-                              | (1 << LSQVER_ID29) | (1 << LSQVER_VERNEG))
+              | (1 << LSQVER_ID29) | (1 << LSQVER_ID30) | (1 << LSQVER_VERNEG))
 
 #define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
-                              | (1 << LSQVER_ID29) | (1 << LSQVER_VERNEG))
+              | (1 << LSQVER_ID29) | (1 << LSQVER_ID30) | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {
@@ -179,6 +185,13 @@ struct lsquic_stream_if {
     void (*on_read)     (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
     void (*on_write)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
     void (*on_close)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
+    /* Called when datagram is ready to be written */
+    ssize_t (*on_dg_write)(lsquic_conn_t *c, void *, size_t);
+    /* Called when datagram is read from a packet.  This callback is required
+     * when es_datagrams is true.  Take care to process it quickly, as this
+     * is called during lsquic_engine_packet_in().
+     */
+    void (*on_datagram)(lsquic_conn_t *, const void *buf, size_t);
     /* This callback in only called in client mode */
     /**
      * When handshake is completed, this optional callback is called.
@@ -338,8 +351,17 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn on timestamp extension by default */
 #define LSQUIC_DF_TIMESTAMPS 1
 
-/* 1: Cubic; 2: BBR */
-#define LSQUIC_DF_CC_ALGO 1
+/* Use Adaptive CC by default */
+#define LSQUIC_DF_CC_ALGO 3
+
+/* Default value of the CC RTT threshold is 1.5 ms */
+#define LSQUIC_DF_CC_RTT_THRESH 1500
+
+/** Turn off datagram extension by default */
+#define LSQUIC_DF_DATAGRAMS 0
+
+/** Assume optimistic NAT by default. */
+#define LSQUIC_DF_OPTIMISTIC_NAT 1
 
 /** By default, incoming packet size is not limited. */
 #define LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX 0
@@ -565,6 +587,8 @@ struct lsquic_engine_settings {
      * @ref lsquic_stream_wantread() or @ref lsquic_stream_wantwrite()
      * or shuts down the stream.
      *
+     * This also applies to the on_dg_write() callback.
+     *
      * The default value is @ref LSQUIC_DF_RW_ONCE.
      */
     int             es_rw_once;
@@ -605,9 +629,22 @@ struct lsquic_engine_settings {
      *
      *  0:  Use default (@ref LSQUIC_DF_CC_ALGO)
      *  1:  Cubic
-     *  2:  BBR
+     *  2:  BBRv1
+     *  3:  Adaptive (Cubic or BBRv1)
      */
     unsigned        es_cc_algo;
+
+    /**
+     * Congestion controller RTT threshold in microseconds.
+     *
+     * Adaptive congestion control uses BBRv1 until RTT is determined.  At
+     * that point a permanent choice of congestion controller is made. If
+     * RTT is smaller than or equal to es_cc_rtt_thresh, congestion
+     * controller is switched to Cubic; otherwise, BBRv1 is picked.
+     *
+     * The default value is @ref LSQUIC_DF_CC_RTT_THRESH.
+     */
+    unsigned        es_cc_rtt_thresh;
 
     /**
      * No progress timeout.
@@ -878,6 +915,22 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MTU_PROBE_TIMER.
      */
     unsigned        es_mtu_probe_timer;
+
+    /**
+     * Enable datagram extension.  Allowed values are 0 and 1.
+     *
+     * Default value is @ref LSQUIC_DF_DATAGRAMS
+     */
+    int             es_datagrams;
+
+    /**
+     * If set to true, changes in peer port are assumed to be due to a
+     * benign NAT rebinding and path characteristics -- MTU, RTT, and
+     * CC state -- are not reset.
+     *
+     * Default value is @ref LSQUIC_DF_OPTIMISTIC_NAT.
+     */
+    int             es_optimistic_nat;
 };
 
 /* Initialize `settings' to default values */
@@ -1586,6 +1639,20 @@ lsquic_conn_get_engine (lsquic_conn_t *c);
 int
 lsquic_conn_get_sockaddr(lsquic_conn_t *c,
                 const struct sockaddr **local, const struct sockaddr **peer);
+
+/* Returns previous value */
+int
+lsquic_conn_want_datagram_write (lsquic_conn_t *, int is_want);
+
+/* Get minimum datagram size.  By default, this value is zero. */
+size_t
+lsquic_conn_get_min_datagram_size (lsquic_conn_t *);
+
+/* Set minimum datagram size.  This is the minumum value of the buffer passed
+ * to the on_dg_write() callback.
+ */
+int
+lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
 
 struct lsquic_logger_if {
     int     (*log_buf)(void *logger_ctx, const char *buf, size_t len);

@@ -36,6 +36,7 @@ enum quic_frame_type
     QUIC_FRAME_HANDSHAKE_DONE,      /* I */
     QUIC_FRAME_ACK_FREQUENCY,       /* I */
     QUIC_FRAME_TIMESTAMP,           /* I */
+    QUIC_FRAME_DATAGRAM,            /* I */
     N_QUIC_FRAMES
 };
 
@@ -66,6 +67,7 @@ enum quic_ft_bit {
     QUIC_FTBIT_HANDSHAKE_DONE    = 1 << QUIC_FRAME_HANDSHAKE_DONE,
     QUIC_FTBIT_ACK_FREQUENCY     = 1 << QUIC_FRAME_ACK_FREQUENCY,
     QUIC_FTBIT_TIMESTAMP         = 1 << QUIC_FRAME_TIMESTAMP,
+    QUIC_FTBIT_DATAGRAM          = 1 << QUIC_FRAME_DATAGRAM,
 };
 
 static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
@@ -95,6 +97,7 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     [QUIC_FRAME_HANDSHAKE_DONE]    =  "QUIC_FRAME_HANDSHAKE_DONE",
     [QUIC_FRAME_ACK_FREQUENCY]     =  "QUIC_FRAME_ACK_FREQUENCY",
     [QUIC_FRAME_TIMESTAMP]         =  "QUIC_FRAME_TIMESTAMP",
+    [QUIC_FRAME_DATAGRAM]          =  "QUIC_FRAME_DATAGRAM",
 };
 
 #define QUIC_FRAME_PRELEN   (sizeof("QUIC_FRAME_"))
@@ -132,6 +135,7 @@ static const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     QUIC_FRAME_SLEN(QUIC_FRAME_HANDSHAKE_DONE)    + 1 + \
     QUIC_FRAME_SLEN(QUIC_FRAME_ACK_FREQUENCY)     + 1 + \
     QUIC_FRAME_SLEN(QUIC_FRAME_TIMESTAMP)         + 1 + \
+    QUIC_FRAME_SLEN(QUIC_FRAME_DATAGRAM)          + 1 + \
     0
 
 

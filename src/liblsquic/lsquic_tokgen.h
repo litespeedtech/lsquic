@@ -7,8 +7,6 @@ struct sockaddr;
 struct lsquic_packet_in;
 struct lsquic_cid;
 
-enum token_type { TOKEN_RETRY, TOKEN_RESUME, N_TOKEN_TYPES, };
-
 struct token_generator;
 
 struct token_generator *

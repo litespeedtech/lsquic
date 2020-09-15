@@ -61,6 +61,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_headers.h"
 #include "lsquic_ev_log.h"
@@ -504,9 +505,16 @@ lsquic_stream_new_crypto (enum enc_level enc_level,
 
     stream->sm_bflags |= SMBF_CRYPTO|SMBF_IETF;
     stream->sm_enc_level = enc_level;
-    /* TODO: why have limit in crypto stream?  Set it to UINT64_MAX? */
+    /* We allow buffering of up to 16 KB of CRYPTO data (I guess we could
+     * make this configurable?).  The window is opened (without sending
+     * MAX_STREAM_DATA) as CRYPTO data is consumed.  If too much comes in
+     * at a time, we abort with TEC_CRYPTO_BUFFER_EXCEEDED.
+     */
     lsquic_sfcw_init(&stream->fc, 16 * 1024, NULL, conn_pub, stream_id);
-    stream->max_send_off = 16 * 1024;
+    /* Don't limit ourselves from sending CRYPTO data.  We assume that
+     * the underlying crypto library behaves in a sane manner.
+     */
+    stream->max_send_off = UINT64_MAX;
     LSQ_DEBUG("created crypto stream");
     SM_HISTORY_APPEND(stream, SHE_CREATED);
     stream->sm_frame_header_sz = stream_crypto_frame_header_sz;
@@ -970,8 +978,14 @@ lsquic_stream_update_sfcw (lsquic_stream_t *stream, uint64_t max_off)
         if (stream->sm_bflags & SMBF_IETF)
         {
             lconn = stream->conn_pub->lconn;
-            lconn->cn_if->ci_abort_error(lconn, 0, TEC_FLOW_CONTROL_ERROR,
-                "flow control violation on stream %"PRIu64, stream->id);
+            if (lsquic_stream_is_crypto(stream))
+                lconn->cn_if->ci_abort_error(lconn, 0,
+                    TEC_CRYPTO_BUFFER_EXCEEDED,
+                    "crypto buffer exceeded on in crypto level %"PRIu64,
+                    crypto_level(stream));
+            else
+                lconn->cn_if->ci_abort_error(lconn, 0, TEC_FLOW_CONTROL_ERROR,
+                    "flow control violation on stream %"PRIu64, stream->id);
         }
         return -1;
     }
@@ -1369,7 +1383,12 @@ static void
 stream_consumed_bytes (struct lsquic_stream *stream)
 {
     lsquic_sfcw_set_read_off(&stream->fc, stream->read_offset);
-    if (lsquic_sfcw_fc_offsets_changed(&stream->fc))
+    if (lsquic_sfcw_fc_offsets_changed(&stream->fc)
+            /* We advance crypto streams' offsets (to control amount of
+             * buffering we allow), but do not send MAX_STREAM_DATA frames.
+             */
+            && !((stream->sm_bflags & (SMBF_IETF|SMBF_CRYPTO))
+                                                == (SMBF_IETF|SMBF_CRYPTO)))
     {
         if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
             TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
@@ -4533,6 +4552,12 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
     case HQFT_GOAWAY:
     case HQFT_MAX_PUSH_ID:
         /* [draft-ietf-quic-http-24], Section 7 */
+        return -1;
+    case 2: /* HTTP/2 PRIORITY */
+    case 6: /* HTTP/2 PING */
+    case 8: /* HTTP/2 WINDOW_UPDATE */
+    case 9: /* HTTP/2 CONTINUATION */
+        /* [draft-ietf-quic-http-30], Section 7.2.8 */
         return -1;
     default:
         /* Ignore unknown frames */

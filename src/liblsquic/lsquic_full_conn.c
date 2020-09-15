@@ -42,6 +42,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_set.h"
 #include "lsquic_malo.h"
 #include "lsquic_chsk_stream.h"
@@ -3670,10 +3671,11 @@ full_conn_ci_packet_in (lsquic_conn_t *lconn, lsquic_packet_in_t *packet_in)
 
 
 static lsquic_packet_out_t *
-full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
+                                                const struct to_coal *unused)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
-    return lsquic_send_ctl_next_packet_to_send(&conn->fc_send_ctl, 0);
+    return lsquic_send_ctl_next_packet_to_send(&conn->fc_send_ctl, NULL);
 }
 
 

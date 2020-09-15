@@ -40,6 +40,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -3005,7 +3006,7 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
     }
     else
     {
-        assert(0x4000 == nw);
+        assert(sizeof(buf) == nw);
         assert(0 == memcmp(buf, buf_out, nw));
     }
 

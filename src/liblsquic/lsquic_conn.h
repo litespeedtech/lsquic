@@ -91,6 +91,12 @@ struct ack_state
     uint32_t    arr[6];
 };
 
+struct to_coal
+{
+    const struct lsquic_packet_out  *prev_packet;
+    size_t                           prev_sz_sum;
+};
+
 struct conn_iface
 {
     enum tick_st
@@ -108,7 +114,7 @@ struct conn_iface
      * for by the congestion controller.
      */
     struct lsquic_packet_out *
-    (*ci_next_packet_to_send) (struct lsquic_conn *, size_t);
+    (*ci_next_packet_to_send) (struct lsquic_conn *, const struct to_coal *);
 
     void
     (*ci_packet_sent) (struct lsquic_conn *, struct lsquic_packet_out *);
@@ -270,6 +276,18 @@ struct conn_iface
 
     void
     (*ci_ack_rollback) (struct lsquic_conn *, struct ack_state *);
+
+    /* Optional method. */
+    int
+    (*ci_want_datagram_write) (struct lsquic_conn *, int);
+
+    /* Optional method */
+    int
+    (*ci_set_min_datagram_size) (struct lsquic_conn *, size_t);
+
+    /* Optional method */
+    size_t
+    (*ci_get_min_datagram_size) (struct lsquic_conn *);
 };
 
 #define LSCONN_CCE_BITS 3

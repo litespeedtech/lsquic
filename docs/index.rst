@@ -17,7 +17,7 @@ Most of the code in this distribution has been  used in our own products
 since 2017.
 
 Currently supported QUIC versions are Q043, Q046, Q050, ID-27, ID-28,
-and ID-29.
+ID-29, and ID-30.
 Support for newer versions will be added soon after they are released.
 
 LSQUIC is licensed under the `MIT License`_; see LICENSE in the source
@@ -37,6 +37,7 @@ LSQUIC supports nearly all QUIC and HTTP/3 features, including
 - TLS Key updates
 - Extensions:
 
+ - :ref:`apiref-datagrams`
  - Loss bits extension (allowing network observer to locate source of packet loss)
  - Timestamps extension (allowing for one-way delay calculation, improving performance of some congestion controllers)
  - Delayed ACKs (this reduces number of ACK frames sent and processed, improving throughput)

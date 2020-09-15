@@ -17,15 +17,36 @@
 #include "test_cert.h"
 
 
+static char s_alpn[0x100];
+
+int
+add_alpn (const char *alpn)
+{
+    size_t alpn_len, all_len;
+
+    alpn_len = strlen(alpn);
+    if (alpn_len > 255)
+        return -1;
+
+    all_len = strlen(s_alpn);
+    if (all_len + 1 + alpn_len + 1 > sizeof(s_alpn))
+        return -1;
+
+    s_alpn[all_len] = alpn_len;
+    memcpy(&s_alpn[all_len + 1], alpn, alpn_len);
+    s_alpn[all_len + 1 + alpn_len] = '\0';
+    return 0;
+}
+
+
 static int
 select_alpn (SSL *ssl, const unsigned char **out, unsigned char *outlen,
                     const unsigned char *in, unsigned int inlen, void *arg)
 {
-    const unsigned char alpn[] = "\x5h3-27\x5h3-28\x5h3-29";
     int r;
 
     r = SSL_select_next_proto((unsigned char **) out, outlen, in, inlen,
-                                                            alpn, sizeof(alpn));
+                                    (unsigned char *) s_alpn, strlen(s_alpn));
     if (r == OPENSSL_NPN_NEGOTIATED)
         return SSL_TLSEXT_ERR_OK;
     else

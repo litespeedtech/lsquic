@@ -1924,12 +1924,13 @@ mini_conn_ci_Q050_packet_in (struct lsquic_conn *lconn,
 
 
 static struct lsquic_packet_out *
-mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
+                                        const struct to_coal *to_coal_UNUSED)
 {
     struct mini_conn *mc = (struct mini_conn *) lconn;
     lsquic_packet_out_t *packet_out;
 
-    assert(0 == size);
+    assert(NULL == to_coal_UNUSED);
     TAILQ_FOREACH(packet_out, &mc->mc_packets_out, po_next)
     {
         if (packet_out->po_flags & PO_SENT)

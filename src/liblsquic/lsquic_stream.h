@@ -536,7 +536,7 @@ size_t
 lsquic_stream_flush_threshold (const struct lsquic_stream *, unsigned);
 #endif
 
-#define crypto_level(stream) (~0ULL - (stream)->id)
+#define crypto_level(stream) (UINT64_MAX - (stream)->id)
 
 void
 lsquic_stream_set_stream_if (struct lsquic_stream *,

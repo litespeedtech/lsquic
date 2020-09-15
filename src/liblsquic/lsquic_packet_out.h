@@ -148,6 +148,7 @@ typedef struct lsquic_packet_out
     unsigned short     po_n_alloc;      /* Total number of bytes allocated in po_data */
     unsigned short     po_token_len;
     enum header_type   po_header_type:8;
+    unsigned char      po_dcid_len;     /* If PO_ENCRYPTED is set */
     enum {
         POL_GQUIC    = 1 << 0,         /* Used for logging */
 #define POLEV_SHIFT 1
@@ -345,4 +346,7 @@ int
 lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *,
                    const struct parse_funcs *, const struct lsquic_stream *);
 
+int
+lsquic_packet_out_equal_dcids (const struct lsquic_packet_out *,
+                               const struct lsquic_packet_out *);
 #endif

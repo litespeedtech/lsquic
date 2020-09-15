@@ -1,3 +1,27 @@
+2020-09-15
+    - 2.20.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 30 support.
+    - [FEATURE] Unreliable Datagram Extension support.
+    - [FEATURE] Adaptive congestion controller.
+    - [BUGFIX] Do not send MAX_STREAM_DATA frames on crypto streams.
+    - [BUGFIX] Fail with CRYPTO_BUFFER_EXCEEDED when too much CRYPTO
+      data comes in.
+    - [BUFFIX] Spin bit is now strictly per path; value is reset on
+      DCID change.
+    - [BUGFIX] Check that max value of max_streams_uni and
+      max_streams_bidi TPs is 2^60.
+    - [BUGFIX] Close IETF mini conn immediately if crypto session
+      cannot be initialized.
+    - Deprecate ID-28 (no browser uses it): it's no longer in the
+      default versions list.
+    - New programs duck_server and duck_client that implement the
+      experimental siduck-00 protocol.  They quack!
+    - IETF crypto streams: don't limit ourselves from sending.
+    - Command-line programs: turn off QL loss bits if -G is used, as
+      Wireshark cannot decrypt QUIC packets when this extension is used.
+    - Turn all h3 framing unit tests back on.
+    - Fix malo initialization when compiled in no-pool mode.
+
 2020-09-08
     - 2.19.10
     - [FEATURE] Add lsquic_stream_pwritev().  This function allows one to

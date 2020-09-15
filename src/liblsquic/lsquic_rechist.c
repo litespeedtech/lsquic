@@ -188,3 +188,16 @@ lsquic_rechist_mem_used (const struct lsquic_rechist *rechist)
          - sizeof(rechist->rh_pints)
          + lsquic_packints_mem_used(&rechist->rh_pints);
 }
+
+
+const struct lsquic_packno_range *
+lsquic_rechist_peek (const struct lsquic_rechist *rechist)
+{
+    const struct packet_interval *pint;
+
+    pint = TAILQ_FIRST(&rechist->rh_pints.pk_intervals);
+    if (pint)
+        return &pint->range;
+    else
+        return NULL;
+}

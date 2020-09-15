@@ -20,6 +20,7 @@ struct lsquic_conn_public;
 struct network_path;
 struct ver_neg;
 enum pns;
+struct to_coal;
 
 enum buf_packet_type { BPT_HIGHEST_PRIO, BPT_OTHER_PRIO, };
 
@@ -48,6 +49,7 @@ enum send_ctl_flags {
     SC_SANITY_CHECK =  1 << 15,
     SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
     SC_POISON       =  1 << 17,     /* poisoned packet exists */
+    SC_CLEANUP_BBR  =  1 << 18,
 };
 
 typedef struct lsquic_send_ctl {
@@ -67,11 +69,9 @@ typedef struct lsquic_send_ctl {
     int                           (*sc_can_send)(struct lsquic_send_ctl *);
     unsigned                        sc_bytes_unacked_retx;
     unsigned                        sc_bytes_scheduled;
-    union {
-        struct lsquic_cubic         cubic;
-        struct lsquic_bbr           bbr;
-    }                               sc_cong_u;
+    struct adaptive_cc              sc_adaptive_cc;
     const struct cong_ctl_if       *sc_ci;
+    void                           *sc_cong_ctl;
     struct lsquic_engine_public    *sc_enpub;
     unsigned                        sc_bytes_unacked_all;
     unsigned                        sc_n_in_flight_all;
@@ -166,7 +166,8 @@ void
 lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *, struct lsquic_packet_out *);
 
 struct lsquic_packet_out *
-lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *, size_t);
+lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *,
+                                                    const struct to_coal *);
 
 int
 lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *);
@@ -362,8 +363,9 @@ void
 lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *, enum packnum_space);
 
 void
-lsquic_send_ctl_repath (struct lsquic_send_ctl *, struct network_path *old,
-                                struct network_path *new);
+lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
+    const struct network_path *old, const struct network_path *new,
+    int keep_path_properties);
 
 void
 lsquic_send_ctl_resize (struct lsquic_send_ctl *);

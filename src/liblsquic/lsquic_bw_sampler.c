@@ -58,7 +58,10 @@ lsquic_bw_sampler_cleanup (struct bw_sampler *sampler)
     if (sampler->bws_conn)
         LSQ_DEBUG("cleanup");
     if (sampler->bws_malo)
+    {
         lsquic_malo_destroy(sampler->bws_malo);
+        sampler->bws_malo = NULL;
+    }
 }
 
 

@@ -448,6 +448,17 @@ is_first_packet_ok (const struct lsquic_packet_in *packet_in,
 }
 
 
+static void
+imico_peer_addr_validated (struct ietf_mini_conn *conn, const char *how)
+{
+    if (!(conn->imc_flags & IMC_ADDR_VALIDATED))
+    {
+        conn->imc_flags |= IMC_ADDR_VALIDATED;
+        LSQ_DEBUG("peer address validated (%s)", how);
+    }
+}
+
+
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
                const struct lsquic_packet_in *packet_in,
@@ -527,7 +538,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     TAILQ_INIT(&conn->imc_app_packets);
     TAILQ_INIT(&conn->imc_crypto_frames);
     if (odcid)
-        conn->imc_flags |= IMC_ADDR_VALIDATED;
+        imico_peer_addr_validated(conn, "odcid");
 
     LSQ_DEBUG("created mini connection object %p; max packet size=%hu",
                                                 conn, conn->imc_path.np_pack_size);
@@ -652,7 +663,8 @@ imico_can_send (const struct ietf_mini_conn *conn, size_t size)
 
 
 static struct lsquic_packet_out *
-ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
+ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
+                                            const struct to_coal *to_coal)
 {
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     struct lsquic_packet_out *packet_out;
@@ -663,7 +675,11 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
         if (packet_out->po_flags & PO_SENT)
             continue;
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
-        if (size == 0 || packet_size + size <= conn->imc_path.np_pack_size)
+        if (!(to_coal
+            && (packet_size + to_coal->prev_sz_sum
+                                            > conn->imc_path.np_pack_size
+            || !lsquic_packet_out_equal_dcids(to_coal->prev_packet, packet_out))
+            ))
         {
             if (!imico_can_send(conn, packet_size))
             {
@@ -674,7 +690,7 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn, size_t size)
             }
             packet_out->po_flags |= PO_SENT;
             conn->imc_bytes_out += packet_size;
-            if (size == 0)
+            if (!to_coal)
                 LSQ_DEBUG("packet_to_send: %"PRIu64, packet_out->po_packno);
             else
                 LSQ_DEBUG("packet_to_send: %"PRIu64" (coalesced)",
@@ -847,7 +863,7 @@ imico_process_crypto_frame (IMICO_PROC_FRAME_ARGS)
     {
         if (0 != conn->imc_conn.cn_esf.i->esfi_init_server(
                                             conn->imc_conn.cn_enc_session))
-            return -1;
+            return 0;
         conn->imc_flags |= IMC_ENC_SESS_INITED;
     }
 
@@ -1210,6 +1226,32 @@ imico_maybe_delay_processing (struct ietf_mini_conn *conn,
 }
 
 
+/* [draft-ietf-quic-transport-30] Section 8.1:
+ " Additionally, a server MAY consider the client address validated if
+ " the client uses a connection ID chosen by the server and the
+ " connection ID contains at least 64 bits of entropy.
+ *
+ * We use RAND_bytes() to generate SCIDs, so it's all entropy.
+ */
+static void
+imico_maybe_validate_by_dcid (struct ietf_mini_conn *conn,
+                                                    const lsquic_cid_t *dcid)
+{
+    unsigned i;
+
+    if (dcid->len >= 8)
+        /* Generic code with unnecessary loop as future-proofing */
+        for (i = 0; i < conn->imc_conn.cn_n_cces; ++i)
+            if ((conn->imc_conn.cn_cces_mask & (i << 1))
+                && (conn->imc_conn.cn_cces[i].cce_flags & CCE_SEQNO)
+                && LSQUIC_CIDS_EQ(&conn->imc_conn.cn_cces[i].cce_cid, dcid))
+            {
+                imico_peer_addr_validated(conn, "dcid/scid + entropy");
+                return;
+            }
+}
+
+
 /* Only a single packet is supported */
 static void
 ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
@@ -1236,6 +1278,9 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         return;
     }
 
+    if (!(conn->imc_flags & IMC_ADDR_VALIDATED))
+        imico_maybe_validate_by_dcid(conn, &packet_in->pi_dcid);
+
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
     if (pns == PNS_INIT && (conn->imc_flags & IMC_IGNORE_INIT))
     {
@@ -1261,7 +1306,7 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         return;
     }
     else if (pns == PNS_HSK)
-        conn->imc_flags |= IMC_ADDR_VALIDATED;
+        imico_peer_addr_validated(conn, "handshake PNS");
 
     if (((conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3) < pns)
     {

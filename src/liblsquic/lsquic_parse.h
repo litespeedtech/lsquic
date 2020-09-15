@@ -323,6 +323,15 @@ struct parse_funcs
     (*pf_gen_timestamp_frame) (unsigned char *buf, size_t buf_len, uint64_t);
     int
     (*pf_parse_timestamp_frame) (const unsigned char *buf, size_t, uint64_t *);
+    int
+    (*pf_parse_datagram_frame) (const unsigned char *buf, size_t, const void **,
+                                                                    size_t *);
+    int
+    (*pf_gen_datagram_frame) (unsigned char *, size_t bufsz, size_t min_sz,
+        size_t max_sz, ssize_t (*)(struct lsquic_conn *, void *, size_t),
+        struct lsquic_conn *);
+    unsigned
+    (*pf_datagram_frame_size) (size_t);
 };
 
 

@@ -29,9 +29,11 @@
 #include <openssl/md5.h>
 
 #include "lsquic.h"
+#include "../src/liblsquic/lsquic_hash.h"
 #include "lsxpack_header.h"
 #include "test_config.h"
 #include "test_common.h"
+#include "test_cert.h"
 #include "prog.h"
 
 #if HAVE_REGEX
@@ -1764,6 +1766,7 @@ main (int argc, char **argv)
     struct stat st;
     struct server_ctx server_ctx;
     struct prog prog;
+    const char *const *alpn;
 
 #if !(HAVE_OPEN_MEMSTREAM || HAVE_REGEX)
     fprintf(stderr, "cannot run server without regex or open_memstream\n");
@@ -1844,6 +1847,18 @@ main (int argc, char **argv)
     {
         LSQ_ERROR("-w and -P are incompatible options");
         exit(EXIT_FAILURE);
+    }
+
+    alpn = lsquic_get_h3_alpns(prog.prog_settings.es_versions);
+    while (*alpn)
+    {
+        if (0 == add_alpn(*alpn))
+            ++alpn;
+        else
+        {
+            LSQ_ERROR("cannot add ALPN %s", *alpn);
+            exit(EXIT_FAILURE);
+        }
     }
 
     if (0 != prog_prep(&prog))

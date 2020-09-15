@@ -475,3 +475,55 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
 
     return -1;
 }
+
+
+static unsigned
+offset_to_dcid (const struct lsquic_packet_out *packet_out)
+{
+    if (packet_out->po_header_type == HETY_NOT_SET)
+        return 1;
+    else
+    {
+        assert(!(packet_out->po_lflags & POL_GQUIC));
+        return 6;
+    }
+}
+
+
+/* Return true if DCIDs of the two packets are equal, false otherwise. */
+int
+lsquic_packet_out_equal_dcids (const struct lsquic_packet_out *a,
+                               const struct lsquic_packet_out *b)
+{
+    const int a_encrypted = !!(a->po_flags & PO_ENCRYPTED);
+    const int b_encrypted = !!(b->po_flags & PO_ENCRYPTED);
+    const unsigned char *dcids[2];
+    size_t sizes[2];
+
+    switch ((a_encrypted << 1) | b_encrypted)
+    {
+    case    (0           << 1) | 0:
+        return a->po_path == b->po_path;
+    case    (0           << 1) | 1:
+        dcids[0] = a->po_path->np_dcid.idbuf;
+        sizes[0] = a->po_path->np_dcid.len;
+        dcids[1] = b->po_enc_data + offset_to_dcid(b);
+        sizes[1] = b->po_dcid_len;
+        break;
+    case    (1           << 1) | 0:
+        dcids[0] = a->po_enc_data + offset_to_dcid(a);
+        sizes[0] = a->po_dcid_len;
+        dcids[1] = b->po_path->np_dcid.idbuf;
+        sizes[1] = b->po_path->np_dcid.len;
+        break;
+    default:
+        dcids[0] = a->po_enc_data + offset_to_dcid(a);
+        sizes[0] = a->po_dcid_len;
+        dcids[1] = b->po_enc_data + offset_to_dcid(b);
+        sizes[1] = b->po_dcid_len;
+        break;
+    }
+
+    return sizes[0] == sizes[1]
+        && 0 == memcmp(dcids[0], dcids[1], sizes[0]);
+}

@@ -74,7 +74,8 @@ static const struct alpn_map {
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
     {   LSQVER_ID28, (unsigned char *) "\x05h3-28",     },
     {   LSQVER_ID29, (unsigned char *) "\x05h3-29",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-29",     },
+    {   LSQVER_ID30, (unsigned char *) "\x05h3-30",     },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-30",     },
 };
 
 struct enc_sess_iquic;
@@ -571,7 +572,6 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
 #endif
     }
 #if LSQUIC_TEST_QUANTUM_READINESS
-    else
     {
         const char *s = getenv("LSQUIC_TEST_QUANTUM_READINESS");
         if (s && atoi(s))
@@ -626,6 +626,16 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     {
         params.tp_numerics[TPI_TIMESTAMPS] = TS_GENERATE_THEM;
         params.tp_set |= 1 << TPI_TIMESTAMPS;
+    }
+    if (settings->es_datagrams)
+    {
+        if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                            = params.tp_max_udp_payload_size;
+        else
+            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                            = TP_DEF_MAX_UDP_PAYLOAD_SIZE;
+        params.tp_set |= 1 << TPI_MAX_DATAGRAM_FRAME_SIZE;
     }
 
     len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
@@ -1220,7 +1230,11 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     SSL_CTX *ssl_ctx = NULL;
     union {
         char errbuf[ERR_ERROR_STRING_BUF_LEN];
-        unsigned char trans_params[sizeof(struct transport_params)];
+        unsigned char trans_params[sizeof(struct transport_params)
+#if LSQUIC_TEST_QUANTUM_READINESS
+            + 4 + lsquic_tp_get_quantum_sz()
+#endif
+        ];
     } u;
 
     if (enc_sess->esi_enpub->enp_alpn)
@@ -1396,7 +1410,7 @@ init_client (struct enc_sess_iquic *const enc_sess)
 #define hexbuf errbuf   /* This is a dual-purpose buffer */
     unsigned char trans_params[0x80
 #if LSQUIC_TEST_QUANTUM_READINESS
-        + 4 + QUANTUM_READY_SZ
+        + 4 + lsquic_tp_get_quantum_sz()
 #endif
     ];
 
@@ -2018,6 +2032,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     packet_out->po_sent_sz     = dst_sz;
     packet_out->po_flags &= ~PO_IPv6;
     packet_out->po_flags |= PO_ENCRYPTED|PO_SENT_SZ|(ipv6 << POIPv6_SHIFT);
+    packet_out->po_dcid_len = packet_out->po_path->np_dcid.len;
     lsquic_packet_out_set_enc_level(packet_out, enc_level);
     lsquic_packet_out_set_kp(packet_out, enc_sess->esi_key_phase);
 
