@@ -3746,7 +3746,7 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
         return ENCPA_BADCRYPT;  /* To cause connection to close */
     ipv6 = NP_IS_IPv6(packet_out->po_path);
     buf = enpub->enp_pmi->pmi_allocate(enpub->enp_pmi_ctx,
-                                packet_out->po_path->np_peer_ctx, bufsz, ipv6);
+                                packet_out->po_path->np_peer_ctx, lsquic_conn_get_ctx(lconn), bufsz, ipv6);
     if (!buf)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",
@@ -3944,7 +3944,7 @@ gquic2_esf_encrypt_packet (enc_session_t *enc_session_p,
     dst_sz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
     ipv6 = NP_IS_IPv6(packet_out->po_path);
     dst = enpub->enp_pmi->pmi_allocate(enpub->enp_pmi_ctx,
-                                packet_out->po_path->np_peer_ctx, dst_sz, ipv6);
+                                packet_out->po_path->np_peer_ctx, lsquic_conn_get_ctx(lconn), dst_sz, ipv6);
     if (!dst)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",

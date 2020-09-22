@@ -1955,7 +1955,7 @@ copy_packet (struct lsquic_engine *engine, struct lsquic_conn *conn,
     }
 
     packet_out->po_enc_data = engine->pub.enp_pmi->pmi_allocate(
-                    engine->pub.enp_pmi_ctx, packet_out->po_path->np_peer_ctx,
+                    engine->pub.enp_pmi_ctx, packet_out->po_path->np_peer_ctx, lsquic_conn_get_ctx(conn),
                     packet_out->po_data_sz, ipv6);
     if (!packet_out->po_enc_data)
     {

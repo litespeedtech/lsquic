@@ -1035,7 +1035,7 @@ struct lsquic_packout_mem_if
     /**
      * Allocate buffer for sending.
      */
-    void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, unsigned short sz,
+    void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, lsquic_conn_ctx_t *, unsigned short sz,
                                                                 char is_ipv6);
     /**
      * This function is used to release the allocated buffer after it is

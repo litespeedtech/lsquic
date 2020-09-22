@@ -115,7 +115,7 @@ void
 pba_init (struct packout_buf_allocator *, unsigned max);
 
 void *
-pba_allocate (void *packout_buf_allocator, void*, unsigned short, char);
+pba_allocate (void *packout_buf_allocator, void*, lsquic_conn_get_ctx *conn_ctx, unsigned short, char);
 
 void
 pba_release (void *packout_buf_allocator, void *, void *obj, char);
