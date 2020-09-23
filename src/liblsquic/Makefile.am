@@ -6,6 +6,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src -I$(top_srcdir)/src/ls
 liblsquic_a_METASOURCES = AUTO
 
 liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
+    lsquic_adaptive_cc.c \
     lsquic_alarmset.c \
     lsquic_arr.c \
     lsquic_attq.c \
@@ -53,6 +54,7 @@ liblsquic_a_SOURCES =  ls-qpack/lsqpack.c \
     lsquic_packet_gquic.c \
     lsquic_packet_in.c \
     lsquic_packet_out.c \
+    lsquic_packet_resize.c \
     lsquic_packints.c \
     lsquic_parse_Q046.c \
     lsquic_parse_Q050.c \
