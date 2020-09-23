@@ -53,7 +53,7 @@ add_stream_to_spi (struct stream_prio_iter *iter, lsquic_stream_t *stream)
 void
 lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
          struct lsquic_stream *last, uintptr_t next_ptr_offset,
-         enum stream_q_flags onlist_mask, const struct lsquic_conn *conn,
+         const struct lsquic_conn *conn,
          const char *name,
          int (*filter)(void *filter_ctx, struct lsquic_stream *),
          void *filter_ctx)
@@ -67,9 +67,7 @@ lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
     iter->spi_set[1]        = 0;
     iter->spi_set[2]        = 0;
     iter->spi_set[3]        = 0;
-    iter->spi_onlist_mask   = onlist_mask;
     iter->spi_cur_prio      = 0;
-    iter->spi_prev_stream   = NULL;
     iter->spi_next_stream   = NULL;
     iter->spi_n_added       = 0;
 
@@ -195,40 +193,11 @@ find_and_set_next_priority (struct stream_prio_iter *iter)
 }
 
 
-/* Each stream returned by the iterator is processed in some fashion.  If,
- * as a result of this, the stream gets taken off the original list, we
- * have to follow suit and remove it from the iterator's set of streams.
- */
-static void
-maybe_evict_prev (struct stream_prio_iter *iter)
-{
-    unsigned set, bit;
-
-    if (0 == (iter->spi_prev_stream->sm_qflags & iter->spi_onlist_mask))
-    {
-        SPI_DEBUG("evict stream %"PRIu64, iter->spi_prev_stream->id);
-        TAILQ_REMOVE(&iter->spi_streams[ iter->spi_prev_prio ],
-                                    iter->spi_prev_stream, next_prio_stream);
-        if (TAILQ_EMPTY(&iter->spi_streams[ iter->spi_prev_prio ]))
-        {
-            set = iter->spi_prev_prio >> 6;
-            bit = iter->spi_prev_prio & 0x3F;
-            iter->spi_set[ set ] &= ~(1ULL << bit);
-            SPI_DEBUG("priority %u now has no elements", iter->spi_prev_prio);
-        }
-        iter->spi_prev_stream = NULL;
-    }
-}
-
-
 lsquic_stream_t *
 lsquic_spi_first (struct stream_prio_iter *iter)
 {
     lsquic_stream_t *stream;
     unsigned set, bit;
-
-    if (iter->spi_prev_stream)
-        maybe_evict_prev(iter);
 
     iter->spi_cur_prio = 0;
     set = iter->spi_cur_prio >> 6;
@@ -244,8 +213,6 @@ lsquic_spi_first (struct stream_prio_iter *iter)
     }
 
     stream = TAILQ_FIRST(&iter->spi_streams[ iter->spi_cur_prio ]);
-    iter->spi_prev_prio   = iter->spi_cur_prio;
-    iter->spi_prev_stream = stream;
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
         SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
@@ -259,14 +226,9 @@ lsquic_spi_next (struct stream_prio_iter *iter)
 {
     lsquic_stream_t *stream;
 
-    if (iter->spi_prev_stream)
-        maybe_evict_prev(iter);
-
     stream = iter->spi_next_stream;
     if (stream)
     {
-        assert(iter->spi_prev_prio == iter->spi_cur_prio);
-        iter->spi_prev_stream = stream;
         iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
         if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
             SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
@@ -281,8 +243,6 @@ lsquic_spi_next (struct stream_prio_iter *iter)
     }
 
     stream = TAILQ_FIRST(&iter->spi_streams[ iter->spi_cur_prio ]);
-    iter->spi_prev_prio   = iter->spi_cur_prio;
-    iter->spi_prev_stream = stream;
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
 
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))

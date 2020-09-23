@@ -1,3 +1,10 @@
+2020-09-23
+    - 2.20.1
+    - [BUGFIX] Typo in new "validate peer addr by DCID" code.  It is
+      a benign bug (works either way), but better to fix it.
+    - Simplify Stream Priority Iterator (SPI).
+    - Minor documentation updates.
+
 2020-09-15
     - 2.20.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 30 support.
@@ -6,7 +13,7 @@
     - [BUGFIX] Do not send MAX_STREAM_DATA frames on crypto streams.
     - [BUGFIX] Fail with CRYPTO_BUFFER_EXCEEDED when too much CRYPTO
       data comes in.
-    - [BUFFIX] Spin bit is now strictly per path; value is reset on
+    - [BUGFIX] Spin bit is now strictly per path; value is reset on
       DCID change.
     - [BUGFIX] Check that max value of max_streams_uni and
       max_streams_bidi TPs is 2^60.

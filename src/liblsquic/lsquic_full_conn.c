@@ -2867,7 +2867,7 @@ process_streams_ready_to_send (struct full_conn *conn)
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.sending_streams),
         TAILQ_LAST(&conn->fc_pub.sending_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        SMQF_SENDING_FLAGS, &conn->fc_conn, "send", NULL, NULL);
+        &conn->fc_conn, "send", NULL, NULL);
 
     for (stream = lsquic_spi_first(&spi); stream;
                                             stream = lsquic_spi_next(&spi))
@@ -3055,7 +3055,7 @@ process_streams_read_events (struct full_conn *conn)
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.read_streams),
         TAILQ_LAST(&conn->fc_pub.read_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
-        SMQF_WANT_READ, &conn->fc_conn, "read", NULL, NULL);
+        &conn->fc_conn, "read", NULL, NULL);
 
     needs_service = 0;
     for (stream = lsquic_spi_first(&spi); stream;
@@ -3082,7 +3082,7 @@ process_streams_read_events (struct full_conn *conn)
         lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.read_streams),
             TAILQ_LAST(&conn->fc_pub.read_streams, lsquic_streams_tailq),
             (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
-            SMQF_WANT_READ, &conn->fc_conn, "read-new",
+            &conn->fc_conn, "read-new",
             filter_out_old_streams, &fctx);
         for (stream = lsquic_spi_first(&spi); stream;
                                                 stream = lsquic_spi_next(&spi))
@@ -3114,7 +3114,7 @@ process_streams_write_events (struct full_conn *conn, int high_prio)
     lsquic_spi_init(&spi, TAILQ_FIRST(&conn->fc_pub.write_streams),
         TAILQ_LAST(&conn->fc_pub.write_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        SMQF_WANT_WRITE|SMQF_WANT_FLUSH, &conn->fc_conn,
+        &conn->fc_conn,
         high_prio ? "write-high" : "write-low", NULL, NULL);
 
     if (high_prio)

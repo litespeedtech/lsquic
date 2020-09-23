@@ -1242,7 +1242,7 @@ imico_maybe_validate_by_dcid (struct ietf_mini_conn *conn,
     if (dcid->len >= 8)
         /* Generic code with unnecessary loop as future-proofing */
         for (i = 0; i < conn->imc_conn.cn_n_cces; ++i)
-            if ((conn->imc_conn.cn_cces_mask & (i << 1))
+            if ((conn->imc_conn.cn_cces_mask & (1 << i))
                 && (conn->imc_conn.cn_cces[i].cce_flags & CCE_SEQNO)
                 && LSQUIC_CIDS_EQ(&conn->imc_conn.cn_cces[i].cce_cid, dcid))
             {

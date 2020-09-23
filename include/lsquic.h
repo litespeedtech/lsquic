@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 20
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:
@@ -82,7 +82,7 @@ enum lsquic_version
     LSQVER_ID27,
 
     /**
-     * IETF QUIC Draft-28
+     * IETF QUIC Draft-28; this version is deprecated.
      */
     LSQVER_ID28,
 

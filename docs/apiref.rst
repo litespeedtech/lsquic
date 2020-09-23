@@ -52,7 +52,7 @@ developed by the IETF.  Both types are included in a single enum:
 
     .. member:: LSQVER_ID28
 
-        IETF QUIC version ID 28
+        IETF QUIC version ID 28; this version is deprecated.
 
     .. member:: LSQVER_ID29
 
