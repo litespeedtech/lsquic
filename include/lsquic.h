@@ -1186,6 +1186,12 @@ struct lsquic_engine_api
      */
     const struct lsquic_packout_mem_if  *ea_pmi;
     void                                *ea_pmi_ctx;
+
+    /**
+     * Optional interface to control the creation of connection IDs
+     */
+    void  (*ea_generate_cid)(lsquic_cid_t *);
+
     /**
      * Optional interface to report new and old source connection IDs.
      */
