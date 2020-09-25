@@ -62,7 +62,7 @@ struct push_promise
             LSQ_DEBUG("destroy push promise %"PRIu64, (promise_)->pp_id);   \
             if ((promise_)->pp_hash_id.qhe_flags & QHE_HASHED)              \
                 lsquic_hash_erase(all_promises_, &(promise_)->pp_hash_id);  \
-            free(promise);                                                  \
+            free(promise_);                                                 \
         }                                                                   \
     }                                                                       \
     else                                                                    \
