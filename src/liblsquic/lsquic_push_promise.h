@@ -2,17 +2,13 @@
 #ifndef LSQUIC_PUSH_PROMISE_H
 #define LSQUIC_PUSH_PROMISE_H 1
 
-struct lsquic_hash_elem;
-struct lsquic_stream;
-
 
 struct push_promise
 {
     /* A push promise is associated with a single stream, while a stream can
      * have several push promises it depends on.  These push promises are
      * stored on a list.  A push promise is destroyed when the dependent
-     * stream is destroyed.  This bounds the amount of time when DUPLICATE_PUSH
-     * frames can be sent out.
+     * stream is destroyed.
      */
     SLIST_ENTRY(push_promise)   pp_next;
     /* Push promises are stored a hash and can be searched by ID */
@@ -62,7 +58,7 @@ struct push_promise
             LSQ_DEBUG("destroy push promise %"PRIu64, (promise_)->pp_id);   \
             if ((promise_)->pp_hash_id.qhe_flags & QHE_HASHED)              \
                 lsquic_hash_erase(all_promises_, &(promise_)->pp_hash_id);  \
-            free(promise);                                                  \
+            free(promise_);                                                 \
         }                                                                   \
     }                                                                       \
     else                                                                    \

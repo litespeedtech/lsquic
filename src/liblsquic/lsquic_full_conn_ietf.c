@@ -2973,6 +2973,8 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
         if (conn->ifc_pub.u.ietf.promises)
             lsquic_hash_destroy(conn->ifc_pub.u.ietf.promises);
     }
+    for (i = 0; i < N_SITS; ++i)
+        lsquic_set64_cleanup(&conn->ifc_closed_stream_ids[i]);
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "full connection destroyed");
     free(conn->ifc_errmsg);
