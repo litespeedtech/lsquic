@@ -7,6 +7,7 @@ PROJECT(lsquic C)
 OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
 OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
+OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
 
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
@@ -122,6 +123,12 @@ IF(NOT PERL_FOUND)
     MESSAGE(FATAL_ERROR "Perl not found -- need it to generate source code")
 ENDIF()
 
+IF(LSQUIC_SHARED_LIB)
+    SET(LIB_SUFFIX .so)
+ELSE()
+    SET(LIB_SUFFIX .a)
+ENDIF()
+
 IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
     FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
                 PATHS ${BORINGSSL_DIR}/include
@@ -147,7 +154,7 @@ IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
                 NO_DEFAULT_PATH)
         ELSE()
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES lib${LIB_NAME}.a
+                NAMES lib${LIB_NAME}${LIB_SUFFIX}
                 PATHS ${BORINGSSL_DIR}/${LIB_NAME}
                 NO_DEFAULT_PATH)
         ENDIF()
@@ -170,7 +177,7 @@ ELSE()
                 NO_DEFAULT_PATH)
         ELSE()
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES lib${LIB_NAME}.a
+                NAMES lib${LIB_NAME}${LIB_SUFFIX}
                 PATHS ${BORINGSSL_LIB}
                 PATH_SUFFIXES ${LIB_NAME}
                 NO_DEFAULT_PATH)
@@ -206,7 +213,7 @@ ELSEIF(CMAKE_SYSTEM_NAME STREQUAL Darwin)
     # XXX somehow FIND_LIBRARY() does not find zlib on Travis?
     SET(ZLIB_LIB z)
 ELSE()
-    FIND_LIBRARY(ZLIB_LIB libz.a)
+    FIND_LIBRARY(ZLIB_LIB libz${LIB_SUFFIX})
 ENDIF()
 IF(ZLIB_LIB)
     MESSAGE(STATUS "Found zlib: ${ZLIB_LIB}")
@@ -224,7 +231,7 @@ ENDIF()
 IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
     FIND_LIBRARY(EVENT_LIB event)
 ELSE()
-    FIND_LIBRARY(EVENT_LIB libevent.a)
+    FIND_LIBRARY(EVENT_LIB libevent${LIB_SUFFIX})
     IF(NOT EVENT_LIB)
         FIND_LIBRARY(EVENT_LIB libevent.so)
     ENDIF()
