@@ -496,7 +496,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
      * a sequence number (0) and therefore can be retired by the client.
      */
     if (enpub->enp_settings.es_scid_len && enpub->enp_generate_scid)
-        enpub->enp_generate_scid(conn->imc_conn, &conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
+        enpub->enp_generate_scid(&conn->imc_conn, &conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
     else 
         lsquic_generate_cid(&conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
     
