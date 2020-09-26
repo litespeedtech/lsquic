@@ -2043,7 +2043,7 @@ pba_init (struct packout_buf_allocator *pba, unsigned max)
 
 
 void *
-pba_allocate (void *packout_buf_allocator, void *peer_ctx, lsquic_conn_ctx_t * conn_ctx, unsigned short size,
+pba_allocate (void *packout_buf_allocator, void *peer_ctx, unsigned short size,
                                                                 char is_ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
