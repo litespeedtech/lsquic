@@ -44,6 +44,7 @@ struct lsquic_engine_public {
     void                           *enp_stream_if_ctx;
     const struct lsquic_hset_if    *enp_hsi_if;
     void                           *enp_hsi_ctx;
+    void  (*enp_generate_scid)(lsquic_conn_t *, lsquic_cid_t *, unsigned);
     int                           (*enp_verify_cert)(void *verify_ctx,
                                             struct stack_st_X509 *chain);
     void                           *enp_verify_ctx;

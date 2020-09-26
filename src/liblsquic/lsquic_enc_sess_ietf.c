@@ -553,8 +553,13 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             }
             cce->cce_seqno = seqno + 1;
             cce->cce_flags = CCE_SEQNO;
-            lsquic_generate_cid(&cce->cce_cid,
-                            enc_sess->esi_enpub->enp_settings.es_scid_len);
+
+            if (enc_sess->esi_enpub->enp_generate_scid) 
+                enc_sess->esi_enpub->enp_generate_scid(enc_sess->esi_conn, &cce->cce_cid, enc_sess->esi_enpub->enp_settings.es_scid_len);
+            else 
+                lsquic_generate_cid(&cce->cce_cid, enc_sess->esi_enpub->enp_settings.es_scid_len);
+            
+            
             /* Don't add to hash: migration must not start until *after*
              * handshake is complete.
              */
