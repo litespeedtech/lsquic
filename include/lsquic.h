@@ -1190,7 +1190,7 @@ struct lsquic_engine_api
     /**
      * Optional interface to control the creation of connection IDs
      */
-    void  (*ea_generate_cid)(lsquic_cid_t *);
+    void  (*es_generate_scid)(lsquic_conn_t *, lsquic_cid_t *, unsigned);
 
     /**
      * Optional interface to report new and old source connection IDs.

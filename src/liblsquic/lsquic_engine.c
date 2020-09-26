@@ -577,7 +577,7 @@ lsquic_engine_new (unsigned flags,
     engine->pub.enp_cert_lu_ctx  = api->ea_cert_lu_ctx;
     engine->pub.enp_get_ssl_ctx  = api->ea_get_ssl_ctx;
 
-    if (api->ea_generate_cid) engine->pub.enp_generate_cid = api->ea_generate_cid;
+    engine->pub.enp_generate_scid = api->es_generate_scid;
 
     if (api->ea_shi)
     {

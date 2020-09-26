@@ -495,11 +495,11 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     /* Generate new SCID. Since is not the original SCID, it is given
      * a sequence number (0) and therefore can be retired by the client.
      */
-    if (enpub->enp_settings.es_scid_len && enpub->enp_generate_cid)
-    {
-        enpub->enp_generate_cid(&conn->imc_conn.cn_cces[1].cce_cid);
-    }
-    else lsquic_generate_cid(&conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
+    if (enpub->enp_settings.es_scid_len && enpub->enp_generate_scid)
+        enpub->enp_generate_scid(conn->imc_conn, &conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
+    else 
+        lsquic_generate_cid(&conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
+    
 
     LSQ_DEBUGC("generated SCID %"CID_FMT" at index %u, switching to it",
                 CID_BITS(&conn->imc_conn.cn_cces[1].cce_cid), 1);
