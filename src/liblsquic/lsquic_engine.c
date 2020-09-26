@@ -466,7 +466,7 @@ free_packet (void *ctx, void *conn_ctx, void *packet_data, char is_ipv6)
 
 
 static void *
-malloc_buf (void *ctx, void *conn_ctx, unsigned short size, char is_ipv6)
+malloc_buf (void *ctx, void *conn_ctx, lsquic_conn_ctx_t *conn_ctx, unsigned short size, char is_ipv6)
 {
     return malloc(size);
 }
