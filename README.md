@@ -71,6 +71,13 @@ If you want to turn on optimizations, do
 cmake -DCMAKE_BUILD_TYPE=Release . && make
 ```
 
+If you want to build as a library, (necessary to build lsquic itself
+as as shared library) do:
+
+```
+cmake -DBUILD_SHARED_LIBS=1 . && make
+```
+
 Building LSQUIC Library
 -----------------------
 
@@ -89,12 +96,22 @@ git submodule update
 
 2. Compile the library
 
+Statically:
+
 
 ```
 # $BORINGSSL is the top-level BoringSSL directory from the previous step
 cmake -DBORINGSSL_DIR=$BORINGSSL .
 make
 ```
+
+As a dynamic library:
+
+```
+cmake -DAS_SHARED_LIB=true .
+make
+```
+
 
 3. Run tests
 
