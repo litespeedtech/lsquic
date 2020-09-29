@@ -17,7 +17,7 @@ Most of the code in this distribution has been  used in our own products
 since 2017.
 
 Currently supported QUIC versions are Q043, Q046, Q050, ID-27, ID-28,
-ID-29, and ID-30.
+ID-29, ID-30, and ID-31.
 Support for newer versions will be added soon after they are released.
 
 LSQUIC is licensed under the `MIT License`_; see LICENSE in the source

@@ -30,7 +30,7 @@ test1 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock */
     lsquic_time_t now = lsquic_time_now();
     lsquic_packno_t largest = 0;
 
-    lsquic_rechist_init(&rechist, 0, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     unsigned i;
     for (i = 1; i <= 0x1234; ++i)
@@ -69,7 +69,7 @@ test2 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock, minus
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     /* Encode the following ranges:
      *    high      low
@@ -128,7 +128,7 @@ test3 (void)
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     /* Encode the following ranges:
      *    high      low
@@ -174,7 +174,7 @@ test4 (void)
     lsquic_rechist_t rechist;
     int i;
 
-    lsquic_rechist_init(&rechist, 0, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     lsquic_time_t now = lsquic_time_now();
     lsquic_rechist_received(&rechist, 1, now);
@@ -242,18 +242,17 @@ test_4byte_packnos (void)
 {
     lsquic_packno_t packno;
     lsquic_rechist_t rechist;
-    struct packet_interval *pint;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     packno = 0x23456789;
     (void) lsquic_rechist_received(&rechist, packno - 33, now);
-    pint = TAILQ_FIRST(&rechist.rh_pints.pk_intervals);
     (void) lsquic_rechist_received(&rechist, packno, now);
 
     /* Adjust: */
-    pint->range.low = 1;
+    rechist.rh_elems[0].re_low = 1;
+    rechist.rh_elems[0].re_count = packno - 33;
 
     const unsigned char expected_ack_frame[] = {
         0x60
@@ -288,23 +287,52 @@ test_4byte_packnos (void)
 }
 
 
+/* lsquic_rechist no longer supports ranges that require integers
+ * wider than four bytes -- modify the test to use a custom receive
+ * history.
+ */
+static const struct lsquic_packno_range test_6byte_ranges[] = {
+    { .high = 0xABCD23456789, .low = 0xABCD23456789, },
+    { .high = 0xABCD23456789 - 33, .low = 1, },
+};
+
+
+static const struct lsquic_packno_range *
+test_6byte_rechist_first (void *rechist)
+{
+    int *next = rechist;
+    *next = 1;
+    return &test_6byte_ranges[0];
+};
+
+
+static const struct lsquic_packno_range *
+test_6byte_rechist_next (void *rechist)
+{
+    int *next = rechist;
+    if (*next == 1)
+    {
+        ++*next;
+        return &test_6byte_ranges[1];
+    }
+    else
+        return NULL;
+}
+
+
+static lsquic_time_t s_test_6byte_now;
+static lsquic_time_t
+test_6byte_rechist_largest_recv  (void *rechist)
+{
+    return s_test_6byte_now;
+}
+
+
 static void
 test_6byte_packnos (void)
 {
-    lsquic_packno_t packno;
-    lsquic_rechist_t rechist;
-    struct packet_interval *pint;
-    lsquic_time_t now = lsquic_time_now();
-
-    lsquic_rechist_init(&rechist, 0, 0);
-
-    packno = 0xABCD23456789;
-    (void) lsquic_rechist_received(&rechist, packno - 33, now);
-    pint = TAILQ_FIRST(&rechist.rh_pints.pk_intervals);
-    (void) lsquic_rechist_received(&rechist, packno, now);
-
-    /* Adjust: */
-    pint->range.low = 1;
+    int rechist = 0;
+    s_test_6byte_now = lsquic_time_now();
 
     const unsigned char expected_ack_frame[] = {
         0x60
@@ -324,18 +352,16 @@ test_6byte_packnos (void)
     int has_missing = -1;
     lsquic_packno_t largest = 0;
     int w = pf->pf_gen_ack_frame(outbuf, sizeof(outbuf),
-        (gaf_rechist_first_f)        lsquic_rechist_first,
-        (gaf_rechist_next_f)         lsquic_rechist_next,
-        (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
-        &rechist, now, &has_missing, &largest, NULL);
+        test_6byte_rechist_first,
+        test_6byte_rechist_next,
+        test_6byte_rechist_largest_recv,
+        &rechist, s_test_6byte_now, &has_missing, &largest, NULL);
     assert(("ACK frame generation successful", w > 0));
     assert(("ACK frame length is correct", w == sizeof(expected_ack_frame)));
     assert(("ACK frame contents are as expected",
         0 == memcmp(outbuf, expected_ack_frame, sizeof(expected_ack_frame))));
     assert(("ACK frame has missing packets", has_missing > 0));
     assert(largest == 0xABCD23456789ULL);
-
-    lsquic_rechist_cleanup(&rechist);
 }
 
 

@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 20
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 21
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -97,6 +97,11 @@ enum lsquic_version
     LSQVER_ID30,
 
     /**
+     * IETF QUIC Draft-31
+     */
+    LSQVER_ID31,
+
+    /**
      * Special version to trigger version negotiation.
      * [draft-ietf-quic-transport-11], Section 3.
      */
@@ -107,7 +112,7 @@ enum lsquic_version
 
 /**
  * We currently support versions 43, 46, 50, Draft-27, Draft-28, Draft-29,
- * and Draft-30.
+ * Draft-30, and Draft-31.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -120,15 +125,18 @@ enum lsquic_version
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
                             (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
 
-#define LSQUIC_DEPRECATED_VERSIONS (1 << LSQVER_ID28)
+#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
+                                  | (1 << LSQVER_ID30))
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
 #define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
-              | (1 << LSQVER_ID29) | (1 << LSQVER_ID30) | (1 << LSQVER_VERNEG))
+                          | (1 << LSQVER_ID29) | (1 << LSQVER_ID30)   \
+                          | (1 << LSQVER_ID31) | (1 << LSQVER_VERNEG))
 
 #define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
-              | (1 << LSQVER_ID29) | (1 << LSQVER_ID30) | (1 << LSQVER_VERNEG))
+                                  | (1 << LSQVER_ID29) | (1 << LSQVER_ID30) \
+                                  | (1 << LSQVER_ID31) | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {
@@ -1186,12 +1194,6 @@ struct lsquic_engine_api
      */
     const struct lsquic_packout_mem_if  *ea_pmi;
     void                                *ea_pmi_ctx;
-
-    /**
-     * Optional interface to control the creation of connection IDs
-     */
-    void  (*es_generate_scid)(lsquic_conn_t *, lsquic_cid_t *, unsigned);
-
     /**
      * Optional interface to report new and old source connection IDs.
      */
@@ -1240,6 +1242,12 @@ struct lsquic_engine_api
      * is not set.
      */
     const char                          *ea_alpn;
+
+    /**
+     * Optional interface to control the creation of connection IDs
+     */
+    void                               (*ea_generate_scid)(lsquic_conn_t *,
+                                                    lsquic_cid_t *, unsigned);
 };
 
 /**

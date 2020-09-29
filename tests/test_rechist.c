@@ -9,18 +9,9 @@
 #include "vc_compat.h"
 #endif
 
-#include "lsquic_types.h"
 #include "lsquic_int_types.h"
 #include "lsquic_rechist.h"
-#include "lsquic_parse.h"
 #include "lsquic_util.h"
-#include "lsquic_logger.h"
-#include "lsquic.h"
-#include "lsquic_hash.h"
-#include "lsquic_conn.h"
-
-
-static struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 0);
 
 
 static void
@@ -30,7 +21,7 @@ test4 (void)
     const struct lsquic_packno_range *range;
     lsquic_packno_t packno;
 
-    lsquic_rechist_init(&rechist, &lconn, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     for (packno = 11917; packno <= 11941; ++packno)
         lsquic_rechist_received(&rechist, packno, 0);
@@ -131,7 +122,7 @@ test5 (void)
     lsquic_rechist_t rechist;
     char buf[100];
 
-    lsquic_rechist_init(&rechist, &lconn, 0);
+    lsquic_rechist_init(&rechist, 0);
 
     lsquic_rechist_received(&rechist, 1, 0);
     /* Packet 2 omitted because it could not be decrypted */
@@ -173,6 +164,97 @@ test5 (void)
 }
 
 
+static void
+test_rand_sequence (unsigned seed)
+{
+    struct lsquic_rechist rechist;
+    const struct lsquic_packno_range *range;
+    lsquic_packno_t prev_low;
+    enum received_st st;
+    unsigned i;
+
+    lsquic_rechist_init(&rechist, 1);
+    srand(seed);
+
+    for (i = 0; i < 10000; ++i)
+    {
+        st = lsquic_rechist_received(&rechist, (unsigned) rand(), 0);
+        assert(st == REC_ST_OK || st == REC_ST_DUP);
+    }
+
+    range = lsquic_rechist_first(&rechist);
+    assert(range);
+    assert(range->high >= range->low);
+    prev_low = range->low;
+
+    while (range = lsquic_rechist_next(&rechist), range != NULL)
+    {
+        assert(range->high >= range->low);
+        assert(range->high < prev_low);
+        prev_low = range->low;
+    }
+
+    lsquic_rechist_cleanup(&rechist);
+}
+
+
+struct shuffle_elem {
+    unsigned    packno;
+    int         rand;
+};
+
+
+static int
+comp_els (const void *a_p, const void *b_p)
+{
+    const struct shuffle_elem *a = a_p, *b = b_p;
+    if (a->rand < b->rand)
+        return -1;
+    if (a->rand > b->rand)
+        return 1;
+    return (a->packno > b->packno) - (b->packno > a->packno);
+}
+
+
+static void
+test_shuffle_1000 (unsigned seed)
+{
+    struct lsquic_rechist rechist;
+    const struct lsquic_packno_range *range;
+    enum received_st st;
+    unsigned i;
+    struct shuffle_elem *els;
+
+    els = malloc(sizeof(els[0]) * 10000);
+    lsquic_rechist_init(&rechist, 1);
+    srand(seed);
+
+    for (i = 0; i < 10000; ++i)
+    {
+        els[i].packno = i;
+        els[i].rand   = rand();
+    }
+
+    qsort(els, 10000, sizeof(els[0]), comp_els);
+
+    for (i = 0; i < 10000; ++i)
+    {
+        st = lsquic_rechist_received(&rechist, els[i].packno, 0);
+        assert(st == REC_ST_OK || st == REC_ST_DUP);
+    }
+
+    range = lsquic_rechist_first(&rechist);
+    assert(range);
+    assert(range->high == 9999);
+    assert(range->low == 0);
+    range = lsquic_rechist_next(&rechist);
+    assert(!range);
+
+    lsquic_rechist_cleanup(&rechist);
+    free(els);
+}
+
+
 int
 main (void)
 {
@@ -181,15 +263,9 @@ main (void)
     unsigned i;
     const struct lsquic_packno_range *range;
 
-    lsquic_global_init(LSQUIC_GLOBAL_SERVER);
+    lsquic_rechist_init(&rechist, 0);
 
-    lsquic_log_to_fstream(stderr, 0);
-    lsq_log_levels[LSQLM_PARSE]   = LSQ_LOG_DEBUG;
-    lsq_log_levels[LSQLM_RECHIST] = LSQ_LOG_DEBUG;
-    
-    lsquic_rechist_init(&rechist, &lconn, 0);
-
-    lsquic_time_t now = lsquic_time_now();
+    lsquic_time_t now = 1234;
     st = lsquic_rechist_received(&rechist, 0, now);
     assert(("inserting packet number zero results in error", st == REC_ST_ERR));
 
@@ -254,11 +330,36 @@ main (void)
     range = lsquic_rechist_next(&rechist);
     assert(("third range does not exist", !range));
 
+    lsquic_rechist_stop_wait(&rechist, 5);
+
+    range = lsquic_rechist_first(&rechist);
+    range = lsquic_rechist_next(&rechist);
+    assert(("second range returned correctly", range));
+    assert(("second range low value checks out", range->low == 5));
+    assert(("second range high value checks out", range->high == 5));
+    range = lsquic_rechist_next(&rechist);
+    assert(("third range does not exist", !range));
+
+    lsquic_rechist_stop_wait(&rechist, 8);
+
+    range = lsquic_rechist_first(&rechist);
+    assert(("first range returned correctly", range));
+    assert(("first range low value checks out", range->low == 8));
+    assert(("first range high value checks out", range->high == 9));
+    range = lsquic_rechist_next(&rechist);
+    assert(("second range does not exist", !range));
+
     lsquic_rechist_cleanup(&rechist);
 
     test4();
 
     test5();
+
+    for (i = 0; i < 10; ++i)
+        test_rand_sequence(i);
+
+    for (i = 0; i < 10; ++i)
+        test_shuffle_1000(i);
 
     return 0;
 }

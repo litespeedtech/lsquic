@@ -54,7 +54,6 @@ SET(TESTS
     purga
     qlog
     quic_be_floats
-    rechist
     reg_pkt_headergen
     rst_stream_gquic_be
     rtt
@@ -127,3 +126,6 @@ ADD_TEST(malo_nopool test_malo_nopool)
 
 ADD_EXECUTABLE(test_minmax test_minmax.c ../src/liblsquic/lsquic_minmax.c)
 ADD_TEST(minmax test_minmax)
+
+ADD_EXECUTABLE(test_rechist test_rechist.c ../src/liblsquic/lsquic_rechist.c)
+ADD_TEST(rechist test_rechist)

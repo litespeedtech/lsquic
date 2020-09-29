@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 #ifndef WIN32
 #include <sys/time.h>
 #else
@@ -33,7 +34,7 @@ test_max_ack (void)
     unsigned char buf[1500];
     struct ack_info acki;
 
-    lsquic_rechist_init(&rechist, &lconn, 0);
+    lsquic_rechist_init(&rechist, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)
@@ -86,7 +87,7 @@ test_ack_truncation (void)
     struct ack_info acki;
     size_t bufsz;
 
-    lsquic_rechist_init(&rechist, &lconn, 0);
+    lsquic_rechist_init(&rechist, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)

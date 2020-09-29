@@ -1086,12 +1086,8 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
     }
 
     if (enpub->enp_settings.es_scid_len)
-    {
-        if (enpub->enp_generate_scid)
-            enpub->enp_generate_scid(lconn, &cce->cce_cid, enpub->enp_settings.es_scid_len);
-        else
-            lsquic_generate_cid(&cce->cce_cid, enpub->enp_settings.es_scid_len);
-    }
+        enpub->enp_generate_scid(lconn, &cce->cce_cid,
+                                            enpub->enp_settings.es_scid_len);
 
     cce->cce_seqno = conn->ifc_scid_seqno++;
     cce->cce_flags |= CCE_SEQNO | flags;
@@ -1182,9 +1178,9 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_MTU_PROBE, mtu_probe_alarm_expired, conn);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], &conn->ifc_conn, 1);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], &conn->ifc_conn, 1);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], &conn->ifc_conn, 1);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], 1);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], 1);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], 1);
     lsquic_send_ctl_init(&conn->ifc_send_ctl, &conn->ifc_alset, enpub,
         flags & IFC_SERVER ? &server_ver_neg : &conn->ifc_u.cli.ifcli_ver_neg,
         &conn->ifc_pub, SC_IETF|SC_NSTP|(ecn ? SC_ECN : 0));
@@ -6734,7 +6730,7 @@ process_regular_packet (struct ietf_full_conn *conn,
     enum received_st st;
     enum dec_packin dec_packin;
     enum was_missing was_missing;
-    unsigned n_rechist_packets;
+    int is_rechist_empty;
     unsigned char saved_path_id;
 
     if (HETY_RETRY == packet_in->pi_header_type)
@@ -6837,7 +6833,7 @@ process_regular_packet (struct ietf_full_conn *conn,
 
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
-    n_rechist_packets = lsquic_rechist_n_packets(&conn->ifc_rechist[pns]);
+    is_rechist_empty = lsquic_rechist_is_empty(&conn->ifc_rechist[pns]);
     st = lsquic_rechist_received(&conn->ifc_rechist[pns], packet_in->pi_packno,
                                                     packet_in->pi_received);
     switch (st) {
@@ -6882,7 +6878,7 @@ process_regular_packet (struct ietf_full_conn *conn,
                 if (packet_in->pi_packno > conn->ifc_max_ackable_packno_in)
                 {
                     was_missing = (enum was_missing)    /* WM_MAX_GAP is 1 */
-                        n_rechist_packets /* Don't count very first packno */
+                        !is_rechist_empty /* Don't count very first packno */
                         && conn->ifc_max_ackable_packno_in + 1
                                                     < packet_in->pi_packno
                         && holes_after(&conn->ifc_rechist[PNS_APP],
@@ -8641,6 +8637,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             break;
         case (0 << 8) | LSQVER_ID29:
         case (0 << 8) | LSQVER_ID30:
+        case (0 << 8) | LSQVER_ID31:
             callbacks = &hcsi_callbacks_client_29;
             break;
         default:
@@ -8648,6 +8645,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
         case (1 << 8) | LSQVER_ID30:
+        case (1 << 8) | LSQVER_ID31:
             callbacks = &hcsi_callbacks_server_29;
             break;
     }

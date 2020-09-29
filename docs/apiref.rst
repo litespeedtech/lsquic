@@ -48,7 +48,7 @@ developed by the IETF.  Both types are included in a single enum:
 
     .. member:: LSQVER_ID27
 
-        IETF QUIC version ID (Internet-Draft) 27
+        IETF QUIC version ID (Internet-Draft) 27; this version is deprecated.
 
     .. member:: LSQVER_ID28
 
@@ -58,9 +58,13 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID 29
 
-    .. member:: LSQVER_ID30
+    .. member:: LSQVER_ID30; this version is deprecated.
 
         IETF QUIC version ID 30
+
+    .. member:: LSQVER_ID31
+
+        IETF QUIC version ID 31
 
     .. member:: N_LSQVER
 
@@ -293,6 +297,10 @@ optional members.
 
         The optional ALPN string is used by the client if :macro:`LSENG_HTTP`
         is not set.
+
+    .. member::                               void (*ea_generate_scid)(lsquic_conn_t *, lsquic_cid_t *, unsigned)
+
+        Optional interface to control the creation of connection IDs.
 
 .. _apiref-engine-settings:
 
@@ -786,7 +794,7 @@ settings structure:
     .. member:: unsigned        es_mtu_probe_timer
 
         This value specifies how long the DPLPMTUD probe timer is, in
-        milliseconds.  `[draft-ietf-tsvwg-datagram-plpmtud-22] <https://tools.ietf.org/html/draft-ietf-tsvwg-datagram-plpmtud-22>`_ says:
+        milliseconds.  :rfc:`8899` says:
 
             PROBE_TIMER:  The PROBE_TIMER is configured to expire after a period
             longer than the maximum time to receive an acknowledgment to a
@@ -2169,7 +2177,6 @@ The following log modules are defined:
 - *qlog*: QLOG output.  At the moment, it is out of date.
 - *qpack-dec*: QPACK decoder.
 - *qpack-enc*: QPACK encoder.
-- *rechist*: Receive history.
 - *sendctl*: Send controller.
 - *sfcw*: Stream flow control window.
 - *spi*: Stream priority iterator.

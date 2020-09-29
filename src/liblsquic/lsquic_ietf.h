@@ -4,7 +4,7 @@
 
 /* Things specific to the IETF version of QUIC that do not fit anywhere else */
 
-/* [draft-ietf-quic-transport-28] Section 20 */
+/* [draft-ietf-quic-transport-31] Section 20 */
 enum trans_error_code
 {
     TEC_NO_ERROR                   =  0x0,
@@ -21,6 +21,8 @@ enum trans_error_code
     TEC_INVALID_TOKEN              =  0xB,
     TEC_APPLICATION_ERROR          =  0xC,
     TEC_CRYPTO_BUFFER_EXCEEDED     =  0xD,
+    TEC_KEY_UPDATE_ERROR           =  0xE,
+    TEC_AEAD_LIMIT_REACHED         =  0xF,
 };
 
 /* Must be at least two */

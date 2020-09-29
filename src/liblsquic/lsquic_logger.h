@@ -51,7 +51,6 @@ enum lsquic_logger_module {
     LSQLM_EVENT,
     LSQLM_ENGINE,
     LSQLM_CONN,
-    LSQLM_RECHIST,
     LSQLM_STREAM,
     LSQLM_PARSE,
     LSQLM_CFCW,

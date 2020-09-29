@@ -387,6 +387,10 @@ void
 lsquic_generate_cid_gquic (lsquic_cid_t *cid);
 
 void
+lsquic_generate_scid (struct lsquic_conn *lconn, lsquic_cid_t *scid,
+                                                                unsigned len);
+
+void
 lsquic_conn_retire_cid (lsquic_conn_t *lconn);
 
 #define lsquic_conn_adv_time(c) ((c)->cn_attq_elem->ae_adv_time)

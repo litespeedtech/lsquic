@@ -660,7 +660,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     conn->fc_pub.all_streams = lsquic_hash_create();
     if (!conn->fc_pub.all_streams)
         goto cleanup_on_error;
-    lsquic_rechist_init(&conn->fc_rechist, &conn->fc_conn, 0);
+    lsquic_rechist_init(&conn->fc_rechist, 0);
     if (conn->fc_flags & FC_HTTP)
     {
         conn->fc_pub.u.gquic.hs = lsquic_headers_stream_new(
@@ -4418,7 +4418,7 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
 
     /* Reset receive history */
     lsquic_rechist_cleanup(&conn->fc_rechist);
-    lsquic_rechist_init(&conn->fc_rechist, &conn->fc_conn, 0);
+    lsquic_rechist_init(&conn->fc_rechist, 0);
 
     /* Reset send controller state */
     lsquic_send_ctl_cleanup(&conn->fc_send_ctl);

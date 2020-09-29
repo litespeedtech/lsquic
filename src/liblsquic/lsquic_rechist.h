@@ -8,34 +8,42 @@
 #ifndef LSQUIC_RECHIST_H
 #define LSQUIC_RECHIST_H 1
 
-struct lsquic_conn;
 
-#include "lsquic_packints.h"
+/* Structure is exposed to facilitate some manipulations in unit tests. */
+struct rechist_elem {
+    lsquic_packno_t     re_low;
+    unsigned            re_count;
+    unsigned            re_next;    /* UINT_MAX means no next element */
+};
+
 
 struct lsquic_rechist {
-    struct packints                 rh_pints;
+    /* elems and masks are allocated in contiguous memory */
+    struct rechist_elem            *rh_elems;
+    uintptr_t                      *rh_masks;
     lsquic_packno_t                 rh_cutoff;
     lsquic_time_t                   rh_largest_acked_received;
-    const struct lsquic_conn       *rh_conn;        /* Used for logging */
-    /* Chromium limits the number of tracked packets (see
-     * kMaxTrackedPackets).  We could do this, too.
-     */
-    unsigned                        rh_n_packets;
+    unsigned                        rh_n_masks;
+    unsigned                        rh_n_alloced;
+    unsigned                        rh_n_used;
+    unsigned                        rh_head;
     enum {
         RH_CUTOFF_SET   = (1 << 0),
-#if LSQUIC_ACK_ATTACK
-        RH_ACK_ATTACK   = (1 << 1),
-#endif
     }                               rh_flags;
-#if LSQUIC_ACK_ATTACK
-    struct lsquic_packno_range      rh_first;
+    struct
+    {
+        struct lsquic_packno_range      range;
+        unsigned                        next;
+    }                               rh_iter;
+#if LSQUIC_TEST
+    unsigned                        rh_n_ops;
 #endif
 };
 
 typedef struct lsquic_rechist lsquic_rechist_t;
 
 void
-lsquic_rechist_init (struct lsquic_rechist *, const struct lsquic_conn *, int);
+lsquic_rechist_init (struct lsquic_rechist *, int is_ietf);
 
 void
 lsquic_rechist_cleanup (struct lsquic_rechist *);
@@ -52,12 +60,6 @@ lsquic_rechist_received (lsquic_rechist_t *, lsquic_packno_t,
 
 void
 lsquic_rechist_stop_wait (lsquic_rechist_t *, lsquic_packno_t);
-
-/* Returns number of bytes written on success, -1 on failure */
-int
-lsquic_rechist_make_ackframe (lsquic_rechist_t *,
-                          void *outbuf, size_t outbuf_sz, int *has_missing,
-                          lsquic_time_t now);
 
 const struct lsquic_packno_range *
 lsquic_rechist_first (lsquic_rechist_t *);
@@ -78,8 +80,8 @@ size_t
 lsquic_rechist_mem_used (const struct lsquic_rechist *);
 
 const struct lsquic_packno_range *
-lsquic_rechist_peek (const struct lsquic_rechist *);
+lsquic_rechist_peek (struct lsquic_rechist *);
 
-#define lsquic_rechist_n_packets(rechist_) (+(rechist_)->rh_n_packets)
+#define lsquic_rechist_is_empty(rechist_) ((rechist_)->rh_n_used == 0)
 
 #endif

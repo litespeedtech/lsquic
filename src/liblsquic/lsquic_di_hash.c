@@ -6,8 +6,7 @@
  * which makes it a good choice when we have a lot of stream frames
  * coming in.
  *
- * Another difference is that it does not check for frame overlap, which
- * is something that is present in Chrome, but it is not required by QUIC.
+ * Another difference is that incoming STREAM frames are allowed to overlap.
  */
 
 

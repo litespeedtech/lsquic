@@ -50,7 +50,6 @@ SET(lsquic_STAT_SRCS
     lsquic_packet_in.c
     lsquic_packet_out.c
     lsquic_packet_resize.c
-    lsquic_packints.c
     lsquic_parse_Q046.c
     lsquic_parse_Q050.c
     lsquic_parse_common.c
@@ -115,3 +114,4 @@ IF(LSQUIC_SHARED_LIB)
 ELSE()
   add_library(lsquic STATIC ${lsquic_STAT_SRCS})
 ENDIF()
+
