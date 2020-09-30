@@ -1,0 +1,81 @@
+commit 5d7eae3e8f45d91327c4cbc3a8eaa7be0ee748e9
+Author: Jonas Vautherin <jonas.vautherin@gmail.com>
+Date:   Wed Sep 30 00:41:07 2020 +0200
+
+    add install targets for crypto ssl decrepit
+    
+    Change-Id: Id0a9cf4da49bc2e40b2be4e1584974a86974ed0f
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c266e1267..3945dea4a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,6 +14,8 @@ include(sources.cmake)
+ enable_language(C)
+ enable_language(CXX)
+ 
++include(GNUInstallDirs)
++
+ # This is a dummy target which all other targets depend on (manually - see other
+ # CMakeLists.txt files). This gives us a hook to add any targets which need to
+ # run before all other targets.
+@@ -627,3 +629,8 @@ add_custom_target(
+     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+     DEPENDS all_tests bssl_shim handshaker
+     USES_TERMINAL)
++
++install(DIRECTORY
++    include/openssl
++    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
++)
+diff --git a/crypto/CMakeLists.txt b/crypto/CMakeLists.txt
+index a872626de..7314db124 100644
+--- a/crypto/CMakeLists.txt
++++ b/crypto/CMakeLists.txt
+@@ -465,6 +465,12 @@ if(USE_CUSTOM_LIBCXX)
+   target_link_libraries(crypto libcxx)
+ endif()
+ 
++install(TARGETS crypto
++    EXPORT boringssl-targets
++    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
++)
++
+ # urandom_test is a separate binary because it needs to be able to observe the
+ # PRNG initialisation, which means that it can't have other tests running before
+ # it does.
+diff --git a/decrepit/CMakeLists.txt b/decrepit/CMakeLists.txt
+index ef95a6be0..70d2550d0 100644
+--- a/decrepit/CMakeLists.txt
++++ b/decrepit/CMakeLists.txt
+@@ -26,6 +26,12 @@ add_dependencies(decrepit global_target)
+ 
+ target_link_libraries(decrepit crypto ssl)
+ 
++install(TARGETS decrepit
++    EXPORT boringssl-targets
++    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
++)
++
+ add_executable(
+   decrepit_test
+ 
+diff --git a/ssl/CMakeLists.txt b/ssl/CMakeLists.txt
+index 0fb532eae..41a2c4624 100644
+--- a/ssl/CMakeLists.txt
++++ b/ssl/CMakeLists.txt
+@@ -45,6 +45,12 @@ add_dependencies(ssl global_target)
+ 
+ target_link_libraries(ssl crypto)
+ 
++install(TARGETS ssl
++    EXPORT boringssl-targets
++    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
++)
++
+ add_executable(
+   ssl_test
+ 

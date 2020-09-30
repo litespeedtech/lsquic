@@ -36,46 +36,27 @@ Building BoringSSL
 ------------------
 
 BoringSSL is not packaged; you have to build it yourself.  The process is
-straightforward.  You will need `go` installed.
+straightforward, but we provide a helper in "./tools/build_boringssl".  You will need `go` installed.
 
-1. Clone BoringSSL by issuing the following command:
+1. You may need to install pre-requisites like zlib and libevent.
 
-```
-git clone https://boringssl.googlesource.com/boringssl
-cd boringssl
-```
-
-You may need to install pre-requisites like zlib and libevent.
-
-2. Use specific BoringSSL version
+2. Run the CMake configure step (instructions assume to be run from the root of this repository):
 
 ```
-git checkout 251b5169fd44345f455438312ec4e18ae07fd58c
+cmake -DCMAKE_INSTALL_PREFIX=tools/build_boringssl/install -Btools/build_boringssl/build -Stools/build_boringssl
 ```
 
-3. Compile the library
+_Note that with older versions of CMake (e.g. on Ubuntu 18.04), `-S` may be `-H.`._
+
+If you want to turn on optimizations, use `-DCMAKE_BUILD_TYPE=Release`, too.
+
+3. Run the CMake build step to build and install BoringSSL:
 
 ```
-cmake . &&  make
+cmake --build tools/build_boringssl/build
 ```
 
-Remember where BoringSSL sources are:
-```
-BORINGSSL=$PWD
-```
-
-If you want to turn on optimizations, do
-
-```
-cmake -DCMAKE_BUILD_TYPE=Release . && make
-```
-
-If you want to build as a library, (necessary to build lsquic itself
-as as shared library) do:
-
-```
-cmake -DBUILD_SHARED_LIBS=1 . && make
-```
+After this succeeds, using this installed BoringSSL when building LSQUIC is a matter of adding `-DCMAKE_PREFIX_PATH=tools/build_boringssl/install` in the LSQUIC configure step.
 
 Building LSQUIC Library
 -----------------------
@@ -84,38 +65,17 @@ LSQUIC's `http_client`, `http_server`, and the tests link BoringSSL
 libraries statically.  Following previous section, you can build LSQUIC
 as follows:
 
-1. Get the source code
+1. Compile the library
 
 ```
-git clone https://github.com/litespeedtech/lsquic.git
-cd lsquic
-git submodule init
-git submodule update
+cmake -DCMAKE_PREFIX_PATH=tools/build_boringssl/install -Bbuild -S.
+cmake --build build
 ```
 
-2. Compile the library
-
-Statically:
-
+2. Run tests
 
 ```
-# $BORINGSSL is the top-level BoringSSL directory from the previous step
-cmake -DBORINGSSL_DIR=$BORINGSSL .
-make
-```
-
-As a dynamic library:
-
-```
-cmake -DLSQUIC_SHARED_LIB=1 -DBORINGSSL_DIR=$BORINGSSL .
-make
-```
-
-
-3. Run tests
-
-```
-make test
+cmake --build build --target test
 ```
 
 Building with Docker
