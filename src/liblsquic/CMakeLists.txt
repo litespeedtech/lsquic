@@ -115,3 +115,9 @@ ELSE()
   add_library(lsquic STATIC ${lsquic_STAT_SRCS})
 ENDIF()
 
+install(TARGETS lsquic
+    EXPORT lsquic-targets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+

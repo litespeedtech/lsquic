@@ -9,6 +9,8 @@ OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
 OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
 OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
 
+INCLUDE(GNUInstallDirs)
+
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
     EXECUTE_PROCESS(
@@ -336,3 +338,10 @@ IF(SPHINX)
 ELSE()
     MESSAGE(STATUS "sphinx-build not found: docs won't be made")
 ENDIF()
+
+INSTALL(FILES
+    include/lsquic.h
+    include/lsquic_types.h
+    include/lsxpack_header.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
+)
