@@ -275,7 +275,7 @@ struct lsquic_enc_session
     c_cert_item_t *cert_item;
     lsquic_server_config_t *server_config;
     SSL_CTX *  ssl_ctx;
-    const struct lsquic_engine_public *enpub;
+    struct lsquic_engine_public *enpub;
     struct lsquic_str * cert_ptr; /* pointer to the leaf cert of the server, not real copy */
     struct lsquic_str   chlo; /* real copy of CHLO message */
     struct lsquic_str   sstk;
@@ -300,23 +300,6 @@ typedef struct compress_cert_hash_item_st
     
 } compress_cert_hash_item_t;
 
-/**
- * server side, just for performance, will save the compressed certs buffer
- */
-static struct lsquic_hash *s_compressed_server_certs;
-
-/***
- * Server side, it will store thr domain/cert [only the leaf cert]
- */
-static struct lsquic_hash *s_server_certs;
-
-/**
- * server side, will save one copy of s_server_scfg, it will update once a day
- * This global pointer is point to the value in the hashtable
- * Better to be put in ShM
- */
-static lsquic_server_config_t s_server_config;
-
 /* server side, only one cert */
 typedef struct cert_item_st
 {
@@ -326,12 +309,12 @@ typedef struct cert_item_st
 } cert_item_t;
 
 /* server */
-static cert_item_t* s_find_cert(const unsigned char *, size_t);
+static cert_item_t* find_cert(struct lsquic_engine_public *, const unsigned char *, size_t);
 static void s_free_cert_hash_item(cert_item_t *item);
-static cert_item_t* s_insert_cert(const unsigned char *key, size_t key_sz,
-                                                const struct lsquic_str *crt);
+static cert_item_t* insert_cert(struct lsquic_engine_public *,
+        const unsigned char *key, size_t key_sz, const struct lsquic_str *crt);
 
-static compress_cert_hash_item_t* find_compress_certs(struct lsquic_str *domain);
+static compress_cert_hash_item_t* find_compress_certs(struct lsquic_engine_public *, struct lsquic_str *domain);
 static compress_cert_hash_item_t *make_compress_cert_hash_item(struct lsquic_str *domain, struct lsquic_str *crts_compress_buf);
 
 #ifdef NDEBUG
@@ -350,7 +333,6 @@ static c_cert_item_t *make_c_cert_item(struct lsquic_str **certs, int count);
 static void free_c_cert_item(c_cert_item_t *item);
 
 static int get_tag_val_u32 (unsigned char *v, int len, uint32_t *val);
-static int init_hs_hash_tables(int flags);
 static uint32_t get_tag_value_i32(unsigned char *, int);
 static uint64_t get_tag_value_i64(unsigned char *, int);
 
@@ -376,61 +358,67 @@ static int
 lsquic_handshake_init(int flags)
 {
     lsquic_crypto_init();
-    return init_hs_hash_tables(flags);
+    return lsquic_crt_init();
 }
 
 
-static void
-cleanup_hs_hash_tables (void)
+void
+lsquic_cleanup_gquic_crypto (struct lsquic_engine_public *enpub)
 {
     struct lsquic_hash_elem *el;
-    if (s_compressed_server_certs)
+    if (enpub->enp_compressed_server_certs)
     {
-        for (el = lsquic_hash_first(s_compressed_server_certs); el;
-                        el = lsquic_hash_next(s_compressed_server_certs))
+        for (el = lsquic_hash_first(enpub->enp_compressed_server_certs); el;
+                        el = lsquic_hash_next(enpub->enp_compressed_server_certs))
         {
             compress_cert_hash_item_t *item = lsquic_hashelem_getdata(el);
             lsquic_str_delete(item->domain);
             lsquic_str_delete(item->crts_compress_buf);
             free(item);
         }
-        lsquic_hash_destroy(s_compressed_server_certs);
-        s_compressed_server_certs = NULL;
+        lsquic_hash_destroy(enpub->enp_compressed_server_certs);
+        enpub->enp_compressed_server_certs = NULL;
     }
 
-    if (s_server_certs)
+    if (enpub->enp_server_certs)
     {
-        for (el = lsquic_hash_first(s_server_certs); el;
-                                    el = lsquic_hash_next(s_server_certs))
+        for (el = lsquic_hash_first(enpub->enp_server_certs); el;
+                                    el = lsquic_hash_next(enpub->enp_server_certs))
         {
             s_free_cert_hash_item( lsquic_hashelem_getdata(el) );
         }
-        lsquic_hash_destroy(s_server_certs);
-        s_server_certs = NULL;
+        lsquic_hash_destroy(enpub->enp_server_certs);
+        enpub->enp_server_certs = NULL;
     }
+
+    free(enpub->enp_server_config);
 }
 
 
 static void
 lsquic_handshake_cleanup (void)
 {
-    cleanup_hs_hash_tables();
     lsquic_crt_cleanup();
 }
 
 
-/* return -1 for fail, 0 OK*/
-static int init_hs_hash_tables(int flags)
+int
+lsquic_init_gquic_crypto (struct lsquic_engine_public *enpub)
 {
-    if (flags & LSQUIC_GLOBAL_SERVER)
-    {
-        s_compressed_server_certs = lsquic_hash_create();
-        if (!s_compressed_server_certs)
-            return -1;
+    enpub->enp_server_config = calloc(1, sizeof(*enpub->enp_server_config));
+    if (!enpub->enp_server_config)
+        return -1;
 
-        s_server_certs = lsquic_hash_create();
-        if (!s_server_certs)
-            return -1;
+    enpub->enp_compressed_server_certs = lsquic_hash_create();
+    if (!enpub->enp_compressed_server_certs)
+        return -1;
+
+    enpub->enp_server_certs = lsquic_hash_create();
+    if (!enpub->enp_server_certs)
+    {
+        lsquic_hash_destroy(enpub->enp_compressed_server_certs);
+        enpub->enp_compressed_server_certs = NULL;
+        return -1;
     }
 
     return 0;
@@ -439,14 +427,15 @@ static int init_hs_hash_tables(int flags)
 
 /* server */
 static cert_item_t *
-s_find_cert (const unsigned char *key, size_t key_sz)
+find_cert (struct lsquic_engine_public *enpub, const unsigned char *key,
+                                                                size_t key_sz)
 {
     struct lsquic_hash_elem *el;
 
-    if (!s_server_certs)
+    if (!enpub->enp_server_certs)
         return NULL;
 
-    el = lsquic_hash_find(s_server_certs, key, key_sz);
+    el = lsquic_hash_find(enpub->enp_server_certs, key, key_sz);
     if (el == NULL)
         return NULL;
 
@@ -505,7 +494,8 @@ s_free_cert_hash_item (cert_item_t *item)
 
 /* server */
 static cert_item_t *
-s_insert_cert (const unsigned char *key, size_t key_sz, const lsquic_str_t *crt)
+insert_cert (struct lsquic_engine_public *enpub, const unsigned char *key,
+                                    size_t key_sz, const lsquic_str_t *crt)
 {
     struct lsquic_hash_elem *el;
     lsquic_str_t *crt_copy;
@@ -524,7 +514,7 @@ s_insert_cert (const unsigned char *key, size_t key_sz, const lsquic_str_t *crt)
 
     item->crt = crt_copy;
     memcpy(item->key, key, key_sz);
-    el = lsquic_hash_insert(s_server_certs, item->key, key_sz,
+    el = lsquic_hash_insert(enpub->enp_server_certs, item->key, key_sz,
                                                         item, &item->hash_el);
     if (el)
         return lsquic_hashelem_getdata(el);
@@ -538,15 +528,15 @@ s_insert_cert (const unsigned char *key, size_t key_sz, const lsquic_str_t *crt)
 
 /* server */
 static compress_cert_hash_item_t *
-find_compress_certs(lsquic_str_t *domain)
+find_compress_certs (struct lsquic_engine_public *enpub, lsquic_str_t *domain)
 {
     struct lsquic_hash_elem *el;
 
-    if (!s_compressed_server_certs)
+    if (!enpub->enp_compressed_server_certs)
         return NULL;
 
-    el = lsquic_hash_find(s_compressed_server_certs, lsquic_str_cstr(domain),
-                                                    lsquic_str_len(domain));
+    el = lsquic_hash_find(enpub->enp_compressed_server_certs,
+                            lsquic_str_cstr(domain), lsquic_str_len(domain));
     if (el == NULL)
         return NULL;
 
@@ -568,9 +558,11 @@ make_compress_cert_hash_item(lsquic_str_t *domain, lsquic_str_t *crts_compress_b
 
 
 /* server */
-static int insert_compress_certs(compress_cert_hash_item_t *item)
+static int
+insert_compress_certs (struct lsquic_engine_public *enpub,
+                                            compress_cert_hash_item_t *item)
 {
-    if (lsquic_hash_insert(s_compressed_server_certs,
+    if (lsquic_hash_insert(enpub->enp_compressed_server_certs,
             lsquic_str_cstr(item->domain),
                 lsquic_str_len(item->domain), item, &item->hash_el) == NULL)
     {
@@ -823,7 +815,7 @@ maybe_log_secrets (struct lsquic_enc_session *enc_session)
 
 static enc_session_t *
 lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
-                    lsquic_cid_t cid, const struct lsquic_engine_public *enpub,
+                    lsquic_cid_t cid, struct lsquic_engine_public *enpub,
                                     const unsigned char *sess_resume, size_t sess_resume_len)
 {
     lsquic_session_cache_info_t *info;
@@ -901,7 +893,7 @@ lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
 /* Server side: Session_cache_entry can be saved for 0rtt */
 static enc_session_t *
 lsquic_enc_session_create_server (struct lsquic_conn *lconn, lsquic_cid_t cid,
-                        const struct lsquic_engine_public *enpub)
+                        struct lsquic_engine_public *enpub)
 {
     fiu_return_on("handshake/new_enc_session", NULL);
 
@@ -1792,23 +1784,23 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     unsigned msg_len, server_config_sz;
     struct message_writer mw;
 
-    if (s_server_config.lsc_scfg && (s_server_config.lsc_scfg->info.expy > (uint64_t)t))
-        return &s_server_config;
+    if (enc_session->enpub->enp_server_config->lsc_scfg && (enc_session->enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
+        return enc_session->enpub->enp_server_config;
 
     ret = shi->shi_lookup(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE,
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
         if (config_has_correct_size(enc_session, scfg_ptr, real_len) &&
-                (s_server_config.lsc_scfg = scfg_ptr,
-                            s_server_config.lsc_scfg->info.expy > (uint64_t)t))
+                (enc_session->enpub->enp_server_config->lsc_scfg = scfg_ptr,
+                            enc_session->enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
         {
             /* Why need to init here, because this memory may be read from SHM,
              * the struct is ready but AEAD_CTX is not ready.
              **/
-            EVP_AEAD_CTX_init(&s_server_config.lsc_stk_ctx, EVP_aead_aes_128_gcm(),
-                              s_server_config.lsc_scfg->info.skt_key, 16, 12, NULL);
-            return &s_server_config;
+            EVP_AEAD_CTX_init(&enc_session->enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
+                              enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key, 16, 12, NULL);
+            return enc_session->enpub->enp_server_config;
         }
         else
         {
@@ -1826,12 +1818,12 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     MSG_LEN_ADD(msg_len, sizeof(temp_scfg->orbt));
     MSG_LEN_ADD(msg_len, sizeof(temp_scfg->expy));
 
-    server_config_sz = sizeof(*s_server_config.lsc_scfg) + MSG_LEN_VAL(msg_len);
-    s_server_config.lsc_scfg = malloc(server_config_sz);
-    if (!s_server_config.lsc_scfg)
+    server_config_sz = sizeof(*enc_session->enpub->enp_server_config->lsc_scfg) + MSG_LEN_VAL(msg_len);
+    enc_session->enpub->enp_server_config->lsc_scfg = malloc(server_config_sz);
+    if (!enc_session->enpub->enp_server_config->lsc_scfg)
         return NULL;
 
-    temp_scfg = &s_server_config.lsc_scfg->info;
+    temp_scfg = &enc_session->enpub->enp_server_config->lsc_scfg->info;
     RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
     RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
     RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
@@ -1842,7 +1834,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     temp_scfg->orbt = 0;
     temp_scfg->expy = t + settings->es_sttl;
 
-    MW_BEGIN(&mw, QTAG_SCFG, 8, s_server_config.lsc_scfg->scfg);
+    MW_BEGIN(&mw, QTAG_SCFG, 8, enc_session->enpub->enp_server_config->lsc_scfg->scfg);
     MW_WRITE_BUFFER(&mw, QTAG_VER, enpub->enp_ver_tags_buf,
                                                 enpub->enp_ver_tags_len);
     MW_WRITE_UINT32(&mw, QTAG_AEAD, temp_scfg->aead);
@@ -1853,7 +1845,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     MW_WRITE_UINT64(&mw, QTAG_ORBT, temp_scfg->orbt);
     MW_WRITE_UINT64(&mw, QTAG_EXPY, temp_scfg->expy);
     MW_END(&mw);
-    assert(MW_P(&mw) == s_server_config.lsc_scfg->scfg + MSG_LEN_VAL(msg_len));
+    assert(MW_P(&mw) == enc_session->enpub->enp_server_config->lsc_scfg->scfg + MSG_LEN_VAL(msg_len));
 
     temp_scfg->scfg_len = MSG_LEN_VAL(msg_len);
 
@@ -1863,17 +1855,17 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 //     shi->shi_delete(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE);
     void *scfg_key = strdup(SERVER_SCFG_KEY);
     shi->shi_insert(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
-            s_server_config.lsc_scfg, server_config_sz, t + settings->es_sttl);
+            enc_session->enpub->enp_server_config->lsc_scfg, server_config_sz, t + settings->es_sttl);
 
     ret = shi->shi_lookup(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
         tmp_scfg_copy = scfg_ptr;
-        if (tmp_scfg_copy != s_server_config.lsc_scfg)
+        if (tmp_scfg_copy != enc_session->enpub->enp_server_config->lsc_scfg)
         {
-            free(s_server_config.lsc_scfg);
-            s_server_config.lsc_scfg = tmp_scfg_copy;
+            free(enc_session->enpub->enp_server_config->lsc_scfg);
+            enc_session->enpub->enp_server_config->lsc_scfg = tmp_scfg_copy;
         }
     }
     else
@@ -1882,12 +1874,12 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
         LSQ_DEBUG("get_valid_scfg got an shi internal error.\n");
     }
 
-    ret = EVP_AEAD_CTX_init(&s_server_config.lsc_stk_ctx, EVP_aead_aes_128_gcm(),
-                              s_server_config.lsc_scfg->info.skt_key,
-                              sizeof(s_server_config.lsc_scfg->info.skt_key), 12, NULL);
+    ret = EVP_AEAD_CTX_init(&enc_session->enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
+                              enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key,
+                              sizeof(enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key), 12, NULL);
 
     LSQ_DEBUG("get_valid_scfg::EVP_AEAD_CTX_init return %d.", ret);
-    return &s_server_config;
+    return enc_session->enpub->enp_server_config;
 }
 
 
@@ -1932,8 +1924,8 @@ generate_crt (struct lsquic_enc_session *enc_session, int common_case)
 
     if (common_case)
     {
-        if (0 != insert_compress_certs(make_compress_cert_hash_item(
-                                                &hs_ctx->sni, &hs_ctx->crt)))
+        if (0 != insert_compress_certs(enc_session->enpub,
+                    make_compress_cert_hash_item(&hs_ctx->sni, &hs_ctx->crt)))
             goto cleanup;
     }
 
@@ -1982,7 +1974,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     common_case = lsquic_str_len(&hs_ctx->ccrt) == 0
                && lsquic_str_bcmp(&hs_ctx->ccs, lsquic_get_common_certs_hash()) == 0;
     if (common_case)
-        compress_certs_item = find_compress_certs(&hs_ctx->sni);
+        compress_certs_item = find_compress_certs(enc_session->enpub, &hs_ctx->sni);
     else
         compress_certs_item = NULL;
 
@@ -2219,7 +2211,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
         key_sz = gen_iasn_key(crt, key, sizeof(key));
         if (key_sz)
         {
-            item = s_find_cert(key, key_sz);
+            item = find_cert(enc_session->enpub, key, key_sz);
             if (item)
                 LSQ_DEBUG("found cert in cache");
             else
@@ -2229,7 +2221,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
                 if (len < 0)
                     return GET_SNI_ERR;
                 lsquic_str_set(&crtstr, (char *) out, len);
-                item = s_insert_cert(key, key_sz, &crtstr);
+                item = insert_cert(enc_session->enpub, key, key_sz, &crtstr);
                 if (item)
                 {
                     OPENSSL_free(out);

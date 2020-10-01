@@ -13,6 +13,7 @@ struct lsquic_str;
 struct lsquic_packet_in;
 struct lsquic_cid;
 struct lsquic_enc_session;
+struct lsquic_engine_public;
 
 /* client side, certs and hashs
  */
@@ -112,5 +113,11 @@ enum hsk_failure_reason
 
 enum lsquic_version
 lsquic_sess_resume_version (const unsigned char *, size_t);
+
+int
+lsquic_init_gquic_crypto (struct lsquic_engine_public *enpub);
+
+void
+lsquic_cleanup_gquic_crypto (struct lsquic_engine_public *enpub);
 
 #endif

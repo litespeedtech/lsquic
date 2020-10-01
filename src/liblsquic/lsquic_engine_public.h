@@ -19,6 +19,7 @@ struct lsquic_stream_if;
 struct ssl_ctx_st;
 struct crand;
 struct evp_aead_ctx_st;
+struct lsquic_server_config;
 
 enum warning_type
 {
@@ -72,6 +73,11 @@ struct lsquic_engine_public {
     /* es_noprogress_timeout converted to microseconds for speed */
     lsquic_time_t                   enp_noprog_timeout;
     lsquic_time_t                   enp_mtu_probe_timer;
+    /* Certs used by gQUIC server: */
+    struct lsquic_hash             *enp_compressed_server_certs;
+    struct lsquic_hash             *enp_server_certs;
+    /* gQUIC server configuration: */
+    struct lsquic_server_config    *enp_server_config;
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

@@ -28,7 +28,7 @@ lsquic_str_new (const char *, size_t);
 void
 lsquic_str_setto (lsquic_str_t *, const void *, size_t);
 
-void
+int
 lsquic_str_append (lsquic_str_t *, const char *, size_t);
 
 void

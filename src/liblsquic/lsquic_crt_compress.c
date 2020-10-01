@@ -166,18 +166,26 @@ static int
 match_common_cert (lsquic_str_t * cert, lsquic_str_t * common_set_hashes,
         uint64_t* out_hash, uint32_t* out_index);
 
+int
+lsquic_crt_init (void)
+{
+    unsigned i;
+
+    s_ccsbuf = lsquic_str_new(NULL, 0);
+    if (!s_ccsbuf)
+        return -1;
+    for (i=0 ;i<common_certs_num; ++i)
+    {
+        if (0 != lsquic_str_append(s_ccsbuf, (const char *)&common_cert_set[i].hash, 8))
+            return -1;
+    }
+    return 0;
+}
+
+
 lsquic_str_t *
 lsquic_get_common_certs_hash()
 {
-    int i;
-    if (s_ccsbuf == NULL)
-    {
-        s_ccsbuf = lsquic_str_new(NULL, 0);
-        for (i=0 ;i<common_certs_num; ++i)
-        {
-            lsquic_str_append(s_ccsbuf, (const char *)&common_cert_set[i].hash, 8);
-        }
-    }
     return s_ccsbuf;
 }
 

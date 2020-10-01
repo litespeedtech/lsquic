@@ -86,6 +86,7 @@
 #include "lsquic_handshake.h"
 #include "lsquic_crand.h"
 #include "lsquic_ietf.h"
+#include "lsquic_handshake.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
@@ -666,6 +667,11 @@ lsquic_engine_new (unsigned flags,
             lsquic_engine_destroy(engine);
             return NULL;
         }
+    }
+    if ((flags & LSENG_SERVER) && 0 != lsquic_init_gquic_crypto(&engine->pub))
+    {
+        lsquic_engine_destroy(engine);
+        return NULL;
     }
 
     if (alpn_len)
@@ -1502,6 +1508,8 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
 #endif
     if (engine->pub.enp_tokgen)
         lsquic_tg_destroy(engine->pub.enp_tokgen);
+    if (engine->flags & LSENG_SERVER)
+        lsquic_cleanup_gquic_crypto(&engine->pub);
 #if LSQUIC_CONN_STATS
     if (engine->stats_fh)
     {

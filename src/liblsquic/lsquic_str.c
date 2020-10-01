@@ -49,7 +49,7 @@ lsquic_str_setto (lsquic_str_t *lstr, const void *str, size_t len)
 }
 
 
-void
+int
 lsquic_str_append (lsquic_str_t *lstr, const char *str, size_t len)
 {
     size_t newlen;
@@ -58,12 +58,13 @@ lsquic_str_append (lsquic_str_t *lstr, const char *str, size_t len)
     newlen = lstr->len + len;
     newstr = realloc(lstr->str, newlen + 1);
     if (!newstr)
-        return;
+        return -1;
 
     memcpy(newstr + lstr->len, str, len);
     newstr[newlen] = '\0';
     lstr->str = newstr;
     lstr->len = newlen;
+    return 0;
 }
 
 

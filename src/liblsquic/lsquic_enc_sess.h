@@ -158,7 +158,7 @@ struct enc_session_funcs_gquic
     /* Create server session */
     enc_session_t *
     (*esf_create_server) (struct lsquic_conn *,
-                        lsquic_cid_t cid, const struct lsquic_engine_public *);
+                        lsquic_cid_t cid, struct lsquic_engine_public *);
 
     /* out_len should have init value as the max length of out */
     enum handshake_error
@@ -216,7 +216,7 @@ struct enc_session_funcs_gquic
     enc_session_t *
     (*esf_create_client) (struct lsquic_conn *, const char *domain,
                             lsquic_cid_t cid,
-                                    const struct lsquic_engine_public *,
+                                    struct lsquic_engine_public *,
                                     const unsigned char *, size_t);
 
     /* -1 error, 0, OK, response in `buf' */

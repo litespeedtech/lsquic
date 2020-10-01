@@ -34,6 +34,9 @@ typedef struct common_cert_st
     uint64_t hash;
 } common_cert_t;
 
+int
+lsquic_crt_init (void);
+
 struct lsquic_str * lsquic_get_common_certs_hash();
 
 
