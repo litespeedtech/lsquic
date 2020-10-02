@@ -205,14 +205,14 @@ lsquic_conn_push_stream (struct lsquic_conn *lconn, void *hset,
 lsquic_conn_ctx_t *
 lsquic_conn_get_ctx (const struct lsquic_conn *lconn)
 {
-    return lconn->cn_if->ci_get_ctx(lconn);
+    return lconn->conn_ctx;
 }
 
 
 void
 lsquic_conn_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
 {
-    lconn->cn_if->ci_set_ctx(lconn, ctx);
+    lconn->conn_ctx = ctx;
 }
 
 

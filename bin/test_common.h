@@ -111,15 +111,11 @@ struct packout_buf_allocator
     SLIST_HEAD(, packout_buf)   free_packout_bufs;
 };
 
-struct lsquic_conn_ctx {
-
-};
-
 void
 pba_init (struct packout_buf_allocator *, unsigned max);
 
 void *
-pba_allocate (void *packout_buf_allocator, void*, lsquic_conn_ctx_t *conn_ctx, unsigned short, char);
+pba_allocate (void *packout_buf_allocator, void*, void *conn_ctx, unsigned short, char);
 
 void
 pba_release (void *packout_buf_allocator, void *, void *obj, char);

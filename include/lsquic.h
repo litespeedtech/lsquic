@@ -966,7 +966,8 @@ struct lsquic_out_spec
     const struct sockaddr *local_sa;
     const struct sockaddr *dest_sa;
     void                  *peer_ctx;
-    int                    ecn; /* Valid values are 0 - 3.  See RFC 3168 */
+    lsquic_conn_ctx_t     *conn_ctx;  /* will be NULL when sending out the first batch of handshake packets */
+    int                    ecn;       /* Valid values are 0 - 3.  See RFC 3168 */
 };
 
 /**

@@ -172,7 +172,6 @@ struct full_conn
         const struct lsquic_stream_if   *stream_if;
         void                            *stream_if_ctx;
     }                            fc_stream_ifs[N_STREAM_IFS];
-    lsquic_conn_ctx_t           *fc_conn_ctx;
     struct lsquic_send_ctl       fc_send_ctl;
     struct lsquic_conn_public    fc_pub;
     lsquic_alarmset_t            fc_alset;
@@ -798,7 +797,7 @@ full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     assert(conn->fc_flags & FC_CREATED_OK);
-    conn->fc_conn_ctx = conn->fc_stream_ifs[STREAM_IF_STD].stream_if
+    lconn->conn_ctx = conn->fc_stream_ifs[STREAM_IF_STD].stream_if
         ->on_new_conn(conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx, lconn);
 }
 
@@ -972,7 +971,7 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
             lsquic_send_ctl_turn_nstp_on(&conn->fc_send_ctl);
         }
         LSQ_DEBUG("Calling on_new_conn callback");
-        conn->fc_conn_ctx = enpub->enp_stream_if->on_new_conn(
+        lconn_full->conn_ctx = enpub->enp_stream_if->on_new_conn(
                                     enpub->enp_stream_if_ctx, &conn->fc_conn);
         /* Now that user code knows about this connection, process incoming
          * packets, if any.
@@ -4176,22 +4175,6 @@ full_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
 }
 
 
-static struct lsquic_conn_ctx *
-full_conn_ci_get_ctx (const struct lsquic_conn *lconn)
-{
-    struct full_conn *const conn = (struct full_conn *) lconn;
-    return conn->fc_conn_ctx;
-}
-
-
-static void
-full_conn_ci_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
-{
-    struct full_conn *const conn = (struct full_conn *) lconn;
-    conn->fc_conn_ctx = ctx;
-}
-
-
 static enum LSQUIC_CONN_STATUS
 full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
 {
@@ -4477,7 +4460,6 @@ static const struct conn_iface full_conn_iface = {
     .ci_client_call_on_new   =  full_conn_ci_client_call_on_new,
     .ci_close                =  full_conn_ci_close,
     .ci_destroy              =  full_conn_ci_destroy,
-    .ci_get_ctx              =  full_conn_ci_get_ctx,
     .ci_get_stream_by_id     =  full_conn_ci_get_stream_by_id,
     .ci_get_engine           =  full_conn_ci_get_engine,
     .ci_get_path             =  full_conn_ci_get_path,
@@ -4503,7 +4485,6 @@ static const struct conn_iface full_conn_iface = {
      * caller when packets come in.
      */
     .ci_report_live          =  NULL,
-    .ci_set_ctx              =  full_conn_ci_set_ctx,
     .ci_status               =  full_conn_ci_status,
     .ci_tick                 =  full_conn_ci_tick,
     .ci_write_ack            =  full_conn_ci_write_ack,
