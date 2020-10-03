@@ -974,7 +974,8 @@ struct lsquic_out_spec
     const struct sockaddr *local_sa;
     const struct sockaddr *dest_sa;
     void                  *peer_ctx;
-    int                    ecn; /* Valid values are 0 - 3.  See RFC 3168 */
+    lsquic_conn_ctx_t     *conn_ctx;  /* will be NULL when sending out the first batch of handshake packets */
+    int                    ecn;       /* Valid values are 0 - 3.  See RFC 3168 */
 };
 
 /**
@@ -1043,7 +1044,7 @@ struct lsquic_packout_mem_if
     /**
      * Allocate buffer for sending.
      */
-    void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, unsigned short sz,
+    void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, lsquic_conn_ctx_t *, unsigned short sz,
                                                                 char is_ipv6);
     /**
      * This function is used to release the allocated buffer after it is

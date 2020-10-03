@@ -376,7 +376,6 @@ struct ietf_full_conn
                                *ifc_enpub;
     const struct lsquic_engine_settings
                                *ifc_settings;
-    lsquic_conn_ctx_t          *ifc_conn_ctx;
     STAILQ_HEAD(, stream_id_to_ss)
                                 ifc_stream_ids_to_ss;
     lsquic_time_t               ifc_created;
@@ -1552,7 +1551,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_last_live_update = now;
 
     LSQ_DEBUG("Calling on_new_conn callback");
-    conn->ifc_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+    conn->ifc_conn.conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
 
     if (0 != handshake_ok(&conn->ifc_conn))
@@ -2761,7 +2760,7 @@ ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     assert(conn->ifc_flags & IFC_CREATED_OK);
-    conn->ifc_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+    lconn->conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                                 conn->ifc_enpub->enp_stream_if_ctx, lconn);
 }
 
@@ -7908,27 +7907,11 @@ ietf_full_conn_ci_stateless_reset (struct lsquic_conn *lconn)
 }
 
 
-static struct lsquic_conn_ctx *
-ietf_full_conn_ci_get_ctx (const struct lsquic_conn *lconn)
-{
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-    return conn->ifc_conn_ctx;
-}
-
-
 static struct lsquic_engine *
 ietf_full_conn_ci_get_engine (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     return conn->ifc_enpub->enp_engine;
-}
-
-
-static void
-ietf_full_conn_ci_set_ctx (struct lsquic_conn *lconn, lsquic_conn_ctx_t *ctx)
-{
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-    conn->ifc_conn_ctx = ctx;
 }
 
 
@@ -8194,7 +8177,6 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_destroy              =  ietf_full_conn_ci_destroy, \
     .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
     .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
-    .ci_get_ctx              =  ietf_full_conn_ci_get_ctx, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
     .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
@@ -8214,7 +8196,6 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_record_addrs         =  ietf_full_conn_ci_record_addrs, \
     .ci_report_live          =  ietf_full_conn_ci_report_live, \
     .ci_retx_timeout         =  ietf_full_conn_ci_retx_timeout, \
-    .ci_set_ctx              =  ietf_full_conn_ci_set_ctx, \
     .ci_set_min_datagram_size=  ietf_full_conn_ci_set_min_datagram_size, \
     .ci_status               =  ietf_full_conn_ci_status, \
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \

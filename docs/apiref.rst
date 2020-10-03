@@ -2016,7 +2016,7 @@ Miscellaneous Types
 
     If not specified, malloc() and free() are used.
 
-    .. member:: void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, unsigned short sz, char is_ipv6)
+    .. member:: void *  (*pmi_allocate) (void *pmi_ctx, void *peer_ctx, lsquic_conn_get_ctx *conn_ctx, unsigned short sz, char is_ipv6)
 
         Allocate buffer for sending.
 

@@ -178,12 +178,6 @@ struct conn_iface
     struct lsquic_engine *
     (*ci_get_engine) (struct lsquic_conn *);
 
-    struct lsquic_conn_ctx *
-    (*ci_get_ctx) (const struct lsquic_conn *);
-
-    void
-    (*ci_set_ctx) (struct lsquic_conn *, struct lsquic_conn_ctx *);
-
     void
     (*ci_make_stream) (struct lsquic_conn *);
 
@@ -318,6 +312,7 @@ struct conn_cid_elem
 struct lsquic_conn
 {
     void                        *cn_enc_session;
+    lsquic_conn_ctx_t           *conn_ctx;
     const struct enc_session_funcs_common
                                 *cn_esf_c;
     union {
