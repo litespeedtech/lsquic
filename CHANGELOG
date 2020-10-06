@@ -1,7 +1,6 @@
-2020-09-25
-    - 2.12.9
-    - [BUGFIX] Memory leak in IETF full conn dtor: cleanup closed IDs sets.
-    - [BUGFIX] Memory leak: free pushed promise when refcnt is zero.
+2020-10-06
+    - 2.12.10
+    - [BUGFIX] Deactivate only *recent* HQ frame, not any HQ frame.
 
 2020-09-08
     - 2.12.8
