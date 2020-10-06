@@ -2629,13 +2629,17 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
     struct stream_hq_frame *shf;
     size_t nw, frame_sz, avail, rem;
     unsigned bits;
+    int new;
 
     while (p < end)
     {
         shf = find_cur_hq_frame(stream);
         if (shf)
+        {
+            new = 0;
             LSQ_DEBUG("found current HQ frame of type 0x%X at offset %"PRIu64,
                                             shf->shf_frame_type, shf->shf_off);
+        }
         else
         {
             rem = frame_std_gen_size(ctx);
@@ -2646,7 +2650,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                 shf = stream_activate_hq_frame(stream,
                                     stream->sm_payload, HQFT_DATA, 0, rem);
                 if (shf)
+                {
+                    new = 1;
                     goto insert;
+                }
                 else
                 {
                     /* TODO: abort connection?  Handle failure somehow */
@@ -2663,7 +2670,8 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
             frame_sz = stream_hq_frame_size(shf);
             if (frame_sz > (uintptr_t) (end - p))
             {
-                stream_hq_frame_put(stream, shf);
+                if (new)
+                    stream_hq_frame_put(stream, shf);
                 break;
             }
             LSQ_DEBUG("insert %zu-byte HQ frame of type 0x%X at payload "
