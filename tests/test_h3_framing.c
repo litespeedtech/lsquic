@@ -1223,11 +1223,11 @@ test_frame_header_split (unsigned n_packets, unsigned extra_sz,
     const ssize_t w = lsquic_stream_write(stream, buf_in, buf_in_sz);
     assert(w >= 0 && (size_t) w == buf_in_sz);
     n_frames = count_hq_frames(stream);
-    assert(n_frames == 1 + (w > 0));
+    assert((int) n_frames == 1 + (w > 0));
 
     lsquic_stream_flush(stream);
     n_frames = count_hq_frames(stream);
-    assert(n_frames == !!stream->sm_n_buffered);
+    assert((int) n_frames == !!stream->sm_n_buffered);
 
     if (add_one_more)
     {

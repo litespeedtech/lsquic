@@ -11,6 +11,8 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#else
+#include <malloc.h>
 #endif
 
 #include <openssl/ssl.h>
@@ -1977,7 +1979,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
 #ifndef WIN32
     char prof_buf[prof_len];
 #else
-    prof_buf = _malloca(prof_len);
+    char *prof_buf = _malloca(prof_len);
     if (!prof_buf)
         return -1;
 #endif
