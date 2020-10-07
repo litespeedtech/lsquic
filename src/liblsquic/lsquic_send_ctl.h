@@ -50,6 +50,9 @@ enum send_ctl_flags {
     SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
     SC_POISON       =  1 << 17,     /* poisoned packet exists */
     SC_CLEANUP_BBR  =  1 << 18,
+    SC_ACK_RECV_INIT=  1 << 19,
+    SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
+    SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
 };
 
 typedef struct lsquic_send_ctl {
@@ -290,7 +293,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
         : 0 )
 
 enum packno_bits
-lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *);
+lsquic_send_ctl_packno_bits (struct lsquic_send_ctl *, enum packnum_space);
 
 int
 lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);

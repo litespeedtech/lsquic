@@ -46,6 +46,7 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
     uint64_t len;
     int s;
 
+  continue_reading:
     while (p < end)
     {
         switch (reader->hr_state)
@@ -83,6 +84,10 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             case HQFT_MAX_PUSH_ID:
                 reader->hr_state = HR_READ_VARINT;
                 break;
+            case HQFT_PRIORITY_UPDATE_PUSH:
+            case HQFT_PRIORITY_UPDATE_STREAM:
+                reader->hr_state = HR_READ_VARINT;
+                break;
             case HQFT_DATA:
             case HQFT_HEADERS:
             case HQFT_PUSH_PROMISE:
@@ -111,13 +116,20 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             reader->hr_nread += p - orig_p;
             if (0 == s)
             {
-                if (reader->hr_nread != reader->hr_frame_length)
+                switch (reader->hr_frame_type)
                 {
-                    reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
-                        HEC_FRAME_ERROR,
-                        "Frame length does not match actual payload length");
-                    reader->hr_state = HR_ERROR;
-                    return -1;
+                case HQFT_GOAWAY:
+                case HQFT_CANCEL_PUSH:
+                case HQFT_MAX_PUSH_ID:
+                    if (reader->hr_nread != reader->hr_frame_length)
+                    {
+                        reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
+                            HEC_FRAME_ERROR,
+                            "Frame length does not match actual payload length");
+                        reader->hr_state = HR_ERROR;
+                        return -1;
+                    }
+                    break;
                 }
                 switch (reader->hr_frame_type)
                 {
@@ -132,6 +144,35 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                 case HQFT_MAX_PUSH_ID:
                     reader->hr_cb->on_max_push_id(reader->hr_ctx,
                                                 reader->hr_u.vint_state.val);
+                    break;
+                case HQFT_PRIORITY_UPDATE_PUSH:
+                case HQFT_PRIORITY_UPDATE_STREAM:
+                    len = reader->hr_frame_length - reader->hr_nread;
+                    if (len <= (uintptr_t) (end - p))
+                    {
+                        reader->hr_cb->on_priority_update(reader->hr_ctx,
+                            reader->hr_frame_type, reader->hr_u.vint_state.val,
+                            (char *) p, len);
+                        p += len;
+                    }
+                    else if (len <= sizeof(reader->hr_u.prio_state.buf))
+                    {
+                        reader->hr_frame_length = len;
+                        reader->hr_nread = 0;
+                        reader->hr_state = HR_READ_PRIORITY_UPDATE;
+                        goto continue_reading;
+                    }
+                    else
+                    {
+                        p += len;
+                        /* 16 bytes is more than enough for a PRIORITY_UPDATE
+                         * frame, anything larger than that is unreasonable.
+                         */
+                        if (reader->hr_frame_length
+                                        > sizeof(reader->hr_u.prio_state.buf))
+                            LSQ_INFO("skip PRIORITY_UPDATE frame that's too "
+                                    "long (%"PRIu64" bytes)", len);
+                    }
                     break;
                 default:
                     assert(0);
@@ -178,6 +219,20 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             }
             else
                 reader->hr_state = HR_READ_SETTING_BEGIN;
+            break;
+        case HR_READ_PRIORITY_UPDATE:
+            len = MIN((uintptr_t) (end - p),
+                            reader->hr_frame_length - reader->hr_nread);
+            memcpy(reader->hr_u.prio_state.buf + reader->hr_nread, p, len);
+            reader->hr_nread += len;
+            p += len;
+            if (reader->hr_frame_length == reader->hr_nread)
+            {
+                reader->hr_cb->on_priority_update(reader->hr_ctx,
+                        reader->hr_frame_type, reader->hr_u.vint_state.val,
+                        reader->hr_u.prio_state.buf, reader->hr_frame_length);
+                reader->hr_state = HR_READ_FRAME_BEGIN;
+            }
             break;
         default:
             assert(0);

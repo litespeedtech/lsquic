@@ -1,3 +1,21 @@
+2020-10-07
+    - 2.22.0
+    - [FEATURE] Extensible HTTP Priorities (HTTP/3 only).
+    - [FEATURE] Add conn context to packet-out memory interface (PR #175).
+    - [BUGFIX] gQUIC proof generation: allocate buffer big enough for
+      signature (issue #173).
+    - [BUGFIX] Make library thread-safe: drop use of global variables
+      (issue #133, issue #167).
+    - [BUGFIX] Deactivate only *recent* HQ frame, not any HQ frame.
+    - [BUGFIX] gQUIC server: associate compressed cert with SSL_CTX,
+      instead of keeping them in a separate hash, potentially leading
+      to mismatches.
+    - [BUGFIX] Stream data discard infinite loop: break on FIN.
+    - cmake: add install target via -DCMAKE_INSTALL_PREFIX (PR #171).
+    - Support randomized packet number to begin a connection.
+    - Mini and full IETF connection size optimization.
+    - http_client: specify HTTP priorities based on stream conditions.
+
 2020-09-29
     - 2.21.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 31 support.

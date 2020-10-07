@@ -22,6 +22,7 @@
 #include "lsquic_packet_common.h"
 #include "lsquic_mini_conn.h"
 #include "lsquic_enc_sess.h"
+#include "lsquic_trechist.h"
 #include "lsquic_mini_conn_ietf.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"

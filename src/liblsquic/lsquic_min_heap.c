@@ -44,14 +44,14 @@ heapify_min_heap (struct min_heap *heap, unsigned i)
 
 
 void
-lsquic_mh_insert (struct min_heap *heap, struct lsquic_conn *conn, uint64_t val)
+lsquic_mh_insert (struct min_heap *heap, void *item, uint64_t val)
 {
     struct min_heap_elem el;
     unsigned i;
 
     assert(heap->mh_nelem < heap->mh_nalloc);
 
-    heap->mh_elems[ heap->mh_nelem ].mhe_conn = conn;
+    heap->mh_elems[ heap->mh_nelem ].mhe_item = item;
     heap->mh_elems[ heap->mh_nelem ].mhe_val  = val;
     ++heap->mh_nelem;
 
@@ -67,15 +67,15 @@ lsquic_mh_insert (struct min_heap *heap, struct lsquic_conn *conn, uint64_t val)
 }
 
 
-struct lsquic_conn *
+void *
 lsquic_mh_pop (struct min_heap *heap)
 {
-    struct lsquic_conn *conn;
+    void *item;
 
     if (heap->mh_nelem == 0)
         return NULL;
 
-    conn = heap->mh_elems[0].mhe_conn;
+    item = heap->mh_elems[0].mhe_item;
     --heap->mh_nelem;
     if (heap->mh_nelem > 0)
     {
@@ -83,5 +83,5 @@ lsquic_mh_pop (struct min_heap *heap)
         heapify_min_heap(heap, 0);
     }
 
-    return conn;
+    return item;
 }

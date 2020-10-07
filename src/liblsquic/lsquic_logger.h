@@ -70,6 +70,7 @@ enum lsquic_logger_module {
     LSQLM_TOKGEN,
     LSQLM_ENG_HIST,
     LSQLM_SPI,
+    LSQLM_HPI,
     LSQLM_DI,
     LSQLM_PRQ,
     LSQLM_PACER,

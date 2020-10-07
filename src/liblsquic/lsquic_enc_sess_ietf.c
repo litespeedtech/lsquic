@@ -240,6 +240,9 @@ struct enc_sess_iquic
         ESI_RSCID        = 1 << 14,
         ESI_ISCID        = 1 << 15,
         ESI_RETRY        = 1 << 16, /* Connection was retried */
+        ESI_MAX_PACKNO_INIT = 1 << 17,
+        ESI_MAX_PACKNO_HSK  = ESI_MAX_PACKNO_INIT << PNS_HSK,
+        ESI_MAX_PACKNO_APP  = ESI_MAX_PACKNO_INIT << PNS_APP,
     }                    esi_flags;
     enum enc_level       esi_last_w;
     unsigned             esi_trasec_sz;
@@ -475,7 +478,17 @@ strip_hp (struct enc_sess_iquic *enc_sess,
         shift += 8;
     }
     pns = lsquic_enclev2pns[hp->hp_enc_level];
-    return decode_packno(enc_sess->esi_max_packno[pns], packno, shift);
+    if (enc_sess->esi_flags & (ESI_MAX_PACKNO_INIT << pns))
+    {
+        LSQ_DEBUG("pre-decode packno: %"PRIu64, packno);
+        return decode_packno(enc_sess->esi_max_packno[pns], packno, shift);
+    }
+    else
+    {
+        LSQ_DEBUG("first packet in %s, packno: %"PRIu64, lsquic_pns2str[pns],
+                                                                        packno);
+        return packno;
+    }
 }
 
 
@@ -1976,7 +1989,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     dst_sz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
     ipv6 = NP_IS_IPv6(packet_out->po_path);
     dst = enpub->enp_pmi->pmi_allocate(enpub->enp_pmi_ctx,
-                                packet_out->po_path->np_peer_ctx, lconn->conn_ctx, dst_sz, ipv6);
+            packet_out->po_path->np_peer_ctx, lconn->cn_conn_ctx, dst_sz, ipv6);
     if (!dst)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",
@@ -2307,8 +2320,10 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "decrypted packet %"PRIu64,
                                                     packet_in->pi_packno);
     pns = lsquic_enclev2pns[enc_level];
-    if (packet_in->pi_packno > enc_sess->esi_max_packno[pns])
+    if (packet_in->pi_packno > enc_sess->esi_max_packno[pns]
+            || !(enc_sess->esi_flags & (ESI_MAX_PACKNO_INIT << pns)))
         enc_sess->esi_max_packno[pns] = packet_in->pi_packno;
+    enc_sess->esi_flags |= ESI_MAX_PACKNO_INIT << pns;
     if (is_valid_packno(pair->ykp_thresh)
                                 && packet_in->pi_packno > pair->ykp_thresh)
         pair->ykp_thresh = packet_in->pi_packno;

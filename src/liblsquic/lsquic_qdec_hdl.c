@@ -27,6 +27,11 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_headers.h"
 #include "lsquic_conn.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn_public.h"
+#include "lsquic_hq.h"
+#include "lsquic_parse.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_QDEC_HDL
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(qdh->qdh_conn)
@@ -39,6 +44,8 @@ struct header_ctx
 {
     void                    *hset;
     struct qpack_dec_hdl    *qdh;
+    enum ppc_flags           ppc_flags;
+    struct lsquic_ext_http_prio ehp;
 };
 
 
@@ -471,6 +478,14 @@ is_content_length (const struct lsxpack_header *xhdr)
 }
 
 
+static int
+is_priority (const struct lsxpack_header *xhdr)
+{
+    return xhdr->name_len == 8
+        && 0 == memcmp(lsxpack_header_get_name(xhdr), "priority", 8);
+}
+
+
 static struct lsxpack_header *
 qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
 {
@@ -499,6 +514,16 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
         if (cl.has > 0)
             (void) lsquic_stream_verify_len(stream, cl.value);
     }
+    else if ((stream->sm_bflags & (SMBF_HTTP_PRIO|SMBF_HPRIO_SET))
+                                                            == SMBF_HTTP_PRIO
+            && is_priority(xhdr))
+    {
+        u->ctx.ppc_flags &= ~(PPC_INC_NAME|PPC_URG_NAME);
+        (void) lsquic_http_parse_pfv(lsxpack_header_get_value(xhdr),
+                        xhdr->val_len, &u->ctx.ppc_flags, &u->ctx.ehp,
+                        (char *) stream->conn_pub->mm->acki,
+                        sizeof(*stream->conn_pub->mm->acki));
+    }
 
     return qdh->qdh_enpub->enp_hsi_if->hsi_process_header(u->ctx.hset, xhdr);
 }
@@ -525,6 +550,15 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     {
         if (!lsquic_stream_header_is_trailer(stream))
         {
+            if (stream->sm_hblock_ctx->ctx.ppc_flags
+                                                & (PPC_INC_SET|PPC_URG_SET))
+            {
+                assert(stream->sm_bflags & SMBF_HTTP_PRIO);
+                LSQ_DEBUG("Apply Priority from headers to stream %"PRIu64,
+                                                                stream->id);
+                (void) lsquic_stream_set_http_prio(stream,
+                                            &stream->sm_hblock_ctx->ctx.ehp);
+            }
             hset = stream->sm_hblock_ctx->ctx.hset;
             uh = &stream->sm_hblock_ctx->uh;
             stream->sm_hblock_ctx = NULL;
@@ -621,6 +655,11 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
 
     u->ctx.hset   = hset;
     u->ctx.qdh    = qdh;
+    u->ctx.ppc_flags = 0;
+    u->ctx.ehp       = (struct lsquic_ext_http_prio) {
+                            .urgency     = LSQUIC_DEF_HTTP_URGENCY,
+                            .incremental = LSQUIC_DEF_HTTP_INCREMENTAL,
+    };
     stream->sm_hblock_ctx = u;
 
     dec_buf_sz = sizeof(dec_buf);

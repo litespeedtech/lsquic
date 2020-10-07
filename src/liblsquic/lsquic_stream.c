@@ -74,6 +74,7 @@
 #include "lsquic_byteswap.h"
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
+#include "lsquic_hcso_writer.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
@@ -439,7 +440,11 @@ lsquic_stream_new (lsquic_stream_id_t id,
         }
         else
             stream->sm_readable = stream_readable_non_http;
-        lsquic_stream_set_priority_internal(stream,
+        if ((ctor_flags & (SCF_HTTP|SCF_HTTP_PRIO))
+                                                == (SCF_HTTP|SCF_HTTP_PRIO))
+        lsquic_stream_set_priority_internal(stream, LSQUIC_DEF_HTTP_URGENCY);
+        else
+            lsquic_stream_set_priority_internal(stream,
                                             LSQUIC_STREAM_DEFAULT_PRIO);
         stream->sm_write_to_packet = stream_write_to_packet_std;
         stream->sm_frame_header_sz = stream_stream_frame_header_sz;
@@ -807,14 +812,18 @@ stream_readable_discard (struct lsquic_stream *stream)
 {
     struct data_frame *data_frame;
     uint64_t toread;
+    int fin;
 
     while ((data_frame = stream->data_in->di_if->di_get_frame(
                                     stream->data_in, stream->read_offset)))
     {
+        fin = data_frame->df_fin;
         toread = data_frame->df_size - data_frame->df_read_off;
         stream->read_offset += toread;
         data_frame->df_read_off = data_frame->df_size;
         stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
+        if (fin)
+            break;
     }
 
     (void) maybe_switch_data_in(stream);
@@ -2417,7 +2426,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
     size_t packet_header_sz, stream_header_sz, tag_len;
     size_t threshold;
 
-    bits = lsquic_send_ctl_packno_bits(stream->conn_pub->send_ctl);
+    bits = lsquic_send_ctl_packno_bits(stream->conn_pub->send_ctl, PNS_APP);
     flags = bits << POBIT_SHIFT;
     if (!(stream->conn_pub->lconn->cn_flags & LSCONN_TCID0))
         flags |= PO_CONN_ID;
@@ -2802,13 +2811,17 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
     struct stream_hq_frame *shf;
     size_t nw, frame_sz, avail, rem;
     unsigned bits;
+    int new;
 
     while (p < end)
     {
         shf = find_cur_hq_frame(stream);
         if (shf)
+        {
+            new = 0;
             LSQ_DEBUG("found current HQ frame of type 0x%X at offset %"PRIu64,
                                             shf->shf_frame_type, shf->shf_off);
+        }
         else
         {
             rem = frame_std_gen_size(ctx);
@@ -2819,7 +2832,10 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                 shf = stream_activate_hq_frame(stream,
                                     stream->sm_payload, HQFT_DATA, 0, rem);
                 if (shf)
+                {
+                    new = 1;
                     goto insert;
+                }
                 else
                 {
                     /* TODO: abort connection?  Handle failure somehow */
@@ -2836,7 +2852,8 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
             frame_sz = stream_hq_frame_size(shf);
             if (frame_sz > (uintptr_t) (end - p))
             {
-                stream_hq_frame_put(stream, shf);
+                if (new)
+                    stream_hq_frame_put(stream, shf);
                 break;
             }
             LSQ_DEBUG("insert %zu-byte HQ frame of type 0x%X at payload "
@@ -4337,7 +4354,10 @@ lsquic_stream_uh_in (lsquic_stream_t *stream, struct uncompressed_headers *uh)
 unsigned
 lsquic_stream_priority (const lsquic_stream_t *stream)
 {
-    return 256 - stream->sm_priority;
+    if (stream->sm_bflags & SMBF_HTTP_PRIO)
+        return stream->sm_priority;
+    else
+        return 256 - stream->sm_priority;
 }
 
 
@@ -4349,9 +4369,20 @@ lsquic_stream_set_priority_internal (lsquic_stream_t *stream, unsigned priority)
      */
     if (lsquic_stream_is_critical(stream))
         return -1;
-    if (priority < 1 || priority > 256)
-        return -1;
-    stream->sm_priority = 256 - priority;
+
+    if (stream->sm_bflags & SMBF_HTTP_PRIO)
+    {
+        if (priority > LSQUIC_MAX_HTTP_URGENCY)
+            return -1;
+        stream->sm_priority = priority;
+    }
+    else
+    {
+        if (priority < 1 || priority > 256)
+            return -1;
+        stream->sm_priority = 256 - priority;
+    }
+
     lsquic_send_ctl_invalidate_bpt_cache(stream->conn_pub->send_ctl);
     LSQ_DEBUG("set priority to %u", priority);
     SM_HISTORY_APPEND(stream, SHE_SET_PRIO);
@@ -4379,10 +4410,17 @@ maybe_send_priority_gquic (struct lsquic_stream *stream, unsigned priority)
 
 
 static int
-send_priority_ietf (struct lsquic_stream *stream, unsigned priority)
+send_priority_ietf (struct lsquic_stream *stream)
 {
-    LSQ_WARN("%s: TODO", __func__);     /* TODO */
-    return -1;
+    struct lsquic_ext_http_prio ehp;
+
+    if (0 == lsquic_stream_get_http_prio(stream, &ehp)
+            && 0 == lsquic_hcso_write_priority_update(
+                            stream->conn_pub->u.ietf.hcso,
+                            HQFT_PRIORITY_UPDATE_STREAM, stream->id, &ehp))
+        return 0;
+    else
+        return -1;
 }
 
 
@@ -4392,7 +4430,12 @@ lsquic_stream_set_priority (lsquic_stream_t *stream, unsigned priority)
     if (0 == lsquic_stream_set_priority_internal(stream, priority))
     {
         if (stream->sm_bflags & SMBF_IETF)
-            return send_priority_ietf(stream, priority);
+        {
+            if (stream->sm_bflags & SMBF_HTTP_PRIO)
+                return send_priority_ietf(stream);
+            else
+                return 0;
+        }
         else
             return maybe_send_priority_gquic(stream, priority);
     }
@@ -4559,6 +4602,18 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
     case 9: /* HTTP/2 CONTINUATION */
         /* [draft-ietf-quic-http-30], Section 7.2.8 */
         return -1;
+    case HQFT_PRIORITY_UPDATE_STREAM:
+    case HQFT_PRIORITY_UPDATE_PUSH:
+        if (stream->sm_bflags & SMBF_HTTP_PRIO)
+            /* If we know about Extensible HTTP Priorities, we should check
+             * that they do not arrive on any but the control stream:
+             */
+            return -1;
+        else
+            /* On the other hand, if we do not support Priorities, treat it
+             * as an unknown frame:
+             */
+            return 0;
     default:
         /* Ignore unknown frames */
         return 0;
@@ -5235,6 +5290,50 @@ lsquic_stream_verify_len (struct lsquic_stream *stream,
         LSQ_DEBUG("will verify that incoming DATA frames have %llu bytes",
             cont_len);
         return 0;
+    }
+    else
+        return -1;
+}
+
+
+int
+lsquic_stream_get_http_prio (struct lsquic_stream *stream,
+                                        struct lsquic_ext_http_prio *ehp)
+{
+    if (stream->sm_bflags & SMBF_HTTP_PRIO)
+    {
+        ehp->urgency = MIN(stream->sm_priority, LSQUIC_MAX_HTTP_URGENCY);
+        ehp->incremental = !!(stream->sm_bflags & SMBF_INCREMENTAL);
+        return 0;
+    }
+    else
+        return -1;
+}
+
+
+int
+lsquic_stream_set_http_prio (struct lsquic_stream *stream,
+                                        const struct lsquic_ext_http_prio *ehp)
+{
+    if (stream->sm_bflags & SMBF_HTTP_PRIO)
+    {
+        if (ehp->urgency > LSQUIC_MAX_HTTP_URGENCY)
+        {
+            LSQ_INFO("%s: invalid urgency: %hhu", __func__, ehp->urgency);
+            return -1;
+        }
+        stream->sm_priority = ehp->urgency;
+        if (ehp->incremental)
+            stream->sm_bflags |= SMBF_INCREMENTAL;
+        else
+            stream->sm_bflags &= ~SMBF_INCREMENTAL;
+        stream->sm_bflags |= SMBF_HPRIO_SET;
+        LSQ_DEBUG("set urgency to %hhu, incremental to %hhd", ehp->urgency,
+                                                            ehp->incremental);
+        if (!(stream->sm_bflags & SMBF_SERVER))
+            return send_priority_ietf(stream);
+        else
+            return 0;
     }
     else
         return -1;

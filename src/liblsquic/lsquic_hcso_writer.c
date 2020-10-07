@@ -213,6 +213,8 @@ hqft2str (enum hq_frame_type type)
     case HQFT_MAX_PUSH_ID:  return "MAX_PUSH_ID";
     case HQFT_CANCEL_PUSH:  return "CANCEL_PUSH";
     case HQFT_GOAWAY:       return "GOAWAY";
+    case HQFT_PRIORITY_UPDATE_PUSH:return "PRIORITY_UPDATE (push)";
+    case HQFT_PRIORITY_UPDATE_STREAM:return "PRIORITY_UPDATE (stream)";
     default:                return "<unknown>";
     }
 }
@@ -272,6 +274,60 @@ int
 lsquic_hcso_write_cancel_push (struct hcso_writer *writer, uint64_t push_id)
 {
     return hcso_write_number_frame(writer, HQFT_CANCEL_PUSH, push_id);
+}
+
+
+int
+lsquic_hcso_write_priority_update (struct hcso_writer *writer,
+                enum hq_frame_type type, uint64_t stream_or_push_id,
+                const struct lsquic_ext_http_prio *ehp)
+{
+    unsigned char *p, *len;
+    unsigned bits;
+    int was_empty;
+    unsigned char buf[8 /* Frame type */ + /* Frame size */ 1 + 8 /* Value */
+                    + 5 /* PFV: "u=.,i" or "u=." */];
+
+    p = buf;
+    bits = vint_val2bits(type);
+    vint_write(p, type, bits, 1 << bits);
+    p += 1 << bits;
+
+    bits = vint_val2bits(stream_or_push_id);
+    len = p;
+    ++p;
+
+    vint_write(p, stream_or_push_id, bits, 1 << bits);
+    p += 1 << bits;
+    if (!(ehp->urgency == LSQUIC_DEF_HTTP_URGENCY
+                        && ehp->incremental == LSQUIC_DEF_HTTP_INCREMENTAL))
+    {
+        *p++ = 'u';
+        *p++ = '=';
+        *p++ = '0' + ehp->urgency;
+        if (ehp->incremental)
+        {
+            *p++ = ',';
+            *p++ = 'i';
+        }
+    }
+
+    *len = p - len - 1;
+
+    was_empty = lsquic_frab_list_empty(&writer->how_fral);
+
+    if (0 != lsquic_frab_list_write(&writer->how_fral, buf, p - buf))
+    {
+        LSQ_INFO("cannot write %s frame to frab list", hqft2str(type));
+        return -1;
+    }
+
+    if (was_empty)
+        lsquic_stream_wantwrite(writer->how_stream, 1);
+
+    LSQ_DEBUG("generated %u-byte %s frame", (unsigned) (p - buf),
+                                                            hqft2str(type));
+    return 0;
 }
 
 

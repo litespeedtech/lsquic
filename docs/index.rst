@@ -37,6 +37,7 @@ LSQUIC supports nearly all QUIC and HTTP/3 features, including
 - TLS Key updates
 - Extensions:
 
+ - :ref:`extensible-http-priorities`
  - :ref:`apiref-datagrams`
  - Loss bits extension (allowing network observer to locate source of packet loss)
  - Timestamps extension (allowing for one-way delay calculation, improving performance of some congestion controllers)

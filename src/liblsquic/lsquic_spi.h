@@ -2,19 +2,12 @@
 /*
  * lsquic_spi.h - SPI: Stream Priority Iterator
  *
- * SPI purposefully does not support switching stream priorities while
- * iterator is active, because this puts iteration termination outside
- * of our control.  One can imagine (admittedly theoretical) scenario
- * in which the user keeps on switching stream priorities around and
- * causing an infinite loop.
+ * Changing a stream's priority when the stream is in the iterator
+ * does not change the stream's position in the iterator.
  */
 
 #ifndef LSQUIC_SPI
 #define LSQUIC_SPI 1
-
-#include <stdint.h>
-
-enum stream_q_flags;
 
 
 struct stream_prio_iter
@@ -30,26 +23,26 @@ struct stream_prio_iter
 
 
 void
-lsquic_spi_init (struct stream_prio_iter *, struct lsquic_stream *first,
+lsquic_spi_init (void *, struct lsquic_stream *first,
          struct lsquic_stream *last, uintptr_t next_ptr_offset,
-         const struct lsquic_conn *,
+         struct lsquic_conn_public *,
          const char *name,
          int (*filter)(void *filter_ctx, struct lsquic_stream *),
          void *filter_ctx);
 
 struct lsquic_stream *
-lsquic_spi_first (struct stream_prio_iter *);
+lsquic_spi_first (void *);
 
 struct lsquic_stream *
-lsquic_spi_next (struct stream_prio_iter *);
+lsquic_spi_next (void *);
 
 void
-lsquic_spi_exhaust_on (struct stream_prio_iter *);
+lsquic_spi_drop_non_high (void *);
 
 void
-lsquic_spi_drop_non_high (struct stream_prio_iter *);
+lsquic_spi_drop_high (void *);
 
 void
-lsquic_spi_drop_high (struct stream_prio_iter *);
+lsquic_spi_cleanup (void *);
 
 #endif

@@ -42,12 +42,22 @@ struct lsquic_str * lsquic_get_common_certs_hash();
 
 int lsquic_get_common_cert(uint64_t hash, uint32_t index, struct lsquic_str *buf);
 
-int lsquic_compress_certs(struct lsquic_str **certs, size_t certs_count,
-                   struct lsquic_str *client_common_set_hashes,
-                   struct lsquic_str *client_cached_cert_hashes,
-                   struct lsquic_str *result);
+struct compressed_cert
+{
+    size_t          len;
+    unsigned        refcnt;
+    unsigned char   buf[0]; /* len bytes */
+};
 
-int lsquic_get_certs_count(struct lsquic_str *compressed_crt_buf);
+/* Returns newly allocated structure or NULL on error */
+struct compressed_cert *
+lsquic_compress_certs(struct lsquic_str **certs, size_t certs_count,
+                   struct lsquic_str *client_common_set_hashes,
+                   struct lsquic_str *client_cached_cert_hashes);
+
+int
+lsquic_get_certs_count (const struct compressed_cert *);
+
 int lsquic_decompress_certs(const unsigned char *in, const unsigned char *in_end,
                      struct lsquic_str *cached_certs, size_t cached_certs_count,
                      struct lsquic_str **out_certs, 

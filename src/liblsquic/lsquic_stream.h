@@ -81,7 +81,7 @@ struct stream_hq_frame
     }                   shf_u;
 #define shf_frame_ptr shf_u.frame_ptr
 #define shf_frame_size shf_u.frame_size
-    enum hq_frame_type  shf_frame_type:8;
+    enum hq_frame_type  shf_frame_type;
     enum shf_flags {
         SHF_TWO_BYTES   = 1 << 0,   /* Use two byte to encode frame length */
         SHF_FIXED_SIZE  = 1 << 1,   /* Payload size guaranteed */
@@ -185,7 +185,10 @@ enum stream_b_flags
     SMBF_CONN_LIMITED = 1 << 7,
     SMBF_HEADERS      = 1 << 8,  /* Headers stream */
     SMBF_VERIFY_CL    = 1 << 9,  /* Verify content-length (stored in sm_cont_len) */
-#define N_SMBF_FLAGS 10
+    SMBF_HTTP_PRIO    = 1 <<10,  /* Extensible HTTP Priorities are used */
+    SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
+    SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
+#define N_SMBF_FLAGS 13
 };
 
 
@@ -343,6 +346,9 @@ struct lsquic_stream
     unsigned short                  sm_n_buffered;  /* Amount of data in sm_buf */
     unsigned short                  sm_n_allocated;  /* Size of sm_buf */
 
+    /* If SMBF_HTTP_PRIO is set, the priority is used to represent the
+     * Extensible Priority urgency, which is in the range [0, 7].
+     */
     unsigned char                   sm_priority;  /* 0: high; 255: low */
     unsigned char                   sm_enc_level;
     enum {
@@ -381,6 +387,7 @@ enum stream_ctor_flags
     SCF_HTTP          = SMBF_USE_HEADERS,
     SCF_CRYPTO        = SMBF_CRYPTO,
     SCF_HEADERS       = SMBF_HEADERS,
+    SCF_HTTP_PRIO     = SMBF_HTTP_PRIO,
 };
 
 

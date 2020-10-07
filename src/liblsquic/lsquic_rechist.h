@@ -84,4 +84,9 @@ lsquic_rechist_peek (struct lsquic_rechist *);
 
 #define lsquic_rechist_is_empty(rechist_) ((rechist_)->rh_n_used == 0)
 
+int
+lsquic_rechist_copy_ranges (struct lsquic_rechist *, void *rechist_ctx,
+    const struct lsquic_packno_range * (*first) (void *),
+    const struct lsquic_packno_range * (*next) (void *));
+
 #endif

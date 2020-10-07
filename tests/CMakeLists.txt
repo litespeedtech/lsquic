@@ -46,6 +46,7 @@ SET(TESTS
     goaway_gquic_be
     h3_framing
     hkdf
+    hpi
     lsquic_hash
     packet_out
     packet_resize
@@ -129,3 +130,6 @@ ADD_TEST(minmax test_minmax)
 
 ADD_EXECUTABLE(test_rechist test_rechist.c ../src/liblsquic/lsquic_rechist.c)
 ADD_TEST(rechist test_rechist)
+
+ADD_EXECUTABLE(test_trechist test_trechist.c ../src/liblsquic/lsquic_trechist.c)
+ADD_TEST(trechist test_trechist)

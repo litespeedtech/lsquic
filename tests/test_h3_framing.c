@@ -1151,6 +1151,17 @@ fuzz_guided_pwritev_testing (const char *input)
 }
 
 
+static unsigned
+count_hq_frames (const struct lsquic_stream *stream)
+{
+    const struct stream_hq_frame *shf;
+    unsigned n_frames = 0;
+    STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
+        ++n_frames;
+    return n_frames;
+}
+
+
 static void
 test_frame_header_split (unsigned n_packets, unsigned extra_sz,
                                                         int add_one_more)
@@ -1162,6 +1173,7 @@ test_frame_header_split (unsigned n_packets, unsigned extra_sz,
     unsigned char *buf_in, *buf_out;
     const unsigned wsize = 70;
     const size_t buf_in_sz = wsize, buf_out_sz = 0x500000;
+    unsigned n_frames;
 
     struct lsxpack_header header = { XHDR(":method", "GET") };
     struct lsquic_http_headers headers = { 1, &header, };
@@ -1210,7 +1222,12 @@ test_frame_header_split (unsigned n_packets, unsigned extra_sz,
 
     const ssize_t w = lsquic_stream_write(stream, buf_in, buf_in_sz);
     assert(w >= 0 && (size_t) w == buf_in_sz);
+    n_frames = count_hq_frames(stream);
+    assert(n_frames == 1 + (w > 0));
+
     lsquic_stream_flush(stream);
+    n_frames = count_hq_frames(stream);
+    assert(n_frames == !!stream->sm_n_buffered);
 
     if (add_one_more)
     {

@@ -41,8 +41,8 @@
 
 #include <event2/event.h>
 
-#include "test_common.h"
 #include "lsquic.h"
+#include "test_common.h"
 #include "prog.h"
 #include "lsxpack_header.h"
 
@@ -1916,6 +1916,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_scid_iss_rate = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "ext_http_prio", 13))
+        {
+            settings->es_ext_http_prio = atoi(val);
+            return 0;
+        }
         break;
     case 14:
         if (0 == strncmp(name, "max_streams_in", 14))
@@ -2043,8 +2048,8 @@ pba_init (struct packout_buf_allocator *pba, unsigned max)
 
 
 void *
-pba_allocate (void *packout_buf_allocator, void *peer_ctx, void *conn_ctx, unsigned short size,
-                                                                char is_ipv6)
+pba_allocate (void *packout_buf_allocator, void *peer_ctx,
+                lsquic_conn_ctx_t *conn_ctx, unsigned short size, char is_ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
     struct packout_buf *pb;

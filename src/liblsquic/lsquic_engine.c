@@ -76,6 +76,7 @@
 #include "lsquic_version.h"
 #include "lsquic_pr_queue.h"
 #include "lsquic_mini_conn.h"
+#include "lsquic_trechist.h"
 #include "lsquic_mini_conn_ietf.h"
 #include "lsquic_stock_shi.h"
 #include "lsquic_purga.h"
@@ -364,6 +365,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
     settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
     settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
+    settings->es_ext_http_prio   = LSQUIC_DF_EXT_HTTP_PRIO;
 }
 
 
@@ -1969,8 +1971,8 @@ copy_packet (struct lsquic_engine *engine, struct lsquic_conn *conn,
     }
 
     packet_out->po_enc_data = engine->pub.enp_pmi->pmi_allocate(
-                    engine->pub.enp_pmi_ctx, packet_out->po_path->np_peer_ctx, conn->conn_ctx,
-                    packet_out->po_data_sz, ipv6);
+                    engine->pub.enp_pmi_ctx, packet_out->po_path->np_peer_ctx,
+                    conn->cn_conn_ctx, packet_out->po_data_sz, ipv6);
     if (!packet_out->po_enc_data)
     {
         LSQ_DEBUG("could not allocate memory for outgoing unencrypted packet "
@@ -2477,7 +2479,7 @@ send_packets_out (struct lsquic_engine *engine,
             batch->outs   [n].peer_ctx = packet_out->po_path->np_peer_ctx;
             batch->outs   [n].local_sa = NP_LOCAL_SA(packet_out->po_path);
             batch->outs   [n].dest_sa  = NP_PEER_SA(packet_out->po_path);
-            batch->outs   [n].conn_ctx = conn->conn_ctx;
+            batch->outs   [n].conn_ctx = conn->cn_conn_ctx;
             batch->conns  [n]          = conn;
         }
         *packet = packet_out;

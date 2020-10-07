@@ -842,6 +842,13 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_OPTIMISTIC_NAT`
 
+    .. member:: int             es_ext_http_prio
+
+       If set to true, Extensible HTTP Priorities are enabled.  This
+       is HTTP/3-only setting.
+
+       Default value is :macro:`LSQUIC_DF_EXT_HTTP_PRIO`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1065,6 +1072,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_OPTIMISTIC_NAT
 
     Assume optimistic NAT by default.
+
+.. macro:: LSQUIC_DF_EXT_HTTP_PRIO
+
+    Turn on Extensible HTTP Priorities by default.
 
 Receiving Packets
 -----------------
@@ -2162,7 +2173,7 @@ The following log modules are defined:
 - *hcsi-reader*: Reader of the HTTP/3 control stream.
 - *hcso-writer*: Writer of the HTTP/3 control stream.
 - *headers*: HEADERS stream (Google QUIC).
-- *hsk-adapter*: 
+- *hsk-adapter*:
 - *http1x*: Header conversion to HTTP/1.x.
 - *logger*: Logger.
 - *mini-conn*: Mini connection.
@@ -2183,6 +2194,72 @@ The following log modules are defined:
 - *stream*: Stream operation.
 - *tokgen*: Token generation and validation.
 - *trapa*: Transport parameter processing.
+
+.. _extensible-http-priorities:
+
+Extensible HTTP Priorities
+--------------------------
+
+lsquic supports the
+`Extensible HTTP Priorities Extension <https://tools.ietf.org/html/draft-ietf-httpbis-priority>`_.
+It is enabled by default when HTTP/3 is used.  The "urgency" and "incremental"
+parameters are included into a dedicated type:
+
+.. type:: struct lsquic_ext_http_prio
+
+    .. member::     unsigned char       urgency
+
+        This value's range is [0, 7], where 0 is the highest and 7 is
+        the lowest urgency.
+
+    .. member::     signed char         incremental
+
+        This is a boolean value.  The valid range is [0, 1].
+
+Some useful macros are also available:
+
+.. macro:: LSQUIC_MAX_HTTP_URGENCY
+
+The maximum value of the "urgency" parameter is 7.
+
+.. macro:: LSQUIC_DEF_HTTP_URGENCY
+
+The default value of the "urgency" parameter is 3.
+
+.. macro:: LSQUIC_DEF_HTTP_INCREMENTAL
+
+The default value of the "incremental" parameter is 0.
+
+There are two functions to
+manage a stream's priority:
+
+.. function:: int lsquic_stream_get_http_prio (lsquic_stream_t \*stream, struct lsquic_ext_http_prio \*ehp)
+
+    Get a stream's priority information.
+
+    :param stream:  The stream whose priority informaion we want.
+
+    :param ehp:     Structure that is to be populated with the stream's
+                    priority information.
+
+    :return:    Returns zero on success of a negative value on failure.
+                A failure occurs if this is not an HTTP/3 stream or if
+                Extensible HTTP Priorities have not been enabled.
+                See :member:`lsquic_engine_settings.es_ext_http_prio`.
+
+.. function:: int lsquic_stream_set_http_prio (lsquic_stream_t \*stream, const struct lsquic_ext_http_prio \*ehp)
+
+    Set a stream's priority information.
+
+    :param stream:  The stream whose priority we want to set.
+
+    :param ehp:     Structure containing the stream's new priority information.
+
+    :return:        Returns zero on success of a negative value on failure.
+                    A failure occurs if some internal error occured or if this
+                    is not an HTTP/3 stream or if Extensible HTTP Priorities
+                    haven't been enabled.
+                    See :member:`lsquic_engine_settings.es_ext_http_prio`.
 
 .. _apiref-datagrams:
 

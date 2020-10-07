@@ -21,6 +21,9 @@
 #include "lsquic_hq.h"
 #include "lsquic_hash.h"
 #include "lsquic_stream.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn_public.h"
 #include "lsquic_spi.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_SPI
@@ -51,17 +54,18 @@ add_stream_to_spi (struct stream_prio_iter *iter, lsquic_stream_t *stream)
 
 
 void
-lsquic_spi_init (struct stream_prio_iter *iter, struct lsquic_stream *first,
+lsquic_spi_init (void *iter_p, struct lsquic_stream *first,
          struct lsquic_stream *last, uintptr_t next_ptr_offset,
-         const struct lsquic_conn *conn,
+         struct lsquic_conn_public *conn_pub,
          const char *name,
          int (*filter)(void *filter_ctx, struct lsquic_stream *),
          void *filter_ctx)
 {
+    struct stream_prio_iter *const iter = iter_p;
     struct lsquic_stream *stream;
     unsigned count;
 
-    iter->spi_conn          = conn;
+    iter->spi_conn          = conn_pub->lconn;
     iter->spi_name          = name ? name : "UNSET";
     iter->spi_set[0]        = 0;
     iter->spi_set[1]        = 0;
@@ -194,8 +198,9 @@ find_and_set_next_priority (struct stream_prio_iter *iter)
 
 
 lsquic_stream_t *
-lsquic_spi_first (struct stream_prio_iter *iter)
+lsquic_spi_first (void *iter_p)
 {
+    struct stream_prio_iter *const iter = iter_p;
     lsquic_stream_t *stream;
     unsigned set, bit;
 
@@ -222,8 +227,9 @@ lsquic_spi_first (struct stream_prio_iter *iter)
 
 
 lsquic_stream_t *
-lsquic_spi_next (struct stream_prio_iter *iter)
+lsquic_spi_next (void *iter_p)
 {
+    struct stream_prio_iter *const iter = iter_p;
     lsquic_stream_t *stream;
 
     stream = iter->spi_next_stream;
@@ -303,8 +309,9 @@ spi_has_more_than_one_queue (const struct stream_prio_iter *iter)
 
 
 static void
-spi_drop_high_or_non_high (struct stream_prio_iter *iter, int drop_high)
+spi_drop_high_or_non_high (void *iter_p, int drop_high)
 {
+    struct stream_prio_iter *const iter = iter_p;
     uint64_t new_set[ sizeof(iter->spi_set) / sizeof(iter->spi_set[0]) ];
     unsigned bit, set, n;
 
@@ -336,14 +343,22 @@ spi_drop_high_or_non_high (struct stream_prio_iter *iter, int drop_high)
 
 
 void
-lsquic_spi_drop_high (struct stream_prio_iter *iter)
+lsquic_spi_drop_high (void *iter_p)
 {
+    struct stream_prio_iter *const iter = iter_p;
     spi_drop_high_or_non_high(iter, 1);
 }
 
 
 void
-lsquic_spi_drop_non_high (struct stream_prio_iter *iter)
+lsquic_spi_drop_non_high (void *iter_p)
 {
+    struct stream_prio_iter *const iter = iter_p;
     spi_drop_high_or_non_high(iter, 0);
+}
+
+
+void
+lsquic_spi_cleanup (void *iter_p)
+{
 }

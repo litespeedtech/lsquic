@@ -312,7 +312,6 @@ struct conn_cid_elem
 struct lsquic_conn
 {
     void                        *cn_enc_session;
-    lsquic_conn_ctx_t           *conn_ctx;
     const struct enc_session_funcs_common
                                 *cn_esf_c;
     union {
@@ -334,6 +333,7 @@ struct lsquic_conn
     lsquic_time_t                cn_last_sent;
     lsquic_time_t                cn_last_ticked;
     struct conn_cid_elem        *cn_cces;   /* At least one is available */
+    lsquic_conn_ctx_t           *cn_conn_ctx;
     enum lsquic_conn_flags       cn_flags;
     enum lsquic_version          cn_version:8;
     unsigned char                cn_cces_mask;  /* Those that are set */

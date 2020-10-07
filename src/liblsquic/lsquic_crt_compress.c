@@ -438,10 +438,10 @@ void serialize_cert_entries(uint8_t* out, int *out_len, cert_entry_t *entries,
 
 
 int
-lsquic_get_certs_count(lsquic_str_t *compressed_crt_buf)
+lsquic_get_certs_count (const struct compressed_cert *ccert)
 {
-    char *in = lsquic_str_buf(compressed_crt_buf);
-    char *in_end = in + lsquic_str_len(compressed_crt_buf);
+    const unsigned char *in = ccert->buf;
+    const unsigned char *in_end = in + ccert->len;
     size_t idx = 0;
     uint8_t type_byte;
     
@@ -578,14 +578,11 @@ static int parse_entries(const unsigned char **in_out, const unsigned char *cons
 }
 
 
-/* return 0 for OK */
-int
+struct compressed_cert *
 lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
                    lsquic_str_t *client_common_set_hashes,
-                   lsquic_str_t *client_cached_cert_hashes,
-                   lsquic_str_t *result)
+                   lsquic_str_t *client_cached_cert_hashes)
 {
-    int rv;
     size_t i;
     size_t uncompressed_size = 0, compressed_size = 0 ;
     z_stream z;
@@ -595,10 +592,12 @@ lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
     uint8_t* out;
     uint32_t tmp_size_32;
     cert_entry_t *entries;
+    struct compressed_cert *ccert;
 
+    ccert = NULL;
     entries = malloc(sizeof(cert_entry_t) * certs_count);
     if (!entries)
-        return -1;
+        return NULL;
 
     dict = lsquic_str_new(NULL, 0);
     if (!dict)
@@ -631,16 +630,18 @@ lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
     entries_size = get_entries_size(entries, certs_count);
     result_length = entries_size + (uncompressed_size > 0 ? 4 : 0) +
                     compressed_size;
-    lsquic_str_prealloc(result, result_length);
+    ccert = malloc(sizeof(*ccert) + result_length);
+    if (!ccert)
+        goto err;
+    ccert->refcnt = 0;
 
-    out = (unsigned char *)lsquic_str_buf(result);
+    out = ccert->buf;
     serialize_cert_entries(out, &out_len, entries, certs_count);
     out += entries_size;
 
     if (uncompressed_size == 0)
     {
-        lsquic_str_setlen(result, entries_size);
-        rv = 0;
+        ccert->len = entries_size;
         goto cleanup;
     }
     
@@ -671,9 +672,7 @@ lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
     if (Z_STREAM_END != deflate(&z, Z_FINISH))
         goto err;
 
-    rv = 0;
-    result_length -= z.avail_out;
-    lsquic_str_setlen(result, result_length);
+    ccert->len = result_length - z.avail_out;
 
   cleanup:
     free(entries);
@@ -681,10 +680,12 @@ lsquic_compress_certs (lsquic_str_t **certs, size_t certs_count,
         lsquic_str_delete(dict);
     if (uncompressed_size)
         deflateEnd(&z);
-    return rv;
+    return ccert;
 
   err:
-    rv = -1;
+    if (ccert)
+        free(ccert);
+    ccert = NULL;
     goto cleanup;
 }
 

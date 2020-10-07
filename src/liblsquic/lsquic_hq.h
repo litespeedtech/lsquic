@@ -6,6 +6,8 @@
 #ifndef LSQUIC_HQ_H
 #define LSQUIC_HQ_H 1
 
+struct lsquic_ext_http_prio;
+
 /* [draft-ietf-quic-http-27] Section 11.2.1 */
 enum hq_frame_type
 {
@@ -16,6 +18,14 @@ enum hq_frame_type
     HQFT_PUSH_PROMISE   = 5,
     HQFT_GOAWAY         = 7,
     HQFT_MAX_PUSH_ID    = 0xD,
+    /* These made me expand shf_frame_type to 4 bytes from 1.  If at some
+     * point we have to support a frame that is wider than 4 byte, it will
+     * be time to bite the bullet and use our own enum for these types
+     * (just like we do for transport parameters).  A simpler alternative
+     * would be to drop the enum and use #define's, but it would stink...
+     */
+    HQFT_PRIORITY_UPDATE_STREAM= 0xF0700,
+    HQFT_PRIORITY_UPDATE_PUSH  = 0xF0701,
     /* This frame is made up and its type is never written to stream.
      * Nevertheless, just to be on the safe side, give it a value as
      * described in [draft-ietf-quic-http-20] Section 4.2.10.
@@ -75,5 +85,18 @@ enum http_error_code
     HEC_QPACK_DECODER_STREAM_ERROR  = 0x202,
 };
 
+
+enum ppc_flags
+{
+    PPC_URG_NAME = 1 << 0,
+    PPC_INC_NAME = 1 << 1,
+    PPC_URG_SET  = 1 << 2,      /* 'urgency' is set */
+    PPC_INC_SET  = 1 << 3,      /* 'incremental' is set */
+};
+
+
+int
+lsquic_http_parse_pfv (const char *, size_t, enum ppc_flags * /* optional */,
+                           struct lsquic_ext_http_prio *, char *str, size_t);
 
 #endif

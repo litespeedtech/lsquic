@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 21
+#define LSQUIC_MINOR_VERSION 22
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -370,6 +370,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Assume optimistic NAT by default. */
 #define LSQUIC_DF_OPTIMISTIC_NAT 1
+
+/** Turn on Extensible HTTP Priorities by default. */
+#define LSQUIC_DF_EXT_HTTP_PRIO 1
 
 /** By default, incoming packet size is not limited. */
 #define LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX 0
@@ -939,6 +942,14 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_OPTIMISTIC_NAT.
      */
     int             es_optimistic_nat;
+
+    /**
+     * If set to true, Extensible HTTP Priorities are enabled.  This
+     * is HTTP/3-only setting.
+     *
+     * Default value is @ref LSQUIC_DF_EXT_HTTP_PRIO
+     */
+    int             es_ext_http_prio;
 };
 
 /* Initialize `settings' to default values */
@@ -1636,6 +1647,42 @@ unsigned lsquic_stream_priority (const lsquic_stream_t *s);
  * @retval  -1  Priority value is invalid.
  */
 int lsquic_stream_set_priority (lsquic_stream_t *s, unsigned priority);
+
+/*
+ * Definitions for Extensible HTTP Priorities:
+ * https://tools.ietf.org/html/draft-ietf-httpbis-priority-01
+ */
+/* This is maximum *value* -- but it's the lowest *priority* */
+#define LSQUIC_MAX_HTTP_URGENCY 7
+#define LSQUIC_DEF_HTTP_URGENCY 3
+#define LSQUIC_DEF_HTTP_INCREMENTAL 0
+
+struct lsquic_ext_http_prio
+{
+    unsigned char   urgency;
+    signed char     incremental;
+};
+
+/**
+ * Get Extensible HTTP Priorities associated with the stream.
+ *
+ * Returns zero on success of a negative value on failure.  A failure occurs
+ * if this is not an HTTP/3 stream or if Extensible HTTP Priorities haven't
+ * been enabled.  See @ref es_ext_http_prio.
+ */
+int
+lsquic_stream_get_http_prio (lsquic_stream_t *, struct lsquic_ext_http_prio *);
+
+/**
+ * Set Extensible HTTP Priorities of the stream.
+ *
+ * Returns zero on success of a negative value on failure.  A failure occurs
+ * if some internal error occured or if this is not an HTTP/3 stream or if
+ * Extensible HTTP Priorities haven't been enabled.  See @ref es_ext_http_prio.
+ */
+int
+lsquic_stream_set_http_prio (lsquic_stream_t *,
+                                        const struct lsquic_ext_http_prio *);
 
 /**
  * Get a pointer to the connection object.  Use it with lsquic_conn_*

@@ -27,6 +27,13 @@ struct mini_crypto_stream
 typedef uint64_t packno_set_t;
 #define MAX_PACKETS ((sizeof(packno_set_t) * 8) - 1)
 
+/* We do not handle packets in the App packet number space in the mini
+ * connection.  They are all buffered to be handled later when the
+ * connection is promoted.  This means we do not have to have data
+ * structures to track the App PNS.
+ */
+#define IMICO_N_PNS (N_PNS - 1)
+
 struct ietf_mini_conn
 {
     struct lsquic_conn              imc_conn;
@@ -37,7 +44,7 @@ struct ietf_mini_conn
         IMC_ENC_SESS_INITED     = 1 << 0,
         IMC_QUEUED_ACK_INIT     = 1 << 1,
         IMC_QUEUED_ACK_HSK      = IMC_QUEUED_ACK_INIT << PNS_HSK,
-        IMC_QUEUED_ACK_APP      = IMC_QUEUED_ACK_INIT << PNS_APP,
+        IMC_UNUSED3             = 1 << 3,
         IMC_ERROR               = 1 << 4,
         IMC_HSK_OK              = 1 << 5,
         IMC_HSK_FAILED          = 1 << 6,
@@ -58,6 +65,7 @@ struct ietf_mini_conn
         IMC_PARSE_FAILED        = 1 << 20,
         IMC_PATH_CHANGED        = 1 << 21,
         IMC_HSK_DONE_SENT       = 1 << 22,
+        IMC_TRECHIST            = 1 << 23,
     }                               imc_flags;
     struct mini_crypto_stream       imc_streams[N_ENC_LEVS];
     void                           *imc_stream_ps[N_ENC_LEVS];
@@ -69,9 +77,15 @@ struct ietf_mini_conn
     TAILQ_HEAD(, lsquic_packet_out) imc_packets_out;
     TAILQ_HEAD(, stream_frame)      imc_crypto_frames;
     packno_set_t                    imc_sent_packnos;
-    packno_set_t                    imc_recvd_packnos[N_PNS];
-    packno_set_t                    imc_acked_packnos[N_PNS];
-    lsquic_time_t                   imc_largest_recvd[N_PNS];
+    union {
+        packno_set_t                    bitmasks[IMICO_N_PNS];
+        struct {
+            struct trechist_elem       *hist_elems;
+            trechist_mask_t             hist_masks[IMICO_N_PNS];
+        }                           trechist;
+    }                               imc_recvd_packnos;
+    packno_set_t                    imc_acked_packnos[IMICO_N_PNS];
+    lsquic_time_t                   imc_largest_recvd[IMICO_N_PNS];
     struct lsquic_rtt_stats         imc_rtt_stats;
     unsigned                        imc_error_code;
     unsigned                        imc_bytes_in;
@@ -90,8 +104,8 @@ struct ietf_mini_conn
      */
     uint8_t                         imc_ecn_packnos;
     uint8_t                         imc_ack_exp;
-    uint8_t                         imc_ecn_counts_in[N_PNS][4];
-    uint8_t                         imc_ecn_counts_out[N_PNS][4];
+    uint8_t                         imc_ecn_counts_in[IMICO_N_PNS][4];
+    uint8_t                         imc_ecn_counts_out[IMICO_N_PNS][4];
     uint8_t                         imc_incoming_ecn;
     uint8_t                         imc_tls_alert;
 #define IMICO_MAX_DELAYED_PACKETS_UNVALIDATED 1u
@@ -121,4 +135,29 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *,
 
 int
 lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *);
+
+struct ietf_mini_rechist
+{
+    const struct ietf_mini_conn *conn;
+    enum packnum_space           pns;
+    union {
+        struct {
+            packno_set_t                 cur_set;
+            struct lsquic_packno_range   range;   /* We return a pointer to this */
+            int                          cur_idx;
+        }                       bitmask;
+        struct trechist_iter    trechist_iter;
+    } u;
+};
+
+void
+lsquic_imico_rechist_init (struct ietf_mini_rechist *rechist,
+                const struct ietf_mini_conn *conn, enum packnum_space pns);
+
+const struct lsquic_packno_range *
+lsquic_imico_rechist_first (void *rechist_ctx);
+
+const struct lsquic_packno_range *
+lsquic_imico_rechist_next (void *rechist_ctx);
+
 #endif

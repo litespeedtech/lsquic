@@ -18,6 +18,8 @@ struct hcsi_callbacks
     void    (*on_setting)(void *ctx, uint64_t setting_id, uint64_t value);
     void    (*on_goaway)(void *ctx, uint64_t stream_id);
     void    (*on_unexpected_frame)(void *ctx, uint64_t frame_type);
+    void    (*on_priority_update)(void *ctx, enum hq_frame_type, uint64_t id,
+                                                        const char *, size_t);
 };
 
 
@@ -29,6 +31,7 @@ struct hcsi_reader
         HR_SKIPPING,
         HR_READ_SETTING_BEGIN,
         HR_READ_SETTING_CONTINUE,
+        HR_READ_PRIORITY_UPDATE,
         HR_READ_VARINT,
         HR_READ_VARINT_CONTINUE,
         HR_ERROR,
@@ -40,10 +43,19 @@ struct hcsi_reader
     {
         struct varint_read_state            vint_state;
         struct varint_read2_state           vint2_state;
+        struct {
+            /* We just need the offset to rest of prio_state to read Priority
+             * Field Value.
+             */
+            struct varint_read_state        UNUSED;
+            char                            buf[
+                        sizeof(struct varint_read2_state)
+                                - sizeof(struct varint_read_state)];
+        }                                   prio_state;
     }                               hr_u;
     const struct hcsi_callbacks    *hr_cb;
     void                           *hr_ctx;
-    unsigned                        hr_nread;  /* Used for PRIORITY and SETTINGS frames */
+    unsigned                        hr_nread;  /* Used for PRIORITY_UPDATE and SETTINGS frames */
 };
 
 

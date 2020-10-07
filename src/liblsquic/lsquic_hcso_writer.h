@@ -7,6 +7,7 @@
 #define LSQUIC_HCSO_WRITER_H 1
 
 struct lsquic_engine_settings;
+struct lsquic_ext_http_prio;
 struct lsquic_stream;
 
 struct hcso_writer
@@ -33,6 +34,11 @@ lsquic_hcso_write_max_push_id (struct hcso_writer *, uint64_t max_push_id);
 
 int
 lsquic_hcso_write_cancel_push (struct hcso_writer *, uint64_t push_id);
+
+int
+lsquic_hcso_write_priority_update (struct hcso_writer *,
+                enum hq_frame_type, uint64_t stream_or_push_id,
+                const struct lsquic_ext_http_prio *);
 
 extern const struct lsquic_stream_if *const lsquic_hcso_writer_if;
 

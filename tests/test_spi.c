@@ -22,6 +22,8 @@
 #include "lsquic_conn.h"
 #include "lsquic_stream.h"
 #include "lsquic_types.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn_public.h"
 #include "lsquic_spi.h"
 #include "lsquic_logger.h"
 
@@ -32,6 +34,8 @@
 static struct stream_prio_iter spi;
 
 static struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 0);
+
+static struct lsquic_conn_public conn_pub = { .lconn = &lconn, };
 
 
 static lsquic_stream_t *
@@ -73,7 +77,7 @@ test_same_priority (unsigned priority)
     lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
         TAILQ_LAST(&streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        &lconn, __func__, NULL, NULL);
+        &conn_pub, __func__, NULL, NULL);
 
     stream = lsquic_spi_first(&spi);
     assert(stream == stream_arr[0]);
@@ -89,7 +93,7 @@ test_same_priority (unsigned priority)
     /* Test reinitialization: */
     lsquic_spi_init(&spi, stream_arr[0], stream_arr[1],
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        &lconn, __func__, NULL, NULL);
+        &conn_pub, __func__, NULL, NULL);
     stream = lsquic_spi_first(&spi);
     assert(stream == stream_arr[0]);
     stream = lsquic_spi_next(&spi);
@@ -121,7 +125,7 @@ test_different_priorities (int *priority)
     lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
         TAILQ_LAST(&streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        &lconn, __func__, NULL, NULL); 
+        &conn_pub, __func__, NULL, NULL);
     for (prev_prio = -1, count = 0, stream = lsquic_spi_first(&spi); stream;
                                         stream = lsquic_spi_next(&spi), ++count)
     {
@@ -214,7 +218,7 @@ test_drop (const struct drop_test *test)
         lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
             TAILQ_LAST(&streams, lsquic_streams_tailq),
             (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-            &lconn, __func__, NULL, NULL);
+            &conn_pub, __func__, NULL, NULL);
 
         if (drop_high)
             lsquic_spi_drop_high(&spi);
@@ -275,7 +279,7 @@ test_different_priorities_filter_odd (int *priority)
     lsquic_spi_init(&spi, TAILQ_FIRST(&streams),
         TAILQ_LAST(&streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        &lconn, __func__, filter_out_odd_priorities, &my_filter_ctx);
+        &conn_pub, __func__, filter_out_odd_priorities, &my_filter_ctx);
 
     for (prev_prio = -1, count = 0, stream = lsquic_spi_first(&spi); stream;
                                         stream = lsquic_spi_next(&spi), ++count)

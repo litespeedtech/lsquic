@@ -161,6 +161,24 @@ strndup(const char *s, size_t n)
 }
 #endif
 
+/* When more than `nread' bytes are read from stream `stream_id', apply
+ * priority in `ehp'.
+ */
+struct priority_spec
+{
+    enum {
+        PRIORITY_SPEC_ACTIVE    = 1 << 0,
+    }                                       flags;
+    lsquic_stream_id_t                      stream_id;
+    size_t                                  nread;
+    struct lsquic_ext_http_prio             ehp;
+};
+static struct priority_spec *s_priority_specs;
+static unsigned s_n_prio_specs;
+
+static void
+maybe_perform_priority_actions (struct lsquic_stream *, lsquic_stream_ctx_t *);
+
 struct lsquic_conn_ctx;
 
 struct path_elem {
@@ -531,7 +549,20 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     LSQ_INFO("created new stream, path: %s", st_h->path);
     lsquic_stream_wantwrite(stream, 1);
     if (randomly_reprioritize_streams)
-        lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
+    {
+        if ((1 << lsquic_conn_quic_version(lsquic_stream_conn(stream)))
+                                                    & LSQUIC_IETF_VERSIONS)
+            lsquic_stream_set_http_prio(stream,
+                &(struct lsquic_ext_http_prio){
+                    .urgency = random() & 7,
+                    .incremental = random() & 1,
+                }
+            );
+        else
+            lsquic_stream_set_priority(stream, 1 + (random() & 0xFF));
+    }
+    if (s_priority_specs)
+        maybe_perform_priority_actions(stream, st_h);
     if (s_abandon_early)
     {
         st_h->sh_stop = random() % (s_abandon_early + 1);
@@ -547,25 +578,37 @@ send_headers (lsquic_stream_ctx_t *st_h)
 {
     const char *hostname = st_h->client_ctx->hostname;
     struct header_buf hbuf;
+    unsigned h_idx = 0;
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
     hbuf.off = 0;
-    struct lsxpack_header headers_arr[7];
+    struct lsxpack_header headers_arr[9];
 #define V(v) (v), strlen(v)
-    header_set_ptr(&headers_arr[0], &hbuf, V(":method"), V(st_h->client_ctx->method));
-    header_set_ptr(&headers_arr[1], &hbuf, V(":scheme"), V("https"));
-    header_set_ptr(&headers_arr[2], &hbuf, V(":path"), V(st_h->path));
-    header_set_ptr(&headers_arr[3], &hbuf, V(":authority"), V(hostname));
-    header_set_ptr(&headers_arr[4], &hbuf, V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
-    /* The following headers only gets sent if there is request payload: */
-    header_set_ptr(&headers_arr[5], &hbuf, V("content-type"), V("application/octet-stream"));
-    header_set_ptr(&headers_arr[6], &hbuf, V("content-length"), V( st_h->client_ctx->payload_size));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V(st_h->client_ctx->method));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":path"), V(st_h->path));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"), V(hostname));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
+    if (randomly_reprioritize_streams)
+    {
+        char pfv[10];
+        sprintf(pfv, "u=%ld", random() & 7);
+        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V(pfv));
+        if (random() & 1)
+            sprintf(pfv, "i");
+        else
+            sprintf(pfv, "i=?0");
+        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V(pfv));
+    }
+    if (st_h->client_ctx->payload)
+    {
+        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("content-type"), V("application/octet-stream"));
+        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("content-length"), V( st_h->client_ctx->payload_size));
+    }
     lsquic_http_headers_t headers = {
-        .count = sizeof(headers_arr) / sizeof(headers_arr[0]),
+        .count = h_idx,
         .headers = headers_arr,
     };
-    if (!st_h->client_ctx->payload)
-        headers.count -= 2;
     if (0 != lsquic_stream_send_headers(st_h->stream, &headers,
                                     st_h->client_ctx->payload == NULL))
     {
@@ -660,6 +703,40 @@ discard (void *ctx, const unsigned char *buf, size_t sz, int fin)
 
 
 static void
+maybe_perform_priority_actions (struct lsquic_stream *stream,
+                                                lsquic_stream_ctx_t *st_h)
+{
+    const lsquic_stream_id_t stream_id = lsquic_stream_id(stream);
+    struct priority_spec *spec;
+    unsigned n_active;
+    int s;
+
+    n_active = 0;
+    for (spec = s_priority_specs; spec < s_priority_specs + s_n_prio_specs;
+                                                                        ++spec)
+    {
+        if ((spec->flags & PRIORITY_SPEC_ACTIVE)
+            && spec->stream_id == stream_id
+            && st_h->sh_nread >= spec->nread)
+        {
+            s = lsquic_stream_set_http_prio(stream, &spec->ehp);
+            if (s != 0)
+            {
+                LSQ_ERROR("could not apply priorities to stream %"PRIu64,
+                                                                    stream_id);
+                exit(1);
+            }
+            spec->flags &= ~PRIORITY_SPEC_ACTIVE;
+        }
+        n_active += !!(spec->flags & PRIORITY_SPEC_ACTIVE);
+    }
+
+    if (n_active == 0)
+        s_priority_specs = NULL;
+}
+
+
+static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     struct http_client_ctx *const client_ctx = st_h->client_ctx;
@@ -728,16 +805,36 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 fwrite(buf, 1, nread, stdout);
             if (randomly_reprioritize_streams && (st_h->count++ & 0x3F) == 0)
             {
-                old_prio = lsquic_stream_priority(stream);
-                new_prio = 1 + (random() & 0xFF);
+                if ((1 << lsquic_conn_quic_version(lsquic_stream_conn(stream)))
+                                                        & LSQUIC_IETF_VERSIONS)
+                {
+                    struct lsquic_ext_http_prio ehp;
+                    if (0 == lsquic_stream_get_http_prio(stream, &ehp))
+                    {
+                        ehp.urgency = 7 & (ehp.urgency + 1);
+                        ehp.incremental = !ehp.incremental;
 #ifndef NDEBUG
-                const int s =
+                        const int s =
 #endif
-                lsquic_stream_set_priority(stream, new_prio);
-                assert(s == 0);
-                LSQ_DEBUG("changed stream %"PRIu64" priority from %u to %u",
+                        lsquic_stream_set_http_prio(stream, &ehp);
+                        assert(s == 0);
+                    }
+                }
+                else
+                {
+                    old_prio = lsquic_stream_priority(stream);
+                    new_prio = 1 + (random() & 0xFF);
+#ifndef NDEBUG
+                    const int s =
+#endif
+                    lsquic_stream_set_priority(stream, new_prio);
+                    assert(s == 0);
+                    LSQ_DEBUG("changed stream %"PRIu64" priority from %u to %u",
                                 lsquic_stream_id(stream), old_prio, new_prio);
+                }
             }
+            if (s_priority_specs)
+                maybe_perform_priority_actions(stream, st_h);
             if ((st_h->sh_flags & ABANDON) && st_h->sh_nread >= st_h->sh_stop)
             {
                 LSQ_DEBUG("closing stream early having read %zd bytes",
@@ -864,6 +961,9 @@ usage (const char *prog)
 "   -e TOKEN    Hexadecimal string representing resume token.\n"
 "   -3 MAX      Close stream after reading at most MAX bytes.  The actual\n"
 "                 number of bytes read is randominzed.\n"
+"   -9 SPEC     Priority specification.  May be specified several times.\n"
+"                 SPEC takes the form stream_id:nread:UI, where U is\n"
+"                 urgency and I is incremental.  Matched \\d+:\\d+:[0-7][01]\n"
             , prog);
 }
 
@@ -1432,6 +1532,7 @@ main (int argc, char **argv)
     struct sport_head sports;
     struct prog prog;
     const char *token = NULL;
+    struct priority_spec *priority_specs = NULL;
 
     TAILQ_INIT(&sports);
     memset(&client_ctx, 0, sizeof(client_ctx));
@@ -1450,6 +1551,7 @@ main (int argc, char **argv)
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS
                                     "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
                             "3:"    /* 3 is 133+ for "e" ("e" for "early") */
+                            "9:"    /* 9 sort of looks like P... */
 #ifndef WIN32
                                                                       "C:"
 #endif
@@ -1486,6 +1588,7 @@ main (int argc, char **argv)
         case 'E':   /* E: randomly reprioritize str<E>ams.  Now, that's
                      * pretty random. :)
                      */
+            srand((uintptr_t) argv);
             randomly_reprioritize_streams = 1;
             break;
         case 'n':
@@ -1569,6 +1672,45 @@ main (int argc, char **argv)
         case '3':
             s_abandon_early = strtol(optarg, NULL, 10);
             break;
+        case '9':
+        {
+            /* Parse priority spec and tack it onto the end of the array */
+            lsquic_stream_id_t stream_id;
+            size_t nread;
+            struct lsquic_ext_http_prio ehp;
+            struct priority_spec *new_specs;
+            stream_id = strtoull(optarg, &optarg, 10);
+            if (*optarg != ':')
+                exit(1);
+            ++optarg;
+            nread = strtoull(optarg, &optarg, 10);
+            if (*optarg != ':')
+                exit(1);
+            ++optarg;
+            if (!(*optarg >= '0' && *optarg <= '7'))
+                exit(1);
+            ehp.urgency = *optarg++ - '0';
+            if (!(*optarg >= '0' && *optarg <= '1'))
+                exit(1);
+            ehp.incremental = *optarg++ - '0';
+            ++s_n_prio_specs;
+            new_specs = realloc(priority_specs,
+                                sizeof(priority_specs[0]) * s_n_prio_specs);
+            if (!new_specs)
+            {
+                perror("malloc");
+                exit(1);
+            }
+            priority_specs = new_specs;
+            priority_specs[s_n_prio_specs - 1] = (struct priority_spec) {
+                .flags      = PRIORITY_SPEC_ACTIVE,
+                .stream_id  = stream_id,
+                .nread      = nread,
+                .ehp        = ehp,
+            };
+            s_priority_specs = priority_specs;
+            break;
+        }
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
@@ -1660,5 +1802,6 @@ main (int argc, char **argv)
     if (client_ctx.qif_fh)
         (void) fclose(client_ctx.qif_fh);
 
+    free(priority_specs);
     exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
 }

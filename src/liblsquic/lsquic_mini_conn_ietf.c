@@ -27,6 +27,7 @@
 #include "lsquic_rtt.h"
 #include "lsquic_util.h"
 #include "lsquic_enc_sess.h"
+#include "lsquic_trechist.h"
 #include "lsquic_mini_conn_ietf.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_trans_params.h"
@@ -34,6 +35,7 @@
 #include "lsquic_packet_ietf.h"
 #include "lsquic_attq.h"
 #include "lsquic_alarmset.h"
+#include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_MINI_CONN
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->imc_conn)
@@ -469,6 +471,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     enc_session_t *enc_sess;
     enum enc_level i;
     const struct enc_session_funcs_iquic *esfi;
+    unsigned char rand_nybble;
 
     if (!is_first_packet_ok(packet_in, udp_payload_size))
         return NULL;
@@ -511,6 +514,23 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     {
         conn->imc_streams[i].mcs_enc_level = i;
         conn->imc_stream_ps[i] = &conn->imc_streams[i];
+    }
+
+    rand_nybble = lsquic_crand_get_nybble(enpub->enp_crand);
+    if (rand_nybble == 0)
+    {
+        /* Use trechist for about one out of every sixteen connections so
+         * that the code does not grow stale.
+         */
+        LSQ_DEBUG("using trechist");
+        conn->imc_flags |= IMC_TRECHIST;
+        conn->imc_recvd_packnos.trechist.hist_elems
+                                    = malloc(TRECHIST_SIZE * IMICO_N_PNS);
+        if (!conn->imc_recvd_packnos.trechist.hist_elems)
+        {
+            LSQ_WARN("cannot allocate trechist elems");
+            return NULL;
+        }
     }
 
     esfi = select_esf_iquic_by_ver(version);
@@ -581,6 +601,8 @@ ietf_mini_conn_ci_destroy (struct lsquic_conn *lconn)
     if (lconn->cn_enc_session)
         lconn->cn_esf.i->esfi_destroy(lconn->cn_enc_session);
     LSQ_DEBUG("ietf_mini_conn_ci_destroyed");
+    if (conn->imc_flags & IMC_TRECHIST)
+        free(conn->imc_recvd_packnos.trechist.hist_elems);
     lsquic_malo_put(conn);
 }
 
@@ -1253,6 +1275,96 @@ imico_maybe_validate_by_dcid (struct ietf_mini_conn *conn,
 }
 
 
+static int
+imico_received_packet_is_dup (struct ietf_mini_conn *conn,
+                                enum packnum_space pns, lsquic_packno_t packno)
+{
+    if (conn->imc_flags & IMC_TRECHIST)
+        return lsquic_trechist_contains(
+            conn->imc_recvd_packnos.trechist.hist_masks[pns],
+            conn->imc_recvd_packnos.trechist.hist_elems
+                                        + TRECHIST_MAX_RANGES * pns, packno);
+    else
+        return !!(conn->imc_recvd_packnos.bitmasks[pns] & (1ULL << packno));
+}
+
+
+static int
+imico_packno_is_largest (struct ietf_mini_conn *conn,
+                                enum packnum_space pns, lsquic_packno_t packno)
+{
+    if (conn->imc_flags & IMC_TRECHIST)
+        return 0 == conn->imc_recvd_packnos.trechist.hist_masks[pns]
+            || packno > lsquic_trechist_max(
+                        conn->imc_recvd_packnos.trechist.hist_masks[pns],
+                        conn->imc_recvd_packnos.trechist.hist_elems
+                                            + TRECHIST_MAX_RANGES * pns);
+    else
+        return 0 == conn->imc_recvd_packnos.bitmasks[pns]
+            || packno > highest_bit_set(conn->imc_recvd_packnos.bitmasks[pns]);
+}
+
+
+static void
+imico_record_recvd_packno (struct ietf_mini_conn *conn,
+                                enum packnum_space pns, lsquic_packno_t packno)
+{
+    if (conn->imc_flags & IMC_TRECHIST)
+    {
+        if (0 != lsquic_trechist_insert(
+                    &conn->imc_recvd_packnos.trechist.hist_masks[pns],
+                    conn->imc_recvd_packnos.trechist.hist_elems
+                                        + TRECHIST_MAX_RANGES * pns, packno))
+        {
+            LSQ_INFO("too many ranges for trechist to hold or range too wide");
+            conn->imc_flags |= IMC_ERROR;
+        }
+    }
+    else
+        conn->imc_recvd_packnos.bitmasks[pns] |= 1ULL << packno;
+}
+
+
+static int
+imico_switch_to_trechist (struct ietf_mini_conn *conn)
+{
+    uint32_t masks[IMICO_N_PNS];
+    enum packnum_space pns;
+    struct trechist_elem *elems;
+    struct ietf_mini_rechist iter;
+
+    elems = malloc(TRECHIST_SIZE * N_PNS);
+    if (!elems)
+    {
+        LSQ_WARN("cannot allocate trechist elems");
+        return -1;
+    }
+
+    for (pns = 0; pns < IMICO_N_PNS; ++pns)
+        if (conn->imc_recvd_packnos.bitmasks[pns])
+        {
+            lsquic_imico_rechist_init(&iter, conn, pns);
+            if (0 != lsquic_trechist_copy_ranges(&masks[pns],
+                                elems + TRECHIST_MAX_RANGES * pns, &iter,
+                                lsquic_imico_rechist_first,
+                                lsquic_imico_rechist_next))
+            {
+                LSQ_WARN("cannot copy ranges from bitmask to trechist");
+                free(elems);
+                return -1;
+            }
+        }
+        else
+            masks[pns] = 0;
+
+    memcpy(conn->imc_recvd_packnos.trechist.hist_masks, masks, sizeof(masks));
+    conn->imc_recvd_packnos.trechist.hist_elems = elems;
+    conn->imc_flags |= IMC_TRECHIST;
+    LSQ_DEBUG("switched to trechist");
+    return 0;
+}
+
+
 /* Only a single packet is supported */
 static void
 ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
@@ -1318,7 +1430,14 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     if (pns == PNS_HSK && !(conn->imc_flags & IMC_IGNORE_INIT))
         ignore_init(conn);
 
-    if (conn->imc_recvd_packnos[pns] & (1ULL << packet_in->pi_packno))
+    if (packet_in->pi_packno > MAX_PACKETS
+                                    && !(conn->imc_flags & IMC_TRECHIST))
+    {
+        if (0 != imico_switch_to_trechist(conn))
+            return;
+    }
+
+    if (imico_received_packet_is_dup(conn, pns, packet_in->pi_packno))
     {
         LSQ_DEBUG("duplicate packet %"PRIu64, packet_in->pi_packno);
         return;
@@ -1328,10 +1447,9 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
      * error, the connection is terminated and recording this packet number
      * is helpful when it is printed along with other diagnostics in dtor.
      */
-    if (0 == conn->imc_recvd_packnos[pns] ||
-            packet_in->pi_packno > highest_bit_set(conn->imc_recvd_packnos[pns]))
+    if (imico_packno_is_largest(conn, pns, packet_in->pi_packno))
         conn->imc_largest_recvd[pns] = packet_in->pi_received;
-    conn->imc_recvd_packnos[pns] |= 1ULL << packet_in->pi_packno;
+    imico_record_recvd_packno(conn, pns, packet_in->pi_packno);
 
     if (0 != imico_parse_regular_packet(conn, packet_in))
     {
@@ -1483,24 +1601,21 @@ imico_have_packets_to_send (struct ietf_mini_conn *conn, lsquic_time_t now)
 }
 
 
-struct ietf_mini_rechist
-{
-    const struct ietf_mini_conn *conn;
-    packno_set_t                 cur_set;
-    struct lsquic_packno_range   range;   /* We return a pointer to this */
-    int                          cur_idx;
-    enum packnum_space           pns;
-};
-
-
-static void
-imico_rechist_init (struct ietf_mini_rechist *rechist,
+void
+lsquic_imico_rechist_init (struct ietf_mini_rechist *rechist,
                     const struct ietf_mini_conn *conn, enum packnum_space pns)
 {
-    rechist->conn    = conn;
-    rechist->pns     = pns;
-    rechist->cur_set = 0;
-    rechist->cur_idx = 0;
+    rechist->conn = conn;
+    rechist->pns  = pns;
+    if (conn->imc_flags & IMC_TRECHIST)
+        lsquic_trechist_iter(&rechist->u.trechist_iter,
+            conn->imc_recvd_packnos.trechist.hist_masks[pns],
+            conn->imc_recvd_packnos.trechist.hist_elems + TRECHIST_MAX_RANGES * pns);
+    else
+    {
+        rechist->u.bitmask.cur_set = 0;
+        rechist->u.bitmask.cur_idx = 0;
+    }
 }
 
 
@@ -1513,51 +1628,70 @@ imico_rechist_largest_recv (void *rechist_ctx)
 
 
 static const struct lsquic_packno_range *
-imico_rechist_next (void *rechist_ctx)
+imico_bitmask_rechist_next (struct ietf_mini_rechist *rechist)
 {
-    struct ietf_mini_rechist *rechist = rechist_ctx;
     const struct ietf_mini_conn *conn = rechist->conn;
     packno_set_t packnos;
     int i;
 
-    packnos = rechist->cur_set;
+    packnos = rechist->u.bitmask.cur_set;
     if (0 == packnos)
         return NULL;
 
     /* There may be a faster way to do this, but for now, we just want
      * correctness.
      */
-    for (i = rechist->cur_idx; i >= 0; --i)
+    for (i = rechist->u.bitmask.cur_idx; i >= 0; --i)
         if (packnos & (1ULL << i))
         {
-            rechist->range.low  = i;
-            rechist->range.high = i;
+            rechist->u.bitmask.range.low  = i;
+            rechist->u.bitmask.range.high = i;
             break;
         }
     assert(i >= 0); /* We must have hit at least one bit */
     --i;
     for ( ; i >= 0 && (packnos & (1ULL << i)); --i)
-        rechist->range.low = i;
+        rechist->u.bitmask.range.low = i;
     if (i >= 0)
     {
-        rechist->cur_set = packnos & ((1ULL << i) - 1);
-        rechist->cur_idx = i;
+        rechist->u.bitmask.cur_set = packnos & ((1ULL << i) - 1);
+        rechist->u.bitmask.cur_idx = i;
     }
     else
-        rechist->cur_set = 0;
+        rechist->u.bitmask.cur_set = 0;
     LSQ_DEBUG("%s: return [%"PRIu64", %"PRIu64"]", __func__,
-                                rechist->range.low, rechist->range.high);
-    return &rechist->range;
+                rechist->u.bitmask.range.low, rechist->u.bitmask.range.high);
+    return &rechist->u.bitmask.range;
 }
 
 
-static const struct lsquic_packno_range *
-imico_rechist_first (void *rechist_ctx)
+const struct lsquic_packno_range *
+lsquic_imico_rechist_next (void *rechist_ctx)
 {
     struct ietf_mini_rechist *rechist = rechist_ctx;
-    rechist->cur_set = rechist->conn->imc_recvd_packnos[ rechist->pns ];
-    rechist->cur_idx = highest_bit_set(rechist->cur_set);
-    return imico_rechist_next(rechist_ctx);
+
+    if (rechist->conn->imc_flags & IMC_TRECHIST)
+        return lsquic_trechist_next(&rechist->u.trechist_iter);
+    else
+        return imico_bitmask_rechist_next(rechist);
+}
+
+
+const struct lsquic_packno_range *
+lsquic_imico_rechist_first (void *rechist_ctx)
+{
+    struct ietf_mini_rechist *rechist = rechist_ctx;
+
+    if (rechist->conn->imc_flags & IMC_TRECHIST)
+        return lsquic_trechist_first(&rechist->u.trechist_iter);
+    else
+    {
+        rechist->u.bitmask.cur_set
+                = rechist->conn->imc_recvd_packnos.bitmasks[ rechist->pns ];
+        rechist->u.bitmask.cur_idx
+                = highest_bit_set(rechist->u.bitmask.cur_set);
+        return lsquic_imico_rechist_next(rechist_ctx);
+    }
 }
 
 
@@ -1598,11 +1732,11 @@ imico_generate_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
         return -1;
 
     /* Generate ACK frame */
-    imico_rechist_init(&rechist, conn, pns);
+    lsquic_imico_rechist_init(&rechist, conn, pns);
     len = conn->imc_conn.cn_pf->pf_gen_ack_frame(
                 packet_out->po_data + packet_out->po_data_sz,
-                lsquic_packet_out_avail(packet_out), imico_rechist_first,
-                imico_rechist_next, imico_rechist_largest_recv, &rechist,
+                lsquic_packet_out_avail(packet_out), lsquic_imico_rechist_first,
+                lsquic_imico_rechist_next, imico_rechist_largest_recv, &rechist,
                 now, &not_used_has_missing, &packet_out->po_ack2ed, ecn_counts);
     if (len < 0)
     {
@@ -1625,7 +1759,7 @@ imico_generate_acks (struct ietf_mini_conn *conn, lsquic_time_t now)
 {
     enum packnum_space pns;
 
-    for (pns = PNS_INIT; pns < N_PNS; ++pns)
+    for (pns = PNS_INIT; pns < IMICO_N_PNS; ++pns)
         if (conn->imc_flags & (IMC_QUEUED_ACK_INIT << pns)
                 && !(pns == PNS_INIT && (conn->imc_flags & IMC_IGNORE_INIT)))
             if (0 != imico_generate_ack(conn, pns, now))
@@ -1814,8 +1948,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
 
 
-    if (conn->imc_flags &
-            (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK|IMC_QUEUED_ACK_APP))
+    if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
     {
         if (0 != imico_generate_acks(conn, now))
         {

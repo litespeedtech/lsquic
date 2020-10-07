@@ -64,14 +64,18 @@
 #include "lsquic_http1x_if.h"
 #include "lsquic_qenc_hdl.h"
 #include "lsquic_qdec_hdl.h"
+#include "lsquic_trechist.h"
 #include "lsquic_mini_conn_ietf.h"
 #include "lsquic_tokgen.h"
 #include "lsquic_full_conn.h"
 #include "lsquic_spi.h"
+#include "lsquic_min_heap.h"
+#include "lsquic_hpi.h"
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_headers.h"
 #include "lsquic_crand.h"
+#include "ls-sfparser.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
 #define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
@@ -338,6 +342,53 @@ struct inc_ack_stats        /* Incoming ACK stats */
 };
 
 
+union prio_iter
+{
+    struct stream_prio_iter spi;
+    struct http_prio_iter   hpi;
+};
+
+
+struct prio_iter_if
+{
+    void (*pii_init) (void *, struct lsquic_stream *first,
+             struct lsquic_stream *last, uintptr_t next_ptr_offset,
+             struct lsquic_conn_public *, const char *name,
+             int (*filter)(void *filter_ctx, struct lsquic_stream *),
+             void *filter_ctx);
+
+    struct lsquic_stream * (*pii_first) (void *);
+
+    struct lsquic_stream * (*pii_next) (void *);
+
+    void (*pii_drop_non_high) (void *);
+
+    void (*pii_drop_high) (void *);
+
+    void (*pii_cleanup) (void *);
+};
+
+
+static const struct prio_iter_if orig_prio_iter_if = {
+    lsquic_spi_init,
+    lsquic_spi_first,
+    lsquic_spi_next,
+    lsquic_spi_drop_non_high,
+    lsquic_spi_drop_high,
+    lsquic_spi_cleanup,
+};
+
+
+static const struct prio_iter_if ext_prio_iter_if = {
+    lsquic_hpi_init,
+    lsquic_hpi_first,
+    lsquic_hpi_next,
+    lsquic_hpi_drop_non_high,
+    lsquic_hpi_drop_high,
+    lsquic_hpi_cleanup,
+};
+
+
 struct ietf_full_conn
 {
     struct lsquic_conn          ifc_conn;
@@ -371,6 +422,7 @@ struct ietf_full_conn
     const struct lsquic_stream_if
                                *ifc_stream_if;
     void                       *ifc_stream_ctx;
+    const struct prio_iter_if  *ifc_pii;
     char                       *ifc_errmsg;
     struct lsquic_engine_public
                                *ifc_enpub;
@@ -454,6 +506,7 @@ struct ietf_full_conn
     }                           ifc_u;
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
+    struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     unsigned short              ifc_min_dg_sz,
                                 ifc_max_dg_sz;
@@ -994,7 +1047,11 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     if (conn->ifc_enpub->enp_settings.es_rw_once)
         flags |= SCF_DISP_RW_ONCE;
     if (conn->ifc_flags & IFC_HTTP)
+    {
         flags |= SCF_HTTP;
+        if (conn->ifc_pii == &ext_prio_iter_if)
+            flags |= SCF_HTTP_PRIO;
+    }
 
     stream_id = generate_stream_id(conn, SD_BIDI);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
@@ -1190,6 +1247,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         return -1;
     conn->ifc_pub.u.ietf.qeh = &conn->ifc_qeh;
     conn->ifc_pub.u.ietf.qdh = &conn->ifc_qdh;
+    conn->ifc_pub.u.ietf.hcso = &conn->ifc_hcso;
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
@@ -1209,6 +1267,10 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
     if (conn->ifc_settings->es_noprogress_timeout)
         conn->ifc_mflags |= MF_NOPROG_TIMEOUT;
+    if (conn->ifc_settings->es_ext_http_prio)
+        conn->ifc_pii = &ext_prio_iter_if;
+    else
+        conn->ifc_pii = &orig_prio_iter_if;
     return 0;
 }
 
@@ -1368,9 +1430,9 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     int have_outgoing_ack;
     lsquic_packno_t next_packno;
     lsquic_time_t now;
-    packno_set_t set;
     enum packnum_space pns;
     unsigned i;
+    struct ietf_mini_rechist mini_rechist;
 
     conn = calloc(1, sizeof(*conn));
     if (!conn)
@@ -1472,14 +1534,14 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_send_ctl.sc_cur_packno = imc->imc_next_packno - 1;
     lsquic_send_ctl_begin_optack_detection(&conn->ifc_send_ctl);
 
-    for (pns = 0; pns < N_PNS; ++pns)
+    for (pns = 0; pns < IMICO_N_PNS; ++pns)
     {
-        for (set = imc->imc_recvd_packnos[pns], i = 0;
-                set && i < MAX_PACKETS; set &= ~(1ULL << i), ++i)
-            if (set & (1ULL << i))
-                (void) lsquic_rechist_received(&conn->ifc_rechist[pns], i, 0);
-        if (i)
-            conn->ifc_rechist[pns].rh_largest_acked_received
+        lsquic_imico_rechist_init(&mini_rechist, imc, pns);
+        if (0 != lsquic_rechist_copy_ranges(&conn->ifc_rechist[pns],
+                                &mini_rechist, lsquic_imico_rechist_first,
+                                lsquic_imico_rechist_next))
+            goto err2;
+        conn->ifc_rechist[pns].rh_largest_acked_received
                                                 = imc->imc_largest_recvd[pns];
     }
 
@@ -1551,7 +1613,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_last_live_update = now;
 
     LSQ_DEBUG("Calling on_new_conn callback");
-    conn->ifc_conn.conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+    conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
 
     if (0 != handshake_ok(&conn->ifc_conn))
@@ -2708,19 +2770,21 @@ static void
 process_streams_ready_to_send (struct ietf_full_conn *conn)
 {
     struct lsquic_stream *stream;
-    struct stream_prio_iter spi;
+    union prio_iter pi;
 
     assert(!TAILQ_EMPTY(&conn->ifc_pub.sending_streams));
 
-    lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.sending_streams),
+    conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.sending_streams),
         TAILQ_LAST(&conn->ifc_pub.sending_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
-        &conn->ifc_conn, "send", NULL, NULL);
+        &conn->ifc_pub, "send", NULL, NULL);
 
-    for (stream = lsquic_spi_first(&spi); stream;
-                                            stream = lsquic_spi_next(&spi))
+    for (stream = conn->ifc_pii->pii_first(&pi); stream;
+                                    stream = conn->ifc_pii->pii_next(&pi))
         if (!process_stream_ready_to_send(conn, stream))
             break;
+
+    conn->ifc_pii->pii_cleanup(&pi);
 }
 
 
@@ -2760,7 +2824,7 @@ ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     assert(conn->ifc_flags & IFC_CREATED_OK);
-    lconn->conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
+    lconn->cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                                 conn->ifc_enpub->enp_stream_if_ctx, lconn);
 }
 
@@ -2976,6 +3040,13 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     }
     for (i = 0; i < N_SITS; ++i)
         lsquic_set64_cleanup(&conn->ifc_closed_stream_ids[i]);
+    if (conn->ifc_bpus)
+    {
+        for (el = lsquic_hash_first(conn->ifc_bpus); el;
+                                        el = lsquic_hash_next(conn->ifc_bpus))
+            free(lsquic_hashelem_getdata(el));
+        lsquic_hash_destroy(conn->ifc_bpus);
+    }
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "full connection destroyed");
     free(conn->ifc_errmsg);
@@ -3950,7 +4021,7 @@ process_streams_read_events (struct ietf_full_conn *conn)
     struct lsquic_stream *stream;
     int iters;
     enum stream_q_flags q_flags, needs_service;
-    struct stream_prio_iter spi;
+    union prio_iter pi;
     static const char *const labels[2] = { "read-0", "read-1", };
 
     if (TAILQ_EMPTY(&conn->ifc_pub.read_streams))
@@ -3960,19 +4031,20 @@ process_streams_read_events (struct ietf_full_conn *conn)
     iters = 0;
     do
     {
-        lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.read_streams),
+        conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.read_streams),
             TAILQ_LAST(&conn->ifc_pub.read_streams, lsquic_streams_tailq),
             (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
-            &conn->ifc_conn, labels[iters], NULL, NULL);
+            &conn->ifc_pub, labels[iters], NULL, NULL);
 
         needs_service = 0;
-        for (stream = lsquic_spi_first(&spi); stream;
-                                                stream = lsquic_spi_next(&spi))
+        for (stream = conn->ifc_pii->pii_first(&pi); stream;
+                                        stream = conn->ifc_pii->pii_next(&pi))
         {
             q_flags = stream->sm_qflags & SMQF_SERVICE_FLAGS;
             lsquic_stream_dispatch_read_events(stream);
             needs_service |= q_flags ^ (stream->sm_qflags & SMQF_SERVICE_FLAGS);
         }
+        conn->ifc_pii->pii_cleanup(&pi);
 
         if (needs_service)
             service_streams(conn);
@@ -4045,23 +4117,25 @@ static void
 process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 {
     struct lsquic_stream *stream;
-    struct stream_prio_iter spi;
+    union prio_iter pi;
 
-    lsquic_spi_init(&spi, TAILQ_FIRST(&conn->ifc_pub.write_streams),
+    conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.write_streams),
         TAILQ_LAST(&conn->ifc_pub.write_streams, lsquic_streams_tailq),
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
-        &conn->ifc_conn,
+        &conn->ifc_pub,
         high_prio ? "write-high" : "write-low", NULL, NULL);
 
     if (high_prio)
-        lsquic_spi_drop_non_high(&spi);
+        conn->ifc_pii->pii_drop_non_high(&pi);
     else
-        lsquic_spi_drop_high(&spi);
+        conn->ifc_pii->pii_drop_high(&pi);
 
-    for (stream = lsquic_spi_first(&spi); stream && write_is_possible(conn);
-                                            stream = lsquic_spi_next(&spi))
+    for (stream = conn->ifc_pii->pii_first(&pi);
+                        stream && write_is_possible(conn);
+                                    stream = conn->ifc_pii->pii_next(&pi))
         if (stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
             lsquic_stream_dispatch_write_events(stream);
+    conn->ifc_pii->pii_cleanup(&pi);
 
     maybe_conn_flush_special_streams(conn);
 }
@@ -4844,12 +4918,22 @@ maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
 }
 
 
+struct buffered_priority_update
+{
+    struct lsquic_hash_elem     hash_el;
+    lsquic_stream_id_t          stream_id;
+    struct lsquic_ext_http_prio ehp;
+};
+
+
 /* This function is called to create incoming streams */
 static struct lsquic_stream *
 new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
             enum stream_ctor_flags flags)
 {
     const struct lsquic_stream_if *iface;
+    struct buffered_priority_update *bpu;
+    struct lsquic_hash_elem *el;
     void *stream_ctx;
     struct lsquic_stream *stream;
     unsigned initial_window;
@@ -4876,7 +4960,11 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
         if (conn->ifc_enpub->enp_settings.es_rw_once)
             flags |= SCF_DISP_RW_ONCE;
         if (conn->ifc_flags & IFC_HTTP)
+        {
             flags |= SCF_HTTP;
+            if (conn->ifc_pii == &ext_prio_iter_if)
+                flags |= SCF_HTTP_PRIO;
+        }
     }
 
     if (((stream_id >> SD_SHIFT) & 1) == SD_UNI)
@@ -4891,6 +4979,20 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
                                conn->ifc_cfg.max_stream_send, flags);
     if (stream)
     {
+        if (conn->ifc_bpus)
+        {
+            el = lsquic_hash_find(conn->ifc_bpus, &stream->id,
+                                                        sizeof(stream->id));
+            if (el)
+            {
+                LSQ_DEBUG("apply buffered PRIORITY_UPDATE to stream %"PRIu64,
+                                                                stream->id);
+                lsquic_hash_erase(conn->ifc_bpus, el);
+                bpu = lsquic_hashelem_getdata(el);
+                (void) lsquic_stream_set_http_prio(stream, &bpu->ehp);
+                free(bpu);
+            }
+        }
         if (lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
                             sizeof(stream->id), stream, &stream->sm_hash_el))
         {
@@ -8523,6 +8625,174 @@ on_goaway_server (void *ctx, uint64_t max_push_id)
 
 
 static void
+on_priority_update_client (void *ctx, enum hq_frame_type frame_type,
+                                uint64_t id, const char *pfv, size_t pfv_sz)
+{
+    struct ietf_full_conn *const conn = ctx;
+
+    if (conn->ifc_pii == &ext_prio_iter_if)
+        ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "Frame type %u is not "
+            "expected to be sent by the server", (unsigned) frame_type);
+    /* else ignore */
+}
+
+
+/* This should not happen often, so do not bother to optimize memory. */
+static int
+buffer_priority_update (struct ietf_full_conn *conn,
+        lsquic_stream_id_t stream_id, const struct lsquic_ext_http_prio *ehp)
+{
+    struct buffered_priority_update *bpu;
+    struct lsquic_hash_elem *el;
+
+    if (!conn->ifc_bpus)
+    {
+        conn->ifc_bpus = lsquic_hash_create();
+        if (!conn->ifc_bpus)
+        {
+            ABORT_ERROR("cannot allocate BPUs hash");
+            return -1;
+        }
+        goto insert_new;
+    }
+
+    el = lsquic_hash_find(conn->ifc_bpus, &stream_id, sizeof(stream_id));
+    if (el)
+    {
+        bpu = lsquic_hashelem_getdata(el);
+        bpu->ehp = *ehp;
+        return 0;
+    }
+
+  insert_new:
+    bpu = malloc(sizeof(*bpu));
+    if (!bpu)
+    {
+        ABORT_ERROR("cannot allocate BPU");
+        return -1;
+    }
+
+    bpu->hash_el.qhe_flags = 0;
+    bpu->stream_id = stream_id;
+    bpu->ehp = *ehp;
+    if (!lsquic_hash_insert(conn->ifc_bpus, &bpu->stream_id,
+                                sizeof(bpu->stream_id), bpu, &bpu->hash_el))
+    {
+        free(bpu);
+        ABORT_ERROR("cannot insert BPU");
+        return -1;
+    }
+
+    return 0;
+}
+
+
+static void
+on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
+                                uint64_t id, const char *pfv, size_t pfv_sz)
+{
+    struct ietf_full_conn *const conn = ctx;
+    struct lsquic_hash_elem *el;
+    struct push_promise *promise;
+    struct lsquic_stream *stream;
+    enum stream_id_type sit;
+    struct lsquic_ext_http_prio ehp;
+
+    if (conn->ifc_pii != &ext_prio_iter_if)
+    {
+        LSQ_DEBUG("Ignore PRIORITY_UPDATE frame");
+        return;
+    }
+
+    if (frame_type == HQFT_PRIORITY_UPDATE_STREAM)
+    {
+        sit = id & SIT_MASK;
+        if (sit != SIT_BIDI_CLIENT)
+        {
+            ABORT_QUIETLY(1, HEC_ID_ERROR, "PRIORITY_UPDATE for non-request "
+                "stream");
+            return;
+        }
+        if (id >= conn->ifc_max_allowed_stream_id[sit])
+        {
+            ABORT_QUIETLY(1, HEC_ID_ERROR, "PRIORITY_UPDATE for non-existing "
+                "stream %"PRIu64" exceeds allowed max of %"PRIu64,
+                id, conn->ifc_max_allowed_stream_id[sit]);
+            return;
+        }
+        stream = find_stream_by_id(conn, id);
+        if (!stream && conn_is_stream_closed(conn, id))
+        {
+            LSQ_DEBUG("stream %"PRIu64" closed, ignore PRIORITY_UPDATE", id);
+            return;
+        }
+    }
+    else
+    {
+        if (id >= conn->ifc_u.ser.ifser_next_push_id)
+        {
+            ABORT_QUIETLY(1, HEC_ID_ERROR, "received PRIORITY_UPDATE with "
+                "ID=%"PRIu64", which is greater than the maximum Push ID "
+                "ever generated by this connection", id);
+            return;
+        }
+        el = lsquic_hash_find(conn->ifc_pub.u.ietf.promises, &id, sizeof(id));
+        if (!el)
+        {
+            LSQ_DEBUG("push promise %"PRIu64" not found, ignore "
+                                                    "PRIORITY_UPDATE", id);
+            return;
+        }
+        promise = lsquic_hashelem_getdata(el);
+        stream = promise->pp_pushed_stream;
+        assert(stream);
+    }
+
+    ehp = (struct lsquic_ext_http_prio) {
+        .urgency     = LSQUIC_DEF_HTTP_URGENCY,
+        .incremental = LSQUIC_DEF_HTTP_INCREMENTAL,
+    };
+    if (pfv_sz)
+    {
+        switch (lsquic_http_parse_pfv(pfv, pfv_sz, NULL, &ehp,
+                                    (char *) conn->ifc_pub.mm->acki,
+                                    sizeof(*conn->ifc_pub.mm->acki)))
+        {
+        case 0:
+            LSQ_DEBUG("Parsed PFV `%.*s' correctly", (int) pfv_sz, pfv);
+            break;
+        case -2:    /* Out of memory, ignore */
+            LSQ_INFO("Ignore PFV `%.*s': out of memory", (int) pfv_sz, pfv);
+            return;
+        default:
+            LSQ_INFO("connection error due to invalid PFV `%.*s'",
+                                                        (int) pfv_sz, pfv);
+            /* From the draft (between versions 1 and 2):
+             " Failure to parse the Priority Field Value MUST be treated
+             " as a connection error of type FRAME_ENCODING_ERROR.
+             */
+            ABORT_QUIETLY(1, HEC_FRAME_ERROR, "cannot parse Priority Field "
+                "Value in PRIORITY_UPDATE frame");
+            return;
+        }
+    }
+    else
+        { /* Empty PFV means "use defaults" */ }
+
+    if (stream)
+        (void) lsquic_stream_set_http_prio(stream, &ehp);
+    else
+    {
+        assert(frame_type == HQFT_PRIORITY_UPDATE_STREAM);
+        if (0 == buffer_priority_update(conn, id, &ehp))
+            LSQ_INFO("buffered priority update for stream %"PRIu64"; "
+                "urgency: %hhu, incremental: %hhd", id, ehp.urgency,
+                ehp.incremental);
+    }
+}
+
+
+static void
 on_unexpected_frame (void *ctx, uint64_t frame_type)
 {
     struct ietf_full_conn *const conn = ctx;
@@ -8539,6 +8809,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_27 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_server_27,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_server,
 };
 
 static const struct hcsi_callbacks hcsi_callbacks_client_27 =
@@ -8549,6 +8820,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_27 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_client_28 /* sic */,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_client,
 };
 
 
@@ -8560,6 +8832,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_28 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_server /* sic */,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_server,
 };
 
 static const struct hcsi_callbacks hcsi_callbacks_client_28 =
@@ -8570,6 +8843,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_28 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_client_28,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_client,
 };
 
 
@@ -8581,6 +8855,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_29 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_server,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_server,
 };
 
 static const struct hcsi_callbacks hcsi_callbacks_client_29 =
@@ -8591,6 +8866,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_29 =
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_client,
     .on_unexpected_frame    = on_unexpected_frame,
+    .on_priority_update     = on_priority_update_client,
 };
 
 

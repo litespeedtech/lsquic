@@ -35,7 +35,9 @@ SET(lsquic_STAT_SRCS
     lsquic_hcso_writer.c
     lsquic_headers_stream.c
     lsquic_hkdf.c
+    lsquic_hpi.c
     lsquic_hspack_valid.c
+    lsquic_http.c
     lsquic_http1x_if.c
     lsquic_logger.c
     lsquic_malo.c
@@ -75,6 +77,7 @@ SET(lsquic_STAT_SRCS
     lsquic_stream.c
     lsquic_tokgen.c
     lsquic_trans_params.c
+    lsquic_trechist.c
     lsquic_util.c
     lsquic_varint.c
     lsquic_version.c
@@ -103,6 +106,7 @@ ADD_CUSTOM_COMMAND(
     DEPENDS ./gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
 SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} lsquic_versions_to_string.c)
+SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} ls-sfparser.c)
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DXXH_HEADER_NAME=\\\"lsquic_xxhash.h\\\"")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLSQPACK_ENC_LOGGER_HEADER=\\\"lsquic_qpack_enc_logger.h\\\"")

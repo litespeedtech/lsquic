@@ -76,6 +76,8 @@ static struct conn_cid_elem dummy_cce;
 static const struct lsquic_conn dummy_lsquic_conn = { .cn_cces = &dummy_cce, };
 static const struct lsquic_conn *const lconn = &dummy_lsquic_conn;
 
+static int s_ccrt_idx;
+
 static const int s_log_seal_and_open;
 static char s_str[0x1000];
 
@@ -167,7 +169,7 @@ typedef struct hs_ctx_st
     struct lsquic_str prof;
     
     struct lsquic_str csct;
-    struct lsquic_str crt; /* compressed certs buffer */
+    struct compressed_cert *ccert;
     struct lsquic_str scfg_pubs; /* Need to copy PUBS, as KEXS comes after it */
 } hs_ctx_t;
 
@@ -314,9 +316,6 @@ static void s_free_cert_hash_item(cert_item_t *item);
 static cert_item_t* insert_cert(struct lsquic_engine_public *,
         const unsigned char *key, size_t key_sz, const struct lsquic_str *crt);
 
-static compress_cert_hash_item_t* find_compress_certs(struct lsquic_engine_public *, struct lsquic_str *domain);
-static compress_cert_hash_item_t *make_compress_cert_hash_item(struct lsquic_str *domain, struct lsquic_str *crts_compress_buf);
-
 #ifdef NDEBUG
 static
 enum hsk_failure_reason
@@ -338,6 +337,8 @@ static uint64_t get_tag_value_i64(unsigned char *, int);
 
 static void determine_keys(struct lsquic_enc_session *enc_session);
 
+static void put_compressed_cert (struct compressed_cert *);
+
 
 #if LSQUIC_KEEP_ENC_SESS_HISTORY
 static void
@@ -354,10 +355,26 @@ eshist_append (struct lsquic_enc_session *enc_session,
 #   define ESHIST_APPEND(sess, event) do { } while (0)
 #endif
 
+
+static void
+free_compressed_cert (void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                            int index, long argl, void *argp)
+{
+    put_compressed_cert(ptr);
+}
+
+
 static int
 lsquic_handshake_init(int flags)
 {
     lsquic_crypto_init();
+    if (flags & LSQUIC_GLOBAL_SERVER)
+    {
+        s_ccrt_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL,
+                                                        free_compressed_cert);
+        if (s_ccrt_idx < 0)
+            return -1;
+    }
     return lsquic_crt_init();
 }
 
@@ -523,53 +540,6 @@ insert_cert (struct lsquic_engine_public *enpub, const unsigned char *key,
         s_free_cert_hash_item(item);
         return NULL;
     }
-}
-
-
-/* server */
-static compress_cert_hash_item_t *
-find_compress_certs (struct lsquic_engine_public *enpub, lsquic_str_t *domain)
-{
-    struct lsquic_hash_elem *el;
-
-    if (!enpub->enp_compressed_server_certs)
-        return NULL;
-
-    el = lsquic_hash_find(enpub->enp_compressed_server_certs,
-                            lsquic_str_cstr(domain), lsquic_str_len(domain));
-    if (el == NULL)
-        return NULL;
-
-    return lsquic_hashelem_getdata(el);
-}
-
-
-/* server */
-static compress_cert_hash_item_t *
-make_compress_cert_hash_item(lsquic_str_t *domain, lsquic_str_t *crts_compress_buf)
-{
-    compress_cert_hash_item_t *item = calloc(1, sizeof(*item));
-    item->crts_compress_buf = lsquic_str_new(NULL, 0);
-    item->domain = lsquic_str_new(NULL, 0);
-    lsquic_str_copy(item->domain, domain);
-    lsquic_str_copy(item->crts_compress_buf, crts_compress_buf);
-    return item;
-}
-
-
-/* server */
-static int
-insert_compress_certs (struct lsquic_engine_public *enpub,
-                                            compress_cert_hash_item_t *item)
-{
-    if (lsquic_hash_insert(enpub->enp_compressed_server_certs,
-            lsquic_str_cstr(item->domain),
-                lsquic_str_len(item->domain), item, &item->hash_el) == NULL)
-    {
-        return -1;
-    }
-    else
-        return 0;
 }
 
 
@@ -929,6 +899,35 @@ lsquic_enc_session_reset_cid (enc_session_t *enc_session_p,
 
 
 static void
+put_compressed_cert (struct compressed_cert *ccert)
+{
+    if (ccert)
+    {
+        assert(ccert->refcnt > 0);
+        --ccert->refcnt;
+        if (0 == ccert->refcnt)
+            free(ccert);
+    }
+}
+
+
+static struct compressed_cert *
+new_compressed_cert (const unsigned char *buf, size_t len)
+{
+    struct compressed_cert *ccert;
+
+    ccert = malloc(sizeof(*ccert) + len);
+    if (ccert)
+    {
+        ccert->refcnt = 1;
+        ccert->len = len;
+        memcpy(ccert->buf, buf, len);
+    }
+    return ccert;
+}
+
+
+static void
 lsquic_enc_session_destroy (enc_session_t *enc_session_p)
 {
     struct lsquic_enc_session *const enc_session = enc_session_p;
@@ -947,7 +946,8 @@ lsquic_enc_session_destroy (enc_session_t *enc_session_p)
     lsquic_str_d(&hs_ctx->sno);
     lsquic_str_d(&hs_ctx->prof);
     lsquic_str_d(&hs_ctx->csct);
-    lsquic_str_d(&hs_ctx->crt);
+    put_compressed_cert(hs_ctx->ccert);
+    hs_ctx->ccert = NULL;
     lsquic_str_d(&hs_ctx->uaid);
     lsquic_str_d(&hs_ctx->scfg_pubs);
     lsquic_str_d(&enc_session->chlo);
@@ -1075,7 +1075,8 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         break;
 
     case QTAG_CRT:
-        lsquic_str_setto(&hs_ctx->crt, val, len);
+        put_compressed_cert(hs_ctx->ccert);
+        hs_ctx->ccert = new_compressed_cert(val, len);
         break;
 
     case QTAG_PUBS:
@@ -1884,7 +1885,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 
 
 static int
-generate_crt (struct lsquic_enc_session *enc_session, int common_case)
+generate_crt (struct lsquic_enc_session *enc_session)
 {
     int i, n, len, crt_num, rv = -1;
     lsquic_str_t **crts;
@@ -1893,6 +1894,7 @@ generate_crt (struct lsquic_enc_session *enc_session, int common_case)
     STACK_OF(X509)      *pXchain;
     SSL_CTX *const ctx = enc_session->ssl_ctx;
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
+    struct compressed_cert *ccert;
 
     SSL_CTX_get0_chain_certs(ctx, &pXchain);
     n = sk_X509_num(pXchain);
@@ -1918,16 +1920,21 @@ generate_crt (struct lsquic_enc_session *enc_session, int common_case)
         OPENSSL_free(out);
     }
 
-    if (0 != lsquic_compress_certs(crts, crt_num, &hs_ctx->ccs, &hs_ctx->ccrt,
-                                                            &hs_ctx->crt))
+    ccert = lsquic_compress_certs(crts, crt_num, &hs_ctx->ccs, &hs_ctx->ccrt);
+    if (!ccert)
         goto cleanup;
 
-    if (common_case)
+    if (SSL_CTX_set_ex_data(ctx, s_ccrt_idx, ccert))
+        ++ccert->refcnt;
+    else
     {
-        if (0 != insert_compress_certs(enc_session->enpub,
-                    make_compress_cert_hash_item(&hs_ctx->sni, &hs_ctx->crt)))
-            goto cleanup;
+        free(ccert);
+        ccert = NULL;
+        goto cleanup;
     }
+
+    ++ccert->refcnt;
+    hs_ctx->ccert = ccert;
 
     /* We got here, set rv to 0: success */
     rv = 0;
@@ -1946,6 +1953,11 @@ static int
 gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
                     size_t max_len, const struct sockaddr *ip, time_t t)
 {
+#ifndef WIN32
+#   define ERR(e_) do { return (e_); } while (0)
+#else
+#   define ERR(e_) do { len = (e_); goto end; } while (0)
+#endif
     int len;
     EVP_PKEY * rsa_priv_key;
     SSL_CTX *ctx = enc_session->ssl_ctx;
@@ -1954,10 +1966,6 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
     int scfg_len = enc_session->server_config->lsc_scfg->info.scfg_len;
     uint8_t *scfg_data = enc_session->server_config->lsc_scfg->scfg;
-    char prof_buf[512];
-    size_t prof_len = 512;
-    compress_cert_hash_item_t* compress_certs_item;
-    int common_case;
     size_t msg_len;
     struct message_writer mw;
 
@@ -1965,33 +1973,46 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     if (!rsa_priv_key)
         return -1;
 
-    lsquic_str_d(&hs_ctx->crt);
+    size_t prof_len = (size_t) EVP_PKEY_size(rsa_priv_key);
+#ifndef WIN32
+    char prof_buf[prof_len];
+#else
+    prof_buf = _malloca(prof_len);
+    if (!prof_buf)
+        return -1;
+#endif
 
-    /**
-     * Only cache hs_ctx->ccs is the hardcoded common certs and hs_ctx->ccrt is empty case
-     * This is the most common case
-     */
-    common_case = lsquic_str_len(&hs_ctx->ccrt) == 0
-               && lsquic_str_bcmp(&hs_ctx->ccs, lsquic_get_common_certs_hash()) == 0;
-    if (common_case)
-        compress_certs_item = find_compress_certs(enc_session->enpub, &hs_ctx->sni);
-    else
-        compress_certs_item = NULL;
-
-    if (compress_certs_item)
+    if (hs_ctx->ccert)
     {
-        lsquic_str_d(&hs_ctx->crt);
-        lsquic_str_copy(&hs_ctx->crt, compress_certs_item->crts_compress_buf);
+        put_compressed_cert(hs_ctx->ccert);
+        hs_ctx->ccert = NULL;
     }
+
+    hs_ctx->ccert = SSL_CTX_get_ex_data(ctx, s_ccrt_idx);
+    if (hs_ctx->ccert)
+    {
+        ++hs_ctx->ccert->refcnt;
+        LSQ_DEBUG("use cached compressed cert");
+    }
+    else if (0 == generate_crt(enc_session))
+        LSQ_DEBUG("generated compressed cert");
     else
-        generate_crt(enc_session, common_case);
+    {
+        LSQ_INFO("cannot could not generate compressed cert for");
+        ERR(-1);
+    }
 
     LSQ_DEBUG("gQUIC rej1 data");
     LSQ_DEBUG("gQUIC NOT enabled");
-    lsquic_gen_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
+    const int s = lsquic_gen_prof((const uint8_t *)lsquic_str_cstr(&enc_session->chlo),
          (size_t)lsquic_str_len(&enc_session->chlo),
          scfg_data, scfg_len,
          rsa_priv_key, (uint8_t *)prof_buf, &prof_len);
+    if (s != 0)
+    {
+        LSQ_INFO("could not generate server proof, code %d", s);
+        ERR(-1);
+    }
 
     lsquic_str_setto(&hs_ctx->prof, prof_buf, prof_len);
 
@@ -2008,10 +2029,11 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     MSG_LEN_ADD(msg_len, SNO_LENGTH);
     MSG_LEN_ADD(msg_len, sizeof(settings->es_sttl));
     MSG_LEN_ADD(msg_len, lsquic_str_len(&hs_ctx->prof));
-    MSG_LEN_ADD(msg_len, lsquic_str_len(&hs_ctx->crt));
+    if (hs_ctx->ccert)
+        MSG_LEN_ADD(msg_len, hs_ctx->ccert->len);
 
     if (MSG_LEN_VAL(msg_len) > max_len)
-        return -1;
+        ERR(-1);
 
     memcpy(enc_session->priv_key, enc_session->server_config->lsc_scfg->info.priv_key, 32);
 
@@ -2040,13 +2062,19 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     MW_WRITE_BUFFER(&mw, QTAG_RREJ, &hs_ctx->rrej, sizeof(hs_ctx->rrej));
     MW_WRITE_BUFFER(&mw, QTAG_STTL, &settings->es_sttl,
                                                 sizeof(settings->es_sttl));
-    MW_WRITE_LS_STR(&mw, QTAG_CRT, &hs_ctx->crt);
+    if (hs_ctx->ccert)
+        MW_WRITE_BUFFER(&mw, QTAG_CRT, hs_ctx->ccert->buf, hs_ctx->ccert->len);
     MW_END(&mw);
 
     assert(data + max_len >= MW_P(&mw));
     len = MW_P(&mw) - data;
     LSQ_DEBUG("gen_rej1_data called, return len %d.", len);
+#ifdef WIN32
+  end:
+    _freea(prof_buf);
+#endif
     return len;
+#undef ERR
 }
 
 
@@ -2316,10 +2344,11 @@ static int handle_chlo_reply_verify_prof(struct lsquic_enc_session *enc_session,
                                          lsquic_str_t *cached_certs,
                                          int cached_certs_count)
 {
-    const unsigned char *const in =
-                (const unsigned char *) lsquic_str_buf(&enc_session->hs_ctx.crt);
-    const unsigned char *const in_end =
-                                    in + lsquic_str_len(&enc_session->hs_ctx.crt);
+    const unsigned char *dummy = (unsigned char *) "";
+    const unsigned char *const in = enc_session->hs_ctx.ccert
+                                    ? enc_session->hs_ctx.ccert->buf : dummy;
+    const unsigned char *const in_end = enc_session->hs_ctx.ccert
+                                    ? in + enc_session->hs_ctx.ccert->len : 0;
     EVP_PKEY *pub_key;
     int ret;
     size_t i;
@@ -2749,9 +2778,9 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
             goto end;
         }
 
-        if (lsquic_str_len(&enc_session->hs_ctx.crt) > 0)
+        if (enc_session->hs_ctx.ccert)
         {
-            out_certs_count = lsquic_get_certs_count(&enc_session->hs_ctx.crt);
+            out_certs_count = lsquic_get_certs_count(enc_session->hs_ctx.ccert);
             if (out_certs_count > 0)
             {
                 out_certs = malloc(out_certs_count * sizeof(lsquic_str_t *));
@@ -3559,7 +3588,9 @@ lsquic_enc_session_mem_used (enc_session_t *enc_session_p)
     size += lsquic_str_len(&enc_session->hs_ctx.sno);
     size += lsquic_str_len(&enc_session->hs_ctx.prof);
     size += lsquic_str_len(&enc_session->hs_ctx.csct);
-    size += lsquic_str_len(&enc_session->hs_ctx.crt);
+    if (enc_session->hs_ctx.ccert)
+        size += enc_session->hs_ctx.ccert->len
+             + sizeof(*enc_session->hs_ctx.ccert);
 
     if (enc_session->info)
     {
@@ -3738,7 +3769,8 @@ gquic_encrypt_packet (enc_session_t *enc_session_p,
         return ENCPA_BADCRYPT;  /* To cause connection to close */
     ipv6 = NP_IS_IPv6(packet_out->po_path);
     buf = enpub->enp_pmi->pmi_allocate(enpub->enp_pmi_ctx,
-                                packet_out->po_path->np_peer_ctx, lconn->conn_ctx, bufsz, ipv6);
+                        packet_out->po_path->np_peer_ctx, lconn->cn_conn_ctx,
+                        bufsz, ipv6);
     if (!buf)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",
@@ -3936,7 +3968,8 @@ gquic2_esf_encrypt_packet (enc_session_t *enc_session_p,
     dst_sz = lconn->cn_pf->pf_packout_size(lconn, packet_out);
     ipv6 = NP_IS_IPv6(packet_out->po_path);
     dst = enpub->enp_pmi->pmi_allocate(enpub->enp_pmi_ctx,
-                                packet_out->po_path->np_peer_ctx, lconn->conn_ctx, dst_sz, ipv6);
+                        packet_out->po_path->np_peer_ctx, lconn->cn_conn_ctx,
+                        dst_sz, ipv6);
     if (!dst)
     {
         LSQ_DEBUG("could not allocate memory for outgoing packet of size %zd",

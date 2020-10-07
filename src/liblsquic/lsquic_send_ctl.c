@@ -305,16 +305,23 @@ first_packno (const struct lsquic_send_ctl *ctl)
 }
 
 
-/*
- * [draft-ietf-quic-transport-12], Section 4.4.1:
- *
- * "   The first Initial packet that is sent by a client contains a packet
- * "   number of 0.  All subsequent packets contain a packet number that is
- * "   incremented by at least one, see (Section 4.8).
- */
 static void
 send_ctl_pick_initial_packno (struct lsquic_send_ctl *ctl)
 {
+#ifndef NDEBUG
+    lsquic_packno_t packno;
+    const char *s;
+
+    if (!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER)
+                    && (s = getenv("LSQUIC_STARTING_PACKNO"), s != NULL))
+    {
+        packno = (lsquic_packno_t) strtoull(s, NULL, 10);
+        LSQ_DEBUG("starting sending packet numbers starting with %"PRIu64
+            " based on environment variable", packno);
+        ctl->sc_cur_packno = packno - 1;
+    }
+    else
+#endif
     ctl->sc_cur_packno = first_packno(ctl) - 1;
 }
 
@@ -352,6 +359,13 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     lsquic_alarmset_init_alarm(alset, AL_RETX_HSK, retx_alarm_rings, ctl);
     lsquic_alarmset_init_alarm(alset, AL_RETX_APP, retx_alarm_rings, ctl);
     lsquic_senhist_init(&ctl->sc_senhist, ctl->sc_flags & SC_IETF);
+#ifndef NDEBUG
+    /* TODO: the logic to select the "previously sent" packno should not be
+     * duplicated here and in lsquic_senhist_init()...
+     */
+    if (!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER))
+        ctl->sc_senhist.sh_last_sent = ctl->sc_cur_packno;
+#endif
     switch (enpub->enp_settings.es_cc_algo)
     {
     case 1:
@@ -1093,6 +1107,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     unsigned ecn_total_acked, ecn_ce_cnt, one_rtt_cnt;
 
     pns = acki->pns;
+    ctl->sc_flags |= SC_ACK_RECV_INIT << pns;
     packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]);
 #if __GNUC__
     __builtin_prefetch(packet_out);
@@ -1704,6 +1719,8 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     assert(count == ctl->sc_n_scheduled);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
+
+
 #endif
 
 
@@ -2073,7 +2090,7 @@ lsquic_send_ctl_new_packet_out (lsquic_send_ctl_t *ctl, unsigned need_at_least,
     lsquic_packet_out_t *packet_out;
     enum packno_bits bits;
 
-    bits = lsquic_send_ctl_packno_bits(ctl);
+    bits = lsquic_send_ctl_packno_bits(ctl, pns);
     packet_out = send_ctl_allocate_packet(ctl, bits, need_at_least, pns, path);
     if (!packet_out)
         return NULL;
@@ -2394,6 +2411,7 @@ send_ctl_log_packet_q (const lsquic_send_ctl_t *ctl, const char *prefix,
     LSQ_DEBUG("%s: [%s]", prefix, buf);
     free(buf);
 }
+
 
 #define LOG_PACKET_Q(prefix, queue) do {                                    \
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))                                     \
@@ -2772,13 +2790,22 @@ lsquic_send_ctl_calc_packno_bits (lsquic_send_ctl_t *ctl)
 
 
 enum packno_bits
-lsquic_send_ctl_packno_bits (lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_packno_bits (struct lsquic_send_ctl *ctl,
+                                                    enum packnum_space pns)
 {
-
-    if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
+    if ((ctl->sc_flags & (SC_ACK_RECV_INIT << pns))
+                    && lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
         return lsquic_send_ctl_calc_packno_bits(ctl);
-    else
+    else if (ctl->sc_flags & (SC_ACK_RECV_INIT << pns))
         return lsquic_send_ctl_guess_packno_bits(ctl);
+    else
+/* From [draft-ietf-quic-transport-31] Section 17.1:
+ *
+ " Prior to receiving an acknowledgement for a packet number space, the
+ " full packet number MUST be included; it is not to be truncated as
+ " described below.
+ */
+        return vint_val2bits(ctl->sc_cur_packno + 1);
 }
 
 
