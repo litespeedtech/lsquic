@@ -1675,7 +1675,8 @@ lsquic_get_h3_alpns (unsigned versions);
  * been established: it will return incorrect result.
  */
 int
-lsquic_is_valid_hs_packet (lsquic_engine_t *, const unsigned char *, size_t);
+lsquic_is_valid_hs_packet (lsquic_engine_t *, const unsigned char *,
+                                        size_t bufsz, size_t packet_in_sz);
 
 /**
  * Parse cid from packet stored in `buf' and store it to `cid'.  Returns 0
