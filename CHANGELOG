@@ -1,3 +1,7 @@
+2020-10-08
+    - 2.12.11
+    - [BUGFIX] Function that checks validity of handshake packets
+
 2020-10-06
     - 2.12.10
     - [BUGFIX] Deactivate only *recent* HQ frame, not any HQ frame.
