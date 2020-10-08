@@ -8,6 +8,7 @@ OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
 OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
 OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
+OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
 
 INCLUDE(GNUInstallDirs)
 
@@ -69,6 +70,10 @@ ELSE()
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O3 -g0")
     # Comment out the following line to compile out debug messages:
     #SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO")
+ENDIF()
+
+IF (LSQUIC_DEVEL)
+    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_DEVEL=1")
 ENDIF()
 
 IF(LSQUIC_PROFILE EQUAL 1)

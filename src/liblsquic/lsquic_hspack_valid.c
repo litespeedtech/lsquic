@@ -88,7 +88,7 @@ is_valid_gquic_hs_packet (const unsigned char *buf, size_t bufsz,
 
 int
 lsquic_is_valid_hs_packet (struct lsquic_engine *engine,
-                                    const unsigned char *buf, size_t bufsz)
+                const unsigned char *buf, size_t bufsz, size_t packet_in_sz)
 {
     lsquic_ver_tag_t tag;
     int is_valid;
@@ -104,7 +104,7 @@ lsquic_is_valid_hs_packet (struct lsquic_engine *engine,
     case 0x80|0x00|0x20|0x10|0x08:
     case 0x80|0x40|0x20|0x10|0x00:
     case 0x80|0x00|0x20|0x10|0x00:
-        is_valid = bufsz >= IQUIC_MIN_INIT_PACKET_SZ
+        is_valid = packet_in_sz >= IQUIC_MIN_INIT_PACKET_SZ
             && lsquic_is_valid_iquic_hs_packet(buf, bufsz, &tag);
         break;
     /* 1X00 XGGG: ID-22 long header */
@@ -122,7 +122,7 @@ lsquic_is_valid_hs_packet (struct lsquic_engine *engine,
     case 0x80|0x00|0x20|0x00|0x08:
     case 0x80|0x40|0x20|0x00|0x00:
     case 0x80|0x00|0x20|0x00|0x00:
-        is_valid = bufsz >= IQUIC_MIN_INIT_PACKET_SZ
+        is_valid = packet_in_sz >= IQUIC_MIN_INIT_PACKET_SZ
             && lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet(buf, bufsz, &tag);
         break;
     /* 01XX XGGG: ID-22 short header */

@@ -1,3 +1,7 @@
+2020-10-08
+    - 2.22.1
+    - [BUGFIX] Function that checks validity of handshake packets.
+
 2020-10-07
     - 2.22.0
     - [FEATURE] Extensible HTTP Priorities (HTTP/3 only).
