@@ -66,6 +66,7 @@ Contents
    tutorial
    apiref
    internals
+   faq
 
 Indices and tables
 ==================
