@@ -11,6 +11,10 @@
 #ifndef LSQUIC_HPI
 #define LSQUIC_HPI 1
 
+#ifndef LSQUIC_TEST
+#define LSQUIC_TEST 0
+#endif
+
 struct lsquic_conn_public;
 
 /* We add 1 to the urgency when we place them on hpi_streams.  Critical

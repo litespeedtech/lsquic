@@ -1616,6 +1616,7 @@ void
 lsquic_imico_rechist_init (struct ietf_mini_rechist *rechist,
                     const struct ietf_mini_conn *conn, enum packnum_space pns)
 {
+    assert(pns < IMICO_N_PNS);
     rechist->conn = conn;
     rechist->pns  = pns;
     if (conn->imc_flags & IMC_TRECHIST)

@@ -19,6 +19,10 @@
 #include <ws2ipdef.h>
 #endif
 
+#ifndef LSQUIC_TEST
+#define LSQUIC_TEST 0
+#endif
+
 struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_packet_out;

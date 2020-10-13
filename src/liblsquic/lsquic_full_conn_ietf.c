@@ -1561,12 +1561,15 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     for (pns = 0; pns < IMICO_N_PNS; ++pns)
     {
         lsquic_imico_rechist_init(&mini_rechist, imc, pns);
-        if (0 != lsquic_rechist_copy_ranges(&conn->ifc_rechist[pns],
-                                &mini_rechist, lsquic_imico_rechist_first,
-                                lsquic_imico_rechist_next))
-            goto err2;
-        conn->ifc_rechist[pns].rh_largest_acked_received
+        if (pns < IMICO_N_PNS)
+        {
+            if (0 != lsquic_rechist_copy_ranges(&conn->ifc_rechist[pns],
+                                    &mini_rechist, lsquic_imico_rechist_first,
+                                    lsquic_imico_rechist_next))
+                goto err2;
+            conn->ifc_rechist[pns].rh_largest_acked_received
                                                 = imc->imc_largest_recvd[pns];
+        }
     }
 
     /* Mini connection sends out packets 0, 1, 2... and so on.  It deletes
@@ -1620,7 +1623,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
      * to add packet renumbering logic to the mini conn.
      */
 
-    for (pns = 0; pns < N_PNS; ++pns)
+    for (pns = 0; pns < IMICO_N_PNS; ++pns)
         for (i = 0; i < 4; ++i)
         {
             conn->ifc_ecn_counts_in[pns][i]  = imc->imc_ecn_counts_in[pns][i];

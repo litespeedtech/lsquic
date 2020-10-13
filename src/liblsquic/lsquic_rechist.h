@@ -8,6 +8,9 @@
 #ifndef LSQUIC_RECHIST_H
 #define LSQUIC_RECHIST_H 1
 
+#ifndef LSQUIC_TEST
+#define LSQUIC_TEST 0
+#endif
 
 /* Structure is exposed to facilitate some manipulations in unit tests. */
 struct rechist_elem {
