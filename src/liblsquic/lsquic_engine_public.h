@@ -78,6 +78,11 @@ struct lsquic_engine_public {
     struct lsquic_hash             *enp_server_certs;
     /* gQUIC server configuration: */
     struct lsquic_server_config    *enp_server_config;
+    /* Serialized subset of server engine transport parameters that is used
+     * as SSL QUIC context.  0 is for version <= LSQVER_ID27, 1 is for others.
+     */
+    unsigned char                   enp_quic_ctx_buf[2][200];
+    unsigned                        enp_quic_ctx_sz[2];
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

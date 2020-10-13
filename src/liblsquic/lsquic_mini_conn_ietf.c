@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -560,6 +561,16 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     TAILQ_INIT(&conn->imc_crypto_frames);
     if (odcid)
         imico_peer_addr_validated(conn, "odcid");
+#if LSQUIC_DEVEL
+    {
+        const char *const s = getenv("LSQUIC_LOSE_0RTT");
+        if (s && atoi(s))
+        {
+            LSQ_DEBUG("will lose 0-RTT packets (via env variable)");
+            conn->imc_delayed_packets_count = UCHAR_MAX;
+        }
+    }
+#endif
 
     LSQ_DEBUG("created mini connection object %p; max packet size=%hu",
                                                 conn, conn->imc_path.np_pack_size);

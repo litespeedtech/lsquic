@@ -87,6 +87,7 @@ typedef struct lsquic_send_ctl {
 
     /* Second section: everything else. */
     struct lsquic_packets_tailq     sc_scheduled_packets,
+                                    sc_0rtt_stash,
                                     sc_lost_packets;
     struct buf_packet_q             sc_buffered_packets[BPT_OTHER_PRIO + 1];
     const struct ver_neg           *sc_ver_neg;
@@ -430,5 +431,11 @@ lsquic_send_ctl_snapshot (struct lsquic_send_ctl *, struct send_ctl_state *);
 void
 lsquic_send_ctl_rollback (struct lsquic_send_ctl *, struct send_ctl_state *,
                                                 const struct iovec *, size_t);
+
+void
+lsquic_send_ctl_0rtt_to_1rtt (struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *);
 
 #endif

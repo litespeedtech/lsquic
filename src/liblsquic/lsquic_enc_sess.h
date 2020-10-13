@@ -15,6 +15,8 @@ struct ssl_stream_method_st;
 struct ssl_st;
 struct sockaddr;
 struct conn_cid_elem;
+struct lsquic_engine_settings;
+enum lsquic_version;
 
 #define DNONC_LENGTH 32
 #define SRST_LENGTH 16
@@ -242,12 +244,6 @@ struct enc_session_funcs_gquic
     void (*esf_reset_cid) (enc_session_t *, const lsquic_cid_t *);
 };
 
-enum iquic_handshake_status {
-    IHS_WANT_READ,
-    IHS_WANT_WRITE,
-    IHS_STOP,
-};
-
 struct crypto_stream_if
 {
     ssize_t     (*csi_write) (void *stream, const void *buf, size_t len);
@@ -370,5 +366,11 @@ lsquic_sess_resume_version (const unsigned char *, size_t);
  * XXX: Perhaps add a check?
  */
 #define IQUIC_TAG_LEN 16
+
+/* Return number of bytes written to `buf' or -1 on error */
+int
+lsquic_enc_sess_ietf_gen_quic_ctx (
+                const struct lsquic_engine_settings *settings,
+                enum lsquic_version version, unsigned char *buf, size_t bufsz);
 
 #endif

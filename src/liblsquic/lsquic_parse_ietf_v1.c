@@ -2163,11 +2163,11 @@ ietf_v1_parse_datagram_frame (const unsigned char *buf, size_t buf_len,
     if (buf[0] & 1)
     {
         s = vint_read(buf + 1, buf + buf_len, &len);
-        if (s > 0 && 1 + s + len >= buf_len)
+        if (s > 0 && 1 + s + len <= buf_len)
         {
             *data = buf + 1 + s;
             *data_len = len;
-            return 1 + buf_len + len;
+            return 1 + s + len;
         }
         else
             return -1;

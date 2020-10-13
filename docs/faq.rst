@@ -18,7 +18,7 @@ connections.
 
 To aid development, there is a :macro:`LSQUIC_FORCED_TCID0_VERSIONS` that
 specifies the list of versions with 0-sized connections.  (If you, for
-example, want to turn them.)
+example, want to turn them off.)
 
 Once gQUIC becomes deprecated in the future, there will remain no technical
 reason why a single engine instance could not be used both for client and

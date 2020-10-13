@@ -373,6 +373,39 @@ stream_is_hsk (const struct lsquic_stream *stream)
 }
 
 
+/* This function's only job is to change the allocated packet's header
+ * type to HETY_0RTT when stream frames are written before handshake
+ * is complete.
+ */
+static struct lsquic_packet_out *
+stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
+                unsigned need_at_least, const struct network_path *path,
+                const struct lsquic_stream *stream)
+{
+    struct lsquic_packet_out *packet_out;
+
+    if (stream->conn_pub->lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
+    {
+        LSQ_DEBUG("switch to regular \"get packet for stream\" function");
+        /* Here we drop the "const" because this is a static function.
+         * Otherwise, we would not condone such sorcery.
+         */
+        ((struct lsquic_stream *) stream)->sm_get_packet_for_stream
+                                = lsquic_send_ctl_get_packet_for_stream;
+        return lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
+                                                            path, stream);
+    }
+    else
+    {
+        packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
+                                                            path, stream);
+        if (packet_out)
+            packet_out->po_header_type = HETY_0RTT;
+        return packet_out;
+    }
+}
+
+
 static struct lsquic_stream *
 stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
            const struct lsquic_stream_if *stream_if, void *stream_if_ctx,
@@ -405,6 +438,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->sm_bflags |= ctor_flags & ((1 << N_SMBF_FLAGS) - 1);
     if (conn_pub->lconn->cn_flags & LSCONN_SERVER)
         stream->sm_bflags |= SMBF_SERVER;
+    stream->sm_get_packet_for_stream = lsquic_send_ctl_get_packet_for_stream;
 
     return stream;
 }
@@ -477,6 +511,13 @@ lsquic_stream_new (lsquic_stream_id_t id,
                 stream->sm_write_to_packet = stream_write_to_packet_std;
             stream->sm_frame_header_sz = stream_stream_frame_header_sz;
         }
+    }
+
+    if ((stream->sm_bflags & (SMBF_SERVER|SMBF_IETF)) == SMBF_IETF
+                    && !(conn_pub->lconn->cn_flags & LSCONN_HANDSHAKE_DONE))
+    {
+        LSQ_DEBUG("use wrapper \"get packet for stream\" function");
+        stream->sm_get_packet_for_stream = stream_get_packet_for_stream_0rtt;
     }
 
     lsquic_sfcw_init(&stream->fc, initial_window, cfcw, conn_pub, id);
@@ -581,6 +622,14 @@ drop_buffered_data (struct lsquic_stream *stream)
     maybe_resize_stream_buffer(stream);
     if (stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
         maybe_remove_from_write_q(stream, SMQF_WRITE_Q_FLAGS);
+}
+
+
+void
+lsquic_stream_drop_hset_ref (struct lsquic_stream *stream)
+{
+    if (stream->uh)
+        stream->uh->uh_hset = NULL;
 }
 
 
@@ -3087,7 +3136,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     else
         need_at_least += size > 0;
   get_packet:
-    packet_out = lsquic_send_ctl_get_packet_for_stream(send_ctl,
+    packet_out = stream->sm_get_packet_for_stream(send_ctl,
                                 need_at_least, stream->conn_pub->path, stream);
     if (packet_out)
     {

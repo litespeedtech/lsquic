@@ -137,7 +137,7 @@ enum ifull_conn_flags
     IFC_IGNORE_HSK    = 1 << 25,
     IFC_PROC_CRYPTO   = 1 << 26,
     IFC_MIGRA         = 1 << 27,
-    IFC_UNUSED28      = 1 << 28, /* Unused */
+    IFC_HTTP_INITED   = 1 << 28, /* HTTP initialized */
     IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
     IFC_TIMESTAMPS    = 1 << 30, /* Timestamps are enabled */
     IFC_DATAGRAMS     = 1u<< 31, /* Datagrams are enabled */
@@ -153,6 +153,7 @@ enum more_flags
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
     MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
+    MF_DOING_0RTT       = 1 << 7,
 };
 
 
@@ -567,6 +568,12 @@ find_cce_by_cid (struct ietf_full_conn *, const lsquic_cid_t *);
 
 static void
 mtu_probe_too_large (struct ietf_full_conn *, const struct lsquic_packet_out *);
+
+static int
+apply_trans_params (struct ietf_full_conn *, const struct transport_params *);
+
+static int
+init_http (struct ietf_full_conn *);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -1252,7 +1259,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
 
-    conn->ifc_flags = flags | IFC_CREATED_OK | IFC_FIRST_TICK;
+    conn->ifc_flags = flags | IFC_FIRST_TICK;
     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
     conn->ifc_max_ack_packno[PNS_HSK] = IQUIC_INVALID_PACKNO;
     conn->ifc_max_ack_packno[PNS_APP] = IQUIC_INVALID_PACKNO;
@@ -1282,6 +1289,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
            const unsigned char *sess_resume, size_t sess_resume_sz,
            const unsigned char *token, size_t token_sz)
 {
+    const struct transport_params *params;
     const struct enc_session_funcs_iquic *esfi;
     struct ietf_full_conn *conn;
     enum lsquic_version ver, sess_resume_version;
@@ -1397,6 +1405,18 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->ifc_created = now;
     LSQ_DEBUG("logging using %s SCID",
         LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "client" : "server");
+    if (sess_resume && (params
+            = conn->ifc_conn.cn_esf.i->esfi_get_peer_transport_params(
+                            conn->ifc_conn.cn_enc_session), params != NULL))
+    {
+        LSQ_DEBUG("initializing transport parameters for 0RTT");
+        if (0 != apply_trans_params(conn, params))
+            goto full_err;
+        if ((conn->ifc_flags & IFC_HTTP) && 0 != init_http(conn))
+            goto full_err;
+        conn->ifc_mflags |= MF_DOING_0RTT;
+    }
+    conn->ifc_flags |= IFC_CREATED_OK;
     return &conn->ifc_conn;
 
   err4:
@@ -1410,6 +1430,10 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
   err1:
     free(conn);
   err0:
+    return NULL;
+
+  full_err:
+    ietf_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 }
 
@@ -1635,6 +1659,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     LSQ_DEBUG("logging using %s SCID",
         LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "server" : "client");
+    conn->ifc_flags |= IFC_CREATED_OK;
     return &conn->ifc_conn;
 
   err3:
@@ -3317,35 +3342,13 @@ maybe_start_migration (struct ietf_full_conn *conn)
 
 
 static int
-handshake_ok (struct lsquic_conn *lconn)
+apply_trans_params (struct ietf_full_conn *conn,
+                                        const struct transport_params *params)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
-    struct dcid_elem *dce;
-    const struct transport_params *params;
     enum stream_id_type sit;
     uint64_t limit;
-    char buf[MAX_TP_STR_SZ];
-
-    fiu_return_on("full_conn_ietf/handshake_ok", -1);
-
-    /* Need to set this flag even we hit an error in the rest of this funciton.
-     * This is because this flag is used to calculate packet out header size
-     */
-    lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
-
-    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
-                                                        lconn->cn_enc_session);
-    if (!params)
-    {
-        ABORT_WARN("could not get transport parameters");
-        return -1;
-    }
-
-    LSQ_DEBUG("peer transport parameters: %s",
-                    ((lconn->cn_version == LSQVER_ID27 ? lsquic_tp_to_str_27
-                    : lsquic_tp_to_str)(params, buf, sizeof(buf)), buf));
 
     if ((params->tp_set & (1 << TPI_LOSS_BITS))
                                     && conn->ifc_settings->es_ql_bits == 2)
@@ -3487,6 +3490,104 @@ handshake_ok (struct lsquic_conn *lconn)
                                                 CUR_NPATH(conn)->np_pack_size);
     }
 
+    if (params->tp_active_connection_id_limit > conn->ifc_conn.cn_n_cces)
+        conn->ifc_active_cids_limit = conn->ifc_conn.cn_n_cces;
+    else
+        conn->ifc_active_cids_limit = params->tp_active_connection_id_limit;
+    conn->ifc_first_active_cid_seqno = conn->ifc_scid_seqno;
+
+    return 0;
+}
+
+
+static int
+init_http (struct ietf_full_conn *conn)
+{
+    fiu_return_on("full_conn_ietf/init_http", -1);
+    lsquic_qeh_init(&conn->ifc_qeh, &conn->ifc_conn);
+    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER,
+                                                                SD_UNI))
+    {
+        ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR, "cannot create "
+                            "control stream due to peer-imposed limit");
+        conn->ifc_error = CONN_ERR(1, HEC_GENERAL_PROTOCOL_ERROR);
+        return -1;
+    }
+    if (0 != create_ctl_stream_out(conn))
+    {
+        ABORT_WARN("cannot create outgoing control stream");
+        return -1;
+    }
+    if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
+            &conn->ifc_enpub->enp_settings, conn->ifc_flags & IFC_SERVER))
+    {
+        ABORT_WARN("cannot write SETTINGS");
+        return -1;
+    }
+    if (!(conn->ifc_flags & IFC_SERVER)
+        && (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
+        && 0 != lsquic_hcso_write_max_push_id(&conn->ifc_hcso,
+                                        conn->ifc_u.cli.ifcli_max_push_id))
+    {
+        ABORT_WARN("cannot write MAX_PUSH_ID");
+        return -1;
+    }
+    if (0 != lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
+                            conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
+                            conn->ifc_settings->es_qpack_dec_max_size,
+                            conn->ifc_settings->es_qpack_dec_max_blocked))
+    {
+        ABORT_WARN("cannot initialize QPACK decoder");
+        return -1;
+    }
+    if (avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI) > 0)
+    {
+        if (0 != create_qdec_stream_out(conn))
+        {
+            ABORT_WARN("cannot create outgoing QPACK decoder stream");
+            return -1;
+        }
+    }
+    else
+    {
+        queue_streams_blocked_frame(conn, SD_UNI);
+        LSQ_DEBUG("cannot create outgoing QPACK decoder stream due to "
+            "unidir limits");
+    }
+    conn->ifc_flags |= IFC_HTTP_INITED;
+    return 0;
+}
+
+
+static int
+handshake_ok (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    struct dcid_elem *dce;
+    const struct transport_params *params;
+    char buf[MAX_TP_STR_SZ];
+
+    fiu_return_on("full_conn_ietf/handshake_ok", -1);
+
+    /* Need to set this flag even we hit an error in the rest of this funciton.
+     * This is because this flag is used to calculate packet out header size
+     */
+    lconn->cn_flags |= LSCONN_HANDSHAKE_DONE;
+
+    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                        lconn->cn_enc_session);
+    if (!params)
+    {
+        ABORT_WARN("could not get transport parameters");
+        return -1;
+    }
+
+    LSQ_DEBUG("peer transport parameters: %s",
+                    ((lconn->cn_version == LSQVER_ID27 ? lsquic_tp_to_str_27
+                    : lsquic_tp_to_str)(params, buf, sizeof(buf)), buf));
+    if (0 != apply_trans_params(conn, params))
+        return -1;
+
     dce = get_new_dce(conn);
     if (!dce)
     {
@@ -3518,65 +3619,9 @@ handshake_ok (struct lsquic_conn *lconn)
 
     LSQ_INFO("applied peer transport parameters");
 
-    if (conn->ifc_flags & IFC_HTTP)
-    {
-        lsquic_qeh_init(&conn->ifc_qeh, &conn->ifc_conn);
-        if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER,
-                                                                    SD_UNI))
-        {
-            ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR, "cannot create "
-                                "control stream due to peer-imposed limit");
-            conn->ifc_error = CONN_ERR(1, HEC_GENERAL_PROTOCOL_ERROR);
+    if ((conn->ifc_flags & (IFC_HTTP|IFC_HTTP_INITED)) == IFC_HTTP)
+        if (0 != init_http(conn))
             return -1;
-        }
-        if (0 != create_ctl_stream_out(conn))
-        {
-            ABORT_WARN("cannot create outgoing control stream");
-            return -1;
-        }
-        if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
-                &conn->ifc_enpub->enp_settings, conn->ifc_flags & IFC_SERVER))
-        {
-            ABORT_WARN("cannot write SETTINGS");
-            return -1;
-        }
-        if (!(conn->ifc_flags & IFC_SERVER)
-            && (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
-            && 0 != lsquic_hcso_write_max_push_id(&conn->ifc_hcso,
-                                            conn->ifc_u.cli.ifcli_max_push_id))
-        {
-            ABORT_WARN("cannot write MAX_PUSH_ID");
-            return -1;
-        }
-        if (0 != lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
-                                conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
-                                conn->ifc_settings->es_qpack_dec_max_size,
-                                conn->ifc_settings->es_qpack_dec_max_blocked))
-        {
-            ABORT_WARN("cannot initialize QPACK decoder");
-            return -1;
-        }
-        if (avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI) > 0)
-        {
-            if (0 != create_qdec_stream_out(conn))
-            {
-                ABORT_WARN("cannot create outgoing QPACK decoder stream");
-                return -1;
-            }
-        }
-        else
-        {
-            queue_streams_blocked_frame(conn, SD_UNI);
-            LSQ_DEBUG("cannot create outgoing QPACK decoder stream due to "
-                "unidir limits");
-        }
-    }
-
-    if (params->tp_active_connection_id_limit > conn->ifc_conn.cn_n_cces)
-        conn->ifc_active_cids_limit = conn->ifc_conn.cn_n_cces;
-    else
-        conn->ifc_active_cids_limit = params->tp_active_connection_id_limit;
-    conn->ifc_first_active_cid_seqno = conn->ifc_scid_seqno;
 
     if (conn->ifc_settings->es_dplpmtud)
         conn->ifc_mflags |= MF_CHECK_MTU_PROBE;
@@ -3584,6 +3629,9 @@ handshake_ok (struct lsquic_conn *lconn)
     if (can_issue_cids(conn) && CN_SCID(&conn->ifc_conn)->len != 0)
         conn->ifc_send_flags |= SF_SEND_NEW_CID;
     maybe_create_delayed_streams(conn);
+
+    if (!(conn->ifc_flags & IFC_SERVER))
+        lsquic_send_ctl_0rtt_to_1rtt(&conn->ifc_send_ctl);
 
     return 0;
 }
@@ -3615,10 +3663,10 @@ ietf_full_conn_ci_hsk_done (struct lsquic_conn *lconn,
         }
         break;
     default:
+    case LSQ_HSK_RESUMED_FAIL:  /* IETF crypto never returns this */
         assert(0);
         /* fall-through */
     case LSQ_HSK_FAIL:
-    case LSQ_HSK_RESUMED_FAIL:
         handshake_failed(lconn);
         break;
     }
@@ -7406,6 +7454,7 @@ check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
 
     if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         || (conn->ifc_flags & IFC_CLOSING)
+        || ~0ull == lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist)
         || lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist) < 30
         || lsquic_send_ctl_in_recovery(&conn->ifc_send_ctl)
         || !lsquic_send_ctl_can_send_probe(&conn->ifc_send_ctl,
@@ -7591,6 +7640,16 @@ ietf_full_conn_ci_retx_timeout (struct lsquic_conn *lconn)
             conn->ifc_send_flags |= SF_SEND_PING;
         }
     }
+}
+
+
+static void
+ietf_full_conn_ci_early_data_failed (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    LSQ_DEBUG("early data failed");
+    lsquic_send_ctl_stash_0rtt_packets(&conn->ifc_send_ctl);
 }
 
 
@@ -7830,7 +7889,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
         if (0 == s)
             process_crypto_stream_write_events(conn);
-        goto end_write;
+        if (!(conn->ifc_mflags & MF_DOING_0RTT))
+            goto end_write;
     }
 
     maybe_conn_flush_special_streams(conn);
@@ -8279,6 +8339,7 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     .ci_destroy              =  ietf_full_conn_ci_destroy, \
     .ci_drain_time           =  ietf_full_conn_ci_drain_time, \
     .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
+    .ci_early_data_failed    =  ietf_full_conn_ci_early_data_failed, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
     .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \

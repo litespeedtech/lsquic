@@ -184,4 +184,26 @@ size_t
 lsquic_tp_get_quantum_sz (void);
 #endif
 
+#define SERVER_0RTT_TPS                                              (0 \
+    /* [draft-ietf-quic-transport-31] Section 7.4.1: */                 \
+    | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)                             \
+    | (1 << TPI_INIT_MAX_DATA)                                          \
+    | (1 << TPI_INIT_MAX_STREAMS_UNI)                                   \
+    | (1 << TPI_INIT_MAX_STREAMS_BIDI)                                  \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)                        \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE)                       \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_UNI)                               \
+    | (1 << TPI_MAX_IDLE_TIMEOUT)                                       \
+    | (1 << TPI_MAX_UDP_PAYLOAD_SIZE)                                   \
+    | (1 << TPI_DISABLE_ACTIVE_MIGRATION)                               \
+    /* Not including TPI_LOSS_BITS, see                              */ \
+    /* draft-ferrieuxhamchaoui-quic-lossbits-03, Section 5.1         */ \
+    /* [draft-ietf-quic-datagram-01] Section 3:                      */ \
+    | (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)                                \
+    /* [draft-iyengar-quic-delayed-ack-01] does not specfiy, store:  */ \
+    | (1 << TPI_MIN_ACK_DELAY)                                          \
+    /* [draft-huitema-quic-ts-03] does not specfiy, store:           */ \
+    | (1 << TPI_TIMESTAMPS)                                             \
+)
+
 #endif

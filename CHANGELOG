@@ -1,3 +1,15 @@
+2020-10-13
+    - 2.23.0
+    - [FEATURE] IETF Client 0-RTT support.
+    - [BUGFIX] Do not schedule MTU probe on first tick.
+    - [BUGFIX] Parsing DATAGRAM frame.
+    - [BUGFIX] If push promise fails, do not invoke hset destructor.
+    - [BUGFIX] Client: When connections are IDed by port number, check DCID.
+      Fixes issue #176.
+    - Revert the 2.22.1 lsquic_is_valid_hs_packet change.  All that was
+      necessary is a change to the way we call it in lsquic_engine.  No
+      change to the function itself is required.
+
 2020-10-08
     - 2.22.1
     - [BUGFIX] Function that checks validity of handshake packets.

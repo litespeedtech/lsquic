@@ -338,6 +338,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     TAILQ_INIT(&ctl->sc_unacked_packets[PNS_HSK]);
     TAILQ_INIT(&ctl->sc_unacked_packets[PNS_APP]);
     TAILQ_INIT(&ctl->sc_lost_packets);
+    TAILQ_INIT(&ctl->sc_0rtt_stash);
     ctl->sc_enpub = enpub;
     ctl->sc_alset = alset;
     ctl->sc_ver_neg = ver_neg;
@@ -1461,6 +1462,11 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     {
         TAILQ_REMOVE(&ctl->sc_lost_packets, packet_out, po_next);
         packet_out->po_flags &= ~PO_LOST;
+        send_ctl_destroy_packet(ctl, packet_out);
+    }
+    while ((packet_out = TAILQ_FIRST(&ctl->sc_0rtt_stash)))
+    {
+        TAILQ_REMOVE(&ctl->sc_0rtt_stash, packet_out, po_next);
         send_ctl_destroy_packet(ctl, packet_out);
     }
     for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
@@ -3794,4 +3800,73 @@ lsquic_send_ctl_rollback (struct lsquic_send_ctl *ctl,
         send_ctl_repace(ctl, &ctl_state->pacer, new_count);
     if (buffered && (lost_types & QUIC_FTBIT_ACK))
         lconn->cn_if->ci_ack_rollback(lconn, &ctl_state->ack_state);
+}
+
+
+/* Find 0-RTT packets and change them to 1-RTT packets */
+void
+lsquic_send_ctl_0rtt_to_1rtt (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out;
+    unsigned count;
+    struct lsquic_packets_tailq *const *q;
+    struct lsquic_packets_tailq *const queues[] = {
+        &ctl->sc_scheduled_packets,
+        &ctl->sc_unacked_packets[PNS_APP],
+        &ctl->sc_lost_packets,
+        &ctl->sc_buffered_packets[0].bpq_packets,
+        &ctl->sc_buffered_packets[1].bpq_packets,
+    };
+
+    assert(ctl->sc_flags & SC_IETF);
+
+    while (packet_out = TAILQ_FIRST(&ctl->sc_0rtt_stash), packet_out != NULL)
+    {
+        TAILQ_REMOVE(&ctl->sc_0rtt_stash, packet_out, po_next);
+        TAILQ_INSERT_TAIL(&ctl->sc_lost_packets, packet_out, po_next);
+        packet_out->po_flags |= PO_LOST;
+    }
+
+    count = 0;
+    for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
+        TAILQ_FOREACH(packet_out, *q, po_next)
+            if (packet_out->po_header_type == HETY_0RTT)
+            {
+                ++count;
+                packet_out->po_header_type = HETY_NOT_SET;
+                if (packet_out->po_flags & PO_ENCRYPTED)
+                    send_ctl_return_enc_data(ctl, packet_out);
+            }
+
+    LSQ_DEBUG("handshake ok: changed %u packet%.*s from 0-RTT to 1-RTT",
+                                                    count, count != 1, "s");
+}
+
+
+/* Remove 0-RTT packets from the unacked queue and wait to retransmit them
+ * after handshake succeeds.  This is the most common case.  There could
+ * (theoretically) be some corner cases where 0-RTT packets are in the
+ * scheduled queue, but we let those be lost naturally if that occurs.
+ */
+void
+lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned count, packet_sz;
+
+    count = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[PNS_APP]);
+                                                packet_out; packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_header_type == HETY_0RTT)
+        {
+            packet_sz = packet_out_sent_sz(packet_out);
+            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
+            TAILQ_INSERT_TAIL(&ctl->sc_0rtt_stash, packet_out, po_next);
+            ++count;
+        }
+    }
+
+    LSQ_DEBUG("stashed %u 0-RTT packet%.*s", count, count != 1, "s");
 }

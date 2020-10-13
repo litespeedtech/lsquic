@@ -1993,6 +1993,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_qpack_dec_max_blocked = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "init_max_streams_bidi", 21))
+        {
+            settings->es_init_max_streams_bidi = atoi(val);
+            return 0;
+        }
         break;
     case 23:
         if (0 == strncmp(name, "max_udp_payload_size_rx", 23))

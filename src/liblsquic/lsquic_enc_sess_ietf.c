@@ -107,6 +107,20 @@ static void
 no_sess_ticket (enum alarm_id alarm_id, void *ctx,
                                   lsquic_time_t expiry, lsquic_time_t now);
 
+static int
+iquic_new_session_cb (SSL *, SSL_SESSION *);
+
+static void
+keylog_callback (const SSL *, const char *);
+
+static enum ssl_verify_result_t
+verify_server_cert_callback (SSL *, uint8_t *out_alert);
+
+static void
+maybe_setup_key_logging (struct enc_sess_iquic *);
+
+static void
+iquic_esfi_destroy (enc_session_t *);
 
 #define SAMPLE_SZ 16
 
@@ -223,7 +237,7 @@ struct enc_sess_iquic
     lsquic_cid_t         esi_iscid; /* Initial SCID */
     unsigned             esi_key_phase;
     enum {
-        ESI_INITIALIZED  = 1 << 0,
+        ESI_UNUSED0      = 1 << 0,
         ESI_LOG_SECRETS  = 1 << 1,
         ESI_HANDSHAKE_OK = 1 << 2,
         ESI_ODCID        = 1 << 3,
@@ -243,17 +257,15 @@ struct enc_sess_iquic
         ESI_MAX_PACKNO_INIT = 1 << 17,
         ESI_MAX_PACKNO_HSK  = ESI_MAX_PACKNO_INIT << PNS_HSK,
         ESI_MAX_PACKNO_APP  = ESI_MAX_PACKNO_INIT << PNS_APP,
+        ESI_HAVE_0RTT_TP = 1 << 20,
     }                    esi_flags;
     enum enc_level       esi_last_w;
     unsigned             esi_trasec_sz;
-    char                *esi_hostname;
     void                *esi_keylog_handle;
 #ifndef NDEBUG
     char                *esi_sni_bypass;
 #endif
     const unsigned char *esi_alpn;
-    unsigned char       *esi_sess_resume_buf;
-    size_t               esi_sess_resume_sz;
     /* Need MD and AEAD for key rotation */
     const EVP_MD        *esi_md;
     const EVP_AEAD      *esi_aead;
@@ -279,6 +291,7 @@ struct enc_sess_iquic
                          esi_hp_batch_packets[HP_BATCH_SIZE];
     unsigned char        esi_hp_batch_samples[HP_BATCH_SIZE][SAMPLE_SZ];
     unsigned char        esi_grease;
+    signed char          esi_have_forw;
 };
 
 
@@ -696,24 +709,23 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
 
 static SSL_SESSION *
 maybe_create_SSL_SESSION (struct enc_sess_iquic *enc_sess,
-                                                    const SSL_CTX *ssl_ctx)
+            const SSL_CTX *ssl_ctx, const unsigned char *sess_resume,
+                                                        size_t sess_resume_sz)
 {
     SSL_SESSION *ssl_session;
     lsquic_ver_tag_t ver_tag;
     enum lsquic_version quic_ver;
     uint32_t rtt_ver, ticket_sz, trapa_sz;
     const unsigned char *ticket_buf, *trapa_buf, *p;
-    const unsigned char *const end
-                    = enc_sess->esi_sess_resume_buf + enc_sess->esi_sess_resume_sz;
+    const unsigned char *const end = sess_resume + sess_resume_sz;
 
-    if (enc_sess->esi_sess_resume_sz
-                    < sizeof(ver_tag) + sizeof(rtt_ver) + sizeof(ticket_sz))
+    if (sess_resume_sz < sizeof(ver_tag) + sizeof(rtt_ver) + sizeof(ticket_sz))
     {
         LSQ_DEBUG("rtt buf too short");
         return NULL;
     }
 
-    p = enc_sess->esi_sess_resume_buf;
+    p = sess_resume;
     memcpy(&ver_tag, p, sizeof(ver_tag));
     p += sizeof(ver_tag);
     quic_ver = lsquic_tag2ver(ver_tag);
@@ -760,14 +772,28 @@ maybe_create_SSL_SESSION (struct enc_sess_iquic *enc_sess,
     p += trapa_sz;
     assert(p == end);
 
-    (void) /* TODO */ trapa_buf;
-
     ssl_session = SSL_SESSION_from_bytes(ticket_buf, ticket_sz, ssl_ctx);
     if (!ssl_session)
     {
         LSQ_WARN("SSL_SESSION could not be parsed out");
         return NULL;
     }
+
+    if (SSL_SESSION_early_data_capable(ssl_session))
+    {
+        if (0 > (quic_ver == LSQVER_ID27 ? lsquic_tp_decode_27
+                    : lsquic_tp_decode)(trapa_buf, trapa_sz, 1,
+                                                    &enc_sess->esi_peer_tp))
+        {
+            SSL_SESSION_free(ssl_session);
+            LSQ_WARN("cannot parse stored transport parameters");
+            return NULL;
+        }
+        LSQ_DEBUG("early data capable, will try 0-RTT");
+        enc_sess->esi_flags |= ESI_HAVE_0RTT_TP;
+    }
+    else
+        LSQ_DEBUG("early data not capable -- not trying 0-RTT");
 
     LSQ_INFO("instantiated SSL_SESSION from serialized buffer");
     return ssl_session;
@@ -795,24 +821,22 @@ iquic_esfi_create_client (const char *hostname,
             struct lsquic_alarmset *alset, unsigned max_streams_uni)
 {
     struct enc_sess_iquic *enc_sess;
+    SSL_CTX *ssl_ctx;
+    SSL_SESSION *ssl_session;
+    const struct alpn_map *am;
+    int transpa_len;
+    char errbuf[ERR_ERROR_STRING_BUF_LEN];
+    unsigned char trans_params[0x80
+#if LSQUIC_TEST_QUANTUM_READINESS
+        + 4 + lsquic_tp_get_quantum_sz()
+#endif
+    ];
 
     fiu_return_on("enc_sess_ietf/create_client", NULL);
 
     enc_sess = calloc(1, sizeof(*enc_sess));
     if (!enc_sess)
         return NULL;
-
-    if (hostname)
-    {
-        enc_sess->esi_hostname = strdup(hostname);
-        if (!enc_sess->esi_hostname)
-        {
-            free(enc_sess);
-            return NULL;
-        }
-    }
-    else
-        enc_sess->esi_hostname = NULL;
 
     enc_sess->esi_enpub = enpub;
     enc_sess->esi_streams = crypto_streams;
@@ -844,25 +868,107 @@ iquic_esfi_create_client (const char *hostname,
         return NULL;
     }
 
-    /* Have to wait until the call to init_client() -- this is when the
-     * result of version negotiation is known.
-     */
+    enc_sess->esi_max_streams_uni = max_streams_uni;
+
+    if (enc_sess->esi_enpub->enp_alpn)
+        enc_sess->esi_alpn = enc_sess->esi_enpub->enp_alpn;
+    else if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+    {
+        for (am = s_h3_alpns; am < s_h3_alpns + sizeof(s_h3_alpns)
+                                                / sizeof(s_h3_alpns[0]); ++am)
+            if (am->version == enc_sess->esi_ver_neg->vn_ver)
+                goto alpn_selected;
+        LSQ_ERROR("version %s has no matching ALPN",
+                                lsquic_ver2str[enc_sess->esi_ver_neg->vn_ver]);
+        goto err;
+  alpn_selected:
+        enc_sess->esi_alpn = am->alpn;
+    }
+
+    LSQ_DEBUG("Create new SSL_CTX");
+    ssl_ctx = SSL_CTX_new(TLS_method());
+    if (!ssl_ctx)
+    {
+        LSQ_ERROR("cannot create SSL context: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        goto err;
+    }
+    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_default_verify_paths(ssl_ctx);
+    SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
+    if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
+        SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
+    if (enc_sess->esi_enpub->enp_kli)
+        SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
+    if (enc_sess->esi_enpub->enp_verify_cert
+            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
+            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
+        SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
+            verify_server_cert_callback);
+    SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
+
+    enc_sess->esi_ssl = SSL_new(ssl_ctx);
+    if (!enc_sess->esi_ssl)
+    {
+        LSQ_ERROR("cannot create SSL object: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        goto err;
+    }
+
+    transpa_len = gen_trans_params(enc_sess, trans_params,
+                                                    sizeof(trans_params));
+    if (transpa_len < 0)
+    {
+        goto err;
+    }
+    if (1 != SSL_set_quic_transport_params(enc_sess->esi_ssl, trans_params,
+                                                            transpa_len))
+    {
+        LSQ_ERROR("cannot set QUIC transport params: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        goto err;
+    }
+
+    if (!(SSL_set_quic_method(enc_sess->esi_ssl, &cry_quic_method)))
+    {
+        LSQ_INFO("could not set stream method");
+        goto err;
+    }
+
+    maybe_setup_key_logging(enc_sess);
+
+    if (enc_sess->esi_alpn &&
+            0 != SSL_set_alpn_protos(enc_sess->esi_ssl, enc_sess->esi_alpn,
+                                                    enc_sess->esi_alpn[0] + 1))
+    {
+        LSQ_ERROR("cannot set ALPN: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        goto err;
+    }
+    if (1 != SSL_set_tlsext_host_name(enc_sess->esi_ssl, hostname))
+    {
+        LSQ_ERROR("cannot set hostname: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        goto err;
+    }
+
     if (sess_resume && sess_resume_sz)
     {
-        enc_sess->esi_sess_resume_buf = malloc(sess_resume_sz);
-        if (enc_sess->esi_sess_resume_buf)
+        ssl_session = maybe_create_SSL_SESSION(enc_sess, ssl_ctx,
+                                                sess_resume, sess_resume_sz);
+        if (ssl_session)
         {
-            memcpy(enc_sess->esi_sess_resume_buf, sess_resume, sess_resume_sz);
-            enc_sess->esi_sess_resume_sz = sess_resume_sz;
+            (void)  /* This only ever returns 1: */
+                SSL_set_session(enc_sess->esi_ssl, ssl_session);
+            SSL_SESSION_free(ssl_session);
+            ssl_session = NULL;
+            enc_sess->esi_flags |= ESI_USE_SSL_TICKET;
         }
-        else
-            enc_sess->esi_sess_resume_sz = 0;
     }
-    else
-    {
-        enc_sess->esi_sess_resume_buf = NULL;
-        enc_sess->esi_sess_resume_sz = 0;
-    }
+
+    SSL_set_ex_data(enc_sess->esi_ssl, s_idx, enc_sess);
+    SSL_set_connect_state(enc_sess->esi_ssl);
 
     if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
         enc_sess->esi_flags |= ESI_WANT_TICKET;
@@ -870,9 +976,15 @@ iquic_esfi_create_client (const char *hostname,
     lsquic_alarmset_init_alarm(enc_sess->esi_alset, AL_SESS_TICKET,
                                             no_sess_ticket, enc_sess);
 
-    enc_sess->esi_max_streams_uni = max_streams_uni;
-
+    SSL_CTX_free(ssl_ctx);
     return enc_sess;
+
+  err:
+    if (enc_sess)
+        iquic_esfi_destroy(enc_sess);
+    if (ssl_ctx)
+        SSL_CTX_free(ssl_ctx);
+    return NULL;
 }
 
 
@@ -1242,6 +1354,7 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
     const struct alpn_map *am;
+    unsigned quic_ctx_idx;
     int transpa_len;
     SSL_CTX *ssl_ctx = NULL;
     union {
@@ -1287,9 +1400,10 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         LSQ_INFO("could not set stream method");
         return -1;
     }
-    /* TODO: set to transport parameter string instead of the constant string */
+    quic_ctx_idx = enc_sess->esi_conn->cn_version == LSQVER_ID27 ? 0 : 1;
     if (!SSL_set_quic_early_data_context(enc_sess->esi_ssl,
-                                                (unsigned char *) "lsquic", 6))
+                        enc_sess->esi_enpub->enp_quic_ctx_buf[quic_ctx_idx],
+                        enc_sess->esi_enpub->enp_quic_ctx_sz[quic_ctx_idx]))
     {
         LSQ_INFO("could not set early data context");
         return -1;
@@ -1317,7 +1431,6 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     SSL_set_ex_data(enc_sess->esi_ssl, s_idx, enc_sess);
     SSL_set_accept_state(enc_sess->esi_ssl);
     LSQ_DEBUG("initialized server enc session");
-    enc_sess->esi_flags |= ESI_INITIALIZED;
     return 0;
 }
 
@@ -1415,129 +1528,6 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
 }
 
 
-static int
-init_client (struct enc_sess_iquic *const enc_sess)
-{
-    SSL_CTX *ssl_ctx;
-    SSL_SESSION *ssl_session;
-    const struct alpn_map *am;
-    int transpa_len;
-    char errbuf[ERR_ERROR_STRING_BUF_LEN];
-#define hexbuf errbuf   /* This is a dual-purpose buffer */
-    unsigned char trans_params[0x80
-#if LSQUIC_TEST_QUANTUM_READINESS
-        + 4 + lsquic_tp_get_quantum_sz()
-#endif
-    ];
-
-    if (enc_sess->esi_enpub->enp_alpn)
-        enc_sess->esi_alpn = enc_sess->esi_enpub->enp_alpn;
-    else if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
-    {
-        for (am = s_h3_alpns; am < s_h3_alpns + sizeof(s_h3_alpns)
-                                                / sizeof(s_h3_alpns[0]); ++am)
-            if (am->version == enc_sess->esi_ver_neg->vn_ver)
-                goto ok;
-        LSQ_ERROR("version %s has no matching ALPN",
-                                lsquic_ver2str[enc_sess->esi_ver_neg->vn_ver]);
-        return -1;
-  ok:   enc_sess->esi_alpn = am->alpn;
-    }
-
-    LSQ_DEBUG("Create new SSL_CTX");
-    ssl_ctx = SSL_CTX_new(TLS_method());
-    if (!ssl_ctx)
-    {
-        LSQ_ERROR("cannot create SSL context: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
-    }
-    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_default_verify_paths(ssl_ctx);
-    SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
-    if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
-        SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
-    if (enc_sess->esi_enpub->enp_kli)
-        SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
-    if (enc_sess->esi_enpub->enp_verify_cert
-            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
-            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
-        SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
-            verify_server_cert_callback);
-    SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
-
-    transpa_len = gen_trans_params(enc_sess, trans_params,
-                                                    sizeof(trans_params));
-    if (transpa_len < 0)
-    {
-        goto err;
-    }
-
-    enc_sess->esi_ssl = SSL_new(ssl_ctx);
-    if (!enc_sess->esi_ssl)
-    {
-        LSQ_ERROR("cannot create SSL object: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
-    }
-    if (!(SSL_set_quic_method(enc_sess->esi_ssl, &cry_quic_method)))
-    {
-        LSQ_INFO("could not set stream method");
-        goto err;
-    }
-    maybe_setup_key_logging(enc_sess);
-    if (1 != SSL_set_quic_transport_params(enc_sess->esi_ssl, trans_params,
-                                                            transpa_len))
-    {
-        LSQ_ERROR("cannot set QUIC transport params: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
-    }
-    if (enc_sess->esi_alpn &&
-            0 != SSL_set_alpn_protos(enc_sess->esi_ssl, enc_sess->esi_alpn,
-                                                    enc_sess->esi_alpn[0] + 1))
-    {
-        LSQ_ERROR("cannot set ALPN: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
-    }
-    if (1 != SSL_set_tlsext_host_name(enc_sess->esi_ssl,
-                                                    enc_sess->esi_hostname))
-    {
-        LSQ_ERROR("cannot set hostname: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
-    }
-    free(enc_sess->esi_hostname);
-    enc_sess->esi_hostname = NULL;
-    if (enc_sess->esi_sess_resume_buf)
-    {
-        ssl_session = maybe_create_SSL_SESSION(enc_sess, ssl_ctx);
-        if (ssl_session)
-        {
-            if (SSL_set_session(enc_sess->esi_ssl, ssl_session))
-                enc_sess->esi_flags |= ESI_USE_SSL_TICKET;
-            else
-                LSQ_WARN("cannot set session");
-        }
-    }
-
-    SSL_set_ex_data(enc_sess->esi_ssl, s_idx, enc_sess);
-    SSL_set_connect_state(enc_sess->esi_ssl);
-    SSL_CTX_free(ssl_ctx);
-    LSQ_DEBUG("initialized client enc session");
-    enc_sess->esi_flags |= ESI_INITIALIZED;
-    return 0;
-
-  err:
-    if (ssl_ctx)
-        SSL_CTX_free(ssl_ctx);
-    return -1;
-#undef hexbuf
-}
-
-
 struct crypto_params
 {
     const EVP_AEAD      *aead;
@@ -1607,20 +1597,85 @@ get_crypto_params (const struct enc_sess_iquic *enc_sess,
 }
 
 
+/* [draft-ietf-quic-transport-31] Section 7.4.1:
+ " If 0-RTT data is accepted by the server, the server MUST NOT reduce
+ " any limits or alter any values that might be violated by the client
+ " with its 0-RTT data.  In particular, a server that accepts 0-RTT data
+ " MUST NOT set values for the following parameters (Section 18.2) that
+ " are smaller than the remembered value of the parameters.
+ "
+ " *  active_connection_id_limit
+ "
+ " *  initial_max_data
+ "
+ " *  initial_max_stream_data_bidi_local
+ "
+ " *  initial_max_stream_data_bidi_remote
+ "
+ " *  initial_max_stream_data_uni
+ "
+ " *  initial_max_streams_bidi
+ "
+ " *  initial_max_streams_uni
+ */
+#define REDUCTION_PROHIBITED_TPS                                     (0 \
+    | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)                             \
+    | (1 << TPI_INIT_MAX_DATA)                                          \
+    | (1 << TPI_INIT_MAX_STREAMS_UNI)                                   \
+    | (1 << TPI_INIT_MAX_STREAMS_BIDI)                                  \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)                        \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE)                       \
+    | (1 << TPI_INIT_MAX_STREAM_DATA_UNI)                               \
+)
+
+
+static int
+check_server_tps_for_violations (const struct enc_sess_iquic *enc_sess,
+                            const struct transport_params *params_0rtt,
+                            const struct transport_params *new_params)
+{
+    enum transport_param_id tpi;
+
+    for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
+        if ((1 << tpi) & REDUCTION_PROHIBITED_TPS)
+            if (new_params->tp_numerics[tpi] > params_0rtt->tp_numerics[tpi])
+            {
+                LSQ_INFO("server's new TP %s increased in value from %"PRIu64
+                    " to %"PRIu64, lsquic_tpi2str[tpi],
+                        params_0rtt->tp_numerics[tpi],
+                        new_params->tp_numerics[tpi]);
+                return -1;
+            }
+
+    LSQ_DEBUG("server's new transport parameters do not violate save 0-RTT "
+        "parameters");
+    return 0;
+}
+
+
 static int
 get_peer_transport_params (struct enc_sess_iquic *enc_sess)
 {
     struct transport_params *const trans_params = &enc_sess->esi_peer_tp;
+    struct transport_params params_0rtt;
     const uint8_t *params_buf;
     size_t bufsz;
     char *params_str;
     const enum lsquic_version version = enc_sess->esi_conn->cn_version;
+    int have_0rtt_tp;
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
     if (!params_buf)
     {
         LSQ_DEBUG("no peer transport parameters");
         return -1;
+    }
+
+    have_0rtt_tp = !!(enc_sess->esi_flags & ESI_HAVE_0RTT_TP);
+    if (have_0rtt_tp)
+    {
+        params_0rtt = enc_sess->esi_peer_tp;
+        enc_sess->esi_flags &= ~ESI_HAVE_0RTT_TP;
     }
 
     LSQ_DEBUG("have peer transport parameters (%zu bytes)", bufsz);
@@ -1645,6 +1700,10 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         }
         return -1;
     }
+
+    if (have_0rtt_tp && 0 != check_server_tps_for_violations(enc_sess,
+                                                &params_0rtt, trans_params))
+        return -1;
 
     const lsquic_cid_t *const cids[LAST_TPI + 1] = {
         [TP_CID_IDX(TPI_ORIGINAL_DEST_CID)]  = enc_sess->esi_flags & ESI_ODCID ? &enc_sess->esi_odcid : NULL,
@@ -1771,6 +1830,14 @@ maybe_get_peer_transport_params (struct enc_sess_iquic *enc_sess)
 }
 
 
+enum iquic_handshake_status {
+    IHS_WANT_READ,
+    IHS_WANT_WRITE,
+    IHS_WANT_RW,
+    IHS_STOP,
+};
+
+
 static enum iquic_handshake_status
 iquic_esfi_handshake (struct enc_sess_iquic *enc_sess)
 {
@@ -1791,9 +1858,12 @@ iquic_esfi_handshake (struct enc_sess_iquic *enc_sess)
             LSQ_DEBUG("retry write");
             return IHS_WANT_WRITE;
         case SSL_ERROR_EARLY_DATA_REJECTED:
-            LSQ_DEBUG("early data rejected");
-            hsk_status = LSQ_HSK_RESUMED_FAIL;
-            goto err;
+            LSQ_DEBUG("early data rejected: reset");
+            SSL_reset_early_data_reject(enc_sess->esi_ssl);
+            if (enc_sess->esi_conn->cn_if->ci_early_data_failed)
+                enc_sess->esi_conn->cn_if->ci_early_data_failed(
+                                                        enc_sess->esi_conn);
+            return IHS_WANT_RW;
             /* fall through */
         default:
             LSQ_DEBUG("handshake: %s", ERR_error_string(err, errbuf));
@@ -1866,7 +1936,9 @@ iquic_esfi_get_peer_transport_params (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
 
-    if (0 == maybe_get_peer_transport_params(enc_sess))
+    if (enc_sess->esi_flags & ESI_HAVE_0RTT_TP)
+        return &enc_sess->esi_peer_tp;
+    else if (0 == maybe_get_peer_transport_params(enc_sess))
         return &enc_sess->esi_peer_tp;
     else
         return NULL;
@@ -1892,8 +1964,6 @@ iquic_esfi_destroy (enc_session_t *enc_session_p)
     free_handshake_keys(enc_sess);
     cleanup_hp(&enc_sess->esi_hp);
 
-    free(enc_sess->esi_sess_resume_buf);
-    free(enc_sess->esi_hostname);
     free(enc_sess);
 }
 
@@ -1910,11 +1980,18 @@ static const enum enc_level hety2el[] =
 };
 
 
-static const enum enc_level pns2enc_level[] =
+static const enum enc_level pns2enc_level[2][N_PNS] =
 {
-    [PNS_INIT]  = ENC_LEV_CLEAR,
-    [PNS_HSK]   = ENC_LEV_INIT,
-    [PNS_APP]   = ENC_LEV_FORW,
+    [0] = {
+        [PNS_INIT]  = ENC_LEV_CLEAR,
+        [PNS_HSK]   = ENC_LEV_INIT,
+        [PNS_APP]   = ENC_LEV_EARLY,
+    },
+    [1] = {
+        [PNS_INIT]  = ENC_LEV_CLEAR,
+        [PNS_HSK]   = ENC_LEV_INIT,
+        [PNS_APP]   = ENC_LEV_FORW,
+    },
 };
 
 
@@ -1941,8 +2018,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
     pns = lsquic_packet_out_pns(packet_out);
-    /* TODO Obviously, will need more logic for 0-RTT */
-    enc_level = pns2enc_level[ pns ];
+    enc_level = pns2enc_level[ enc_sess->esi_have_forw ][ pns ];
 
     if (enc_level == ENC_LEV_FORW)
     {
@@ -2458,7 +2534,7 @@ static int
 iquic_esf_sess_resume_enabled (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
-    return enc_sess->esi_sess_resume_buf != NULL;
+    return !!(enc_sess->esi_flags & ESI_USE_SSL_TICKET);
 }
 
 
@@ -2817,6 +2893,9 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
             key_len, hexbuf));
     }
 
+    if (rw && enc_level == ENC_LEV_FORW)
+        enc_sess->esi_have_forw = 1;
+
     return 1;
 
   err:
@@ -2955,25 +3034,11 @@ chsk_ietf_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
     enum enc_level enc_level;
 
     enc_level = enc_sess->esi_cryst_if->csi_enc_level(stream);
-    if (enc_level != ENC_LEV_CLEAR)
-    {
-        LSQ_DEBUG("skip initialization of stream at level %u", enc_level);
-        goto end;
-    }
-
-    if (
-        (enc_sess->esi_flags & ESI_SERVER) == 0 &&
-        0 != init_client(enc_sess))
-    {
-        LSQ_WARN("enc session could not be initialized");
-        return NULL;
-    }
-
-    enc_sess->esi_cryst_if->csi_wantwrite(stream, 1);
+    if (enc_level == ENC_LEV_CLEAR)
+        enc_sess->esi_cryst_if->csi_wantwrite(stream, 1);
 
     LSQ_DEBUG("handshake stream created successfully");
 
-  end:
     return stream_if_ctx;
 }
 
@@ -3006,6 +3071,7 @@ chsk_ietf_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 static const char *const ihs2str[] = {
     [IHS_WANT_READ]  = "want read",
     [IHS_WANT_WRITE] = "want write",
+    [IHS_WANT_RW]    = "want rw",
     [IHS_STOP]       = "stop",
 };
 
@@ -3035,6 +3101,10 @@ iquic_esfi_shake_stream (enc_session_t *sess,
     case IHS_WANT_WRITE:
         enc_sess->esi_cryst_if->csi_wantwrite(stream, 1);
         enc_sess->esi_cryst_if->csi_wantread(stream, 0);
+        break;
+    case IHS_WANT_RW:
+        enc_sess->esi_cryst_if->csi_wantwrite(stream, 1);
+        enc_sess->esi_cryst_if->csi_wantread(stream, 1);
         break;
     default:
         assert(st == IHS_STOP);
@@ -3209,3 +3279,96 @@ const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
     /* [draft-ietf-quic-tls-29] Section 5.8 */
     (unsigned char *) "\xe5\x49\x30\xf9\x7f\x21\x36\xf0\x53\x0a\x8c\x1c",
 };
+
+
+int
+lsquic_enc_sess_ietf_gen_quic_ctx (
+                const struct lsquic_engine_settings *settings,
+                enum lsquic_version version, unsigned char *buf, size_t bufsz)
+{
+    struct transport_params params;
+    int len;
+
+    /* This code is pretty much copied from gen_trans_params(), with
+     * small (but important) exceptions.
+     */
+
+    memset(&params, 0, sizeof(params));
+    params.tp_init_max_data = settings->es_init_max_data;
+    params.tp_init_max_stream_data_bidi_local
+                            = settings->es_init_max_stream_data_bidi_local;
+    params.tp_init_max_stream_data_bidi_remote
+                            = settings->es_init_max_stream_data_bidi_remote;
+    params.tp_init_max_stream_data_uni
+                            = settings->es_init_max_stream_data_uni;
+    params.tp_init_max_streams_uni
+                            = settings->es_init_max_streams_uni;
+    params.tp_init_max_streams_bidi
+                            = settings->es_init_max_streams_bidi;
+    params.tp_ack_delay_exponent
+                            = TP_DEF_ACK_DELAY_EXP;
+    params.tp_max_idle_timeout = settings->es_idle_timeout * 1000;
+    params.tp_max_ack_delay = TP_DEF_MAX_ACK_DELAY;
+    params.tp_active_connection_id_limit = MAX_IETF_CONN_DCIDS;
+    params.tp_set |= (1 << TPI_INIT_MAX_DATA)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE)
+                  |  (1 << TPI_INIT_MAX_STREAM_DATA_UNI)
+                  |  (1 << TPI_INIT_MAX_STREAMS_UNI)
+                  |  (1 << TPI_INIT_MAX_STREAMS_BIDI)
+                  |  (1 << TPI_ACK_DELAY_EXPONENT)
+                  |  (1 << TPI_MAX_IDLE_TIMEOUT)
+                  |  (1 << TPI_MAX_ACK_DELAY)
+                  |  (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)
+                  ;
+    if (settings->es_max_udp_payload_size_rx)
+    {
+        params.tp_max_udp_payload_size = settings->es_max_udp_payload_size_rx;
+        params.tp_set |= 1 << TPI_MAX_UDP_PAYLOAD_SIZE;
+    }
+    if (!settings->es_allow_migration)
+        params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
+    if (settings->es_ql_bits)
+    {
+        params.tp_loss_bits = settings->es_ql_bits - 1;
+        params.tp_set |= 1 << TPI_LOSS_BITS;
+    }
+    if (settings->es_delayed_acks)
+    {
+        params.tp_numerics[TPI_MIN_ACK_DELAY] = 10000;    /* TODO: make into a constant? make configurable? */
+        params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
+    }
+    if (settings->es_timestamps)
+    {
+        params.tp_numerics[TPI_TIMESTAMPS] = TS_GENERATE_THEM;
+        params.tp_set |= 1 << TPI_TIMESTAMPS;
+    }
+    if (settings->es_datagrams)
+    {
+        if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
+            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                            = params.tp_max_udp_payload_size;
+        else
+            params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
+                                            = TP_DEF_MAX_UDP_PAYLOAD_SIZE;
+        params.tp_set |= 1 << TPI_MAX_DATAGRAM_FRAME_SIZE;
+    }
+
+    params.tp_set &= SERVER_0RTT_TPS;
+
+    len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
+                        &params, 1, buf, bufsz);
+    if (len >= 0)
+    {
+        char str[MAX_TP_STR_SZ];
+        LSQ_LOG1(LSQ_LOG_DEBUG, "generated QUIC server context of %d bytes "
+            "for version %s", len, lsquic_ver2str[version]);
+        LSQ_LOG1(LSQ_LOG_DEBUG, "%s", ((version == LSQVER_ID27
+                ? lsquic_tp_to_str_27 : lsquic_tp_to_str)(&params, str,
+                                                            sizeof(str)), str));
+    }
+    else
+        LSQ_LOG1(LSQ_LOG_WARN, "cannot generate QUIC server context: %d",
+                                                                        errno);
+    return len;
+}

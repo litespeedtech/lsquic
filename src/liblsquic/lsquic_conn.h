@@ -282,6 +282,10 @@ struct conn_iface
     /* Optional method */
     size_t
     (*ci_get_min_datagram_size) (struct lsquic_conn *);
+
+    /* Optional method */
+    void
+    (*ci_early_data_failed) (struct lsquic_conn *);
 };
 
 #define LSCONN_CCE_BITS 3

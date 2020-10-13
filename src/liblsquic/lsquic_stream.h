@@ -17,6 +17,9 @@ struct data_frame;
 enum quic_frame_type;
 struct push_promise;
 union hblock_ctx;
+struct lsquic_packet_out;
+struct lsquic_send_ctl;
+struct network_path;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 
@@ -310,6 +313,11 @@ struct lsquic_stream
                                                 const size_t);
     size_t                        (*sm_write_avail)(struct lsquic_stream *);
     int                           (*sm_readable)(struct lsquic_stream *);
+
+    struct lsquic_packet_out *    (*sm_get_packet_for_stream)(
+                                        struct lsquic_send_ctl *,
+                                        unsigned, const struct network_path *,
+                                        const struct lsquic_stream *);
 
     /* This element is optional */
     const struct stream_filter_if  *sm_sfi;
@@ -621,5 +629,8 @@ lsquic_stream_ss_frame_sent (struct lsquic_stream *);
 void
 lsquic_stream_set_pwritev_params (unsigned iovecs, unsigned frames);
 #endif
+
+void
+lsquic_stream_drop_hset_ref (struct lsquic_stream *);
 
 #endif

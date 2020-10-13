@@ -1506,8 +1506,14 @@ idle_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 headers.count = sizeof(header_arr) / sizeof(header_arr[0]);
                 req = new_req(GET, push_path->path, st_h->req->authority_str);
                 if (req)
-                    (void) lsquic_conn_push_stream(lsquic_stream_conn(stream),
-                                req, stream, &headers);
+                {
+                    if (0 != lsquic_conn_push_stream(lsquic_stream_conn(stream),
+                                                            req, stream, &headers))
+                    {
+                        LSQ_WARN("stream push failed");
+                        interop_server_hset_destroy(req);
+                    }
+                }
                 else
                     LSQ_WARN("cannot allocate req for push");
                 free(push_path);

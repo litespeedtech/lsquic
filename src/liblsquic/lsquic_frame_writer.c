@@ -30,6 +30,8 @@
 #include "lsquic_frab_list.h"
 #include "lsquic_ev_log.h"
 
+#include "fiu-local.h"
+
 #define LSQUIC_LOGGER_MODULE LSQLM_FRAME_WRITER
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(\
                                         lsquic_stream_conn(fw->fw_stream))
@@ -496,6 +498,8 @@ lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
     struct http_push_promise_frame push_frame;
     unsigned char *buf;
     int s;
+
+    fiu_return_on("frame_writer/writer_promise", -1);
 
     if (fw->fw_max_header_list_sz && 0 != check_headers_size(fw, headers))
         return -1;

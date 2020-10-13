@@ -4156,10 +4156,15 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     if (0 != lsquic_headers_stream_push_promise(conn->fc_pub.u.gquic.hs, dep_stream->id,
                                         pushed_stream->id, headers))
     {
-        /* Since the failure to write to HEADERS stream results in aborting
-         * the connection, we do not bother rolling back.
-         */
-        LSQ_ERROR("could not send push promise");
+        /* If forget we ever had the hset pointer: */
+        lsquic_stream_drop_hset_ref(pushed_stream);
+        /* Now roll back stream creation and return stream ID: */
+        if (pushed_stream->sm_hash_el.qhe_flags & QHE_HASHED)
+            lsquic_hash_erase(conn->fc_pub.all_streams,
+                                                &pushed_stream->sm_hash_el);
+        lsquic_stream_destroy(pushed_stream);
+        conn->fc_last_stream_id -= 2;
+        LSQ_INFO("could not send push promise");
         return -1;
     }
 

@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 22
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_MINOR_VERSION 23
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -1923,8 +1923,7 @@ lsquic_get_h3_alpns (unsigned versions);
  * been established: it will return incorrect result.
  */
 int
-lsquic_is_valid_hs_packet (lsquic_engine_t *, const unsigned char *,
-                                        size_t bufsz, size_t packet_in_sz);
+lsquic_is_valid_hs_packet (lsquic_engine_t *, const unsigned char *, size_t);
 
 /**
  * Parse cid from packet stored in `buf' and store it to `cid'.  Returns 0

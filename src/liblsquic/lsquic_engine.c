@@ -631,6 +631,22 @@ lsquic_engine_new (unsigned flags,
     engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
     if (!engine->pub.enp_tokgen)
         return NULL;
+    if (engine->flags & ENG_SERVER)
+        for (i = 0; i < sizeof(engine->pub.enp_quic_ctx_sz)
+                                / sizeof(engine->pub.enp_quic_ctx_sz[0]); ++i)
+        {
+            int sz = lsquic_enc_sess_ietf_gen_quic_ctx(
+                        &engine->pub.enp_settings,
+                        i == 0 ? LSQVER_ID27 : LSQVER_ID28,
+                        engine->pub.enp_quic_ctx_buf[i],
+                        sizeof(engine->pub.enp_quic_ctx_buf));
+            if (sz < 0)
+            {
+                free(engine);
+                return NULL;
+            }
+            engine->pub.enp_quic_ctx_sz[i] = (unsigned) sz;
+        }
     engine->pub.enp_crand = &engine->crand;
     if (engine->pub.enp_settings.es_noprogress_timeout)
         engine->pub.enp_noprog_timeout
@@ -1106,6 +1122,34 @@ find_conn_by_addr (struct lsquic_hash *hash, const struct sockaddr *sa)
 }
 
 
+/* When connections are identified by the local address, we need to drop
+ * packets that use DCIDs that do not correspond to any of SCIDs.  This
+ * can happen when peer retires a SCID.  This mimics the normal behavior,
+ * when connections are looked up in engine->conns_hash by ID: when there
+ * is no match, the packet is dropped.
+ */
+static int
+dcid_checks_out (const struct lsquic_conn *conn, const lsquic_cid_t *dcid)
+{
+    const struct conn_cid_elem *cce;
+
+    if (LSQUIC_CIDS_EQ(CN_SCID(conn), dcid))
+        return 1;
+
+    /* Slow check for those rare cases */
+    for (cce = conn->cn_cces; cce < END_OF_CCES(conn); ++cce)
+        if ((conn->cn_cces_mask & (1 << (cce - conn->cn_cces)))
+                        && !(cce->cce_flags & CCE_PORT)
+                        && LSQUIC_CIDS_EQ(&cce->cce_cid, dcid))
+        {
+            LSQ_DEBUG("connection checks out");
+            return 1;
+        }
+
+    return 0;
+}
+
+
 static lsquic_conn_t *
 find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          struct packin_parse_state *ppstate, const struct sockaddr *sa_local)
@@ -1114,7 +1158,17 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     lsquic_conn_t *conn;
 
     if (engine->flags & ENG_CONNS_BY_ADDR)
+    {
         el = find_conn_by_addr(engine->conns_hash, sa_local);
+        if ((packet_in->pi_flags & PI_CONN_ID)
+                && !dcid_checks_out(lsquic_hashelem_getdata(el),
+                                                    &packet_in->pi_conn_id))
+        {
+            LSQ_DEBUGC("DCID matches no SCID in connection %"CID_FMT": drop it",
+                CID_BITS(&packet_in->pi_conn_id));
+            return NULL;
+        }
+    }
     else if (packet_in->pi_flags & PI_CONN_ID)
         el = lsquic_hash_find(engine->conns_hash,
                     packet_in->pi_conn_id.idbuf, packet_in->pi_conn_id.len);
