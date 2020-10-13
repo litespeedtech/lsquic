@@ -821,7 +821,7 @@ iquic_esfi_create_client (const char *hostname,
             struct lsquic_alarmset *alset, unsigned max_streams_uni)
 {
     struct enc_sess_iquic *enc_sess;
-    SSL_CTX *ssl_ctx;
+    SSL_CTX *ssl_ctx = NULL;
     SSL_SESSION *ssl_session;
     const struct alpn_map *am;
     int transpa_len;
