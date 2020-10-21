@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
@@ -313,3 +314,23 @@ lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
     if (len < (int) sz)
         snprintf(buf + len, sz - (size_t) len, ":%hu", port);
 }
+
+
+#ifdef _MSC_VER
+char *
+lsquic_strndup (const char *s, size_t n)
+{
+    size_t len;
+    char *copy;
+
+    len = strnlen(s, n);
+    copy = malloc(n + 1);
+    if (copy)
+    {
+        memcpy(copy, s, len);
+        copy[len] = '\0';
+    }
+
+    return copy;
+}
+#endif
