@@ -1661,23 +1661,6 @@ interop_server_hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
 }
 
 
-#ifdef WIN32
-char *
-strndup (const char *s, size_t n)
-{
-    char *copy;
-
-    copy = malloc(n + 1);
-    if (!copy)
-        return NULL;
-
-    memcpy(copy, s, n);
-    copy[n] = '\0';
-    return copy;
-}
-#endif
-
-
 static int
 interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
 {
