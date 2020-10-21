@@ -336,6 +336,7 @@ static const struct conn_iface our_conn_if =
     .ci_write_ack     = write_ack,
 };
 
+static struct conn_stats s_conn_stats;
 
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
@@ -366,6 +367,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     tobjs->conn_pub.path = &network_path;
+    tobjs->conn_pub.conn_stats = &s_conn_stats;
     tobjs->initial_stream_window = initial_stream_window;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
