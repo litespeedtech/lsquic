@@ -144,23 +144,6 @@ calc_sample_stats (const struct sample_stats *stats,
 }
 
 
-#ifdef WIN32
-static char *
-strndup(const char *s, size_t n)
-{
-    char *copy;
-
-    copy = malloc(n + 1);
-    if (copy)
-    {
-        memcpy(copy, s, n);
-        copy[n] = '\0';
-    }
-
-    return copy;
-}
-#endif
-
 /* When more than `nread' bytes are read from stream `stream_id', apply
  * priority in `ehp'.
  */
