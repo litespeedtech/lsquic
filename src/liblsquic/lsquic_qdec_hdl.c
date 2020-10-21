@@ -32,6 +32,8 @@
 #include "lsquic_conn_public.h"
 #include "lsquic_hq.h"
 #include "lsquic_parse.h"
+#include "lsquic_qpack_exp.h"
+#include "lsquic_util.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_QDEC_HDL
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(qdh->qdh_conn)
@@ -163,6 +165,18 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
     if (enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAMEVAL)
         dec_opts |= LSQPACK_DEC_OPT_HASH_NAMEVAL;
 
+    if (enpub->enp_settings.es_qpack_experiment)
+    {
+        qdh->qdh_exp_rec = lsquic_qpack_exp_new();
+        if (qdh->qdh_exp_rec)
+        {
+            if (conn->cn_flags & LSCONN_SERVER)
+                qdh->qdh_exp_rec->qer_flags |= QER_SERVER;
+            qdh->qdh_exp_rec->qer_used_max_size = dyn_table_size;
+            qdh->qdh_exp_rec->qer_used_max_blocked = max_risked_streams;
+        }
+    }
+
     qdh->qdh_conn = conn;
     lsquic_frab_list_init(&qdh->qdh_fral, 0x400, NULL, NULL, NULL);
     lsqpack_dec_init(&qdh->qdh_decoder, (void *) conn, dyn_table_size,
@@ -189,12 +203,29 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
 }
 
 
+static void
+qdh_log_and_clean_exp_rec (struct qpack_dec_hdl *qdh)
+{
+    char buf[0x400];
+
+    qdh->qdh_exp_rec->qer_comp_ratio = lsqpack_dec_ratio(&qdh->qdh_decoder);
+    /* Naughty: poking inside the decoder, it's not exposed.  (Should it be?) */
+    qdh->qdh_exp_rec->qer_peer_max_size = qdh->qdh_decoder.qpd_cur_max_capacity;
+    (void) lsquic_qpack_exp_to_xml(qdh->qdh_exp_rec, buf, sizeof(buf));
+    LSQ_NOTICE("%s", buf);
+    lsquic_qpack_exp_destroy(qdh->qdh_exp_rec);
+    qdh->qdh_exp_rec = NULL;
+}
+
+
 void
 lsquic_qdh_cleanup (struct qpack_dec_hdl *qdh)
 {
     if (qdh->qdh_flags & QDH_INITIALIZED)
     {
         LSQ_DEBUG("cleanup");
+        if (qdh->qdh_exp_rec)
+            qdh_log_and_clean_exp_rec(qdh);
         lsqpack_dec_cleanup(&qdh->qdh_decoder);
         lsquic_frab_list_cleanup(&qdh->qdh_fral);
         qdh->qdh_flags &= ~QDH_INITIALIZED;
@@ -498,6 +529,22 @@ qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
 }
 
 
+static void
+qdh_maybe_set_user_agent (struct qpack_dec_hdl *qdh,
+                                        const struct lsxpack_header *xhdr)
+{
+    /* Flipped: we are the *decoder* */
+    const char *const name = qdh->qdh_exp_rec->qer_flags & QER_SERVER ?
+                                    "user-agent" : "server";
+    const size_t len = qdh->qdh_exp_rec->qer_flags & QER_SERVER ? 10 : 6;
+
+    if (len == xhdr->name_len
+                && 0 == memcmp(name, lsxpack_header_get_name(xhdr), len))
+        qdh->qdh_exp_rec->qer_user_agent
+                = strndup(lsxpack_header_get_value(xhdr), xhdr->val_len);
+}
+
+
 static int
 qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
 {
@@ -524,6 +571,8 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
                         (char *) stream->conn_pub->mm->acki,
                         sizeof(*stream->conn_pub->mm->acki));
     }
+    else if (qdh->qdh_exp_rec && !qdh->qdh_exp_rec->qer_user_agent)
+        qdh_maybe_set_user_agent(qdh, xhdr);
 
     return qdh->qdh_enpub->enp_hsi_if->hsi_process_header(u->ctx.hset, xhdr);
 }
@@ -662,9 +711,21 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
     };
     stream->sm_hblock_ctx = u;
 
+    if (qdh->qdh_exp_rec)
+    {
+        const lsquic_time_t now = lsquic_time_now();
+        if (0 == qdh->qdh_exp_rec->qer_hblock_count)
+            qdh->qdh_exp_rec->qer_first_req = now;
+        qdh->qdh_exp_rec->qer_last_req = now;
+        ++qdh->qdh_exp_rec->qer_hblock_count;
+        qdh->qdh_exp_rec->qer_hblock_size += bufsz;
+    }
+
     dec_buf_sz = sizeof(dec_buf);
     rhs = lsqpack_dec_header_in(&qdh->qdh_decoder, stream, stream->id,
                     header_size, buf, bufsz, dec_buf, &dec_buf_sz);
+    if (qdh->qdh_exp_rec)
+        qdh->qdh_exp_rec->qer_peer_max_blocked += rhs == LQRHS_BLOCKED;
     return qdh_header_read_results(qdh, stream, rhs, dec_buf, dec_buf_sz);
 }
 
@@ -681,9 +742,13 @@ lsquic_qdh_header_in_continue (struct qpack_dec_hdl *qdh,
 
     if (qdh->qdh_flags & QDH_INITIALIZED)
     {
+        if (qdh->qdh_exp_rec)
+            qdh->qdh_exp_rec->qer_hblock_size += bufsz;
         dec_buf_sz = sizeof(dec_buf);
         rhs = lsqpack_dec_header_read(&qdh->qdh_decoder, stream,
                                     buf, bufsz, dec_buf, &dec_buf_sz);
+        if (qdh->qdh_exp_rec)
+            qdh->qdh_exp_rec->qer_peer_max_blocked += rhs == LQRHS_BLOCKED;
         return qdh_header_read_results(qdh, stream, rhs, dec_buf, dec_buf_sz);
     }
     else

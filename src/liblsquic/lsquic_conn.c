@@ -305,3 +305,22 @@ lsquic_conn_get_min_datagram_size (struct lsquic_conn *lconn)
     else
         return 0;
 }
+
+
+#if LSQUIC_CONN_STATS
+void
+lsquic_conn_stats_diff (const struct conn_stats *cumulative_stats,
+                        const struct conn_stats *previous_stats,
+                        struct conn_stats *new_stats)
+{
+    const unsigned long *const cum = (void *) cumulative_stats,
+                        *const prev = (void *) previous_stats;
+    unsigned long *const new = (void *) new_stats;
+    unsigned i;
+
+    for (i = 0; i < sizeof(*new_stats) / sizeof(new[0]); ++i)
+        new[i] = cum[i] - prev[i];
+}
+
+
+#endif

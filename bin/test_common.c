@@ -1952,6 +1952,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_proc_time_thresh = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "qpack_experiment", 16))
+        {
+            settings->es_qpack_experiment = atoi(val);
+            return 0;
+        }
         break;
     case 18:
         if (0 == strncmp(name, "qpack_enc_max_size", 18))

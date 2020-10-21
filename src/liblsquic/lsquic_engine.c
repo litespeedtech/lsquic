@@ -103,6 +103,7 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 /* The batch of outgoing packets grows and shrinks dynamically */
+/* Batch sizes must be powers of two */
 #define MAX_OUT_BATCH_SIZE 1024
 #define MIN_OUT_BATCH_SIZE 4
 #define INITIAL_OUT_BATCH_SIZE 32
@@ -131,6 +132,11 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
 
 static void
 force_close_conn (lsquic_engine_t *engine, lsquic_conn_t *conn);
+
+#if LSQUIC_CONN_STATS
+static void
+update_busy_detector (struct lsquic_engine *, struct lsquic_conn *, int);
+#endif
 
 #if LSQUIC_COUNT_ENGINE_CALLS
 #define ENGINE_CALLS_INCR(e) do { ++(e)->n_engine_calls; } while (0)
@@ -276,6 +282,16 @@ struct lsquic_engine
 #endif
     struct crand                       crand;
     EVP_AEAD_CTX                       retry_aead_ctx[N_IETF_RETRY_VERSIONS];
+#if LSQUIC_CONN_STATS
+    struct {
+        uint16_t            immed_ticks;    /* bitmask */
+#define MAX_IMMED_TICKS UINT16_MAX
+        struct lsquic_conn *last_conn,      /* from last call */
+                           *pin_conn,       /* last connection with packet in */
+                           *current;        /* currently busy connection */
+        lsquic_time_t       last_log;
+    }                                  busy;
+#endif
 };
 
 
@@ -896,6 +912,19 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
     }
 #if LSQUIC_CONN_STATS
     update_stats_sum(engine, conn);
+    if (engine->busy.last_conn == conn)
+        engine->busy.last_conn = NULL;
+    if (engine->busy.current == conn)
+    {
+        char cidstr[MAX_CID_LEN * 2 + 1];
+        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+            "busy connection %s is destroyed",
+            (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr));
+        engine->busy.current = NULL;
+        engine->busy.last_log = 0;
+    }
+    if (engine->busy.pin_conn == conn)
+        engine->busy.pin_conn = NULL;
 #endif
     --engine->n_conns;
     conn->cn_flags |= LSCONN_NEVER_TICKABLE;
@@ -1503,6 +1532,9 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     packet_in_data = packet_in->pi_data;
     packet_in_size = packet_in->pi_data_sz;
     conn->cn_if->ci_packet_in(conn, packet_in);
+#if LSQUIC_CONN_STATS
+    engine->busy.pin_conn = conn;
+#endif
     QLOG_PACKET_RX(lsquic_conn_log_cid(conn), packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
     return 0;
@@ -1588,8 +1620,7 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
             : 0);
         fprintf(engine->stats_fh, "    ACK frames: %lu\n", stats->in.n_acks);
         fprintf(engine->stats_fh, "    ACK frames processed: %lu\n", stats->in.n_acks_proc);
-        fprintf(engine->stats_fh, "    ACK frames merged to new: %lu\n", stats->in.n_acks_merged[0]);
-        fprintf(engine->stats_fh, "    ACK frames merged to old: %lu\n", stats->in.n_acks_merged[1]);
+        fprintf(engine->stats_fh, "    ACK frames merged: %lu\n", stats->in.n_acks_merged);
         fprintf(engine->stats_fh, "Out:\n");
         fprintf(engine->stats_fh, "    Total bytes: %lu\n", stats->out.bytes);
         fprintf(engine->stats_fh, "    packets: %lu\n", stats->out.packets);
@@ -1956,6 +1987,14 @@ lsquic_engine_process_conns (lsquic_engine_t *engine)
     lsquic_conn_t *conn;
     lsquic_time_t now;
 
+#if LSQUIC_CONN_STATS
+    if (engine->busy.pin_conn)
+    {
+        update_busy_detector(engine, engine->busy.pin_conn, 1);
+        engine->busy.pin_conn = NULL;
+    }
+#endif
+
     ENGINE_IN(engine);
 
     now = lsquic_time_now();
@@ -2263,6 +2302,27 @@ apply_hp (struct conns_out_iter *iter)
 }
 
 
+#if LSQUIC_CONN_STATS
+static void
+update_batch_size_stats (struct lsquic_engine *engine, unsigned batch_size)
+{
+    struct batch_size_stats *const stats = &engine->pub.enp_batch_size_stats;
+
+    ++stats->count;
+    if (batch_size > stats->max)
+        stats->max = batch_size;
+    if (batch_size < stats->min || 0 == stats->min)
+        stats->min = batch_size;
+    if (stats->avg)
+        stats->avg = ((float) batch_size - stats->avg) * 0.4 + stats->avg;
+    else
+        stats->avg = (float) batch_size;
+}
+
+
+#endif
+
+
 static unsigned
 send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
             unsigned n_to_send)
@@ -2273,6 +2333,10 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
     size_t count;
     CONST_BATCH struct out_batch *const batch = sb_ctx->batch;
     struct lsquic_packet_out *CONST_BATCH *packet_out, *CONST_BATCH *end;
+
+#if LSQUIC_CONN_STATS
+    update_batch_size_stats(engine, n_to_send);
+#endif
 
     apply_hp(sb_ctx->conns_iter);
 #if CAN_LOSE_PACKETS
@@ -2690,6 +2754,39 @@ next_new_full_conn (struct conns_stailq *new_full_conns)
 }
 
 
+#if LSQUIC_CONN_STATS
+static void
+maybe_log_conn_stats (struct lsquic_engine *engine, struct lsquic_conn *conn,
+                                                            lsquic_time_t now)
+{
+    char cidstr[MAX_CID_LEN * 2 + 1];
+
+    if (!LSQ_LOG_ENABLED_EXT(LSQ_LOG_NOTICE, LSQLM_CONN_STATS))
+        return;
+
+    if (conn->cn_last_ticked + 1000000 >= now)
+    {
+        if (0 == engine->busy.last_log
+                            || engine->busy.last_log + 1000000 - 1000 < now)
+        {
+            engine->busy.last_log = now;
+            conn->cn_if->ci_log_stats(conn);
+        }
+    }
+    else
+    {
+        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+            "stop logging status for connection %s: no longer busy",
+            (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr));
+        engine->busy.current = NULL;
+        engine->busy.last_log = 0;
+    }
+}
+
+
+#endif
+
+
 static void
 process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                      lsquic_time_t now)
@@ -2726,6 +2823,10 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                             || (conn = next_new_full_conn(&new_full_conns)))
     {
         tick_st = conn->cn_if->ci_tick(conn, now);
+#if LSQUIC_CONN_STATS
+        if (conn == engine->busy.current)
+            maybe_log_conn_stats(engine, conn, now);
+#endif
         conn->cn_last_ticked = now + i /* Maintain relative order */ ++;
         if (tick_st & TICK_PROMOTE)
         {
@@ -2973,13 +3074,49 @@ lsquic_engine_cooldown (lsquic_engine_t *engine)
 }
 
 
+#if LSQUIC_CONN_STATS
+static void
+update_busy_detector (struct lsquic_engine *engine, struct lsquic_conn *conn,
+                                                                    int immed)
+{
+    char cidstr[MAX_CID_LEN * 2 + 1];
+
+    if (!(LSQ_LOG_ENABLED_EXT(LSQ_LOG_NOTICE, LSQLM_CONN_STATS)
+                                                && conn->cn_if->ci_log_stats))
+        return;
+
+    if (conn == engine->busy.last_conn)
+    {
+        engine->busy.immed_ticks <<= 1u;
+        engine->busy.immed_ticks |= immed;
+        if (MAX_IMMED_TICKS == engine->busy.immed_ticks)
+        {
+            if (engine->busy.current != conn)
+                lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+                    "connection %s marked busy: it's had %u immediate ticks "
+                    "in a row",
+                    (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr),
+                    (unsigned) (sizeof(engine->busy.immed_ticks) * 8));
+            engine->busy.current = conn;
+        }
+    }
+    else
+        engine->busy.immed_ticks <<= 1;
+
+    engine->busy.last_conn = conn;
+}
+
+
+#endif
+
+
 int
 lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
 {
     const struct attq_elem *next_attq;
     lsquic_time_t now, next_time;
-#if LSQUIC_DEBUG_NEXT_ADV_TICK
-    const struct lsquic_conn *conn;
+#if LSQUIC_DEBUG_NEXT_ADV_TICK || LSQUIC_CONN_STATS
+    struct lsquic_conn *conn;
     const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
 #endif
 
@@ -2996,6 +3133,10 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
             lsquic_mh_count(&engine->conns_out),
             lsquic_mh_count(&engine->conns_out) != 1, "s",
             CID_BITS(lsquic_conn_log_cid(conn)));
+#endif
+#if LSQUIC_CONN_STATS
+        conn = lsquic_mh_peek(&engine->conns_out);
+        update_busy_detector(engine, conn, 1);
 #endif
         *diff = 0;
         return 1;
@@ -3021,6 +3162,10 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
             lsquic_mh_count(&engine->conns_tickable),
             lsquic_mh_count(&engine->conns_tickable) != 1, "s",
             CID_BITS(lsquic_conn_log_cid(conn)));
+#endif
+#if LSQUIC_CONN_STATS
+        conn = lsquic_mh_peek(&engine->conns_tickable);
+        update_busy_detector(engine, conn, 1);
 #endif
         *diff = 0;
         return 1;
@@ -3075,6 +3220,25 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     else
         LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
 #endif
+
+#if LSQUIC_CONN_STATS
+    if (next_attq)
+        update_busy_detector(engine, next_attq->ae_conn,
+            /* Immediate if: a) time is now or in the past */
+                              *diff <= 0
+                        /*   b) next event is pacer, which means that the
+                         *      connection wants to send, but is prevented
+                         *      by the pacer from doing so.
+                         */
+                            || next_attq->ae_why == AEW_PACER
+                        /*   c) next event is to retransmit data (meaning
+                         *      that there is data in flight) and the
+                         *      time is small, which implies a small RTT.
+                         */
+                            || (next_attq->ae_why == N_AEWS + AL_RETX_APP
+                                    && *diff < 5000));
+#endif
+
     return 1;
 }
 

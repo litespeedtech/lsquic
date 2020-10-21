@@ -899,6 +899,9 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
     packet_sz = packet_out_sent_sz(packet_out);
 
     ++ctl->sc_loss_count;
+#if LSQUIC_CONN_STATS
+    ++ctl->sc_conn_pub->conn_stats->out.lost_packets;
+#endif
 
     if (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))
     {

@@ -849,6 +849,20 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_EXT_HTTP_PRIO`
 
+    .. member:: int             es_qpack_experiment
+
+       If set to 1, QPACK statistics are logged per connection.
+
+       If set to 2, QPACK experiments are run.  In this mode, encoder
+       and decoder setting values are randomly selected (from the range
+       [0, whatever is specified in es_qpack_(enc|dec)_*]) and these
+       values along with compression ratio and user agent are logged at
+       NOTICE level when connection is destroyed.  The purpose of these
+       experiments is to use compression performance statistics to figure
+       out a good set of default values.
+
+       Default value is :macro:`LSQUIC_DF_QPACK_EXPERIMENT`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1076,6 +1090,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_EXT_HTTP_PRIO
 
     Turn on Extensible HTTP Priorities by default.
+
+.. macro:: LSQUIC_DF_QPACK_EXPERIMENT
+
+    By default, QPACK experiments are turned off.
 
 Receiving Packets
 -----------------

@@ -1,3 +1,13 @@
+2020-10-21
+    - 2.23.2
+    - Add QPACK stats collection and experimentation mode, see the new
+      es_qpack_experiment setting.
+    - Log busy connection stats every second using the new "conn-stats"
+      log module.
+    - Log about skipping only once.
+    - Update HTTP/3 greased frame type formula.
+    - Use ls-qpack v2.2.1.
+
 2020-10-13
     - 2.23.1
     - [FEATURE] IETF Client 0-RTT support.

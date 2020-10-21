@@ -13,6 +13,7 @@
 struct lsquic_conn;
 struct lsquic_stream;
 struct lsquic_stream_if;
+struct qpack_exp_record;
 
 struct qpack_enc_hdl
 {
@@ -26,6 +27,7 @@ struct qpack_enc_hdl
     struct lsquic_stream    *qeh_enc_sm_out;
     struct frab_list         qeh_fral;
     struct lsquic_stream    *qeh_dec_sm_in;
+    struct qpack_exp_record *qeh_exp_rec;
     size_t                   qeh_tsu_sz;
     unsigned char            qeh_tsu_buf[LSQPACK_LONGEST_SDTC];
 };

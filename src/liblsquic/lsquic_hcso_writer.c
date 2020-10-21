@@ -119,7 +119,8 @@ hcso_setting_type2bits (struct hcso_writer *writer, unsigned setting)
 
 int
 lsquic_hcso_write_settings (struct hcso_writer *writer,
-                        const struct lsquic_engine_settings *settings,
+                        unsigned max_header_list_size,
+                        unsigned dyn_table_size, unsigned max_risked_streams,
                         int is_server)
 {
     unsigned char *p;
@@ -149,36 +150,36 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     *p++ = HQFT_SETTINGS;
     p += frame_size_len;
 
-    if (settings->es_max_header_list_size != HQ_DF_MAX_HEADER_LIST_SIZE)
+    if (max_header_list_size != HQ_DF_MAX_HEADER_LIST_SIZE)
     {
         /* Write out SETTINGS_MAX_HEADER_LIST_SIZE */
         bits = hcso_setting_type2bits(writer, HQSID_MAX_HEADER_LIST_SIZE);
         vint_write(p, HQSID_MAX_HEADER_LIST_SIZE, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(settings->es_max_header_list_size);
-        vint_write(p, settings->es_max_header_list_size, bits, 1 << bits);
+        bits = vint_val2bits(max_header_list_size);
+        vint_write(p, max_header_list_size, bits, 1 << bits);
         p += 1 << bits;
     }
 
-    if (settings->es_qpack_dec_max_size != HQ_DF_QPACK_MAX_TABLE_CAPACITY)
+    if (dyn_table_size != HQ_DF_QPACK_MAX_TABLE_CAPACITY)
     {
         /* Write out SETTINGS_QPACK_MAX_TABLE_CAPACITY */
         bits = hcso_setting_type2bits(writer, HQSID_QPACK_MAX_TABLE_CAPACITY);
         vint_write(p, HQSID_QPACK_MAX_TABLE_CAPACITY, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(settings->es_qpack_dec_max_size);
-        vint_write(p, settings->es_qpack_dec_max_size, bits, 1 << bits);
+        bits = vint_val2bits(dyn_table_size);
+        vint_write(p, dyn_table_size, bits, 1 << bits);
         p += 1 << bits;
     }
 
-    if (settings->es_qpack_dec_max_blocked != HQ_DF_QPACK_BLOCKED_STREAMS)
+    if (max_risked_streams != HQ_DF_QPACK_BLOCKED_STREAMS)
     {
         /* Write out SETTINGS_QPACK_BLOCKED_STREAMS */
         bits = hcso_setting_type2bits(writer, HQSID_QPACK_BLOCKED_STREAMS);
         vint_write(p, HQSID_QPACK_BLOCKED_STREAMS, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(settings->es_qpack_dec_max_blocked);
-        vint_write(p, settings->es_qpack_dec_max_blocked, bits, 1 << bits);
+        bits = vint_val2bits(max_risked_streams);
+        vint_write(p, max_risked_streams, bits, 1 << bits);
         p += 1 << bits;
     }
 

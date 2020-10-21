@@ -76,6 +76,7 @@
 #include "lsquic_headers.h"
 #include "lsquic_crand.h"
 #include "ls-sfparser.h"
+#include "lsquic_qpack_exp.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
 #define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
@@ -512,6 +513,10 @@ struct ietf_full_conn
     unsigned short              ifc_min_dg_sz,
                                 ifc_max_dg_sz;
     struct inc_ack_stats        ifc_ias;
+#if LSQUIC_CONN_STATS
+    struct conn_stats           ifc_stats,
+                               *ifc_last_stats;
+#endif
     struct ack_info             ifc_ack;
 };
 
@@ -524,6 +529,14 @@ struct ietf_full_conn
 
 #define NPATH2CPATH(npath_) ((struct conn_path *) \
             ((char *) (npath_) - offsetof(struct conn_path, cop_path)))
+
+#if LSQUIC_CONN_STATS
+#define CONN_STATS(what_, count_) do {                                  \
+    conn->ifc_stats.what_ += (count_);                                  \
+} while (0)
+#else
+#define CONN_STATS(what_, count_)
+#endif
 
 static const struct ver_neg server_ver_neg;
 
@@ -1221,6 +1234,9 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_pub.send_ctl = &conn->ifc_send_ctl;
     conn->ifc_pub.enpub = enpub;
     conn->ifc_pub.mm = &enpub->enp_mm;
+#if LSQUIC_CONN_STATS
+    conn->ifc_pub.conn_stats = &conn->ifc_stats;
+#endif
     conn->ifc_pub.path = CUR_NPATH(conn);
     TAILQ_INIT(&conn->ifc_pub.sending_streams);
     TAILQ_INIT(&conn->ifc_pub.read_streams);
@@ -1847,6 +1863,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         ABORT_ERROR("generating ACK frame failed: %d", errno);
         return -1;
     }
+    CONN_STATS(out.acks, 1);
     char buf[0x100];
     lsquic_hexstr(packet_out->po_data + packet_out->po_data_sz, w, buf, sizeof(buf));
     LSQ_DEBUG("ACK bytes: %s", buf);
@@ -3076,6 +3093,24 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
         lsquic_hash_destroy(conn->ifc_bpus);
     }
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
+#if LSQUIC_CONN_STATS
+    if (conn->ifc_flags & IFC_CREATED_OK)
+    {
+        LSQ_NOTICE("# ticks: %lu", conn->ifc_stats.n_ticks);
+        LSQ_NOTICE("received %lu packets, of which %lu were not decryptable, %lu were "
+            "dups and %lu were errors; sent %lu packets, avg stream data per outgoing"
+            " packet is %lu bytes",
+            conn->ifc_stats.in.packets, conn->ifc_stats.in.undec_packets,
+            conn->ifc_stats.in.dup_packets, conn->ifc_stats.in.err_packets,
+            conn->ifc_stats.out.packets,
+            conn->ifc_stats.out.stream_data_sz / conn->ifc_stats.out.packets);
+        LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
+            conn->ifc_stats.in.n_acks, conn->ifc_stats.in.n_acks_proc,
+            conn->ifc_stats.in.n_acks_merged);
+    }
+    if (conn->ifc_last_stats)
+        free(conn->ifc_last_stats);
+#endif
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "full connection destroyed");
     free(conn->ifc_errmsg);
     free(conn);
@@ -3503,11 +3538,52 @@ apply_trans_params (struct ietf_full_conn *conn,
 }
 
 
+static void
+randomize_qpack_settings (struct ietf_full_conn *conn, const char *side,
+                        unsigned *dyn_table_size, unsigned *max_risked_streams)
+{
+    const unsigned char nybble = lsquic_crand_get_nybble(
+                                                    conn->ifc_enpub->enp_crand);
+    /* For each setting, select one of four levels:
+     *  Table size:     0, 1/4, 1/2, and 1/1 of dyn_table_size
+     *  Risked streams: 0, 1, 5, and max_risked_streams
+     */
+    switch (nybble & 3)
+    {   case 0: *dyn_table_size  = 0; break;
+        case 1: *dyn_table_size /= 4; break;
+        case 2: *dyn_table_size /= 2; break;
+        default:                      break;
+    }
+    if (*dyn_table_size)
+        switch ((nybble >> 2) & 3)
+        {   case 0: *max_risked_streams = 0;                           break;
+            case 1: *max_risked_streams = MIN(1, *max_risked_streams); break;
+            case 2: *max_risked_streams = MIN(5, *max_risked_streams); break;
+            default:                                                   break;
+        }
+    else
+        *max_risked_streams = 0;
+    LSQ_INFO("randomized QPACK %s settings: table size: %u; risked "
+        "streams: %u", side, *dyn_table_size, *max_risked_streams);
+}
+
+
 static int
 init_http (struct ietf_full_conn *conn)
 {
+    unsigned max_risked_streams, dyn_table_size;
+
     fiu_return_on("full_conn_ietf/init_http", -1);
     lsquic_qeh_init(&conn->ifc_qeh, &conn->ifc_conn);
+    if (conn->ifc_settings->es_qpack_experiment)
+    {
+        conn->ifc_qeh.qeh_exp_rec = lsquic_qpack_exp_new();
+        if (conn->ifc_qeh.qeh_exp_rec)
+        {
+            conn->ifc_qeh.qeh_exp_rec->qer_flags |= QER_SERVER & conn->ifc_flags;
+            conn->ifc_qeh.qeh_exp_rec->qer_flags |= QER_ENCODER;
+        }
+    }
     if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER,
                                                                 SD_UNI))
     {
@@ -3521,8 +3597,14 @@ init_http (struct ietf_full_conn *conn)
         ABORT_WARN("cannot create outgoing control stream");
         return -1;
     }
+    dyn_table_size = conn->ifc_settings->es_qpack_dec_max_size;
+    max_risked_streams = conn->ifc_settings->es_qpack_dec_max_blocked;
+    if (conn->ifc_settings->es_qpack_experiment == 2)
+        randomize_qpack_settings(conn, "decoder", &dyn_table_size,
+                                                    &max_risked_streams);
     if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
-            &conn->ifc_enpub->enp_settings, conn->ifc_flags & IFC_SERVER))
+                conn->ifc_settings->es_max_header_list_size, dyn_table_size,
+                max_risked_streams, conn->ifc_flags & IFC_SERVER))
     {
         ABORT_WARN("cannot write SETTINGS");
         return -1;
@@ -3537,8 +3619,7 @@ init_http (struct ietf_full_conn *conn)
     }
     if (0 != lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
                             conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
-                            conn->ifc_settings->es_qpack_dec_max_size,
-                            conn->ifc_settings->es_qpack_dec_max_blocked))
+                            dyn_table_size, max_risked_streams))
     {
         ABORT_WARN("cannot initialize QPACK decoder");
         return -1;
@@ -4715,6 +4796,7 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
     unsigned n_unacked;
     int one_rtt_acked;
 
+    CONN_STATS(in.n_acks_proc, 1);
     LSQ_DEBUG("Processing ACK");
     one_rtt_acked = lsquic_send_ctl_1rtt_acked(&conn->ifc_send_ctl);
     n_unacked = lsquic_send_ctl_n_unacked(&conn->ifc_send_ctl);
@@ -5413,6 +5495,8 @@ process_stream_frame (struct ietf_full_conn *conn,
     }
     EV_LOG_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame);
     LSQ_DEBUG("Got stream frame for stream #%"PRIu64, stream_frame->stream_id);
+    CONN_STATS(in.stream_frames, 1);
+    CONN_STATS(in.stream_data_sz, stream_frame->data_frame.df_size);
 
     if (conn_is_send_only_stream(conn, stream_frame->stream_id))
     {
@@ -5515,6 +5599,8 @@ process_ack_frame (struct ietf_full_conn *conn,
     int parsed_len;
     lsquic_time_t warn_time;
 
+    CONN_STATS(in.n_acks, 1);
+
     if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
         new_acki = conn->ifc_pub.mm->acki;
     else
@@ -5561,6 +5647,7 @@ process_ack_frame (struct ietf_full_conn *conn,
     {
         if (0 == lsquic_merge_acks(&conn->ifc_ack, new_acki))
         {
+            CONN_STATS(in.n_acks_merged, 1);
             ++conn->ifc_ias.n_acks;
             LSQ_DEBUG("merged into saved ACK, getting %s",
                 (lsquic_acki2str(&conn->ifc_ack, conn->ifc_pub.mm->ack_str,
@@ -6888,6 +6975,8 @@ process_regular_packet (struct ietf_full_conn *conn,
     if (HETY_RETRY == packet_in->pi_header_type)
         return process_retry_packet(conn, packet_in);
 
+    CONN_STATS(in.packets, 1);
+
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
     if (pns == PNS_INIT)
         conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
@@ -6957,12 +7046,14 @@ process_regular_packet (struct ietf_full_conn *conn,
             }
             else if (dec_packin == DECPI_BADCRYPT)
             {
+                CONN_STATS(in.undec_packets, 1);
                 LSQ_INFO("could not decrypt packet (type %s)",
                                     lsquic_hety2str[packet_in->pi_header_type]);
                 return 0;
             }
             else
             {
+                CONN_STATS(in.undec_packets, 1);
                 LSQ_INFO("packet is too short to be decrypted");
                 return 0;
             }
@@ -7095,12 +7186,14 @@ process_regular_packet (struct ietf_full_conn *conn,
         }
         return 0;
     case REC_ST_DUP:
+        CONN_STATS(in.dup_packets, 1);
         LSQ_INFO("packet %"PRIu64" is a duplicate", packet_in->pi_packno);
         return 0;
     default:
         assert(0);
         /* Fall through */
     case REC_ST_ERR:
+        CONN_STATS(in.err_packets, 1);
         LSQ_INFO("error processing packet %"PRIu64, packet_in->pi_packno);
         return -1;
     }
@@ -7247,6 +7340,7 @@ ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
 
+    CONN_STATS(in.bytes, packet_in->pi_data_sz);
     set_earliest_idle_alarm(conn, conn->ifc_idle_to
                     ? packet_in->pi_received + conn->ifc_idle_to : 0);
     if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
@@ -7353,6 +7447,8 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
                                 conn->ifc_enpub->enp_crand))) * 1000000);
     conn->ifc_pub.bytes_out += lsquic_packet_out_sent_sz(&conn->ifc_conn,
                                                                 packet_out);
+    CONN_STATS(out.packets, 1);
+    CONN_STATS(out.bytes, lsquic_packet_out_sent_sz(lconn, packet_out));
 }
 
 
@@ -7772,6 +7868,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         goto end;                                                       \
     }                                                                   \
 } while (0)
+
+    CONN_STATS(n_ticks, 1);
 
     if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
     {
@@ -8328,6 +8426,57 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
 }
 
 
+#if LSQUIC_CONN_STATS
+static const struct conn_stats *
+ietf_full_conn_ci_get_stats (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    return &conn->ifc_stats;
+}
+
+
+#include "lsquic_cong_ctl.h"
+
+static void
+ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct batch_size_stats *const bs = &conn->ifc_enpub->enp_batch_size_stats;
+    struct conn_stats diff_stats;
+    uint64_t cwnd;
+    char cidstr[MAX_CID_LEN * 2 + 1];
+
+    if (!conn->ifc_last_stats)
+    {
+        conn->ifc_last_stats = calloc(1, sizeof(*conn->ifc_last_stats));
+        if (!conn->ifc_last_stats)
+            return;
+        LSQ_DEBUG("allocated last stats");
+    }
+
+    cwnd = conn->ifc_send_ctl.sc_ci->cci_get_cwnd(
+                                            conn->ifc_send_ctl.sc_cong_ctl);
+    lsquic_conn_stats_diff(&conn->ifc_stats, conn->ifc_last_stats, &diff_stats);
+    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+        "%s: ticks: %lu; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
+        ", avail: %"PRIu64"; packets: sent: %lu, lost: %lu, retx: %lu, rcvd: %lu"
+        "; batch: count: %u; min: %u; max: %u; avg: %.2f",
+        (lsquic_cid2str(LSQUIC_LOG_CONN_ID, cidstr), cidstr),
+        diff_stats.n_ticks, cwnd,
+        conn->ifc_pub.conn_cap.cc_max,
+        lsquic_conn_cap_avail(&conn->ifc_pub.conn_cap),
+        diff_stats.out.packets, diff_stats.out.lost_packets,
+        diff_stats.out.retx_packets, diff_stats.in.packets,
+        bs->count, bs->min, bs->max, bs->avg);
+
+    *conn->ifc_last_stats = conn->ifc_stats;
+    memset(bs, 0, sizeof(*bs));
+}
+
+
+#endif
+
+
 #define IETF_FULL_CONN_FUNCS \
     .ci_abort                =  ietf_full_conn_ci_abort, \
     .ci_abort_error          =  ietf_full_conn_ci_abort_error, \
@@ -8376,6 +8525,10 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
     .ci_packet_too_large    =  ietf_full_conn_ci_packet_too_large,
+#if LSQUIC_CONN_STATS
+    .ci_get_stats           =  ietf_full_conn_ci_get_stats,
+    .ci_log_stats           =  ietf_full_conn_ci_log_stats,
+#endif
 };
 static const struct conn_iface *ietf_full_conn_iface_ptr =
                                                 &ietf_full_conn_iface;
@@ -8385,6 +8538,10 @@ static const struct conn_iface ietf_full_conn_prehsk_iface = {
     .ci_next_packet_to_send =  ietf_full_conn_ci_next_packet_to_send_pre_hsk,
     .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent_pre_hsk,
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent_pre_hsk,
+#if LSQUIC_CONN_STATS
+    .ci_get_stats           =  ietf_full_conn_ci_get_stats,
+    .ci_log_stats           =  ietf_full_conn_ci_log_stats,
+#endif
 };
 static const struct conn_iface *ietf_full_conn_prehsk_iface_ptr =
                                                 &ietf_full_conn_prehsk_iface;
@@ -8512,6 +8669,18 @@ on_settings_frame (void *ctx)
                                 conn->ifc_peer_hq_settings.header_table_size);
     max_risked_streams = MIN(conn->ifc_settings->es_qpack_enc_max_blocked,
                             conn->ifc_peer_hq_settings.qpack_blocked_streams);
+    if (conn->ifc_settings->es_qpack_experiment == 2)
+        randomize_qpack_settings(conn, "encoder", &dyn_table_size,
+                                                        &max_risked_streams);
+    if (conn->ifc_qeh.qeh_exp_rec)
+    {
+        conn->ifc_qeh.qeh_exp_rec->qer_peer_max_size
+                        = conn->ifc_peer_hq_settings.header_table_size;
+        conn->ifc_qeh.qeh_exp_rec->qer_used_max_size = dyn_table_size;
+        conn->ifc_qeh.qeh_exp_rec->qer_peer_max_blocked
+                        = conn->ifc_peer_hq_settings.qpack_blocked_streams;
+        conn->ifc_qeh.qeh_exp_rec->qer_used_max_blocked = max_risked_streams;
+    }
     if (0 != lsquic_qeh_settings(&conn->ifc_qeh,
             conn->ifc_peer_hq_settings.header_table_size,
             dyn_table_size, max_risked_streams, conn->ifc_flags & IFC_SERVER))

@@ -70,6 +70,7 @@ liblsquic_a_SOURCES = \
 	lsquic_qdec_hdl.c \
 	lsquic_qenc_hdl.c \
 	lsquic_qlog.c \
+	lsquic_qpack_exp.c \
 	lsquic_rechist.c \
 	lsquic_rtt.c \
 	lsquic_send_ctl.c \

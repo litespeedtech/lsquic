@@ -26,6 +26,8 @@
 #include "lsqpack.h"
 #include "lsxpack_header.h"
 #include "lsquic_conn.h"
+#include "lsquic_qpack_exp.h"
+#include "lsquic_util.h"
 #include "lsquic_qenc_hdl.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_QENC_HDL
@@ -140,12 +142,27 @@ lsquic_qeh_settings (struct qpack_enc_hdl *qeh, unsigned max_table_size,
 }
 
 
+static void
+qeh_log_and_clean_exp_rec (struct qpack_enc_hdl *qeh)
+{
+    char buf[0x400];
+
+    qeh->qeh_exp_rec->qer_comp_ratio = lsqpack_enc_ratio(&qeh->qeh_encoder);
+    (void) lsquic_qpack_exp_to_xml(qeh->qeh_exp_rec, buf, sizeof(buf));
+    LSQ_NOTICE("%s", buf);
+    lsquic_qpack_exp_destroy(qeh->qeh_exp_rec);
+    qeh->qeh_exp_rec = NULL;
+}
+
+
 void
 lsquic_qeh_cleanup (struct qpack_enc_hdl *qeh)
 {
     if (qeh->qeh_flags & QEH_INITIALIZED)
     {
         LSQ_DEBUG("cleanup");
+        if (qeh->qeh_exp_rec)
+            qeh_log_and_clean_exp_rec(qeh);
         lsqpack_enc_cleanup(&qeh->qeh_encoder);
         lsquic_frab_list_cleanup(&qeh->qeh_fral);
         memset(qeh, 0, sizeof(*qeh));
@@ -323,6 +340,28 @@ const struct lsquic_stream_if *const lsquic_qeh_dec_sm_in_if =
                                                     &qeh_dec_sm_in_if;
 
 
+static void
+qeh_maybe_set_user_agent (struct qpack_enc_hdl *qeh,
+                                    const struct lsquic_http_headers *headers)
+{
+    const char *const name = qeh->qeh_exp_rec->qer_flags & QER_SERVER ?
+                                    "server" : "user-agent";
+    const size_t len = qeh->qeh_exp_rec->qer_flags & QER_SERVER ? 6 : 10;
+    int i;
+
+    for (i = 0; i < headers->count; ++i)
+        if (len == headers->headers[i].name_len
+                && 0 == memcmp(name,
+                        lsxpack_header_get_name(&headers->headers[i]), len))
+        {
+            qeh->qeh_exp_rec->qer_user_agent = strndup(
+                            lsxpack_header_get_value(&headers->headers[i]),
+                            headers->headers[i].val_len);
+            break;
+        }
+}
+
+
 static enum qwh_status
 qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     unsigned seqno, const struct lsquic_http_headers *headers,
@@ -346,6 +385,17 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     if (!enc_buf)
         return QWH_ERR;
 #endif
+
+    if (qeh->qeh_exp_rec)
+    {
+        const lsquic_time_t now = lsquic_time_now();
+        if (qeh->qeh_exp_rec->qer_hblock_count == 0)
+            qeh->qeh_exp_rec->qer_first_req = now;
+        qeh->qeh_exp_rec->qer_last_req = now;
+        ++qeh->qeh_exp_rec->qer_hblock_count;
+        if (!qeh->qeh_exp_rec->qer_user_agent)
+            qeh_maybe_set_user_agent(qeh, headers);
+    }
 
     s = lsqpack_enc_start_header(&qeh->qeh_encoder, stream_id, 0);
     if (s != 0)
@@ -443,6 +493,8 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         *prefix_sz = (size_t) nw;
     }
     *headers_sz = p - buf;
+    if (qeh->qeh_exp_rec)
+        qeh->qeh_exp_rec->qer_hblock_size += p - buf;
     if (lsquic_frab_list_empty(&qeh->qeh_fral))
     {
         LSQ_DEBUG("all %zd bytes of encoder stream written out; header block "

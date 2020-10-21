@@ -203,6 +203,7 @@ struct full_conn
     }                            fc_hsk_ctx;
 #if LSQUIC_CONN_STATS
     struct conn_stats            fc_stats;
+    struct conn_stats           *fc_last_stats;
 #endif
 #if KEEP_CLOSED_STREAM_HISTORY
     /* Rolling log of histories of closed streams.  Older entries are
@@ -1117,6 +1118,7 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
     LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
         conn->fc_stats.in.n_acks, conn->fc_stats.in.n_acks_proc,
         conn->fc_stats.in.n_acks_merged);
+    free(conn->fc_last_stats);
 #endif
     while ((sitr = STAILQ_FIRST(&conn->fc_stream_ids_to_reset)))
     {
@@ -4439,6 +4441,44 @@ full_conn_ci_get_stats (struct lsquic_conn *lconn)
     struct full_conn *conn = (struct full_conn *) lconn;
     return &conn->fc_stats;
 }
+
+#include "lsquic_cong_ctl.h"
+
+static void
+full_conn_ci_log_stats (struct lsquic_conn *lconn)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    struct batch_size_stats *const bs = &conn->fc_enpub->enp_batch_size_stats;
+    struct conn_stats diff_stats;
+    uint64_t cwnd;
+    char cidstr[MAX_CID_LEN * 2 + 1];
+
+    if (!conn->fc_last_stats)
+    {
+        conn->fc_last_stats = calloc(1, sizeof(*conn->fc_last_stats));
+        if (!conn->fc_last_stats)
+            return;
+        LSQ_DEBUG("allocated last stats");
+    }
+
+    cwnd = conn->fc_send_ctl.sc_ci->cci_get_cwnd(
+                                            conn->fc_send_ctl.sc_cong_ctl);
+    lsquic_conn_stats_diff(&conn->fc_stats, conn->fc_last_stats, &diff_stats);
+    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+        "%s: ticks: %lu; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
+        ", avail: %"PRIu64"; packets: sent: %lu, lost: %lu, retx: %lu, rcvd: %lu"
+        "; batch: count: %u; min: %u; max: %u; avg: %.2f",
+        (lsquic_cid2str(LSQUIC_LOG_CONN_ID, cidstr), cidstr),
+        diff_stats.n_ticks, cwnd,
+        conn->fc_pub.conn_cap.cc_max,
+        lsquic_conn_cap_avail(&conn->fc_pub.conn_cap),
+        diff_stats.out.packets, diff_stats.out.lost_packets,
+        diff_stats.out.retx_packets, diff_stats.in.packets,
+        bs->count, bs->min, bs->max, bs->avg);
+
+    *conn->fc_last_stats = conn->fc_stats;
+    memset(bs, 0, sizeof(*bs));
+}
 #endif
 
 
@@ -4470,6 +4510,7 @@ static const struct conn_iface full_conn_iface = {
     .ci_get_path             =  full_conn_ci_get_path,
 #if LSQUIC_CONN_STATS
     .ci_get_stats            =  full_conn_ci_get_stats,
+    .ci_log_stats            =  full_conn_ci_log_stats,
 #endif
     .ci_going_away           =  full_conn_ci_going_away,
     .ci_hsk_done             =  full_conn_ci_hsk_done,

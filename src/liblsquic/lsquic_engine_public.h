@@ -83,6 +83,13 @@ struct lsquic_engine_public {
      */
     unsigned char                   enp_quic_ctx_buf[2][200];
     unsigned                        enp_quic_ctx_sz[2];
+#if LSQUIC_CONN_STATS
+    struct batch_size_stats {
+        unsigned    min, max,   /* Minimum and maximum batch sizes */
+                    count;      /* Number of batches sent */
+        float       avg;        /* Average batch size */
+    }                               enp_batch_size_stats;
+#endif
 };
 
 /* Put connection onto the Tickable Queue if it is not already on it.  If

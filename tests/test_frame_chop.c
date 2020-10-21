@@ -29,6 +29,7 @@
 #include "lsquic_frame_reader.h"
 #if LSQUIC_CONN_STATS
 #include "lsquic_int_types.h"
+#include "lsquic_hash.h"
 #include "lsquic_conn.h"
 #endif
 

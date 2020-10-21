@@ -14,6 +14,7 @@ struct lsquic_conn;
 struct lsquic_stream;
 struct lsquic_stream_if;
 struct lsquic_engine_public;
+struct qpack_exp_record;
 
 
 struct qpack_dec_hdl
@@ -33,6 +34,7 @@ struct qpack_dec_hdl
     void                    *qdh_hsi_ctx;
     void                   (*qdh_on_dec_sent_func)(void *);
     void                    *qdh_on_dec_sent_ctx;
+    struct qpack_exp_record *qdh_exp_rec;
 };
 
 int

@@ -95,14 +95,25 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                                                         reader->hr_frame_type);
                 return -1;
             default:
-                if (!(reader->hr_frame_type >= 0xB &&
-                        (reader->hr_frame_type - 0xB) % 0x1F == 0))
-                    LSQ_INFO("unknown frame type 0x%"PRIX64" -- skipping",
-                                                        reader->hr_frame_type);
+            {
+            /* From [draft-ietf-quic-http-31] Section 7.2.8:
+             " Frame types of the format "0x1f * N + 0x21" for non-negative
+             " integer values of N are reserved to exercise the requirement
+             " that unknown types be ignored
+             */
+                enum lsq_log_level L;
+                if (!(reader->hr_frame_type >= 0x21 &&
+                        (reader->hr_frame_type - 0x21) % 0x1F == 0))
+                    /* Non-grease: log with higher level: */
+                    L = LSQ_LOG_INFO;
+                else
+                    L = LSQ_LOG_DEBUG;
+                LSQ_LOG(L, "unknown frame type 0x%"PRIX64": will skip "
+                    "%"PRIu64" bytes", reader->hr_frame_type,
+                    reader->hr_frame_length);
                 reader->hr_state = HR_SKIPPING;
-                LSQ_DEBUG("unknown frame 0x%"PRIX64": will skip %"PRIu64" bytes",
-                            reader->hr_frame_type, reader->hr_frame_length);
                 break;
+            }
             }
             break;
         case HR_READ_VARINT:

@@ -6,7 +6,6 @@
 #ifndef LSQUIC_HCSO_WRITER_H
 #define LSQUIC_HCSO_WRITER_H 1
 
-struct lsquic_engine_settings;
 struct lsquic_ext_http_prio;
 struct lsquic_stream;
 
@@ -24,7 +23,7 @@ struct hcso_writer
 
 int
 lsquic_hcso_write_settings (struct hcso_writer *,
-                        const struct lsquic_engine_settings *, int);
+                                        unsigned, unsigned, unsigned, int);
 
 int
 lsquic_hcso_write_goaway (struct hcso_writer *, lsquic_stream_id_t);

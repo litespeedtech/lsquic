@@ -151,6 +151,9 @@ struct conn_iface
 #if LSQUIC_CONN_STATS
     const struct conn_stats *
     (*ci_get_stats) (struct lsquic_conn *);
+
+    void
+    (*ci_log_stats) (struct lsquic_conn *);
 #endif
 
     void
@@ -424,12 +427,18 @@ struct conn_stats {
         unsigned long       acks;
         unsigned long       packets;            /* Number of sent packets */
         unsigned long       acked_via_loss;     /* Number of packets acked via loss record */
+        unsigned long       lost_packets;
         unsigned long       retx_packets;       /* Number of retransmitted packets */
         unsigned long       bytes;              /* Overall bytes out */
         unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
         unsigned long       headers_comp;       /* Sum of compressed header bytes */
     }                   out;
 };
+
+void
+lsquic_conn_stats_diff (const struct conn_stats *cumulative,
+                        const struct conn_stats *previous,
+                        struct conn_stats *new);
 #endif
 
 #endif

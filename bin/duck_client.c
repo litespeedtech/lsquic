@@ -68,10 +68,11 @@ duck_client_on_conn_closed (lsquic_conn_t *conn)
 static ssize_t
 duck_client_on_dg_write (lsquic_conn_t *conn, void *buf, size_t sz)
 {
-    int s;
-
     /* We only write one request */
-    s = lsquic_conn_want_datagram_write(conn, 0);
+#ifndef NDEBUG
+    int s =
+#endif
+    lsquic_conn_want_datagram_write(conn, 0);
     assert(s == 1); /* Old value was "yes, we want to write a datagram" */
 
     if (sz >= sizeof(REQUEST) - 1)

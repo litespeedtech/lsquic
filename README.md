@@ -11,11 +11,10 @@ Description
 LiteSpeed QUIC (LSQUIC) Library is an open-source implementation of QUIC
 and HTTP/3 functionality for servers and clients.  Most of the code in this
 distribution is used in our own products: LiteSpeed Web Server, LiteSpeed ADC,
-and OpenLiteSpeed.  Do not hesitate to report bugs back to us.  Even better,
-send us fixes and improvements!
+and OpenLiteSpeed.
 
 Currently supported QUIC versions are Q043, Q046, Q050, ID-27, ID-28, ID-29,
-ID-30, and ID-31.  Support for newer versions will be added soon after they
+ID-30, and ID-31.  Support for newer versions is added soon after they
 are released.
 
 Documentation
@@ -156,6 +155,12 @@ The library has been tested on the following platforms:
   - ARM
 - Windows
   - x86_64
+
+Get Involved
+------------
+
+Do not hesitate to report bugs back to us.  Even better, send us fixes
+and improvements!
 
 Have fun,
 

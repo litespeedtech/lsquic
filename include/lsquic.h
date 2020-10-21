@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 23
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 2
 
 /**
  * Engine flags:
@@ -340,6 +340,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_QPACK_DEC_MAX_SIZE 4096
 #define LSQUIC_DF_QPACK_ENC_MAX_BLOCKED 100
 #define LSQUIC_DF_QPACK_ENC_MAX_SIZE 4096
+
+/* By default, QPACK experiments are turned off */
+#define LSQUIC_DF_QPACK_EXPERIMENT 0
 
 /** ECN is disabled by default */
 #define LSQUIC_DF_ECN 0
@@ -950,6 +953,21 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_EXT_HTTP_PRIO
      */
     int             es_ext_http_prio;
+
+    /**
+     * If set to 1, QPACK statistics are logged per connection.
+     *
+     * If set to 2, QPACK experiments are run.  In this mode, encoder
+     * and decoder setting values are randomly selected (from the range
+     * [0, whatever is specified in es_qpack_(enc|dec)_*]) and these
+     * values along with compression ratio and user agent are logged at
+     * NOTICE level when connection is destroyed.  The purpose of these
+     * experiments is to use compression performance statistics to figure
+     * out a good set of default values.
+     *
+     * Default value is @ref LSQUIC_DF_QPACK_EXPERIMENT.
+     */
+    int             es_qpack_experiment;
 };
 
 /* Initialize `settings' to default values */
