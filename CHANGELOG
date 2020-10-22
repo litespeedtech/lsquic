@@ -1,3 +1,8 @@
+2020-10-22
+    - 2.23.3
+    - [BUGFIX] Update packetization threshold when writing to stream
+      after packet size is reduced following an RTO.
+
 2020-10-21
     - 2.23.2
     - Add QPACK stats collection and experimentation mode, see the new

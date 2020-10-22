@@ -2538,6 +2538,7 @@ struct frame_gen_ctx
     size_t              (*fgc_size) (void *ctx);
     int                 (*fgc_fin) (void *ctx);
     gsf_read_f            fgc_read;
+    size_t                fgc_thresh;
 };
 
 
@@ -2703,6 +2704,22 @@ incr_sm_payload (struct lsquic_stream *stream, size_t incr)
 }
 
 
+static void
+maybe_resize_threshold (struct frame_gen_ctx *fg_ctx)
+{
+    struct lsquic_stream *stream = fg_ctx->fgc_stream;
+    size_t old;
+
+    if (fg_ctx->fgc_thresh)
+    {
+        old = fg_ctx->fgc_thresh;
+        fg_ctx->fgc_thresh
+            = lsquic_stream_flush_threshold(stream, fg_ctx->fgc_size(fg_ctx));
+        LSQ_DEBUG("changed threshold from %zd to %zd", old, fg_ctx->fgc_thresh);
+    }
+}
+
+
 static size_t
 frame_std_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
 {
@@ -2721,7 +2738,10 @@ frame_std_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                                                 stream->sm_n_buffered - len);
             stream->sm_n_buffered -= len;
             if (0 == stream->sm_n_buffered)
+            {
                 maybe_resize_stream_buffer(stream);
+                maybe_resize_threshold(fg_ctx);
+            }
             assert(stream->max_send_off >= stream->tosend_off + stream->sm_n_buffered);
             incr_sm_payload(stream, len);
             *fin = fg_ctx->fgc_fin(fg_ctx);
@@ -2731,6 +2751,7 @@ frame_std_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
         p += stream->sm_n_buffered;
         stream->sm_n_buffered = 0;
         maybe_resize_stream_buffer(stream);
+        maybe_resize_threshold(fg_ctx);
     }
 
     available = lsquic_stream_write_avail(fg_ctx->fgc_stream);
@@ -3297,6 +3318,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
         .fgc_stream = stream,
         .fgc_reader = reader,
         .fgc_nread_from_reader = 0,
+        .fgc_thresh = thresh,
     };
 
 #if LSQUIC_EXTRA_CHECKS
@@ -3319,7 +3341,9 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
     }
 
     seen_ok = 0;
-    while ((size = fg_ctx.fgc_size(&fg_ctx), thresh ? size >= thresh : size > 0)
+    while ((size = fg_ctx.fgc_size(&fg_ctx),
+                            fg_ctx.fgc_thresh
+                          ? size >= fg_ctx.fgc_thresh : size > 0)
            || fg_ctx.fgc_fin(&fg_ctx))
     {
         switch (stream->sm_write_to_packet(&fg_ctx, size))
@@ -3354,9 +3378,9 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
     if (use_framing && seen_ok)
         maybe_close_varsize_hq_frame(stream);
 
-    if (thresh && (swo & SWO_BUFFER))
+    if (fg_ctx.fgc_thresh && (swo & SWO_BUFFER))
     {
-        assert(size < thresh);
+        assert(size < fg_ctx.fgc_thresh);
         assert(size >= stream->sm_n_buffered);
         size -= stream->sm_n_buffered;
         if (size > 0)

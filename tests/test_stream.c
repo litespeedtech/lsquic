@@ -2469,6 +2469,80 @@ test_changing_pack_size (void)
 }
 
 
+/* This tests what happens when a stream data is buffered using one packet
+ * size, but then packet size get smaller (which is what happens when an RTO
+ * occurs), and then more data is written.
+ *
+ * In particular, the write sizes in this tests are structured to make
+ * maybe_resize_threshold() change the threshold.
+ */
+static void
+test_reducing_pack_size (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    struct lsquic_conn *lconn = &tobjs.lconn;
+    struct lsquic_stream *stream;
+    int s;
+    unsigned i;
+    unsigned char buf[0x4000];
+
+    init_buf(buf, sizeof(buf));
+
+    enum lsquic_version versions_to_test[] =
+    {
+        LSQVER_050,
+        LSQVER_ID29,
+    };
+
+    /* Particular versions should not matter as this is tests the logic in
+     * stream only, but we do it for completeness.
+     */
+    for (i = 0; i < sizeof(versions_to_test) / sizeof(versions_to_test[0]); i++)
+    {
+        g_pf = select_pf_by_ver(versions_to_test[i]);
+
+        init_test_ctl_settings(&g_ctl_settings);
+        g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+        g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+        init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+        n_closed = 0;
+        if ((1 << versions_to_test[i]) & LSQUIC_IETF_VERSIONS)
+        {
+            tobjs.ctor_flags |= SCF_IETF;
+            lconn->cn_flags |= LSCONN_IETF;
+        }
+        network_path.np_pack_size = 2000;
+        stream = new_stream(&tobjs, 5);
+        assert(("Stream initialized", stream));
+        const struct test_ctx *const test_ctx_local = tobjs.stream_if_ctx;
+        assert(("on_new_stream called correctly", stream == test_ctx_local->stream));
+
+        nw = lsquic_stream_write(stream, buf, 1400);
+        assert(stream->sm_n_allocated <= 2000);
+        assert(stream->sm_n_buffered > 0);
+        assert(("n bytes written correctly", (size_t)nw == 1400));
+
+        /* Shrink packet size */
+        network_path.np_pack_size = 1300;
+
+        nw = lsquic_stream_write(stream, buf, 3000);
+        assert(stream->sm_n_allocated <= 1300);
+        assert(stream->sm_n_buffered > 0);
+        assert(("n bytes written correctly", (size_t)nw == 3000));
+
+        s = lsquic_stream_flush(stream);
+        assert(stream->sm_n_buffered == 0);
+        assert(0 == s);
+
+        lsquic_stream_destroy(stream);
+        assert(("on_close called", 1 == n_closed));
+        deinit_test_objs(&tobjs);
+    }
+    g_pf = select_pf_by_ver(LSQVER_043);
+}
+
+
 /* Test window update logic, connection-limited */
 static void
 test_window_update1 (void)
@@ -3409,6 +3483,7 @@ main (int argc, char **argv)
     test_writing_to_stream_outside_callback();
     test_stealing_ack();
     test_changing_pack_size();
+    test_reducing_pack_size();
     test_window_update1();
     test_window_update2();
     test_forced_flush_when_conn_blocked();
