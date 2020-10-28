@@ -222,7 +222,7 @@ struct parse_funcs
      */
     size_t
     (*pf_packout_max_header_size) (const struct lsquic_conn *,
-                                    enum packet_out_flags, size_t dcid_len);
+                    enum packet_out_flags, size_t dcid_len, enum header_type);
 
     enum packno_bits
     (*pf_calc_packno_bits) (lsquic_packno_t packno,
@@ -381,7 +381,7 @@ lsquic_gquic_packout_size (const struct lsquic_conn *,
 
 size_t
 lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
-                                enum packet_out_flags flags, size_t unused);
+                enum packet_out_flags flags, size_t unused, enum header_type);
 
 size_t
 lsquic_gquic_po_header_sz (enum packet_out_flags flags);

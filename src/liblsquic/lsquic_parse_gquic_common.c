@@ -574,7 +574,8 @@ lsquic_gquic_packout_size (const struct lsquic_conn *conn,
 
 size_t
 lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
-                                enum packet_out_flags flags, size_t dcid_len)
+                                enum packet_out_flags flags, size_t dcid_len,
+                                enum header_type unused)
 {
     return lsquic_gquic_po_header_sz(flags);
 }

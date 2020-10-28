@@ -21,8 +21,7 @@ static const unsigned char version_tags[N_LSQVER][4] =
     [LSQVER_ID27] = { 0xFF, 0, 0, 27, },
     [LSQVER_ID28] = { 0xFF, 0, 0, 28, },
     [LSQVER_ID29] = { 0xFF, 0, 0, 29, },
-    [LSQVER_ID30] = { 0xFF, 0, 0, 30, },
-    [LSQVER_ID31] = { 0xFF, 0, 0, 31, },
+    [LSQVER_ID32] = { 0xFF, 0, 0, 32, },
     [LSQVER_VERNEG] = { 0xFA, 0xFA, 0xFA, 0xFA, },
 };
 
@@ -62,8 +61,7 @@ const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_ID27] = "FF00001B",
     [LSQVER_ID28] = "FF00001C",
     [LSQVER_ID29] = "FF00001D",
-    [LSQVER_ID30] = "FF00001E",
-    [LSQVER_ID31] = "FF00001F",
+    [LSQVER_ID32] = "FF000020",
     [LSQVER_VERNEG] = "FAFAFAFA",
 };
 

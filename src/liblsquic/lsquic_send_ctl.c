@@ -2043,12 +2043,18 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
                             unsigned need_at_least, enum packnum_space pns,
                             const struct network_path *path)
 {
+    static const enum header_type pns2hety[] =
+    {
+        [PNS_INIT]  = HETY_INITIAL,
+        [PNS_HSK]   = HETY_HANDSHAKE,
+        [PNS_APP]   = HETY_NOT_SET,
+    };
     lsquic_packet_out_t *packet_out;
 
     packet_out = lsquic_packet_out_new(&ctl->sc_enpub->enp_mm,
                     ctl->sc_conn_pub->packet_out_malo,
                     !(ctl->sc_flags & SC_TCID0), ctl->sc_conn_pub->lconn, bits,
-                    ctl->sc_ver_neg->vn_tag, NULL, path);
+                    ctl->sc_ver_neg->vn_tag, NULL, path, pns2hety[pns]);
     if (!packet_out)
         return NULL;
 

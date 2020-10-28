@@ -133,6 +133,7 @@ hsk_client_on_read (lsquic_stream_t *stream, struct lsquic_stream_ctx *sh)
         /* fallthru */
     case DATA_FORMAT_ERROR:
         LSQ_INFO("lsquic_enc_session_handle_chlo_reply returned an error");
+        lsquic_mm_put_16k(c_hsk->mm, c_hsk->buf_in);
         c_hsk->buf_in = NULL;
         lsquic_stream_wantread(stream, 0);
         c_hsk->lconn->cn_if->ci_hsk_done(c_hsk->lconn, LSQ_HSK_FAIL);

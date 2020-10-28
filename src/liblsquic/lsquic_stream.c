@@ -2483,7 +2483,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
         flags |= PO_LONGHEAD;
 
     packet_header_sz = lsquic_po_header_length(stream->conn_pub->lconn, flags,
-                                        stream->conn_pub->path->np_dcid.len);
+                            stream->conn_pub->path->np_dcid.len, HETY_NOT_SET);
     stream_header_sz = stream->sm_frame_header_sz(stream, data_sz);
     tag_len = stream->conn_pub->lconn->cn_esf_c->esf_tag_len;
 

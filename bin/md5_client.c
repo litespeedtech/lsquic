@@ -460,6 +460,7 @@ main (int argc, char **argv)
 
     TAILQ_INIT(&sports);
     prog_init(&prog, 0, &sports, &client_file_stream_if, &client_ctx);
+    prog.prog_api.ea_alpn = "md5";
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS "bhr:f:p:")))
     {

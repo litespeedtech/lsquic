@@ -3103,7 +3103,8 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
             conn->ifc_stats.in.packets, conn->ifc_stats.in.undec_packets,
             conn->ifc_stats.in.dup_packets, conn->ifc_stats.in.err_packets,
             conn->ifc_stats.out.packets,
-            conn->ifc_stats.out.stream_data_sz / conn->ifc_stats.out.packets);
+            conn->ifc_stats.out.stream_data_sz /
+                (conn->ifc_stats.out.packets ? conn->ifc_stats.out.packets : 1));
         LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
             conn->ifc_stats.in.n_acks, conn->ifc_stats.in.n_acks_proc,
             conn->ifc_stats.in.n_acks_merged);
@@ -4472,6 +4473,24 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 
 
 static void
+maybe_pad_packet (struct ietf_full_conn *conn,
+                                        struct lsquic_packet_out *packet_out)
+{
+    unsigned short avail;
+
+    avail = lsquic_packet_out_avail(packet_out);
+    if (avail)
+    {
+        memset(packet_out->po_data + packet_out->po_data_sz, 0, avail);
+        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail);
+        packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
+        LSQ_DEBUG("added %hu-byte PADDING frame to packet %"PRIu64, avail,
+                                                        packet_out->po_packno);
+    }
+}
+
+
+static void
 generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
@@ -4530,6 +4549,7 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     packet_out->po_frame_types |= QUIC_FTBIT_PATH_CHALLENGE;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
+    maybe_pad_packet(conn, packet_out);
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
     lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + path_id,
                     now + (INITIAL_CHAL_TIMEOUT << (copath->cop_n_chals - 1)));
@@ -4600,6 +4620,7 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     }
     packet_out->po_frame_types |= QUIC_FTBIT_PATH_RESPONSE;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    maybe_pad_packet(conn, packet_out);
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << path_id);
 }
@@ -5699,6 +5720,34 @@ process_ping_frame (struct ietf_full_conn *conn,
 }
 
 
+static int
+is_benign_transport_error_code (uint64_t error_code)
+{
+    switch (error_code)
+    {
+    case TEC_NO_ERROR:
+    case TEC_INTERNAL_ERROR:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+
+static int
+is_benign_application_error_code (uint64_t error_code)
+{
+    switch (error_code)
+    {
+    case HEC_NO_ERROR:
+    case HEC_INTERNAL_ERROR:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+
 static unsigned
 process_connection_close_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
@@ -5709,6 +5758,7 @@ process_connection_close_frame (struct ietf_full_conn *conn,
     uint16_t reason_len;
     uint8_t reason_off;
     int parsed_len, app_error;
+    const char *ua;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_connect_close_frame(p, len,
                             &app_error, &error_code, &reason_len, &reason_off);
@@ -5716,7 +5766,25 @@ process_connection_close_frame (struct ietf_full_conn *conn,
         return 0;
     EV_LOG_CONNECTION_CLOSE_FRAME_IN(LSQUIC_LOG_CONN_ID, error_code,
                             (int) reason_len, (const char *) p + reason_off);
-    LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
+    if (LSQ_LOG_ENABLED(LSQ_LOG_NOTICE)
+        && !(   (!app_error && is_benign_transport_error_code(error_code))
+              ||( app_error && is_benign_application_error_code(error_code))))
+    {
+        if (conn->ifc_flags & IFC_HTTP)
+        {
+            ua = lsquic_qdh_get_ua(&conn->ifc_qdh);
+            if (!ua)
+                ua = "unknown peer";
+        }
+        else
+            ua = "non-HTTP/3 peer";
+        LSQ_NOTICE("Received CONNECTION_CLOSE from <%s> with %s-level error "
+            "code %"PRIu64", reason: `%.*s'", ua,
+            app_error ? "application" : "transport", error_code,
+            (int) reason_len, (const char *) p + reason_off);
+    }
+    else
+        LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
             "reason: %.*s)", app_error ? "application" : "transport",
                 error_code, (int) reason_len, (const char *) p + reason_off);
     conn->ifc_flags |= IFC_RECV_CLOSE;
@@ -9126,16 +9194,14 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             callbacks = &hcsi_callbacks_server_28;
             break;
         case (0 << 8) | LSQVER_ID29:
-        case (0 << 8) | LSQVER_ID30:
-        case (0 << 8) | LSQVER_ID31:
+        case (0 << 8) | LSQVER_ID32:
             callbacks = &hcsi_callbacks_client_29;
             break;
         default:
             assert(0);
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
-        case (1 << 8) | LSQVER_ID30:
-        case (1 << 8) | LSQVER_ID31:
+        case (1 << 8) | LSQVER_ID32:
             callbacks = &hcsi_callbacks_server_29;
             break;
     }

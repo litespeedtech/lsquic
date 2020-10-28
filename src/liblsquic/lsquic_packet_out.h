@@ -229,8 +229,9 @@ typedef struct lsquic_packet_out
     (p)->po_flags |= ((b) & 1) << POSPIN_SHIFT;                         \
 } while (0)
 
-#define lsquic_po_header_length(lconn, po_flags, dcid_len) ( \
-    lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags, dcid_len))
+#define lsquic_po_header_length(lconn, po_flags, dcid_len, header_type) (   \
+    lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags, dcid_len,     \
+                                             header_type))                  \
 
 #define lsquic_packet_out_total_sz(lconn, p) (\
     (lconn)->cn_pf->pf_packout_size(lconn, p))
@@ -308,7 +309,7 @@ lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *, struct malo *, int use_cid,
                        const struct lsquic_conn *, enum packno_bits,
                        const lsquic_ver_tag_t *, const unsigned char *nonce,
-                       const struct network_path *);
+                       const struct network_path *, enum header_type);
 
 void
 lsquic_packet_out_destroy (lsquic_packet_out_t *,

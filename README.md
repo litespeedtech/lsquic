@@ -14,8 +14,7 @@ distribution is used in our own products: LiteSpeed Web Server, LiteSpeed ADC,
 and OpenLiteSpeed.
 
 Currently supported QUIC versions are Q043, Q046, Q050, ID-27, ID-28, ID-29,
-ID-30, and ID-31.  Support for newer versions is added soon after they
-are released.
+and ID-32.  Support for newer versions is added soon after they are released.
 
 Documentation
 -------------

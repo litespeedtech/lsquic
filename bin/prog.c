@@ -610,11 +610,6 @@ keylog_open (void *ctx, lsquic_conn_t *conn)
 static void
 keylog_log_line (void *handle, const char *line)
 {
-    size_t len;
-
-    len = strlen(line);
-    if (len < sizeof("QUIC_") - 1 || strncmp(line, "QUIC_", 5))
-        fputs("QUIC_", handle);
     fputs(line, handle);
     fputs("\n", handle);
     fflush(handle);

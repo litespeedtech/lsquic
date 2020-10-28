@@ -582,10 +582,36 @@ my_preadv (void *user_data, const struct iovec *iov, int iovcnt)
 {
 #if HAVE_PREADV
     lsquic_stream_ctx_t *const st_h = user_data;
-    return preadv(st_h->file_fd, iov, iovcnt, st_h->written);
+    ssize_t nread = preadv(st_h->file_fd, iov, iovcnt, st_h->written);
+    LSQ_DEBUG("%s: wrote %zd bytes", __func__, (size_t) nread);
+    return nread;
 #else
     return -1;
 #endif
+}
+
+
+static size_t
+pwritev_fallback_read (void *lsqr_ctx, void *buf, size_t count)
+{
+    lsquic_stream_ctx_t *const st_h = lsqr_ctx;
+    struct iovec iov;
+    size_t ntoread;
+
+    ntoread = st_h->file_size - st_h->written;
+    if (ntoread > count)
+        count = ntoread;
+    iov.iov_base = buf;
+    iov.iov_len = count;
+    return my_preadv(lsqr_ctx, &iov, 1);
+}
+
+
+static size_t
+pwritev_fallback_size (void *lsqr_ctx)
+{
+    lsquic_stream_ctx_t *const st_h = lsqr_ctx;
+    return st_h->file_size - st_h->written;
 }
 
 
@@ -624,11 +650,17 @@ http_server_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                     to_write = s_pwritev;
                 nw = lsquic_stream_pwritev(stream, my_preadv, st_h, to_write);
                 if (nw == 0)
-                    goto use_reader;
+                {
+                    struct lsquic_reader reader = {
+                        .lsqr_read = pwritev_fallback_read,
+                        .lsqr_size = pwritev_fallback_size,
+                        .lsqr_ctx = st_h,
+                    };
+                    nw = lsquic_stream_writef(stream, &reader);
+                }
             }
             else
             {
-  use_reader:
                 nw = lsquic_stream_writef(stream, &st_h->reader);
             }
             if (nw < 0)
@@ -1006,6 +1038,8 @@ http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     free(st_h->req_path);
     if (st_h->reader.lsqr_ctx)
         destroy_lsquic_reader_ctx(st_h->reader.lsqr_ctx);
+    if (s_pwritev)
+        close(st_h->file_fd);
     if (st_h->req)
         interop_server_hset_destroy(st_h->req);
     free(st_h);

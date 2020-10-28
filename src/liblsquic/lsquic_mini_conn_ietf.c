@@ -121,7 +121,8 @@ imico_get_packet_out (struct ietf_mini_conn *conn,
     }
 
     packet_out = lsquic_packet_out_new(&conn->imc_enpub->enp_mm, NULL, 1,
-            &conn->imc_conn, IQUIC_PACKNO_LEN_1, NULL, NULL, &conn->imc_path);
+            &conn->imc_conn, IQUIC_PACKNO_LEN_1, NULL, NULL, &conn->imc_path,
+            header_type);
     if (!packet_out)
     {
         LSQ_WARN("could not allocate packet: %s", strerror(errno));
@@ -696,6 +697,18 @@ imico_can_send (const struct ietf_mini_conn *conn, size_t size)
 }
 
 
+static void
+imico_zero_pad (struct lsquic_packet_out *packet_out)
+{
+    size_t pad_size;
+
+    pad_size = lsquic_packet_out_avail(packet_out);
+    memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
+    packet_out->po_data_sz += pad_size;
+    packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
+}
+
+
 static struct lsquic_packet_out *
 ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
                                             const struct to_coal *to_coal)
@@ -708,6 +721,16 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
     {
         if (packet_out->po_flags & PO_SENT)
             continue;
+        /* [draft-ietf-quic-transport-32] Section 14.1:
+         " a server MUST expand the payload of all UDP datagrams carrying
+         " ack-eliciting Initial packets to at least the smallest allowed
+         " maximum datagram size of 1200 bytes.
+         */
+        if (packet_out->po_header_type == HETY_INITIAL
+                && !(packet_out->po_frame_types & (1 << QUIC_FRAME_PADDING))
+                && (packet_out->po_frame_types & IQUIC_FRAME_ACKABLE_MASK)
+                && lsquic_packet_out_avail(packet_out) > 0)
+            imico_zero_pad(packet_out);
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
         if (!(to_coal
             && (packet_size + to_coal->prev_sz_sum

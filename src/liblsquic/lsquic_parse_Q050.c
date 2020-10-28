@@ -459,7 +459,8 @@ gquic_Q050_packout_header_size_short (const struct lsquic_conn *lconn,
 
 static size_t
 gquic_Q050_packout_max_header_size (const struct lsquic_conn *lconn,
-                        enum packet_out_flags flags, size_t dcid_len_unused)
+                        enum packet_out_flags flags, size_t dcid_len_unused,
+                        enum header_type unused)
 {
     if (lconn->cn_flags & LSCONN_SERVER)
     {

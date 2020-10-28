@@ -1,3 +1,20 @@
+2020-10-28
+    - 2.24.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 31 support.  Drop ID-30
+      and ID-31 support.
+    - [BUGFIX] Divide-by-zero in newly enabled conn stats code when no
+      packets were sent.
+    - [BUGFIX] Memory leak in gQUIC client when server hello cannot be
+      parsed.
+    - [BUGFIX] Server Initial packet size calculation.
+    - Log user-agent and CONN_CLOSE reason when peer reports error.
+    - Example programs: Specify ALPN for echo and md5 clients and servers
+      (issue #184).
+    - Example programs: Don't add "QUIC_" prefix to lines in keylog file
+      (issue #185).
+    - http_server: Fix fd leak in preadv mode; fix preadv() usage when
+      reading from disk.
+
 2020-10-22
     - 2.23.3
     - [BUGFIX] Update packetization threshold when writing to stream

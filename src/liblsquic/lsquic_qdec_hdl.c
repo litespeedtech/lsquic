@@ -165,6 +165,8 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
     if (enpub->enp_hsi_if->hsi_flags & LSQUIC_HSI_HASH_NAMEVAL)
         dec_opts |= LSQPACK_DEC_OPT_HASH_NAMEVAL;
 
+    if (conn->cn_flags & LSCONN_SERVER)
+        qdh->qdh_flags |= QDH_SERVER;
     if (enpub->enp_settings.es_qpack_experiment)
     {
         qdh->qdh_exp_rec = lsquic_qpack_exp_new();
@@ -176,6 +178,8 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
             qdh->qdh_exp_rec->qer_used_max_blocked = max_risked_streams;
         }
     }
+    if (!qdh->qdh_exp_rec && LSQ_LOG_ENABLED_EXT(LSQ_LOG_NOTICE, LSQLM_CONN))
+        qdh->qdh_flags |= QDH_SAVE_UA;
 
     qdh->qdh_conn = conn;
     lsquic_frab_list_init(&qdh->qdh_fral, 0x400, NULL, NULL, NULL);
@@ -226,6 +230,11 @@ lsquic_qdh_cleanup (struct qpack_dec_hdl *qdh)
         LSQ_DEBUG("cleanup");
         if (qdh->qdh_exp_rec)
             qdh_log_and_clean_exp_rec(qdh);
+        if (qdh->qdh_ua)
+        {
+            free(qdh->qdh_ua);
+            qdh->qdh_ua = NULL;
+        }
         lsqpack_dec_cleanup(&qdh->qdh_decoder);
         lsquic_frab_list_cleanup(&qdh->qdh_fral);
         qdh->qdh_flags &= ~QDH_INITIALIZED;
@@ -531,17 +540,16 @@ qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
 
 static void
 qdh_maybe_set_user_agent (struct qpack_dec_hdl *qdh,
-                                        const struct lsxpack_header *xhdr)
+                                const struct lsxpack_header *xhdr, char **ua)
 {
     /* Flipped: we are the *decoder* */
-    const char *const name = qdh->qdh_exp_rec->qer_flags & QER_SERVER ?
+    const char *const name = qdh->qdh_flags & QDH_SERVER ?
                                     "user-agent" : "server";
-    const size_t len = qdh->qdh_exp_rec->qer_flags & QER_SERVER ? 10 : 6;
+    const size_t len = qdh->qdh_flags & QDH_SERVER ? 10 : 6;
 
     if (len == xhdr->name_len
                 && 0 == memcmp(name, lsxpack_header_get_name(xhdr), len))
-        qdh->qdh_exp_rec->qer_user_agent
-                = strndup(lsxpack_header_get_value(xhdr), xhdr->val_len);
+        *ua = strndup(lsxpack_header_get_value(xhdr), xhdr->val_len);
 }
 
 
@@ -572,7 +580,9 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
                         sizeof(*stream->conn_pub->mm->acki));
     }
     else if (qdh->qdh_exp_rec && !qdh->qdh_exp_rec->qer_user_agent)
-        qdh_maybe_set_user_agent(qdh, xhdr);
+        qdh_maybe_set_user_agent(qdh, xhdr, &qdh->qdh_exp_rec->qer_user_agent);
+    else if ((qdh->qdh_flags & QDH_SAVE_UA) && !qdh->qdh_ua)
+        qdh_maybe_set_user_agent(qdh, xhdr, &qdh->qdh_ua);
 
     return qdh->qdh_enpub->enp_hsi_if->hsi_process_header(u->ctx.hset, xhdr);
 }
@@ -843,4 +853,16 @@ lsquic_qdh_arm_if_unsent (struct qpack_dec_hdl *qdh, void (*func)(void *),
         qdh->qdh_on_dec_sent_ctx  = ctx;
         return 1;
     }
+}
+
+
+const char *
+lsquic_qdh_get_ua (const struct qpack_dec_hdl *qdh)
+{
+    if (qdh->qdh_ua)
+        return qdh->qdh_ua;
+    else if (qdh->qdh_exp_rec && qdh->qdh_exp_rec->qer_user_agent)
+        return qdh->qdh_exp_rec->qer_user_agent;
+    else
+        return NULL;
 }

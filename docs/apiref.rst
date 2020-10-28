@@ -58,13 +58,9 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID 29
 
-    .. member:: LSQVER_ID30
+    .. member:: LSQVER_ID32
 
-        IETF QUIC version ID 30; this version is deprecated.
-
-    .. member:: LSQVER_ID31
-
-        IETF QUIC version ID 31
+        IETF QUIC version ID 32
 
     .. member:: N_LSQVER
 

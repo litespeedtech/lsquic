@@ -213,6 +213,7 @@ main (int argc, char **argv)
 
     TAILQ_INIT(&sports);
     prog_init(&prog, 0, &sports, &client_echo_stream_if, &client_ctx);
+    prog.prog_api.ea_alpn = "echo";
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS "h")))
     {

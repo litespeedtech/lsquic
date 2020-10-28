@@ -23,6 +23,8 @@ struct qpack_dec_hdl
     enum {
         QDH_INITIALIZED     = 1 << 0,
         QDH_PUSH_PROMISE    = 1 << 1,
+        QDH_SAVE_UA         = 1 << 2,
+        QDH_SERVER          = 1 << 3,
     }                        qdh_flags;
     struct lsqpack_dec       qdh_decoder;
     struct lsquic_stream    *qdh_enc_sm_in;
@@ -35,6 +37,7 @@ struct qpack_dec_hdl
     void                   (*qdh_on_dec_sent_func)(void *);
     void                    *qdh_on_dec_sent_ctx;
     struct qpack_exp_record *qdh_exp_rec;
+    char                    *qdh_ua;
 };
 
 int
@@ -73,6 +76,9 @@ lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *, lsquic_stream_id_t);
 
 int
 lsquic_qdh_arm_if_unsent (struct qpack_dec_hdl *, void (*)(void *), void *);
+
+const char *
+lsquic_qdh_get_ua (const struct qpack_dec_hdl *);
 
 extern const struct lsquic_stream_if *const lsquic_qdh_enc_sm_in_if;
 extern const struct lsquic_stream_if *const lsquic_qdh_dec_sm_out_if;

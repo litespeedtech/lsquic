@@ -20,6 +20,8 @@
 
 #include "lsquic.h"
 #include "test_common.h"
+#include "../src/liblsquic/lsquic_hash.h"
+#include "test_cert.h"
 #include "prog.h"
 
 #include "../src/liblsquic/lsquic_logger.h"
@@ -218,6 +220,7 @@ main (int argc, char **argv)
         }
     }
 
+    add_alpn("echo");
     if (0 != prog_prep(&prog))
     {
         LSQ_ERROR("could not prep");

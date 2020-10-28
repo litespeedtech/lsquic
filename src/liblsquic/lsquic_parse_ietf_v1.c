@@ -122,8 +122,7 @@ ietf_v1_packout_header_size_long_by_packet (const struct lsquic_conn *lconn,
 
 
 static size_t
-ietf_v1_packout_header_size_short (const struct lsquic_conn *lconn,
-                                enum packet_out_flags flags, size_t dcid_len)
+ietf_v1_packout_header_size_short (enum packet_out_flags flags, size_t dcid_len)
 {
     enum packno_bits bits;
     size_t sz;
@@ -140,19 +139,13 @@ ietf_v1_packout_header_size_short (const struct lsquic_conn *lconn,
 
 static size_t
 ietf_v1_packout_max_header_size (const struct lsquic_conn *lconn,
-                                enum packet_out_flags flags, size_t dcid_len)
+    enum packet_out_flags flags, size_t dcid_len, enum header_type header_type)
 {
-    if (lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
-        return ietf_v1_packout_header_size_short(lconn, flags, dcid_len);
-    else if (lconn->cn_flags & LSCONN_SERVER)
-        /* Server does not set the token in its Initial packet header: set
-         * the packet type to something else in order not to overestimate
-         * header size.
-         */
-        return ietf_v1_packout_header_size_long_by_flags(lconn, HETY_HANDSHAKE,
-                                                            flags, dcid_len);
+    if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
+                                                && header_type == HETY_NOT_SET)
+        return ietf_v1_packout_header_size_short(flags, dcid_len);
     else
-        return ietf_v1_packout_header_size_long_by_flags(lconn, HETY_INITIAL,
+        return ietf_v1_packout_header_size_long_by_flags(lconn, header_type,
                                                             flags, dcid_len);
 }
 
@@ -309,7 +302,7 @@ ietf_v1_packout_size (const struct lsquic_conn *lconn,
 
     if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
                                 && packet_out->po_header_type == HETY_NOT_SET)
-        sz = ietf_v1_packout_header_size_short(lconn, packet_out->po_flags,
+        sz = ietf_v1_packout_header_size_short(packet_out->po_flags,
                                             packet_out->po_path->np_dcid.len);
     else
         sz = ietf_v1_packout_header_size_long_by_packet(lconn, packet_out);

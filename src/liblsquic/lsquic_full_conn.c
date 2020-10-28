@@ -1114,7 +1114,8 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
         conn->fc_stats.in.packets, conn->fc_stats.in.undec_packets,
         conn->fc_stats.in.dup_packets, conn->fc_stats.in.err_packets,
         conn->fc_stats.out.packets,
-        conn->fc_stats.out.stream_data_sz / conn->fc_stats.out.packets);
+        conn->fc_stats.out.stream_data_sz /
+            (conn->fc_stats.out.packets ? conn->fc_stats.out.packets : 1));
     LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
         conn->fc_stats.in.n_acks, conn->fc_stats.in.n_acks_proc,
         conn->fc_stats.in.n_acks_merged);
