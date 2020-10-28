@@ -1747,7 +1747,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
     if (versions & LSQUIC_IETF_VERSIONS)
         conn = lsquic_ietf_full_conn_client_new(&engine->pub, versions,
                     flags, hostname, base_plpmtu,
-                    is_ipv4, sess_resume, sess_resume_len, token, token_sz);
+                    is_ipv4, sess_resume, sess_resume_len, token, token_sz, peer_ctx);
     else
         conn = lsquic_gquic_full_conn_client_new(&engine->pub, versions,
                             flags, hostname, base_plpmtu, is_ipv4,

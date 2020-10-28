@@ -817,10 +817,11 @@ iquic_esfi_create_client (const char *hostname,
             const lsquic_cid_t *dcid, const struct ver_neg *ver_neg,
             void *crypto_streams[4], const struct crypto_stream_if *cryst_if,
             const unsigned char *sess_resume, size_t sess_resume_sz,
-            struct lsquic_alarmset *alset, unsigned max_streams_uni)
+            struct lsquic_alarmset *alset, unsigned max_streams_uni, void* peer_ctx)
 {
     struct enc_sess_iquic *enc_sess;
     SSL_CTX *ssl_ctx = NULL;
+    int set_app_ctx = 0;
     SSL_SESSION *ssl_session;
     const struct alpn_map *am;
     int transpa_len;
@@ -884,29 +885,39 @@ iquic_esfi_create_client (const char *hostname,
         enc_sess->esi_alpn = am->alpn;
     }
 
-    LSQ_DEBUG("Create new SSL_CTX");
-    ssl_ctx = SSL_CTX_new(TLS_method());
+    ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx( peer_ctx );
     if (!ssl_ctx)
     {
-        LSQ_ERROR("cannot create SSL context: %s",
-            ERR_error_string(ERR_get_error(), errbuf));
-        goto err;
+        LSQ_DEBUG("Create new SSL_CTX");
+        ssl_ctx = SSL_CTX_new(TLS_method());
+        if (!ssl_ctx)
+        {
+            LSQ_ERROR("cannot create SSL context: %s",
+                ERR_error_string(ERR_get_error(), errbuf));
+            goto err;
+        }
+        SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
+        SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
+        SSL_CTX_set_default_verify_paths(ssl_ctx);
+        SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
+        if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
+            SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
+        if (enc_sess->esi_enpub->enp_kli)
+            SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
+        if (enc_sess->esi_enpub->enp_verify_cert
+                || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
+                || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
+            SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
+                verify_server_cert_callback);
+        SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
+        set_app_ctx = 0;
     }
-    SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_default_verify_paths(ssl_ctx);
-    SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
-    if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
-        SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
-    if (enc_sess->esi_enpub->enp_kli)
-        SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
-    if (enc_sess->esi_enpub->enp_verify_cert
-            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
-            || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
-        SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
-            verify_server_cert_callback);
-    SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
-
+    else
+    {
+        set_app_ctx = 1;
+    }
+    
+    
     enc_sess->esi_ssl = SSL_new(ssl_ctx);
     if (!enc_sess->esi_ssl)
     {
@@ -975,13 +986,14 @@ iquic_esfi_create_client (const char *hostname,
     lsquic_alarmset_init_alarm(enc_sess->esi_alset, AL_SESS_TICKET,
                                             no_sess_ticket, enc_sess);
 
-    SSL_CTX_free(ssl_ctx);
+    if( !set_app_ctx )
+        SSL_CTX_free(ssl_ctx);
     return enc_sess;
 
   err:
     if (enc_sess)
         iquic_esfi_destroy(enc_sess);
-    if (ssl_ctx)
+    if (!set_app_ctx && ssl_ctx)
         SSL_CTX_free(ssl_ctx);
     return NULL;
 }

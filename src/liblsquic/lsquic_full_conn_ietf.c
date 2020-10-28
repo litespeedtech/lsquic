@@ -1303,7 +1303,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
            unsigned versions, unsigned flags,
            const char *hostname, unsigned short base_plpmtu, int is_ipv4,
            const unsigned char *sess_resume, size_t sess_resume_sz,
-           const unsigned char *token, size_t token_sz)
+           const unsigned char *token, size_t token_sz, void* peer_ctx)
 {
     const struct transport_params *params;
     const struct enc_session_funcs_iquic *esfi;
@@ -1397,7 +1397,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                 &conn->ifc_u.cli.ifcli_ver_neg,
                 (void **) conn->ifc_u.cli.crypto_streams, &crypto_stream_if,
                 sess_resume, sess_resume_sz, &conn->ifc_alset,
-                conn->ifc_max_streams_in[SD_UNI]);
+                conn->ifc_max_streams_in[SD_UNI], peer_ctx);
     if (!conn->ifc_conn.cn_enc_session)
         goto err2;
 

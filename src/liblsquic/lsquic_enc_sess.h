@@ -264,7 +264,7 @@ struct enc_session_funcs_iquic
                            const struct ver_neg *, void *(crypto_streams)[4],
                            const struct crypto_stream_if *,
                            const unsigned char *, size_t,
-                           struct lsquic_alarmset *, unsigned);
+                           struct lsquic_alarmset *, unsigned, void*);
 
     void
     (*esfi_destroy) (enc_session_t *);

@@ -19,7 +19,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *,
                unsigned flags /* Only FC_SERVER and FC_HTTP */,
            const char *hostname, unsigned short base_plpmtu, int is_ipv4,
            const unsigned char *sess_resume, size_t,
-           const unsigned char *token, size_t);
+           const unsigned char *token, size_t, void* peer_ctx);
 
 typedef struct lsquic_conn *
 (*server_conn_ctor_f) (struct lsquic_engine_public *,

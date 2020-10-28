@@ -317,7 +317,7 @@ Other required engine callbacks are a set of stream and connection callbacks tha
     /* --- 8< --- snip --- 8< --- */
     .ea_stream_if       = &stream_callbacks,
     .ea_stream_if_ctx   = &some_context,
-    .ea_get_ssl_ctx     = get_ssl_ctx,  /* Server only */
+    .ea_get_ssl_ctx     = get_ssl_ctx,  
   };
 
 
