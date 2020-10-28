@@ -11,7 +11,6 @@ struct iovec {
 #define strncasecmp _strnicmp
 #define strdup _strdup
 #define PATH_MAX MAX_PATH
-#define close _close
 
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 

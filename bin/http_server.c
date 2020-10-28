@@ -1038,8 +1038,10 @@ http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     free(st_h->req_path);
     if (st_h->reader.lsqr_ctx)
         destroy_lsquic_reader_ctx(st_h->reader.lsqr_ctx);
+#if HAVE_PREADV
     if (s_pwritev)
         close(st_h->file_fd);
+#endif
     if (st_h->req)
         interop_server_hset_destroy(st_h->req);
     free(st_h);
