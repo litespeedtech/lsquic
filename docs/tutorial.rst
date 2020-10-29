@@ -119,7 +119,7 @@ to perform various functions.  Mandatory among these are:
 - functions linked to connection and stream events,
   :member:`lsquic_engine_api.ea_stream_if`;
 - function to look up certificate to use, :member:`lsquic_engine_api.ea_lookup_cert` (in server mode); and
-- function to fetch SSL context, :member:`lsquic_engine_api.ea_get_ssl_ctx` (in server mode).
+- function to fetch SSL context, :member:`lsquic_engine_api.ea_get_ssl_ctx` (optional in client mode).
 
 The minimal structure for a client will look like this:
 
@@ -317,7 +317,7 @@ Other required engine callbacks are a set of stream and connection callbacks tha
     /* --- 8< --- snip --- 8< --- */
     .ea_stream_if       = &stream_callbacks,
     .ea_stream_if_ctx   = &some_context,
-    .ea_get_ssl_ctx     = get_ssl_ctx,  
+    .ea_get_ssl_ctx     = get_ssl_ctx,
   };
 
 

@@ -81,7 +81,7 @@ prog_init (struct prog *prog, unsigned flags,
                                     = prog;
     prog->prog_api.ea_pmi           = &pmi;
     prog->prog_api.ea_pmi_ctx       = &prog->prog_pba;
-    prog->prog_api.ea_get_ssl_ctx   = get_ssl_ctx;
+    prog->prog_api.ea_get_ssl_ctx   = flags & LSENG_SERVER ? get_ssl_ctx : NULL;
 #if LSQUIC_PREFERRED_ADDR
     if (getenv("LSQUIC_PREFERRED_ADDR4") || getenv("LSQUIC_PREFERRED_ADDR6"))
         prog->prog_flags |= PROG_SEARCH_ADDRS;

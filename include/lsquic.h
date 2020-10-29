@@ -1206,6 +1206,7 @@ struct lsquic_engine_api
     /** Function to look up certificates by SNI is used in server mode. */
     lsquic_lookup_cert_f                 ea_lookup_cert;
     void                                *ea_cert_lu_ctx;
+    /** Mandatory callback for server, optional for client. */
     struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx);
     /**
      * Shared hash interface is optional.  If set to zero, performance of

@@ -817,7 +817,8 @@ iquic_esfi_create_client (const char *hostname,
             const lsquic_cid_t *dcid, const struct ver_neg *ver_neg,
             void *crypto_streams[4], const struct crypto_stream_if *cryst_if,
             const unsigned char *sess_resume, size_t sess_resume_sz,
-            struct lsquic_alarmset *alset, unsigned max_streams_uni, void* peer_ctx)
+            struct lsquic_alarmset *alset, unsigned max_streams_uni,
+            void* peer_ctx)
 {
     struct enc_sess_iquic *enc_sess;
     SSL_CTX *ssl_ctx = NULL;
@@ -885,8 +886,10 @@ iquic_esfi_create_client (const char *hostname,
         enc_sess->esi_alpn = am->alpn;
     }
 
-    ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx( peer_ctx );
-    if (!ssl_ctx)
+    if (enc_sess->esi_enpub->enp_get_ssl_ctx
+                && (ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(peer_ctx)))
+        set_app_ctx = 1;
+    else
     {
         LSQ_DEBUG("Create new SSL_CTX");
         ssl_ctx = SSL_CTX_new(TLS_method());
@@ -910,14 +913,8 @@ iquic_esfi_create_client (const char *hostname,
             SSL_CTX_set_custom_verify(ssl_ctx, SSL_VERIFY_PEER,
                 verify_server_cert_callback);
         SSL_CTX_set_early_data_enabled(ssl_ctx, 1);
-        set_app_ctx = 0;
     }
-    else
-    {
-        set_app_ctx = 1;
-    }
-    
-    
+
     enc_sess->esi_ssl = SSL_new(ssl_ctx);
     if (!enc_sess->esi_ssl)
     {
