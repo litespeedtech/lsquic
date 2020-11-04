@@ -1,3 +1,12 @@
+2020-11-04
+    - 2.24.1
+    - [API] Allow use of ea_get_ssl_ctx() on the client (optional).  PR #186.
+    - [BUGFIX] Expand datagram with ack-eliciting Initial to 1200 bytes
+      after connection promotion.
+    - [BUGFIX] Discard CRYPTO frames from lower encryption levels after
+      connection promotion.
+    - [BUGFIX] Cancel path response if path could not be initialized.
+
 2020-10-28
     - 2.24.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 31 support.  Drop ID-30

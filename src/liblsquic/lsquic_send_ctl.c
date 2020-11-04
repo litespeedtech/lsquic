@@ -1943,7 +1943,9 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
         packet_out->po_lflags &= ~POL_LIMITED;
 
     if (UNLIKELY(packet_out->po_header_type == HETY_INITIAL)
-                    && !(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER)
+                    && (!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER)
+                        || (packet_out->po_frame_types
+                                                & IQUIC_FRAME_ACKABLE_MASK))
                     && size < 1200)
     {
         send_ctl_maybe_zero_pad(ctl, packet_out, 1200 - size);

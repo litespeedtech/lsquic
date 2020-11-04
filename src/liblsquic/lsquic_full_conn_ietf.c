@@ -5357,6 +5357,7 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame stream_frame;
+    enum enc_level enc_level;
     int parsed_len;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_crypto_frame(p, len,
@@ -5364,9 +5365,19 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame, enc_level);
+    LSQ_DEBUG("Got CRYPTO frame for enc level #%u", enc_level);
     if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
     {
-        LSQ_DEBUG("discard %d-byte CRYPTO frame", parsed_len);
+        LSQ_DEBUG("discard %d-byte CRYPTO frame: handshake has been confirmed",
+                                                                    parsed_len);
+        return (unsigned) parsed_len;
+    }
+    if (enc_level < ENC_LEV_INIT)
+    {   /* Must be dup */
+        LSQ_DEBUG("discard %d-byte CRYPTO frame on level %s", parsed_len,
+                                                lsquic_enclev2str[enc_level]);
         return (unsigned) parsed_len;
     }
 
@@ -6581,7 +6592,7 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
 }
 
 
-static void
+static int
 on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
                                     const struct lsquic_packet_in *packet_in)
 {
@@ -6608,7 +6619,7 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
     {
         ABORT_ERROR("DCID %"CID_FMT" not found on new path",
                                             CID_BITS(&packet_in->pi_dcid));
-        return;
+        return -1;
     }
 
     dcid_changed = !(cce->cce_flags & CCE_USED);
@@ -6620,7 +6631,7 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
         if (0 == init_new_path(conn, path, dcid_changed))
             path->cop_flags |= COP_INITIALIZED;
         else
-            return;
+            return -1;
 
         conn->ifc_send_flags |= SF_SEND_PATH_CHAL << packet_in->pi_path_id;
         LSQ_DEBUG("scheduled return path challenge on path %hhu",
@@ -6638,6 +6649,7 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
     path->cop_cce_idx = cce - lconn->cn_cces;
     cce->cce_flags |= CCE_USED;
     LOG_SCIDS(conn);
+    return 0;
 }
 
 
@@ -7157,7 +7169,15 @@ process_regular_packet (struct ietf_full_conn *conn,
         if (saved_path_id == conn->ifc_cur_path_id)
         {
             if (conn->ifc_cur_path_id != packet_in->pi_path_id)
-                on_new_or_unconfirmed_path(conn, packet_in);
+            {
+                if (0 != on_new_or_unconfirmed_path(conn, packet_in))
+                {
+                    LSQ_DEBUG("path %hhu invalid, cancel any path response "
+                        "on it", packet_in->pi_path_id);
+                    conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP
+                                                    << packet_in->pi_path_id);
+                }
+            }
             else if (!LSQUIC_CIDS_EQ(CN_SCID(&conn->ifc_conn),
                                                     &packet_in->pi_dcid))
             {

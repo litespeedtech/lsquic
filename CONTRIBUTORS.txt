@@ -12,6 +12,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Rahul Jadhav -- Android support
     - Victor Stewart -- Generate SCIDs API (connection ID steering)
     - Aaron France -- Shared library support and Lisp bindings
+    - Suma Subbarao -- Use callback to supply client's SSL_CTX
 
 Thank you!
 
