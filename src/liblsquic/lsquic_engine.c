@@ -3026,7 +3026,12 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
         is_ietf = 0 == (packet_in->pi_flags & PI_GQUIC);
         packet_in_data += packet_in->pi_data_sz;
         if (is_ietf && packet_in_data < packet_end)
+        {
             cid = packet_in->pi_dcid;
+            if (packet_begin == packet_in->pi_data) /* Only log once: */
+                LSQ_DEBUGC("received coalesced datagram of %zd bytes for "
+                        "connection %"CID_FMT, packet_in_size, CID_BITS(&cid));
+        }
         packet_in->pi_received = lsquic_time_now();
         packet_in->pi_flags |= (3 & ecn) << PIBIT_ECN_SHIFT;
         eng_hist_inc(&engine->history, packet_in->pi_received, sl_packets_in);

@@ -1069,7 +1069,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     assert(frame->packet_in);
 
     SM_HISTORY_APPEND(stream, SHE_FRAME_IN);
-    LSQ_DEBUG("received stream frame, offset 0x%"PRIX64", len %u; "
+    LSQ_DEBUG("received stream frame, offset %"PRIu64", len %u; "
         "fin: %d", frame->data_frame.df_offset, frame->data_frame.df_size, !!frame->data_frame.df_fin);
 
     if ((stream->sm_bflags & SMBF_USE_HEADERS)
@@ -1210,16 +1210,16 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > offset)
     {
-        LSQ_INFO("RST_STREAM invalid: its offset 0x%"PRIX64" is "
+        LSQ_INFO("RST_STREAM invalid: its offset %"PRIu64" is "
             "smaller than that of byte following the last byte we have seen: "
-            "0x%"PRIX64, offset,
+            "%"PRIu64, offset,
             lsquic_sfcw_get_max_recv_off(&stream->fc));
         return -1;
     }
 
     if (!lsquic_sfcw_set_max_recv_off(&stream->fc, offset))
     {
-        LSQ_INFO("RST_STREAM invalid: its offset 0x%"PRIX64
+        LSQ_INFO("RST_STREAM invalid: its offset %"PRIu64
             " violates flow control", offset);
         return -1;
     }
@@ -4142,13 +4142,13 @@ lsquic_stream_window_update (lsquic_stream_t *stream, uint64_t offset)
     if (offset > stream->max_send_off)
     {
         SM_HISTORY_APPEND(stream, SHE_WINDOW_UPDATE);
-        LSQ_DEBUG("update max send offset from 0x%"PRIX64" to "
-            "0x%"PRIX64, stream->max_send_off, offset);
+        LSQ_DEBUG("update max send offset from %"PRIu64" to "
+            "%"PRIu64, stream->max_send_off, offset);
         stream->max_send_off = offset;
     }
     else
-        LSQ_DEBUG("new offset 0x%"PRIX64" is not larger than old "
-            "max send offset 0x%"PRIX64", ignoring", offset,
+        LSQ_DEBUG("new offset %"PRIu64" is not larger than old "
+            "max send offset %"PRIu64", ignoring", offset,
             stream->max_send_off);
 }
 

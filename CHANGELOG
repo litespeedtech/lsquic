@@ -1,3 +1,12 @@
+2020-11-05
+    - 2.24.2
+    - [BUGFIX] Allow peer to migrate when its SCID is zero-length.
+    - [BUGFIX] PADDING size calculation: only one Short packet can be
+      coalesced.  (This should have been part of the fix in 2.24.1).
+    - Abort connect if received NEW_CONNECTION_ID but current DCID is
+      zero-length.
+    - Improve log messages
+
 2020-11-04
     - 2.24.1
     - [API] Allow use of ea_get_ssl_ctx() on the client (optional).  PR #186.

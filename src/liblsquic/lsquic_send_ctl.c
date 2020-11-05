@@ -1811,6 +1811,8 @@ send_ctl_maybe_zero_pad (struct lsquic_send_ctl *ctl,
         if (cum_size + size > limit)
             break;
         cum_size += size;
+        if (HETY_NOT_SET == packet_out->po_header_type)
+            break;
     }
 
     LSQ_DEBUG("cum_size: %zu; limit: %zu", cum_size, limit);

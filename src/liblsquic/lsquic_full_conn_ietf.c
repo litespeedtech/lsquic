@@ -2101,7 +2101,7 @@ maybe_get_rate_available_scid_slot (struct ietf_full_conn *conn,
         return;
     }
 
-    /* period: ns per cid */
+    /* period: usec per cid */
     period = (60 * 1000000) / conn->ifc_enpub->enp_settings.es_scid_iss_rate;
     active_cid = 0;
     total_elapsed = 0;
@@ -2119,12 +2119,12 @@ maybe_get_rate_available_scid_slot (struct ietf_full_conn *conn,
         }
     }
     elapsed_thresh = ((active_cid * (active_cid + 1)) / 2) * period;
-    /* compare total elapsed ns to elapsed ns threshold */
+    /* compare total elapsed usec to elapsed usec threshold */
     if (total_elapsed < elapsed_thresh)
     {
         wait_time = (elapsed_thresh - total_elapsed) / active_cid;
         LSQ_DEBUG("cid_throt no SCID slots available (rate-limited), "
-                    "must wait %"PRIu64" ns", wait_time);
+                    "must wait %"PRIu64" usec", wait_time);
         lsquic_alarmset_set(&conn->ifc_alset, AL_CID_THROT, now + wait_time);
         conn->ifc_send_flags &= ~SF_SEND_NEW_CID;
     }
@@ -6067,6 +6067,13 @@ process_new_connection_id_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if (CUR_DCID(conn)->len == 0)
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "Received NEW_CONNECTION_ID "
+            "frame, but current DCID is zero-length");
+        return 0;
+    }
+
     if (seqno < conn->ifc_last_retire_prior_to)
     {
         retire_seqno(conn, seqno);
@@ -6563,10 +6570,11 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
         path->cop_path.np_dcid = dce->de_cid;
         dce->de_flags |= DE_ASSIGNED;
     }
-    else if (!dcid_changed)
+    else if (!dcid_changed || CUR_DCID(conn)->len == 0)
     {
-        /* It is OK to reuse DCID if the peer did not use a new DCID when its
-         * address changed.  See [draft-ietf-quic-transport-24] Section 9.5.
+        /* It is OK to reuse DCID if it is zero-length or ir the peer did not
+         * use a new DCID when its address changed.  See
+         * [draft-ietf-quic-transport-24] Section 9.5.
          */
         path->cop_path.np_dcid = CUR_NPATH(conn)->np_dcid;
         LSQ_DEBUGC("assigned already-used DCID %"CID_FMT" to new path %u, "
