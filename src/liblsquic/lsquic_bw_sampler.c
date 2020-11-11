@@ -37,6 +37,7 @@ lsquic_bw_sampler_init (struct bw_sampler *sampler, struct lsquic_conn *conn,
     sampler->bws_malo = malo;
     sampler->bws_conn = conn;
     sampler->bws_retx_frames = retx_frames;
+    sampler->bws_flags |= BWS_APP_LIMITED;
     LSQ_DEBUG("init");
     return 0;
 }

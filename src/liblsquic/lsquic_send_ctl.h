@@ -53,6 +53,7 @@ enum send_ctl_flags {
     SC_ACK_RECV_INIT=  1 << 19,
     SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
+    SC_ROUGH_RTT    =  1 << 22,
 };
 
 typedef struct lsquic_send_ctl {
@@ -365,6 +366,10 @@ lsquic_send_ctl_set_token (struct lsquic_send_ctl *,
 
 void
 lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *, enum packnum_space);
+
+void
+lsquic_send_ctl_maybe_calc_rough_rtt (struct lsquic_send_ctl *,
+                                                        enum packnum_space);
 
 void
 lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,

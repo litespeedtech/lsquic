@@ -3545,6 +3545,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!handshake_done_or_doing_sess_resume(conn))
     {
         process_hsk_stream_write_events(conn);
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
         goto end_write;
     }
 

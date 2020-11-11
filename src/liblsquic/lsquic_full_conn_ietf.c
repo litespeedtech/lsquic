@@ -7069,12 +7069,16 @@ process_regular_packet (struct ietf_full_conn *conn,
     if (pns == PNS_INIT)
         conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
                                                                     packet_in);
+    else if (pns == PNS_HSK)
+        lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
     if ((pns == PNS_INIT && (conn->ifc_flags & IFC_IGNORE_INIT))
                     || (pns == PNS_HSK  && (conn->ifc_flags & IFC_IGNORE_HSK)))
     {
         /* Don't bother decrypting */
         LSQ_DEBUG("ignore %s packet",
             pns == PNS_INIT ? "Initial" : "Handshake");
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "ignore %s packet",
+                                                        lsquic_pns2str[pns]);
         return 0;
     }
 
@@ -8087,7 +8091,11 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (0 == s)
             process_crypto_stream_write_events(conn);
         if (!(conn->ifc_mflags & MF_DOING_0RTT))
+        {
+            lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl,
+                                                            CUR_NPATH(conn));
             goto end_write;
+        }
     }
 
     maybe_conn_flush_special_streams(conn);

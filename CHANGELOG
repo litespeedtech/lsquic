@@ -1,3 +1,13 @@
+2020-11-11
+    - 2.24.3
+    - [BUGFIX] Get rough RTT estimate on receipt of Handshake packet.
+      This prevents BBR on the client from miscalculating pacing rate,
+      slowing down sending of ACK packets.
+    - [BUGFIX] Packets sent during handshake are app-limited.
+    - [BUGFIX] Bandwidth sampler starts in app-limited mode.
+    - [BUGFIX] Memory leak: free QPACK handler context in stream dtor.
+    - Logging improvements.
+
 2020-11-05
     - 2.24.2
     - [BUGFIX] Allow peer to migrate when its SCID is zero-length.

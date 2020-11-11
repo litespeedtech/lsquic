@@ -57,6 +57,12 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(ctl->sc_conn_pub->lconn)
 #include "lsquic_logger.h"
 
+#if __GNUC__
+#   define UNLIKELY(cond) __builtin_expect(cond, 0)
+#else
+#   define UNLIKELY(cond) cond
+#endif
+
 #define MAX_RESUBMITTED_ON_RTO  2
 #define MAX_RTO_BACKOFFS        10
 #define DEFAULT_RETX_DELAY      500000      /* Microseconds */
@@ -742,6 +748,12 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
     const lsquic_time_t measured_rtt = now - sent;
     if (packno > ctl->sc_max_rtt_packno && lack_delta < measured_rtt)
     {
+        if (UNLIKELY(ctl->sc_flags & SC_ROUGH_RTT))
+        {
+            memset(&ctl->sc_conn_pub->rtt_stats, 0,
+                                        sizeof(ctl->sc_conn_pub->rtt_stats));
+            ctl->sc_flags &= ~SC_ROUGH_RTT;
+        }
         ctl->sc_max_rtt_packno = packno;
         lsquic_rtt_stats_update(&ctl->sc_conn_pub->rtt_stats, measured_rtt, lack_delta);
         LSQ_DEBUG("packno %"PRIu64"; rtt: %"PRIu64"; delta: %"PRIu64"; "
@@ -1115,12 +1127,6 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]);
 #if __GNUC__
     __builtin_prefetch(packet_out);
-#endif
-
-#if __GNUC__
-#   define UNLIKELY(cond) __builtin_expect(cond, 0)
-#else
-#   define UNLIKELY(cond) cond
 #endif
 
 #if __GNUC__
@@ -1520,9 +1526,22 @@ send_ctl_all_bytes_out (const struct lsquic_send_ctl *ctl)
 int
 lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 {
+#ifdef NDEBUG
     return (ctl->sc_flags & SC_PACE)
         && !lsquic_pacer_can_schedule(&ctl->sc_pacer,
                                                ctl->sc_n_in_flight_all);
+#else
+    if (ctl->sc_flags & SC_PACE)
+    {
+        const int blocked = !lsquic_pacer_can_schedule(&ctl->sc_pacer,
+                                               ctl->sc_n_in_flight_all);
+        LSQ_DEBUG("pacer blocked: %d, in_flight_all: %u", blocked,
+                                                ctl->sc_n_in_flight_all);
+        return blocked;
+    }
+    else
+        return 0;
+#endif
 }
 
 
@@ -3211,6 +3230,42 @@ lsquic_send_ctl_set_token (struct lsquic_send_ctl *ctl,
     ctl->sc_token_sz = token_sz;
     LSQ_DEBUG("set token");
     return 0;
+}
+
+
+void
+lsquic_send_ctl_maybe_calc_rough_rtt (struct lsquic_send_ctl *ctl,
+                                                    enum packnum_space pns)
+{
+    const struct lsquic_packet_out *packet_out;
+    lsquic_time_t min_sent, rtt;
+    struct lsquic_packets_tailq *const *q;
+    struct lsquic_packets_tailq *const queues[] = {
+        &ctl->sc_lost_packets,
+        &ctl->sc_unacked_packets[pns],
+    };
+
+    if ((ctl->sc_flags & SC_ROUGH_RTT)
+                || lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats))
+        return;
+
+    min_sent = UINT64_MAX;
+    for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
+        TAILQ_FOREACH(packet_out, *q, po_next)
+            if (min_sent > packet_out->po_sent)
+                min_sent = packet_out->po_sent;
+
+    /* If we do not have an RTT estimate yet, get a rough estimate of it,
+     * because now we will ignore packets that carry acknowledgements and
+     * RTT estimation may be delayed.
+     */
+    if (min_sent < UINT64_MAX)
+    {
+        rtt = lsquic_time_now() - min_sent;
+        lsquic_rtt_stats_update(&ctl->sc_conn_pub->rtt_stats, rtt, 0);
+        ctl->sc_flags |= SC_ROUGH_RTT;
+        LSQ_DEBUG("set rough RTT to %"PRIu64" usec", rtt);
+    }
 }
 
 
