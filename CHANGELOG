@@ -1,6 +1,12 @@
-2020-10-26
-    - 2.12.12
-    - Undo changes in 2.12.11
+2020-11-17
+    - 2.12.13
+    - [BUGFIX] min RTO delay is 200 ms , not 1 second.
+    - [BUGFIX] calculate TLP timer correctly when only one packet is in
+      flight.
+    - [BUGFIX] discard CRYPTO frames from lower levels after connection
+      promotion.
+    - [BUGFIX] cancel path response if path could not be initialized.
+    - [BUGFIX] if push promise fails, do not invoke hset destructor.
 
 2020-10-06
     - 2.12.10
