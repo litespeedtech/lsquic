@@ -3078,7 +3078,7 @@ handshake_ok (struct lsquic_conn *lconn)
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
 
-    conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
+    conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_PACKET_SIZE))
             && params->tp_numerics[TPI_MAX_PACKET_SIZE]

@@ -415,7 +415,7 @@ calculate_tlp_delay (lsquic_send_ctl_t *ctl)
     }
     else
     {
-        delay = srtt + srtt / 2 + MIN_RTO_DELAY;
+        delay = srtt + srtt / 2 + ctl->sc_conn_pub->max_peer_ack_usec;
         if (delay < 2 * srtt)
             delay = 2 * srtt;
     }

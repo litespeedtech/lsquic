@@ -62,6 +62,7 @@ struct lsquic_conn_public {
      */
     unsigned                        bytes_in;   /* successfully processed */
     unsigned                        bytes_out;
+    unsigned                        max_peer_ack_usec;
 };
 
 #endif

@@ -617,6 +617,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     conn->fc_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     conn->fc_pub.path = &conn->fc_path;
+    conn->fc_pub.max_peer_ack_usec = ACK_TIMEOUT;
     conn->fc_stream_ifs[STREAM_IF_STD].stream_if     = enpub->enp_stream_if;
     conn->fc_stream_ifs[STREAM_IF_STD].stream_if_ctx = enpub->enp_stream_if_ctx;
     conn->fc_settings = &enpub->enp_settings;
