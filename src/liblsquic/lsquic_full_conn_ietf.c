@@ -4702,6 +4702,7 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
     struct stream_frame stream_frame;
+    enum enc_level enc_level;
     int parsed_len;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_crypto_frame(p, len,
@@ -4709,9 +4710,19 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
+    enc_level = lsquic_packet_in_enc_level(packet_in);
+    EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, &stream_frame, enc_level);
+    LSQ_DEBUG("Got CRYPTO frame for enc level #%u", enc_level);
     if (!(conn->ifc_flags & IFC_PROC_CRYPTO))
     {
-        LSQ_DEBUG("discard %d-byte CRYPTO frame", parsed_len);
+        LSQ_DEBUG("discard %d-byte CRYPTO frame: handshake has been confirmed",
+                                                                    parsed_len);
+        return (unsigned) parsed_len;
+    }
+    if (enc_level < ENC_LEV_INIT)
+    {   /* Must be dup */
+        LSQ_DEBUG("discard %d-byte CRYPTO frame on level %s", parsed_len,
+                                                lsquic_enclev2str[enc_level]);
         return (unsigned) parsed_len;
     }
 
