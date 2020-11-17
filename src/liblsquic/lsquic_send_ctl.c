@@ -58,7 +58,7 @@
 #define MAX_RTO_BACKOFFS        10
 #define DEFAULT_RETX_DELAY      500000      /* Microseconds */
 #define MAX_RTO_DELAY           60000000    /* Microseconds */
-#define MIN_RTO_DELAY           1000000      /* Microseconds */
+#define MIN_RTO_DELAY           200000      /* Microseconds */
 #define N_NACKS_BEFORE_RETX     3
 
 #define CGP(ctl) ((struct cong_ctl *) &(ctl)->sc_cong_u)
