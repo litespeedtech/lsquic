@@ -536,6 +536,14 @@ drop_buffered_data (struct lsquic_stream *stream)
 }
 
 
+void
+lsquic_stream_drop_hset_ref (struct lsquic_stream *stream)
+{
+    if (stream->uh)
+        stream->uh->uh_hset = NULL;
+}
+
+
 static void
 destroy_uh (struct lsquic_stream *stream)
 {

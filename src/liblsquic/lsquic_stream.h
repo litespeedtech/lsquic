@@ -606,4 +606,7 @@ lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 #define lsquic_stream_is_blocked(stream_) ((stream_)->blocked_off && \
                         (stream_)->blocked_off == (stream_)->max_send_off)
 
+void
+lsquic_stream_drop_hset_ref (struct lsquic_stream *);
+
 #endif
