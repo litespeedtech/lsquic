@@ -26,8 +26,8 @@ enum purga_type
 struct purga_el
 {
     enum purga_type             puel_type;
-    /* When puel_type is PUTY_CONN_DRAIN, puel_time specifies the time until
-     * the end of the drain period.
+    /* When puel_type is PUTY_CONN_DRAIN or PUTY_CID_RETIRED, puel_time
+     * specifies the time until the end of the drain period.
      *
      * When puel_type is PUTY_CONN_DELETED, puel_time specifies the time
      * until the next time stateless reset can be sent.  puel_count is the

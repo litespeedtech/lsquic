@@ -67,7 +67,7 @@
 #define MAX_RTO_BACKOFFS        10
 #define DEFAULT_RETX_DELAY      500000      /* Microseconds */
 #define MAX_RTO_DELAY           60000000    /* Microseconds */
-#define MIN_RTO_DELAY           1000000      /* Microseconds */
+#define MIN_RTO_DELAY           200000      /* Microseconds */
 #define N_NACKS_BEFORE_RETX     3
 
 #define CGP(ctl) ((struct cong_ctl *) (ctl)->sc_cong_ctl)
@@ -443,7 +443,7 @@ calculate_tlp_delay (lsquic_send_ctl_t *ctl)
     }
     else
     {
-        delay = srtt + srtt / 2 + MIN_RTO_DELAY;
+        delay = srtt + srtt / 2 + ctl->sc_conn_pub->max_peer_ack_usec;
         if (delay < 2 * srtt)
             delay = 2 * srtt;
     }
@@ -1276,7 +1276,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     if (one_rtt_cnt)
         ctl->sc_flags |= SC_1RTT_ACKED;
 
-    if (lsquic_send_ctl_ecn_turned_on(ctl))
+    if (lsquic_send_ctl_ecn_turned_on(ctl) && (acki->flags & AI_ECN))
     {
         const uint64_t sum = acki->ecn_counts[ECN_ECT0]
                            + acki->ecn_counts[ECN_ECT1]

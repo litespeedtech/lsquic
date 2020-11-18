@@ -480,7 +480,6 @@ struct ietf_full_conn
     unsigned                    ifc_ack_freq_seqno;
     unsigned                    ifc_last_pack_tol;
     unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
-    unsigned                    ifc_max_peer_ack_usec;
     unsigned short              ifc_max_udp_payload;    /* Cached TP */
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
@@ -3118,18 +3117,10 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
 }
 
 
-static lsquic_time_t
-ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
+static uint64_t
+calc_drain_time (const struct ietf_full_conn *conn)
 {
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     lsquic_time_t drain_time, pto, srtt, var;
-
-    /* Only applicable to a server whose connection was not timed out */
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_TIMED_OUT)) != IFC_SERVER)
-    {
-        LSQ_DEBUG("drain time is zero (don't drain)");
-        return 0;
-    }
 
     /* PTO Calculation: [draft-ietf-quic-recovery-18], Section 6.2.2.1;
      * Drain time: [draft-ietf-quic-transport-19], Section 10.1.
@@ -3139,6 +3130,24 @@ ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
     pto = srtt + 4 * var + TP_DEF_MAX_ACK_DELAY * 1000;
     drain_time = 3 * pto;
 
+    return drain_time;
+}
+
+
+static lsquic_time_t
+ietf_full_conn_ci_drain_time (const struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    lsquic_time_t drain_time;
+
+    /* Only applicable to a server whose connection was not timed out */
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_TIMED_OUT)) != IFC_SERVER)
+    {
+        LSQ_DEBUG("drain time is zero (don't drain)");
+        return 0;
+    }
+
+    drain_time = calc_drain_time(conn);
     LSQ_DEBUG("drain time is %"PRIu64" usec", drain_time);
     return drain_time;
 }
@@ -3510,7 +3519,7 @@ apply_trans_params (struct ietf_full_conn *conn,
             ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
     }
 
-    conn->ifc_max_peer_ack_usec = params->tp_max_ack_delay * 1000;
+    conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
             /* Second check is so that we don't truncate a large value when
@@ -4437,7 +4446,7 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 
     need = conn->ifc_conn.cn_pf->pf_ack_frequency_frame_size(
                         conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
-                        conn->ifc_max_peer_ack_usec);
+                        conn->ifc_pub.max_peer_ack_usec);
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
     {
@@ -4450,7 +4459,7 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
                             packet_out->po_data + packet_out->po_data_sz,
                             lsquic_packet_out_avail(packet_out),
                             conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
-                            conn->ifc_max_peer_ack_usec, ignore);
+                            conn->ifc_pub.max_peer_ack_usec, ignore);
     if (sz < 0)
     {
         ABORT_ERROR("gen_ack_frequency_frame failed");
@@ -4466,7 +4475,7 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
     packet_out->po_frame_types |= QUIC_FTBIT_ACK_FREQUENCY;
     LSQ_DEBUG("Generated ACK_FREQUENCY(seqno: %u; pack_tol: %u; "
         "upd: %u; ignore: %d)", conn->ifc_ack_freq_seqno,
-        conn->ifc_last_pack_tol, conn->ifc_max_peer_ack_usec, ignore);
+        conn->ifc_last_pack_tol, conn->ifc_pub.max_peer_ack_usec, ignore);
     ++conn->ifc_ack_freq_seqno;
     conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
 }
@@ -6105,14 +6114,17 @@ retire_cid (struct ietf_full_conn *conn, struct conn_cid_elem *cce,
                                                         lsquic_time_t now)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
+    lsquic_time_t drain_time;
 
-    LSQ_DEBUGC("retiring CID %"CID_FMT"; seqno: %u; %s",
-                CID_BITS(&cce->cce_cid), cce->cce_seqno,
-                (cce->cce_flags & CCE_SEQNO) ? "" : "original");
+    drain_time = calc_drain_time(conn);
+    LSQ_DEBUGC("retiring CID %"CID_FMT"; seqno: %u; %s; drain time %"PRIu64
+                " usec", CID_BITS(&cce->cce_cid), cce->cce_seqno,
+                (cce->cce_flags & CCE_SEQNO) ? "" : "original", drain_time);
 
     if (cce->cce_flags & CCE_SEQNO)
         --conn->ifc_active_cids_count;
-    lsquic_engine_retire_cid(conn->ifc_enpub, lconn, cce - lconn->cn_cces, now);
+    lsquic_engine_retire_cid(conn->ifc_enpub, lconn, cce - lconn->cn_cces, now,
+                                                                    drain_time);
     memset(cce, 0, sizeof(*cce));
 
     if (can_issue_cids(conn)

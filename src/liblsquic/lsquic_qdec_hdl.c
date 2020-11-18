@@ -57,8 +57,8 @@ struct header_ctx
  */
 union hblock_ctx
 {
-    struct header_ctx           ctx;
-    struct uncompressed_headers uh;
+    struct header_ctx ctx;
+    unsigned char     space_for_uh[sizeof(struct uncompressed_headers)];
 };
 
 
@@ -596,6 +596,21 @@ static const struct lsqpack_dec_hset_if dhi_if =
 };
 
 
+static void
+qdh_maybe_destroy_hblock_ctx (struct qpack_dec_hdl *qdh,
+                                                struct lsquic_stream *stream)
+{
+    if (stream->sm_hblock_ctx)
+    {
+        LSQ_DEBUG("destroy hblock_ctx of stream %"PRIu64, stream->id);
+        qdh->qdh_enpub->enp_hsi_if->hsi_discard_header_set(
+                                            stream->sm_hblock_ctx->ctx.hset);
+        free(stream->sm_hblock_ctx);
+        stream->sm_hblock_ctx = NULL;
+    }
+}
+
+
 static enum lsqpack_read_header_status
 qdh_header_read_results (struct qpack_dec_hdl *qdh,
         struct lsquic_stream *stream, enum lsqpack_read_header_status rhs,
@@ -619,7 +634,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
                                             &stream->sm_hblock_ctx->ctx.ehp);
             }
             hset = stream->sm_hblock_ctx->ctx.hset;
-            uh = &stream->sm_hblock_ctx->uh;
+            uh = (void *) stream->sm_hblock_ctx;
             stream->sm_hblock_ctx = NULL;
             memset(uh, 0, sizeof(*uh));
             uh->uh_stream_id = stream->id;
@@ -631,8 +646,9 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
             if (0 != qdh->qdh_enpub->enp_hsi_if
                                         ->hsi_process_header(hset, NULL))
             {
-                LSQ_DEBUG("finishing HTTP/1.x hset failed");
+                LSQ_DEBUG("finishing hset failed");
                 free(uh);
+                qdh->qdh_enpub->enp_hsi_if->hsi_discard_header_set(hset);
                 return LQRHS_ERROR;
             }
             uh->uh_hset = hset;
@@ -642,14 +658,14 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
             {
                 LSQ_DEBUG("could not give hset to stream %"PRIu64, stream->id);
                 free(uh);
+                qdh->qdh_enpub->enp_hsi_if->hsi_discard_header_set(hset);
                 return LQRHS_ERROR;
             }
         }
         else
         {
             LSQ_DEBUG("discard trailer header set");
-            free(stream->sm_hblock_ctx);
-            stream->sm_hblock_ctx = NULL;
+            qdh_maybe_destroy_hblock_ctx(qdh, stream);
         }
         if (qdh->qdh_dec_sm_out)
         {
@@ -664,6 +680,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     }
     else if (rhs == LQRHS_ERROR)
     {
+        qdh_maybe_destroy_hblock_ctx(qdh, stream);
         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
         qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
             HEC_QPACK_DECOMPRESSION_FAILED, "QPACK decompression error; "
@@ -786,6 +803,8 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
 {
     ssize_t nw;
     unsigned char buf[LSQPACK_LONGEST_CANCEL];
+
+    qdh_maybe_destroy_hblock_ctx(qdh, stream);
 
     if (!qdh->qdh_dec_sm_out)
         return;

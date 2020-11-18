@@ -107,7 +107,8 @@ lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
 
 void
 lsquic_engine_retire_cid (struct lsquic_engine_public *,
-              struct lsquic_conn *, unsigned cce_idx, lsquic_time_t now);
+    struct lsquic_conn *, unsigned cce_idx, lsquic_time_t now,
+    lsquic_time_t drain_time);
 
 int
 lsquic_engine_add_cid (struct lsquic_engine_public *,

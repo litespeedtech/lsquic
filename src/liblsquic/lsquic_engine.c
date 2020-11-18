@@ -1225,6 +1225,13 @@ find_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 }
 
 
+static const char *const puty2str[] = {
+    [PUTY_CONN_DELETED] = "deleted",
+    [PUTY_CONN_DRAIN]   = "being drained",
+    [PUTY_CID_RETIRED]  = "retired",
+};
+
+
 static lsquic_conn_t *
 find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
          struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
@@ -1270,34 +1277,33 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         switch (puel->puel_type)
         {
         case PUTY_CID_RETIRED:
-            LSQ_DEBUGC("CID %"CID_FMT" was retired, ignore packet",
-                                            CID_BITS(&packet_in->pi_conn_id));
-            return NULL;
         case PUTY_CONN_DRAIN:
-            LSQ_DEBUG("drain till: %"PRIu64"; now: %"PRIu64,
-                puel->puel_time, packet_in->pi_received);
             if (puel->puel_time > packet_in->pi_received)
             {
-                LSQ_DEBUGC("CID %"CID_FMT" is in drain state, ignore packet",
-                                            CID_BITS(&packet_in->pi_conn_id));
+                LSQ_DEBUGC("CID %"CID_FMT" is %s for another %"PRIu64
+                    "usec, ignore packet", CID_BITS(&packet_in->pi_conn_id),
+                    puty2str[puel->puel_type],
+                    puel->puel_time - packet_in->pi_received);
                 return NULL;
             }
-            LSQ_DEBUGC("CID %"CID_FMT" goes from drain state to deleted",
-                                            CID_BITS(&packet_in->pi_conn_id));
-            puel->puel_type = PUTY_CONN_DELETED;
-            puel->puel_count = 0;
-            puel->puel_time = 0;
-            /* fall-through */
+            LSQ_DEBUGC("CID %"CID_FMT" is no longer %s",
+                CID_BITS(&packet_in->pi_conn_id), puty2str[puel->puel_type]);
+            break;
         case PUTY_CONN_DELETED:
             LSQ_DEBUGC("Connection with CID %"CID_FMT" was deleted",
                                             CID_BITS(&packet_in->pi_conn_id));
             if (puel->puel_time < packet_in->pi_received)
             {
-                puel->puel_time = packet_in->pi_received
-                            /* Exponential back-off */
-                            + 1000000ull * (1 << MIN(puel->puel_count, 4));
-                ++puel->puel_count;
-                goto maybe_send_prst;
+                if (puel->puel_count < 4)
+                {
+                    puel->puel_time = packet_in->pi_received
+                                /* Exponential back-off */
+                                + 1000000ull * (1 << MIN(puel->puel_count, 4));
+                    ++puel->puel_count;
+                    goto maybe_send_prst;
+                }
+                else
+                    break;
             }
             return NULL;
         default:
@@ -3295,10 +3301,12 @@ lsquic_engine_add_cid (struct lsquic_engine_public *enpub,
 
 void
 lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
-              struct lsquic_conn *conn, unsigned cce_idx, lsquic_time_t now)
+              struct lsquic_conn *conn, unsigned cce_idx, lsquic_time_t now,
+              lsquic_time_t drain_time)
 {
     struct lsquic_engine *const engine = (struct lsquic_engine *) enpub;
     struct conn_cid_elem *const cce = &conn->cn_cces[cce_idx];
+    struct purga_el *puel;
     void *peer_ctx;
 
     assert(cce_idx < conn->cn_n_cces);
@@ -3309,8 +3317,10 @@ lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
     if (engine->purga)
     {
         peer_ctx = lsquic_conn_get_peer_ctx(conn, NULL);
-        lsquic_purga_add(engine->purga, &cce->cce_cid, peer_ctx,
+        puel = lsquic_purga_add(engine->purga, &cce->cce_cid, peer_ctx,
                                                     PUTY_CID_RETIRED, now);
+        if (puel)
+            puel->puel_time = now + drain_time;
     }
     conn->cn_cces_mask &= ~(1u << cce_idx);
     LSQ_DEBUGC("retire CID %"CID_FMT, CID_BITS(&cce->cce_cid));

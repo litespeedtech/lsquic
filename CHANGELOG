@@ -1,3 +1,14 @@
+2020-11-18
+    - 2.24.4
+    - [BUGFIX] Check whether ECN counts are set in ACK struct before using
+      them.
+    - [BUGFIX] Calculate TLP timer correctly when only one packet is in
+      flight.
+    - [BUGFIX] Min RTO delay is 200 milliseconds, not 1 second.
+    - [BUGFIX] Memory leak in QPACK decoder handler: discard hset when
+      necessary.
+    - Allow retired and drained CIDs to be reused after a timeout.
+
 2020-11-11
     - 2.24.3
     - [BUGFIX] Get rough RTT estimate on receipt of Handshake packet.

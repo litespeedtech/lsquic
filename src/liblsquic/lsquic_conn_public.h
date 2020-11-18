@@ -66,6 +66,7 @@ struct lsquic_conn_public {
     unsigned                        bytes_out;
     /* Used for no-progress timeout */
     lsquic_time_t                   last_tick, last_prog;
+    unsigned                        max_peer_ack_usec;
 };
 
 #endif
