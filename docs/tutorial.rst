@@ -151,6 +151,9 @@ Receiving Packets
 UDP datagrams are passed to the engine using the :func:`lsquic_engine_packet_in()` function.  This is the only way to do so.
 A pointer to the UDP payload is passed along with the size of the payload.
 Local and peer socket addresses are passed in as well.
+The local one is required for two reasons.
+Firstly it becomes source address on outgoing packets.
+Secondly QUIC uses it to send special frames to validate path.
 The void "peer ctx" pointer is associated with the peer address.  It gets passed to the function that sends outgoing packets and to a few other callbacks.  In a standard setup, this is most likely the socket file descriptor, but it could be pointing to something else.
 The  ECN value is in the range of 0 through 3, as in RFC 3168.
 
