@@ -55,6 +55,12 @@ Grab a page from your server:
 You can play with various options, of which there are many.  Use
 the ``-h`` command-line flag to see them.
 
+More about LSQUIC
+-----------------
+
+You may be also interested in this presentation_ about LSQUIC.
+Slides are available `here <https://github.com/dtikhonov/talks/tree/master/netdev-0x14>`_.
+
 Next steps
 ----------
 
@@ -69,3 +75,4 @@ the :doc:`apiref`.
 .. _`ls-qpack`: https://github.com/litespeedtech/ls-qpack
 .. _libevent: https://libevent.org/
 .. _README: https://github.com/litespeedtech/lsquic/blob/master/README.md
+.. _presentation: https://www.youtube.com/watch?v=kDwyGNsQXds

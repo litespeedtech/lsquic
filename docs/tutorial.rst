@@ -2,6 +2,8 @@
 Tutorial
 ********
 
+Code for this tutorial is available on `GitHub <https://github.com/dtikhonov/lsquic-tutorial>`_.
+
 .. highlight:: c
 
 Introduction
