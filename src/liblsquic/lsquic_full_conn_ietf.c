@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#define _USE_MATH_DEFINES   /* Need this for M_E on Windows */
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
