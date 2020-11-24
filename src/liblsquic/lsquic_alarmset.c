@@ -48,6 +48,7 @@ const char *const lsquic_alid2str[] =
     [AL_SESS_TICKET] = "SESS_TICKET",
     [AL_BLOCKED_KA] = "BLOCKED_KA",
     [AL_MTU_PROBE]  = "MTU_PROBE",
+    [AL_PACK_TOL]   = "PACK_TOL",
 };
 
 

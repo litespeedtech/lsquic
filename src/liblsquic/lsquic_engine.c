@@ -382,6 +382,14 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
     settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
     settings->es_ext_http_prio   = LSQUIC_DF_EXT_HTTP_PRIO;
+    settings->es_ptpc_periodicity= LSQUIC_DF_PTPC_PERIODICITY;
+    settings->es_ptpc_max_packtol= LSQUIC_DF_PTPC_MAX_PACKTOL;
+    settings->es_ptpc_dyn_target = LSQUIC_DF_PTPC_DYN_TARGET;
+    settings->es_ptpc_target     = LSQUIC_DF_PTPC_TARGET;
+    settings->es_ptpc_prop_gain  = LSQUIC_DF_PTPC_PROP_GAIN;
+    settings->es_ptpc_int_gain   = LSQUIC_DF_PTPC_INT_GAIN;
+    settings->es_ptpc_err_thresh = LSQUIC_DF_PTPC_ERR_THRESH;
+    settings->es_ptpc_err_divisor= LSQUIC_DF_PTPC_ERR_DIVISOR;
 }
 
 

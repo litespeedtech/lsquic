@@ -30,7 +30,7 @@ test1 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock */
     lsquic_time_t now = lsquic_time_now();
     lsquic_packno_t largest = 0;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     unsigned i;
     for (i = 1; i <= 0x1234; ++i)
@@ -69,7 +69,7 @@ test2 (void) /* Inverse of quic_framer_test.cc -- NewAckFrameOneAckBlock, minus
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     /* Encode the following ranges:
      *    high      low
@@ -128,7 +128,7 @@ test3 (void)
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     /* Encode the following ranges:
      *    high      low
@@ -174,7 +174,7 @@ test4 (void)
     lsquic_rechist_t rechist;
     int i;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     lsquic_time_t now = lsquic_time_now();
     lsquic_rechist_received(&rechist, 1, now);
@@ -244,7 +244,7 @@ test_4byte_packnos (void)
     lsquic_rechist_t rechist;
     lsquic_time_t now = lsquic_time_now();
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     packno = 0x23456789;
     (void) lsquic_rechist_received(&rechist, packno - 33, now);

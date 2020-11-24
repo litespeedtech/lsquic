@@ -1857,6 +1857,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_base_plpmtu = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "ptpc_target", 11))
+        {
+            settings->es_ptpc_target = atof(val);
+            return 0;
+        }
         break;
     case 12:
         if (0 == strncmp(name, "idle_conn_to", 12))
@@ -1921,6 +1926,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_ext_http_prio = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "ptpc_int_gain", 13))
+        {
+            settings->es_ptpc_int_gain = atof(val);
+            return 0;
+        }
         break;
     case 14:
         if (0 == strncmp(name, "max_streams_in", 14))
@@ -1931,6 +1941,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "progress_check", 14))
         {
             settings->es_progress_check = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "ptpc_prop_gain", 14))
+        {
+            settings->es_ptpc_prop_gain = atof(val);
             return 0;
         }
         break;
@@ -1945,6 +1960,16 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_grease_quic_bit = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "ptpc_dyn_target", 15))
+        {
+            settings->es_ptpc_dyn_target = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "ptpc_err_thresh", 15))
+        {
+            settings->es_ptpc_err_thresh = atof(val);
+            return 0;
+        }
         break;
     case 16:
         if (0 == strncmp(name, "proc_time_thresh", 16))
@@ -1955,6 +1980,21 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "qpack_experiment", 16))
         {
             settings->es_qpack_experiment = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "ptpc_periodicity", 16))
+        {
+            settings->es_ptpc_periodicity = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "ptpc_max_packtol", 16))
+        {
+            settings->es_ptpc_max_packtol = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "ptpc_err_divisor", 16))
+        {
+            settings->es_ptpc_err_divisor = atof(val);
             return 0;
         }
         break;

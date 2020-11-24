@@ -1,3 +1,8 @@
+2020-11-24
+    - 2.24.5
+    - [FEATURE] Improve Delayed ACKs extension and turn it on by default.
+    - Limit receive history to a finite amount of memory.
+
 2020-11-18
     - 2.24.4
     - [BUGFIX] Check whether ECN counts are set in ACK struct before using

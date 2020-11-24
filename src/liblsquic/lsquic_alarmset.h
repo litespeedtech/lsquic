@@ -38,6 +38,7 @@ enum alarm_id {
     AL_PATH_CHAL_3,
     AL_SESS_TICKET,
     AL_BLOCKED_KA,      /* Blocked Keep-Alive */
+    AL_PACK_TOL,        /* Calculate packet tolerance */
     MAX_LSQUIC_ALARMS
 };
 
@@ -59,6 +60,7 @@ enum alarm_id_bit {
     ALBIT_SESS_TICKET = 1 << AL_SESS_TICKET,
     ALBIT_BLOCKED_KA  = 1 << AL_BLOCKED_KA,
     ALBIT_MTU_PROBE = 1 << AL_MTU_PROBE,
+    ALBIT_PACK_TOL = 1 << AL_PACK_TOL,
 };
 
 
@@ -91,6 +93,9 @@ lsquic_alarmset_init_alarm (lsquic_alarmset_t *, enum alarm_id,
 
 #define lsquic_alarmset_are_set(alarmset, flags) \
                             ((alarmset)->as_armed_set & (flags))
+
+#define lsquic_alarmset_is_inited(alarmset_, al_id_) (                  \
+    (alarmset_)->as_alarms[al_id_].callback)
 
 /* Timers "fire," alarms "ring." */
 void

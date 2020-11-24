@@ -61,6 +61,7 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0x1057:    return TPI_LOSS_BITS;
     case 0x2AB2:    return TPI_GREASE_QUIC_BIT;
     case 0xDE1A:    return TPI_MIN_ACK_DELAY;
+    case 0xFF02DE1A:return TPI_MIN_ACK_DELAY_02;
     case 0x7158:    return TPI_TIMESTAMPS;
     default:        return INT_MAX;
     }
@@ -92,6 +93,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
 #endif
     [TPI_LOSS_BITS]                         =  0x1057,
     [TPI_MIN_ACK_DELAY]                     =  0xDE1A,
+    [TPI_MIN_ACK_DELAY_02]                  =  0xFF02DE1A,
     [TPI_TIMESTAMPS]                        =  0x7158,
     [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
 };
@@ -122,6 +124,7 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
 #endif
     [TPI_LOSS_BITS]                         =  "loss_bits",
     [TPI_MIN_ACK_DELAY]                     =  "min_ack_delay",
+    [TPI_MIN_ACK_DELAY_02]                  =  "min_ack_delay_02",
     [TPI_TIMESTAMPS]                        =  "timestamps",
     [TPI_GREASE_QUIC_BIT]                   =  "grease_quic_bit",
 };
@@ -162,6 +165,7 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  VINT_MAX_VALUE,
     [TPI_LOSS_BITS]                         =  1,
     [TPI_MIN_ACK_DELAY]                     =  (1u << 24) - 1u,
+    [TPI_MIN_ACK_DELAY_02]                  =  (1u << 24) - 1u,
     [TPI_TIMESTAMPS]                        =  TS_WANT_THEM|TS_GENERATE_THEM,
     [TPI_MAX_DATAGRAM_FRAME_SIZE]           =  VINT_MAX_VALUE,
 };
@@ -172,6 +176,7 @@ static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
     /* On the other hand, we do enforce the lower bound. */
     [TPI_MAX_UDP_PAYLOAD_SIZE]              =  1200,
     [TPI_MIN_ACK_DELAY]                     =  1,
+    [TPI_MIN_ACK_DELAY_02]                  =  1,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  2,
     [TPI_TIMESTAMPS]                        =  TS_WANT_THEM,
 };
@@ -398,6 +403,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             case TPI_ACTIVE_CONNECTION_ID_LIMIT:
             case TPI_LOSS_BITS:
             case TPI_MIN_ACK_DELAY:
+            case TPI_MIN_ACK_DELAY_02:
             case TPI_TIMESTAMPS:
             case TPI_MAX_DATAGRAM_FRAME_SIZE:
                 vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
@@ -496,6 +502,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         s = vint_read(p, end, &param_id);
         if (s < 0)
             return -1;
+        LSQ_DEBUG("read TP 0x%"PRIX64, param_id);
         p += s;
         s = vint_read(p, end, &len);
         if (s < 0)
@@ -525,6 +532,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         case TPI_ACTIVE_CONNECTION_ID_LIMIT:
         case TPI_LOSS_BITS:
         case TPI_MIN_ACK_DELAY:
+        case TPI_MIN_ACK_DELAY_02:
         case TPI_TIMESTAMPS:
         case TPI_MAX_DATAGRAM_FRAME_SIZE:
             switch (len)
@@ -657,6 +665,17 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         LSQ_DEBUG("min_ack_delay (%"PRIu64" usec) is larger than "
             "max_ack_delay (%"PRIu64" ms)",
             params->tp_numerics[TPI_MIN_ACK_DELAY],
+            params->tp_numerics[TPI_MAX_ACK_DELAY]);
+        return -1;
+    }
+
+    if ((params->tp_set & (1 << TPI_MIN_ACK_DELAY_02))
+            && params->tp_numerics[TPI_MIN_ACK_DELAY_02]
+                            > params->tp_numerics[TPI_MAX_ACK_DELAY] * 1000)
+    {
+        LSQ_DEBUG("min_ack_delay_02 (%"PRIu64" usec) is larger than "
+            "max_ack_delay (%"PRIu64" ms)",
+            params->tp_numerics[TPI_MIN_ACK_DELAY_02],
             params->tp_numerics[TPI_MAX_ACK_DELAY]);
         return -1;
     }
@@ -912,6 +931,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
             case TPI_ACTIVE_CONNECTION_ID_LIMIT:
             case TPI_LOSS_BITS:
             case TPI_MIN_ACK_DELAY:
+            case TPI_MIN_ACK_DELAY_02:
             case TPI_TIMESTAMPS:
             case TPI_MAX_DATAGRAM_FRAME_SIZE:
                 vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
@@ -1041,6 +1061,7 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         case TPI_ACTIVE_CONNECTION_ID_LIMIT:
         case TPI_LOSS_BITS:
         case TPI_MIN_ACK_DELAY:
+        case TPI_MIN_ACK_DELAY_02:
         case TPI_TIMESTAMPS:
         case TPI_MAX_DATAGRAM_FRAME_SIZE:
             switch (len)
@@ -1167,6 +1188,17 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         LSQ_DEBUG("min_ack_delay (%"PRIu64" usec) is larger than "
             "max_ack_delay (%"PRIu64" ms)",
             params->tp_numerics[TPI_MIN_ACK_DELAY],
+            params->tp_numerics[TPI_MAX_ACK_DELAY]);
+        return -1;
+    }
+
+    if ((params->tp_set & (1 << TPI_MIN_ACK_DELAY_02))
+            && params->tp_numerics[TPI_MIN_ACK_DELAY_02]
+                            > params->tp_numerics[TPI_MAX_ACK_DELAY] * 1000)
+    {
+        LSQ_DEBUG("min_ack_delay_02 (%"PRIu64" usec) is larger than "
+            "max_ack_delay (%"PRIu64" ms)",
+            params->tp_numerics[TPI_MIN_ACK_DELAY_02],
             params->tp_numerics[TPI_MAX_ACK_DELAY]);
         return -1;
     }

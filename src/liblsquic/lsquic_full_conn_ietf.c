@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -99,6 +100,7 @@
  * future: right now, we punt it.
  */
 #define CLIENT_PUSH_SUPPORT 0
+
 
 
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER
@@ -336,11 +338,11 @@ struct conn_path
 };
 
 
-struct inc_ack_stats        /* Incoming ACK stats */
+struct packet_tolerance_stats
 {
-    unsigned        n_acks;     /* Number of ACKs between ticks */
-    float           avg_acked;  /* Packets acked between ticks */
-    float           avg_n_acks; /* Average number of ACKs */
+    unsigned        n_acks;     /* Number of ACKs between probes */
+    float           integral_error;
+    lsquic_time_t   last_sample;
 };
 
 
@@ -447,6 +449,7 @@ struct ietf_full_conn
     unsigned                    ifc_n_slack_akbl[N_PNS];
     unsigned                    ifc_n_slack_all;    /* App PNS only */
     unsigned                    ifc_max_retx_since_last_ack;
+    lsquic_time_t               ifc_max_ack_delay;
     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
     uint64_t                    ifc_ecn_counts_out[N_PNS][4];
     lsquic_stream_id_t          ifc_max_req_id;
@@ -479,6 +482,11 @@ struct ietf_full_conn
     unsigned                    ifc_last_retire_prior_to;
     unsigned                    ifc_ack_freq_seqno;
     unsigned                    ifc_last_pack_tol;
+    unsigned                    ifc_last_calc_pack_tol;
+#if LSQUIC_CONN_STATS
+    unsigned                    ifc_min_pack_tol_sent;
+    unsigned                    ifc_max_pack_tol_sent;
+#endif
     unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
     unsigned short              ifc_max_udp_payload;    /* Cached TP */
     lsquic_time_t               ifc_last_live_update;
@@ -511,7 +519,8 @@ struct ietf_full_conn
     uint64_t                    ifc_last_max_data_off_sent;
     unsigned short              ifc_min_dg_sz,
                                 ifc_max_dg_sz;
-    struct inc_ack_stats        ifc_ias;
+    struct packet_tolerance_stats
+                                ifc_pts;
 #if LSQUIC_CONN_STATS
     struct conn_stats           ifc_stats,
                                *ifc_last_stats;
@@ -583,6 +592,10 @@ mtu_probe_too_large (struct ietf_full_conn *, const struct lsquic_packet_out *);
 
 static int
 apply_trans_params (struct ietf_full_conn *, const struct transport_params *);
+
+static void
+packet_tolerance_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now);
 
 static int
 init_http (struct ietf_full_conn *);
@@ -1256,9 +1269,15 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_MTU_PROBE, mtu_probe_alarm_expired, conn);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], 1);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], 1);
-    lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], 1);
+    /* For Init and Handshake, we don't expect many ranges at all.  For
+     * the regular receive history, set limit to a value that would never
+     * be reached under normal circumstances, yet small enough that would
+     * use little memory when under attack and be robust (fast).  The
+     * value 1000 limits receive history to about 16KB.
+     */
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_INIT], 1, 10);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_HSK], 1, 10);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], 1, 1000);
     lsquic_send_ctl_init(&conn->ifc_send_ctl, &conn->ifc_alset, enpub,
         flags & IFC_SERVER ? &server_ver_neg : &conn->ifc_u.cli.ifcli_ver_neg,
         &conn->ifc_pub, SC_IETF|SC_NSTP|(ecn ? SC_ECN : 0));
@@ -1287,6 +1306,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_max_req_id = VINT_MAX_VALUE + 1;
     conn->ifc_ping_unretx_thresh = 20;
     conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
+    conn->ifc_max_ack_delay = ACK_TIMEOUT;
     if (conn->ifc_settings->es_noprogress_timeout)
         conn->ifc_mflags |= MF_NOPROG_TIMEOUT;
     if (conn->ifc_settings->es_ext_http_prio)
@@ -3096,6 +3116,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     if (conn->ifc_flags & IFC_CREATED_OK)
     {
         LSQ_NOTICE("# ticks: %lu", conn->ifc_stats.n_ticks);
+        LSQ_NOTICE("sent %lu packets", conn->ifc_stats.out.packets);
         LSQ_NOTICE("received %lu packets, of which %lu were not decryptable, %lu were "
             "dups and %lu were errors; sent %lu packets, avg stream data per outgoing"
             " packet is %lu bytes",
@@ -3104,7 +3125,19 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
             conn->ifc_stats.out.packets,
             conn->ifc_stats.out.stream_data_sz /
                 (conn->ifc_stats.out.packets ? conn->ifc_stats.out.packets : 1));
-        LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
+        if (conn->ifc_flags & IFC_DELAYED_ACKS)
+            LSQ_NOTICE("delayed ACKs settings: (%u/%.3f/%.3f/%.3f/%.3f/%.3f); "
+                "packet tolerances sent: count: %u, min: %u, max: %u",
+                conn->ifc_settings->es_ptpc_periodicity,
+                conn->ifc_settings->es_ptpc_target,
+                conn->ifc_settings->es_ptpc_prop_gain,
+                conn->ifc_settings->es_ptpc_int_gain,
+                conn->ifc_settings->es_ptpc_err_thresh,
+                conn->ifc_settings->es_ptpc_err_divisor,
+                conn->ifc_ack_freq_seqno,
+                conn->ifc_min_pack_tol_sent, conn->ifc_max_pack_tol_sent);
+        LSQ_NOTICE("ACKs: delayed acks on: %s; in: %lu; processed: %lu; merged: %lu",
+            conn->ifc_flags & IFC_DELAYED_ACKS ? "yes" : "no",
             conn->ifc_stats.in.n_acks, conn->ifc_stats.in.n_acks_proc,
             conn->ifc_stats.in.n_acks_merged);
     }
@@ -3497,10 +3530,18 @@ apply_trans_params (struct ietf_full_conn *conn,
     LSQ_DEBUG("PING period is set to %"PRIu64" usec", conn->ifc_ping_period);
 
     if (conn->ifc_settings->es_delayed_acks
-            && (params->tp_set & (1 << TPI_MIN_ACK_DELAY)))
+            && (params->tp_set
+                    & ((1 << TPI_MIN_ACK_DELAY)|(1 << TPI_MIN_ACK_DELAY_02))))
     {
+        /* We do not use the min_ack_delay value for anything at the moment,
+         * as ACK_FREQUENCY frames we generate do not change the peer's max
+         * ACK delay.  When or if we do decide to do it, don't forget to use
+         * the correct value here -- based on which TP is set!
+         */
         LSQ_DEBUG("delayed ACKs enabled");
         conn->ifc_flags |= IFC_DELAYED_ACKS;
+        lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PACK_TOL,
+                                        packet_tolerance_alarm_expired, conn);
     }
     if (conn->ifc_settings->es_timestamps
             && (params->tp_set & (1 << TPI_TIMESTAMPS))
@@ -4416,23 +4457,6 @@ generate_handshake_done_frame (struct ietf_full_conn *conn,
 }
 
 
-static unsigned
-packet_tolerance (float avg_acked)
-{
-    if (avg_acked < 3)
-        return 2;
-    if (avg_acked < 10)
-        return 4;
-    if (avg_acked < 20)
-        return 8;
-    if (avg_acked < 40)
-        return 16;
-    if (avg_acked < 80)
-        return 32;
-    return 64;
-}
-
-
 static void
 generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
 {
@@ -4445,7 +4469,7 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
     const int ignore = 1;
 
     need = conn->ifc_conn.cn_pf->pf_ack_frequency_frame_size(
-                        conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
+                        conn->ifc_ack_freq_seqno, conn->ifc_last_calc_pack_tol,
                         conn->ifc_pub.max_peer_ack_usec);
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
@@ -4454,11 +4478,10 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
         return;
     }
 
-    conn->ifc_last_pack_tol = packet_tolerance(conn->ifc_ias.avg_acked);
     sz = conn->ifc_conn.cn_pf->pf_gen_ack_frequency_frame(
                             packet_out->po_data + packet_out->po_data_sz,
                             lsquic_packet_out_avail(packet_out),
-                            conn->ifc_ack_freq_seqno, conn->ifc_last_pack_tol,
+                            conn->ifc_ack_freq_seqno, conn->ifc_last_calc_pack_tol,
                             conn->ifc_pub.max_peer_ack_usec, ignore);
     if (sz < 0)
     {
@@ -4471,13 +4494,25 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
+    conn->ifc_last_pack_tol = conn->ifc_last_calc_pack_tol;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= QUIC_FTBIT_ACK_FREQUENCY;
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+        "Generated ACK_FREQUENCY(seqno: %u; pack_tol: %u; "
+        "upd: %u; ignore: %d)", conn->ifc_ack_freq_seqno,
+        conn->ifc_last_pack_tol, conn->ifc_pub.max_peer_ack_usec, ignore);
     LSQ_DEBUG("Generated ACK_FREQUENCY(seqno: %u; pack_tol: %u; "
         "upd: %u; ignore: %d)", conn->ifc_ack_freq_seqno,
         conn->ifc_last_pack_tol, conn->ifc_pub.max_peer_ack_usec, ignore);
     ++conn->ifc_ack_freq_seqno;
     conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
+#if LSQUIC_CONN_STATS
+    if (conn->ifc_last_pack_tol > conn->ifc_max_pack_tol_sent)
+        conn->ifc_max_pack_tol_sent = conn->ifc_last_pack_tol;
+    if (conn->ifc_last_pack_tol < conn->ifc_min_pack_tol_sent
+                                    || 0 == conn->ifc_min_pack_tol_sent)
+        conn->ifc_min_pack_tol_sent = conn->ifc_last_pack_tol;
+#endif
 }
 
 
@@ -4776,44 +4811,158 @@ handshake_confirmed (struct ietf_full_conn *conn)
 }
 
 
-static void
-update_ema (float *val, unsigned new)
+static float
+calc_target (lsquic_time_t srtt_ms)
 {
-    if (*val)
-        *val = (new - *val) * 0.4 + *val;
-    else
-        *val = new;
+    if (srtt_ms <= 5 * 1000)
+        return 2.5;
+    if (srtt_ms <= 10 * 1000)
+        return 2.0;
+    if (srtt_ms <= 15 * 1000)
+        return 1.6;
+    if (srtt_ms <= 20 * 1000)
+        return 1.4;
+    if (srtt_ms <= 30 * 1000)
+        return 1.3;
+    if (srtt_ms <= 40 * 1000)
+        return 1.2;
+    if (srtt_ms <= 50 * 1000)
+        return 1.1;
+    if (srtt_ms <= 60 * 1000)
+        return 1.0;
+    if (srtt_ms <= 70 * 1000)
+        return 0.9;
+    if (srtt_ms <= 80 * 1000)
+        return 0.8;
+    if (srtt_ms <= 100 * 1000)
+        return 0.7;
+    return 0.5;
 }
 
 
 static void
-update_target_packet_tolerance (struct ietf_full_conn *conn,
-                                                const unsigned n_newly_acked)
+packet_tolerance_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now)
 {
-    unsigned tol;
+    struct ietf_full_conn *const conn = ctx;
+    const float             Kp = conn->ifc_settings->es_ptpc_prop_gain,
+                            Ki = conn->ifc_settings->es_ptpc_int_gain,
+                    err_thresh = conn->ifc_settings->es_ptpc_err_thresh,
+                   err_divisor = conn->ifc_settings->es_ptpc_err_divisor;
+    const unsigned periodicity = conn->ifc_settings->es_ptpc_periodicity;
+    const unsigned max_packtol = conn->ifc_settings->es_ptpc_max_packtol;
+    float avg_acks_per_rtt, error, combined_error, normalized,
+            combined_error_abs, target, rtts;
+    double dt;
+    lsquic_time_t srtt, begin_t;
 
-    update_ema(&conn->ifc_ias.avg_n_acks, conn->ifc_ias.n_acks);
-    update_ema(&conn->ifc_ias.avg_acked, n_newly_acked);
+    srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
 
-    tol = packet_tolerance(conn->ifc_ias.avg_acked);
-    LSQ_DEBUG("packtol logic: %u ACK frames (avg: %.2f), %u newly acked "
-        "(avg: %.1f), last sent %u, would-be tol: %u", conn->ifc_ias.n_acks,
-        conn->ifc_ias.avg_n_acks, n_newly_acked, conn->ifc_ias.avg_acked,
-        conn->ifc_last_pack_tol, tol);
-    if (conn->ifc_ias.avg_n_acks > 1.5 && conn->ifc_ias.avg_acked > 2.0
-                && tol > conn->ifc_last_pack_tol)
+    if (srtt == 0)
+        goto end;
+    if (0 == conn->ifc_pts.n_acks)
+        /* Don't reset last_sample and calculate average for both this and next
+         * period the next time around.
+         */
+        goto end;
+
+    if (conn->ifc_settings->es_ptpc_dyn_target)
+        target = calc_target(srtt);
+    else
+        target = conn->ifc_settings->es_ptpc_target;
+
+    dt = periodicity * (double) srtt / 1000000;
+
+    begin_t = conn->ifc_pts.last_sample ? conn->ifc_pts.last_sample
+                                                    : conn->ifc_created;
+    /*
+    LSQ_DEBUG("begin: %"PRIu64"; now: %"PRIu64"; SRTT: %"PRIu64"; acks: %u",
+        begin_t, now, srtt, conn->ifc_pts.n_acks);
+    */
+    rtts = (float) (now - begin_t) / (float) srtt;
+    avg_acks_per_rtt = (float) conn->ifc_pts.n_acks / (float) rtts;
+    normalized = avg_acks_per_rtt * M_E / target;
+    error = logf(normalized) - 1;
+    conn->ifc_pts.integral_error += error * (float) dt;
+    combined_error = Kp * error + Ki * conn->ifc_pts.integral_error;
+    combined_error_abs = fabsf(combined_error);
+    conn->ifc_pts.last_sample = now;
+    if (combined_error_abs > err_thresh)
     {
-        LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
-                                        "increase", conn->ifc_last_pack_tol);
-        conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
+        unsigned adj = combined_error_abs / err_divisor;
+        unsigned last_pack_tol = conn->ifc_last_pack_tol;
+        if (0 == last_pack_tol)
+        {
+            last_pack_tol = (unsigned)
+                lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist)
+                                                    / conn->ifc_pts.n_acks;
+            LSQ_DEBUG("packets sent: %"PRIu64"; ACKs received: %u; implied "
+                "tolerance: %u",
+                lsquic_senhist_largest(&conn->ifc_send_ctl.sc_senhist),
+                conn->ifc_pts.n_acks, last_pack_tol);
+            if (last_pack_tol < 2)
+                last_pack_tol = 2;
+            else if (last_pack_tol >= max_packtol)
+                last_pack_tol = max_packtol / 2;
+        }
+        if (combined_error > 0)
+        {
+            conn->ifc_last_calc_pack_tol = last_pack_tol + adj;
+            if (conn->ifc_last_calc_pack_tol >= max_packtol)
+            {
+                /* Clamp integral error when we can go no higher */
+                conn->ifc_pts.integral_error -= error * (float) dt;
+                conn->ifc_last_calc_pack_tol = max_packtol;
+            }
+        }
+        else
+        {
+            if (adj + 2 < last_pack_tol)
+                conn->ifc_last_calc_pack_tol = last_pack_tol - adj;
+            else
+                conn->ifc_last_calc_pack_tol = 2;
+            if (conn->ifc_last_calc_pack_tol == 2)
+            {
+                /* Clamp integral error when we can go no lower */
+                conn->ifc_pts.integral_error -= error * (float) dt;
+            }
+        }
+        if (conn->ifc_last_calc_pack_tol != conn->ifc_last_pack_tol)
+        {
+            LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
+                "%s to %u", conn->ifc_last_pack_tol,
+                combined_error > 0 ? "increase" : "decrease",
+                conn->ifc_last_calc_pack_tol);
+            conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
+        }
+        else
+        {
+            LSQ_DEBUG("packet tolerance unchanged at %u", conn->ifc_last_pack_tol);
+            conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
+        }
     }
-    else if (conn->ifc_ias.avg_n_acks < 1.5
-        && (float) tol < (float) conn->ifc_last_pack_tol * 3 / 4)
+    else
+        conn->ifc_send_flags &= ~SF_SEND_ACK_FREQUENCY;
+    LSQ_DEBUG("avg ACKs per RTT: %.3f; normalized: %.3f; target: %.3f; error: %.3f; "
+        "p-error: %.3f, i-error: %.3f; Overall: %.3f; "
+        "packet tolerance: current: %u, last: %u",
+        avg_acks_per_rtt, normalized, target, error, Kp * error,
+        conn->ifc_pts.integral_error, combined_error,
+        conn->ifc_last_calc_pack_tol, conn->ifc_last_pack_tol);
+    /* Until we have the first value, don't reset the counters */
+    if (conn->ifc_last_calc_pack_tol != 0)
+        conn->ifc_pts.n_acks = 0;
+
+  end:
+    if (lsquic_send_ctl_have_unacked_retx_data(&conn->ifc_send_ctl))
     {
-        LSQ_DEBUG("old packet tolerance target: %u, schedule ACK_FREQUENCY "
-                                        "decrease", conn->ifc_last_pack_tol);
-        conn->ifc_send_flags |= SF_SEND_ACK_FREQUENCY;
+        LSQ_DEBUG("set PACK_TOL alarm %"PRIu64" microseconds into the future",
+            srtt * periodicity);
+        lsquic_alarmset_set(&conn->ifc_alset, al_id, now + srtt * periodicity);
     }
+    else
+        LSQ_DEBUG("no unacked retx data: do not rearm the packet tolerance "
+                                                                    "alarm");
 }
 
 
@@ -4823,13 +4972,11 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
 {
     enum packnum_space pns;
     lsquic_packno_t packno;
-    unsigned n_unacked;
     int one_rtt_acked;
 
     CONN_STATS(in.n_acks_proc, 1);
     LSQ_DEBUG("Processing ACK");
     one_rtt_acked = lsquic_send_ctl_1rtt_acked(&conn->ifc_send_ctl);
-    n_unacked = lsquic_send_ctl_n_unacked(&conn->ifc_send_ctl);
     if (0 == lsquic_send_ctl_got_ack(&conn->ifc_send_ctl, acki, received, now))
     {
         pns = acki->pns;
@@ -4844,9 +4991,6 @@ process_ack (struct ietf_full_conn *conn, struct ack_info *acki,
                 ignore_init(conn);
             handshake_confirmed(conn);
         }
-        if (PNS_APP == pns && (conn->ifc_flags & IFC_DELAYED_ACKS))
-            update_target_packet_tolerance(conn,
-                n_unacked - lsquic_send_ctl_n_unacked(&conn->ifc_send_ctl));
         return 0;
     }
     else
@@ -5676,20 +5820,20 @@ process_ack_frame (struct ietf_full_conn *conn,
     conn->ifc_max_ack_packno[pns] = packet_in->pi_packno;
     new_acki->pns = pns;
 
+    ++conn->ifc_pts.n_acks;
+
     /* Only cache ACKs for PNS_APP */
     if (pns == PNS_APP && new_acki == &conn->ifc_ack)
     {
         LSQ_DEBUG("Saved ACK");
         conn->ifc_flags |= IFC_HAVE_SAVED_ACK;
         conn->ifc_saved_ack_received = packet_in->pi_received;
-        conn->ifc_ias.n_acks = 1;
     }
     else if (pns == PNS_APP)
     {
         if (0 == lsquic_merge_acks(&conn->ifc_ack, new_acki))
         {
             CONN_STATS(in.n_acks_merged, 1);
-            ++conn->ifc_ias.n_acks;
             LSQ_DEBUG("merged into saved ACK, getting %s",
                 (lsquic_acki2str(&conn->ifc_ack, conn->ifc_pub.mm->ack_str,
                                 MAX_ACKI_STR_SZ), conn->ifc_pub.mm->ack_str));
@@ -6414,6 +6558,15 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if (upd_mad < TP_MIN_ACK_DELAY)
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Update Max Ack Delay value of %"PRIu64" usec is invalid, as it "
+            "is smaller than the advertised min_ack_delay of %u usec",
+            upd_mad, TP_MIN_ACK_DELAY);
+        return 0;
+    }
+
     if (conn->ifc_max_ack_freq_seqno > 0
                                     && seqno <= conn->ifc_max_ack_freq_seqno)
     {
@@ -6428,7 +6581,15 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
         conn->ifc_max_retx_since_last_ack = pack_tol;
     }
 
-    /* TODO: do something with max ack delay update */
+    if (upd_mad != conn->ifc_max_ack_delay)
+    {
+        conn->ifc_max_ack_delay = upd_mad;
+        LSQ_DEBUG("set Max Ack Delay to new value of %"PRIu64" usec",
+            conn->ifc_max_ack_delay);
+    }
+    else
+        LSQ_DEBUG("keep Max Ack Delay unchanged at %"PRIu64" usec",
+            conn->ifc_max_ack_delay);
 
     if (ignore)
     {
@@ -6770,16 +6931,23 @@ try_queueing_ack_app (struct ietf_full_conn *conn,
     }
     else if (conn->ifc_n_slack_akbl[PNS_APP] > 0)
     {
-        /* See https://github.com/quicwg/base-drafts/issues/3304 for more */
-        srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
-        if (srtt)
-            ack_timeout = MAX(1000, MIN(ACK_TIMEOUT, srtt / 4));
+        if (!lsquic_alarmset_is_set(&conn->ifc_alset, AL_ACK_APP))
+        {
+            /* See https://github.com/quicwg/base-drafts/issues/3304 for more */
+            srtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
+            if (srtt)
+                ack_timeout = MAX(1000, MIN(conn->ifc_max_ack_delay, srtt / 4));
+            else
+                ack_timeout = conn->ifc_max_ack_delay;
+            lsquic_alarmset_set(&conn->ifc_alset, AL_ACK_APP,
+                                                            now + ack_timeout);
+            LSQ_DEBUG("%s ACK alarm set to %"PRIu64, lsquic_pns2str[PNS_APP],
+                                                            now + ack_timeout);
+        }
         else
-            ack_timeout = ACK_TIMEOUT;
-        lsquic_alarmset_set(&conn->ifc_alset, AL_ACK_APP,
-                                                        now + ack_timeout);
-        LSQ_DEBUG("%s ACK alarm set to %"PRIu64, lsquic_pns2str[PNS_APP],
-                                                        now + ack_timeout);
+            LSQ_DEBUG("%s ACK alarm already set to %"PRIu64" usec from now",
+                lsquic_pns2str[PNS_APP],
+                conn->ifc_alset.as_expiry[AL_ACK_APP] - now);
     }
 }
 
@@ -9524,3 +9692,4 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+

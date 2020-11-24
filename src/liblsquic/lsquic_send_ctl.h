@@ -158,6 +158,9 @@ lsquic_send_ctl_smallest_unacked (lsquic_send_ctl_t *ctl);
 int
 lsquic_send_ctl_have_unacked_stream_frames (const lsquic_send_ctl_t *);
 
+int
+lsquic_send_ctl_have_unacked_retx_data (const struct lsquic_send_ctl *);
+
 void
 lsquic_send_ctl_cleanup (lsquic_send_ctl_t *);
 
@@ -398,8 +401,6 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *,
 
 void
 lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
-
-#define lsquic_send_ctl_n_unacked(ctl_) ((ctl_)->sc_n_in_flight_retx)
 
 void
 lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);

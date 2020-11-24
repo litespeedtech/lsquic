@@ -21,7 +21,7 @@ test4 (void)
     const struct lsquic_packno_range *range;
     lsquic_packno_t packno;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     for (packno = 11917; packno <= 11941; ++packno)
         lsquic_rechist_received(&rechist, packno, 0);
@@ -122,7 +122,7 @@ test5 (void)
     lsquic_rechist_t rechist;
     char buf[100];
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     lsquic_rechist_received(&rechist, 1, 0);
     /* Packet 2 omitted because it could not be decrypted */
@@ -165,15 +165,15 @@ test5 (void)
 
 
 static void
-test_rand_sequence (unsigned seed)
+test_rand_sequence (unsigned seed, unsigned max)
 {
     struct lsquic_rechist rechist;
     const struct lsquic_packno_range *range;
     lsquic_packno_t prev_low;
     enum received_st st;
-    unsigned i;
+    unsigned i, count;
 
-    lsquic_rechist_init(&rechist, 1);
+    lsquic_rechist_init(&rechist, 1, max);
     srand(seed);
 
     for (i = 0; i < 10000; ++i)
@@ -186,13 +186,17 @@ test_rand_sequence (unsigned seed)
     assert(range);
     assert(range->high >= range->low);
     prev_low = range->low;
+    count = 1;
 
     while (range = lsquic_rechist_next(&rechist), range != NULL)
     {
+        ++count;
         assert(range->high >= range->low);
         assert(range->high < prev_low);
         prev_low = range->low;
     }
+    if (max)
+        assert(count <= max);
 
     lsquic_rechist_cleanup(&rechist);
 }
@@ -226,7 +230,7 @@ test_shuffle_1000 (unsigned seed)
     struct shuffle_elem *els;
 
     els = malloc(sizeof(els[0]) * 10000);
-    lsquic_rechist_init(&rechist, 1);
+    lsquic_rechist_init(&rechist, 1, 0);
     srand(seed);
 
     for (i = 0; i < 10000; ++i)
@@ -263,7 +267,7 @@ main (void)
     unsigned i;
     const struct lsquic_packno_range *range;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
 
     lsquic_time_t now = 1234;
     st = lsquic_rechist_received(&rechist, 0, now);
@@ -356,7 +360,10 @@ main (void)
     test5();
 
     for (i = 0; i < 10; ++i)
-        test_rand_sequence(i);
+        test_rand_sequence(i, 0);
+
+    for (i = 0; i < 10; ++i)
+        test_rand_sequence(i, 111 + i * 3 /* Just something arbitrary */);
 
     for (i = 0; i < 10; ++i)
         test_shuffle_1000(i);

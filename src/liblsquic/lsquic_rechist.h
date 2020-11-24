@@ -30,6 +30,7 @@ struct lsquic_rechist {
     unsigned                        rh_n_alloced;
     unsigned                        rh_n_used;
     unsigned                        rh_head;
+    unsigned                        rh_max_ranges;
     enum {
         RH_CUTOFF_SET   = (1 << 0),
     }                               rh_flags;
@@ -46,7 +47,7 @@ struct lsquic_rechist {
 typedef struct lsquic_rechist lsquic_rechist_t;
 
 void
-lsquic_rechist_init (struct lsquic_rechist *, int is_ietf);
+lsquic_rechist_init (struct lsquic_rechist *, int is_ietf, unsigned max_ranges);
 
 void
 lsquic_rechist_cleanup (struct lsquic_rechist *);

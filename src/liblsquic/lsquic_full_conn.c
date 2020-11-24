@@ -81,6 +81,9 @@ enum stream_if { STREAM_IF_STD, STREAM_IF_HSK, STREAM_IF_HDR, N_STREAM_IFS };
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
 #define ACK_TIMEOUT                     25000
 
+/* Maximum number of ACK ranges that can fit into gQUIC ACK frame */
+#define MAX_ACK_RANGES 256
+
 /* IMPORTANT: Keep values of FC_SERVER and FC_HTTP same as LSENG_SERVER
  * and LSENG_HTTP.
  */
@@ -661,7 +664,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     conn->fc_pub.all_streams = lsquic_hash_create();
     if (!conn->fc_pub.all_streams)
         goto cleanup_on_error;
-    lsquic_rechist_init(&conn->fc_rechist, 0);
+    lsquic_rechist_init(&conn->fc_rechist, 0, MAX_ACK_RANGES);
     if (conn->fc_flags & FC_HTTP)
     {
         conn->fc_pub.u.gquic.hs = lsquic_headers_stream_new(
@@ -4411,7 +4414,7 @@ lsquic_gquic_full_conn_srej (struct lsquic_conn *lconn)
 
     /* Reset receive history */
     lsquic_rechist_cleanup(&conn->fc_rechist);
-    lsquic_rechist_init(&conn->fc_rechist, 0);
+    lsquic_rechist_init(&conn->fc_rechist, 0, MAX_ACK_RANGES);
 
     /* Reset send controller state */
     lsquic_send_ctl_cleanup(&conn->fc_send_ctl);

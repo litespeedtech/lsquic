@@ -647,8 +647,10 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     }
     if (settings->es_delayed_acks)
     {
-        params.tp_numerics[TPI_MIN_ACK_DELAY] = 10000;    /* TODO: make into a constant? make configurable? */
+        params.tp_numerics[TPI_MIN_ACK_DELAY] = TP_MIN_ACK_DELAY;
         params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
+        params.tp_numerics[TPI_MIN_ACK_DELAY_02] = TP_MIN_ACK_DELAY;
+        params.tp_set |= 1 << TPI_MIN_ACK_DELAY_02;
     }
     if (settings->es_timestamps)
     {
@@ -1687,6 +1689,17 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     }
 
     LSQ_DEBUG("have peer transport parameters (%zu bytes)", bufsz);
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    {
+        params_str = lsquic_mm_get_4k(&enc_sess->esi_enpub->enp_mm);
+        if (params_str)
+        {
+            lsquic_hexdump(params_buf, bufsz, params_str, 0x1000);
+            LSQ_DEBUG("transport parameters (%zd bytes):\n%s", bufsz,
+                                                            params_str);
+            lsquic_mm_put_4k(&enc_sess->esi_enpub->enp_mm, params_str);
+        }
+    }
     if (0 > (version == LSQVER_ID27 ? lsquic_tp_decode_27
                 : lsquic_tp_decode)(params_buf, bufsz,
                             !(enc_sess->esi_flags & ESI_SERVER),
@@ -3343,8 +3356,10 @@ lsquic_enc_sess_ietf_gen_quic_ctx (
     }
     if (settings->es_delayed_acks)
     {
-        params.tp_numerics[TPI_MIN_ACK_DELAY] = 10000;    /* TODO: make into a constant? make configurable? */
+        params.tp_numerics[TPI_MIN_ACK_DELAY] = TP_MIN_ACK_DELAY;
         params.tp_set |= 1 << TPI_MIN_ACK_DELAY;
+        params.tp_numerics[TPI_MIN_ACK_DELAY_02] = TP_MIN_ACK_DELAY;
+        params.tp_set |= 1 << TPI_MIN_ACK_DELAY_02;
     }
     if (settings->es_timestamps)
     {

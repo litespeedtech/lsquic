@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 24
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_PATCH_VERSION 5
 
 /**
  * Engine flags:
@@ -350,8 +350,21 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn spin bit on by default */
 #define LSQUIC_DF_SPIN 1
 
-/** Turn off delayed ACKs extension by default */
-#define LSQUIC_DF_DELAYED_ACKS 0
+/** Turn on delayed ACKs extension by default */
+#define LSQUIC_DF_DELAYED_ACKS 1
+
+/**
+ * Defaults for the Packet Tolerance PID Controller (PTPC) used by the
+ * Delayed ACKs extension:
+ */
+#define LSQUIC_DF_PTPC_PERIODICITY 3
+#define LSQUIC_DF_PTPC_MAX_PACKTOL 150
+#define LSQUIC_DF_PTPC_DYN_TARGET 1
+#define LSQUIC_DF_PTPC_TARGET 1.0
+#define LSQUIC_DF_PTPC_PROP_GAIN 0.8
+#define LSQUIC_DF_PTPC_INT_GAIN 0.35
+#define LSQUIC_DF_PTPC_ERR_THRESH 0.05
+#define LSQUIC_DF_PTPC_ERR_DIVISOR 0.05
 
 /** Turn on timestamp extension by default */
 #define LSQUIC_DF_TIMESTAMPS 1
@@ -847,9 +860,6 @@ struct lsquic_engine_settings {
     /**
      * Enable delayed ACKs extension.  Allowed values are 0 and 1.
      *
-     * Warning: this is an experimental feature.  Using it will most likely
-     * lead to degraded performance.
-     *
      * Default value is @ref LSQUIC_DF_DELAYED_ACKS
      */
     int             es_delayed_acks;
@@ -962,6 +972,39 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_QPACK_EXPERIMENT.
      */
     int             es_qpack_experiment;
+
+    /**
+     * Settings for the Packet Tolerance PID Controller (PTPC) used for
+     * the Delayed ACKs logic.  Periodicity is how often the number of
+     * incoming ACKs is sampled.  Periodicity's units is the number of
+     * RTTs. Target is the average number of incoming ACKs per RTT we
+     * want to achieve.  Error threshold defines the range of error values
+     * within which no action is taken.  For example, error threshold of
+     * 0.03 means that adjustment actions will be taken only when the
+     * error is outside of the [-0.03, 0.03] range.  Proportional and
+     * integral gains have their usual meanings described here:
+     *      https://en.wikipedia.org/wiki/PID_controller#Controller_theory
+     *
+     * The average is normalized as follows:
+     *    AvgNormalized = Avg * e / Target      # Where 'e' is 2.71828...
+     *
+     * The error is then calculated as ln(AvgNormalized) - 1.  This gives
+     * us a logarithmic scale that is convenient to use for adjustment
+     * calculations.  The error divisor is used to calculate the packet
+     * tolerance adjustment:
+     *    Adjustment = Error / ErrorDivisor
+     *
+     * WARNING.  The library comes with sane defaults.  Only fiddle with
+     * these knobs if you know what you are doing.
+     */
+    unsigned es_ptpc_periodicity;   /* LSQUIC_DF_PTPC_PERIODICITY */
+    unsigned es_ptpc_max_packtol;   /* LSQUIC_DF_PTPC_MAX_PACKTOL */
+    int      es_ptpc_dyn_target;    /* LSQUIC_DF_PTPC_DYN_TARGET */
+    float    es_ptpc_target,        /* LSQUIC_DF_PTPC_TARGET */
+             es_ptpc_prop_gain,     /* LSQUIC_DF_PTPC_PROP_GAIN */
+             es_ptpc_int_gain,      /* LSQUIC_DF_PTPC_INT_GAIN */
+             es_ptpc_err_thresh,    /* LSQUIC_DF_PTPC_ERR_THRESH */
+             es_ptpc_err_divisor;   /* LSQUIC_DF_PTPC_ERR_DIVISOR */
 };
 
 /* Initialize `settings' to default values */

@@ -24,10 +24,17 @@
 
 
 void
-lsquic_rechist_init (struct lsquic_rechist *rechist, int ietf)
+lsquic_rechist_init (struct lsquic_rechist *rechist, int ietf,
+                                                        unsigned max_ranges)
 {
     memset(rechist, 0, sizeof(*rechist));
     rechist->rh_cutoff = ietf ? 0 : 1;
+    /* '1' is an odd case that would add an extra conditional in
+     * rechist_reuse_last_elem(), so we prohibit it.
+     */
+    if (max_ranges == 1)
+        max_ranges = 2;
+    rechist->rh_max_ranges = max_ranges;
 }
 
 
@@ -95,6 +102,8 @@ rechist_grow (struct lsquic_rechist *rechist)
         nelems = rechist->rh_n_alloced * 2;
     else
         nelems = 4;
+    if (rechist->rh_max_ranges && nelems > rechist->rh_max_ranges)
+        nelems = rechist->rh_max_ranges;
     n_masks = (nelems + (-nelems & (BITS_PER_MASK - 1))) / BITS_PER_MASK;
     size = sizeof(struct rechist_elem) * nelems + sizeof(uintptr_t) * n_masks;
     mem = realloc(rechist->rh_elems, size);
@@ -117,15 +126,44 @@ rechist_grow (struct lsquic_rechist *rechist)
 }
 
 
+/* We hit maximum number of elements.  To allocate a new element, we drop
+ * the last element and return its index, reusing the slot.
+ */
+static int
+rechist_reuse_last_elem (struct lsquic_rechist *rechist)
+{
+    struct rechist_elem *last, *penultimate;
+    unsigned last_idx;
+
+    /* No need to check bitmask anywhere: the array is full! */
+    last = rechist->rh_elems;
+    while (last->re_next != UINT_MAX)
+        ++last;
+
+    last_idx = last - rechist->rh_elems;
+    penultimate = rechist->rh_elems;
+    while (penultimate->re_next != last_idx)
+        ++penultimate;
+
+    penultimate->re_next = UINT_MAX;
+    return last_idx;
+}
+
+
 static int
 rechist_alloc_elem (struct lsquic_rechist *rechist)
 {
     unsigned i, idx;
     uintptr_t *mask;
 
-    if (rechist->rh_n_used == rechist->rh_n_alloced
-                                            && 0 != rechist_grow(rechist))
-        return -1;
+    if (rechist->rh_n_used == rechist->rh_n_alloced)
+    {
+        if (rechist->rh_max_ranges
+                            && rechist->rh_n_used >= rechist->rh_max_ranges)
+            return rechist_reuse_last_elem(rechist);
+        if (0 != rechist_grow(rechist))
+            return -1;
+    }
 
     for (mask = rechist->rh_masks; *mask == UINTPTR_MAX; ++mask)
         ;
@@ -238,6 +276,8 @@ lsquic_rechist_received (lsquic_rechist_t *rechist, lsquic_packno_t packno,
         el = &rechist->rh_elems[el->re_next];
     }
 
+    if (rechist->rh_max_ranges && rechist->rh_n_used >= rechist->rh_max_ranges)
+        goto replace_last_el;
     prev_idx = el - rechist->rh_elems;
     idx = rechist_alloc_elem(rechist);
     if (idx < 0)
@@ -266,6 +306,9 @@ lsquic_rechist_received (lsquic_rechist_t *rechist, lsquic_packno_t packno,
     return REC_ST_OK;
 
   insert_before:
+    if (el->re_next == UINT_MAX && rechist->rh_max_ranges
+                            && rechist->rh_n_used >= rechist->rh_max_ranges)
+        goto replace_last_el;
     prev_idx = prev - rechist->rh_elems;
     next_idx = el - rechist->rh_elems;
     idx = rechist_alloc_elem(rechist);
@@ -280,6 +323,16 @@ lsquic_rechist_received (lsquic_rechist_t *rechist, lsquic_packno_t packno,
     else
         rechist->rh_elems[prev_idx].re_next  = idx;
 
+    rechist_sanity_check(rechist);
+    return REC_ST_OK;
+
+  replace_last_el:
+    /* Special case: replace last element if chopping, because we cannot
+     * realloc the "prev_idx" hook
+     */
+    assert(el->re_next == UINT_MAX);
+    el->re_low   = packno;
+    el->re_count = 1;
     rechist_sanity_check(rechist);
     return REC_ST_OK;
 }

@@ -34,7 +34,7 @@ test_max_ack (void)
     unsigned char buf[1500];
     struct ack_info acki;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)
@@ -87,7 +87,7 @@ test_ack_truncation (void)
     struct ack_info acki;
     size_t bufsz;
 
-    lsquic_rechist_init(&rechist, 0);
+    lsquic_rechist_init(&rechist, 0, 0);
     now = lsquic_time_now();
 
     for (i = 1; i <= 300; ++i)

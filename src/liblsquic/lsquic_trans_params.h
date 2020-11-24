@@ -33,6 +33,14 @@ enum transport_param_id
      * Numeric transport parameters without default values:
      */
     TPI_MIN_ACK_DELAY,
+    /* The _02 version of MIN_ACK_DELAY is to support -02 version of the
+     * draft.  Functionally, it's exactly the same as -01, but without the
+     * extra enum there is no easy way to keep encoding and decoding simple.
+     * Because we support both, we don't care which one the peer selects.
+     * If the peer, like us, also sends both, we *assume* that the two
+     * versions of the transport parameter carry the same values.
+     */
+    TPI_MIN_ACK_DELAY_02,
     TPI_TIMESTAMPS,
     TPI_MAX_DATAGRAM_FRAME_SIZE,
     TPI_LOSS_BITS,                          MAX_NUMERIC_TPI = TPI_LOSS_BITS,
@@ -117,7 +125,7 @@ struct transport_params
 #define TP_DEF_INIT_MAX_STREAM_DATA_BIDI_REMOTE 0
 #define TP_DEF_INIT_MAX_STREAM_DATA_UNI 0
 #define TP_DEF_MAX_IDLE_TIMEOUT 0
-#define TP_DEF_MAX_ACK_DELAY 25
+#define TP_DEF_MAX_ACK_DELAY 25u
 #define TP_DEF_ACTIVE_CONNECTION_ID_LIMIT 2
 
 /* [draft-ietf-quic-transport-18], Section 18.1 */
@@ -202,8 +210,18 @@ lsquic_tp_get_quantum_sz (void);
     | (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)                                \
     /* [draft-iyengar-quic-delayed-ack-01] does not specfiy, store:  */ \
     | (1 << TPI_MIN_ACK_DELAY)                                          \
+    /* [draft-iyengar-quic-delayed-ack-02] does not specfiy, store:  */ \
+    | (1 << TPI_MIN_ACK_DELAY_02)                                       \
     /* [draft-huitema-quic-ts-03] does not specfiy, store:           */ \
     | (1 << TPI_TIMESTAMPS)                                             \
 )
+
+/* We always send the minimum ACK delay as 10ms; it is not configurable.
+ * There is nothing special about this particular value, except that it
+ * is not "too small" -- that is, it's within an order of magnitude from
+ * the maximum ACK delay of 25ms.  10ms seems like a safe lower bound for
+ * the ACK delay without performing more research.
+ */
+#define TP_MIN_ACK_DELAY 10000u
 
 #endif

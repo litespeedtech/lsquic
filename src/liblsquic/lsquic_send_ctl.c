@@ -191,6 +191,14 @@ send_ctl_first_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
 }
 
 
+int
+lsquic_send_ctl_have_unacked_retx_data (const struct lsquic_send_ctl *ctl)
+{
+    return lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_APP)
+        && send_ctl_first_unacked_retx_packet(ctl, PNS_APP);
+}
+
+
 static lsquic_packet_out_t *
 send_ctl_last_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
                                                     enum packnum_space pns)
@@ -507,6 +515,12 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     LSQ_DEBUG("set retx alarm to %"PRIu64", which is %"PRIu64
         " usec from now, mode %s", now + delay, delay, retx2str[rm]);
     lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, now + delay);
+
+    if (PNS_APP == pns
+            && ctl->sc_ci == &lsquic_cong_bbr_if
+            && lsquic_alarmset_is_inited(ctl->sc_alset, AL_PACK_TOL)
+            && !lsquic_alarmset_is_set(ctl->sc_alset, AL_PACK_TOL))
+        lsquic_alarmset_set(ctl->sc_alset, AL_PACK_TOL, now + delay);
 }
 
 
