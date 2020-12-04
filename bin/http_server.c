@@ -1045,7 +1045,8 @@ http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     if (st_h->req)
         interop_server_hset_destroy(st_h->req);
     free(st_h);
-    LSQ_INFO("%s called", __func__);
+    LSQ_INFO("%s called, has unacked data: %d", __func__,
+                                lsquic_stream_has_unacked_data(stream));
 }
 
 

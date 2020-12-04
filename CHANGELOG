@@ -1,3 +1,13 @@
+2020-12-04
+    - 2.25.0
+    - [API, FEATURE] Add es_delay_onclose option to delay on_close until all
+      data is ACKed.  Use new function lsquic_stream_has_unacked_data() to
+      learn whether peer acknowledged all data written to stream.
+    - [API] Add optional on_reset() stream callback to get notifications
+      when RESET or STOP_SENDING frames are received.
+    - [BUGFIX] On STOP_SENDING, make conn tickable is _writeable_, not
+      readable.
+
 2020-11-24
     - 2.24.5
     - [FEATURE] Improve Delayed ACKs extension and turn it on by default.

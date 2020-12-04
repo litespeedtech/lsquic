@@ -1330,6 +1330,8 @@ new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
         flags |= SCF_HTTP;
     if (conn->fc_enpub->enp_settings.es_rw_once)
         flags |= SCF_DISP_RW_ONCE;
+    if (conn->fc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
 
     return new_stream_ext(conn, stream_id, STREAM_IF_STD, flags);
 }
@@ -4025,6 +4027,7 @@ headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
     }
 
     stream = new_stream_ext(conn, uh->uh_oth_stream_id, STREAM_IF_STD,
+                (conn->fc_enpub->enp_settings.es_delay_onclose?SCF_DELAY_ONCLOSE:0)|
                 SCF_DI_AUTOSWITCH|(conn->fc_enpub->enp_settings.es_rw_once ?
                                                         SCF_DISP_RW_ONCE : 0));
     if (!stream)

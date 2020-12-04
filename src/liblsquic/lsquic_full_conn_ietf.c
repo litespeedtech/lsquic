@@ -1079,6 +1079,8 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     flags = SCF_IETF|SCF_DI_AUTOSWITCH;
     if (conn->ifc_enpub->enp_settings.es_rw_once)
         flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
     if (conn->ifc_flags & IFC_HTTP)
     {
         flags |= SCF_HTTP;
@@ -1117,6 +1119,8 @@ create_push_stream (struct ietf_full_conn *conn)
     flags = SCF_IETF|SCF_HTTP;
     if (conn->ifc_enpub->enp_settings.es_rw_once)
         flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
 
     stream_id = generate_stream_id(conn, SD_UNI);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
@@ -5267,6 +5271,8 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
         stream_ctx = conn->ifc_enpub->enp_stream_if_ctx;
         if (conn->ifc_enpub->enp_settings.es_rw_once)
             flags |= SCF_DISP_RW_ONCE;
+        if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+            flags |= SCF_DELAY_ONCLOSE;
         if (conn->ifc_flags & IFC_HTTP)
         {
             flags |= SCF_HTTP;

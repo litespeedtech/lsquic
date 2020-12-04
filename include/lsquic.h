@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 24
-#define LSQUIC_PATCH_VERSION 5
+#define LSQUIC_MINOR_VERSION 25
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -210,6 +210,17 @@ struct lsquic_stream_if {
      * perform a session resumption next time around.
      */
     void (*on_sess_resume_info)(lsquic_conn_t *c, const unsigned char *, size_t);
+    /**
+     * Optional callback is called as soon as the peer resets a stream.
+     * The argument `how' is either 0, 1, or 2, meaning "read", "write", and
+     * "read and write", respectively (just like in shutdown(2)).  This
+     * signals the user to stop reading, writing, or both.
+     *
+     * Note that resets differ in gQUIC and IETF QUIC.  In gQUIC, `how' is
+     * always 2; in IETF QUIC, `how' is either 0 or 1 because on can reset
+     * just one direction in IETF QUIC.
+     */
+    void (*on_reset)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how);
 };
 
 struct ssl_ctx_st;
@@ -410,6 +421,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** By default, we use the minimum timer of 1000 milliseconds */
 #define LSQUIC_DF_MTU_PROBE_TIMER 1000
+
+/** By default, calling on_close() is not delayed */
+#define LSQUIC_DF_DELAY_ONCLOSE 0
 
 struct lsquic_engine_settings {
     /**
@@ -1005,6 +1019,16 @@ struct lsquic_engine_settings {
              es_ptpc_int_gain,      /* LSQUIC_DF_PTPC_INT_GAIN */
              es_ptpc_err_thresh,    /* LSQUIC_DF_PTPC_ERR_THRESH */
              es_ptpc_err_divisor;   /* LSQUIC_DF_PTPC_ERR_DIVISOR */
+
+    /**
+     * When set to true, the on_close() callback will be delayed until the
+     * peer acknowledges all data sent on the stream.  (Or until the connection
+     * is destroyed in some manner -- either explicitly closed by the user or
+     * as a result of an engine shutdown.)
+     *
+     * Default value is @ref LSQUIC_DF_DELAY_ONCLOSE
+     */
+    int             es_delay_onclose;
 };
 
 /* Initialize `settings' to default values */
@@ -1635,6 +1659,13 @@ lsquic_conn_is_push_enabled (lsquic_conn_t *);
 int lsquic_stream_shutdown(lsquic_stream_t *s, int how);
 
 int lsquic_stream_close(lsquic_stream_t *s);
+
+/**
+ * Return true if peer has not ACKed all data written to the stream.  This
+ * includes both packetized and buffered data.
+ */
+int
+lsquic_stream_has_unacked_data (lsquic_stream_t *s);
 
 /**
  * Get certificate chain returned by the server.  This can be used for

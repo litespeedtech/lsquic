@@ -1,20 +1,6 @@
 /* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_stream.c -- stream processing
- *
- * To clear up terminology, here are some of our stream states (in order).
- * They are not codified, but they are referred to in both code and comments.
- *
- *  CLOSED      STREAM_U_READ_DONE and STREAM_U_WRITE_DONE are set.  At this
- *                point, on_close() gets called.
- *  FINISHED    FIN or RST has been sent to peer.  Stream is scheduled to be
- *                finished (freed): it gets put onto the `service_streams'
- *                list for connection to clean it up.
- *  DESTROYED   All remaining memory associated with the stream is released.
- *                If on_close() has not been called yet, it is called now.
- *                The stream pointer is now invalid.
- *
- * When connection is aborted, a stream may go directly to DESTROYED state.
  */
 
 #include <assert.h>
@@ -476,7 +462,7 @@ lsquic_stream_new (lsquic_stream_id_t id,
             stream->sm_readable = stream_readable_non_http;
         if ((ctor_flags & (SCF_HTTP|SCF_HTTP_PRIO))
                                                 == (SCF_HTTP|SCF_HTTP_PRIO))
-        lsquic_stream_set_priority_internal(stream, LSQUIC_DEF_HTTP_URGENCY);
+            lsquic_stream_set_priority_internal(stream, LSQUIC_DEF_HTTP_URGENCY);
         else
             lsquic_stream_set_priority_internal(stream,
                                             LSQUIC_STREAM_DEFAULT_PRIO);
@@ -708,13 +694,16 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
 
 
 static int
-stream_is_finished (const lsquic_stream_t *stream)
+stream_is_finished (struct lsquic_stream *stream)
 {
     return lsquic_stream_is_closed(stream)
+        && (stream->sm_bflags & SMBF_DELAY_ONCLOSE ?
+           /* Need a stricter check when on_close() is delayed: */
+            !lsquic_stream_has_unacked_data(stream) :
            /* n_unacked checks that no outgoing packets that reference this
             * stream are outstanding:
             */
-        && 0 == stream->n_unacked
+            0 == stream->n_unacked)
         && 0 == (stream->sm_qflags & (
            /* This checks that no packets that reference this stream will
             * become outstanding:
@@ -756,6 +745,8 @@ maybe_schedule_call_on_close (lsquic_stream_t *stream)
     if ((stream->stream_flags & (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE|
                      STREAM_ONNEW_DONE|STREAM_ONCLOSE_DONE))
             == (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE|STREAM_ONNEW_DONE)
+            && (!(stream->sm_bflags & SMBF_DELAY_ONCLOSE)
+                                || !lsquic_stream_has_unacked_data(stream))
             && !(stream->sm_qflags & SMQF_CALL_ONCLOSE))
     {
         if (0 == (stream->sm_qflags & SMQF_SERVICE_FLAGS))
@@ -1224,6 +1215,28 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
         return -1;
     }
 
+    if (stream->stream_if->on_reset
+                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
+    {
+        if (stream->sm_bflags & SMBF_IETF)
+        {
+            if (!(stream->sm_dflags & SMDF_ONRESET0))
+            {
+                stream->stream_if->on_reset(stream, stream->st_ctx, 0);
+                stream->sm_dflags |= SMDF_ONRESET0;
+            }
+        }
+        else
+        {
+            if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
+                                    != (SMDF_ONRESET0|SMDF_ONRESET1))
+            {
+                stream->stream_if->on_reset(stream, stream->st_ctx, 2);
+                stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
+            }
+        }
+    }
+
     /* Let user collect error: */
     maybe_conn_to_tickable_if_readable(stream);
 
@@ -1270,8 +1283,15 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
     stream->stream_flags |= STREAM_SS_RECVD;
 
+    if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
+                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
+    {
+        stream->stream_if->on_reset(stream, stream->st_ctx, 1);
+        stream->sm_dflags |= SMDF_ONRESET1;
+    }
+
     /* Let user collect error: */
-    maybe_conn_to_tickable_if_readable(stream);
+    maybe_conn_to_tickable_if_writeable(stream, 0);
 
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
@@ -4283,7 +4303,10 @@ lsquic_stream_acked (struct lsquic_stream *stream,
         stream->stream_flags |= STREAM_RST_ACKED;
     }
     if (0 == stream->n_unacked)
+    {
+        maybe_schedule_call_on_close(stream);
         maybe_finish_stream(stream);
+    }
 }
 
 
@@ -5410,4 +5433,11 @@ lsquic_stream_set_http_prio (struct lsquic_stream *stream,
     }
     else
         return -1;
+}
+
+
+int
+lsquic_stream_has_unacked_data (struct lsquic_stream *stream)
+{
+    return stream->n_unacked > 0 || stream->sm_n_buffered > 0;
 }

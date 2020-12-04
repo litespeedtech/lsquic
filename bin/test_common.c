@@ -1931,6 +1931,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_ptpc_int_gain = atof(val);
             return 0;
         }
+        if (0 == strncmp(name, "delay_onclose", 13))
+        {
+            settings->es_delay_onclose = atoi(val);
+            return 0;
+        }
         break;
     case 14:
         if (0 == strncmp(name, "max_streams_in", 14))

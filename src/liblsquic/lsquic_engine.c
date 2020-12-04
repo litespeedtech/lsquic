@@ -390,6 +390,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_ptpc_int_gain   = LSQUIC_DF_PTPC_INT_GAIN;
     settings->es_ptpc_err_thresh = LSQUIC_DF_PTPC_ERR_THRESH;
     settings->es_ptpc_err_divisor= LSQUIC_DF_PTPC_ERR_DIVISOR;
+    settings->es_delay_onclose   = LSQUIC_DF_DELAY_ONCLOSE;
 }
 
 

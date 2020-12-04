@@ -191,7 +191,17 @@ enum stream_b_flags
     SMBF_HTTP_PRIO    = 1 <<10,  /* Extensible HTTP Priorities are used */
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
     SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
-#define N_SMBF_FLAGS 13
+    SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
+#define N_SMBF_FLAGS 14
+};
+
+
+/* Stream "callback done" flags */
+/* TODO: move STREAM.*DONE flags from stream_flags here */
+enum stream_d_flags
+{
+    SMDF_ONRESET0       =   1 << 0, /* Called on_reset(0) */
+    SMDF_ONRESET1       =   1 << 1, /* Called on_reset(1) */
 };
 
 
@@ -364,6 +374,7 @@ struct lsquic_stream
         SSHS_ENC_SENDING,   /* Sending encoder stream data */
         SSHS_HBLOCK_SENDING,/* Sending header block data */
     }                               sm_send_headers_state:8;
+    enum stream_d_flags             sm_dflags:8;
     signed char                     sm_saved_want_write;
     signed char                     sm_has_frame;
 
@@ -396,6 +407,7 @@ enum stream_ctor_flags
     SCF_CRYPTO        = SMBF_CRYPTO,
     SCF_HEADERS       = SMBF_HEADERS,
     SCF_HTTP_PRIO     = SMBF_HTTP_PRIO,
+    SCF_DELAY_ONCLOSE = SMBF_DELAY_ONCLOSE,
 };
 
 

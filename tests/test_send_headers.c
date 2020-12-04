@@ -89,10 +89,24 @@ on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *h)
 }
 
 
+static struct reset_call_ctx {
+    struct lsquic_stream    *stream;
+    int                      how;
+} s_onreset_called = { NULL, -1, };
+
+
+static void
+on_reset (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how)
+{
+    s_onreset_called = (struct reset_call_ctx) { stream, how, };
+}
+
+
 const struct lsquic_stream_if stream_if = {
     .on_new_stream          = on_new_stream,
     .on_write               = on_write,
     .on_close               = on_close,
+    .on_reset               = on_reset,
 };
 
 
@@ -355,7 +369,10 @@ test_flushes_and_closes (void)
     lsquic_stream_acked(stream, QUIC_FRAME_STREAM);
     lsquic_stream_call_on_close(stream);
     assert(!(stream->sm_qflags & SMQF_FREE_STREAM));    /* Not yet */
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
     lsquic_stream_rst_in(stream, 0, 0);
+    assert(s_onreset_called.stream == NULL);
+    assert(s_onreset_called.how == -1);
     assert(!(stream->sm_qflags & (SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF)));
     assert(stream->sm_qflags & SMQF_FREE_STREAM);
     lsquic_stream_destroy(stream);

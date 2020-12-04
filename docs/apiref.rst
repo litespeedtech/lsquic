@@ -856,6 +856,16 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_QPACK_EXPERIMENT`
 
+    .. member:: int             es_delay_onclose
+
+       When set to true, :member:`lsquic_stream_if.on_close` will be delayed until the
+       peer acknowledges all data sent on the stream.  (Or until the connection
+       is destroyed in some manner -- either explicitly closed by the user or
+       as a result of an engine shutdown.)  To find out whether all data written
+       to peer has been acknowledged, use `lsquic_stream_has_unacked_data()`.
+
+       Default value is :macro:`LSQUIC_DF_DELAY_ONCLOSE`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1088,6 +1098,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     By default, QPACK experiments are turned off.
 
+.. macro:: LSQUIC_DF_DELAY_ONCLOSE
+
+    By default, calling :member:`lsquic_stream_if.on_close()` is not delayed.
+
 Receiving Packets
 -----------------
 
@@ -1271,6 +1285,20 @@ the engine to communicate with the user code:
         a good time to clean up the stream context.
 
         This callback is mandatory.
+
+    .. member:: void (*on_reset)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how)
+
+        This callback is called as soon as the peer resets a stream.
+        The argument `how` is either 0, 1, or 2, meaning "read", "write", and
+        "read and write", respectively (just like in ``shutdown(2)``).  This
+        signals the user to stop reading, writing, or both.
+
+        Note that resets differ in gQUIC and IETF QUIC.  In gQUIC, `how` is
+        always 2; in IETF QUIC, `how` is either 0 or 1 because on can reset
+        just one direction in IETF QUIC.
+
+        This callback is optional.  The reset error can still be collected
+        during next "on read" or "on write" event.
 
     .. member:: void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s)
 
@@ -1944,6 +1972,11 @@ Miscellaneous Stream Functions
 
     Returns true if this stream was rejected, false otherwise.  Use this as
     an aid to distinguish between errors.
+
+.. function:: int lsquic_stream_has_unacked_data (const lsquic_stream_t *stream)
+
+    Return true if peer has not ACKed all data written to the stream.  This
+    includes both packetized and buffered data.
 
 Other Functions
 ---------------
