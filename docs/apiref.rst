@@ -257,10 +257,10 @@ optional members.
 
         Look up certificate.  Mandatory in server mode.
 
-    .. member:: struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx)
+    .. member:: struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx, const struct sockaddr *local)
 
         Get SSL_CTX associated with a peer context.  Mandatory in server
-        mode.  This is use for default values for SSL instantiation.
+        mode.  This is used for default values for SSL instantiation.
 
     .. member:: const struct lsquic_hset_if         *ea_hsi_if
     .. member:: void                                *ea_hsi_ctx

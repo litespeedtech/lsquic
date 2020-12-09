@@ -20,6 +20,7 @@ struct ssl_ctx_st;
 struct crand;
 struct evp_aead_ctx_st;
 struct lsquic_server_config;
+struct sockaddr;
 
 enum warning_type
 {
@@ -37,7 +38,8 @@ struct lsquic_engine_public {
     struct token_generator         *enp_tokgen;
     lsquic_lookup_cert_f            enp_lookup_cert;
     void                           *enp_cert_lu_ctx;
-    struct ssl_ctx_st *           (*enp_get_ssl_ctx)(void *peer_ctx);
+    struct ssl_ctx_st *           (*enp_get_ssl_ctx)(void *peer_ctx,
+                                                     const struct sockaddr *);
     const struct lsquic_shared_hash_if
                                    *enp_shi;
     void                           *enp_shi_ctx;

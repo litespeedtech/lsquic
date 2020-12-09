@@ -54,6 +54,9 @@ enum send_ctl_flags {
     SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
     SC_ROUGH_RTT    =  1 << 22,
+#if LSQUIC_DEVEL
+    SC_DYN_PTHRESH  =  1 << 31u,    /* dynamic packet threshold enabled */
+#endif
 };
 
 typedef struct lsquic_send_ctl {
@@ -110,6 +113,9 @@ typedef struct lsquic_send_ctl {
      * This information is used to drop stale ACK frames from packets in
      * buffered queues.
      */
+    /* XXX We have both sc_largest_acked_packno and sc_largest_acked.  Rename
+     * the latter to make the code more readable.
+     */
     lsquic_packno_t                 sc_largest_acked;
     lsquic_time_t                   sc_loss_to;
     uint64_t                        sc_ecn_total_acked[N_PNS];
@@ -137,6 +143,7 @@ typedef struct lsquic_send_ctl {
     lsquic_packno_t                 sc_gap;
     unsigned                        sc_loss_count;  /* Used to set loss bit */
     unsigned                        sc_square_count;/* Used to set square bit */
+    unsigned                        sc_reord_thresh;
     signed char                     sc_cidlen;      /* For debug purposes */
 } lsquic_send_ctl_t;
 

@@ -166,6 +166,7 @@ typedef struct lsquic_packet_out
         POL_HEADER_PROT = 1 << 9,       /* Header protection applied */
 #endif
         POL_LIMITED     = 1 << 10,      /* Used to credit sc_next_limit if needed. */
+        POL_FACKED   = 1 << 11,         /* Lost due to FACK check */
     }                  po_lflags:16;
     unsigned char     *po_data;
 

@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 25
+#define LSQUIC_MINOR_VERSION 26
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -1274,7 +1274,8 @@ struct lsquic_engine_api
     lsquic_lookup_cert_f                 ea_lookup_cert;
     void                                *ea_cert_lu_ctx;
     /** Mandatory callback for server, optional for client. */
-    struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx);
+    struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx,
+                                                const struct sockaddr *local);
     /**
      * Shared hash interface is optional.  If set to zero, performance of
      * multiple LSQUIC instances will be degraded.

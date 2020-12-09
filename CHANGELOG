@@ -1,3 +1,9 @@
+2020-12-09
+    - 2.26.0
+    - [OPTIMIZATION] Adjust packet reordering threshold when spurious losses
+      are detected.
+    - [API] Pass pointer to local sockaddr to ea_get_ssl_ctx() callback.
+
 2020-12-04
     - 2.25.0
     - [API, FEATURE] Add es_delay_onclose option to delay on_close until all

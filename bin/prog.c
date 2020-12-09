@@ -39,7 +39,7 @@
 
 static int prog_stopped;
 
-static SSL_CTX * get_ssl_ctx (void *);
+static SSL_CTX * get_ssl_ctx (void *, const struct sockaddr *);
 
 static const struct lsquic_packout_mem_if pmi = {
     .pmi_allocate = pba_allocate,
@@ -417,7 +417,7 @@ prog_init_client (struct prog *prog)
 
 
 static SSL_CTX *
-get_ssl_ctx (void *peer_ctx)
+get_ssl_ctx (void *peer_ctx, const struct sockaddr *unused)
 {
     const struct service_port *const sport = peer_ctx;
     return sport->sp_prog->prog_ssl_ctx;

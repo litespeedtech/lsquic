@@ -417,6 +417,13 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_can_send = send_ctl_can_send_pre_hsk;
     else
         ctl->sc_can_send = send_ctl_can_send;
+    ctl->sc_reord_thresh = N_NACKS_BEFORE_RETX;
+#if LSQUIC_DEVEL
+    const char *s;
+    s = getenv("LSQUIC_DYN_PTHRESH");
+    if (s == NULL || atoi(s))
+        ctl->sc_flags |= SC_DYN_PTHRESH;
+#endif
 }
 
 
@@ -884,7 +891,7 @@ send_ctl_destroy_chain (struct lsquic_send_ctl *ctl,
 }
 
 
-static void
+static struct lsquic_packet_out *
 send_ctl_record_loss (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -909,16 +916,21 @@ send_ctl_record_loss (struct lsquic_send_ctl *ctl,
          * remove from the list:
          */
         TAILQ_INSERT_BEFORE(packet_out, loss_record, po_next);
+        return loss_record;
     }
     else
+    {
         LSQ_INFO("cannot allocate memory for loss record");
+        return NULL;
+    }
 }
 
 
-static int
+static struct lsquic_packet_out *
 send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
             lsquic_packet_out_t *packet_out, struct lsquic_packet_out **next)
 {
+    struct lsquic_packet_out *loss_record;
     unsigned packet_sz;
 
     assert(ctl->sc_n_in_flight_all);
@@ -952,11 +964,11 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
     {
         LSQ_DEBUG("lost retransmittable packet %"PRIu64,
                                                     packet_out->po_packno);
-        send_ctl_record_loss(ctl, packet_out);
+        loss_record = send_ctl_record_loss(ctl, packet_out);
         send_ctl_unacked_remove(ctl, packet_out, packet_sz);
         TAILQ_INSERT_TAIL(&ctl->sc_lost_packets, packet_out, po_next);
         packet_out->po_flags |= PO_LOST;
-        return 1;
+        return loss_record;
     }
     else
     {
@@ -965,7 +977,7 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         send_ctl_unacked_remove(ctl, packet_out, packet_sz);
         send_ctl_destroy_chain(ctl, packet_out, next);
         send_ctl_destroy_packet(ctl, packet_out);
-        return 0;
+        return NULL;
     }
 }
 
@@ -993,7 +1005,7 @@ send_ctl_handle_lost_packet (struct lsquic_send_ctl *ctl,
         struct lsquic_packet_out *packet_out, struct lsquic_packet_out **next)
 {
     if (0 == (packet_out->po_flags & PO_MTU_PROBE))
-        return send_ctl_handle_regular_lost_packet(ctl, packet_out, next);
+        return send_ctl_handle_regular_lost_packet(ctl, packet_out, next) != NULL;
     else
         return send_ctl_handle_lost_mtu_probe(ctl, packet_out);
 }
@@ -1031,7 +1043,7 @@ static int
 send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                             lsquic_time_t time)
 {
-    lsquic_packet_out_t *packet_out, *next;
+    struct lsquic_packet_out *packet_out, *next, *loss_record;
     lsquic_packno_t largest_retx_packno, largest_lost_packno;
 
     largest_retx_packno = largest_retx_packet_number(ctl, pns);
@@ -1047,14 +1059,22 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
         if (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
             continue;
 
-        if (packet_out->po_packno + N_NACKS_BEFORE_RETX <
+        if (packet_out->po_packno + ctl->sc_reord_thresh <
                                                 ctl->sc_largest_acked_packno)
         {
-            LSQ_DEBUG("loss by FACK detected, packet %"PRIu64,
+            LSQ_DEBUG("loss by FACK detected (dist: %"PRIu64"), packet %"PRIu64,
+                ctl->sc_largest_acked_packno - packet_out->po_packno,
                                                     packet_out->po_packno);
             if (0 == (packet_out->po_flags & PO_MTU_PROBE))
+            {
                 largest_lost_packno = packet_out->po_packno;
-            (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
+                loss_record = send_ctl_handle_regular_lost_packet(ctl,
+                                                        packet_out, &next);
+                if (loss_record)
+                    loss_record->po_lflags |= POL_FACKED;
+            }
+            else
+                send_ctl_handle_lost_mtu_probe(ctl, packet_out);
             continue;
         }
 
@@ -1120,6 +1140,26 @@ send_ctl_mtu_probe_acked (struct lsquic_send_ctl *ctl,
 }
 
 
+static void
+send_ctl_maybe_increase_reord_thresh (struct lsquic_send_ctl *ctl,
+                            const struct lsquic_packet_out *loss_record,
+                            lsquic_packno_t prev_largest_acked)
+{
+#if LSQUIC_DEVEL
+    if (ctl->sc_flags & SC_DYN_PTHRESH)
+#endif
+    if ((loss_record->po_lflags & POL_FACKED)
+            && loss_record->po_packno + ctl->sc_reord_thresh
+                < prev_largest_acked)
+    {
+        ctl->sc_reord_thresh = prev_largest_acked - loss_record->po_packno;
+        LSQ_DEBUG("packet %"PRIu64" was a spurious loss by FACK, increase "
+            "reordering threshold to %u", loss_record->po_packno,
+            ctl->sc_reord_thresh);
+    }
+}
+
+
 int
 lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                          const struct ack_info *acki,
@@ -1129,6 +1169,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                                     &acki->ranges[ acki->n_ranges - 1 ];
     lsquic_packet_out_t *packet_out, *next;
     lsquic_packno_t smallest_unacked;
+    lsquic_packno_t prev_largest_acked;
     lsquic_packno_t ack2ed[2];
     unsigned packet_sz;
     int app_limited, losses_detected;
@@ -1190,6 +1231,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         ctl->sc_cur_rt_end = lsquic_senhist_largest(&ctl->sc_senhist);
     }
 
+    prev_largest_acked = ctl->sc_largest_acked_packno;
     do_rtt = 0, skip_checks = 0;
     app_limited = -1;
     do
@@ -1234,6 +1276,8 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                                                                     po_next);
                 LSQ_DEBUG("acking via loss record %"PRIu64,
                                                         packet_out->po_packno);
+                send_ctl_maybe_increase_reord_thresh(ctl, packet_out,
+                                                            prev_largest_acked);
 #if LSQUIC_CONN_STATS
                 ++ctl->sc_conn_pub->conn_stats->out.acked_via_loss;
 #endif

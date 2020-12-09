@@ -863,7 +863,8 @@ The server requires SSL callbacks to be present.  The basic required callback is
   struct lsquic_engine_api {
     lsquic_lookup_cert_f   ea_lookup_cert;
     void                  *ea_cert_lu_ctx;
-    struct ssl_ctx_st *  (*ea_get_ssl_ctx)(void *peer_ctx);
+    struct ssl_ctx_st *  (*ea_get_ssl_ctx)(void *peer_ctx,
+                                            const struct sockaddr *local);
     /* (Other members of the struct are not shown) */
   };
 

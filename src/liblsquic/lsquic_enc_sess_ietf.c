@@ -888,11 +888,20 @@ iquic_esfi_create_client (const char *hostname,
         enc_sess->esi_alpn = am->alpn;
     }
 
-    if (enc_sess->esi_enpub->enp_get_ssl_ctx
-                && (ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(peer_ctx)))
-        set_app_ctx = 1;
+    if (enc_sess->esi_enpub->enp_get_ssl_ctx)
+    {
+        struct network_path *const path =
+            enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);
+        ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(peer_ctx,
+                                                            NP_LOCAL_SA(path));
+        if (ssl_ctx)
+            set_app_ctx = 1;
+        else
+            goto create_new_ssl_ctx;
+    }
     else
     {
+  create_new_ssl_ctx:
         LSQ_DEBUG("Create new SSL_CTX");
         ssl_ctx = SSL_CTX_new(TLS_method());
         if (!ssl_ctx)
@@ -1363,6 +1372,7 @@ static int
 iquic_esfi_init_server (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
+    struct network_path *path;
     const struct alpn_map *am;
     unsigned quic_ctx_idx;
     int transpa_len;
@@ -1390,8 +1400,9 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
   ok:   enc_sess->esi_alpn = am->alpn;
     }
 
-    ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(
-                    lsquic_conn_get_peer_ctx(enc_sess->esi_conn, NULL));
+    path = enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);
+    ssl_ctx = enc_sess->esi_enpub->enp_get_ssl_ctx(path->np_peer_ctx,
+                                                            NP_LOCAL_SA(path));
     if (!ssl_ctx)
     {
         LSQ_ERROR("fetching SSL context associated with peer context failed");
