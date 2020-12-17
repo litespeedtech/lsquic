@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/litespeedtech/lsquic.svg?branch=master)](https://travis-ci.org/litespeedtech/lsquic)
+[![Build Status](https://travis-ci.com/litespeedtech/lsquic.svg?branch=master)](https://travis-ci.com/litespeedtech/lsquic)
 [![Build Status](https://api.cirrus-ci.com/github/litespeedtech/lsquic.svg)](https://cirrus-ci.com/github/litespeedtech/lsquic)
 [![Build status](https://ci.appveyor.com/api/projects/status/ij4n3vy343pkgm1j?svg=true)](https://ci.appveyor.com/project/litespeedtech/lsquic)
 
