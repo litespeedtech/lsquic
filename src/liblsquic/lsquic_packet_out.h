@@ -351,4 +351,9 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *,
 int
 lsquic_packet_out_equal_dcids (const struct lsquic_packet_out *,
                                const struct lsquic_packet_out *);
+
+void
+lsquic_packet_out_pad_over (struct lsquic_packet_out *packet_out,
+                                                enum quic_ft_bit frame_types);
+
 #endif

@@ -1077,10 +1077,10 @@ test_loc_data_rem_RST (struct test_objs *tobjs)
         assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_FREE_STREAM);
     }
 
+    const unsigned expected_nread = stream->sm_bflags & SMBF_IETF ? 100 : 200;
     lsquic_stream_destroy(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
 
-    const unsigned expected_nread = stream->sm_bflags & SMBF_IETF ? 100 : 200;
     assert(expected_nread == tobjs->conn_pub.cfcw.cf_max_recv_off);
     assert(expected_nread == tobjs->conn_pub.cfcw.cf_read_off);
 }

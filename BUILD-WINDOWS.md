@@ -1,14 +1,14 @@
-LiteSpeed QUIC (LSQUIC) Client Library - Building for Windows
-=============================================================
+LiteSpeed QUIC (LSQUIC) Library - Building for Windows
+======================================================
 
 Description
 -----------
 
 This document is intended to supplement the document README.md at the
-root of the distribution of the LiteSpeed QUIC (LSQUIC) Client Library
+root of the distribution of the LiteSpeed QUIC (LSQUIC) Library
 to build the library and programs in a Windows environment.  
 
-The addition of Windows support to the LSQUIC Client was a contribution 
+The addition of Windows support to the LSQUIC was a contribution 
 from the user community and this document was based on our experiences
 of validating the code.  As for the overall implementation, do not hesitate
 to report bugs back to us.  Even better, continue to send us fixes and 
@@ -30,7 +30,7 @@ Some open source code required to be installed to build the code include:
      version appropriate for the development/target platform (32 vs 64-bits, 
      etc.).
    - The Windows vcpkg package manager.  It can be cloned from [here](https://github.com/Microsoft/vcpkg).
-     Clone it at the same level to be used to clone/develop the lsquic-client.
+     Clone it at the same level to be used to clone/develop the lsquic.
      The package must be compiled following the instructions on the git 
      repository.
    - Perform builds using the _Developer Command Prompt for Visual Studio_ instead
@@ -48,7 +48,7 @@ Some open source code required to be installed to build the code include:
    - From the command line, once the variable above has been defined, install
      both *zlib* and *libevent*.  Note that libevent may also automatically 
      install *openssl*.  If it does not, it may need to be manually specified 
-     to properly link the lsquic-client executables.
+     to properly link the lsquic executables.
         ```
         vcpkg install zlib:x64-windows-static
         vcpkg install libevent:x64-windows-static
@@ -68,15 +68,15 @@ Some open source code required to be installed to build the code include:
      platform to *64-bit*.  Compile the project.
    - Repeat the cmake and compile steps replacing *Debug* with *Release*.
 
-Make and Compile LSQUIC-Client
-------------------------------
+Make and Compile LSQUIC
+-----------------------
 
 
-Clone lsquic-client:
+Clone lsquic:
 
    ```
-   git clone https://github.com/litespeedtech/lsquic-client.git --recurse-submodules
-   cd lsquic-client
+   git clone https://github.com/litespeedtech/lsquic.git --recurse-submodules
+   cd lsquic
    ```
 
 Configure the build using cmake (you can specify `Release` instead of `Debug`
@@ -107,4 +107,4 @@ Have fun,
 
 LiteSpeed QUIC Team.
 
-Copyright (c) 2017 - 2019 LiteSpeed Technologies Inc
+Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc

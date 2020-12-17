@@ -527,3 +527,24 @@ lsquic_packet_out_equal_dcids (const struct lsquic_packet_out *a,
     return sizes[0] == sizes[1]
         && 0 == memcmp(dcids[0], dcids[1], sizes[0]);
 }
+
+
+void
+lsquic_packet_out_pad_over (struct lsquic_packet_out *packet_out,
+                                                enum quic_ft_bit frame_types)
+{
+    struct packet_out_frec_iter pofi;
+    struct frame_rec *frec;
+
+    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                frec = lsquic_pofi_next(&pofi))
+    {
+        if ((1 << frec->fe_frame_type) & frame_types)
+        {
+            memset(packet_out->po_data + frec->fe_off, 0, frec->fe_len);
+            frec->fe_frame_type = QUIC_FRAME_PADDING;
+        }
+    }
+
+    packet_out->po_frame_types &= ~frame_types;
+}

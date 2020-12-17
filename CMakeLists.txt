@@ -271,6 +271,7 @@ ELSE()
     MESSAGE(STATUS "pcreposix not found: http_server won't work")
 ENDIF()
 LIST(APPEND LIBS ws2_32)
+LIST(APPEND LIBS iphlpapi)
 ENDIF()
 ENDIF()	# LSQUIC_BIN OR LSQUIC_TESTS
 

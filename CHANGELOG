@@ -1,3 +1,9 @@
+2020-12-17
+    - 2.26.1
+    - [BUGFIX] Migration corner cases: drop or pad over path challenge
+      and response frames when necessary.
+    - Fix stream unit test.
+
 2020-12-09
     - 2.26.0
     - [OPTIMIZATION] Adjust packet reordering threshold when spurious losses

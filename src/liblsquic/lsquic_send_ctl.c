@@ -3578,6 +3578,14 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
                 packet_out->po_path = new;
                 if (packet_out->po_flags & PO_ENCRYPTED)
                     send_ctl_return_enc_data(ctl, packet_out);
+                if (packet_out->po_frame_types
+                        & (QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_PATH_RESPONSE))
+                    /* This is a corner case, we just want to avoid protocol
+                     * violation.  No optimization is done.  If we happen to
+                     * send a packet of padding, oh well.
+                     */
+                    lsquic_packet_out_pad_over(packet_out,
+                            QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_PATH_RESPONSE);
             }
 
     LSQ_DEBUG("repathed %u packet%.*s", count, count != 1, "s");
@@ -3590,6 +3598,32 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
         memset(&ctl->sc_conn_pub->rtt_stats, 0,
                                         sizeof(ctl->sc_conn_pub->rtt_stats));
         ctl->sc_ci->cci_reinit(CGP(ctl));
+    }
+}
+
+
+/* Drop PATH_CHALLENGE packets for path `path'. */
+void
+lsquic_send_ctl_cancel_chals (struct lsquic_send_ctl *ctl,
+                                            const struct network_path *path)
+{
+    struct lsquic_packet_out *packet_out, *next;
+
+    /* We need only to examine the scheduled queue as lost challenges are
+     * not retransmitted.
+     */
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_path == path
+                && packet_out->po_frame_types == QUIC_FTBIT_PATH_CHALLENGE)
+        {
+            send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
+            send_ctl_sched_remove(ctl, packet_out);
+            assert(packet_out->po_loss_chain == packet_out);
+            send_ctl_destroy_packet(ctl, packet_out);
+        }
     }
 }
 
