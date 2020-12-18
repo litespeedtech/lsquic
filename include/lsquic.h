@@ -221,6 +221,16 @@ struct lsquic_stream_if {
      * just one direction in IETF QUIC.
      */
     void (*on_reset)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how);
+    /**
+     * Optional callback is called when a CONNECTION_CLOSE frame is received.
+     * This allows the application to log low-level diagnostic information about
+     * errors received with the CONNECTION_CLOSE frame. If app_error is -1 then
+     * it is considered unknown if this is an app_error or not.
+     */
+#define LSQUIC_SUPPORTS_CONNCLOSEFRAME_CALLBACK
+    void (*on_conncloseframe_received)(lsquic_conn_t *c,
+                                       int app_error, uint64_t error_code,
+                                       const char *reason, int reason_len);
 };
 
 struct ssl_ctx_st;

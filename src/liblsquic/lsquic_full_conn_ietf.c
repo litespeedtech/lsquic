@@ -5960,6 +5960,9 @@ process_connection_close_frame (struct ietf_full_conn *conn,
         LSQ_INFO("Received CONNECTION_CLOSE frame (%s-level code: %"PRIu64"; "
             "reason: %.*s)", app_error ? "application" : "transport",
                 error_code, (int) reason_len, (const char *) p + reason_off);
+    if (conn->ifc_enpub->enp_stream_if->on_conncloseframe_received)
+        conn->ifc_enpub->enp_stream_if->on_conncloseframe_received(
+            &conn->ifc_conn, app_error, error_code, (const char *) p + reason_off, reason_len);
     conn->ifc_flags |= IFC_RECV_CLOSE;
     if (!(conn->ifc_flags & IFC_CLOSING))
     {
