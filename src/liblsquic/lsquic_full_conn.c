@@ -2098,6 +2098,9 @@ process_connection_close_frame (struct full_conn *conn, lsquic_packet_in_t *pack
                             (int) reason_len, (const char *) p + reason_off);
     LSQ_INFO("Received CONNECTION_CLOSE frame (code: %"PRIu64"; reason: %.*s)",
                 error_code, (int) reason_len, (const char *) p + reason_off);
+    if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_conncloseframe_received)
+        conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_conncloseframe_received(
+            &conn->fc_conn, -1, error_code, (const char *) p + reason_off, reason_len);
     conn->fc_flags |= FC_RECV_CLOSE;
     if (!(conn->fc_flags & FC_CLOSING))
     {
