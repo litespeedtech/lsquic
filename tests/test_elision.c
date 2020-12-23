@@ -124,7 +124,7 @@ elide_single_stream_frame (void)
 
     streams[0].stream_flags |= STREAM_RST_SENT;
 
-    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, UINT64_MAX);
     assert(0 == streams[0].n_unacked);
     assert(0 == packet_out->po_frame_types);
     assert(!lsquic_pofi_first(&pofi, packet_out));
@@ -193,7 +193,7 @@ shrink_packet_post_elision (void)
 
     streams[0].stream_flags |= STREAM_RST_SENT;
 
-    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, UINT64_MAX);
     assert(0 == streams[0].n_unacked);
 
     assert(QUIC_FTBIT_STREAM == packet_out->po_frame_types);
@@ -364,7 +364,7 @@ elide_three_stream_frames (int chop_regen)
 
     if (chop_regen)
         lsquic_packet_out_chop_regen(packet_out);
-    lsquic_packet_out_elide_reset_stream_frames(packet_out, 0);
+    lsquic_packet_out_elide_reset_stream_frames(packet_out, UINT64_MAX);
 
     assert(ref_out->po_data_sz == packet_out->po_data_sz + (chop_regen ? 5 : 0));
     assert(ref_out->po_regen_sz == packet_out->po_regen_sz + (chop_regen ? 5 : 0));

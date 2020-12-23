@@ -1294,7 +1294,7 @@ the engine to communicate with the user code:
         signals the user to stop reading, writing, or both.
 
         Note that resets differ in gQUIC and IETF QUIC.  In gQUIC, `how` is
-        always 2; in IETF QUIC, `how` is either 0 or 1 because on can reset
+        always 2; in IETF QUIC, `how` is either 0 or 1 because one can reset
         just one direction in IETF QUIC.
 
         This callback is optional.  The reset error can still be collected

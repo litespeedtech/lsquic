@@ -1,3 +1,14 @@
+2020-12-23
+    - 2.26.2
+    - [BUGFIX] Do not drop incoming data when STOP_SENDING is received.
+    - [BUGFIX] Receipt of STOP_SENDING should not cause read-reset.
+    - [BUGFIX] Allow stream writes after receiving RESET.
+    - [BUGFIX] Typo in stream: ANDing enum with wrong flag.
+    - [BUGFIX] Reset elision: do not use zero as special stream ID value,
+      for zero is a valid stream ID in IETF QUIC.
+    - [API] Add optional on_conncloseframe_received() callback.
+    - Use zero error code in RESET stream sent in response to STOP_SENDING.
+
 2020-12-17
     - 2.26.1
     - [BUGFIX] Migration corner cases: drop or pad over path challenge

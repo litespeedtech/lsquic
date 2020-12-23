@@ -429,15 +429,14 @@ lsquic_stream_call_on_new (lsquic_stream_t *);
 void
 lsquic_stream_destroy (lsquic_stream_t *);
 
-/* Any of these flags will cause user-facing read and write and
- * shutdown calls to return an error.  They also make the stream
- * both readable and writeable, as we want the user to collect
- * the error.
- */
+/* True if either read or write side of the stream has been reset */
 #define lsquic_stream_is_reset(stream) \
     (((stream)->stream_flags & \
                     (STREAM_RST_RECVD|STREAM_RST_SENT|STREAM_SS_RECVD)) \
         || ((stream)->sm_qflags & SMQF_SEND_RST))
+
+int
+lsquic_stream_is_write_reset (const struct lsquic_stream *);
 
 /* Data that from the network gets inserted into the stream using
  * lsquic_stream_frame_in() function.  Returns 0 on success, -1 on

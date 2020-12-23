@@ -1430,7 +1430,8 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
         {
             if (0 == (lost_packet->po_flags & PO_MINI))
             {
-                lsquic_packet_out_elide_reset_stream_frames(lost_packet, 0);
+                lsquic_packet_out_elide_reset_stream_frames(lost_packet,
+                                                                    UINT64_MAX);
                 if (lost_packet->po_regen_sz >= lost_packet->po_data_sz)
                 {
                     LSQ_DEBUG("Dropping packet %"PRIu64" from lost queue",

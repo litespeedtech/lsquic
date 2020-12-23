@@ -1030,18 +1030,113 @@ test_loc_data_rem_RST (struct test_objs *tobjs)
     s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
     assert(0 == s);
     s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
-    if (stream->sm_bflags & SMBF_IETF)
-        lsquic_stream_stop_sending_in(stream, 12345);
-    else
-    {
-        s = lsquic_stream_rst_in(stream, 200, 0);
-        assert(0 == s);
-    }
+    s = lsquic_stream_rst_in(stream, 200, 0);
+    assert(0 == s);
     assert(s_onreset_called.stream == stream);
     if (stream->sm_bflags & SMBF_IETF)
-        assert(s_onreset_called.how == 1);
+        assert(s_onreset_called.how == 0);
     else
         assert(s_onreset_called.how == 2);
+
+    ack_packet(&tobjs->send_ctl, 1);
+
+    if (!(stream->sm_bflags & SMBF_IETF))
+    {
+        assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+        assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
+    }
+
+    /* Not yet closed: error needs to be collected */
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(0 == (stream->sm_qflags & SMQF_SERVICE_FLAGS));
+
+    n = lsquic_stream_write(stream, buf, 100);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(100 == n);   /* Write successful after reset in IETF */
+    else
+        assert(-1 == n);    /* Error collected */
+    s = lsquic_stream_close(stream);
+    assert(0 == s);     /* Stream successfully closed */
+
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->n_unacked == 1);
+
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_CALL_ONCLOSE);
+
+    if (!(stream->sm_bflags & SMBF_IETF))
+        lsquic_stream_rst_frame_sent(stream);
+
+    lsquic_stream_call_on_close(stream);
+
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+
+    if (stream->sm_bflags & SMBF_IETF)
+    {
+        /* FIN packet has not been acked yet: */
+        assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+        /* Now ack it: */
+        ack_packet(&tobjs->send_ctl, 1);
+    }
+
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_FREE_STREAM);
+
+    lsquic_stream_destroy(stream);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+
+    assert(200 == tobjs->conn_pub.cfcw.cf_max_recv_off);
+    assert(200 == tobjs->conn_pub.cfcw.cf_read_off);
+}
+
+
+/* Client: we send some data (no FIN), and remote end sends some data and
+ * then sends STOP_SENDING
+ */
+static void
+test_loc_data_rem_SS (struct test_objs *tobjs)
+{
+    lsquic_packet_out_t *packet_out;
+    lsquic_stream_t *stream;
+    char buf_out[0x100];
+    unsigned char buf[0x100];
+    ssize_t n;
+    int s, fin;
+
+    init_buf(buf_out, sizeof(buf_out));
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);  /* STOP_SENDING is IETF-only */
+    n = lsquic_stream_write(stream, buf_out, 100);
+    assert(n == 100);
+    assert(0 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    s = lsquic_stream_flush(stream);
+    assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+
+    n = read_from_scheduled_packets(&tobjs->send_ctl, stream->id, buf,
+                                                    sizeof(buf), 0, &fin, 0);
+    assert(100 == n);
+    assert(0 == memcmp(buf_out, buf, 100));
+    assert(!fin);
+
+    /* Pretend we sent out a packet: */
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, 0);
+    lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet_out);
+
+    s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
+    assert(0 == s);
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 1);
+
+    /* Incoming STOP_SENDING should not affect the ability to read from
+     * stream.
+     */
+    unsigned char mybuf[123];
+    const ssize_t nread = lsquic_stream_read(stream, mybuf, sizeof(mybuf));
+    assert(nread == 100);
 
     ack_packet(&tobjs->send_ctl, 1);
 
@@ -1474,6 +1569,7 @@ test_termination (void)
         { 1, 0, test_rem_data_loc_close, },
         { 1, 1, test_loc_FIN_rem_RST, },
         { 1, 1, test_loc_data_rem_RST, },
+        { 0, 1, test_loc_data_rem_SS, },
         { 1, 0, test_loc_RST_rem_FIN, },
         { 1, 1, test_gapless_elision_beginning, },
         { 1, 1, test_gapless_elision_middle, },

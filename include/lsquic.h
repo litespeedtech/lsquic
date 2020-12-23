@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 26
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 2
 
 /**
  * Engine flags:
@@ -217,7 +217,7 @@ struct lsquic_stream_if {
      * signals the user to stop reading, writing, or both.
      *
      * Note that resets differ in gQUIC and IETF QUIC.  In gQUIC, `how' is
-     * always 2; in IETF QUIC, `how' is either 0 or 1 because on can reset
+     * always 2; in IETF QUIC, `how' is either 0 or 1 because one can reset
      * just one direction in IETF QUIC.
      */
     void (*on_reset)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how);

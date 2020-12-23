@@ -297,7 +297,7 @@ lsquic_packet_out_destroy (lsquic_packet_out_t *packet_out,
 }
 
 
-/* If `stream_id' is zero, stream frames from all reset streams are elided.
+/* If `stream_id' is UINT64_MAX, stream frames from all reset streams are elided.
  * Otherwise, elision is limited to the specified stream.
  */
 unsigned
@@ -320,16 +320,16 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
         {
             ++n_stream_frames;
 
-            if (stream_id)
+            if (stream_id != UINT64_MAX)
             {
                 victim = frec->fe_stream->id == stream_id;
                 if (victim)
                 {
-                    assert(lsquic_stream_is_reset(frec->fe_stream));
+                    assert(lsquic_stream_is_write_reset(frec->fe_stream));
                 }
             }
             else
-                victim = lsquic_stream_is_reset(frec->fe_stream);
+                victim = lsquic_stream_is_write_reset(frec->fe_stream);
 
             if (victim)
             {

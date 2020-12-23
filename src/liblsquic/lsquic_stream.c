@@ -872,6 +872,17 @@ stream_readable_discard (struct lsquic_stream *stream)
 }
 
 
+static int
+stream_is_read_reset (const struct lsquic_stream *stream)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        return stream->stream_flags & STREAM_RST_RECVD;
+    else
+        return (stream->stream_flags & (STREAM_RST_RECVD|STREAM_RST_SENT))
+            || (stream->sm_qflags & SMQF_SEND_RST);
+}
+
+
 int
 lsquic_stream_readable (struct lsquic_stream *stream)
 {
@@ -885,10 +896,24 @@ lsquic_stream_readable (struct lsquic_stream *stream)
          *   lsquic_stream_read() will return -1 (we want the user to be
          *   able to collect the error).
          */
-        ||  lsquic_stream_is_reset(stream)
+        ||  stream_is_read_reset(stream)
         /* Type-dependent readability check: */
         ||  stream->sm_readable(stream);
     ;
+}
+
+
+/* Return true if write end of the stream has been reset.
+ * Note that the logic for gQUIC is the same for write and read resets.
+ */
+int
+lsquic_stream_is_write_reset (const struct lsquic_stream *stream)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        return stream->stream_flags & STREAM_SS_RECVD;
+    else
+        return (stream->stream_flags & (STREAM_RST_RECVD|STREAM_RST_SENT))
+            || (stream->sm_qflags & SMQF_SEND_RST);
 }
 
 
@@ -901,7 +926,7 @@ stream_writeable (struct lsquic_stream *stream)
          *   lsquic_stream_write() will return -1 (we want the user to be
          *   able to collect the error).
          */
-           lsquic_stream_is_reset(stream)
+           lsquic_stream_is_write_reset(stream)
         /* - Data can be written to stream: */
         || lsquic_stream_write_avail(stream)
     ;
@@ -1294,13 +1319,12 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     maybe_conn_to_tickable_if_writeable(stream, 0);
 
     lsquic_sfcw_consume_rem(&stream->fc);
-    drop_frames_in(stream);
     drop_buffered_data(stream);
     maybe_elide_stream_frames(stream);
 
     if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
-        lsquic_stream_reset_ext(stream, error_code, 0);
+        lsquic_stream_reset_ext(stream, 0, 0);
 
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
@@ -1628,7 +1652,7 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     SM_HISTORY_APPEND(stream, SHE_USER_READ);
 
-    if (lsquic_stream_is_reset(stream))
+    if (stream_is_read_reset(stream))
     {
         if (stream->stream_flags & STREAM_RST_RECVD)
             stream->stream_flags |= STREAM_RST_READ;
@@ -1816,7 +1840,7 @@ stream_shutdown_write (lsquic_stream_t *stream)
             && !(stream->stream_flags & (STREAM_FIN_SENT|STREAM_RST_SENT))
                 && !stream_is_incoming_unidir(stream)
                         /* In gQUIC, receiving a RESET means "stop sending" */
-                    && !(!(stream->sm_qflags & SMBF_IETF)
+                    && !(!(stream->sm_bflags & SMBF_IETF)
                                 && (stream->stream_flags & STREAM_RST_RECVD)))
     {
         if ((stream->sm_bflags & SMBF_USE_HEADERS)
@@ -2530,7 +2554,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
             return -1;                                                      \
         }                                                                   \
     }                                                                       \
-    if (lsquic_stream_is_reset(stream))                                     \
+    if (lsquic_stream_is_write_reset(stream))                               \
     {                                                                       \
         LSQ_INFO("Attempt to write to stream after it had been reset");     \
         errno = ECONNRESET;                                                 \
@@ -4600,7 +4624,7 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 {
     void *hset;
 
-    if (lsquic_stream_is_reset(stream))
+    if (stream_is_read_reset(stream))
     {
         LSQ_INFO("%s: stream is reset, no headers returned", __func__);
         errno = ECONNRESET;
