@@ -38,8 +38,10 @@
 #include "prog.h"
 
 static int prog_stopped;
+static const char *s_keylog_dir;
 
 static SSL_CTX * get_ssl_ctx (void *, const struct sockaddr *);
+static void keylog_log_line (const SSL *, const char *);
 
 static const struct lsquic_packout_mem_if pmi = {
     .pmi_allocate = pba_allocate,
@@ -81,7 +83,7 @@ prog_init (struct prog *prog, unsigned flags,
                                     = prog;
     prog->prog_api.ea_pmi           = &pmi;
     prog->prog_api.ea_pmi_ctx       = &prog->prog_pba;
-    prog->prog_api.ea_get_ssl_ctx   = flags & LSENG_SERVER ? get_ssl_ctx : NULL;
+    prog->prog_api.ea_get_ssl_ctx   = get_ssl_ctx;
 #if LSQUIC_PREFERRED_ADDR
     if (getenv("LSQUIC_PREFERRED_ADDR4") || getenv("LSQUIC_PREFERRED_ADDR6"))
         prog->prog_flags |= PROG_SEARCH_ADDRS;
@@ -356,7 +358,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
                 return -1;
             }
         }
-        prog->prog_keylog_dir = optarg;
+        s_keylog_dir = optarg;
         if (prog->prog_settings.es_ql_bits)
         {
             LSQ_NOTICE("QL loss bits turned off because of -G.  If you want "
@@ -425,29 +427,41 @@ get_ssl_ctx (void *peer_ctx, const struct sockaddr *unused)
 
 
 static int
-prog_init_server (struct prog *prog)
+prog_init_ssl_ctx (struct prog *prog)
 {
-    struct service_port *sport;
     unsigned char ticket_keys[48];
 
     prog->prog_ssl_ctx = SSL_CTX_new(TLS_method());
-    if (prog->prog_ssl_ctx)
+    if (!prog->prog_ssl_ctx)
     {
-        SSL_CTX_set_min_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
-        SSL_CTX_set_max_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
-        SSL_CTX_set_default_verify_paths(prog->prog_ssl_ctx);
-
-        /* This is obviously test code: the key is just an array of NUL bytes */
-        memset(ticket_keys, 0, sizeof(ticket_keys));
-        if (1 != SSL_CTX_set_tlsext_ticket_keys(prog->prog_ssl_ctx,
-                                            ticket_keys, sizeof(ticket_keys)))
-        {
-            LSQ_ERROR("SSL_CTX_set_tlsext_ticket_keys failed");
-            return -1;
-        }
+        LSQ_ERROR("cannot allocate SSL context");
+        return -1;
     }
-    else
-        LSQ_WARN("cannot create SSL context");
+
+    SSL_CTX_set_min_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(prog->prog_ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_default_verify_paths(prog->prog_ssl_ctx);
+
+    /* This is obviously test code: the key is just an array of NUL bytes */
+    memset(ticket_keys, 0, sizeof(ticket_keys));
+    if (1 != SSL_CTX_set_tlsext_ticket_keys(prog->prog_ssl_ctx,
+                                        ticket_keys, sizeof(ticket_keys)))
+    {
+        LSQ_ERROR("SSL_CTX_set_tlsext_ticket_keys failed");
+        return -1;
+    }
+
+    if (s_keylog_dir)
+        SSL_CTX_set_keylog_callback(prog->prog_ssl_ctx, keylog_log_line);
+
+    return 0;
+}
+
+
+static int
+prog_init_server (struct prog *prog)
+{
+    struct service_port *sport;
 
     TAILQ_FOREACH(sport, prog->prog_sports, next_sport)
         if (0 != sport_init_server(sport, prog->prog_engine, prog->prog_eb))
@@ -582,53 +596,44 @@ prog_stop (struct prog *prog)
 
 
 static void *
-keylog_open (void *ctx, lsquic_conn_t *conn)
+keylog_open_file (const SSL *ssl)
 {
-    const struct prog *const prog = ctx;
+    const lsquic_conn_t *conn;
     const lsquic_cid_t *cid;
     FILE *fh;
     int sz;
     char id_str[MAX_CID_LEN * 2 + 1];
     char path[PATH_MAX];
 
+    conn = lsquic_ssl_to_conn(ssl);
     cid = lsquic_conn_id(conn);
     lsquic_hexstr(cid->idbuf, cid->len, id_str, sizeof(id_str));
-    sz = snprintf(path, sizeof(path), "%s/%s.keys", prog->prog_keylog_dir,
-                                                                    id_str);
+    sz = snprintf(path, sizeof(path), "%s/%s.keys", s_keylog_dir, id_str);
     if ((size_t) sz >= sizeof(path))
     {
         LSQ_WARN("%s: file too long", __func__);
         return NULL;
     }
-    fh = fopen(path, "w");
+    fh = fopen(path, "ab");
     if (!fh)
-        LSQ_WARN("could not open %s for writing: %s", path, strerror(errno));
+        LSQ_WARN("could not open %s for appending: %s", path, strerror(errno));
     return fh;
 }
 
 
 static void
-keylog_log_line (void *handle, const char *line)
+keylog_log_line (const SSL *ssl, const char *line)
 {
-    fputs(line, handle);
-    fputs("\n", handle);
-    fflush(handle);
+    FILE *file;
+
+    file = keylog_open_file(ssl);
+    if (file)
+    {
+        fputs(line, file);
+        fputs("\n", file);
+        fclose(file);
+    }
 }
-
-
-static void
-keylog_close (void *handle)
-{
-    fclose(handle);
-}
-
-
-static const struct lsquic_keylog_if keylog_if =
-{
-    .kli_open       = keylog_open,
-    .kli_log_line   = keylog_log_line,
-    .kli_close      = keylog_close,
-};
 
 
 static struct ssl_ctx_st *
@@ -644,10 +649,17 @@ prog_prep (struct prog *prog)
     int s;
     char err_buf[100];
 
-    if (prog->prog_keylog_dir)
+    if (s_keylog_dir && prog->prog_certs)
     {
-        prog->prog_api.ea_keylog_if = &keylog_if;
-        prog->prog_api.ea_keylog_ctx = prog;
+        struct lsquic_hash_elem *el;
+        struct server_cert *cert;
+
+        for (el = lsquic_hash_first(prog->prog_certs); el;
+                                el = lsquic_hash_next(prog->prog_certs))
+        {
+            cert = lsquic_hashelem_getdata(el);
+            SSL_CTX_set_keylog_callback(cert->ce_ssl_ctx, keylog_log_line);
+        }
     }
 
     if (0 != lsquic_engine_check_settings(prog->prog_api.ea_settings,
@@ -695,6 +707,9 @@ prog_prep (struct prog *prog)
 
     prog->prog_timer = event_new(prog->prog_eb, -1, 0,
                                         prog_timer_handler, prog);
+
+    if (0 != prog_init_ssl_ctx(prog))
+        return -1;
 
     if (prog->prog_engine_flags & LSENG_SERVER)
         s = prog_init_server(prog);

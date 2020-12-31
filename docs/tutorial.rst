@@ -1078,28 +1078,9 @@ Key logging and Wireshark
 `Wireshark`_ supports IETF QUIC.  The developers have been very good at keeping up with latest versions.
 You will need version 3.3 of Wireshark to support Internet-Draft 29.  Support for HTTP/3 is in progress.
 
-LSQUIC supports exporting TLS secrets.  For that, you need to specify a set of function pointers via
-:member:`lsquic_engine_api.ea_keylog_if`.
-
-::
-
-  /* Secrets are logged per connection.  Interface to open file (handle),
-   * log lines, and close file.
-   */
-  struct lsquic_keylog_if {
-      void * (*kli_open) (void *keylog_ctx, lsquic_conn_t *);
-      void   (*kli_log_line) (void *handle, const char *line);
-      void   (*kli_close) (void *handle);
-  };
-
-  struct lsquic_engine_api {
-    /* --- 8< --- snip --- 8< --- */
-    const struct lsquic_keylog_if       *ea_keylog_if;
-    void                                *ea_keylog_ctx;
-  };
-
-There are three functions: one to open a file, one to write a line into the file, and one to close the file.  The lines are not interpreted.
-In the engine API struct, there are two members to set: one is the pointer to the struct with the function pointers, and the other is the context passed to "kli_open" function.
+To export TLS secrets, use BoringSSL's ``SSL_CTX_set_keylog_callback()``.
+Use `lsquic_ssl_to_conn()` to get the connection associated
+with the SSL object.
 
 Key logging example
 -------------------
@@ -1107,8 +1088,9 @@ Key logging example
 ::
 
     static void *
-    keylog_open (void *ctx, lsquic_conn_t *conn)
+    keylog_open_file (const SSL *ssl)
     {
+        const lsquic_conn_t *conn;
         const lsquic_cid_t *cid;
         FILE *fh;
         int sz;
@@ -1117,6 +1099,7 @@ Key logging example
         char path[PATH_MAX];
         static const char b2c[16] = "0123456789ABCDEF";
 
+        conn = lsquic_ssl_to_conn(ssl);
         cid = lsquic_conn_id(conn);
         for (i = 0; i < cid->len; ++i)
         {
@@ -1130,28 +1113,30 @@ Key logging example
             LOG("WARN: %s: file too long", __func__);
             return NULL;
         }
-        fh = fopen(path, "wb");
+        fh = fopen(path, "ab");
         if (!fh)
-            LOG("WARN: could not open %s for writing: %s", path, strerror(errno));
+            LOG("WARN: could not open %s for appending: %s", path, strerror(errno));
         return fh;
     }
 
     static void
-    keylog_log_line (void *handle, const char *line)
+    keylog_log_line (const SSL *ssl, const char *line)
     {
-        fputs(line, handle);
-        fputs("\n", handle);
-        fflush(handle);
+        file = keylog_open_file(ssl);
+        if (file)
+        {
+            fputs(line, file);
+            fputs("\n", file);
+            fclose(file);
+        }
     }
 
-    static void
-    keylog_close (void *handle)
-    {
-        fclose(handle);
-    }
+    /* ... */
 
-The function to open the file is passed the connection object.  It can be used to generate a filename
-based on the connection ID.
+    SSL_CTX_set_keylog_callback(ssl, keylog_log_line);
+
+The most involved part of this is opening the necessary file, creating it if necessary.
+The connection can be used to generate a filename based on the connection ID.
 We see that the line logger simply writes the passed C string to the filehandle and appends a newline.
 
 Wireshark screenshot

@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 26
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 27
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -1238,26 +1238,6 @@ struct lsquic_hset_if
 };
 
 /**
- * SSL keylog interface.
- */
-struct lsquic_keylog_if
-{
-    /** Return keylog handle or NULL if no key logging is desired */
-    void *    (*kli_open) (void *keylog_ctx, lsquic_conn_t *);
-
-    /**
-     * Log line.  The first argument is the pointer returned by
-     * @ref kli_open.
-     */
-    void      (*kli_log_line) (void *handle, const char *line);
-
-    /**
-     * Close handle.
-     */
-    void      (*kli_close) (void *handle);
-};
-
-/**
  * This struct contains a list of all callbacks that are used by the engine
  * to communicate with the user code.  Most of these are optional, while
  * the following are mandatory:
@@ -1332,12 +1312,6 @@ struct lsquic_engine_api
      */
     void /* FILE, really */             *ea_stats_fh;
 #endif
-
-    /**
-     * Optional SSL key logging interface.
-     */
-    const struct lsquic_keylog_if       *ea_keylog_if;
-    void                                *ea_keylog_ctx;
 
     /**
      * The optional ALPN string is used by the client if @ref LSENG_HTTP
@@ -2067,6 +2041,10 @@ lsquic_conn_status (lsquic_conn_t *, char *errbuf, size_t bufsz);
 
 extern const char *const
 lsquic_ver2str[N_LSQVER];
+
+/* Return connection associated with this SSL object */
+lsquic_conn_t *
+lsquic_ssl_to_conn (const struct ssl_st *);
 
 #ifdef __cplusplus
 }

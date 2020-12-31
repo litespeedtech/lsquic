@@ -56,8 +56,6 @@ struct lsquic_engine_public {
     const struct lsquic_packout_mem_if
                                    *enp_pmi;
     void                           *enp_pmi_ctx;
-    const struct lsquic_keylog_if  *enp_kli;
-    void                           *enp_kli_ctx;
     struct lsquic_engine           *enp_engine;
     struct lsquic_hash             *enp_srst_hash;
     enum {

@@ -109,14 +109,8 @@ no_sess_ticket (enum alarm_id alarm_id, void *ctx,
 static int
 iquic_new_session_cb (SSL *, SSL_SESSION *);
 
-static void
-keylog_callback (const SSL *, const char *);
-
 static enum ssl_verify_result_t
 verify_server_cert_callback (SSL *, uint8_t *out_alert);
-
-static void
-maybe_setup_key_logging (struct enc_sess_iquic *);
 
 static void
 iquic_esfi_destroy (enc_session_t *);
@@ -260,7 +254,6 @@ struct enc_sess_iquic
     }                    esi_flags;
     enum enc_level       esi_last_w;
     unsigned             esi_trasec_sz;
-    void                *esi_keylog_handle;
 #ifndef NDEBUG
     char                *esi_sni_bypass;
 #endif
@@ -886,6 +879,8 @@ iquic_esfi_create_client (const char *hostname,
         goto err;
   alpn_selected:
         enc_sess->esi_alpn = am->alpn;
+        LSQ_DEBUG("for QUIC version %s, ALPN is %s",
+                        lsquic_ver2str[am->version], (char *) am->alpn + 1);
     }
 
     if (enc_sess->esi_enpub->enp_get_ssl_ctx)
@@ -916,8 +911,6 @@ iquic_esfi_create_client (const char *hostname,
         SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
         if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
             SSL_CTX_sess_set_new_cb(ssl_ctx, iquic_new_session_cb);
-        if (enc_sess->esi_enpub->enp_kli)
-            SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
         if (enc_sess->esi_enpub->enp_verify_cert
                 || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT)
                 || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_QLOG))
@@ -953,8 +946,6 @@ iquic_esfi_create_client (const char *hostname,
         LSQ_INFO("could not set stream method");
         goto err;
     }
-
-    maybe_setup_key_logging(enc_sess);
 
     if (enc_sess->esi_alpn &&
             0 != SSL_set_alpn_protos(enc_sess->esi_ssl, enc_sess->esi_alpn,
@@ -1243,31 +1234,6 @@ free_handshake_keys (struct enc_sess_iquic *enc_sess)
 }
 
 
-static void
-keylog_callback (const SSL *ssl, const char *line)
-{
-    struct enc_sess_iquic *enc_sess;
-
-    enc_sess = SSL_get_ex_data(ssl, s_idx);
-    if (enc_sess->esi_keylog_handle)
-        enc_sess->esi_enpub->enp_kli->kli_log_line(
-                                        enc_sess->esi_keylog_handle, line);
-}
-
-
-static void
-maybe_setup_key_logging (struct enc_sess_iquic *enc_sess)
-{
-    if (enc_sess->esi_enpub->enp_kli)
-    {
-        enc_sess->esi_keylog_handle = enc_sess->esi_enpub->enp_kli->kli_open(
-                        enc_sess->esi_enpub->enp_kli_ctx, enc_sess->esi_conn);
-        LSQ_DEBUG("SSL keys %s be logged",
-                            enc_sess->esi_keylog_handle ? "will" : "will not");
-    }
-}
-
-
 static enum ssl_verify_result_t
 verify_server_cert_callback (SSL *ssl, uint8_t *out_alert)
 {
@@ -1332,8 +1298,6 @@ iquic_lookup_cert (SSL *ssl, void *arg)
         {
             LSQ_DEBUG("looked up cert for %s", server_name
                                                 ? server_name : "<no SNI>");
-            if (enc_sess->esi_enpub->enp_kli)
-                SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
             SSL_set_verify(enc_sess->esi_ssl,
                                     SSL_CTX_get_verify_mode(ssl_ctx), NULL);
             SSL_set_verify_depth(enc_sess->esi_ssl,
@@ -1398,6 +1362,8 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
                                 lsquic_ver2str[enc_sess->esi_conn->cn_version]);
         return -1;
   ok:   enc_sess->esi_alpn = am->alpn;
+        LSQ_DEBUG("for QUIC version %s, ALPN is %s",
+                        lsquic_ver2str[am->version], (char *) am->alpn + 1);
     }
 
     path = enc_sess->esi_conn->cn_if->ci_get_path(enc_sess->esi_conn, NULL);
@@ -1429,9 +1395,6 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         LSQ_INFO("could not set early data context");
         return -1;
     }
-    maybe_setup_key_logging(enc_sess);
-    if (!enc_sess->esi_enpub->enp_lookup_cert && enc_sess->esi_keylog_handle)
-        SSL_CTX_set_keylog_callback(ssl_ctx, keylog_callback);
 
     transpa_len = gen_trans_params(enc_sess, u.trans_params,
                                                     sizeof(u.trans_params));
@@ -1988,8 +1951,6 @@ iquic_esfi_destroy (enc_session_t *enc_session_p)
             + sizeof(enc_sess->esi_frals) / sizeof(enc_sess->esi_frals[0]);
                 ++fral)
         lsquic_frab_list_cleanup(fral);
-    if (enc_sess->esi_keylog_handle)
-        enc_sess->esi_enpub->enp_kli->kli_close(enc_sess->esi_keylog_handle);
     if (enc_sess->esi_ssl)
         SSL_free(enc_sess->esi_ssl);
 
@@ -3405,4 +3366,20 @@ lsquic_enc_sess_ietf_gen_quic_ctx (
         LSQ_LOG1(LSQ_LOG_WARN, "cannot generate QUIC server context: %d",
                                                                         errno);
     return len;
+}
+
+
+struct lsquic_conn *
+lsquic_ssl_to_conn (const struct ssl_st *ssl)
+{
+    struct enc_sess_iquic *enc_sess;
+
+    if (s_idx < 0)
+        return NULL;
+
+    enc_sess = SSL_get_ex_data(ssl, s_idx);
+    if (!enc_sess)
+        return NULL;
+
+    return enc_sess->esi_conn;
 }

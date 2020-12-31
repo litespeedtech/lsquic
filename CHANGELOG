@@ -1,3 +1,8 @@
+2020-12-31
+    - 2.27.0
+    - [API] Remove keylog callbacks.  See issue #188.
+    - Add a bit more ALPN logging.
+
 2020-12-23
     - 2.26.2
     - [BUGFIX] Do not drop incoming data when STOP_SENDING is received.

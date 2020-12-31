@@ -1981,6 +1981,10 @@ Miscellaneous Stream Functions
 Other Functions
 ---------------
 
+.. function:: lsquic_conn_t lsquic_ssl_to_conn (const SSL *)
+
+    Get connection associated with this SSL object.
+
 .. function:: enum lsquic_version lsquic_str2ver (const char *str, size_t len)
 
     Translate string QUIC version to LSQUIC QUIC version representation.
@@ -2102,22 +2106,6 @@ Miscellaneous Types
     :param n_cids:
 
         Number of elements in the peer context pointer and connection ID arrays.
-
-.. type:: struct lsquic_keylog_if
-
-    SSL keylog interface.
-
-    .. member:: void *    (*kli_open) (void *keylog_ctx, lsquic_conn_t *conn)
-
-        Return keylog handle or NULL if no key logging is desired.
-
-    .. member:: void      (*kli_log_line) (void *handle, const char *line)
-
-        Log line.  The first argument is the pointer returned by ``kli_open()``.
-
-    .. member:: void      (*kli_close) (void *handle)
-
-        Close handle.
 
 .. type:: enum lsquic_logger_timestamp_style
 

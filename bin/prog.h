@@ -45,7 +45,6 @@ struct prog
     struct lsquic_engine           *prog_engine;
     const char                     *prog_hostname;
     int                             prog_ipver;     /* 0, 4, or 6 */
-    const char                     *prog_keylog_dir;
     enum {
         PROG_FLAG_COOLDOWN  = 1 << 0,
 #if LSQUIC_PREFERRED_ADDR

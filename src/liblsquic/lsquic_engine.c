@@ -647,8 +647,6 @@ lsquic_engine_new (unsigned flags,
     }
     engine->pub.enp_verify_cert  = api->ea_verify_cert;
     engine->pub.enp_verify_ctx   = api->ea_verify_ctx;
-    engine->pub.enp_kli          = api->ea_keylog_if;
-    engine->pub.enp_kli_ctx      = api->ea_keylog_ctx;
     engine->pub.enp_engine = engine;
     if (hash_conns_by_addr(engine))
         engine->flags |= ENG_CONNS_BY_ADDR;
