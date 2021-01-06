@@ -117,6 +117,23 @@ rechist2str (lsquic_rechist_t *rechist, char *buf, size_t bufsz)
 
 
 static void
+test_range_copy (struct lsquic_rechist *orig, int ietf)
+{
+    char orig_str[0x1000], new_str[0x1000];
+    struct lsquic_rechist new;
+
+    rechist2str(orig, orig_str, sizeof(orig_str));
+
+    lsquic_rechist_init(&new, ietf, 0);
+    lsquic_rechist_copy_ranges(&new, orig,
+        (const struct lsquic_packno_range * (*) (void *)) lsquic_rechist_first,
+        (const struct lsquic_packno_range * (*) (void *)) lsquic_rechist_next);
+    rechist2str(&new, new_str, sizeof(new_str));
+    assert(0 == strcmp(orig_str, new_str));
+}
+
+
+static void
 test5 (void)
 {
     lsquic_rechist_t rechist;
@@ -150,6 +167,7 @@ test5 (void)
     assert(0 == strcmp(buf, "[12-12][10-10][8-6][4-3][1-1]"));
 
     lsquic_rechist_received(&rechist, 9, 0);
+    test_range_copy(&rechist, 0);
 
     rechist2str(&rechist, buf, sizeof(buf));
     assert(0 == strcmp(buf, "[12-12][10-6][4-3][1-1]"));
@@ -181,6 +199,8 @@ test_rand_sequence (unsigned seed, unsigned max)
         st = lsquic_rechist_received(&rechist, (unsigned) rand(), 0);
         assert(st == REC_ST_OK || st == REC_ST_DUP);
     }
+
+    test_range_copy(&rechist, 1);
 
     range = lsquic_rechist_first(&rechist);
     assert(range);
@@ -246,6 +266,7 @@ test_shuffle_1000 (unsigned seed)
         st = lsquic_rechist_received(&rechist, els[i].packno, 0);
         assert(st == REC_ST_OK || st == REC_ST_DUP);
     }
+    test_range_copy(&rechist, 1);
 
     range = lsquic_rechist_first(&rechist);
     assert(range);
