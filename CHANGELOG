@@ -1,4 +1,8 @@
 2021-01-06
+    - 2.27.2
+    - [BUGFIX] Memory corruption in receive history copy-ranges function.
+
+2021-01-06
     - 2.27.1
     - [API] New knob to set outgoing packet batch size.
     - Aborted connection now become tickable immediately.

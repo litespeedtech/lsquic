@@ -20,13 +20,13 @@
 # -- Project information -----------------------------------------------------
 
 project = u'lsquic'
-copyright = u'2020, LiteSpeed Technologies'
+copyright = u'2021, LiteSpeed Technologies'
 author = u'LiteSpeed Technologies'
 
 # The short X.Y version
 version = u'2.27'
 # The full version, including alpha/beta/rc tags
-release = u'2.27.1'
+release = u'2.27.2'
 
 
 # -- General configuration ---------------------------------------------------

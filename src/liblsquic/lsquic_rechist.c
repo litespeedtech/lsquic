@@ -496,13 +496,13 @@ lsquic_rechist_copy_ranges (struct lsquic_rechist *rechist, void *src_rechist,
 {
     const struct lsquic_packno_range *range;
     struct rechist_elem *el;
-    unsigned *next_idx;
+    unsigned prev_idx;
     int idx;
 
     /* This function only works if rechist contains no elements */
     assert(rechist->rh_n_used == 0);
 
-    next_idx = &rechist->rh_head;
+    prev_idx = UINT_MAX;
     for (range = first(src_rechist); range; range = next(src_rechist))
     {
         idx = rechist_alloc_elem(rechist);
@@ -512,8 +512,11 @@ lsquic_rechist_copy_ranges (struct lsquic_rechist *rechist, void *src_rechist,
         el->re_low = range->low;
         el->re_count = range->high - range->low + 1;
         el->re_next = UINT_MAX;
-        *next_idx = idx;
-        next_idx = &el->re_next;
+        if (prev_idx == UINT_MAX)
+            rechist->rh_head = idx;
+        else
+            rechist->rh_elems[prev_idx].re_next = idx;
+        prev_idx = idx;
     }
 
     return 0;

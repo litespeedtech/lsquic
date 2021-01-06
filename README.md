@@ -165,4 +165,4 @@ Have fun,
 
 LiteSpeed QUIC Team.
 
-Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc
+Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc

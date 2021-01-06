@@ -8076,7 +8076,8 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 
     if (new_size > USHRT_MAX)
     {
-        LSQ_DEBUG("min datagram size cannot be larger than %hu", USHRT_MAX);
+        LSQ_DEBUG("min datagram size cannot be larger than %hu",
+                                                    (unsigned short) USHRT_MAX);
         return -1;
     }
 
