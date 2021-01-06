@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
 - only debug and release are expected in the Cmakelists.txt. If you need a different config, please follow the model in that file to add it.
 
 - vcpkg does not have boringssl, so you'll have to build it yourself. Follow the instructions at the boringssl repository.

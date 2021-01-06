@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef __LSQUIC_H__
 #define __LSQUIC_H__
 
@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 27
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 /**
  * Engine flags:
@@ -433,6 +433,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** By default, calling on_close() is not delayed */
 #define LSQUIC_DF_DELAY_ONCLOSE 0
+
+/**
+ * By default, maximum batch size is not specified, leaving it up to the
+ * library.
+ */
+#define LSQUIC_DF_MAX_BATCH_SIZE 0
 
 struct lsquic_engine_settings {
     /**
@@ -1038,6 +1044,15 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_DELAY_ONCLOSE
      */
     int             es_delay_onclose;
+
+    /**
+     * If set to a non-zero value, specifies maximum batch size.  (The
+     * batch of packets passed to @ref ea_packets_out() callback).  Must
+     * be no larger than 1024.
+     *
+     * Default value is @ref LSQUIC_DF_MAX_BATCH_SIZE
+     */
+    unsigned        es_max_batch_size;
 };
 
 /* Initialize `settings' to default values */

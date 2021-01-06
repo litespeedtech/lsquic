@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * md5_server.c -- Read one or more streams from the client and return
  *                 MD5 sum of the payload.

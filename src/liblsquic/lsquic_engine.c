@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_engine.c - QUIC engine
  */
@@ -101,9 +101,10 @@
 #endif
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 /* The batch of outgoing packets grows and shrinks dynamically */
-/* Batch sizes must be powers of two */
+/* Batch sizes do not have to be powers of two */
 #define MAX_OUT_BATCH_SIZE 1024
 #define MIN_OUT_BATCH_SIZE 4
 #define INITIAL_OUT_BATCH_SIZE 32
@@ -247,6 +248,7 @@ struct lsquic_engine
     struct min_heap                    conns_out;
     struct eng_hist                    history;
     unsigned                           batch_size;
+    unsigned                           min_batch_size, max_batch_size;
     struct lsquic_conn                *curr_conn;
     struct pr_queue                   *pr_queue;
     struct attq                       *attq;
@@ -482,6 +484,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
+    if (settings->es_max_batch_size > MAX_OUT_BATCH_SIZE)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "max batch size is greater than "
+                "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
+        return -1;
+    }
+
     return 0;
 }
 
@@ -699,7 +709,19 @@ lsquic_engine_new (unsigned flags,
     }
     engine->attq = lsquic_attq_create();
     eng_hist_init(&engine->history);
-    engine->batch_size = INITIAL_OUT_BATCH_SIZE;
+    if (engine->pub.enp_settings.es_max_batch_size)
+    {
+        engine->max_batch_size = engine->pub.enp_settings.es_max_batch_size;
+        engine->min_batch_size = MIN(4, engine->max_batch_size);
+        engine->batch_size = MAX(engine->max_batch_size / 4,
+                                                    engine->min_batch_size);
+    }
+    else
+    {
+        engine->min_batch_size = MIN_OUT_BATCH_SIZE;
+        engine->max_batch_size = MAX_OUT_BATCH_SIZE;
+        engine->batch_size = INITIAL_OUT_BATCH_SIZE;
+    }
     if (engine->pub.enp_settings.es_honor_prst)
     {
         engine->pub.enp_srst_hash = lsquic_hash_create();
@@ -799,14 +821,14 @@ log_packet_checksum (const lsquic_cid_t *cid, const char *direction,
 static void
 grow_batch_size (struct lsquic_engine *engine)
 {
-    engine->batch_size <<= engine->batch_size < MAX_OUT_BATCH_SIZE;
+    engine->batch_size = MIN(engine->batch_size * 2, engine->max_batch_size);
 }
 
 
 static void
 shrink_batch_size (struct lsquic_engine *engine)
 {
-    engine->batch_size >>= engine->batch_size > MIN_OUT_BATCH_SIZE;
+    engine->batch_size = MAX(engine->batch_size / 2, engine->min_batch_size);
 }
 
 

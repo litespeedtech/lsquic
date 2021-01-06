@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Write several things to HEADERS stream and check the results.  What
  * varies is the amount of bytes that are written to stream every time.

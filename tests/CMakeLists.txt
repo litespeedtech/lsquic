@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
 INCLUDE_DIRECTORIES(../src/liblsquic)
 
 ENABLE_TESTING()

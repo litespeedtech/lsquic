@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Stream/crypto handshake adapter for the server side.  Since on the server
  * side, the handshake logic is handled in mini conn, this adapter does not

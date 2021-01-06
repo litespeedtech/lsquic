@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Test adapted from Chromium bandwidth_sampler_test.cc */
 // Copyright 2016 The Chromium Authors. All rights reserved.
 

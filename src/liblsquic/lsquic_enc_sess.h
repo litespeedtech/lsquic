@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_ENC_SESS_H
 #define LSQUIC_ENC_SESS_H 1
 
@@ -295,7 +295,7 @@ struct enc_session_funcs_iquic
                            void *(crypto_streams)[4],
                            const struct crypto_stream_if *,
                            const struct lsquic_cid *odcid,
-                           const struct lsquic_cid *iscid );
+                           const struct lsquic_cid *iscid);
 
     void
     (*esfi_shake_stream)(enc_session_t *, struct lsquic_stream *,

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_full_conn_ietf.c -- IETF QUIC connection.
  */
@@ -2931,6 +2931,7 @@ ietf_full_conn_ci_abort (struct lsquic_conn *lconn)
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     LSQ_INFO("User aborted connection");
     conn->ifc_flags |= IFC_ABORTED;
+    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
 }
 
 
@@ -4113,6 +4114,13 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
                 stream->id);
             return 1;
         }
+
+    if (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS)
+    {
+        LSQ_DEBUG("tickable: immediate close flags: 0x%X",
+            (unsigned) (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS));
+        return 1;
+    }
 
     LSQ_DEBUG("not tickable");
     return 0;

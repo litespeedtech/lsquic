@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * Based on Google code released under BSD license here:
  *  https://groups.google.com/forum/#!topic/bbr-dev/3RTgkzi5ZD8

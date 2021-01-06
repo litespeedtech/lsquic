@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Getopt for GNU.
    NOTE: getopt is now part of the C library, so if you don't know what
    "Keep this file name-space clean" means, talk to roland@gnu.ai.mit.edu

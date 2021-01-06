@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Tests adopted from Chromium windowed_filter_test.cc */
 // Copyright (c) 2016 The Chromium Authors. All rights reserved.
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Declarations for getopt.
    Copyright (C) 1989, 1990, 1991, 1992, 1993 Free Software Foundation, Inc.
 

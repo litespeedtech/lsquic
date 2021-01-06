@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_enc_sess_ietf.c -- Crypto session for IETF QUIC
  */
@@ -1014,7 +1014,7 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
                     void *(crypto_streams)[4],
                     const struct crypto_stream_if *cryst_if,
                     const struct lsquic_cid *odcid,
-                    const struct lsquic_cid *iscid )
+                    const struct lsquic_cid *iscid)
 {
     struct enc_sess_iquic *enc_sess;
 

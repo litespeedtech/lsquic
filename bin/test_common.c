@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 #if __GNUC__
 #define _GNU_SOURCE     /* For struct in6_pktinfo */
 #endif
@@ -1951,6 +1951,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "ptpc_prop_gain", 14))
         {
             settings->es_ptpc_prop_gain = atof(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "max_batch_size", 14))
+        {
+            settings->es_max_batch_size = atoi(val);
             return 0;
         }
         break;

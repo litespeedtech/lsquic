@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_full_conn.c -- A "full" connection object has full functionality
  */
@@ -3768,6 +3768,7 @@ full_conn_ci_abort (struct lsquic_conn *lconn)
     struct full_conn *conn = (struct full_conn *) lconn;
     LSQ_INFO("User aborted connection");
     conn->fc_flags |= FC_ABORTED;
+    lsquic_engine_add_conn_to_tickable(conn->fc_enpub, lconn);
 }
 
 
@@ -4322,6 +4323,13 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
                 stream->id);
             return 1;
         }
+
+    if (conn->fc_flags & FC_IMMEDIATE_CLOSE_FLAGS)
+    {
+        LSQ_DEBUG("tickable: immediate close flags: 0x%X",
+            (unsigned) (conn->fc_flags & FC_IMMEDIATE_CLOSE_FLAGS));
+        return 1;
+    }
 
     LSQ_DEBUG("not tickable");
     return 0;

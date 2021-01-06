@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * duck_client.c -- The siduck client.  See
  *      https://tools.ietf.org/html/draft-pardue-quic-siduck-00

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_stream.c -- stream processing
  */
@@ -2952,7 +2952,8 @@ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
                 }
                 else
                 {
-                    /* TODO: abort connection?  Handle failure somehow */
+                    stream->conn_pub->lconn->cn_if->ci_internal_error(
+                        stream->conn_pub->lconn, "cannot activate HQ frame");
                     break;
                 }
             }

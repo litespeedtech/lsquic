@@ -866,6 +866,14 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_DELAY_ONCLOSE`
 
+    .. member:: int             es_max_batch_size
+
+       If set to a non-zero value, specifies maximum batch size.  (The
+       batch of packets passed to :member:`lsquic_engine_api.ea_packets_out`).
+       Must be no larger than 1024.
+
+       Default value is :macro:`LSQUIC_DF_MAX_BATCH_SIZE`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1101,6 +1109,11 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_DELAY_ONCLOSE
 
     By default, calling :member:`lsquic_stream_if.on_close()` is not delayed.
+
+.. macro:: LSQUIC_DF_MAX_BATCH_SIZE
+
+    By default, maximum batch size is not specified, leaving it up to the
+    library.
 
 Receiving Packets
 -----------------
@@ -1425,6 +1438,12 @@ Closing Connections
 
     This closes the connection.  :member:`lsquic_stream_if.on_conn_closed`
     and :member:`lsquic_stream_if.on_close` callbacks will be called.
+
+.. function:: void lsquic_conn_abort (lsquic_conn_t *conn)
+
+    This aborts the connection.  The connection and all associated objects
+    will be destroyed (with necessary callbacks called) during the next time
+    :func:`lsquic_engine_process_conns()` is invoked.
 
 Creating Streams
 ----------------

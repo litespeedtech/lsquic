@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2020 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(sendmmsg HAVE_SENDMMSG)
 CHECK_FUNCTION_EXISTS(recvmmsg HAVE_RECVMMSG)
