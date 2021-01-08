@@ -3617,9 +3617,10 @@ lsquic_send_ctl_cancel_chals (struct lsquic_send_ctl *ctl,
                                                             packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
-        if (packet_out->po_path == path
-                && packet_out->po_frame_types == QUIC_FTBIT_PATH_CHALLENGE)
+        if (packet_out->po_path == path)
         {
+            assert(packet_out->po_frame_types & QUIC_FTBIT_PATH_CHALLENGE);
+            assert(!(packet_out->po_frame_types & ctl->sc_retx_frames));
             send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
             send_ctl_sched_remove(ctl, packet_out);
             assert(packet_out->po_loss_chain == packet_out);

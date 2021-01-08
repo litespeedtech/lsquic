@@ -84,6 +84,9 @@ enum stream_if { STREAM_IF_STD, STREAM_IF_HSK, STREAM_IF_HDR, N_STREAM_IFS };
 /* Maximum number of ACK ranges that can fit into gQUIC ACK frame */
 #define MAX_ACK_RANGES 256
 
+/* HANDSHAKE and HEADERS streams are always open in gQUIC connection */
+#define N_SPECIAL_STREAMS 2
+
 /* IMPORTANT: Keep values of FC_SERVER and FC_HTTP same as LSENG_SERVER
  * and LSENG_HTTP.
  */
@@ -1828,7 +1831,7 @@ reset_local_streams_over_goaway (struct full_conn *conn)
                                  el = lsquic_hash_next(conn->fc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (stream->id > conn->fc_goaway_stream_id &&
+        if ((int64_t) stream->id > (int64_t) conn->fc_goaway_stream_id &&
             ((stream->id & 1) ^ is_server /* Locally initiated? */))
         {
             lsquic_stream_received_goaway(stream);
@@ -2083,8 +2086,6 @@ static unsigned
 process_connection_close_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
                                 const unsigned char *p, size_t len)
 {
-    lsquic_stream_t *stream;
-    struct lsquic_hash_elem *el;
     uint64_t error_code;
     uint16_t reason_len;
     uint8_t reason_off;
@@ -2101,17 +2102,7 @@ process_connection_close_frame (struct full_conn *conn, lsquic_packet_in_t *pack
     if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_conncloseframe_received)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_conncloseframe_received(
             &conn->fc_conn, -1, error_code, (const char *) p + reason_off, reason_len);
-    conn->fc_flags |= FC_RECV_CLOSE;
-    if (!(conn->fc_flags & FC_CLOSING))
-    {
-        for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
-                                     el = lsquic_hash_next(conn->fc_pub.all_streams))
-        {
-            stream = lsquic_hashelem_getdata(el);
-            lsquic_stream_shutdown_internal(stream);
-        }
-        conn->fc_flags |= FC_CLOSING;
-    }
+    conn->fc_flags |= FC_RECV_CLOSE|FC_CLOSING;
     return parsed_len;
 }
 
@@ -2411,7 +2402,7 @@ process_regular_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
         {
             frame_types = packet_in->pi_frame_types;
             if ((conn->fc_flags & FC_GOING_AWAY)
-                && lsquic_hash_count(conn->fc_pub.all_streams) < 3)
+                && lsquic_hash_count(conn->fc_pub.all_streams) <= N_SPECIAL_STREAMS)
             {
                 /* Ignore PING frames if we are going away and there are no
                  * active streams.  (HANDSHAKE and HEADERS streams are the
@@ -2627,7 +2618,7 @@ maybe_close_conn (struct full_conn *conn)
 
     if ((conn->fc_flags & (FC_CLOSING|FC_GOAWAY_SENT|FC_SERVER))
                                             == (FC_GOAWAY_SENT|FC_SERVER)
-        && lsquic_hash_count(conn->fc_pub.all_streams) == 2)
+        && lsquic_hash_count(conn->fc_pub.all_streams) == N_SPECIAL_STREAMS)
     {
 #ifndef NDEBUG
         for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
@@ -3193,7 +3184,7 @@ conn_ok_to_close (const struct full_conn *conn)
         || (conn->fc_flags & FC_RECV_CLOSE)
         || (
                !lsquic_send_ctl_have_outgoing_stream_frames(&conn->fc_send_ctl)
-            && lsquic_hash_count(conn->fc_pub.all_streams) == 0
+            && lsquic_hash_count(conn->fc_pub.all_streams) <= N_SPECIAL_STREAMS
             && lsquic_send_ctl_have_unacked_stream_frames(&conn->fc_send_ctl) == 0);
 }
 
@@ -3807,7 +3798,8 @@ full_conn_ci_close (struct lsquic_conn *lconn)
                                      el = lsquic_hash_next(conn->fc_pub.all_streams))
         {
             stream = lsquic_hashelem_getdata(el);
-            lsquic_stream_shutdown_internal(stream);
+            if (!lsquic_stream_is_critical(stream))
+                lsquic_stream_reset(stream, 0);
         }
         conn->fc_flags |= FC_CLOSING;
         if (!(conn->fc_flags & FC_GOAWAY_SENT))
@@ -4264,7 +4256,7 @@ full_conn_ci_is_tickable (lsquic_conn_t *lconn)
             !lsquic_send_ctl_sched_is_blocked(&conn->fc_send_ctl)))
     {
         const enum full_conn_flags send_flags = FC_SEND_GOAWAY
-                |FC_SEND_STOP_WAITING|FC_SEND_PING|FC_SEND_WUF|FC_CLOSING;
+                |FC_SEND_STOP_WAITING|FC_SEND_PING|FC_SEND_WUF;
         if (conn->fc_flags & send_flags)
         {
             LSQ_DEBUG("tickable: flags: 0x%X", conn->fc_flags & send_flags);

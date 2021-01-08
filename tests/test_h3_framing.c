@@ -331,7 +331,9 @@ static const struct conn_iface our_conn_if =
 };
 
 
+#if LSQUIC_CONN_STATS
 static struct conn_stats s_conn_stats;
+#endif
 
 static void
 init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
@@ -361,7 +363,9 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     tobjs->conn_pub.path = &network_path;
+#if LSQUIC_CONN_STATS
     tobjs->conn_pub.conn_stats = &s_conn_stats;
+#endif
     tobjs->initial_stream_window = initial_stream_window;
     tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;

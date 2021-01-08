@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 2
 #define LSQUIC_MINOR_VERSION 27
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -1320,13 +1320,13 @@ struct lsquic_engine_api
      */
     const struct lsquic_hset_if         *ea_hsi_if;
     void                                *ea_hsi_ctx;
-#if LSQUIC_CONN_STATS
+
     /**
      * If set, engine will print cumulative connection statistics to this
-     * file just before it is destroyed.
+     * file just before it is destroyed.  (Must be compiled with
+     * -DLSQUIC_CONN_STATS=1).
      */
     void /* FILE, really */             *ea_stats_fh;
-#endif
 
     /**
      * The optional ALPN string is used by the client if @ref LSENG_HTTP

@@ -705,8 +705,10 @@ cid_throt_alarm_expired (enum alarm_id al_id, void *ctx,
 static void
 wipe_path (struct ietf_full_conn *conn, unsigned path_id)
 {
+    void *peer_ctx = conn->ifc_paths[path_id].cop_path.np_peer_ctx;
     memset(&conn->ifc_paths[path_id], 0, sizeof(conn->ifc_paths[0]));
     conn->ifc_paths[path_id].cop_path.np_path_id = path_id;
+    conn->ifc_paths[path_id].cop_path.np_peer_ctx = peer_ctx;
 }
 
 
@@ -2916,7 +2918,7 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
             stream = lsquic_hashelem_getdata(el);
             sd = (stream->id >> SD_SHIFT) & 1;
             if (SD_BIDI == sd)
-                lsquic_stream_shutdown_internal(stream);
+                lsquic_stream_reset(stream, 0);
         }
         conn->ifc_flags |= IFC_CLOSING;
         conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
@@ -5933,8 +5935,6 @@ static unsigned
 process_connection_close_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    lsquic_stream_t *stream;
-    struct lsquic_hash_elem *el;
     uint64_t error_code;
     uint16_t reason_len;
     uint8_t reason_off;
@@ -5971,17 +5971,7 @@ process_connection_close_frame (struct ietf_full_conn *conn,
     if (conn->ifc_enpub->enp_stream_if->on_conncloseframe_received)
         conn->ifc_enpub->enp_stream_if->on_conncloseframe_received(
             &conn->ifc_conn, app_error, error_code, (const char *) p + reason_off, reason_len);
-    conn->ifc_flags |= IFC_RECV_CLOSE;
-    if (!(conn->ifc_flags & IFC_CLOSING))
-    {
-        for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
-                             el = lsquic_hash_next(conn->ifc_pub.all_streams))
-        {
-            stream = lsquic_hashelem_getdata(el);
-            lsquic_stream_shutdown_internal(stream);
-        }
-        conn->ifc_flags |= IFC_CLOSING;
-    }
+    conn->ifc_flags |= IFC_RECV_CLOSE|IFC_CLOSING;
     return parsed_len;
 }
 
@@ -8890,6 +8880,7 @@ cancel_push_promise (struct ietf_full_conn *conn, struct push_promise *promise)
     /* But let stream dtor free the promise object as sm_promise may yet
      * be used by the stream in some ways.
      */
+    /* TODO: drop lsquic_stream_shutdown_internal, use something else */
     lsquic_stream_shutdown_internal(promise->pp_pushed_stream);
     if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso, promise->pp_id))
         ABORT_WARN("cannot write CANCEL_PUSH");

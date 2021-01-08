@@ -1837,7 +1837,8 @@ stream_shutdown_write (lsquic_stream_t *stream)
      * the flags indicate that nothing else should be written.
      */
     if (!(stream->sm_bflags & SMBF_CRYPTO)
-            && !(stream->stream_flags & (STREAM_FIN_SENT|STREAM_RST_SENT))
+            && !((stream->stream_flags & (STREAM_FIN_SENT|STREAM_RST_SENT))
+                    || (stream->sm_qflags & SMQF_SEND_RST))
                 && !stream_is_incoming_unidir(stream)
                         /* In gQUIC, receiving a RESET means "stop sending" */
                     && !(!(stream->sm_bflags & SMBF_IETF)
