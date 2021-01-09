@@ -961,6 +961,8 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
     else
         ++have_errors;
 
+    conn->fc_conn.hostname = lconn_mini->hostname;
+
     if (0 == have_errors)
     {
         tcid0 = conn->fc_settings->es_support_tcid0

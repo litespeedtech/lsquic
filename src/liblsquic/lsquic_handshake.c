@@ -2222,7 +2222,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
     struct ssl_ctx_st *ssl_ctx;
     size_t key_sz;
     unsigned char key[0x400];
-    
+    enc_session->es_conn->hostname = enc_session->hs_ctx.sni.str;
     if (!enc_session->ssl_ctx)
     {
         if (!cb)

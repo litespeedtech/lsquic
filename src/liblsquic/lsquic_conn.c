@@ -193,6 +193,12 @@ lsquic_conn_get_engine (struct lsquic_conn *lconn)
     return lconn->cn_if->ci_get_engine(lconn);
 }
 
+char *
+lsquic_conn_get_sni(struct lsquic_conn *lconn)
+{
+	return lconn->hostname;
+}
+
 
 int
 lsquic_conn_push_stream (struct lsquic_conn *lconn, void *hset,

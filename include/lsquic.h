@@ -1784,6 +1784,10 @@ lsquic_conn_id (const lsquic_conn_t *c);
 lsquic_engine_t *
 lsquic_conn_get_engine (lsquic_conn_t *c);
 
+/** Get sni from connection */
+char *
+lsquic_conn_get_sni(struct lsquic_conn *lconn);
+
 int
 lsquic_conn_get_sockaddr(lsquic_conn_t *c,
                 const struct sockaddr **local, const struct sockaddr **peer);

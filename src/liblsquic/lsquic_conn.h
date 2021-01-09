@@ -368,6 +368,7 @@ struct lsquic_conn
             (lsconn_)->cn_cces = (lsconn_)->cn_cces_buf; \
             (lsconn_)->cn_n_cces = 8; (lsconn_)->cn_cces_mask = 1; } while (0)
 #endif
+    char* hostname;
 };
 
 #define END_OF_CCES(conn) ((conn)->cn_cces + (conn)->cn_n_cces)
