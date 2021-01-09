@@ -1081,6 +1081,8 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
         }
         return NULL;
     }
+
+    conn->hostname = mini_conn->hostname;
     ++engine->n_conns;
     if (0 != insert_conn_into_hash(engine, conn, lsquic_conn_get_peer_ctx(conn, NULL)))
     {

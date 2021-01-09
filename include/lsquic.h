@@ -1785,7 +1785,7 @@ lsquic_engine_t *
 lsquic_conn_get_engine (lsquic_conn_t *c);
 
 /** Get sni from connection */
-char *
+const char *
 lsquic_conn_get_sni(struct lsquic_conn *lconn);
 
 int

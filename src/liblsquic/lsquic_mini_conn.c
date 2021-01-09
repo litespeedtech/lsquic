@@ -231,6 +231,7 @@ lsquic_mini_conn_new (struct lsquic_engine_public *enp,
     mc->mc_conn.cn_cid = packet_in->pi_conn_id;
     mc->mc_conn.cn_flags = LSCONN_MINI | LSCONN_SERVER;
     mc->mc_conn.cn_if = conn_iface;
+    mc->mc_conn.hostname = NULL;
     LSQ_DEBUG("created mini connection object");
     MCHIST_APPEND(mc, MCHE_CREATED);
     return &mc->mc_conn;

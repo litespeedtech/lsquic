@@ -1503,9 +1503,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     struct ietf_mini_rechist mini_rechist;
 
     conn = calloc(1, sizeof(*conn));
+
     if (!conn)
         goto err0;
     now = lsquic_time_now();
+    conn->ifc_conn.hostname = mini_conn->hostname;
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);

@@ -193,7 +193,7 @@ lsquic_conn_get_engine (struct lsquic_conn *lconn)
     return lconn->cn_if->ci_get_engine(lconn);
 }
 
-char *
+const char *
 lsquic_conn_get_sni(struct lsquic_conn *lconn)
 {
 	return lconn->hostname;

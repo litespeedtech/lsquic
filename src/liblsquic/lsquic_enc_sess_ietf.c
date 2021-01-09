@@ -1265,11 +1265,14 @@ static int
 iquic_lookup_cert (SSL *ssl, void *arg)
 {
     struct enc_sess_iquic *const enc_sess = arg;
+
     const struct network_path *path;
     const char *server_name;
     SSL_CTX *ssl_ctx;
 
     server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+
+    enc_sess->esi_conn->hostname = server_name;
 #ifndef NDEBUG
     if (!server_name)
         server_name = enc_sess->esi_sni_bypass;

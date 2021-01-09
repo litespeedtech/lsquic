@@ -856,6 +856,7 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->fc_hsk_ctx.server.lconn = lconn_full;
     conn->fc_hsk_ctx.server.enpub = enpub;
+    conn->fc_conn.hostname = lconn_mini->hostname;
 
     /* TODO Optimize: we don't need an actual crypto stream and handler
      * on the server side, as we don't do anything with it.  We can
