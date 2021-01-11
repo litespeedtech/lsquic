@@ -3502,6 +3502,14 @@ lsquic_enc_session_get_ua (enc_session_t *enc_session_p)
 }
 
 
+static const char *
+lsquic_enc_session_get_sni (enc_session_t *enc_session_p)
+{
+    struct lsquic_enc_session *const enc_session = enc_session_p;
+    return lsquic_str_cstr(&enc_session->hs_ctx.sni);
+}
+
+
 #ifndef NDEBUG
 static uint8_t
 lsquic_enc_session_have_key (enc_session_t *enc_session_p)
@@ -3819,6 +3827,7 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 =
     .esf_cipher = lsquic_enc_session_cipher,
     .esf_keysize = lsquic_enc_session_keysize,
     .esf_alg_keysize = lsquic_enc_session_alg_keysize,
+    .esf_get_sni = lsquic_enc_session_get_sni,
     .esf_encrypt_packet = gquic_encrypt_packet,
     .esf_decrypt_packet = gquic_decrypt_packet,
     .esf_tag_len = GQUIC_PACKET_HASH_SZ,
@@ -4246,6 +4255,7 @@ const
 /* Q050 and later */
 struct enc_session_funcs_common lsquic_enc_session_common_gquic_2 =
 {
+    .esf_get_sni                =  lsquic_enc_session_get_sni,
     .esf_global_init            =  lsquic_handshake_init,
     .esf_global_cleanup         =  lsquic_handshake_cleanup,
     .esf_cipher                 =  lsquic_enc_session_cipher,

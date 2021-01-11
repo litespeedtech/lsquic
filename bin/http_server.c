@@ -321,6 +321,11 @@ static lsquic_conn_ctx_t *
 http_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 {
     struct server_ctx *server_ctx = stream_if_ctx;
+    const char *sni;
+
+    sni = lsquic_conn_get_sni(conn);
+    LSQ_DEBUG("new connection, SNI: %s", sni ? sni : "<not set>");
+
     lsquic_conn_ctx_t *conn_h = malloc(sizeof(*conn_h));
     conn_h->conn = conn;
     conn_h->server_ctx = server_ctx;

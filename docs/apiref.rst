@@ -1964,6 +1964,10 @@ Miscellaneous Connection Functions
 
     Get peer context associated with the connection and local address.
 
+.. function:: const char * lsquic_conn_get_sni (lsquic_conn_t *conn)
+
+    Get SNI sent by the client.
+
 .. function:: enum LSQUIC_CONN_STATUS lsquic_conn_status (lsquic_conn_t *conn, char *errbuf, size_t bufsz)
 
     Get connection status.

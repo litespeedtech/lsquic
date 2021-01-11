@@ -1979,6 +1979,10 @@ lsquic_conn_set_ctx (lsquic_conn_t *, lsquic_conn_ctx_t *);
 void *
 lsquic_conn_get_peer_ctx (lsquic_conn_t *, const struct sockaddr *local_sa);
 
+/** Get SNI sent by the client */
+const char *
+lsquic_conn_get_sni (lsquic_conn_t *);
+
 /**
  * Abort connection.
  */

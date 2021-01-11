@@ -2410,6 +2410,21 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
 }
 
 
+static const char *
+iquic_esf_get_sni (enc_session_t *enc_session_p)
+{
+    struct enc_sess_iquic *const enc_sess = enc_session_p;
+    const char *server_name;
+
+    server_name = SSL_get_servername(enc_sess->esi_ssl, TLSEXT_NAMETYPE_host_name);
+#ifndef NDEBUG
+    if (!server_name)
+        server_name = enc_sess->esi_sni_bypass;
+#endif
+    return server_name;
+}
+
+
 static int
 iquic_esf_global_init (int flags)
 {
@@ -2669,6 +2684,7 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1 =
     .esf_tag_len         = IQUIC_TAG_LEN,
     .esf_get_server_cert_chain
                          = iquic_esf_get_server_cert_chain,
+    .esf_get_sni         = iquic_esf_get_sni,
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,
     .esf_alg_keysize     = iquic_esf_alg_keysize,
@@ -2687,6 +2703,7 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1_no_flush
     .esf_tag_len         = IQUIC_TAG_LEN,
     .esf_get_server_cert_chain
                          = iquic_esf_get_server_cert_chain,
+    .esf_get_sni         = iquic_esf_get_sni,
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,
     .esf_alg_keysize     = iquic_esf_alg_keysize,

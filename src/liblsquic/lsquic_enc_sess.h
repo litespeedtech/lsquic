@@ -99,6 +99,9 @@ struct enc_session_funcs_common
     int
     (*esf_alg_keysize) (enc_session_t *);
 
+    const char *
+    (*esf_get_sni) (enc_session_t *);
+
     /* Need to pass lconn in encrypt and decrypt methods because enc_session
      * is allowed to be NULL for gQUIC.
      */

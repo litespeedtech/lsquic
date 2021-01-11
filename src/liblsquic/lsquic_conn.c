@@ -324,3 +324,13 @@ lsquic_conn_stats_diff (const struct conn_stats *cumulative_stats,
 
 
 #endif
+
+
+const char *
+lsquic_conn_get_sni (struct lsquic_conn *lconn)
+{
+    if (lconn->cn_esf_c && lconn->cn_esf_c->esf_get_sni)
+        return lconn->cn_esf_c->esf_get_sni(lconn->cn_enc_session);
+    else
+        return NULL;
+}
