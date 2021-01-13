@@ -1,4 +1,5 @@
 language: c
+if: branch = master
 matrix:
     include:
         - name: Linux (gcc)
