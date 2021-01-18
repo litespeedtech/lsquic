@@ -10,7 +10,7 @@ All declarations are in :file:`lsquic.h`, so it is enough to
 
 ::
 
-    #incluide <lsquic.h>
+    #include <lsquic.h>
 
 in each source file.
 
