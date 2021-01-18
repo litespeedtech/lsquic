@@ -909,11 +909,11 @@ lsquic_stream_readable (struct lsquic_stream *stream)
 int
 lsquic_stream_is_write_reset (const struct lsquic_stream *stream)
 {
-    if (stream->sm_bflags & SMBF_IETF)
-        return stream->stream_flags & STREAM_SS_RECVD;
-    else
-        return (stream->stream_flags & (STREAM_RST_RECVD|STREAM_RST_SENT))
-            || (stream->sm_qflags & SMQF_SEND_RST);
+    /* The two protocols use different frames to effect write reset: */
+    const enum stream_flags cause_flag = stream->sm_bflags & SMBF_IETF
+        ? STREAM_SS_RECVD : STREAM_RST_RECVD;
+    return (stream->stream_flags & (cause_flag|STREAM_RST_SENT))
+        || (stream->sm_qflags & SMQF_SEND_RST);
 }
 
 

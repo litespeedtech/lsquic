@@ -731,7 +731,8 @@ path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
         LSQ_INFO("migration to path #%u failed after none of %u path "
             "challenges received responses", path_id, copath->cop_n_chals);
         /* There may be a lingering challenge if its generation is delayed */
-        lsquic_send_ctl_cancel_chals(&conn->ifc_send_ctl, &copath->cop_path);
+        lsquic_send_ctl_cancel_path_verification(&conn->ifc_send_ctl,
+                                                        &copath->cop_path);
         wipe_path(conn, path_id);
     }
     else

@@ -344,10 +344,12 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
     if (sample)
         TAILQ_INSERT_TAIL(&bbr->bbr_ack_state.samples, sample, next);
 
-    if (is_valid_packno(bbr->bbr_ack_state.max_packno))
-        /* We assume packet numbers are ordered */
-        assert(packet_out->po_packno > bbr->bbr_ack_state.max_packno);
-    bbr->bbr_ack_state.max_packno = packet_out->po_packno;
+    if (!is_valid_packno(bbr->bbr_ack_state.max_packno)
+                /* Packet ordering is checked for, and warned about, in
+                 * lsquic_senhist_add().
+                 */
+            || packet_out->po_packno > bbr->bbr_ack_state.max_packno)
+        bbr->bbr_ack_state.max_packno = packet_out->po_packno;
     bbr->bbr_ack_state.acked_bytes += packet_sz;
 }
 

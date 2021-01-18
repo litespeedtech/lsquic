@@ -387,7 +387,7 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
     int keep_path_properties);
 
 void
-lsquic_send_ctl_cancel_chals (struct lsquic_send_ctl *,
+lsquic_send_ctl_cancel_path_verification (struct lsquic_send_ctl *,
                                                 const struct network_path *);
 
 void

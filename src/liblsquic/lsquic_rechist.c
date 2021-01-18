@@ -503,7 +503,13 @@ lsquic_rechist_copy_ranges (struct lsquic_rechist *rechist, void *src_rechist,
     assert(rechist->rh_n_used == 0);
 
     prev_idx = UINT_MAX;
-    for (range = first(src_rechist); range; range = next(src_rechist))
+    for (range = first(src_rechist); range &&
+            /* Do not overwrite higher-numbered ranges.  (Also, logic below
+             * does not work if rechist_reuse_last_elem() is used.)
+             */
+            (rechist->rh_max_ranges == 0
+                            || rechist->rh_n_used < rechist->rh_max_ranges);
+                                                    range = next(src_rechist))
     {
         idx = rechist_alloc_elem(rechist);
         if (idx < 0)

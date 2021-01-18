@@ -3603,15 +3603,15 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
 }
 
 
-/* Drop PATH_CHALLENGE packets for path `path'. */
+/* Drop PATH_CHALLENGE and PATH_RESPONSE packets for path `path'. */
 void
-lsquic_send_ctl_cancel_chals (struct lsquic_send_ctl *ctl,
+lsquic_send_ctl_cancel_path_verification (struct lsquic_send_ctl *ctl,
                                             const struct network_path *path)
 {
     struct lsquic_packet_out *packet_out, *next;
 
-    /* We need only to examine the scheduled queue as lost challenges are
-     * not retransmitted.
+    /* We need only to examine the scheduled queue as lost challenges and
+     * responses are not retransmitted.
      */
     for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
                                                             packet_out = next)
@@ -3619,7 +3619,8 @@ lsquic_send_ctl_cancel_chals (struct lsquic_send_ctl *ctl,
         next = TAILQ_NEXT(packet_out, po_next);
         if (packet_out->po_path == path)
         {
-            assert(packet_out->po_frame_types & QUIC_FTBIT_PATH_CHALLENGE);
+            assert(packet_out->po_frame_types
+                    & (QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_PATH_RESPONSE));
             assert(!(packet_out->po_frame_types & ctl->sc_retx_frames));
             send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
             send_ctl_sched_remove(ctl, packet_out);

@@ -52,9 +52,9 @@ void
 lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
                                         const lsquic_packet_in_t *packet_in)
 {
-    switch (packet_in->pi_flags & (
-                                   PI_FROM_MINI|
-                                                PI_GQUIC))
+    unsigned packet_sz;
+
+    switch (packet_in->pi_flags & (PI_FROM_MINI|PI_GQUIC))
     {
     case PI_FROM_MINI|PI_GQUIC:
         LCID("packet in: %"PRIu64" (from mini)", packet_in->pi_packno);
@@ -65,15 +65,18 @@ lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
             lsquic_packet_in_ecn(packet_in));
         break;
     case PI_GQUIC:
-        LCID("packet in: %"PRIu64", size: %u", packet_in->pi_packno,
-            (unsigned) (packet_in->pi_data_sz + GQUIC_PACKET_HASH_SZ));
+        packet_sz = packet_in->pi_data_sz
+            + (packet_in->pi_flags & PI_DECRYPTED ? GQUIC_PACKET_HASH_SZ : 0);
+        LCID("packet in: %"PRIu64", size: %u", packet_in->pi_packno, packet_sz);
         break;
     default:
+        packet_sz = packet_in->pi_data_sz
+            + (packet_in->pi_flags & PI_DECRYPTED ? IQUIC_TAG_LEN : 0);
         if (packet_in->pi_flags & PI_LOG_QL_BITS)
             LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
                 "path: %hhu; Q: %d; L: %d",
                 packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
-                (unsigned) (packet_in->pi_data_sz + IQUIC_TAG_LEN),
+                packet_sz,
                 lsquic_packet_in_ecn(packet_in),
                 /* spin bit value is only valid for short packet headers */
                 lsquic_packet_in_spin_bit(packet_in), packet_in->pi_path_id,
@@ -83,7 +86,7 @@ lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
             LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
                 "path: %hhu",
                 packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
-                (unsigned) (packet_in->pi_data_sz + IQUIC_TAG_LEN),
+                packet_sz,
                 lsquic_packet_in_ecn(packet_in),
                 /* spin bit value is only valid for short packet headers */
                 lsquic_packet_in_spin_bit(packet_in), packet_in->pi_path_id);

@@ -1,3 +1,12 @@
+2021-01-18
+    - 2.27.5
+    - [BUGFIX] Assertion in send controller when path validation fails.
+    - [BUGFIX] Assertion in BBR when sending out-of-order packets is
+      detected.
+    - [BUGFIX] Drop overflow receive history ranges when cloning.
+    - Log correct size of the incoming packet.
+    - Fix internal stream function.
+
 2021-01-13
     - 2.27.4
     - [API] Add lsquic_conn_get_sni(), fixes issue #203.

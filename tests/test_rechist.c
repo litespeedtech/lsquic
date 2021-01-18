@@ -121,6 +121,7 @@ test_range_copy (struct lsquic_rechist *orig, int ietf)
 {
     char orig_str[0x1000], new_str[0x1000];
     struct lsquic_rechist new;
+    size_t len;
 
     rechist2str(orig, orig_str, sizeof(orig_str));
 
@@ -130,6 +131,19 @@ test_range_copy (struct lsquic_rechist *orig, int ietf)
         (const struct lsquic_packno_range * (*) (void *)) lsquic_rechist_next);
     rechist2str(&new, new_str, sizeof(new_str));
     assert(0 == strcmp(orig_str, new_str));
+    lsquic_rechist_cleanup(&new);
+
+    /* This tests that lower-numbered ranges do not overwrite higher-numbered
+     * ranges.
+     */
+    lsquic_rechist_init(&new, ietf, 10);
+    lsquic_rechist_copy_ranges(&new, orig,
+        (const struct lsquic_packno_range * (*) (void *)) lsquic_rechist_first,
+        (const struct lsquic_packno_range * (*) (void *)) lsquic_rechist_next);
+    rechist2str(&new, new_str, sizeof(new_str));
+    len = strlen(new_str);
+    assert(0 == strncmp(orig_str, new_str, len));
+    lsquic_rechist_cleanup(&new);
 }
 
 
