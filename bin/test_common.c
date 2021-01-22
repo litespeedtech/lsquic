@@ -1548,7 +1548,7 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #else
     DWORD bytes;
     WSAMSG msg;
-    WSABUF wsaBuf;
+    LPWSABUF pWsaBuf = NULL;
 #endif
     union {
         /* cmsg(3) recommends union for proper alignment */
@@ -1595,6 +1595,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 
     n = 0;
     prev_ancil_key = 0;
+#ifdef WIN32
+    #define MAX_OUT_BATCH_SIZE 1024
+    pWsaBuf = malloc(sizeof(*pWsaBuf)*MAX_OUT_BATCH_SIZE*2);
+    if (NULL == pWsaBuf) {
+        return -1;
+    }
+#endif
+
     do
     {
         sport = specs[n].peer_ctx;
@@ -1611,14 +1619,17 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         msg.msg_iovlen     = specs[n].iovlen;
         msg.msg_flags      = 0;
 #else
-        wsaBuf.buf = specs[n].iov->iov_base;
-        wsaBuf.len = specs[n].iov->iov_len;
+        for (int i = 0; i < specs[n].iovlen; i++)
+        {
+            pWsaBuf[i].buf = specs[n].iov[i].iov_base;
+            pWsaBuf[i].len = specs[n].iov[i].iov_len;
+        }
         msg.name           = (void *) specs[n].dest_sa;
         msg.namelen        = (AF_INET == specs[n].dest_sa->sa_family ?
                                             sizeof(struct sockaddr_in) :
                                             sizeof(struct sockaddr_in6));
-        msg.dwBufferCount  = 1;
-        msg.lpBuffers      = &wsaBuf;
+        msg.dwBufferCount  = specs[n].iovlen;
+        msg.lpBuffers      = pWsaBuf;
         msg.dwFlags        = 0;
 #endif
         if ((sport->sp_flags & SPORT_SERVER) && specs[n].local_sa->sa_family)
@@ -1680,6 +1691,13 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 
     if (n < orig_count)
         prog_sport_cant_send(sport->sp_prog, sport->fd);
+
+#ifdef WIN32
+    if (NULL != pWsaBuf) {
+        free(pWsaBuf);
+        pWsaBuf = NULL;
+    }
+#endif
 
     if (n > 0)
     {
