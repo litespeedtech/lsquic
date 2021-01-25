@@ -2615,10 +2615,12 @@ maybe_close_conn (struct full_conn *conn)
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
 #endif
+    const unsigned n_special_stream = N_SPECIAL_STREAMS
+                                    - !(conn->fc_flags & FC_HTTP);
 
     if ((conn->fc_flags & (FC_CLOSING|FC_GOAWAY_SENT|FC_SERVER))
                                             == (FC_GOAWAY_SENT|FC_SERVER)
-        && lsquic_hash_count(conn->fc_pub.all_streams) == N_SPECIAL_STREAMS)
+        && lsquic_hash_count(conn->fc_pub.all_streams) == n_special_streams)
     {
 #ifndef NDEBUG
         for (el = lsquic_hash_first(conn->fc_pub.all_streams); el;
