@@ -1699,6 +1699,22 @@ static const enum header_type bits2ht[4] =
 };
 
 
+#if LSQUIC_QIR
+/* Return true if the parsing function is to enforce the minimum DCID
+ * length requirement as specified in IETF v1 and the I-Ds.
+ */
+static int
+enforce_initial_dcil (lsquic_ver_tag_t tag)
+{
+    enum lsquic_version version;
+
+    version = lsquic_tag2ver(tag);
+    return version != (enum lsquic_version) -1
+        && ((1 << version) & LSQUIC_IETF_VERSIONS);
+}
+#endif
+
+
 int
 lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
                 size_t length, int is_server, unsigned cid_len,
@@ -1751,6 +1767,14 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     switch (header_type)
     {
     case HETY_INITIAL:
+#if LSQUIC_QIR
+        if (!enforce_initial_dcil(tag))
+        {
+            /* Count even zero-length DCID as having DCID */
+            packet_in->pi_flags |= PI_CONN_ID;
+        }
+        else
+#endif
         if (is_server && dcil < MIN_INITIAL_DCID_LEN)
             return -1;
         r = vint_read(p, end, &token_len);

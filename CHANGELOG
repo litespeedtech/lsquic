@@ -1,3 +1,16 @@
+2021-01-27
+    - 2.27.6
+    - [BUGFIX] Replace dispatch read/write events assertion with a check.
+    - [BUGFIX] gQUIC connection close: there is no HEADERS stream without
+      HTTP flag, see issue #220.
+    - http_client, http_server: add hq protocol support and other flags
+      for use with QUIC Interop Runner.
+    - Fix: use IP_PMTUDISC_PROBE (not IP_PMTUDISC_DO) on Linux to set
+      Don't-Fragment flag on outgoing packets.
+    - Fix send_packets_one_by_one on Windows platform when sending
+      multiple iovs, see issue #218.
+    - Exit echo_client on Windows immediately, see issue #219.
+
 2021-01-18
     - 2.27.5
     - [BUGFIX] Assertion in send controller when path validation fails.

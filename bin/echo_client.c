@@ -208,6 +208,12 @@ main (int argc, char **argv)
     struct prog prog;
     struct echo_client_ctx client_ctx;
 
+#ifdef WIN32
+    fprintf(stderr, "%s does not work on Windows, see\n"
+        "https://github.com/litespeedtech/lsquic/issues/219\n", argv[0]);
+    exit(EXIT_FAILURE);
+#endif
+
     memset(&client_ctx, 0, sizeof(client_ctx));
     client_ctx.prog = &prog;
 

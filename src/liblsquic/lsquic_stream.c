@@ -2363,12 +2363,13 @@ maybe_mark_as_blocked (lsquic_stream_t *stream)
 void
 lsquic_stream_dispatch_read_events (lsquic_stream_t *stream)
 {
-    assert(stream->sm_qflags & SMQF_WANT_READ);
-
-    if (stream->sm_bflags & SMBF_RW_ONCE)
-        stream_dispatch_read_events_once(stream);
-    else
-        stream_dispatch_read_events_loop(stream);
+    if (stream->sm_qflags & SMQF_WANT_READ)
+    {
+        if (stream->sm_bflags & SMBF_RW_ONCE)
+            stream_dispatch_read_events_once(stream);
+        else
+            stream_dispatch_read_events_loop(stream);
+    }
 }
 
 
@@ -2381,7 +2382,9 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     unsigned short n_buffered;
     enum stream_q_flags q_flags;
 
-    assert(stream->sm_qflags & SMQF_WRITE_Q_FLAGS);
+    if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS))
+        return;
+
     q_flags = stream->sm_qflags & SMQF_WRITE_Q_FLAGS;
     tosend_off = stream->tosend_off;
     n_buffered = stream->sm_n_buffered;

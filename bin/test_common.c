@@ -947,7 +947,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         if (AF_INET == sa_local->sa_family)
         {
 #if __linux__
-            on = IP_PMTUDISC_DO;
+            on = IP_PMTUDISC_PROBE;
             s = setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &on,
                                                                 sizeof(on));
 #else
@@ -1136,7 +1136,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
         {
         int on;
 #if __linux__
-            on = IP_PMTUDISC_DO;
+            on = IP_PMTUDISC_PROBE;
             s = setsockopt(sockfd, IPPROTO_IP, IP_MTU_DISCOVER, &on,
                                                                 sizeof(on));
 #elif WIN32

@@ -190,6 +190,7 @@ struct http_client_ctx {
     unsigned                     hcc_n_open_conns;
     unsigned                     hcc_reset_after_nbytes;
     unsigned                     hcc_retire_cid_after_nbytes;
+    const char                  *hcc_download_dir;
     
     char                        *hcc_sess_resume_file_name;
 
@@ -487,6 +488,7 @@ struct lsquic_stream_ctx {
                                      * lsquic_stream_read* functions.
                                      */
     unsigned             count;
+    FILE                *download_fh;
     struct lsquic_reader reader;
 };
 
@@ -551,6 +553,23 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
         st_h->sh_stop = random() % (s_abandon_early + 1);
         st_h->sh_flags |= ABANDON;
     }
+
+    if (st_h->client_ctx->hcc_download_dir)
+    {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s",
+                            st_h->client_ctx->hcc_download_dir, st_h->path);
+        st_h->download_fh = fopen(path, "wb");
+        if (st_h->download_fh)
+            LSQ_NOTICE("downloading %s to %s", st_h->path, path);
+        else
+        {
+            LSQ_ERROR("cannot open %s for writing: %s", path, strerror(errno));
+            lsquic_stream_close(stream);
+        }
+    }
+    else
+        st_h->download_fh = NULL;
 
     return st_h;
 }
@@ -785,7 +804,8 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 st_h->sh_flags |= PROCESSED_HEADERS;
             }
             if (!s_discard_response)
-                fwrite(buf, 1, nread, stdout);
+                fwrite(buf, 1, nread, st_h->download_fh
+                                    ? st_h->download_fh : stdout);
             if (randomly_reprioritize_streams && (st_h->count++ & 0x3F) == 0)
             {
                 if ((1 << lsquic_conn_quic_version(lsquic_stream_conn(stream)))
@@ -887,6 +907,8 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     }
     if (st_h->reader.lsqr_ctx)
         destroy_lsquic_reader_ctx(st_h->reader.lsqr_ctx);
+    if (st_h->download_fh)
+        fclose(st_h->download_fh);
     free(st_h);
 }
 
@@ -899,6 +921,65 @@ static struct lsquic_stream_if http_client_if = {
     .on_write               = http_client_on_write,
     .on_close               = http_client_on_close,
     .on_hsk_done            = http_client_on_hsk_done,
+};
+
+
+/* XXX This function assumes we can send the request in one shot.  This is
+ * not a realistic assumption to make in general, but will work for our
+ * limited use case (QUIC Interop Runner).
+ */
+static void
+hq_client_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
+{
+    if (st_h->client_ctx->payload)
+    {
+        LSQ_ERROR("payload is not supported in HQ client");
+        lsquic_stream_close(stream);
+        return;
+    }
+
+    lsquic_stream_write(stream, "GET ", 4);
+    lsquic_stream_write(stream, st_h->path, strlen(st_h->path));
+    lsquic_stream_write(stream, "\r\n", 2);
+    lsquic_stream_shutdown(stream, 1);
+    lsquic_stream_wantread(stream, 1);
+}
+
+
+static size_t
+hq_client_print_to_file (void *user_data, const unsigned char *buf,
+                                                size_t buf_len, int fin_unused)
+{
+    fwrite(buf, 1, buf_len, user_data);
+    return buf_len;
+}
+
+
+static void
+hq_client_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
+{
+    FILE *out = st_h->download_fh ? st_h->download_fh : stdout;
+    ssize_t nread;
+
+    nread = lsquic_stream_readf(stream, hq_client_print_to_file, out);
+    if (nread <= 0)
+    {
+        if (nread < 0)
+            LSQ_WARN("error reading response for %s: %s", st_h->path,
+                                                        strerror(errno));
+        lsquic_stream_close(stream);
+    }
+}
+
+
+/* The "hq" set of callbacks differs only in the read and write routines */
+static struct lsquic_stream_if hq_client_if = {
+    .on_new_conn            = http_client_on_new_conn,
+    .on_conn_closed         = http_client_on_conn_closed,
+    .on_new_stream          = http_client_on_new_stream,
+    .on_read                = hq_client_on_read,
+    .on_write               = hq_client_on_write,
+    .on_close               = http_client_on_close,
 };
 
 
@@ -947,6 +1028,8 @@ usage (const char *prog)
 "   -9 SPEC     Priority specification.  May be specified several times.\n"
 "                 SPEC takes the form stream_id:nread:UI, where U is\n"
 "                 urgency and I is incremental.  Matched \\d+:\\d+:[0-7][01]\n"
+"   -7 DIR      Save fetched resources into this directory.\n"
+"   -Q ALPN     Use hq ALPN.  Specify, for example, \"h3-29\".\n"
             , prog);
 }
 
@@ -1535,6 +1618,8 @@ main (int argc, char **argv)
                                     "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
                             "3:"    /* 3 is 133+ for "e" ("e" for "early") */
                             "9:"    /* 9 sort of looks like P... */
+                            "7:"    /* Download directory */
+                            "Q:"    /* ALPN, e.g. h3-29 */
 #ifndef WIN32
                                                                       "C:"
 #endif
@@ -1694,6 +1779,15 @@ main (int argc, char **argv)
             s_priority_specs = priority_specs;
             break;
         }
+        case '7':
+            client_ctx.hcc_download_dir = optarg;
+            break;
+        case 'Q':
+            /* XXX A bit hacky, as `prog' has already been initialized... */
+            prog.prog_engine_flags &= ~LSENG_HTTP;
+            prog.prog_api.ea_alpn      = optarg;
+            prog.prog_api.ea_stream_if = &hq_client_if;
+            break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);

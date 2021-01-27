@@ -1066,6 +1066,116 @@ const struct lsquic_stream_if http_server_if = {
 };
 
 
+/* XXX Assume we can always read the request in one shot.  This is not a
+ * good assumption to make in a real product.
+ */
+static void
+hq_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
+{
+    char buf[0x400];
+    ssize_t nread;
+    char *path, *end, *filename;
+
+    nread = lsquic_stream_read(stream, buf, sizeof(buf));
+    if (nread >= (ssize_t) sizeof(buf))
+    {
+        LSQ_WARN("request too large, at least %zd bytes", sizeof(buf));
+        lsquic_stream_close(stream);
+        return;
+    }
+    else if (nread < 0)
+    {
+        LSQ_WARN("error reading request from stream: %s", strerror(errno));
+        lsquic_stream_close(stream);
+        return;
+    }
+    buf[nread] = '\0';
+    path = strchr(buf, ' ');
+    if (!path)
+    {
+        LSQ_WARN("invalid request (no space character): `%s'", buf);
+        lsquic_stream_close(stream);
+        return;
+    }
+    if (!(path - buf == 3 && 0 == strncasecmp(buf, "GET", 3)))
+    {
+        LSQ_NOTICE("unsupported method `%.*s'", (int) (path - buf), buf);
+        lsquic_stream_close(stream);
+        return;
+    }
+    ++path;
+    for (end = path + nread - 5; end > path
+                                    && (*end == '\r' || *end == '\n'); --end)
+        *end = '\0';
+    LSQ_NOTICE("parsed out request path: %s", path);
+
+    filename = malloc(strlen(st_h->server_ctx->document_root) + 1 + strlen(path) + 1);
+    strcpy(filename, st_h->server_ctx->document_root);
+    strcat(filename, "/");
+    strcat(filename, path);
+    LSQ_NOTICE("file to fetch: %s", filename);
+    /* XXX This copy pasta is getting a bit annoying now: two mallocs of the
+     * same thing?
+     */
+    st_h->req_filename = filename;
+    st_h->req_path = strdup(filename);
+    st_h->reader.lsqr_read = test_reader_read;
+    st_h->reader.lsqr_size = test_reader_size;
+    st_h->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->req_path);
+    if (!st_h->reader.lsqr_ctx)
+    {
+        lsquic_stream_close(stream);
+        return;
+    }
+    lsquic_stream_shutdown(stream, 0);
+    lsquic_stream_wantwrite(stream, 1);
+}
+
+
+static void
+hq_server_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
+{
+    ssize_t nw;
+
+    nw = lsquic_stream_writef(stream, &st_h->reader);
+    if (nw < 0)
+    {
+        struct lsquic_conn *conn = lsquic_stream_conn(stream);
+        lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
+        if (conn_h->flags & RECEIVED_GOAWAY)
+        {
+            LSQ_NOTICE("cannot write: goaway received");
+            lsquic_stream_close(stream);
+        }
+        else
+        {
+            LSQ_ERROR("write error: %s", strerror(errno));
+            lsquic_stream_close(stream);
+        }
+    }
+    else if (bytes_left(st_h) > 0)
+    {
+        st_h->written += (size_t) nw;
+        lsquic_stream_wantwrite(stream, 1);
+    }
+    else
+    {
+        lsquic_stream_shutdown(stream, 1);
+        lsquic_stream_wantread(stream, 1);
+    }
+}
+
+
+const struct lsquic_stream_if hq_server_if = {
+    .on_new_conn            = http_server_on_new_conn,
+    .on_conn_closed         = http_server_on_conn_closed,
+    .on_new_stream          = http_server_on_new_stream,
+    .on_read                = hq_server_on_read,
+    .on_write               = hq_server_on_write,
+    .on_close               = http_server_on_close,
+};
+
+
 #if HAVE_REGEX
 struct req_map
 {
@@ -1655,6 +1765,7 @@ usage (const char *prog)
 "                 Incompatible with -w.\n"
 #endif
 "   -y DELAY    Delay response for this many seconds -- use for debugging\n"
+"   -Q ALPN     Use hq mode; ALPN could be \"hq-29\", for example.\n"
             , prog);
 }
 
@@ -1811,7 +1922,7 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:hQ:")))
     {
         switch (opt) {
         case 'n':
@@ -1854,6 +1965,12 @@ main (int argc, char **argv)
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
             exit(0);
+        case 'Q':
+            /* XXX A bit hacky, as `prog' has already been initialized... */
+            prog.prog_engine_flags &= ~LSENG_HTTP;
+            prog.prog_api.ea_stream_if = &hq_server_if;
+            add_alpn(optarg);
+            break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
