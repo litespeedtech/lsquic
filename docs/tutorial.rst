@@ -117,7 +117,7 @@ a struct of type :type:`lsquic_engine_api`.  This structure lists
 several user-specified function pointers that the engine is to use
 to perform various functions.  Mandatory among these are:
 
-- function to set packets out, :member:`lsquic_engine_api.ea_packets_out`;
+- function to send packets out, :member:`lsquic_engine_api.ea_packets_out`;
 - functions linked to connection and stream events,
   :member:`lsquic_engine_api.ea_stream_if`;
 - function to look up certificate to use, :member:`lsquic_engine_api.ea_lookup_cert` (in server mode); and
