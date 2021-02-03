@@ -217,6 +217,122 @@ lsquic_cid_from_packet (const unsigned char *buf, size_t bufsz,
 }
 
 
+int
+lsquic_dcid_from_packet (const unsigned char *buf, size_t bufsz,
+                                unsigned server_cid_len, unsigned *cid_len)
+{
+    const unsigned char *p;
+    unsigned dcil, scil;
+
+    if (bufsz < 9)
+        return -1;
+
+    switch (buf[0] >> 3)
+    {
+    /* Xs vary, Gs are iGnored: */
+    /* 1X11 XGGG: */
+    case (0x80|0x40|0x20|0x10|0x08) >> 3:
+    case (0x80|0x00|0x20|0x10|0x08) >> 3:
+    case (0x80|0x40|0x20|0x10|0x00) >> 3:
+    case (0x80|0x00|0x20|0x10|0x00) >> 3:
+  Q046_long:
+        /* lsquic_Q046_parse_packet_in_long_begin */
+        if (bufsz < 14)
+            return -1;
+        p = buf + 5;
+        dcil = p[0] >> 4;
+        if (dcil)
+            dcil += 3;
+        scil = p[0] & 0xF;
+        if (scil)
+            scil += 3;
+        ++p;
+        if (dcil == GQUIC_CID_LEN && scil == 0)
+        {
+            *cid_len = GQUIC_CID_LEN;
+            return (unsigned) (p - buf);
+        }
+        else
+            return -1;
+    /* 1X00 XGGG: */
+    /*
+    case (0x80|0x40|0x00|0x00|0x08) >> 3:
+    case (0x80|0x00|0x00|0x00|0x08) >> 3:
+    case (0x80|0x40|0x00|0x00|0x00) >> 3:
+    case (0x80|0x00|0x00|0x00|0x00) >> 3:
+    case (0x80|0x40|0x00|0x10|0x08) >> 3:
+    case (0x80|0x00|0x00|0x10|0x08) >> 3:
+    case (0x80|0x40|0x00|0x10|0x00) >> 3:
+    case (0x80|0x00|0x00|0x10|0x00) >> 3:
+    case (0x80|0x40|0x20|0x00|0x08) >> 3:
+    case (0x80|0x00|0x20|0x00|0x08) >> 3:
+    case (0x80|0x40|0x20|0x00|0x00) >> 3:
+    case (0x80|0x00|0x20|0x00|0x00) >> 3:
+    */
+    default:
+        /* parse_ietf_v1_or_Q046plus_long_begin */
+        if (buf[4] == (unsigned) '6')
+            goto Q046_long;
+        /* lsquic_Q050_parse_packet_in_long_begin or
+            lsquic_ietf_v1_parse_packet_in_long_begin */
+        if (bufsz < 14)
+            return -1;
+        dcil = buf[5];
+        if (dcil <= MAX_CID_LEN && 6 + dcil < bufsz)
+        {
+            *cid_len = dcil;
+            return 6;
+        }
+        else
+            return -1;
+    /* 01XX XGGG */
+    case (0x00|0x40|0x00|0x00|0x00) >> 3:
+    case (0x00|0x40|0x00|0x00|0x08) >> 3:
+    case (0x00|0x40|0x00|0x10|0x00) >> 3:
+    case (0x00|0x40|0x00|0x10|0x08) >> 3:
+    case (0x00|0x40|0x20|0x00|0x00) >> 3:
+    case (0x00|0x40|0x20|0x00|0x08) >> 3:
+    case (0x00|0x40|0x20|0x10|0x00) >> 3:
+    case (0x00|0x40|0x20|0x10|0x08) >> 3:
+        /* lsquic_ietf_v1_parse_packet_in_short_begin */
+        if (1 + server_cid_len <= bufsz)
+        {
+            *cid_len = server_cid_len;
+            return 1;
+        }
+        else
+            return -1;
+    /* 00XX 0GGG */
+    case (0x00|0x00|0x00|0x00|0x00) >> 3:
+    case (0x00|0x00|0x00|0x10|0x00) >> 3:
+    case (0x00|0x00|0x20|0x00|0x00) >> 3:
+    case (0x00|0x00|0x20|0x10|0x00) >> 3:
+        /* lsquic_Q046_parse_packet_in_short_begin */
+        if (1 + server_cid_len <= bufsz && (buf[0] & 0x40))
+        {
+            *cid_len = server_cid_len;
+            return 1;
+        }
+        else
+            return -1;
+    /* 00XX 1GGG */
+    case (0x00|0x00|0x00|0x00|0x08) >> 3:
+    case (0x00|0x00|0x00|0x10|0x08) >> 3:
+    case (0x00|0x00|0x20|0x00|0x08) >> 3:
+    case (0x00|0x00|0x20|0x10|0x08) >> 3:
+        /* lsquic_gquic_parse_packet_in_begin */
+        if (1 + GQUIC_CID_LEN <= bufsz
+                        && (buf[0] & PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID))
+        {
+            *cid_len = server_cid_len;
+            return 1;
+        }
+        else
+            return -1;
+    }
+}
+
+
 /* See [draft-ietf-quic-transport-28], Section 12.4 (Table 3) */
 const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
 {

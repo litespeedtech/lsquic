@@ -393,6 +393,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_ptpc_err_thresh = LSQUIC_DF_PTPC_ERR_THRESH;
     settings->es_ptpc_err_divisor= LSQUIC_DF_PTPC_ERR_DIVISOR;
     settings->es_delay_onclose   = LSQUIC_DF_DELAY_ONCLOSE;
+    settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
 }
 
 
@@ -616,7 +617,10 @@ lsquic_engine_new (unsigned flags,
     engine->pub.enp_get_ssl_ctx  = api->ea_get_ssl_ctx;
 
     if (api->ea_generate_scid)
+    {
         engine->pub.enp_generate_scid = api->ea_generate_scid;
+        engine->pub.enp_gen_scid_ctx  = api->ea_gen_scid_ctx;
+    }
     else
         engine->pub.enp_generate_scid = lsquic_generate_scid;
 

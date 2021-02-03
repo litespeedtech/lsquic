@@ -874,6 +874,14 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_MAX_BATCH_SIZE`
 
+    .. member:: int             es_check_tp_sanity
+
+       When true, sanity checks are performed on peer's transport parameter
+       values.  If some limits are set suspiciously low, the connection won't
+       be established.
+
+       Default value is :macro:`LSQUIC_DF_CHECK_TP_SANITY`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1115,6 +1123,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
     By default, maximum batch size is not specified, leaving it up to the
     library.
 
+.. macro:: LSQUIC_DF_CHECK_TP_SANITY
+
+    Transport parameter sanity checks are performed by default.
+
 Receiving Packets
 -----------------
 
@@ -1336,6 +1348,11 @@ the engine to communicate with the user code:
 
         This callback lets client record information needed to
         perform session resumption next time around.
+
+        For IETF QUIC, this is called only if :member:`lsquic_engine_api.ea_get_ssl_ctx_st`
+        is *not* set, in which case the library creates its own SSL_CTX.
+
+        Note: this callback will be deprecated when gQUIC support is removed.
 
         This callback is optional.
 

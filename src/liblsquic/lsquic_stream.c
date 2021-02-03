@@ -3469,21 +3469,30 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
 }
 
 
-/* Perform an implicit flush when we hit connection limit while buffering
- * data.  This is to prevent a (theoretical) stall:
+/* Perform an implicit flush when we hit connection or stream flow control
+ * limit while buffering data.
+ *
+ * This is to prevent a (theoretical) stall.  Scenario 1:
  *
  * Imagine a number of streams, all of which buffered some data.  The buffered
  * data is up to connection cap, which means no further writes are possible.
  * None of them flushes, which means that data is not sent and connection
  * WINDOW_UPDATE frame never arrives from peer.  Stall.
+ *
+ * Scenario 2:
+ *
+ * Stream flow control window is smaller than the packetizing threshold.  In
+ * this case, without a flush, the peer will never send a WINDOW_UPDATE.  Stall.
  */
 static int
 maybe_flush_stream (struct lsquic_stream *stream)
 {
-    if (stream->sm_n_buffered > 0
-          && (stream->sm_bflags & SMBF_CONN_LIMITED)
-            && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap) == 0)
+    if (stream->sm_n_buffered > 0 && stream->sm_write_avail(stream) == 0)
+    {
+        LSQ_DEBUG("out of flow control credits, flush %zu buffered bytes",
+            stream->sm_n_buffered + active_hq_frame_sizes(stream));
         return stream_flush_nocheck(stream);
+    }
     else
         return 0;
 }
@@ -4033,7 +4042,12 @@ send_headers_ietf (struct lsquic_stream *stream,
         return -1;
 #endif
 
-    stream->stream_flags &= ~STREAM_PUSHING;
+    if (stream->stream_flags & STREAM_PUSHING)
+    {
+        LSQ_DEBUG("push promise still being written, cannot send header now");
+        errno = EBADMSG;
+        return -1;
+    }
     stream->stream_flags |= STREAM_NOPUSH;
 
     /* TODO: Optimize for the common case: write directly to sm_buf and fall
@@ -5326,6 +5340,7 @@ on_write_pp_wrapper (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
             nw, promise->pp_write_state == PPWS_DONE ? "done" : "not done");
         if (promise->pp_write_state == PPWS_DONE)
         {
+            stream->stream_flags &= ~STREAM_PUSHING;
             /* Restore want_write flag */
             want_write = !!(stream->sm_qflags & SMQF_WANT_WRITE);
             if (want_write != stream->sm_saved_want_write)
@@ -5353,6 +5368,7 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
                                                 struct push_promise *promise)
 {
     struct lsquic_reader pp_reader;
+    struct stream_hq_frame *shf;
     unsigned bits, len;
     ssize_t nw;
 
@@ -5365,21 +5381,33 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
     vint_write(promise->pp_encoded_push_id + 8 - len, promise->pp_id,
                                                             bits, 1 << bits);
 
-    if (!stream_activate_hq_frame(stream,
+    shf = stream_activate_hq_frame(stream,
                 stream->sm_payload + stream->sm_n_buffered, HQFT_PUSH_PROMISE,
-                SHF_FIXED_SIZE, pp_reader_size(promise)))
+                SHF_FIXED_SIZE, pp_reader_size(promise));
+    if (!shf)
         return -1;
 
     stream->stream_flags |= STREAM_PUSHING;
 
     init_pp_reader(promise, &pp_reader);
+#ifdef FIU_ENABLE
+    if (fiu_fail("stream/fail_initial_pp_write"))
+    {
+        LSQ_NOTICE("%s: failed to write push promise (fiu)", __func__);
+        nw = -1;
+    }
+    else
+#endif
     nw = stream_write(stream, &pp_reader, SWO_BUFFER);
     if (nw > 0)
     {
         SLIST_INSERT_HEAD(&stream->sm_promises, promise, pp_next);
         ++promise->pp_refcnt;
         if (promise->pp_write_state == PPWS_DONE)
+        {
             LSQ_DEBUG("fully wrote promise %"PRIu64, promise->pp_id);
+            stream->stream_flags &= ~STREAM_PUSHING;
+        }
         else
         {
             LSQ_DEBUG("partially wrote promise %"PRIu64" (state: %d, off: %u)"
@@ -5388,6 +5416,7 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
             stream->stream_flags |= STREAM_NOPUSH;
             stream->sm_saved_want_write =
                                     !!(stream->sm_qflags & SMQF_WANT_WRITE);
+            lsquic_stream_flush(stream);
             stream_wantwrite(stream, 1);
         }
         return 0;
@@ -5396,6 +5425,7 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
     {
         if (nw < 0)
             LSQ_WARN("failure writing push promise");
+        stream_hq_frame_put(stream, shf);
         stream->stream_flags |= STREAM_NOPUSH;
         stream->stream_flags &= ~STREAM_PUSHING;
         return -1;

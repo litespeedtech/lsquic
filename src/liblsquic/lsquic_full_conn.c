@@ -336,6 +336,7 @@ recent_packet_hist_new (struct full_conn *conn, unsigned out,
     conn->fc_recent_packets[out].els[idx].time = time;
 }
 
+
 static void
 recent_packet_hist_frames (struct full_conn *conn, unsigned out,
                                                 enum quic_ft_bit frame_types)
@@ -344,6 +345,8 @@ recent_packet_hist_frames (struct full_conn *conn, unsigned out,
     idx = (conn->fc_recent_packets[out].idx - 1) % KEEP_PACKET_HISTORY;
     conn->fc_recent_packets[out].els[idx].frame_types |= frame_types;
 }
+
+
 #else
 #define recent_packet_hist_new(conn, out, time)
 #define recent_packet_hist_frames(conn, out, frames)
@@ -542,6 +545,7 @@ apply_peer_settings (struct full_conn *conn)
     lsquic_full_conn_on_peer_config(conn, cfcw, sfcw, mids);
     return 0;
 }
+
 
 static const struct conn_iface *full_conn_iface_ptr;
 
@@ -1248,6 +1252,8 @@ verify_ack_frame (struct full_conn *conn, const unsigned char *buf, int bufsz)
     assert(i == ack_info->n_ranges);
     LSQ_DEBUG("Sent ACK frame %s", ack_buf);
 }
+
+
 #endif
 
 
@@ -4059,7 +4065,6 @@ headers_stream_on_priority (void *ctx, lsquic_stream_id_t stream_id,
 }
 
 
-
 #define STRLEN(s) (sizeof(s) - 1)
 
 static struct uncompressed_headers *
@@ -4456,6 +4461,7 @@ full_conn_ci_get_stats (struct lsquic_conn *lconn)
     return &conn->fc_stats;
 }
 
+
 #include "lsquic_cong_ctl.h"
 
 static void
@@ -4493,6 +4499,8 @@ full_conn_ci_log_stats (struct lsquic_conn *lconn)
     *conn->fc_last_stats = conn->fc_stats;
     memset(bs, 0, sizeof(*bs));
 }
+
+
 #endif
 
 

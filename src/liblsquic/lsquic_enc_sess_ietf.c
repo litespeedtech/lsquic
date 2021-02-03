@@ -979,7 +979,7 @@ iquic_esfi_create_client (const char *hostname,
     SSL_set_ex_data(enc_sess->esi_ssl, s_idx, enc_sess);
     SSL_set_connect_state(enc_sess->esi_ssl);
 
-    if (enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info)
+    if (SSL_CTX_sess_get_new_cb(ssl_ctx))
         enc_sess->esi_flags |= ESI_WANT_TICKET;
     enc_sess->esi_alset = alset;
     lsquic_alarmset_init_alarm(enc_sess->esi_alset, AL_SESS_TICKET,
@@ -1434,10 +1434,14 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
 } while (0)
 #endif
 
+
+/* Return 0 on success, in which case *buf is newly allocated memory and should
+ * be freed by the caller.
+ */
 static int
-iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
+iquic_ssl_sess_to_resume_info (struct enc_sess_iquic *enc_sess, SSL *ssl,
+                SSL_SESSION *session, unsigned char **bufp, size_t *buf_szp)
 {
-    struct enc_sess_iquic *enc_sess;
     uint32_t num;
     unsigned char *p, *buf;
     uint8_t *ticket_buf;
@@ -1446,33 +1450,29 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
     const uint8_t *trapa_buf;
     size_t trapa_sz, buf_sz;
 
-    enc_sess = SSL_get_ex_data(ssl, s_idx);
-    assert(enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info);
-
-    SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &trapa_buf,
-                                                                &trapa_sz);
+    SSL_get_peer_quic_transport_params(ssl, &trapa_buf, &trapa_sz);
     if (!(trapa_buf + trapa_sz))
     {
         LSQ_WARN("no transport parameters: cannot generate session "
                                                     "resumption info");
-        return 0;
+        return -1;
     }
     if (trapa_sz > UINT32_MAX)
     {
         LSQ_WARN("trapa size too large: %zu", trapa_sz);
-        return 0;
+        return -1;
     }
 
     if (!SSL_SESSION_to_bytes(session, &ticket_buf, &ticket_sz))
     {
         LSQ_INFO("could not serialize new session");
-        return 0;
+        return -1;
     }
     if (ticket_sz > UINT32_MAX)
     {
         LSQ_WARN("ticket size too large: %zu", ticket_sz);
         OPENSSL_free(ticket_buf);
-        return 0;
+        return -1;
     }
 
     buf_sz = sizeof(tag) + sizeof(uint32_t) + sizeof(uint32_t)
@@ -1481,8 +1481,8 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
     if (!buf)
     {
         OPENSSL_free(ticket_buf);
-        LSQ_WARN("%s: malloc failed", __func__);
-        return 0;
+        LSQ_INFO("%s: malloc failed", __func__);
+        return -1;
     }
 
     p = buf;
@@ -1503,8 +1503,26 @@ iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
 
     LSQ_DEBUG("generated %zu bytes of session resumption buffer", buf_sz);
 
-    enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info(enc_sess->esi_conn,
-                                                                buf, buf_sz);
+    *bufp = buf;
+    *buf_szp = buf_sz;
+    return 0;
+}
+
+
+static int
+iquic_new_session_cb (SSL *ssl, SSL_SESSION *session)
+{
+    struct enc_sess_iquic *enc_sess;
+    unsigned char *buf;
+    size_t buf_sz;
+
+    enc_sess = SSL_get_ex_data(ssl, s_idx);
+    assert(enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info);
+
+    if (0 == iquic_ssl_sess_to_resume_info(enc_sess, ssl, session, &buf,
+                                                                    &buf_sz))
+        enc_sess->esi_enpub->enp_stream_if->on_sess_resume_info(
+                                            enc_sess->esi_conn, buf, buf_sz);
     free(buf);
     enc_sess->esi_flags &= ~ESI_WANT_TICKET;
     lsquic_alarmset_unset(enc_sess->esi_alset, AL_SESS_TICKET);
@@ -1803,6 +1821,36 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         }
         else
             LSQ_DEBUG("greasing turned off: won't grease the QUIC bit");
+    }
+
+    if (enc_sess->esi_enpub->enp_settings.es_check_tp_sanity
+        /* We only care (and know) about HTTP/3.  Other protocols may have
+         * their own limitations.  The most generic way to do this would be
+         * to factor out transport parameter sanity check into a callback.
+         */
+        && enc_sess->esi_alpn && enc_sess->esi_alpn[0] >= 2
+        && enc_sess->esi_alpn[1] == 'h'
+        && enc_sess->esi_alpn[2] == '3')
+    {
+        const enum transport_param_id stream_data = enc_sess->esi_flags
+            & ESI_SERVER ? TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL
+                         : TPI_INIT_MAX_STREAM_DATA_BIDI_REMOTE;
+        if (!((trans_params->tp_set & (1 << stream_data))
+                        && trans_params->tp_numerics[stream_data] >= 0x1000))
+        {
+            LSQ_INFO("peer transport parameters: %s=%"PRIu64" does not pass "
+                "sanity check", lsquic_tpi2str[stream_data],
+                trans_params->tp_numerics[stream_data]);
+            return -1;
+        }
+        if (!((trans_params->tp_set & (1 << TPI_INIT_MAX_DATA))
+                    && trans_params->tp_numerics[TPI_INIT_MAX_DATA] >= 0x1000))
+        {
+            LSQ_INFO("peer transport parameters: %s=%"PRIu64" does not pass "
+                "sanity check", lsquic_tpi2str[TPI_INIT_MAX_DATA],
+                trans_params->tp_numerics[TPI_INIT_MAX_DATA]);
+            return -1;
+        }
     }
 
     return 0;
@@ -3399,4 +3447,29 @@ lsquic_ssl_to_conn (const struct ssl_st *ssl)
         return NULL;
 
     return enc_sess->esi_conn;
+}
+
+
+int
+lsquic_ssl_sess_to_resume_info (SSL *ssl, SSL_SESSION *session,
+                                        unsigned char **buf, size_t *buf_sz)
+{
+    struct enc_sess_iquic *enc_sess;
+    int status;
+
+    if (s_idx < 0)
+        return -1;
+
+    enc_sess = SSL_get_ex_data(ssl, s_idx);
+    if (!enc_sess)
+        return -1;
+
+    status = iquic_ssl_sess_to_resume_info(enc_sess, ssl, session, buf, buf_sz);
+    if (status == 0)
+    {
+        LSQ_DEBUG("%s called successfully, unset WANT_TICKET flag", __func__);
+        enc_sess->esi_flags &= ~ESI_WANT_TICKET;
+        lsquic_alarmset_unset(enc_sess->esi_alset, AL_SESS_TICKET);
+    }
+    return status;
 }

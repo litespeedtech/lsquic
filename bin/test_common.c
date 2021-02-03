@@ -158,6 +158,8 @@ static void getExtensionPtrs()
 #endif
 
 
+
+
 static struct packets_in *
 allocate_packets_in (SOCKET_TYPE fd)
 {

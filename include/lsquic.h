@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 27
-#define LSQUIC_PATCH_VERSION 6
+#define LSQUIC_MINOR_VERSION 28
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -208,6 +208,11 @@ struct lsquic_stream_if {
     /**
      * This optional callback lets client record information needed to
      * perform a session resumption next time around.
+     *
+     * For IETF QUIC, this is called only if ea_get_ssl_ctx() is *not* set,
+     * in which case the library creates its own SSL_CTX.
+     *
+     * Note: this callback will be deprecated when gQUIC support is removed.
      */
     void (*on_sess_resume_info)(lsquic_conn_t *c, const unsigned char *, size_t);
     /**
@@ -234,6 +239,7 @@ struct lsquic_stream_if {
 
 struct ssl_ctx_st;
 struct ssl_st;
+struct ssl_session_st;
 struct lsxpack_header;
 
 /**
@@ -439,6 +445,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  * library.
  */
 #define LSQUIC_DF_MAX_BATCH_SIZE 0
+
+/** Transport parameter sanity checks are performed by default. */
+#define LSQUIC_DF_CHECK_TP_SANITY 1
 
 struct lsquic_engine_settings {
     /**
@@ -1046,13 +1055,22 @@ struct lsquic_engine_settings {
     int             es_delay_onclose;
 
     /**
-     * If set to a non-zero value, specifies maximum batch size.  (The
+     * If set to a non-zero value, specified maximum batch size.  (The
      * batch of packets passed to @ref ea_packets_out() callback).  Must
      * be no larger than 1024.
      *
      * Default value is @ref LSQUIC_DF_MAX_BATCH_SIZE
      */
     unsigned        es_max_batch_size;
+
+    /**
+     * When true, sanity checks are performed on peer's transport parameter
+     * values.  If some limits are set suspiciously low, the connection won't
+     * be established.
+     *
+     * Default value is @ref LSQUIC_DF_CHECK_TP_SANITY
+     */
+    int             es_check_tp_sanity;
 };
 
 /* Initialize `settings' to default values */
@@ -1337,8 +1355,10 @@ struct lsquic_engine_api
     /**
      * Optional interface to control the creation of connection IDs
      */
-    void                               (*ea_generate_scid)(lsquic_conn_t *,
-                                                    lsquic_cid_t *, unsigned);
+    void                               (*ea_generate_scid)(void *ctx,
+                                lsquic_conn_t *, lsquic_cid_t *, unsigned);
+    /** Passed to ea_generate_scid() */
+    void                                *ea_gen_scid_ctx;
 };
 
 /**
@@ -2023,6 +2043,18 @@ int
 lsquic_cid_from_packet (const unsigned char *, size_t bufsz, lsquic_cid_t *cid);
 
 /**
+ * On success, offset to the CID is returned (a non-negative value).
+ * `cid_len' is set to the length of the CID.  The server perspective
+ * is assumed.  `server_cid_len' is set to the length of the CIDs that
+ * server generates.
+ *
+ * On failure, a negative value is returned.
+ */
+int
+lsquic_dcid_from_packet (const unsigned char *, size_t bufsz,
+                                unsigned server_cid_len, unsigned *cid_len);
+
+/**
  * Returns true if there are connections to be processed, false otherwise.
  * If true, `diff' is set to the difference between the earliest advisory
  * tick time and now.  If the former is in the past, the value of `diff'
@@ -2064,6 +2096,18 @@ lsquic_ver2str[N_LSQVER];
 /* Return connection associated with this SSL object */
 lsquic_conn_t *
 lsquic_ssl_to_conn (const struct ssl_st *);
+
+/* Return session resumption information that can be used on subsequenct
+ * connection as argument to lsquic_engine_connect().  Call from inside
+ * SSL's new session callback.
+ *
+ * Returns 0 on success.  In this case, `buf' is made to point to newly
+ * allocated memory containing `buf_sz' bytes.  It is the caller's
+ * responsibility to free the memory.
+ */
+int
+lsquic_ssl_sess_to_resume_info (struct ssl_st *, struct ssl_session_st *,
+                                        unsigned char **buf, size_t *buf_sz);
 
 #ifdef __cplusplus
 }

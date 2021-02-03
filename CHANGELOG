@@ -1,3 +1,19 @@
+2021-02-03
+    - 2.28.0
+    - [API] lsquic_ssl_sess_to_resume_info() is the new way to get
+      session info.
+    - [API] Add user pointer to ea_generate_scid callback.
+    - [API] Add lsquic_dcid_from_packet() -- a fast function to parse
+      out DCID.
+    - [API] Add es_max_batch_size to control outgoing packet batch size.
+    - [BUGFIX] Disallow sending of header while promise is being written.
+    - [BUGFIX] Flush stream when buffered bytes exhaust stream cap.
+    - [BUGFIX] Deactivate HQ frame if writing push promise fails.
+    - Perform sanity check on peer transport parameters and fail the
+      handshake if some flow control limits are too low.  This can be
+      turned off, see es_check_tp_sanity.
+    - http_server: fix how requests are read in "hq" mode.
+
 2021-01-27
     - 2.27.6
     - [BUGFIX] Replace dispatch read/write events assertion with a check.

@@ -426,6 +426,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 }
 
 
+/* Now only used for gQUIC and will be going away after that */
 static void
 http_client_on_sess_resume_info (lsquic_conn_t *conn, const unsigned char *buf,
                                                                 size_t bufsz)
@@ -1011,7 +1012,6 @@ usage (const char *prog)
 "   -I          Abort on incomplete reponse from server\n"
 "   -4          Prefer IPv4 when resolving hostname\n"
 "   -6          Prefer IPv6 when resolving hostname\n"
-"   -0 FILE     Provide RTT info file (reading or writing)\n"
 #ifndef WIN32
 "   -C DIR      Certificate store.  If specified, server certificate will\n"
 "                 be verified.\n"
@@ -1736,7 +1736,7 @@ main (int argc, char **argv)
         case '0':
             http_client_if.on_sess_resume_info = http_client_on_sess_resume_info;
             client_ctx.hcc_sess_resume_file_name = optarg;
-            break;
+            goto common_opts;
         case '3':
             s_abandon_early = strtol(optarg, NULL, 10);
             break;
@@ -1788,6 +1788,7 @@ main (int argc, char **argv)
             prog.prog_api.ea_alpn      = optarg;
             prog.prog_api.ea_stream_if = &hq_client_if;
             break;
+        common_opts:
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);

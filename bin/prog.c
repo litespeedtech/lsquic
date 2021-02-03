@@ -39,6 +39,7 @@
 
 static int prog_stopped;
 static const char *s_keylog_dir;
+static const char *s_sess_resume_file;
 
 static SSL_CTX * get_ssl_ctx (void *, const struct sockaddr *);
 static void keylog_log_line (const SSL *, const char *);
@@ -118,6 +119,7 @@ void
 prog_print_common_options (const struct prog *prog, FILE *out)
 {
     fprintf(out,
+"   -0 FILE     Provide session resumption file (reading or writing)\n"
 #if HAVE_REGEX
 "   -s SVCPORT  Service port.  Takes on the form of host:port, host,\n"
 "                 or port.  If host is not an IPv4 or IPv6 address, it is\n"
@@ -338,6 +340,9 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
             sport->sp_flags |= SPORT_CONNECT;
         }
         return 0;
+    case '0':
+        s_sess_resume_file = optarg;
+        return 0;
     case 'G':
 #ifndef WIN32
         if (0 == stat(optarg, &st))
@@ -427,6 +432,53 @@ get_ssl_ctx (void *peer_ctx, const struct sockaddr *unused)
 
 
 static int
+prog_new_session_cb (SSL *ssl, SSL_SESSION *session)
+{
+    unsigned char *buf;
+    size_t bufsz, nw;
+    FILE *file;
+
+    /* Our client is rather limited: only one file and only one ticket
+     * can be saved.  A more flexible client implementation would call
+     * lsquic_ssl_to_conn() and maybe save more tickets based on its
+     * own configuration.
+     */
+    if (!s_sess_resume_file)
+        return 0;
+
+    if (0 != lsquic_ssl_sess_to_resume_info(ssl, session, &buf, &bufsz))
+    {
+        LSQ_NOTICE("lsquic_ssl_sess_to_resume_info failed");
+        return 0;
+    }
+
+    file = fopen(s_sess_resume_file, "wb");
+    if (!file)
+    {
+        LSQ_WARN("cannot open %s for writing: %s",
+            s_sess_resume_file, strerror(errno));
+        free(buf);
+        return 0;
+    }
+
+    nw = fwrite(buf, 1, bufsz, file);
+    if (nw == bufsz)
+    {
+        LSQ_INFO("wrote %zd bytes of session resumption information to %s",
+            nw, s_sess_resume_file);
+        s_sess_resume_file = NULL;  /* Save just one ticket */
+    }
+    else
+        LSQ_WARN("error: fwrite(%s) returns %zd instead of %zd: %s",
+            s_sess_resume_file, nw, bufsz, strerror(errno));
+
+    fclose(file);
+    free(buf);
+    return 0;
+}
+
+
+static int
 prog_init_ssl_ctx (struct prog *prog)
 {
     unsigned char ticket_keys[48];
@@ -453,6 +505,14 @@ prog_init_ssl_ctx (struct prog *prog)
 
     if (s_keylog_dir)
         SSL_CTX_set_keylog_callback(prog->prog_ssl_ctx, keylog_log_line);
+
+    if (s_sess_resume_file)
+    {
+        SSL_CTX_set_session_cache_mode(prog->prog_ssl_ctx,
+                                                    SSL_SESS_CACHE_CLIENT);
+        SSL_CTX_set_early_data_enabled(prog->prog_ssl_ctx, 1);
+        SSL_CTX_sess_set_new_cb(prog->prog_ssl_ctx, prog_new_session_cb);
+    }
 
     return 0;
 }

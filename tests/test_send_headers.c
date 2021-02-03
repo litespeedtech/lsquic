@@ -531,7 +531,8 @@ test_pp_wantwrite_restoration (const int want_write)
     lsquic_stream_window_update(stream, 100);
     lsquic_stream_dispatch_write_events(stream);
     assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-                                        == (STREAM_NOPUSH|STREAM_PUSHING));
+        /* After push promise was all written, STREAM_PUSHING is no longer set */
+                                        == STREAM_NOPUSH);
     assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state == PPWS_DONE); /* Done! */
     assert(want_write == s_onwrite_called); /* Restored: and on_write called */
 

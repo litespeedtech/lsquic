@@ -1184,7 +1184,7 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
     }
 
     if (enpub->enp_settings.es_scid_len)
-        enpub->enp_generate_scid(lconn, &cce->cce_cid,
+        enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, lconn, &cce->cce_cid,
                                             enpub->enp_settings.es_scid_len);
 
     cce->cce_seqno = conn->ifc_scid_seqno++;

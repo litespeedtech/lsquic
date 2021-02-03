@@ -1066,30 +1066,36 @@ const struct lsquic_stream_if http_server_if = {
 };
 
 
-/* XXX Assume we can always read the request in one shot.  This is not a
- * good assumption to make in a real product.
- */
+#if HAVE_OPEN_MEMSTREAM
 static void
 hq_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 {
-    char buf[0x400];
+    char tbuf[0x100], *buf;
     ssize_t nread;
     char *path, *end, *filename;
 
-    nread = lsquic_stream_read(stream, buf, sizeof(buf));
-    if (nread >= (ssize_t) sizeof(buf))
+    if (!st_h->req_fh)
+        st_h->req_fh = open_memstream(&st_h->req_buf, &st_h->req_sz);
+
+    nread = lsquic_stream_read(stream, tbuf, sizeof(tbuf));
+    if (nread > 0)
     {
-        LSQ_WARN("request too large, at least %zd bytes", sizeof(buf));
-        lsquic_stream_close(stream);
+        fwrite(tbuf, 1, nread, st_h->req_fh);
         return;
     }
-    else if (nread < 0)
+
+    if (nread < 0)
     {
         LSQ_WARN("error reading request from stream: %s", strerror(errno));
         lsquic_stream_close(stream);
         return;
     }
-    buf[nread] = '\0';
+
+    fwrite("", 1, 1, st_h->req_fh);
+    fclose(st_h->req_fh);
+    LSQ_INFO("got request: `%.*s'", (int) st_h->req_sz, st_h->req_buf);
+
+    buf = st_h->req_buf;
     path = strchr(buf, ' ');
     if (!path)
     {
@@ -1104,8 +1110,8 @@ hq_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
         return;
     }
     ++path;
-    for (end = path + nread - 5; end > path
-                                    && (*end == '\r' || *end == '\n'); --end)
+    for (end = buf + st_h->req_sz - 1; end > path
+                && (*end == '\0' || *end == '\r' || *end == '\n'); --end)
         *end = '\0';
     LSQ_NOTICE("parsed out request path: %s", path);
 
@@ -1174,6 +1180,7 @@ const struct lsquic_stream_if hq_server_if = {
     .on_write               = hq_server_on_write,
     .on_close               = http_server_on_close,
 };
+#endif
 
 
 #if HAVE_REGEX
@@ -1922,7 +1929,11 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:hQ:")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:h"
+#if HAVE_OPEN_MEMSTREAM
+                                                    "Q:"
+#endif
+                                                                        )))
     {
         switch (opt) {
         case 'n':
@@ -1965,12 +1976,14 @@ main (int argc, char **argv)
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
             exit(0);
+#if HAVE_OPEN_MEMSTREAM
         case 'Q':
             /* XXX A bit hacky, as `prog' has already been initialized... */
             prog.prog_engine_flags &= ~LSENG_HTTP;
             prog.prog_api.ea_stream_if = &hq_server_if;
             add_alpn(optarg);
             break;
+#endif
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
