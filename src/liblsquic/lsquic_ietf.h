@@ -4,7 +4,7 @@
 
 /* Things specific to the IETF version of QUIC that do not fit anywhere else */
 
-/* [draft-ietf-quic-transport-31] Section 20 */
+/* [draft-ietf-quic-transport-33] Section 20 */
 enum trans_error_code
 {
     TEC_NO_ERROR                   =  0x0,
@@ -23,6 +23,7 @@ enum trans_error_code
     TEC_CRYPTO_BUFFER_EXCEEDED     =  0xD,
     TEC_KEY_UPDATE_ERROR           =  0xE,
     TEC_AEAD_LIMIT_REACHED         =  0xF,
+    TEC_NO_VIABLE_PATH             = 0x10,
 };
 
 /* Must be at least two */
@@ -32,9 +33,12 @@ enum trans_error_code
 #define IETF_RETRY_KEY_SZ 16
 #define IETF_RETRY_NONCE_SZ 12
 
-#define N_IETF_RETRY_VERSIONS 2
+#define N_IETF_RETRY_VERSIONS 3
 extern const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS];
 extern const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS];
-#define lsquic_version_2_retryver(ver_) ((ver_) > LSQVER_ID28)
+#define lsquic_version_2_retryver(ver_) (                       \
+    (ver_) <= LSQVER_ID27 ? 0 :                                 \
+    (ver_) <= LSQVER_ID34 ? 1 :                                 \
+    2)
 
 #endif

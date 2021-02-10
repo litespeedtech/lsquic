@@ -29,12 +29,15 @@ find_free_slot (uint32_t slots)
 }
 
 
-/* Returns 0 on success, 1 if dup, -1 if out of elements */
+/* When capacity is reached, smallest element is removed.  When the number
+ * of elements in a single range cannot be represented by te_count, an
+ * error is returned.  This is the only error this function returns.
+ */
 int
 lsquic_trechist_insert (trechist_mask_t *mask, struct trechist_elem *elems,
                                                             uint32_t packno)
 {
-    struct trechist_elem *el, *prev;
+    struct trechist_elem *el, *prev, *cur, *next;
     unsigned idx;
 
     if (*mask == 0)
@@ -54,16 +57,21 @@ lsquic_trechist_insert (trechist_mask_t *mask, struct trechist_elem *elems,
             goto insert_before;
         if (packno == el->te_low - 1)
         {
-            if (el->te_count == UCHAR_MAX)
-                return -1;
-            --el->te_low;
-            ++el->te_count;
-            if (el->te_next && el->te_low == TE_HIGH(&elems[el->te_next]) + 1)
+            if (el->te_next && el->te_low == TE_HIGH(&elems[el->te_next]) + 2)
             {
+                if (el->te_count + elems[el->te_next].te_count - 1 > UCHAR_MAX)
+                    return -1;
                 *mask &= ~(1u << el->te_next);
-                el->te_count += elems[el->te_next].te_count;
+                el->te_count += elems[el->te_next].te_count + 1;
                 el->te_low    = elems[el->te_next].te_low;
                 el->te_next   = elems[el->te_next].te_next;
+            }
+            else
+            {
+                if (el->te_count == UCHAR_MAX)
+                    return -1;
+                --el->te_low;
+                ++el->te_count;
             }
             return 0;
         }
@@ -75,15 +83,18 @@ lsquic_trechist_insert (trechist_mask_t *mask, struct trechist_elem *elems,
             return 0;
         }
         if (packno >= el->te_low && packno <= TE_HIGH(el))
-            return 1;   /* Dup */
+            return 0;   /* Dup */
         if (!el->te_next)
             break;  /* insert tail */
         prev = el;
         el = &elems[el->te_next];
     }
 
-    if (*mask == ((1u << TRECHIST_MAX_RANGES) - 1))
-        return -1;
+    if (*mask == TRECHIST_MAX_RANGES_MASK)
+        /* No need to insert element smaller than the smallest element
+         * already in our list.  The new element "overflows".
+         */
+        return 0;
 
     idx = find_free_slot(*mask);
     elems[idx].te_low   = packno;
@@ -95,10 +106,17 @@ lsquic_trechist_insert (trechist_mask_t *mask, struct trechist_elem *elems,
 
   insert_before:
 
-    if (*mask == ((1u << TRECHIST_MAX_RANGES) - 1))
-        return -1;
+    if (*mask != TRECHIST_MAX_RANGES_MASK)
+        idx = find_free_slot(*mask);
+    else
+    {   /* Drop last element and reuse its slot */
+        for (next = &elems[el->te_next], cur = el; next->te_next;
+                                cur = next, next = &elems[cur->te_next])
+            ;
+        idx = cur->te_next;
+        cur->te_next = 0;
+    }
 
-    idx = find_free_slot(*mask);
     *mask |= 1u << idx;;
     if (el == elems)
     {
@@ -159,7 +177,8 @@ lsquic_trechist_next (void *iter_p)
 }
 
 
-int
+/* First TRECHIST_MAX_RANGES ranges are copied */
+void
 lsquic_trechist_copy_ranges (trechist_mask_t *mask,
                     struct trechist_elem *elems, void *src_rechist,
                     const struct lsquic_packno_range * (*first) (void *),
@@ -182,19 +201,13 @@ lsquic_trechist_copy_ranges (trechist_mask_t *mask,
         el->te_next = i + 1;
     }
 
-    if (!range && el)
-    {
+    if (el)
         el->te_next = 0;
+
+    if (i < 32)
         *mask = (1u << i) - 1;
-        return 0;
-    }
-    else if (!el)
-    {
-        *mask = 0;
-        return 0;   /* Must have been an empty */
-    }
     else
-        return -1;
+        *mask = UINT32_MAX;
 }
 
 

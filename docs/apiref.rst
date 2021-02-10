@@ -50,17 +50,18 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID (Internet-Draft) 27; this version is deprecated.
 
-    .. member:: LSQVER_ID28
-
-        IETF QUIC version ID 28; this version is deprecated.
-
     .. member:: LSQVER_ID29
 
         IETF QUIC version ID 29
 
-    .. member:: LSQVER_ID32
+    .. member:: LSQVER_ID34
 
-        IETF QUIC version ID 32
+        IETF QUIC version ID 34
+
+    .. member:: LSQVER_I001
+
+        IETF QUIC version 1.  (This version is disabled by default until
+        the QUIC RFC is released).
 
     .. member:: N_LSQVER
 

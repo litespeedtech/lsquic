@@ -72,10 +72,10 @@ static const struct alpn_map {
     const unsigned char *alpn;
 } s_h3_alpns[] = {
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
-    {   LSQVER_ID28, (unsigned char *) "\x05h3-28",     },
     {   LSQVER_ID29, (unsigned char *) "\x05h3-29",     },
-    {   LSQVER_ID32, (unsigned char *) "\x05h3-32",     },
-    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-32",     },
+    {   LSQVER_ID34, (unsigned char *) "\x05h3-34",     },
+    {   LSQVER_I001, (unsigned char *) "\x02h3",        },
+    {   LSQVER_VERNEG, (unsigned char *) "\x05h3-34",     },
 };
 
 struct enc_sess_iquic;
@@ -926,6 +926,10 @@ iquic_esfi_create_client (const char *hostname,
             ERR_error_string(ERR_get_error(), errbuf));
         goto err;
     }
+#if BORINGSSL_API_VERSION >= 13
+    SSL_set_quic_use_legacy_codepoint(enc_sess->esi_ssl,
+                            enc_sess->esi_ver_neg->vn_ver < LSQVER_ID34);
+#endif
 
     transpa_len = gen_trans_params(enc_sess, trans_params,
                                                     sizeof(trans_params));
@@ -1109,6 +1113,7 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
     struct header_prot *hp;
     size_t hsk_secret_sz, key_len;
     unsigned cliser, i;
+    const unsigned char *salt;
     unsigned char hsk_secret[EVP_MAX_MD_SIZE];
     unsigned char secret[2][SHA256_DIGEST_LENGTH];  /* client, server */
     unsigned char key[2][EVP_MAX_KEY_LENGTH];
@@ -1131,12 +1136,17 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
     pair->ykp_thresh = IQUIC_INVALID_PACKNO;
     hp = &enc_sess->esi_hsk_hps[ENC_LEV_CLEAR];
 
+    if (enc_sess->esi_conn->cn_version < LSQVER_ID29)
+        salt = HSK_SALT_PRE29;
+    else if (enc_sess->esi_conn->cn_version < LSQVER_ID34)
+        salt = HSK_SALT_PRE33;
+    else
+        salt = HSK_SALT;
     HKDF_extract(hsk_secret, &hsk_secret_sz, md, cid->idbuf, cid->len,
-                    enc_sess->esi_conn->cn_version < LSQVER_ID29
-                    ? HSK_SALT_PRE29 : HSK_SALT, HSK_SALT_SZ);
+                    salt, HSK_SALT_SZ);
     if (enc_sess->esi_flags & ESI_LOG_SECRETS)
     {
-        LSQ_DEBUG("handshake salt: %s", HEXSTR(HSK_SALT, HSK_SALT_SZ, hexbuf));
+        LSQ_DEBUG("handshake salt: %s", HEXSTR(salt, HSK_SALT_SZ, hexbuf));
         LSQ_DEBUG("handshake secret: %s", HEXSTR(hsk_secret, hsk_secret_sz,
                                                                     hexbuf));
     }
@@ -1382,6 +1392,10 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
             ERR_error_string(ERR_get_error(), u.errbuf));
         return -1;
     }
+#if BORINGSSL_API_VERSION >= 13
+    SSL_set_quic_use_legacy_codepoint(enc_sess->esi_ssl,
+                            enc_sess->esi_conn->cn_version < LSQVER_ID34);
+#endif
     if (!(SSL_set_quic_method(enc_sess->esi_ssl, &cry_quic_method)))
     {
         LSQ_INFO("could not set stream method");
@@ -3327,6 +3341,9 @@ const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
     /* [draft-ietf-quic-tls-29] Section 5.8 */
     (unsigned char *)
         "\xcc\xce\x18\x7e\xd0\x9a\x09\xd0\x57\x28\x15\x5a\x6c\xb9\x6b\xe1",
+    /* [draft-ietf-quic-tls-33] Section 5.8 */
+    (unsigned char *)
+        "\xbe\x0c\x69\x0b\x9f\x66\x57\x5a\x1d\x76\x6b\x54\xe3\x68\xc8\x4e",
 };
 
 
@@ -3336,6 +3353,8 @@ const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
     (unsigned char *) "\x4d\x16\x11\xd0\x55\x13\xa5\x52\xc5\x87\xd5\x75",
     /* [draft-ietf-quic-tls-29] Section 5.8 */
     (unsigned char *) "\xe5\x49\x30\xf9\x7f\x21\x36\xf0\x53\x0a\x8c\x1c",
+    /* [draft-ietf-quic-tls-33] Section 5.8 */
+    (unsigned char *) "\x46\x15\x99\xd3\x5d\x63\x2b\xf2\x23\x98\x25\xbb",
 };
 
 

@@ -1963,13 +1963,12 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     int len;
     EVP_PKEY * rsa_priv_key;
     SSL_CTX *ctx = enc_session->ssl_ctx;
-    const struct lsquic_engine_settings *const settings =
-                                        &enc_session->enpub->enp_settings;
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
     int scfg_len = enc_session->server_config->lsc_scfg->info.scfg_len;
     uint8_t *scfg_data = enc_session->server_config->lsc_scfg->scfg;
     size_t msg_len;
     struct message_writer mw;
+    uint64_t sttl;
 
     rsa_priv_key = SSL_CTX_get0_privatekey(ctx);
     if (!rsa_priv_key)
@@ -2029,7 +2028,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     MSG_LEN_ADD(msg_len, scfg_len);
     MSG_LEN_ADD(msg_len, STK_LENGTH);
     MSG_LEN_ADD(msg_len, SNO_LENGTH);
-    MSG_LEN_ADD(msg_len, sizeof(settings->es_sttl));
+    MSG_LEN_ADD(msg_len, sizeof(sttl));
     MSG_LEN_ADD(msg_len, lsquic_str_len(&hs_ctx->prof));
     if (hs_ctx->ccert)
         MSG_LEN_ADD(msg_len, hs_ctx->ccert->len);
@@ -2055,6 +2054,8 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
         lsquic_str_setlen(&enc_session->ssno, SNO_LENGTH);
     }
     RAND_bytes((uint8_t *) lsquic_str_buf(&enc_session->ssno), SNO_LENGTH);
+    sttl = enc_session->enpub->enp_server_config->lsc_scfg->info.expy
+                                                    - (uint64_t) time(NULL);
 
     MW_BEGIN(&mw, QTAG_REJ, 7, data);
     MW_WRITE_LS_STR(&mw, QTAG_STK, &enc_session->sstk);
@@ -2062,8 +2063,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     MW_WRITE_LS_STR(&mw, QTAG_PROF, &hs_ctx->prof);
     MW_WRITE_BUFFER(&mw, QTAG_SCFG, scfg_data, scfg_len);
     MW_WRITE_BUFFER(&mw, QTAG_RREJ, &hs_ctx->rrej, sizeof(hs_ctx->rrej));
-    MW_WRITE_BUFFER(&mw, QTAG_STTL, &settings->es_sttl,
-                                                sizeof(settings->es_sttl));
+    MW_WRITE_BUFFER(&mw, QTAG_STTL, &sttl, sizeof(sttl));
     if (hs_ctx->ccert)
         MW_WRITE_BUFFER(&mw, QTAG_CRT, hs_ctx->ccert->buf, hs_ctx->ccert->len);
     MW_END(&mw);

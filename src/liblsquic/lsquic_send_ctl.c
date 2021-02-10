@@ -641,6 +641,10 @@ send_ctl_add_poison (struct lsquic_send_ctl *ctl)
 {
     struct lsquic_packet_out *poison;
 
+    /* XXX Allocating the poison packet out of the regular pool can fail.
+     * This leads to a lot of error checking that could be skipped if we
+     * did not have to allocate this packet at all.
+     */
     poison = lsquic_malo_get(ctl->sc_conn_pub->packet_out_malo);
     if (!poison)
         return -1;
@@ -689,6 +693,33 @@ send_ctl_reschedule_poison (struct lsquic_send_ctl *ctl)
 }
 
 
+static int
+send_ctl_update_poison_hist (struct lsquic_send_ctl *ctl,
+                                                    lsquic_packno_t packno)
+{
+    if (packno == ctl->sc_gap + 1)
+    {
+        assert(!(ctl->sc_flags & SC_POISON));
+        lsquic_senhist_add(&ctl->sc_senhist, ctl->sc_gap);
+        if (0 != send_ctl_add_poison(ctl))
+            return -1;
+    }
+
+    return 0;
+}
+
+
+void
+lsquic_send_ctl_mtu_not_sent (struct lsquic_send_ctl *ctl,
+                                        struct lsquic_packet_out *packet_out)
+{
+    (void)  /* See comment in send_ctl_add_poison(): the plan is to make
+    this code path always succeed. */
+    send_ctl_update_poison_hist(ctl, packet_out->po_packno);
+    lsquic_senhist_add(&ctl->sc_senhist, packet_out->po_packno);
+}
+
+
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
                              struct lsquic_packet_out *packet_out)
@@ -699,13 +730,8 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     assert(!(packet_out->po_flags & PO_ENCRYPTED));
     ctl->sc_last_sent_time = packet_out->po_sent;
     pns = lsquic_packet_out_pns(packet_out);
-    if (packet_out->po_packno == ctl->sc_gap + 1)
-    {
-        assert(!(ctl->sc_flags & SC_POISON));
-        lsquic_senhist_add(&ctl->sc_senhist, ctl->sc_gap);
-        if (0 != send_ctl_add_poison(ctl))
-            return -1;
-    }
+    if (0 != send_ctl_update_poison_hist(ctl, packet_out->po_packno))
+        return -1;
     LSQ_DEBUG("packet %"PRIu64" has been sent (frame types: %s)",
         packet_out->po_packno, lsquic_frame_types_to_str(frames,
             sizeof(frames), packet_out->po_frame_types));

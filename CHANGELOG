@@ -1,3 +1,13 @@
+2021-02-10
+    - 2.29.0
+    - [FEATURE] QUIC and HTTP/3 Internet Draft 34 support and v1 support.
+      The latter is turned off by default.
+    - Drop support for ID-28 and ID-32.
+    - [BUGFIX] IETF QUIC mini conn receive history (trechist): allow
+      unlimited inserts by dropping smallest elements.
+    - [BUGFIX] gQUIC: set STTL to correct value, issue #226.
+    - [BUGFIX] Account for poison packet gap when MTU probe was too large.
+
 2021-02-03
     - 2.28.0
     - [API] lsquic_ssl_sess_to_resume_info() is the new way to get

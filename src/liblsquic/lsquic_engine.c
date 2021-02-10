@@ -674,7 +674,7 @@ lsquic_engine_new (unsigned flags,
         {
             int sz = lsquic_enc_sess_ietf_gen_quic_ctx(
                         &engine->pub.enp_settings,
-                        i == 0 ? LSQVER_ID27 : LSQVER_ID28,
+                        i == 0 ? LSQVER_ID27 : LSQVER_ID29,
                         engine->pub.enp_quic_ctx_buf[i],
                         sizeof(engine->pub.enp_quic_ctx_buf));
             if (sz < 0)

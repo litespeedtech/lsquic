@@ -1378,15 +1378,10 @@ imico_switch_to_trechist (struct ietf_mini_conn *conn)
         if (conn->imc_recvd_packnos.bitmasks[pns])
         {
             lsquic_imico_rechist_init(&iter, conn, pns);
-            if (0 != lsquic_trechist_copy_ranges(&masks[pns],
+            lsquic_trechist_copy_ranges(&masks[pns],
                                 elems + TRECHIST_MAX_RANGES * pns, &iter,
                                 lsquic_imico_rechist_first,
-                                lsquic_imico_rechist_next))
-            {
-                LSQ_WARN("cannot copy ranges from bitmask to trechist");
-                free(elems);
-                return -1;
-            }
+                                lsquic_imico_rechist_next);
         }
         else
             masks[pns] = 0;

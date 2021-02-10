@@ -26,6 +26,12 @@ while (<HEADER>) {
             push @all_versions, $1;
             push @all_alpns, "h3-$2";
         }
+        if (/^\s*(LSQVER_I(\d{3}))\b/) {
+            push @all_versions, $1;
+            if (not grep 'h3' eq $_, @all_alpns) {
+                push @all_alpns, "h3";
+            }
+        }
     }
 }
 

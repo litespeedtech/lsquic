@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 28
+#define LSQUIC_MINOR_VERSION 29
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -82,19 +82,20 @@ enum lsquic_version
     LSQVER_ID27,
 
     /**
-     * IETF QUIC Draft-28; this version is deprecated.
-     */
-    LSQVER_ID28,
-
-    /**
      * IETF QUIC Draft-29
      */
     LSQVER_ID29,
 
     /**
-     * IETF QUIC Draft-32
+     * IETF QUIC Draft-34
      */
-    LSQVER_ID32,
+    LSQVER_ID34,
+
+    /**
+     * IETF QUIC v1.  Functionally the same as Draft-34, but marked
+     * experimental for now.
+     */
+    LSQVER_I001,
 
     /**
      * Special version to trigger version negotiation.
@@ -106,8 +107,8 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-27, Draft-28, Draft-29,
- * and Draft-32.
+ * We currently support versions 43, 46, 50, Draft-27, Draft-29, Draft-34,
+ * and IETF QUIC v1.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -118,19 +119,21 @@ enum lsquic_version
 #define LSQUIC_FORCED_TCID0_VERSIONS ((1 << LSQVER_046)|(1 << LSQVER_050))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
+                            (1 << LSQVER_I001) | \
                             (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
 
-#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28))
+#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27))
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) \
                           | (1 << LSQVER_ID29) \
-                          | (1 << LSQVER_ID32) | (1 << LSQVER_VERNEG))
+                          | (1 << LSQVER_ID34) \
+                          | (1 << LSQVER_I001) | (1 << LSQVER_VERNEG))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) | (1 << LSQVER_ID28) \
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) \
                                   | (1 << LSQVER_ID29) \
-                                  | (1 << LSQVER_ID32) | (1 << LSQVER_VERNEG))
+              | (1 << LSQVER_ID34) | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {

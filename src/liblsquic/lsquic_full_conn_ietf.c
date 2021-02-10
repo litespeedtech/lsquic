@@ -3314,7 +3314,7 @@ try_to_begin_migration (struct ietf_full_conn *conn,
         return BM_NOT_MIGRATING;
     }
 
-    if (conn->ifc_conn.cn_version <= LSQVER_ID28 /* Starting with ID-29,
+    if (conn->ifc_conn.cn_version <= LSQVER_ID27 /* Starting with ID-29,
         disable_active_migration TP applies only to the time period during
         the handshake.  Our client does not migrate during the handshake:
         this code runs only after handshake has succeeded. */
@@ -7566,16 +7566,16 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
          */
         if (!verneg_ok(conn))
         {
-            ABORT_ERROR("version negotiation not permitted in this version "
-                                                                    "of QUIC");
+            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR,
+                "version negotiation not permitted in this version of QUIC");
             return -1;
         }
 
         versions &= conn->ifc_u.cli.ifcli_ver_neg.vn_supp;
         if (0 == versions)
         {
-            ABORT_ERROR("client does not support any of the server-specified "
-                        "versions");
+            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR,
+                "client does not support any of the server-specified versions");
             return -1;
         }
 
@@ -7663,13 +7663,12 @@ ietf_full_conn_ci_packet_too_large (struct lsquic_conn *lconn,
     assert(packet_out->po_lflags & POL_HEADER_PROT);
 #endif
 
-    lsquic_senhist_add(&conn->ifc_send_ctl.sc_senhist, packet_out->po_packno);
-    lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
     if (packet_out->po_flags & PO_MTU_PROBE)
     {
         LSQ_DEBUG("%zu-byte MTU probe in packet %"PRIu64" is too large",
             lsquic_packet_out_sent_sz(&conn->ifc_conn, packet_out),
             packet_out->po_packno);
+        lsquic_send_ctl_mtu_not_sent(&conn->ifc_send_ctl, packet_out);
         mtu_probe_too_large(conn, packet_out);
     }
     else
@@ -9041,7 +9040,7 @@ on_goaway_server_27 (void *ctx, uint64_t stream_id)
 
 
 static void
-on_goaway_client_28 (void *ctx, uint64_t stream_id)
+on_goaway_client_27 (void *ctx, uint64_t stream_id)
 {
     struct ietf_full_conn *const conn = ctx;
     struct lsquic_stream *stream;
@@ -9348,30 +9347,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_27 =
     .on_max_push_id         = on_max_push_id_client,
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
-    .on_goaway              = on_goaway_client_28 /* sic */,
-    .on_unexpected_frame    = on_unexpected_frame,
-    .on_priority_update     = on_priority_update_client,
-};
-
-
-static const struct hcsi_callbacks hcsi_callbacks_server_28 =
-{
-    .on_cancel_push         = on_cancel_push_server,
-    .on_max_push_id         = on_max_push_id,
-    .on_settings_frame      = on_settings_frame,
-    .on_setting             = on_setting,
-    .on_goaway              = on_goaway_server /* sic */,
-    .on_unexpected_frame    = on_unexpected_frame,
-    .on_priority_update     = on_priority_update_server,
-};
-
-static const struct hcsi_callbacks hcsi_callbacks_client_28 =
-{
-    .on_cancel_push         = on_cancel_push_client,
-    .on_max_push_id         = on_max_push_id_client,
-    .on_settings_frame      = on_settings_frame,
-    .on_setting             = on_setting,
-    .on_goaway              = on_goaway_client_28,
+    .on_goaway              = on_goaway_client_27,
     .on_unexpected_frame    = on_unexpected_frame,
     .on_priority_update     = on_priority_update_client,
 };
@@ -9416,21 +9392,17 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
         case (1 << 8) | LSQVER_ID27:
             callbacks = &hcsi_callbacks_server_27;
             break;
-        case (0 << 8) | LSQVER_ID28:
-            callbacks = &hcsi_callbacks_client_28;
-            break;
-        case (1 << 8) | LSQVER_ID28:
-            callbacks = &hcsi_callbacks_server_28;
-            break;
         case (0 << 8) | LSQVER_ID29:
-        case (0 << 8) | LSQVER_ID32:
+        case (0 << 8) | LSQVER_ID34:
+        case (0 << 8) | LSQVER_I001:
             callbacks = &hcsi_callbacks_client_29;
             break;
         default:
             assert(0);
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
-        case (1 << 8) | LSQVER_ID32:
+        case (1 << 8) | LSQVER_ID34:
+        case (1 << 8) | LSQVER_I001:
             callbacks = &hcsi_callbacks_server_29;
             break;
     }

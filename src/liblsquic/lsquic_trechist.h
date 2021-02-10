@@ -19,6 +19,7 @@ struct lsquic_packno_range;
  * UCHAR_MAX, which is how many different values can fit into te_next.
  */
 #define TRECHIST_MAX_RANGES 16
+#define TRECHIST_MAX_RANGES_MASK ((1u << TRECHIST_MAX_RANGES) - 1)
 
 struct trechist_elem
 {
@@ -58,7 +59,7 @@ lsquic_trechist_first (void *iter);
 const struct lsquic_packno_range *
 lsquic_trechist_next (void *iter);
 
-int
+void
 lsquic_trechist_copy_ranges (trechist_mask_t *mask /* This gets overwritten */,
                     struct trechist_elem *elems, void *src_rechist,
                     const struct lsquic_packno_range * (*first) (void *),

@@ -155,6 +155,10 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *, struct lsquic_alarmset *,
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *, struct lsquic_packet_out *);
 
+void
+lsquic_send_ctl_mtu_not_sent (struct lsquic_send_ctl *ctl,
+                                                    struct lsquic_packet_out *);
+
 int
 lsquic_send_ctl_got_ack (lsquic_send_ctl_t *, const struct ack_info *,
                                                 lsquic_time_t, lsquic_time_t);

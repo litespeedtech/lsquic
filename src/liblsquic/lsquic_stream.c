@@ -1473,7 +1473,7 @@ verify_cl_on_fin (struct lsquic_stream *stream)
     if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
     {
         lconn = stream->conn_pub->lconn;
-        lconn->cn_if->ci_abort_error(lconn, 1, HEC_GENERAL_PROTOCOL_ERROR,
+        lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
             "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
             "while content-length specified of %llu", stream->id,
             stream->sm_data_in, stream->sm_cont_len);
@@ -4811,7 +4811,7 @@ verify_cl_on_new_data_frame (struct lsquic_stream *stream,
     if (stream->sm_data_in > stream->sm_cont_len)
     {
         lconn = stream->conn_pub->lconn;
-        lconn->cn_if->ci_abort_error(lconn, 1, HEC_GENERAL_PROTOCOL_ERROR,
+        lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
             "number of bytes in DATA frames of stream %"PRIu64" exceeds "
             "content-length limit of %llu", stream->id, stream->sm_cont_len);
     }
