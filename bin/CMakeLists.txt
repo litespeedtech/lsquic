@@ -1,4 +1,74 @@
 # Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
+LIST(APPEND LIBS ${EVENT_LIB})
+
+IF(MSVC)
+    FIND_LIBRARY(PCRE_LIB pcre)
+    IF(PCRE_LIB)
+        MESSAGE(STATUS "Found pcre: ${PCRE_LIB}")
+        LIST(APPEND LIBS ${PCRE_LIB})
+    ELSE()
+        MESSAGE(STATUS "pcre not found: http_server won't work")
+    ENDIF()
+    FIND_LIBRARY(PCREPOSIX_LIB pcreposix)
+    IF(PCREPOSIX_LIB)
+        MESSAGE(STATUS "Found pcreposix: ${PCREPOSIX_LIB}")
+        LIST(APPEND LIBS ${PCREPOSIX_LIB})
+    ELSE()
+        MESSAGE(STATUS "pcreposix not found: http_server won't work")
+    ENDIF()
+    LIST(APPEND LIBS ws2_32)
+    LIST(APPEND LIBS iphlpapi)
+ENDIF()
+
+IF(MSVC)
+    SET(GETOPT_C ../wincompat/getopt.c)
+ENDIF()
+add_executable(http_server http_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+IF(NOT MSVC)   #   TODO: port MD5 server and client to Windows
+add_executable(md5_server md5_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(md5_client md5_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
+ENDIF()
+add_executable(echo_server echo_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(echo_client echo_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(duck_server duck_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(duck_client duck_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
+
+
+IF (NOT MSVC)
+
+add_executable(http_client
+    http_client.c
+    prog.c
+    test_common.c
+    test_cert.c
+)
+
+#MSVC
+ELSE()
+
+add_executable(http_client
+    http_client.c
+    prog.c
+    test_common.c
+    test_cert.c
+    ../wincompat/getopt.c
+    ../wincompat/getopt1.c
+)
+
+ENDIF()
+
+TARGET_LINK_LIBRARIES(http_client ${LIBS})
+TARGET_LINK_LIBRARIES(http_server ${LIBS})
+IF(NOT MSVC)
+TARGET_LINK_LIBRARIES(md5_server  ${LIBS})
+TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
+ENDIF()
+TARGET_LINK_LIBRARIES(echo_server ${LIBS})
+TARGET_LINK_LIBRARIES(echo_client ${LIBS})
+TARGET_LINK_LIBRARIES(duck_server ${LIBS})
+TARGET_LINK_LIBRARIES(duck_client ${LIBS})
+
+
 INCLUDE(CheckFunctionExists)
 CHECK_FUNCTION_EXISTS(sendmmsg HAVE_SENDMMSG)
 CHECK_FUNCTION_EXISTS(recvmmsg HAVE_RECVMMSG)

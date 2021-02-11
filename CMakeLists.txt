@@ -234,100 +234,45 @@ ELSE()
     MESSAGE(STATUS "zlib not found")
 ENDIF()
 
-IF (LSQUIC_BIN OR LSQUIC_TESTS)
-FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h)
-IF (EVENT_INCLUDE_DIR)
-    INCLUDE_DIRECTORIES(${EVENT_INCLUDE_DIR})
-ELSE()
-    MESSAGE(FATAL_ERROR "event2/event.h was not found")
-ENDIF()
-IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-    FIND_LIBRARY(EVENT_LIB event)
-ELSE()
-    FIND_LIBRARY(EVENT_LIB libevent${LIB_SUFFIX})
-    IF(NOT EVENT_LIB)
-        FIND_LIBRARY(EVENT_LIB libevent.so)
+SET(LIBS lsquic ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
+
+IF (LSQUIC_BIN)
+    FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h)
+    IF (EVENT_INCLUDE_DIR)
+        INCLUDE_DIRECTORIES(${EVENT_INCLUDE_DIR})
+    ELSE()
+        MESSAGE(WARNING "event2/event.h was not found: binaries won't be built")
+        SET(LSQUIC_BIN OFF)
     ENDIF()
 ENDIF()
-IF(EVENT_LIB)
-    MESSAGE(STATUS "Found event: ${EVENT_LIB}")
-ELSE()
-    MESSAGE(STATUS "libevent not found")
-ENDIF()
-SET(LIBS lsquic ${EVENT_LIB} ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
-IF(MSVC)
-FIND_LIBRARY(PCRE_LIB pcre)
-IF(PCRE_LIB)
-    MESSAGE(STATUS "Found pcre: ${PCRE_LIB}")
-    LIST(APPEND LIBS ${PCRE_LIB})
-ELSE()
-    MESSAGE(STATUS "pcre not found: http_server won't work")
-ENDIF()
-FIND_LIBRARY(PCREPOSIX_LIB pcreposix)
-IF(PCREPOSIX_LIB)
-    MESSAGE(STATUS "Found pcreposix: ${PCREPOSIX_LIB}")
-    LIST(APPEND LIBS ${PCREPOSIX_LIB})
-ELSE()
-    MESSAGE(STATUS "pcreposix not found: http_server won't work")
-ENDIF()
-LIST(APPEND LIBS ws2_32)
-LIST(APPEND LIBS iphlpapi)
-ENDIF()
-ENDIF()	# LSQUIC_BIN OR LSQUIC_TESTS
 
-IF(LSQUIC_BIN)
-IF(MSVC)
-    SET(GETOPT_C wincompat/getopt.c)
+IF (LSQUIC_BIN)
+    IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+        FIND_LIBRARY(EVENT_LIB event)
+    ELSE()
+        FIND_LIBRARY(EVENT_LIB libevent${LIB_SUFFIX})
+        IF(NOT EVENT_LIB)
+            FIND_LIBRARY(EVENT_LIB libevent.so)
+        ENDIF()
+    ENDIF()
+    IF(EVENT_LIB)
+        MESSAGE(STATUS "Found event: ${EVENT_LIB}")
+    ELSE()
+        MESSAGE(WARNING "libevent not found: binaries won't be built")
+        SET(LSQUIC_BIN OFF)
+    ENDIF()
 ENDIF()
-add_executable(http_server bin/http_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-IF(NOT MSVC)   #   TODO: port MD5 server and client to Windows
-add_executable(md5_server bin/md5_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-add_executable(md5_client bin/md5_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-ENDIF()
-add_executable(echo_server bin/echo_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-add_executable(echo_client bin/echo_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-add_executable(duck_server bin/duck_server.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
-add_executable(duck_client bin/duck_client.c bin/prog.c bin/test_common.c bin/test_cert.c ${GETOPT_C})
 
 
 IF (NOT MSVC)
-
-add_executable(http_client
-    bin/http_client.c
-    bin/prog.c
-    bin/test_common.c
-    bin/test_cert.c
-)
-LIST(APPEND LIBS pthread m)
-
-#MSVC
+    LIST(APPEND LIBS pthread m)
 ELSE()
-
-add_executable(http_client
-    bin/http_client.c
-    bin/prog.c
-    bin/test_common.c
-    bin/test_cert.c
-    wincompat/getopt.c
-    wincompat/getopt1.c
-)
-LIST(APPEND LIBS ws2_32)
-
+    LIST(APPEND LIBS ws2_32)
 ENDIF()
 
-TARGET_LINK_LIBRARIES(http_client ${LIBS})
-TARGET_LINK_LIBRARIES(http_server ${LIBS})
-IF(NOT MSVC)
-TARGET_LINK_LIBRARIES(md5_server  ${LIBS})
-TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
+IF (LSQUIC_BIN)
+    ADD_SUBDIRECTORY(bin)
 ENDIF()
-TARGET_LINK_LIBRARIES(echo_server ${LIBS})
-TARGET_LINK_LIBRARIES(echo_client ${LIBS})
-TARGET_LINK_LIBRARIES(duck_server ${LIBS})
-TARGET_LINK_LIBRARIES(duck_client ${LIBS})
-
-add_subdirectory(bin)
-ENDIF() # LSQUIC_BIN
 
 add_subdirectory(src)
 
