@@ -1,0 +1,35 @@
+version: 2.{branch}.{build}
+
+image: Ubuntu2004
+
+build: off
+
+init:
+
+install:
+
+- sh: >-
+
+    git clone https://boringssl.googlesource.com/boringssl
+
+    cd boringssl
+
+    git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9
+
+    cmake .
+
+    make -j4
+
+    cd ..
+
+    git submodule init
+
+    git submodule update
+
+    cmake -DBORINGSSL_DIR=$PWD/boringssl .
+
+    make
+
+test_script:
+
+- sh: make test
