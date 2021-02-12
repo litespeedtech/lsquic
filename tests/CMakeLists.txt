@@ -44,7 +44,6 @@ SET(TESTS
     frame_reader
     frame_writer
     goaway_gquic_be
-    h3_framing
     hkdf
     hpi
     lsquic_hash
@@ -84,6 +83,9 @@ IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     SET(TESTS ${TESTS} ack_merge)
     # No open_memstream() on Windows
     SET(TESTS ${TESTS} hcsi_reader)
+    # Takes forever on Windows, for whatever reason.  Or maybe it's the
+    # MS C compilers.  Something to investigate... later.
+    LIST(APPEND TESTS h3_framing)
 ENDIF()
 
 
