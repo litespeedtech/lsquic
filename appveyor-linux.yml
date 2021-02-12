@@ -1,6 +1,8 @@
 version: 2.{branch}.{build}
 
-image: Ubuntu2004
+image:
+- Ubuntu2004
+- MacOS
 
 build: off
 
