@@ -1,3 +1,11 @@
+2021-02-18
+    - 2.29.1
+    - Make it possible to build the library and unit tests without
+      libevent.
+    - Build all command-line utilities in bin/
+    - Add perf_client and perf_server command-line utilities to test
+      performance according to the "perf" protocol.
+
 2021-02-10
     - 2.29.0
     - [FEATURE] QUIC and HTTP/3 Internet Draft 34 support and v1 support.
