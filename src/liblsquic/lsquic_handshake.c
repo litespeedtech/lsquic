@@ -1887,7 +1887,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 
 
 static int
-generate_crt (struct lsquic_enc_session *enc_session)
+generate_crt (struct lsquic_enc_session *enc_session, int common_case)
 {
     int i, n, len, crt_num, rv = -1;
     lsquic_str_t **crts;
@@ -1926,13 +1926,16 @@ generate_crt (struct lsquic_enc_session *enc_session)
     if (!ccert)
         goto cleanup;
 
-    if (SSL_CTX_set_ex_data(ctx, s_ccrt_idx, ccert))
-        ++ccert->refcnt;
-    else
+    if (common_case)
     {
-        free(ccert);
-        ccert = NULL;
-        goto cleanup;
+        if (SSL_CTX_set_ex_data(ctx, s_ccrt_idx, ccert))
+            ++ccert->refcnt;
+        else
+        {
+            free(ccert);
+            ccert = NULL;
+            goto cleanup;
+        }
     }
 
     ++ccert->refcnt;
@@ -1966,6 +1969,7 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
     int scfg_len = enc_session->server_config->lsc_scfg->info.scfg_len;
     uint8_t *scfg_data = enc_session->server_config->lsc_scfg->scfg;
+    int common_case;
     size_t msg_len;
     struct message_writer mw;
     uint64_t sttl;
@@ -1989,13 +1993,21 @@ gen_rej1_data (struct lsquic_enc_session *enc_session, uint8_t *data,
         hs_ctx->ccert = NULL;
     }
 
-    hs_ctx->ccert = SSL_CTX_get_ex_data(ctx, s_ccrt_idx);
+    /**
+     * Only cache hs_ctx->ccs is the hardcoded common certs and hs_ctx->ccrt is empty case
+     * This is the most common case
+     */
+    common_case = lsquic_str_len(&hs_ctx->ccrt) == 0
+               && lsquic_str_bcmp(&hs_ctx->ccs, lsquic_get_common_certs_hash()) == 0;
+    if (common_case)
+        hs_ctx->ccert = SSL_CTX_get_ex_data(ctx, s_ccrt_idx);
+
     if (hs_ctx->ccert)
     {
         ++hs_ctx->ccert->refcnt;
         LSQ_DEBUG("use cached compressed cert");
     }
-    else if (0 == generate_crt(enc_session))
+    else if (0 == generate_crt(enc_session, common_case))
         LSQ_DEBUG("generated compressed cert");
     else
     {
