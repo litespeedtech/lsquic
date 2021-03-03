@@ -96,7 +96,7 @@
 #define LSQUIC_DEBUG_NEXT_ADV_TICK 1
 #endif
 
-#if LSQUIC_DEBUG_NEXT_ADV_TICK
+#if LSQUIC_DEBUG_NEXT_ADV_TICK || LSQUIC_CONN_STATS
 #include "lsquic_alarmset.h"
 #endif
 
@@ -3161,6 +3161,8 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     lsquic_time_t now, next_time;
 #if LSQUIC_DEBUG_NEXT_ADV_TICK || LSQUIC_CONN_STATS
     struct lsquic_conn *conn;
+#endif
+#if LSQUIC_DEBUG_NEXT_ADV_TICK
     const enum lsq_log_level L = LSQ_LOG_DEBUG;  /* Easy toggle */
 #endif
 

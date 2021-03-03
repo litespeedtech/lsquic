@@ -2581,8 +2581,11 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
     lsquic_stream_rst_frame_sent(stream);
-    LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset 0x%"PRIX64"; error code "
+    LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset %"PRIu64"; error code "
               "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RESET_STREAM: stream "
+        "%"PRIu64"; offset %"PRIu64"; error code %"PRIu64, stream->id,
+        stream->tosend_off, stream->error_code);
 
     return 1;
 }
@@ -2919,7 +2922,7 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
             stream = lsquic_hashelem_getdata(el);
             sd = (stream->id >> SD_SHIFT) & 1;
             if (SD_BIDI == sd)
-                lsquic_stream_reset(stream, 0);
+                lsquic_stream_maybe_reset(stream, 0, 1);
         }
         conn->ifc_flags |= IFC_CLOSING;
         conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;

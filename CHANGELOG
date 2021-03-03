@@ -1,3 +1,12 @@
+2021-03-03
+    - 2.29.3
+    - [BUGFIX] Do not send RESET_STREAM if writing to stream is already
+      finished.
+    - perf_client: wait for all ACKs before exiting.
+    - Improve how generated RESET_STREAM is logged.
+    - Fix compilation in different combos of adv_tick/conn_stats flags.
+    - Move qpack warning disablement into src/liblsquic/CMakeLists.txt.
+
 2021-02-23
     - 2.29.2
     - Fix regression in gQUIC server: bug #234.

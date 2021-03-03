@@ -510,10 +510,7 @@ void
 lsquic_stream_stream_frame_sent (lsquic_stream_t *);
 
 void
-lsquic_stream_reset (lsquic_stream_t *, uint64_t error_code);
-
-void
-lsquic_stream_reset_ext (lsquic_stream_t *, uint64_t error_code, int close);
+lsquic_stream_maybe_reset (struct lsquic_stream *, uint64_t error_code, int);
 
 void
 lsquic_stream_call_on_close (lsquic_stream_t *);

@@ -335,6 +335,7 @@ main (int argc, char **argv)
     TAILQ_INIT(&sports);
     prog_init(&s_prog, 0, &sports, &perf_stream_if, NULL);
     s_prog.prog_api.ea_alpn = "perf";
+    s_prog.prog_settings.es_delay_onclose = 1;
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS "hp:T:")))
     {

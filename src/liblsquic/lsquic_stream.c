@@ -144,6 +144,9 @@ stream_readable_http_ietf (struct lsquic_stream *stream);
 static ssize_t
 stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz);
 
+static void
+stream_reset (struct lsquic_stream *, uint64_t error_code, int do_close);
+
 static size_t
 active_hq_frame_sizes (const struct lsquic_stream *);
 
@@ -1284,7 +1287,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
                         (STREAM_RST_SENT|STREAM_SS_SENT|STREAM_FIN_SENT))
                             && !(stream->sm_bflags & SMBF_IETF)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
-        lsquic_stream_reset_ext(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
+        stream_reset(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
 
     stream->stream_flags |= STREAM_RST_RECVD;
 
@@ -1324,7 +1327,7 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
 
     if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
-        lsquic_stream_reset_ext(stream, 0, 0);
+        stream_reset(stream, 0, 0);
 
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
@@ -1767,7 +1770,7 @@ handle_early_read_shutdown_gquic (struct lsquic_stream *stream)
 {
     if (!(stream->stream_flags & STREAM_RST_SENT))
     {
-        lsquic_stream_reset_ext(stream, 7 /* QUIC_STREAM_CANCELLED */, 0);
+        stream_reset(stream, 7 /* QUIC_STREAM_CANCELLED */, 0);
         stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
     }
 }
@@ -1848,7 +1851,7 @@ stream_shutdown_write (lsquic_stream_t *stream)
                 && !(stream->stream_flags & STREAM_HEADERS_SENT))
         {
             LSQ_DEBUG("headers not sent, send a reset");
-            lsquic_stream_reset(stream, 0);
+            stream_reset(stream, 0, 1);
         }
         else if (stream->sm_n_buffered == 0)
         {
@@ -4244,15 +4247,22 @@ lsquic_stream_set_max_send_off (lsquic_stream_t *stream, uint64_t offset)
 
 
 void
-lsquic_stream_reset (lsquic_stream_t *stream, uint64_t error_code)
+lsquic_stream_maybe_reset (struct lsquic_stream *stream, uint64_t error_code,
+                           int do_close)
 {
-    lsquic_stream_reset_ext(stream, error_code, 1);
+    if (!((stream->stream_flags
+            & (STREAM_RST_SENT|STREAM_FIN_SENT|STREAM_U_WRITE_DONE))
+        || (stream->sm_qflags & SMQF_SEND_RST)))
+    {
+        stream_reset(stream, error_code, do_close);
+    }
+    else if (do_close)
+        stream_shutdown_read(stream);
 }
 
 
-void
-lsquic_stream_reset_ext (lsquic_stream_t *stream, uint64_t error_code,
-                         int do_close)
+static void
+stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
 {
     if ((stream->stream_flags & STREAM_RST_SENT)
                                     || (stream->sm_qflags & SMQF_SEND_RST))
@@ -4599,7 +4609,7 @@ lsquic_stream_refuse_push (lsquic_stream_t *stream)
             && !(stream->stream_flags & STREAM_RST_SENT))
     {
         LSQ_DEBUG("refusing pushed stream: send reset");
-        lsquic_stream_reset_ext(stream, 8 /* QUIC_REFUSED_STREAM */, 1);
+        stream_reset(stream, 8 /* QUIC_REFUSED_STREAM */, 1);
         return 0;
     }
     else

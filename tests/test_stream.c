@@ -1242,7 +1242,7 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
     sss = lsquic_stream_sending_state(stream);
     assert(SSS_SEND == sss);
 
-    lsquic_stream_reset(stream, 0);
+    lsquic_stream_maybe_reset(stream, 0, 1);
     ++stream->n_unacked;    /* Fake sending of packet with RST_STREAM */
     assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
     assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
@@ -1535,7 +1535,7 @@ test_unlimited_stream_flush_data (struct test_objs *tobjs)
     lsquic_stream_flush(stream);
     assert(0x4000 == lsquic_conn_cap_avail(cap));
 
-    lsquic_stream_reset(stream, 0xF00DF00D);
+    lsquic_stream_maybe_reset(stream, 0xF00DF00D, 1);
     assert(0x4000 == lsquic_conn_cap_avail(cap));   /* Still unchanged */
 
     lsquic_stream_destroy(stream);

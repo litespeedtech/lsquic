@@ -3807,7 +3807,7 @@ full_conn_ci_close (struct lsquic_conn *lconn)
         {
             stream = lsquic_hashelem_getdata(el);
             if (!lsquic_stream_is_critical(stream))
-                lsquic_stream_reset(stream, 0);
+                lsquic_stream_maybe_reset(stream, 0, 1);
         }
         conn->fc_flags |= FC_CLOSING;
         if (!(conn->fc_flags & FC_GOAWAY_SENT))
@@ -3933,7 +3933,7 @@ headers_stream_on_stream_error (void *ctx, lsquic_stream_id_t stream_id)
          * errors.  There does not seem to be a good reason to figure out
          * and send more specific error codes.
          */
-        lsquic_stream_reset_ext(stream, 1, 0);
+        lsquic_stream_maybe_reset(stream, 1, 0);
     }
 }
 

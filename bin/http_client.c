@@ -785,7 +785,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (client_ctx->hcc_reset_after_nbytes &&
                 s_stat_downloaded_bytes > client_ctx->hcc_reset_after_nbytes)
             {
-                lsquic_stream_reset(stream, 0x1);
+                lsquic_stream_maybe_reset(stream, 0x1, 1);
                 break;
             }
             /* test retire_cid after some number of read bytes */
