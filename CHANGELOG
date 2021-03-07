@@ -1,3 +1,9 @@
+2021-03-06
+    - 2.27.7
+    - [BUGFIX] Infinite loop in stream: returned HQ frame can be at any
+      point on the list.
+    - [BUGFIX] Fail push promise immediately if STREAM_NOPUSH is set.
+
 2021-01-27
     - 2.27.6
     - [BUGFIX] Replace dispatch read/write events assertion with a check.

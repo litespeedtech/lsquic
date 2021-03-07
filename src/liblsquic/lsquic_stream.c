@@ -2666,8 +2666,8 @@ static void
 stream_hq_frame_put (struct lsquic_stream *stream,
                                                 struct stream_hq_frame *shf)
 {
-    assert(STAILQ_FIRST(&stream->sm_hq_frames) == shf);
-    STAILQ_REMOVE_HEAD(&stream->sm_hq_frames, shf_next);
+    /* In vast majority of cases, the frame to put is at the head: */
+    STAILQ_REMOVE(&stream->sm_hq_frames, shf, stream_hq_frame, shf_next);
     if (frame_in_stream(stream, shf))
         memset(shf, 0, sizeof(*shf));
     else
@@ -5357,7 +5357,9 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
     ssize_t nw;
 
     assert(stream->sm_bflags & SMBF_IETF);
-    assert(lsquic_stream_can_push(stream));
+
+    if (stream->stream_flags & STREAM_NOPUSH)
+        return -1;
 
     bits = vint_val2bits(promise->pp_id);
     len = 1 << bits;
