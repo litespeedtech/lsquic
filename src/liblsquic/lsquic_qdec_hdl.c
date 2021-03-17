@@ -380,7 +380,7 @@ qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
         LSQ_INFO("error reading encoder stream");
         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
         qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
-            HEC_QPACK_DECODER_STREAM_ERROR, "Error interpreting QPACK encoder "
+            HEC_QPACK_ENCODER_STREAM_ERROR, "Error interpreting QPACK encoder "
             "stream; offset %"PRIu64", line %d", qerr->off, qerr->line);
         goto end;
     }

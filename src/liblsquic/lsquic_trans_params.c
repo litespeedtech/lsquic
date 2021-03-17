@@ -153,7 +153,7 @@ static const uint64_t max_vals[MAX_NUMERIC_TPI + 1] =
      * it is not required by the spec and is not necessary.
      */
     [TPI_MAX_UDP_PAYLOAD_SIZE]              =  VINT_MAX_VALUE,
-    [TPI_ACK_DELAY_EXPONENT]                =  VINT_MAX_VALUE,
+    [TPI_ACK_DELAY_EXPONENT]                =  TP_MAX_ACK_DELAY_EXP,
     [TPI_INIT_MAX_STREAMS_UNI]              =  1ull << 60,
     [TPI_INIT_MAX_STREAMS_BIDI]             =  1ull << 60,
     [TPI_INIT_MAX_DATA]                     =  VINT_MAX_VALUE,

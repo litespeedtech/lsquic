@@ -6393,6 +6393,13 @@ process_new_token_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if (conn->ifc_flags & IFC_SERVER)
+    {   /* [draft-ietf-quic-transport-34] Section 19.7 */
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                                    "received unexpected NEW_TOKEN frame");
+        return 0;
+    }
+
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG)
                             || LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))
     {
@@ -6858,17 +6865,22 @@ parse_regular_packet (struct ietf_full_conn *conn,
     p = packet_in->pi_data + packet_in->pi_header_sz;
     pend = packet_in->pi_data + packet_in->pi_data_sz;
 
-    while (p < pend)
-    {
-        len = process_packet_frame(conn, packet_in, p, pend - p);
-        if (len > 0)
-            p += len;
-        else
+    if (p < pend)
+        do
         {
-            ABORT_ERROR("Error parsing frame");
-            break;
+            len = process_packet_frame(conn, packet_in, p, pend - p);
+            if (len > 0)
+                p += len;
+            else
+            {
+                ABORT_ERROR("Error parsing frame");
+                break;
+            }
         }
-    }
+        while (p < pend);
+    else
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "packet %"PRIu64" has no frames", packet_in->pi_packno);
 }
 
 
@@ -8959,7 +8971,8 @@ on_settings_frame (void *ctx)
     LSQ_DEBUG("SETTINGS frame");
     if (conn->ifc_flags & IFC_HAVE_PEER_SET)
     {
-        ABORT_WARN("second incoming SETTING frame on HTTP control stream");
+        ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED,
+            "second incoming SETTING frame on HTTP control stream");
         return;
     }
 

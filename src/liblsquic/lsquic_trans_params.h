@@ -128,6 +128,9 @@ struct transport_params
 #define TP_DEF_MAX_ACK_DELAY 25u
 #define TP_DEF_ACTIVE_CONNECTION_ID_LIMIT 2
 
+/* [draft-ietf-quic-transport-34], Section 18.2 */
+#define TP_MAX_ACK_DELAY_EXP 20
+
 /* [draft-ietf-quic-transport-18], Section 18.1 */
 #define TP_MAX_MAX_ACK_DELAY ((1u << 14) - 1)
 
