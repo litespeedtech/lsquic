@@ -1143,15 +1143,15 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         break;
 
     case QTAG_SCID:
-        if (len != SCID_LENGTH)
+        if (len < SCID_LENGTH)
             return -1;
         if (is_client)
         {
-            memcpy(enc_session->info->sscid, val, len);
+            memcpy(enc_session->info->sscid, val, SCID_LENGTH);
         }
         else
         {
-            memcpy(hs_ctx->scid, val, len);
+            memcpy(hs_ctx->scid, val, SCID_LENGTH);
             hs_ctx->set |= HSET_SCID;
         }
         ESHIST_APPEND(enc_session, ESHE_SET_SCID);
