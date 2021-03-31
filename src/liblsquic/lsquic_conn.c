@@ -242,7 +242,10 @@ void
 lsquic_generate_scid (void *ctx, struct lsquic_conn *lconn, lsquic_cid_t *scid,
                                                                 unsigned len)
 {
-    lsquic_generate_cid(scid, len);
+    if (len)
+        lsquic_generate_cid(scid, len);
+    else
+        scid->len = len;
 }
 
 

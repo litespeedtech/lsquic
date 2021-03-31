@@ -52,6 +52,9 @@ static unsigned highest_bit_set (unsigned long long);
 static int
 imico_can_send (const struct ietf_mini_conn *, size_t);
 
+static void
+ietf_mini_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
+                                unsigned error_code, const char *fmt, ...);
 
 static const enum header_type el2hety[] =
 {
@@ -1432,11 +1435,19 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
 
     dec_packin = lconn->cn_esf_c->esf_decrypt_packet(lconn->cn_enc_session,
                                 conn->imc_enpub, &conn->imc_conn, packet_in);
-    if (dec_packin != DECPI_OK)
+    switch (dec_packin)
     {
+    case DECPI_OK:
+        break;
+    case DECPI_VIOLATION:
+        ietf_mini_conn_ci_abort_error(lconn, 0, TEC_PROTOCOL_VIOLATION,
+                    "protocol violation detected while decrypting packet");
+        return;
+    case DECPI_NOT_YET:
+        imico_maybe_delay_processing(conn, packet_in);
+        return;
+    default:
         LSQ_DEBUG("could not decrypt packet");
-        if (DECPI_NOT_YET == dec_packin)
-            imico_maybe_delay_processing(conn, packet_in);
         return;
     }
 
@@ -1511,8 +1522,6 @@ ietf_mini_conn_ci_packet_sent (struct lsquic_conn *lconn,
         mc->mc_flags &= ~MC_UNSENT_ACK;
     }
 #endif
-    ++conn->imc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
-                              [ lsquic_packet_out_ecn(packet_out) ];
     if (packet_out->po_header_type == HETY_HANDSHAKE)
         conn->imc_flags |= IMC_HSK_PACKET_SENT;
     LSQ_DEBUG("%s: packet %"PRIu64" sent", __func__, packet_out->po_packno);

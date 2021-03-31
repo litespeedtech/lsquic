@@ -158,6 +158,7 @@ enum more_flags
     MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
+    MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
 };
 
 
@@ -402,8 +403,6 @@ struct ietf_full_conn
     /* App PNS only, used to calculate was_missing: */
     lsquic_packno_t             ifc_max_ackable_packno_in;
     struct lsquic_send_ctl      ifc_send_ctl;
-    struct lsquic_stream       *ifc_stream_hcsi;    /* HTTP Control Stream Incoming */
-    struct lsquic_stream       *ifc_stream_hcso;    /* HTTP Control Stream Outgoing */
     struct lsquic_conn_public   ifc_pub;
     lsquic_alarmset_t           ifc_alset;
     struct lsquic_set64         ifc_closed_stream_ids[N_SITS];
@@ -424,9 +423,6 @@ struct ietf_full_conn
     struct conn_err             ifc_error;
     unsigned                    ifc_n_delayed_streams;
     unsigned                    ifc_n_cons_unretx;
-    const struct lsquic_stream_if
-                               *ifc_stream_if;
-    void                       *ifc_stream_ctx;
     const struct prio_iter_if  *ifc_pii;
     char                       *ifc_errmsg;
     struct lsquic_engine_public
@@ -452,7 +448,6 @@ struct ietf_full_conn
     unsigned                    ifc_max_retx_since_last_ack;
     lsquic_time_t               ifc_max_ack_delay;
     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
-    uint64_t                    ifc_ecn_counts_out[N_PNS][4];
     lsquic_stream_id_t          ifc_max_req_id;
     struct hcso_writer          ifc_hcso;
     struct http_ctl_stream_in   ifc_hcsi;
@@ -1672,7 +1667,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         for (i = 0; i < 4; ++i)
         {
             conn->ifc_ecn_counts_in[pns][i]  = imc->imc_ecn_counts_in[pns][i];
-            conn->ifc_ecn_counts_out[pns][i] = imc->imc_ecn_counts_out[pns][i];
         }
     conn->ifc_incoming_ecn = imc->imc_incoming_ecn;
     conn->ifc_pub.rtt_stats = imc->imc_rtt_stats;
@@ -2040,6 +2034,7 @@ can_issue_cids (const struct ietf_full_conn *conn)
 
     can = ((1 << conn->ifc_conn.cn_n_cces) - 1
                                             != conn->ifc_conn.cn_cces_mask)
+       && conn->ifc_enpub->enp_settings.es_scid_len
        && conn->ifc_active_cids_count < conn->ifc_active_cids_limit;
     LSQ_DEBUG("can issue CIDs: %d (n_cces %hhu; mask: 0x%hhX; "
                                         "active: %hhu; limit: %hhu)",
@@ -3775,7 +3770,7 @@ handshake_ok (struct lsquic_conn *lconn)
     if (conn->ifc_settings->es_dplpmtud)
         conn->ifc_mflags |= MF_CHECK_MTU_PROBE;
 
-    if (can_issue_cids(conn) && CN_SCID(&conn->ifc_conn)->len != 0)
+    if (can_issue_cids(conn))
         conn->ifc_send_flags |= SF_SEND_NEW_CID;
     maybe_create_delayed_streams(conn);
 
@@ -7379,8 +7374,7 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                     packet_in->pi_received);
     switch (st) {
     case REC_ST_OK:
-        if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET))
-                                                && (packet_in->pi_scid_len))
+        if (!(conn->ifc_flags & (IFC_SERVER|IFC_DCID_SET)))
             record_dcid(conn, packet_in);
         saved_path_id = conn->ifc_cur_path_id;
         parse_regular_packet(conn, packet_in);
@@ -7742,8 +7736,6 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
     s = lsquic_send_ctl_sent_packet(&conn->ifc_send_ctl, packet_out);
     if (s != 0)
         ABORT_ERROR("sent packet failed: %s", strerror(errno));
-    ++conn->ifc_ecn_counts_out[ lsquic_packet_out_pns(packet_out) ]
-                              [ lsquic_packet_out_ecn(packet_out) ];
     /* Set blocked keep-alive for a [1,8] seconds */
     if (packet_out->po_frame_types
                             & (QUIC_FTBIT_BLOCKED|QUIC_FTBIT_STREAM_BLOCKED))
@@ -9398,7 +9390,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
     struct ietf_full_conn *const conn = (void *) stream_if_ctx;
     const struct hcsi_callbacks *callbacks;
 
-    conn->ifc_stream_hcsi = stream;
+    conn->ifc_mflags |= MF_HAVE_HCSI;
 
     switch ((!!(conn->ifc_flags & IFC_SERVER) << 8) | conn->ifc_conn.cn_version)
     {
@@ -9488,8 +9480,6 @@ hcsi_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 static void
 hcsi_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 {
-    struct ietf_full_conn *const conn = (void *) ctx;
-    conn->ifc_stream_hcsi = NULL;
 }
 
 
@@ -9509,7 +9499,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
     switch (stream_type)
     {
     case HQUST_CONTROL:
-        if (!conn->ifc_stream_hcsi)
+        if (!(conn->ifc_mflags & MF_HAVE_HCSI))
         {
             LSQ_DEBUG("Incoming HTTP control stream ID: %"PRIu64,
                                                             stream->id);
@@ -9518,9 +9508,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
         else
         {
             ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR,
-                "Control stream %"PRIu64" already exists: cannot create "
-                "second control stream %"PRIu64, conn->ifc_stream_hcsi->id,
-                stream->id);
+                "Attempt to create second control stream");
             lsquic_stream_close(stream);
         }
         break;

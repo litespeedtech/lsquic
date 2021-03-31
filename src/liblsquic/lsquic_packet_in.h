@@ -23,13 +23,14 @@ struct data_frame
 
 typedef struct stream_frame
 {
-    /* Stream frames are stored in a list inside stream. */
+    /* Stream frames are stored in a list inside "di nocopy" (if "di nocopy"
+     * is used).
+     */
     TAILQ_ENTRY(stream_frame)       next_frame;
 
-    /* `data' points somewhere into the packet payload.  The packet object
-     * is reference-counted.  When the frame is freed, the packet is released
-     * via lsquic_packet_put().  If data_length is zero, the frame does not
-     * keep a reference to the incoming packet and this pointer is not set.
+    /* `data_frame.df_data' points somewhere into the packet payload.  The
+     * packet object is reference-counted.  When the frame is freed, the
+     * packet is released via lsquic_packet_in_put().
      */
     struct lsquic_packet_in        *packet_in;
 

@@ -553,6 +553,25 @@ qdh_maybe_set_user_agent (struct qpack_dec_hdl *qdh,
 }
 
 
+/* Intercept header errors so that upper-layer errors do not get
+ * misinterpreted as QPACK errors.
+ */
+static int
+qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
+                                                struct lsxpack_header *xhdr)
+{
+    int retval;
+
+    retval = qdh->qdh_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
+    if (0 != retval)
+        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+            1 == retval ? HEC_MESSAGE_ERROR : HEC_INTERNAL_ERROR,
+            "error processing headers");
+
+    return retval;
+}
+
+
 static int
 qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
 {
@@ -584,7 +603,7 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
     else if ((qdh->qdh_flags & QDH_SAVE_UA) && !qdh->qdh_ua)
         qdh_maybe_set_user_agent(qdh, xhdr, &qdh->qdh_ua);
 
-    return qdh->qdh_enpub->enp_hsi_if->hsi_process_header(u->ctx.hset, xhdr);
+    return qdh_hsi_process_wrapper(qdh, u->ctx.hset, xhdr);
 }
 
 
@@ -643,8 +662,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
             uh->uh_exclusive = -1;
             if (qdh->qdh_enpub->enp_hsi_if == lsquic_http1x_if)
                 uh->uh_flags    |= UH_H1H;
-            if (0 != qdh->qdh_enpub->enp_hsi_if
-                                        ->hsi_process_header(hset, NULL))
+            if (0 != qdh_hsi_process_wrapper(qdh, hset, NULL))
             {
                 LSQ_DEBUG("finishing hset failed");
                 free(uh);

@@ -54,6 +54,7 @@ while (<TMPFILE>)
      or s/^iquic_esf_/esf_/
      or s/^gquic[0-9]?_esf_/esf_/
      or s/^iquic_esfi_/esfi_/
+     or s/^lsquic_[sh]pi_/pii_/
      or s/^(lsquic_cubic|lsquic_bbr)_/cci_/
     )
     {

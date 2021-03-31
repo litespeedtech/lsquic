@@ -418,6 +418,11 @@ struct req
     enum {
         HAVE_XHDR   = 1 << 0,
     }            flags;
+    enum {
+        PH_AUTHORITY    = 1 << 0,
+        PH_METHOD       = 1 << 1,
+        PH_PATH         = 1 << 2,
+    }            pseudo_headers;
     char        *path;
     char        *method_str;
     char        *authority_str;
@@ -1829,7 +1834,16 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
     unsigned name_len, value_len;
 
     if (!xhdr)
-        return 0;
+    {
+        if (req->pseudo_headers == (PH_AUTHORITY|PH_METHOD|PH_PATH))
+            return 0;
+        else
+        {
+            LSQ_INFO("%s: missing some pseudo-headers: 0x%X", __func__,
+                req->pseudo_headers);
+            return 1;
+        }
+    }
 
     name = lsxpack_header_get_name(xhdr);
     value = lsxpack_header_get_value(xhdr);
@@ -1856,6 +1870,7 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
         req->path = strndup(value, value_len);
         if (!req->path)
             return -1;
+        req->pseudo_headers |= PH_PATH;
         return 0;
     }
 
@@ -1872,6 +1887,7 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
             req->method = POST;
         else
             req->method = UNSUPPORTED;
+        req->pseudo_headers |= PH_METHOD;
         return 0;
     }
 
@@ -1880,6 +1896,7 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
         req->authority_str = strndup(value, value_len);
         if (!req->authority_str)
             return -1;
+        req->pseudo_headers |= PH_AUTHORITY;
         return 0;
     }
 

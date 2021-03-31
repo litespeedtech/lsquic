@@ -65,8 +65,8 @@ Contents
    gettingstarted
    tutorial
    apiref
-   internals
    devel
+   internals
    faq
 
 Indices and tables

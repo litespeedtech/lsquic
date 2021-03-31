@@ -64,7 +64,6 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_hash.h"
 #include "lsquic_conn.h"
-#include "lsquic_send_ctl.h"
 #include "lsquic_full_conn.h"
 #include "lsquic_util.h"
 #include "lsquic_qtags.h"
@@ -2908,6 +2907,8 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         }
     }
 
+    cub_flush(&engine->new_scids);
+
     if ((engine->pub.enp_flags & ENPUB_CAN_SEND)
                         && lsquic_engine_has_unsent_packets(engine))
         send_packets_out(engine, &ticked_conns, &closed_conns);
@@ -2948,7 +2949,6 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
         }
     }
 
-    cub_flush(&engine->new_scids);
     cub_flush(&cub_live);
     cub_flush(&cub_old);
 }

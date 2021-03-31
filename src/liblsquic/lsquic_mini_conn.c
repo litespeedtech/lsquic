@@ -11,10 +11,6 @@
  * spooled, if necessary.  When mini connection is promoted to full
  * connection, the state, including spooled incoming packets, is transferred
  * to the full connection.
- *
- * Note that mini connections do not retransmit lost packets.  This is to
- * minimize the effect of magnification attacks.  Clients like Chrome and
- * Opera fall back to using TCP if QUIC handshake times out.
  */
 
 
