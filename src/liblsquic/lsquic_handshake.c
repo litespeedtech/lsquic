@@ -120,6 +120,7 @@ enum enc_sess_history_event
     ESHE_SNO_OK             =  'f',
     ESHE_MULTI2_2BITS       =  'i',
     ESHE_SNI_DELAYED        =  'Y',
+    ESHE_XLCT_MISMATCH      =  'x',
 };
 #endif
 
@@ -155,6 +156,7 @@ typedef struct hs_ctx_st
     uint32_t    tcid;
     uint32_t    smhl;
     uint64_t    sttl;
+    uint64_t    xlct;
     unsigned char scid[SCID_LENGTH];
     //unsigned char chlo_hash[32]; //SHA256 HASH of CHLO
     unsigned char nonc[DNONC_LENGTH]; /* 4 tm, 8 orbit ---> REJ, 20 rand */
@@ -1264,6 +1266,10 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         ESHIST_APPEND(enc_session, ESHE_SET_SRST);
         break;
 
+    case QTAG_XLCT:
+        hs_ctx->xlct = get_tag_value_i64(val, len);
+        break;
+
     default:
         LSQ_DEBUG("Ignored tag '%.*s'", 4, (char *)&tag);
         break;
@@ -1658,6 +1664,7 @@ determine_rtts (struct lsquic_enc_session *enc_session,
 {
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
     enum hsk_failure_reason hfr;
+    uint64_t hash = 0;
 
     if (!(hs_ctx->set & HSET_SCID))
     {
@@ -1692,6 +1699,20 @@ determine_rtts (struct lsquic_enc_session *enc_session,
         hs_ctx->rrej = HFR_CONFIG_INCHOATE_HELLO;
         ESHIST_APPEND(enc_session, ESHE_EMPTY_CCRT);
         goto fail_1rtt;
+    }
+
+    if (hs_ctx->xlct)
+    {
+        hash = lsquic_fnv1a_64((const uint8_t *)lsquic_str_buf(enc_session->cert_ptr),
+                    lsquic_str_len(enc_session->cert_ptr));
+
+        if (hash != hs_ctx->xlct)
+        {
+            /* The expected leaf certificate hash could not be validated. */
+            hs_ctx->rrej = HFR_INVALID_EXPECTED_LEAF_CERTIFICATE;
+            ESHIST_APPEND(enc_session, ESHE_XLCT_MISMATCH);
+            goto fail_1rtt;
+        }
     }
 
     if (lsquic_str_len(&enc_session->ssno) > 0)
@@ -2333,9 +2354,6 @@ handle_chlo_frames_data(const uint8_t *data, int len,
     }
 
 
-    rtt = determine_rtts(enc_session, ip, t);
-    ESHIST_APPEND(enc_session, ESHE_MULTI2_2BITS + rtt);
-    lsquic_str_setto(&enc_session->chlo, (const char *)data, len);
     switch (get_sni_SSL_CTX(enc_session, cb, cb_ctx, local))
     {
     case GET_SNI_ERR:
@@ -2346,6 +2364,9 @@ handle_chlo_frames_data(const uint8_t *data, int len,
         break;
     }
 
+    rtt = determine_rtts(enc_session, ip, t);
+    ESHIST_APPEND(enc_session, ESHE_MULTI2_2BITS + rtt);
+    lsquic_str_setto(&enc_session->chlo, (const char *)data, len);
 
     LSQ_DEBUG("handle_chlo_frames_data return %d.", rtt);
     return rtt;
