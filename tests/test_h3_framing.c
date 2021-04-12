@@ -1467,8 +1467,7 @@ test_reading_zero_size_data_frame (void)
 
     /* Fake out reading of HEADERS frame: */
     stream->stream_flags |= STREAM_HAVE_UH;
-    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
-    stream->sm_hq_filter.hqfi_hist_idx++;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
 
     /* One-byte DATA frame */
     frame = new_frame_in_ext(&tobjs, 0, 3, 0, (uint8_t[3]){ 0, 1, 'a', });
@@ -1524,8 +1523,7 @@ test_reading_zero_size_data_frame_scenario2 (void)
 
     /* Fake out reading of HEADERS frame: */
     stream->stream_flags |= STREAM_HAVE_UH;
-    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
-    stream->sm_hq_filter.hqfi_hist_idx++;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
 
     /* Zero-length DATA frame */
     frame = new_frame_in_ext(&tobjs, 0, 5, 0, (uint8_t[5]){ 0, 1, 'a', 0, 0, });
@@ -1576,8 +1574,7 @@ test_reading_zero_size_data_frame_scenario3 (void)
 
     /* Fake out reading of HEADERS frame: */
     stream->stream_flags |= STREAM_HAVE_UH;
-    stream->sm_hq_filter.hqfi_hist_buf = 1 /* CODE_HEADER */;
-    stream->sm_hq_filter.hqfi_hist_idx++;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
 
     /* Zero-length DATA frame */
     frame = new_frame_in_ext(&tobjs, 0, 4, 0, (uint8_t[4]){ 0, 1, 'a', 0, });
