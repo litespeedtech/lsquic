@@ -585,13 +585,14 @@ send_headers (lsquic_stream_ctx_t *st_h)
     if (!hostname)
         hostname = st_h->client_ctx->prog->prog_hostname;
     hbuf.off = 0;
-    struct lsxpack_header headers_arr[9];
+    struct lsxpack_header headers_arr[10];
 #define V(v) (v), strlen(v)
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V(st_h->client_ctx->method));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":path"), V(st_h->path));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"), V(hostname));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
+    //header_set_ptr(&headers_arr[h_idx++], &hbuf, V("expect"), V("100-continue"));
     if (randomly_reprioritize_streams)
     {
         char pfv[10];

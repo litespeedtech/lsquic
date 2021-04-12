@@ -1,3 +1,12 @@
+2021-04-12
+    - 2.30.0
+    - Added support for sending/receiving multiple headers to address the
+      case related to "100 continue" header handling.
+    - Addressed high CPU usage for a GOAWAY connection before sending
+      CONNECTION_CLOSE.
+    - Addressed SIGFPE due to zero pacing rate. (ISSUE #254).
+    - Fixed a minor issue related to multi-paths.
+
 2021-03-31
     - 2.29.6
     - Documentation: describe lsquic internals ("guts").

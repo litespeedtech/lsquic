@@ -623,15 +623,13 @@ lsquic_stream_drop_hset_ref (struct lsquic_stream *stream)
 
 
 static void
-destroy_uh (struct lsquic_stream *stream)
+destroy_uh (struct uncompressed_headers *uh, const struct lsquic_hset_if *hsi_if)
 {
-    if (stream->uh)
+    if (uh)
     {
-        if (stream->uh->uh_hset)
-            stream->conn_pub->enpub->enp_hsi_if
-                            ->hsi_discard_header_set(stream->uh->uh_hset);
-        free(stream->uh);
-        stream->uh = NULL;
+        if (uh->uh_hset)
+            hsi_if->hsi_discard_header_set(uh->uh_hset);
+        free(uh);
     }
 }
 
@@ -641,6 +639,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
 {
     struct push_promise *promise;
     struct stream_hq_frame *shf;
+    struct uncompressed_headers *uh;
 
     stream->stream_flags |= STREAM_U_WRITE_DONE|STREAM_U_READ_DONE;
     if ((stream->stream_flags & (STREAM_ONNEW_DONE|STREAM_ONCLOSE_DONE)) ==
@@ -687,7 +686,12 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     }
     while ((shf = STAILQ_FIRST(&stream->sm_hq_frames)))
         stream_hq_frame_put(stream, shf);
-    destroy_uh(stream);
+    while(stream->uh)
+    {
+        uh = stream->uh;
+        stream->uh = uh->uh_next;
+        destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
+    }
     free(stream->sm_buf);
     free(stream->sm_header_block);
     LSQ_DEBUG("destroyed stream");
@@ -1443,7 +1447,8 @@ static size_t
 read_uh (struct lsquic_stream *stream,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
-    struct http1x_headers *const h1h = stream->uh->uh_hset;
+    struct uncompressed_headers *uh = stream->uh;
+    struct http1x_headers *const h1h = uh->uh_hset;
     size_t nread;
 
     nread = readf(ctx, (unsigned char *) h1h->h1h_buf + h1h->h1h_off,
@@ -1452,8 +1457,10 @@ read_uh (struct lsquic_stream *stream,
     h1h->h1h_off += nread;
     if (h1h->h1h_off == h1h->h1h_size)
     {
-        LSQ_DEBUG("read all uncompressed headers");
-        destroy_uh(stream);
+        stream->uh = uh->uh_next;
+        LSQ_DEBUG("read all uncompressed headers from uh: %p, next uh: %p",
+                    uh, stream->uh);
+        destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
         if (stream->stream_flags & STREAM_HEAD_IN_FIN)
         {
             stream->stream_flags |= STREAM_FIN_REACHED;
@@ -4186,7 +4193,7 @@ lsquic_stream_send_headers (lsquic_stream_t *stream,
                             const lsquic_http_headers_t *headers, int eos)
 {
     if ((stream->sm_bflags & SMBF_USE_HEADERS)
-            && !(stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_U_WRITE_DONE)))
+            && !(stream->stream_flags & (STREAM_U_WRITE_DONE)))
     {
         if (stream->sm_bflags & SMBF_IETF)
             return send_headers_ietf(stream, headers, eos);
@@ -4411,15 +4418,19 @@ static int
 stream_uh_in_gquic (struct lsquic_stream *stream,
                                             struct uncompressed_headers *uh)
 {
-    if ((stream->sm_bflags & SMBF_USE_HEADERS)
-                                    && !(stream->stream_flags & STREAM_HAVE_UH))
+    struct uncompressed_headers **next;
+    if ((stream->sm_bflags & SMBF_USE_HEADERS))
     {
         SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
         LSQ_DEBUG("received uncompressed headers");
         stream->stream_flags |= STREAM_HAVE_UH;
         if (uh->uh_flags & UH_FIN)
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
-        stream->uh = uh;
+        next = &stream->uh;
+        while(*next)
+            next = &(*next)->uh_next;
+        *next = uh;
+        assert(uh->uh_next == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -4443,9 +4454,10 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
                                             struct uncompressed_headers *uh)
 {
     int push_promise;
+    struct uncompressed_headers **next;
 
     push_promise = lsquic_stream_header_is_pp(stream);
-    if (!(stream->stream_flags & STREAM_HAVE_UH) && !push_promise)
+    if (!push_promise)
     {
         SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
         LSQ_DEBUG("received uncompressed headers");
@@ -4460,7 +4472,11 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
                                             && lsquic_stream_is_pushed(stream));
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
         }
-        stream->uh = uh;
+        next = &stream->uh;
+        while(*next)
+            next = &(*next)->uh_next;
+        *next = uh;
+        assert(uh->uh_next == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -4652,6 +4668,7 @@ void *
 lsquic_stream_get_hset (struct lsquic_stream *stream)
 {
     void *hset;
+    struct uncompressed_headers *uh;
 
     if (stream_is_read_reset(stream))
     {
@@ -4676,9 +4693,14 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 
     hset = stream->uh->uh_hset;
     stream->uh->uh_hset = NULL;
-    destroy_uh(stream);
+
+    uh = stream->uh;
+    stream->uh = uh->uh_next;
+    free(uh);
+
     if (stream->stream_flags & STREAM_HEAD_IN_FIN)
     {
+
         stream->stream_flags |= STREAM_FIN_REACHED;
         SM_HISTORY_APPEND(stream, SHE_REACH_FIN);
     }
@@ -4706,31 +4728,21 @@ static int
 update_type_hist_and_check (const struct lsquic_stream *stream,
                                                     struct hq_filter *filter)
 {
-    /* 3-bit codes: */
-    enum {
-        CODE_UNSET,
-        CODE_HEADER,    /* H    Header  */
-        CODE_DATA,      /* D    Data    */
-        CODE_PLUS,      /* +    Plus: meaning previous frame repeats */
-    };
-    static const unsigned valid_seqs[] = {
-        /* Ordered by expected frequency */
-        0123,   /* HD+  */
-        012,    /* HD   */
-        01,     /* H    */
-        013,    /* H+   */ /* Really HH, but we don't record it like this */
-        01231,  /* HD+H */
-        0121,   /* HDH  */
-    };
-    unsigned code, i;
-
     switch (filter->hqfi_type)
     {
     case HQFT_HEADERS:
-        code = CODE_HEADER;
+        if (filter->hqfi_flags & HQFI_FLAG_TRAILER)
+            return -1;
+        if (filter->hqfi_flags & HQFI_FLAG_DATA)
+            filter->hqfi_flags |= HQFI_FLAG_TRAILER;
+        else
+            filter->hqfi_flags |= HQFI_FLAG_HEADER;
         break;
     case HQFT_DATA:
-        code = CODE_DATA;
+        if ((filter->hqfi_flags & (HQFI_FLAG_HEADER
+              | HQFI_FLAG_TRAILER)) != HQFI_FLAG_HEADER)
+            return -1;
+        filter->hqfi_flags |= HQFI_FLAG_DATA;
         break;
     case HQFT_PUSH_PROMISE:
         /* [draft-ietf-quic-http-24], Section 7 */
@@ -4768,31 +4780,7 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
         return 0;
     }
 
-    if (filter->hqfi_hist_idx >= MAX_HQFI_ENTRIES)
-        return -1;
-
-    if (filter->hqfi_hist_idx && (filter->hqfi_hist_buf & 7) == code)
-    {
-        filter->hqfi_hist_buf <<= 3;
-        filter->hqfi_hist_buf |= CODE_PLUS;
-        filter->hqfi_hist_idx++;
-    }
-    else if (filter->hqfi_hist_idx > 1
-            && ((filter->hqfi_hist_buf >> 3) & 7) == code
-            && (filter->hqfi_hist_buf & 7) == CODE_PLUS)
-        /* Keep it at plus, do nothing */;
-    else
-    {
-        filter->hqfi_hist_buf <<= 3;
-        filter->hqfi_hist_buf |= code;
-        filter->hqfi_hist_idx++;
-    }
-
-    for (i = 0; i < sizeof(valid_seqs) / sizeof(valid_seqs[0]); ++i)
-        if (filter->hqfi_hist_buf == valid_seqs[i])
-            return 0;
-
-    return -1;
+    return 0;
 }
 
 
@@ -4860,8 +4848,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             {
                 lconn = stream->conn_pub->lconn;
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
-                LSQ_INFO("unexpected HTTP/3 frame sequence: %o",
-                    filter->hqfi_hist_buf);
+                LSQ_INFO("unexpected HTTP/3 frame sequence");
                 lconn->cn_if->ci_abort_error(lconn, 1, HEC_FRAME_UNEXPECTED,
                     "unexpected HTTP/3 frame sequence on stream %"PRIu64,
                     stream->id);

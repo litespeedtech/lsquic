@@ -704,6 +704,7 @@ wipe_path (struct ietf_full_conn *conn, unsigned path_id)
     memset(&conn->ifc_paths[path_id], 0, sizeof(conn->ifc_paths[0]));
     conn->ifc_paths[path_id].cop_path.np_path_id = path_id;
     conn->ifc_paths[path_id].cop_path.np_peer_ctx = peer_ctx;
+    conn->ifc_used_paths &= ~(1 << path_id);
 }
 
 
@@ -2755,6 +2756,20 @@ have_bidi_streams (const struct ietf_full_conn *conn)
 }
 
 
+static int
+conn_ok_to_close (const struct ietf_full_conn *conn)
+{
+    assert(conn->ifc_flags & IFC_CLOSING);
+    return !(conn->ifc_flags & IFC_SERVER)
+        || (conn->ifc_flags & IFC_RECV_CLOSE)
+        || (
+               !lsquic_send_ctl_have_outgoing_stream_frames(&conn->ifc_send_ctl)
+            && !have_bidi_streams(conn)
+            && lsquic_send_ctl_have_unacked_stream_frames(
+                                                    &conn->ifc_send_ctl) == 0);
+}
+
+
 static void
 maybe_close_conn (struct ietf_full_conn *conn)
 {
@@ -2763,8 +2778,13 @@ maybe_close_conn (struct ietf_full_conn *conn)
         && !have_bidi_streams(conn))
     {
         conn->ifc_flags |= IFC_CLOSING|IFC_GOAWAY_CLOSE;
-        conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
-        LSQ_DEBUG("closing connection: GOAWAY sent and no responses remain");
+        LSQ_DEBUG("maybe_close_conn: GOAWAY sent and no responses remain");
+        if (conn_ok_to_close(conn))
+        {
+            conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
+            LSQ_DEBUG("maybe_close_conn: ok to close: "
+                      "schedule to send CONNECTION_CLOSE");
+        }
     }
 }
 
@@ -2920,7 +2940,12 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
                 lsquic_stream_maybe_reset(stream, 0, 1);
         }
         conn->ifc_flags |= IFC_CLOSING;
-        conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
+        if (conn_ok_to_close(conn))
+        {
+            conn->ifc_send_flags |= SF_SEND_CONN_CLOSE;
+            LSQ_DEBUG("ietf_full_conn_ci_close: ok to close: "
+                      "schedule to send CONNECTION_CLOSE");
+        }
         lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
     }
 }
@@ -3204,7 +3229,8 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
     {
         if (!(conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY)))
         {
-            LSQ_INFO("connection marked as going away");
+            LSQ_INFO("connection marked as going away, last stream: %ld",
+                     conn->ifc_max_req_id);
             conn->ifc_flags |= IFC_GOING_AWAY;
             const lsquic_stream_id_t stream_id = conn->ifc_max_req_id + N_SITS;
             if (valid_stream_id(stream_id))
@@ -4337,20 +4363,6 @@ process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
     conn->ifc_pii->pii_cleanup(&pi);
 
     maybe_conn_flush_special_streams(conn);
-}
-
-
-static int
-conn_ok_to_close (const struct ietf_full_conn *conn)
-{
-    assert(conn->ifc_flags & IFC_CLOSING);
-    return !(conn->ifc_flags & IFC_SERVER)
-        || (conn->ifc_flags & IFC_RECV_CLOSE)
-        || (
-               !lsquic_send_ctl_have_outgoing_stream_frames(&conn->ifc_send_ctl)
-            && !have_bidi_streams(conn)
-            && lsquic_send_ctl_have_unacked_stream_frames(
-                                                    &conn->ifc_send_ctl) == 0);
 }
 
 
@@ -8325,7 +8337,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
   end_write:
-    if ((conn->ifc_flags & IFC_CLOSING) && conn_ok_to_close(conn))
+    if ((conn->ifc_flags & IFC_CLOSING)
+        && ((conn->ifc_send_flags & SF_SEND_CONN_CLOSE)
+            || conn_ok_to_close(conn)))
     {
         LSQ_DEBUG("connection is OK to close");
         conn->ifc_flags |= IFC_TICK_CLOSE;

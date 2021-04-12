@@ -38,7 +38,7 @@ Fetch Google home page:
 
 ::
 
-    ./http_client -s www.google.com -p / -o version=Q050
+    ./http_client -s www.google.com -p / -o version=h3-29
 
 Run your own server (it does not touch the filesystem, don't worry):
 

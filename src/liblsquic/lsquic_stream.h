@@ -109,6 +109,9 @@ struct hq_filter
         HQFI_FLAG_ERROR         = 1 << 1,
         HQFI_FLAG_BEGIN         = 1 << 2,
         HQFI_FLAG_BLOCKED       = 1 << 3,
+        HQFI_FLAG_HEADER        = 1 << 4,
+        HQFI_FLAG_DATA          = 1 << 5,
+        HQFI_FLAG_TRAILER       = 1 << 6,
     }                           hqfi_flags:8;
     enum {
         HQFI_STATE_FRAME_HEADER_BEGIN,
@@ -117,9 +120,6 @@ struct hq_filter
         HQFI_STATE_PUSH_ID_BEGIN,
         HQFI_STATE_PUSH_ID_CONTINUE,
     }                           hqfi_state:8;
-    unsigned char               hqfi_hist_idx;
-#define MAX_HQFI_ENTRIES (sizeof(unsigned) * 8 / 3)
-    unsigned                    hqfi_hist_buf;
 };
 
 

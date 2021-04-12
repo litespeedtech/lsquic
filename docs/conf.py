@@ -24,9 +24,9 @@ copyright = u'2021, LiteSpeed Technologies'
 author = u'LiteSpeed Technologies'
 
 # The short X.Y version
-version = u'2.29'
+version = u'2.30'
 # The full version, including alpha/beta/rc tags
-release = u'2.29.6'
+release = u'2.30.0'
 
 
 # -- General configuration ---------------------------------------------------
@@ -39,6 +39,12 @@ release = u'2.29.6'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+# To make ours look like readthedocs.io, change theme to "sphinx_rtd_theme",
+# pip install sphinx_rtd_theme, and uncomment extensions:
+#    "sphinx.ext.intersphinx",
+#    "sphinx.ext.autodoc",
+#    "sphinx.ext.mathjax",
+#    "sphinx.ext.viewcode",
 ]
 
 # Add any paths that contain templates here, relative to this directory.

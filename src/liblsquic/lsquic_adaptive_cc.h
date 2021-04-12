@@ -15,7 +15,7 @@ struct adaptive_cc
     struct lsquic_cubic     acc_cubic;
     struct lsquic_bbr       acc_bbr;
     enum {
-        ACC_CUBIC,  /* If set, use Cubic; otherwise, use BBR */
+        ACC_CUBIC = 1,  /* If set, use Cubic; otherwise, use BBR */
     }                       acc_flags;
 };
 

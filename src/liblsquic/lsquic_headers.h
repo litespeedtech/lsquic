@@ -36,6 +36,8 @@ struct uncompressed_headers
                            UH_H1H  = (1 << 2),  /* uh_hset points to http1x_headers */
     }                      uh_flags:8;
     void                  *uh_hset;
+    struct uncompressed_headers
+                          *uh_next;
 };
 
 #endif

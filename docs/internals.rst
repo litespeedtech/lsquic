@@ -22,16 +22,6 @@ Code Version
 
 The code version under discussion is v2.29.6.
 
-High-Level Structure
-********************
-
-At a high level, the lsquic library can be used to instantiate an engine
-(or several engines). An engine manages connections; each connection has
-streams. Engine, connection, and stream objects are exposed to the user
-who interacts with them using the API (see :doc:`apiref`). All other data
-structures are internal and are hanging off, in one way or another, from
-the engine, connection, or stream objects.
-
 Coding Style
 ************
 
@@ -96,6 +86,21 @@ List of Common Terms
 
 -  **iQUIC** This stands for IETF QUIC. To differentiate between gQUIC
    and IETF QUIC, we use ``iquic`` in some names and types.
+
+-  **Public Reset** In the IETF QUIC parlance, this is called the *stateless*
+   reset.  Because gQUIC was first to be implemented, this name is still
+   used in the code, even when the IETF QUIC stateless reset is meant.
+   You will see names that contain strings like "prst" and "pubres".
+
+High-Level Structure
+********************
+
+At a high level, the lsquic library can be used to instantiate an engine
+(or several engines). An engine manages connections; each connection has
+streams. Engine, connection, and stream objects are exposed to the user
+who interacts with them using the API (see :doc:`apiref`). All other data
+structures are internal and are hanging off, in one way or another, from
+the engine, connection, or stream objects.
 
 Engine
 ******
@@ -573,11 +578,11 @@ dedicated chapters elsewhere in this document:
 
 -  `Mini gQUIC Connection <#mini-gquic-connection>`__
 
--  `Full gQUIC Connection <#connection-public-interface>`__
+-  `Full gQUIC Connection <#full-gquic-connection>`__
 
 -  `Mini IETF QUIC Connection <#mini-ietf-connection>`__
 
--  `Full IETF QUIC Connection <#mini-ietf-connection>`__
+-  `Full IETF QUIC Connection <#full-ietf-connection>`__
 
 -  `Evanescent Connection <#evanescent-connection>`__
 
@@ -619,7 +624,7 @@ Various list and heap connectors
 
 A connection may be pointed to by one or several queues and heaps (see
 "\ `Connection Management <#connection-management>`__\ "). There are
-several struct members that make it possible: all the \*TAILQ_ENTRYs,
+several struct members that make it possible: \*TAILQ_ENTRYs,
 ``cn_attq_elem``, and ``cn_cert_susp_head``.
 
 Version
@@ -1135,11 +1140,155 @@ size will be written by a different function.
 Parsing
 *******
 
+*Files: lsquic_parse.h, lsquic_parse_ietf_v1.c, lsquic_parse_Q050.c, lsquic_parse_Q046.c,
+lsquic_parse_gquic_be.c, lsquic_parse_common.c, and others*
+
+Overview
+========
+
+The two types of QUIC -- gQUIC and IETF QUIC -- have different packet and
+frame formats.  In addition, different gQUIC version are different among
+themselves.  Functions to parse and generate packets and frames of each
+type are abstracted out behind the rather large ``struct parse_funcs``.
+When a connection is created, its ``cn_pf`` member is set to point to
+the correct set of function pointers via the ``select_pf_by_ver()`` macro.
+
 Parsing Packets
 ===============
 
+Before settling on a particular set of parsing function for a connection,
+the server needs to determine the connection's version.  It does so using
+the function ``lsquic_parse_packet_in_server_begin()``.
+
+This function figures out whether the packet has a long or a short header,
+and which QUIC version it is.  Because the server deals with fewer packet
+types than the client (no version negotiation or stateless retry packets),
+it can determine the necessary parsing function from the first byte of the
+incoming packet.
+
+The "begin" in the name of the function refers to the fact that packet
+parsing is a two-step process [3]_.  In the first step, the packet version,
+CID, and some other parameters are parsed out; in the second step,
+version-specific ``pf_parse_packet_in_finish()`` is called to parse out
+the packet number.  Between the two calls, the state is saved in
+``struct packin_parse_state``.
+
+Generating Packets
+==================
+
+Packets are generated during encryption using the ``pf_gen_reg_pkt_header()``
+function.  The generated header is encrypted together with the `packet payload`_
+and this becomes the QUIC packet that is sent out.  (Most of the time, the
+QUIC packet corresponds to the UDP datagram, but sometimes packets are
+`coalesced <#packet-coalescing>`__.
+
 Parsing Frames
 ==============
+
+There is a parsing function for each frame type.  These function generally
+have names that begin with "pf_parse\_" and follow a similar pattern:
+
+-   The first argument is the buffer to be parsed;
+
+-   The second argument is its size;
+
+-   Any additional arguments are outputs: the parsed out values from the frame;
+
+-   Number of bytes consumed is returned or a negative value is returned
+    if a parsing error occurred.
+
+For example:
+
+::
+
+    int
+    (*pf_parse_stream_frame) (const unsigned char *buf, size_t rem_packet_sz,
+                                                    struct stream_frame *);
+
+    int
+    (*pf_parse_max_data) (const unsigned char *, size_t, uint64_t *);
+
+Generating Frames
+=================
+
+Functions that generate frames begin with "pf_gen\_" and also follow a
+pattern:
+
+-   First argument is the buffer to be written to;
+
+-   The second argument is the buffer size;
+
+-   Any additional arguments specify the values to include in the frame;
+
+-   The size of the resulting frame is returned or a negative value if
+    an error occurred.
+
+For example:
+
+::
+
+    int
+    (*pf_gen_path_chal_frame) (unsigned char *, size_t, uint64_t chal);
+
+    int
+    (*pf_gen_stream_frame) (unsigned char *buf, size_t bufsz,
+                            lsquic_stream_id_t stream_id, uint64_t offset,
+                            int fin, size_t size, gsf_read_f, void *stream);
+
+Frame Types
+===========
+
+Frame types are listed in ``enum quic_frame_type``.  When frames are parsed,
+the on-the-wire frame type is translated to the enum value; when frames are
+generated, the enum is converted to the on-the-wire format.  This indirection
+is convenient, as it limits the range of possible QUIC frame values, making
+it possible to store a list of frame types as a bitmask.  Examples include
+``po_frame_types`` and ``sc_retx_frames``.
+
+Some frame types, such as ACK and STREAM, are common to both Google and IETF
+QUIC.  Others, such as STOP_WAITING and RETIRE_CONNECTION_ID, are only used
+in one of the protocols.  The third type is frames that are used by IETF
+QUIC extensions, such as TIMESTAMP and ACK_FREQUENCY.
+
+Parsing IETF QUIC Frame Types
+-----------------------------
+
+Most IETF frame types are encoded as a single by on the wire (and all Google
+QUIC frames are).  Some of them are encoded using multiple bytes.  This is
+because, like the vast majority of all integral values in IETF QUIC, the frame
+type is encoded as a varint.  Unlike the other integral values, however, the
+frame type has the unique property is that it must be encoded using the
+*minimal representation*: that is, the encoding must use the minimum number
+of bytes possible.  For example, encoding the value 200 must use the two-byte
+varint, not four- or eight-byte version.  This makes it possible to parse
+frame types once without having to reparse the frame type again in individual
+frame-parsing routines.
+
+Frame type is parsed out in ``ietf_v1_parse_frame_type()``.  Because of the
+minimal encoding requirement, the corresponding frame-parsing functions know
+the number of bytes to skip for type, for example:
+
+
+::
+
+    static int
+    ietf_v1_parse_frame_with_varints (const unsigned char *buf, size_t len,
+                const uint64_t frame_type, unsigned count, uint64_t *vals[])
+    {
+        /* --- 8< --- code removed */
+        vbits = vint_val2bits(frame_type);
+        p += 1 << vbits;                    // <=== SKIP FRAME TYPE
+        /* --- 8< --- code removed */
+    }
+
+    static int
+    ietf_v1_parse_timestamp_frame (const unsigned char *buf,
+                                    size_t buf_len, uint64_t *timestamp)
+    {
+        return ietf_v1_parse_frame_with_varints(buf, buf_len,
+                FRAME_TYPE_TIMESTAMP, 1, (uint64_t *[]) { timestamp });
+    }
+
 
 Mini vs Full Connections
 ************************
@@ -1772,13 +1921,6 @@ The following steps are performed:
 
 -  Streams are serviced (closed, freed, created)
 
-.. _notable-code-4:
-
-Notable Code
-============
-
-TODO
-
 Full IETF Connection
 ********************
 
@@ -2240,8 +2382,22 @@ Last time ``ea_live_scids()`` was called.
 ifc_paths
 ---------
 
-Array of network paths.  Most of the time, only one path is used when the
-peer migrates.  The array has four elements as a safe upper limit.
+Array of connection paths.  Most of the time, only one path is used; more
+are used during `migration <#path-migration>`__.  The array has four
+elements as a safe upper limit.
+
+The elements are of type ``struct conn_path``.  Besides the network path,
+which stores socket addresses and is associated with each outgoing packet
+(via ``po_path``), the connection path keeps track of the following
+information:
+
+-   Outgoing path challenges.  See `Sending Path Challenges`_.
+
+-   Incoming path challenge.
+
+-   Spin bit (``cop_max_packno``, ``cop_spin_bit``, and ``COP_SPIN_BIT``).
+
+-   DPLPMTUD state.
 
 ifc_u.cli
 ---------
@@ -2348,6 +2504,140 @@ be found).
 Path Migration
 ==============
 
+What follows assumes familiarity with `Section 9
+<https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-9>`__
+of the Transport I-D.
+
+Server
+------
+
+The server handles two types of path migration.  In the first type, the
+client performs probing by sending path challenges; in the second type,
+the migration is due to a NAT rebinding.
+
+The connection keeps track of different paths in `ifc_paths`_.  Path
+objects are allocated out of the ``ifc_paths`` array.  They are of type
+``struct conn_path``; one of the members is ``cop_path``, which is the
+network path object used to send packets (via ``po_path``).
+
+Each incoming packet is fed to the engine using the
+``lsquic_engine_packet_in()`` function.  Along with the UDP datagram,
+the local and peer socket addresses are passed to it.  These addresses are
+eventually passed to the connection via the ``ci_record_addrs()`` call.
+The first of these calls -- for the first incoming packet -- determines the
+*current path*.  When the address pair, which is a four-tuple of local
+and remote IP addresses and port numbers, does not match that of the
+current path, a new path object is created, triggering migration logic.
+
+``ci_record_addrs()`` returns a *path ID*, which is simply the index of
+the corresponding element in the ``ifc_paths`` array.  The current path
+ID is stored in ``ifc_cur_path_id``.  The engine assigns this value to
+the newly created incoming packet (in ``pi_path_id``).  The packet is
+then passed to ``ci_packet_in()``.
+
+The first part of the path-switching logic is in ``process_regular_packet()``:
+
+::
+
+    case REC_ST_OK:
+        /* --- 8< --- some code elided... */
+        saved_path_id = conn->ifc_cur_path_id;
+        parse_regular_packet(conn, packet_in);
+        if (saved_path_id == conn->ifc_cur_path_id)
+        {
+            if (conn->ifc_cur_path_id != packet_in->pi_path_id)
+            {
+                if (0 != on_new_or_unconfirmed_path(conn, packet_in))
+                {
+                    LSQ_DEBUG("path %hhu invalid, cancel any path response "
+                        "on it", packet_in->pi_path_id);
+                    conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP
+                                                    << packet_in->pi_path_id);
+                }
+
+The above means: if the current path has not changed after the packet
+was processed, but the packet came in on a different path, then invoke
+the "on new or unconfirmed path" logic.  This is done this way because
+the current path may be have been already changed if the packet contained
+a PATH_RESPONSE frame.
+
+First time a packet is received on a new path, a PATH_CHALLENGE frame is
+scheduled.
+
+If more than one packet received on the new path contain non-probing frames,
+the current path is switched: it is assumed that the path change is due to
+NAT rebinding.
+
+Client
+------
+
+Path migration is controlled by the client.  When the client receives
+a packet from an unknown server address, it drops the packet on the
+floor (per spec).  This code is in ``process_regular_packet()``.
+
+The client can migrate if ``es_allow_migration`` is on (it is in the default
+configuration) and the server provides the "preferred_address" transport
+parameter.  The migration process begins once the handshake is confirmed;
+see the ``maybe_start_migration()`` function.  The SCID provided by the
+server as part of the "preferred_address" transport parameter is used as the
+destination CID and path #1 is picked:
+
+
+::
+
+    copath = &conn->ifc_paths[1];
+    migra_begin(conn, copath, dce, (struct sockaddr *) &sockaddr, params);
+    return BM_MIGRATING;
+
+In ``migra_begin``, migration state is initiated and sending of a
+PATH_CHALLENGE frame is scheduled:
+
+::
+
+    conn->ifc_mig_path_id = copath - conn->ifc_paths;
+    conn->ifc_used_paths |= 1 << conn->ifc_mig_path_id;
+    conn->ifc_send_flags |= SF_SEND_PATH_CHAL << conn->ifc_mig_path_id;
+    LSQ_DEBUG("Schedule migration to path %hhu: will send PATH_CHALLENGE",
+        conn->ifc_mig_path_id);
+
+Sending Path Challenges
+-----------------------
+
+To send a path challenge, a packet is allocated to be sent on that path,
+a new challenge is generated, the PATH_CHALLENGE is written to the
+packet, and the packet is scheduled.  All this happens in the
+``generate_path_chal_frame()`` function.
+
+::
+
+    need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();
+    packet_out = get_writeable_packet_on_path(conn, need, &copath->cop_path, 1);
+    /* --- 8< --- some code elided... */
+    w = conn->ifc_conn.cn_pf->pf_gen_path_chal_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            copath->cop_path_chals[copath->cop_n_chals]);
+    /* --- 8< --- some code elided... */
+    lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + path_id,
+                    now + (INITIAL_CHAL_TIMEOUT << (copath->cop_n_chals - 1)));
+
+If the path response is not received before a timeout, another path challenge
+is sent, up to the number of elements in ``cop_path_chals``.  The timeout
+uses exponential back-off; it is not based on RTT, because the RTT of the
+new path is unknown.
+
+Receiving Path Responses
+------------------------
+
+When a PATH_RESPONSE frame is received, the path on which the corresponding
+challenge was sent may become the new current path.  See
+``process_path_response_frame()``.
+
+Note that the path ID of the incoming packet with the PATH_RESPONSE frame is
+not taken into account.  This is by design: see
+`Section 8.2.2 of the Transport I-D
+<https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-8.2.2>`__.
+
 Stream Priority Iterators
 =========================
 
@@ -2385,8 +2675,181 @@ some limited interop testing.
 Anatomy of Outgoing Packet
 **************************
 
+Overview
+========
+
+The outgoing packet is represented by ``struct lsquic_packet_out``.  An
+outgoing packet always lives on one -- and only one -- of the
+`Send Controller`_'s `Packet Queues`_.  For that, ``po_next`` is used.
+
+Beyond the packet number, stored in ``po_packno``, the packet has several
+properties: sent time (``po_sent``), frame information, encryption
+level, network path, and others.  Several properties are encoded into
+one or more bits in the bitmasks ``po_flags`` and ``po_lflags``.
+Multibit properties are usually accessed and modified by a special
+macro.
+
+The packet has a pointer to the packetized data in ``po_data``.
+If the packet has been encrypted but not yet sent, the encrypted
+buffer is pointed to ``po_enc_data``.
+
+Packet Payload
+==============
+
+The payload consists of the various frames -- STREAM, ACK, and others --
+written, one after another, to ``po_data``.  The header, consisting of
+the type byte, (optional) connection ID, and the packet number is constructed
+when the packet is just about to be sent, during encryption.  This
+buffer -- header and the encrypted payload are stored in a buffer
+pointed to by ``po_enc_data``.
+
+Because stream data is written directly to the outgoing packet, the
+packet is not destroyed when it is declared lost by the `loss detection
+logic <#loss-detection-and-retransmission>`__.  Instead, it is repackaged
+and sent out again as a new packet.  Besides assigning the packet a
+new number, packet retransmission involves removing non-retransmittable
+frames from the packet.  (See ``lsquic_packet_out_chop_regen()``.)
+
+Historically, some places in the code assumed that the frames to be
+dropped are always located at the beginning of the ``po_data`` buffer.
+(This was before a `frame record <#frame-records>`__ was created for
+each frame).  The cumulative size of the frames to be removed is in
+``po_regen_sz``; this size can be zero.  Code that generates
+non-retransmittable frames still writes them only to the beginning
+of the packet.
+
+The goal is to drop ``po_regen_sz`` and to begin to write ACK and
+other non-retransmittable frames anywhere.  This should be possible
+to do now (see ``lsquic_packet_out_chop_regen()``, which can support
+such use after removing the assertion), but we haven't pulled the
+trigger on it yet.  Making this change will allow other code to become
+simpler: for example, the opportunistic ACKs logic.
+
+Frame Records
+=============
+
+Each frame written to ``po_data`` has an associated *frame record* stored
+in ``po_frecs``:
+
+::
+
+    struct frame_rec {
+        union {
+            struct lsquic_stream   *stream;
+            uintptr_t               data;
+        }                        fe_u;
+        unsigned short           fe_off,
+                                 fe_len;
+        enum quic_frame_type     fe_frame_type;
+    };
+
+Frame records are primarily used to keep track of the number of unacknowledged
+stream frames for a stream.  When a packet is acknowledged, the frame records
+are iterated over and ``lsquic_stream_acked()`` is called.  The second purpose
+is to speed up packet resizing, as frame records record the type, position,
+and size of a frame.
+
+Most of the time, a packet will contain a single frame: STREAM on the sender
+of data and ACK on the receiver.  This use case is optimized: ``po_frecs`` is
+a union and when there is only one frame per packets, the frame record is
+stored in the packet struct directly.
+
 Evanescent Connection
 *********************
+
+*Files: lsquic_pr_queue.h, lsquic_pr_queue.c*
+
+"PR Queue" stands for "Packet Request Queue."  This and the Evanescent
+Connection object types are explaned below in this section.
+
+Overview
+========
+
+Some packets need to be replied to outside of context of existing
+mini or full connections:
+
+1. A version negotiation packet needs to be sent when a packet
+   arrives that specifies QUIC version that we do not support.
+
+2. A stateless reset packet needs to be sent when we receive a
+   packet that does not belong to a known QUIC connection.
+
+
+The replies cannot be sent immediately.  They share outgoing
+socket with existing connections and must be scheduled according
+to prioritization rules.
+
+The information needed to generate reply packet  -- connection ID,
+connection context, and the peer address -- is saved in the Packet
+Request Queue.
+
+When it is time to send packets, the connection iterator knows to
+call prq_next_conn() when appropriate.  What is returned is an
+evanescent connection object that disappears as soon as the reply
+packet is successfully sent out.
+
+There are two limits associated with Packet Request Queue:
+
+1. Maximum number of packet requests that are allowed to be
+   pending at any one time.  This is simply to prevent memory
+   blowout.
+
+2. Maximum verneg connection objects to be allocated at any one
+   time.  This number is the same as the maximum batch size in
+   the engine, because the packet (and, therefore, the connection)
+   is returned to the Packet Request Queue when it could not be
+   sent.
+
+We call this a "request" queue because it describes what we do with
+QUIC packets whose version we do not support or those packets that
+do not belong to an existing connection: we send a reply for each of
+these packets, which effectively makes them "requests."
+
+Packet Requests
+===============
+
+When an incoming packet requires a non-connection response, it is added
+to the Packet Request Queue.  There is a single ``struct pr_queue`` per
+engine -- it is instantiated if the engine is in the server mode.
+
+The packet request is recorded in ``struct packet_req``, which are kept
+inside a hash in the PR Queue.  The reason for keeping the requests in
+a hash is to minimize duplicate responses:  If a client hello message
+is spread over several incoming packets, only one response carrying the
+version negotiation packet (for example) will be sent.
+
+::
+
+    struct packet_req
+    {
+        struct lsquic_hash_elem     pr_hash_el;
+        lsquic_cid_t                pr_scid;
+        lsquic_cid_t                pr_dcid;
+        enum packet_req_type        pr_type;
+        enum pr_flags {
+            PR_GQUIC    = 1 << 0,
+        }                           pr_flags;
+        enum lsquic_version         pr_version;
+        unsigned                    pr_rst_sz;
+        struct network_path         pr_path;
+    };
+
+Responses are created on demand.  Until that time, everything that is
+necessary to generate the response is stored in ``packet_req``.
+
+Sending Responses
+=================
+
+To make these packets fit into the usual packet-sending loop,
+each response is made to resemble a packet
+sent by a connecteion.  For that, the PR Queue creates a connection
+object that only lives for the duration of batching of the packet.
+(Hence the connection's name: *evanescent* connection.)  This connection
+is returned by the ``lsquic_prq_next_conn()`` by the connection iterator
+during the `batching process <#batching-packets>`__
+
+For simplicity, the response packet is generated in this function as well.
+The call to ``ci_next_packet_to_send()`` only returns the pointer to it.
 
 Send Controller
 ***************
@@ -2692,7 +3155,16 @@ Alarm Set
 
 *Files: lsquic_alarmset.h, lsquic_alarmset.c, test_alarmset.c*
 
-TODO
+The alarm set, ``struct lsquic_alarmset``, is an array of callbacks and
+expiry times.  To speed up operations, setting and unsetting alarms is
+done via macros.
+
+The functions to ring [4]_ the alarms and to calculate the next alarm
+time use a loop.  It would be possible to maintain a different data
+structure, such as a min-heap, to keep the alarm, and that would obviate
+the need to loop in ``lsquic_alarmset_mintime()``.  It is not worth it:
+the function is not called often and a speed win here would be offset
+by the necessity to maintain the min-heap ordering.
 
 Tickable Queue
 **************
@@ -2743,11 +3215,168 @@ memory that stores ``attq_elem`` stays put. This is why there are both
 CID Purgatory
 *************
 
+*Files: lsquic_purga.h, lsquic_purga.c*
+
+Overview
+========
+
+This module keeps a set of CIDs that should be ignored for a period
+of time.  It is used when a connection is closed: this way, late
+packets will not create a new connection.
+
+A connection may have been deleted, retired, or closed.  In the latter
+case, it enters the `Draining State <https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-10.2.2>`__.
+In this state, the connection is to ignore incoming packets.
+
+Structure
+=========
+
+The purgatory keeps a list of 16-KB pages.  A page looks like this:
+
+::
+
+    #define PURGA_ELS_PER_PAGE 273
+
+    struct purga_page
+    {
+        TAILQ_ENTRY(purga_page)     pupa_next;
+        lsquic_time_t               pupa_last;
+        unsigned                    pupa_count;
+        bloom_mask_el_t             pupa_mask[BLOOM_N_MASK_ELS];
+        lsquic_cid_t                pupa_cids[PURGA_ELS_PER_PAGE];
+        void *                      pupa_peer_ctx[PURGA_ELS_PER_PAGE];
+        struct purga_el             pupa_els[PURGA_ELS_PER_PAGE];
+    };
+
+The reason for having CIDs and peer contexts in separate arrays is to be
+able to call the ``ea_old_scids()`` callback when a page expires.  A page
+is expired when it is full and the last added element is more than
+``pur_min_life`` microseconds ago.  The minimum CID life is hardcoded as
+30 seconds in lsquic_engine.c (see the ``lsquic_purga_new()`` call).
+
+To avoid scannig the whole array of CIDs in ``lsquic_purga_contains()``,
+we use a Bloom filter.
+
+The Bloom filter is constructed using a 8192-bit bit field and 6 hash
+functions.  With 273 elements per page, this gives us 0.004% possibility
+of a false positive.  In other words, when we do have to search a page
+for a particular CID, the chance of finding the CID is 99.99%.
+
+Quick calculation:
+
+.. code-block:: text
+
+    perl -E '$k=6;$m=1<<13;$n=273;printf("%f\n", (1-exp(1)**-($k*$n/$m))**$k)'
+
+To extract 6 13-bit values from a 64-bit integer, they are overlapped:
+
+.. code-block:: text
+
+     0         10        20        30        40        50        60
+    +----------------------------------------------------------------+
+    |                                                                |
+    +----------------------------------------------------------------+
+     1111111111111
+               2222222222222
+                         3333333333333
+                                   4444444444444
+                                             5555555555555
+                                                       6666666666666
+
+This is not 100% kosher, but having 6 functions gives a better guarantee
+and it happens to work in practice.
+
 Memory Manager
 **************
 
+*Files: lsquic_mm.h, lsquic_mm.c*
+
+The memory manager allocates several types of objects that are used by
+different parts of the library:
+
+-   Incoming packet objects and associated buffers
+
+-   Outgoing packet objects and associated buffers
+
+-   Stream frames
+
+-   Frame records
+
+-   Mini connections, both Google and IETF QUIC
+
+-   DCID elements
+
+-   HTTP/3 (a.k.a. "HQ") frames
+
+-   Four- and sixteen-kilobyte pages
+
+These objects are either stored on linked list or in `malo <#malo-allocator>`__
+pools and are shared among all connections.  (Full connections allocate outgoing
+packets from per-connection malo allocators: this is done to speed up `ACK
+processing <#handling-acks>`__.)
+
+The list of cached outgoing packet buffers is shrunk once in a while (see
+the "poolst\_*" functions).  Other object types are kept in the cache
+until the engine is destroyed.  One Memory Manager object is allocated per
+engine instance.
+
 Malo Allocator
 **************
+
+*Files: lsquic_malo.h, lsquic_malo.c*
+
+Overview
+========
+
+The malo allocator is a pool of objects of fixed size.  It tries to
+allocate and deallocate objects as fast as possible.  To do so, it
+does the following:
+
+1. Allocations occur 4 KB at a time.
+
+2. No division or multiplication operations are performed for
+   appropriately sized objects.  (More on this below.)
+
+(In recent testing, malo was about 2.7 times faster than malloc for
+64-byte objects.)
+
+Besides speed, the allocator provides a convenient API:
+To free (put) an object, one does not need a pointer to the malo
+object.
+
+To gain all these advantages, there are trade-offs:
+
+1. There are two memory penalties:
+
+   a. Per object overhead.  If an object is at least ROUNDUP_THRESH in
+      size as the next power of two, the allocator uses that power of
+      two value as the object size.  This is done to avoid using
+      division and multiplication.  For example, a 104-byte object
+      will have a 24-byte overhead.
+
+   b. Per page overhead.  Page links occupy some bytes in the
+      page.  To keep things fast, at least one slot per page is
+      always occupied, independent of object size.  Thus, for a
+      1 KB object size, 25% of the page is used for the page
+      header.
+
+2. 4 KB pages are not freed until the malo allocator is destroyed.
+   This is something to keep in mind.
+
+Internal Structure
+==================
+
+The malo allocator allocates objects out of 4 KB pages.  Each page is
+aligned on a 4-KB memory boundary.  This makes it possible for the
+``lsquic_malo_put()`` function only to take on argument -- the object
+to free -- and to find the malo allocator object itself.
+
+Each page begins with a header followed by a number of slots -- up to
+the 4-KB limit.  Two lists of pages are maintained: all pages and free
+pages.  A "free" page is a page with at least one free slot in it.
+
+The malo allocator (``struct malo``) stores itself in the first page,
+occupying some slots.
 
 Receive History
 ***************
@@ -2987,6 +3616,20 @@ connection.
 Set64
 *****
 
+*Files: lsquic_set.h, lsquic_set.h, test_set.c*
+
+This data structure (along with *Set32*, which is not currently used
+anywhere in the code) is meant to keep track of a set of numbers that
+are always increasing and are not expected to contain many gaps.
+Stream IDs fit that description, and ``lsquic_set64`` is used in both
+gQUIC and IETF QUIC full connections.
+
+Because one or two low bits in stream IDs contain stream type, the
+stream IDs of different types are stored in different set structures;
+otherwise, there would be gaps.  For example, see the
+``conn_is_stream_closed()`` functions (there is one in each gQUIC and
+IETF QUIC full connection code).
+
 Appendix A: List of Data Structures
 ***********************************
 
@@ -3050,3 +3693,14 @@ QLOG
    Allocator <#malo-allocator>`__, which used to be limited to objects
    whose size is a power of two, so it was either fitting it into 128
    bytes or effectively doubling the mini conn size.
+
+.. [3]
+   This two-step packet parsing mechanism is left over from the
+   little-endian to big-endian switch in gQUIC several years ago:
+   Before parsing out the packet number, it was necessary to know
+   whether it is little- or big-endian.  It should be possible to
+   do away with this, especially once gQUIC is gone.
+
+.. [4]
+   This term was picked consciously: alarms *ring*, while timers do
+   other things, such as "fire" and so on.

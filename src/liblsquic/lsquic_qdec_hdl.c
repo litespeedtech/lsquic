@@ -641,7 +641,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
 
     if (rhs == LQRHS_DONE)
     {
-        if (!lsquic_stream_header_is_trailer(stream))
+        if (1)    //!lsquic_stream_header_is_trailer(stream))
         {
             if (stream->sm_hblock_ctx->ctx.ppc_flags
                                                 & (PPC_INC_SET|PPC_URG_SET))

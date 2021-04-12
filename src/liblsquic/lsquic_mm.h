@@ -36,7 +36,6 @@ struct lsquic_mm {
         struct malo     *frame_rec_arr; /* For struct frame_rec_arr */
         struct malo     *mini_conn;     /* For struct mini_conn */
         struct malo     *mini_conn_ietf;/* For struct ietf_mini_conn */
-        struct malo     *retry_conn;    /* For struct retry_conn */
         struct malo     *packet_in;     /* For struct lsquic_packet_in */
         struct malo     *packet_out;    /* For struct lsquic_packet_out */
         struct malo     *dcid_elem;     /* For struct dcid_elem */

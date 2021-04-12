@@ -546,6 +546,8 @@ send_ctl_transfer_time (void *ctx)
 
     in_recovery = send_ctl_in_recovery(ctl);
     pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), in_recovery);
+    if (!pacing_rate)
+        pacing_rate = 1;
     tx_time = (uint64_t) SC_PACK_SIZE(ctl) * 1000000 / pacing_rate;
     return tx_time;
 }
@@ -3788,6 +3790,8 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *ctl,
         if (n_out + path->np_pack_size >= cwnd)
             return 0;
         pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), 0);
+        if (!pacing_rate)
+            pacing_rate = 1;
         tx_time = (uint64_t) path->np_pack_size * 1000000 / pacing_rate;
         return lsquic_pacer_can_schedule_probe(&ctl->sc_pacer,
                    ctl->sc_n_scheduled + ctl->sc_n_in_flight_all, tx_time);

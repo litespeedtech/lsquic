@@ -133,6 +133,7 @@ typedef struct hs_ctx_st
         HSET_SCID     =   (1 << 2),
         HSET_IRTT     =   (1 << 3),
         HSET_SRST     =   (1 << 4),
+        HSET_XLCT     =   (1 << 5),     /* xlct is set */
     }           set;
     enum {
         HOPT_NSTP     =   (1 << 0),     /* NSTP option present in COPT */
@@ -283,6 +284,7 @@ struct lsquic_enc_session
     SSL_CTX *  ssl_ctx;
     struct lsquic_engine_public *enpub;
     struct lsquic_str * cert_ptr; /* pointer to the leaf cert of the server, not real copy */
+    uint64_t            cert_hash;
     struct lsquic_str   chlo; /* real copy of CHLO message */
     struct lsquic_str   sstk;
     struct lsquic_str   ssno;
@@ -310,6 +312,7 @@ typedef struct compress_cert_hash_item_st
 typedef struct cert_item_st
 {
     struct lsquic_str*      crt;
+    uint64_t                hash;   /* Hash of `crt' */
     struct lsquic_hash_elem hash_el;
     unsigned char           key[0];
 } cert_item_t;
@@ -535,6 +538,8 @@ insert_cert (struct lsquic_engine_public *enpub, const unsigned char *key,
 
     item->crt = crt_copy;
     memcpy(item->key, key, key_sz);
+    item->hash = lsquic_fnv1a_64((const uint8_t *)lsquic_str_buf(crt),
+                                                        lsquic_str_len(crt));
     el = lsquic_hash_insert(enpub->enp_server_certs, item->key, key_sz,
                                                         item, &item->hash_el);
     if (el)
@@ -1267,6 +1272,13 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         break;
 
     case QTAG_XLCT:
+        if (len != sizeof(hs_ctx->xlct))
+        {
+            LSQ_INFO("Unexpected size of XLCT: %u instead of %zu bytes",
+                len, sizeof(hs_ctx->xlct));
+            return -1;
+        }
+        hs_ctx->set |= HSET_XLCT;
         hs_ctx->xlct = get_tag_value_i64(val, len);
         break;
 
@@ -1664,7 +1676,6 @@ determine_rtts (struct lsquic_enc_session *enc_session,
 {
     hs_ctx_t *const hs_ctx = &enc_session->hs_ctx;
     enum hsk_failure_reason hfr;
-    uint64_t hash = 0;
 
     if (!(hs_ctx->set & HSET_SCID))
     {
@@ -1701,12 +1712,9 @@ determine_rtts (struct lsquic_enc_session *enc_session,
         goto fail_1rtt;
     }
 
-    if (hs_ctx->xlct)
+    if (hs_ctx->set & HSET_XLCT)
     {
-        hash = lsquic_fnv1a_64((const uint8_t *)lsquic_str_buf(enc_session->cert_ptr),
-                    lsquic_str_len(enc_session->cert_ptr));
-
-        if (hash != hs_ctx->xlct)
+        if (enc_session->cert_hash != hs_ctx->xlct)
         {
             /* The expected leaf certificate hash could not be validated. */
             hs_ctx->rrej = HFR_INVALID_EXPECTED_LEAF_CERTIFICATE;
@@ -2297,6 +2305,7 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
                 }
             }
             enc_session->cert_ptr = item->crt;
+            enc_session->cert_hash = item->hash;
         }
         else
         {
@@ -2310,6 +2319,9 @@ get_sni_SSL_CTX(struct lsquic_enc_session *enc_session, lsquic_lookup_cert_f cb,
             if (!enc_session->cert_ptr)
                 return GET_SNI_ERR;
             enc_session->es_flags |= ES_FREE_CERT_PTR;
+            enc_session->cert_hash = lsquic_fnv1a_64(
+                (const uint8_t *) lsquic_str_buf(enc_session->cert_ptr),
+                lsquic_str_len(enc_session->cert_ptr));
         }
     }
     return GET_SNI_OK;
