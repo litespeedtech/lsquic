@@ -3188,7 +3188,8 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
         return 1;
     }
 
-    if (engine->pr_queue && lsquic_prq_have_pending(engine->pr_queue))
+    if ((engine->pub.enp_flags & ENPUB_CAN_SEND)
+        && engine->pr_queue && lsquic_prq_have_pending(engine->pr_queue))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
         engine->last_logged_conn = 0;

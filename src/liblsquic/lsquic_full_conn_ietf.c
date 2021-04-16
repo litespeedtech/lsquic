@@ -4018,6 +4018,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     uh->uh_exclusive     = 0;
     uh->uh_flags         = UH_FIN;
     uh->uh_hset          = hset;
+    uh->uh_next          = NULL;
 
     memset(promise, 0, sizeof(*promise));
     promise->pp_refcnt = 1; /* This function itself keeps a reference */
@@ -7587,7 +7588,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
          */
         if (!verneg_ok(conn))
         {
-            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR,
+            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR|IFC_HSK_FAILED,
                 "version negotiation not permitted in this version of QUIC");
             return -1;
         }
@@ -7595,7 +7596,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
         versions &= conn->ifc_u.cli.ifcli_ver_neg.vn_supp;
         if (0 == versions)
         {
-            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR,
+            ABORT_WITH_FLAG(conn, LSQ_LOG_NOTICE, IFC_ERROR|IFC_HSK_FAILED,
                 "client does not support any of the server-specified versions");
             return -1;
         }
@@ -8461,7 +8462,12 @@ ietf_full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
     }
 
     if (conn->ifc_flags & IFC_ERROR)
-        return LSCONN_ST_ERROR;
+    {
+        if (conn->ifc_flags & IFC_HSK_FAILED)
+            return LSCONN_ST_VERNEG_FAILURE;
+        else
+            return LSCONN_ST_ERROR;
+    }
     if (conn->ifc_flags & IFC_TIMED_OUT)
         return LSCONN_ST_TIMED_OUT;
     if (conn->ifc_flags & IFC_ABORTED)
@@ -8564,6 +8570,8 @@ ietf_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
     const char *err_str, *percent;
     char err_buf[0x100];
 
+    if (conn->ifc_error.u.err != 0)
+        return;
     percent = strchr(fmt, '%');
     if (percent)
     {
@@ -9344,11 +9352,15 @@ on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
 
 
 static void
-on_unexpected_frame (void *ctx, uint64_t frame_type)
+on_frame_error (void *ctx, unsigned code, uint64_t frame_type)
 {
     struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "Frame type %"PRIu64" is not "
-        "allowed on the control stream", frame_type);
+    if (code == HEC_MISSING_SETTINGS)
+        ABORT_QUIETLY(1, code, "The first control frame is not SETTINGS, "
+                     "got frame type %"PRIu64, frame_type);
+    else
+        ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED, "Frame type %"PRIu64" is not "
+            "allowed on the control stream", frame_type);
 }
 
 
@@ -9359,7 +9371,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_27 =
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_server_27,
-    .on_unexpected_frame    = on_unexpected_frame,
+    .on_frame_error         = on_frame_error,
     .on_priority_update     = on_priority_update_server,
 };
 
@@ -9370,7 +9382,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_27 =
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_client_27,
-    .on_unexpected_frame    = on_unexpected_frame,
+    .on_frame_error         = on_frame_error,
     .on_priority_update     = on_priority_update_client,
 };
 
@@ -9382,7 +9394,7 @@ static const struct hcsi_callbacks hcsi_callbacks_server_29 =
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_server,
-    .on_unexpected_frame    = on_unexpected_frame,
+    .on_frame_error         = on_frame_error,
     .on_priority_update     = on_priority_update_server,
 };
 
@@ -9393,7 +9405,7 @@ static const struct hcsi_callbacks hcsi_callbacks_client_29 =
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
     .on_goaway              = on_goaway_client,
-    .on_unexpected_frame    = on_unexpected_frame,
+    .on_frame_error         = on_frame_error,
     .on_priority_update     = on_priority_update_client,
 };
 

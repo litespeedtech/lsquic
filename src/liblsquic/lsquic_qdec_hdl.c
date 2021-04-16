@@ -565,7 +565,7 @@ qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
     retval = qdh->qdh_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
     if (0 != retval)
         qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
-            1 == retval ? HEC_MESSAGE_ERROR : HEC_INTERNAL_ERROR,
+            HEC_MESSAGE_ERROR,
             "error processing headers");
 
     return retval;

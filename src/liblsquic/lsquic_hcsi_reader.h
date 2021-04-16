@@ -17,7 +17,7 @@ struct hcsi_callbacks
     void    (*on_settings_frame)(void *ctx);
     void    (*on_setting)(void *ctx, uint64_t setting_id, uint64_t value);
     void    (*on_goaway)(void *ctx, uint64_t stream_id);
-    void    (*on_unexpected_frame)(void *ctx, uint64_t frame_type);
+    void    (*on_frame_error)(void *ctx, unsigned code, uint64_t frame_type);
     void    (*on_priority_update)(void *ctx, enum hq_frame_type, uint64_t id,
                                                         const char *, size_t);
 };
@@ -35,7 +35,11 @@ struct hcsi_reader
         HR_READ_VARINT,
         HR_READ_VARINT_CONTINUE,
         HR_ERROR,
-    }                               hr_state;
+    }                               hr_state:8;
+    enum {
+        HR_FLAG_RCVD_SETTING = 1,
+    }                               hr_flag:8;
+    unsigned                        hr_nread;  /* Used for PRIORITY_UPDATE and SETTINGS frames */
     struct lsquic_conn             *hr_conn;
     uint64_t                        hr_frame_type;
     uint64_t                        hr_frame_length;
@@ -55,7 +59,6 @@ struct hcsi_reader
     }                               hr_u;
     const struct hcsi_callbacks    *hr_cb;
     void                           *hr_ctx;
-    unsigned                        hr_nread;  /* Used for PRIORITY_UPDATE and SETTINGS frames */
 };
 
 

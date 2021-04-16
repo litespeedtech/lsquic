@@ -2283,6 +2283,7 @@ process_ver_neg_packet (struct full_conn *conn, lsquic_packet_in_t *packet_in)
     versions &= conn->fc_ver_neg.vn_supp;
     if (0 == versions)
     {
+        conn->fc_flags |= FC_HSK_FAILED;
         ABORT_ERROR("client does not support any of the server-specified "
                     "versions");
         return;
@@ -4087,6 +4088,7 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     if (lsquic_http1x_if == conn->fc_enpub->enp_hsi_if)
         uh->uh_flags    |= UH_H1H;
     uh->uh_hset          = hset;
+    uh->uh_next          = NULL;
 
     return uh;
 }
@@ -4230,7 +4232,12 @@ full_conn_ci_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
     }
 
     if (conn->fc_flags & FC_ERROR)
-        return LSCONN_ST_ERROR;
+    {
+        if (conn->fc_flags & FC_HSK_FAILED)
+            return LSCONN_ST_VERNEG_FAILURE;
+        else
+            return LSCONN_ST_ERROR;
+    }
     if (conn->fc_flags & FC_TIMED_OUT)
         return LSCONN_ST_TIMED_OUT;
     if (conn->fc_flags & FC_ABORTED)

@@ -189,7 +189,7 @@ on_goaway (void *ctx, uint64_t stream_id)
 }
 
 static void
-on_unexpected_frame (void *ctx, uint64_t frame_type)
+on_frame_error (void *ctx, unsigned code, uint64_t frame_type)
 {
     fprintf(ctx, "%s: %"PRIu64"\n", __func__, frame_type);
 }
@@ -219,7 +219,7 @@ static const struct hcsi_callbacks callbacks =
     .on_settings_frame      = on_settings_frame,
     .on_setting             = on_setting,
     .on_goaway              = on_goaway,
-    .on_unexpected_frame    = on_unexpected_frame,
+    .on_frame_error         = on_frame_error,
     .on_priority_update     = on_priority_update,
 };
 
@@ -252,6 +252,7 @@ run_test (const struct test *test)
     {
         out_f = open_memstream(&output, &out_sz);
         lsquic_hcsi_reader_init(&reader, &lconn, &callbacks, out_f);
+        reader.hr_flag |= HR_FLAG_RCVD_SETTING;
 
         p = test->input;
         do

@@ -1,3 +1,10 @@
+2021-04-16
+    - 2.30.1
+    - Fixed an unintialized data member for handling pushed headers.
+    - Added a new status code for version negotiation failure.
+    - Fixed a few compliance issues found by h3spec.
+    - Addressed high CPU usage when transport cannot send pending packets.
+
 2021-04-12
     - 2.30.0
     - Added support for sending/receiving multiple headers to address the

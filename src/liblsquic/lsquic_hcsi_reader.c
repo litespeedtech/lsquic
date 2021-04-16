@@ -61,9 +61,19 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                 break;
             reader->hr_frame_type = reader->hr_u.vint2_state.vr2s_one;
             reader->hr_frame_length = reader->hr_u.vint2_state.vr2s_two;
+
+            if (!(reader->hr_flag & HR_FLAG_RCVD_SETTING)
+                && reader->hr_frame_type != HQFT_SETTINGS)
+            {
+                reader->hr_cb->on_frame_error(reader->hr_ctx,
+                            HEC_MISSING_SETTINGS, reader->hr_frame_type);
+                return -1;
+            }
+
             switch (reader->hr_frame_type)
             {
             case HQFT_SETTINGS:
+                reader->hr_flag |= HR_FLAG_RCVD_SETTING;
                 if (reader->hr_frame_length)
                 {
                     reader->hr_state = HR_READ_SETTING_BEGIN;
@@ -91,8 +101,8 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             case HQFT_DATA:
             case HQFT_HEADERS:
             case HQFT_PUSH_PROMISE:
-                reader->hr_cb->on_unexpected_frame(reader->hr_ctx,
-                                                        reader->hr_frame_type);
+                reader->hr_cb->on_frame_error(reader->hr_ctx,
+                    HEC_FRAME_UNEXPECTED, reader->hr_frame_type);
                 return -1;
             default:
             {
