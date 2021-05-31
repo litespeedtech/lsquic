@@ -3499,7 +3499,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          * more than 1 packet over CWND.
          */
         tick |= TICK_SEND;
-        goto end;
+        goto end_write;
     }
 
     /* Try to fit any of the following three frames -- STOP_WAITING,
@@ -3587,7 +3587,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
   skip_write:
     if ((conn->fc_flags & FC_CLOSING) && conn_ok_to_close(conn))
     {
-        RETURN_IF_OUT_OF_PACKETS();
         LSQ_DEBUG("connection is OK to close");
         /* This is normal termination sequence.
          *
@@ -3595,15 +3594,16 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          * packets scheduled to send, or silent close flag is not set.
          */
         conn->fc_flags |= FC_TICK_CLOSE;
+        tick |= TICK_CLOSE;
         if ((conn->fc_flags & FC_RECV_CLOSE) ||
                 0 != lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl) ||
                                         !conn->fc_settings->es_silent_close)
         {
+            RETURN_IF_OUT_OF_PACKETS();
             generate_connection_close_packet(conn);
-            tick |= TICK_SEND|TICK_CLOSE;
+            tick |= TICK_SEND;
         }
-        else
-            tick |= TICK_CLOSE;
+
         goto end;
     }
 

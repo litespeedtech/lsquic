@@ -8248,7 +8248,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
          * than 1 packet over CWND.
          */
         tick |= TICK_SEND;
-        goto end;
+        goto end_write;
     }
 
     /* Try to fit MAX_DATA before checking if we have run out of room.
@@ -8344,6 +8344,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     {
         LSQ_DEBUG("connection is OK to close");
         conn->ifc_flags |= IFC_TICK_CLOSE;
+        tick |= TICK_CLOSE;
         if (!(conn->ifc_mflags & MF_CONN_CLOSE_PACK)
             /* Generate CONNECTION_CLOSE frame if:
              *     ... this is a client and handshake was successful;
@@ -8368,10 +8369,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         {
             RETURN_IF_OUT_OF_PACKETS();
             generate_connection_close_packet(conn);
-            tick |= TICK_SEND|TICK_CLOSE;
+            tick |= TICK_SEND;
         }
-        else
-            tick |= TICK_CLOSE;
+
         goto end;
     }
 
