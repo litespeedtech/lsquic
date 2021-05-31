@@ -8344,14 +8344,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     {
         LSQ_DEBUG("connection is OK to close");
         conn->ifc_flags |= IFC_TICK_CLOSE;
-        if ((conn->ifc_flags & IFC_RECV_CLOSE) &&
-                !lsquic_send_ctl_can_send(&conn->ifc_send_ctl))
-        {
-            LSQ_DEBUG("CONNECTION_CLOSE received, and lsquic_send_ctl_can_send false,"
-                      " close full conn immediately.");
-            tick |= TICK_CLOSE;
-        }
-        else if (!(conn->ifc_mflags & MF_CONN_CLOSE_PACK)
+        tick |= TICK_CLOSE;
+        if (!(conn->ifc_mflags & MF_CONN_CLOSE_PACK)
             /* Generate CONNECTION_CLOSE frame if:
              *     ... this is a client and handshake was successful;
              */
@@ -8375,10 +8369,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         {
             RETURN_IF_OUT_OF_PACKETS();
             generate_connection_close_packet(conn);
-            tick |= TICK_SEND|TICK_CLOSE;
+            tick |= TICK_SEND;
         }
-        else
-            tick |= TICK_CLOSE;
+
         goto end;
     }
 
