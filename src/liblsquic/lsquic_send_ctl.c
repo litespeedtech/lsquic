@@ -1240,6 +1240,13 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         ctl->sc_flags &= ~SC_WAS_QUIET;
         LSQ_DEBUG("ACK comes after a period of quiescence");
         ctl->sc_ci->cci_was_quiet(CGP(ctl), now, ctl->sc_bytes_unacked_all);
+        if (packet_out && (packet_out->po_frame_types & QUIC_FTBIT_PING)
+            && ctl->sc_conn_pub->last_prog)
+        {
+            LSQ_DEBUG("ACK to PING frame, update last progress to %"PRIu64,
+                                            ctl->sc_conn_pub->last_tick);
+            ctl->sc_conn_pub->last_prog = ctl->sc_conn_pub->last_tick;
+        }
     }
 
     if (UNLIKELY(!packet_out))

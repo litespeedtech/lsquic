@@ -1143,7 +1143,7 @@ fuzz_guided_pwritev_testing (const char *input)
     case 3: version = LSQVER_ID27; break;
     case 4: version = LSQVER_ID29; break;
     default:
-    case 5: version = LSQVER_ID34; break;
+    case 5: version = LSQVER_I001; break;
     }
 
     sched_immed = !!(buf[8] & 0x08);

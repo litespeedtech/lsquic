@@ -5067,7 +5067,9 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
                     (unsigned) data_frame->df_size - data_frame->df_read_off);
         else
         {
-            assert(data_frame->df_read_off == data_frame->df_size);
+            if (!(filter->hqfi_type == HQFT_HEADERS
+                    && (filter->hqfi_flags & HQFI_FLAG_BLOCKED)))
+                assert(data_frame->df_read_off == data_frame->df_size);
             return 0;
         }
     }

@@ -73,7 +73,6 @@ static const struct alpn_map {
 } s_h3_alpns[] = {
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
     {   LSQVER_ID29, (unsigned char *) "\x05h3-29",     },
-    {   LSQVER_ID34, (unsigned char *) "\x05h3-34",     },
     {   LSQVER_I001, (unsigned char *) "\x02h3",        },
     {   LSQVER_VERNEG, (unsigned char *) "\x05h3-34",     },
 };
@@ -928,7 +927,7 @@ iquic_esfi_create_client (const char *hostname,
     }
 #if BORINGSSL_API_VERSION >= 13
     SSL_set_quic_use_legacy_codepoint(enc_sess->esi_ssl,
-                            enc_sess->esi_ver_neg->vn_ver < LSQVER_ID34);
+                            enc_sess->esi_ver_neg->vn_ver < LSQVER_I001);
 #endif
 
     transpa_len = gen_trans_params(enc_sess, trans_params,
@@ -1138,7 +1137,7 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
 
     if (enc_sess->esi_conn->cn_version < LSQVER_ID29)
         salt = HSK_SALT_PRE29;
-    else if (enc_sess->esi_conn->cn_version < LSQVER_ID34)
+    else if (enc_sess->esi_conn->cn_version < LSQVER_I001)
         salt = HSK_SALT_PRE33;
     else
         salt = HSK_SALT;
@@ -1394,7 +1393,7 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     }
 #if BORINGSSL_API_VERSION >= 13
     SSL_set_quic_use_legacy_codepoint(enc_sess->esi_ssl,
-                            enc_sess->esi_conn->cn_version < LSQVER_ID34);
+                            enc_sess->esi_conn->cn_version < LSQVER_I001);
 #endif
     if (!(SSL_set_quic_method(enc_sess->esi_ssl, &cry_quic_method)))
     {

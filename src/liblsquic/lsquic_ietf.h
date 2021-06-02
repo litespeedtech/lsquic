@@ -38,7 +38,7 @@ extern const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS];
 extern const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS];
 #define lsquic_version_2_retryver(ver_) (                       \
     (ver_) <= LSQVER_ID27 ? 0 :                                 \
-    (ver_) <= LSQVER_ID34 ? 1 :                                 \
+    (ver_) <= LSQVER_I001 ? 1 :                                 \
     2)
 
 #endif

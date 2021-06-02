@@ -1,3 +1,11 @@
+2021-06-02
+    - 3.0.0
+    - Enable HTTP/3 v1 by default, drop draft 34.
+    - Prevent connection timeout when client does not send PING frame.
+    - Close connection ASAP after recieve CONNECTION_CLOSE (issue #284)
+    - Do not assert() when decode a trailer.
+    - Properly handle GOAWAY frame, do not close the last acknowledged stream.
+
 2021-04-20
     - 2.30.2
     - Update ls-hpack to 2.3.0 to address dynamic table size limit (issue #260).

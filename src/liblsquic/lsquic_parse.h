@@ -345,7 +345,7 @@ extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
                                          &lsquic_parse_funcs_gquic_Q043 :   \
     (1 << (ver)) & (1 << LSQVER_046)                            ?           \
                                          &lsquic_parse_funcs_gquic_Q046 :   \
-    (1 << (ver)) & ((1 << LSQVER_050)|LSQUIC_EXPERIMENTAL_Q098) ?           \
+    (1 << (ver)) & (1 << LSQVER_050)                            ?           \
                                          &lsquic_parse_funcs_gquic_Q050 :   \
     &lsquic_parse_funcs_ietf_v1)
 

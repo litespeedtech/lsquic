@@ -3499,7 +3499,10 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          * more than 1 packet over CWND.
          */
         tick |= TICK_SEND;
-        goto end_write;
+        if (conn->fc_flags & FC_CLOSING)
+            goto end_write;
+        else
+            goto end;
     }
 
     /* Try to fit any of the following three frames -- STOP_WAITING,

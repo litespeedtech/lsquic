@@ -23,9 +23,9 @@ struct sockaddr;
 extern "C" {
 #endif
 
-#define LSQUIC_MAJOR_VERSION 2
-#define LSQUIC_MINOR_VERSION 30
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MAJOR_VERSION 3
+#define LSQUIC_MINOR_VERSION 0
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -64,18 +64,6 @@ enum lsquic_version
      */
     LSQVER_050,
 
-#if LSQUIC_USE_Q098
-    /**
-     * Q098.  This is a made-up, experimental version used to test version
-     * negotiation.  The choice of 98 is similar to Google's choice of 99
-     * as the "IETF" version.
-     */
-    LSQVER_098,
-#define LSQUIC_EXPERIMENTAL_Q098 (1 << LSQVER_098)
-#else
-#define LSQUIC_EXPERIMENTAL_Q098 0
-#endif
-
     /**
      * IETF QUIC Draft-27
      */
@@ -87,13 +75,7 @@ enum lsquic_version
     LSQVER_ID29,
 
     /**
-     * IETF QUIC Draft-34
-     */
-    LSQVER_ID34,
-
-    /**
-     * IETF QUIC v1.  Functionally the same as Draft-34, but marked
-     * experimental for now.
+     * IETF QUIC v1.
      */
     LSQVER_I001,
 
@@ -119,8 +101,7 @@ enum lsquic_version
 #define LSQUIC_FORCED_TCID0_VERSIONS ((1 << LSQVER_046)|(1 << LSQVER_050))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
-                            (1 << LSQVER_I001) | \
-                            (1 << LSQVER_VERNEG) | LSQUIC_EXPERIMENTAL_Q098)
+                            (1 << LSQVER_VERNEG))
 
 #define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27))
 
@@ -128,12 +109,11 @@ enum lsquic_version
 
 #define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) \
                           | (1 << LSQVER_ID29) \
-                          | (1 << LSQVER_ID34) \
                           | (1 << LSQVER_I001) | (1 << LSQVER_VERNEG))
 
 #define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) \
                                   | (1 << LSQVER_ID29) \
-              | (1 << LSQVER_ID34) | (1 << LSQVER_VERNEG))
+                                  | (1 << LSQVER_VERNEG))
 
 enum lsquic_hsk_status
 {

@@ -3007,11 +3007,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             parse_packet_in_begin = lsquic_Q050_parse_packet_in_begin;
         else
         {
-#if LSQUIC_USE_Q098
-            assert(conn->cn_version == LSQVER_046 || conn->cn_version == LSQVER_098);
-#else
             assert(conn->cn_version == LSQVER_046);
-#endif
             parse_packet_in_begin = lsquic_Q046_parse_packet_in_begin;
         }
     }

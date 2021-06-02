@@ -1041,6 +1041,8 @@ create_uni_stream_out (struct ietf_full_conn *conn, int priority,
     }
     if (priority >= 0)
         lsquic_stream_set_priority_internal(stream, priority);
+    else
+        ++conn->ifc_pub.n_special_streams;
     lsquic_stream_call_on_new(stream);
     return 0;
 }
@@ -1682,12 +1684,12 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     LSQ_DEBUG("Calling on_new_conn callback");
     conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
+    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
 
     if (0 != handshake_ok(&conn->ifc_conn))
         goto err3;
 
     conn->ifc_created = imc->imc_created;
-    conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
                                         imc->imc_created + conn->ifc_idle_to);
@@ -5262,6 +5264,7 @@ struct buffered_priority_update
 };
 
 
+#define MAX_CRITICAL_STREAM_ID 12
 /* This function is called to create incoming streams */
 static struct lsquic_stream *
 new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
@@ -5287,7 +5290,11 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
          * to address this is to reclassify them later?
          */
 #endif
-        flags |= SCF_CRITICAL;
+        if (stream_id < MAX_CRITICAL_STREAM_ID)
+        {
+            flags |= SCF_CRITICAL;
+            ++conn->ifc_pub.n_special_streams;
+        }
     }
     else
     {
@@ -8248,7 +8255,10 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
          * than 1 packet over CWND.
          */
         tick |= TICK_SEND;
-        goto end_write;
+        if (conn->ifc_flags & IFC_CLOSING)
+            goto end_write;
+        else
+            goto end;
     }
 
     /* Try to fit MAX_DATA before checking if we have run out of room.
@@ -8409,7 +8419,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
      *     packets and poor performance.
      */
     if (conn->ifc_ping_period
-                        && lsquic_hash_count(conn->ifc_pub.all_streams) > 0)
+                        && lsquic_hash_count(conn->ifc_pub.all_streams) >
+                           conn->ifc_pub.n_special_streams)
         lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
                                                 now + conn->ifc_ping_period);
 
@@ -9100,7 +9111,7 @@ on_goaway_client_27 (void *ctx, uint64_t stream_id)
                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (stream->id >= stream_id
+        if (stream->id > stream_id
                             && (stream->id & SIT_MASK) == SIT_BIDI_CLIENT)
         {
             lsquic_stream_received_goaway(stream);
@@ -9155,7 +9166,7 @@ on_goaway_client (void *ctx, uint64_t stream_id)
                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (stream->id >= stream_id
+        if (stream->id > stream_id
                             && (stream->id & SIT_MASK) == SIT_BIDI_CLIENT)
         {
             lsquic_stream_received_goaway(stream);
@@ -9177,7 +9188,7 @@ on_goaway_server (void *ctx, uint64_t max_push_id)
                         el = lsquic_hash_next(conn->ifc_pub.u.ietf.promises))
     {
         promise = lsquic_hashelem_getdata(el);
-        if (promise->pp_id >= max_push_id)
+        if (promise->pp_id > max_push_id)
             cancel_push_promise(conn, promise);
     }
 }
@@ -9427,7 +9438,6 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             callbacks = &hcsi_callbacks_server_27;
             break;
         case (0 << 8) | LSQVER_ID29:
-        case (0 << 8) | LSQVER_ID34:
         case (0 << 8) | LSQVER_I001:
             callbacks = &hcsi_callbacks_client_29;
             break;
@@ -9435,7 +9445,6 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             assert(0);
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
-        case (1 << 8) | LSQVER_ID34:
         case (1 << 8) | LSQVER_I001:
             callbacks = &hcsi_callbacks_server_29;
             break;
