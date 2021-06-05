@@ -25,4 +25,4 @@ RUN cd /src/lsquic && \
     cmake -DBORINGSSL_DIR=/src/boringssl . && \
     make
 
-RUN cd lsquic && make test && cp http_client /usr/bin/ && cp http_server /usr/bin
+RUN cd lsquic && make test && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
