@@ -135,7 +135,7 @@ docker build -t lsquic .
 
 Then you can use the examples from the command line.  For example:
 ```
-sudo docker run -it --rm lsquic http_client -s www.google.com  -p / -o version=Q046
+sudo docker run -it --rm lsquic http_client -s www.google.com  -p / -o version=h3-29
 sudo docker run -p 12345:12345/udp -v /path/to/certs:/mnt/certs -it --rm lsquic http_server -c www.example.com,/mnt/certs/chain,/mnt/certs/key
 ```
 
