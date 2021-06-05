@@ -14,8 +14,7 @@ and HTTP/3 functionality for servers and clients.  Most of the code in this
 distribution is used in our own products: LiteSpeed Web Server, LiteSpeed ADC,
 and OpenLiteSpeed.
 
-Currently supported QUIC versions are v1 (disabled by default until the
-QUIC RFC is released); Internet-Draft versions 34, 29, and 27;
+Currently supported QUIC versions are v1, Internet-Draft versions 29, and 27;
 and the older "Google" QUIC versions Q043, Q046, an Q050.
 
 Documentation
