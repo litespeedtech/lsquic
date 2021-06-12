@@ -3597,15 +3597,18 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
          * packets scheduled to send, or silent close flag is not set.
          */
         conn->fc_flags |= FC_TICK_CLOSE;
-        tick |= TICK_CLOSE;
+        if (conn->fc_flags & FC_RECV_CLOSE)
+            tick |= TICK_CLOSE;
         if ((conn->fc_flags & FC_RECV_CLOSE) ||
                 0 != lsquic_send_ctl_n_scheduled(&conn->fc_send_ctl) ||
                                         !conn->fc_settings->es_silent_close)
         {
             RETURN_IF_OUT_OF_PACKETS();
             generate_connection_close_packet(conn);
-            tick |= TICK_SEND;
+            tick |= TICK_SEND|TICK_CLOSE;
         }
+        else
+            tick |= TICK_CLOSE;
 
         goto end;
     }
