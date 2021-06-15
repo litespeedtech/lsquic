@@ -97,7 +97,7 @@ lsquic_gquic_be_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
                                             struct packin_parse_state *state)
 {
     lsquic_packno_t packno;
-    if (state->pps_nbytes)
+    if ((packet_in->pi_flags & PI_GQUIC) && state->pps_nbytes)
     {
         READ_UINT(packno, 64, state->pps_p, state->pps_nbytes);
         packet_in->pi_packno = packno;
