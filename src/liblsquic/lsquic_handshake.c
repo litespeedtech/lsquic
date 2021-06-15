@@ -3340,12 +3340,6 @@ lsquic_enc_session_handle_chlo(enc_session_t *enc_session_p,
         determine_keys(enc_session);
         enc_session->have_key = 1;
 
-        if (lsquic_str_len(&enc_session->hs_ctx.stk) > 0)
-        {
-            shi->shi_delete(shi_ctx, lsquic_str_cstr(&enc_session->hs_ctx.stk),
-                            lsquic_str_len(&enc_session->hs_ctx.stk));
-        }
-
         LSQ_DEBUG("lsquic_enc_session_handle_chlo call gen_shlo_data");
         len = gen_shlo_data(out, *out_len, enc_session, version, peer,
                                                                     t, nonce);
