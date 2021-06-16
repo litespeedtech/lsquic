@@ -1,3 +1,9 @@
+2021-06-16
+    - 3.0.1
+    - Only force TICK_CLOSE flag after received CONNECTION_CLOSE frame. (issue #292 #281)
+    - Avoid mismatch in packet parsing. (issue #262)
+    - Remove unnecessary shi_delete call.
+
 2021-06-02
     - 3.0.0
     - Enable HTTP/3 v1 by default, drop draft 34.
