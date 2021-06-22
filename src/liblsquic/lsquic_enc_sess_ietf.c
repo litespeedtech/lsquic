@@ -2568,7 +2568,7 @@ iquic_esf_keysize (enc_session_t *enc_session_p)
     else if (enc_sess->esi_ssl)
     {
         cipher = SSL_get_current_cipher(enc_sess->esi_ssl);
-        id = SSL_CIPHER_get_id(cipher);
+        id = cipher ? SSL_CIPHER_get_id(cipher) : 0;
 
         /* RFC 8446, Appendix B.4 */
         switch (id)
