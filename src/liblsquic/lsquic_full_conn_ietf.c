@@ -3231,7 +3231,7 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
     {
         if (!(conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY)))
         {
-            LSQ_INFO("connection marked as going away, last stream: %ld",
+            LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
                      conn->ifc_max_req_id);
             conn->ifc_flags |= IFC_GOING_AWAY;
             const lsquic_stream_id_t stream_id = conn->ifc_max_req_id + N_SITS;
