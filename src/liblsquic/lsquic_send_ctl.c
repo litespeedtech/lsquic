@@ -3654,8 +3654,9 @@ lsquic_send_ctl_cancel_path_verification (struct lsquic_send_ctl *ctl,
         next = TAILQ_NEXT(packet_out, po_next);
         if (packet_out->po_path == path)
         {
-            assert(packet_out->po_frame_types
-                    & (QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_PATH_RESPONSE));
+            assert((packet_out->po_frame_types
+                    & (QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_PATH_RESPONSE))
+                   || packet_out->po_frame_types == QUIC_FTBIT_PADDING);
             assert(!(packet_out->po_frame_types & ctl->sc_retx_frames));
             send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
             send_ctl_sched_remove(ctl, packet_out);

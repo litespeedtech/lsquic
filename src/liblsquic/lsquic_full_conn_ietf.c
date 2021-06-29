@@ -5918,6 +5918,11 @@ process_ping_frame (struct ietf_full_conn *conn,
     LSQ_DEBUG("received PING");
     if (conn->ifc_flags & IFC_SERVER)
         log_conn_flow_control(conn);
+
+    LSQ_DEBUG("received PING frame, update last progress to %"PRIu64,
+                                            conn->ifc_pub.last_tick);
+    conn->ifc_pub.last_prog = conn->ifc_pub.last_tick;
+
     return 1;
 }
 
