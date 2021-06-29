@@ -25,6 +25,7 @@ struct prog
     unsigned short                  prog_max_packet_size;
     int                             prog_version_cleared;
     unsigned long                   prog_read_count;
+    unsigned                        prog_gso_burst;
 #if HAVE_SENDMMSG
     int                             prog_use_sendmmsg;
 #endif
@@ -74,7 +75,7 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #   define IP_DONTFRAG_FLAG ""
 #endif
 
-#define PROG_OPTS "i:km:c:y:L:l:o:H:s:S:Y:z:G:W" RECVMMSG_FLAG SENDMMSG_FLAG \
+#define PROG_OPTS "O:i:km:c:y:L:l:o:H:s:S:Y:z:G:W" RECVMMSG_FLAG SENDMMSG_FLAG \
                                                             IP_DONTFRAG_FLAG
 
 /* Returns:
