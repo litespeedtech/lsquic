@@ -151,6 +151,8 @@ The library has been tested on the following platforms:
   - i386
 - MacOS
   - x86_64
+- iOS
+  - ARM
 - Android
   - ARM
 - Windows
