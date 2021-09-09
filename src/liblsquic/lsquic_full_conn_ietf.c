@@ -2900,8 +2900,11 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
     if (conn->ifc_flags & IFC_DATAGRAMS)
     {
         old = !!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE);
-        if (is_want)
+        if (is_want) {
             conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
+            lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
+                                                            &conn->ifc_conn);
+        }
         else
             conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
         LSQ_DEBUG("turn %s \"want datagram write\" flag",
