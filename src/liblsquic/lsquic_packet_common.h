@@ -226,6 +226,7 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_HANDSHAKE_DONE     \
     |  QUIC_FTBIT_ACK_FREQUENCY      \
     |  QUIC_FTBIT_TIMESTAMP          \
+    |  QUIC_FTBIT_DATAGRAM           \
     |  QUIC_FTBIT_CRYPTO             )
 
 /* [draft-ietf-quic-transport-24] Section 1.2 */
