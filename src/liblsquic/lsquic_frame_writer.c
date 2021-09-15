@@ -106,7 +106,7 @@ lsquic_frame_writer_new (struct lsquic_mm *mm, struct lsquic_stream *stream,
         return NULL;
     }
 
-    fw = malloc(sizeof(*fw));
+    fw = calloc(1, sizeof(*fw));
     if (!fw)
         return NULL;
 
