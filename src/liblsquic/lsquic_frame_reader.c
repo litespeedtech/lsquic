@@ -186,7 +186,7 @@ lsquic_frame_reader_new (enum frame_reader_flags flags,
 #endif
                     const struct lsquic_hset_if *hsi_if, void *hsi_ctx)
 {
-    struct lsquic_frame_reader *fr = malloc(sizeof(*fr));
+    struct lsquic_frame_reader *fr = calloc(1, sizeof(*fr));
     if (!fr)
         return NULL;
     fr->fr_mm             = mm;
