@@ -2783,7 +2783,7 @@ generate_ping_frame (struct full_conn *conn)
                             packet_out->po_data + packet_out->po_data_sz,
                             lsquic_packet_out_avail(packet_out));
     if (sz < 0) {
-        ABORT_ERROR("gen_blocked_frame failed");
+        ABORT_ERROR("gen_ping_frame failed");
         return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
