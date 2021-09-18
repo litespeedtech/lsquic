@@ -226,13 +226,13 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_HANDSHAKE_DONE     \
     |  QUIC_FTBIT_ACK_FREQUENCY      \
     |  QUIC_FTBIT_TIMESTAMP          \
-    |  QUIC_FTBIT_DATAGRAM           \
     |  QUIC_FTBIT_CRYPTO             )
 
 /* [draft-ietf-quic-transport-24] Section 1.2 */
 #define IQUIC_FRAME_ACKABLE_MASK (  \
-    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_ACK|QUIC_FTBIT_PADDING\
-                            |QUIC_FTBIT_CONNECTION_CLOSE|QUIC_FTBIT_TIMESTAMP))
+    (ALL_IQUIC_FRAMES | QUIC_FTBIT_DATAGRAM) \
+        & ~(QUIC_FTBIT_ACK | QUIC_FTBIT_PADDING \
+            | QUIC_FTBIT_CONNECTION_CLOSE | QUIC_FTBIT_TIMESTAMP))
 
 /* [draft-ietf-quic-transport-20], Section 13.2 */
 /* We bend some rules and retransmit BLOCKED, MAX_DATA, MAX_STREAM_DATA,
