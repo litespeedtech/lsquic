@@ -247,6 +247,7 @@ extern const enum quic_ft_bit lsquic_legal_frames_by_level[][4];
 /* Applies both to gQUIC and IETF QUIC, thus "B" for "both" */
 #define BQUIC_FRAME_REGEN_MASK ((1 << QUIC_FRAME_ACK)                \
   | (1 << QUIC_FRAME_PATH_CHALLENGE) | (1 << QUIC_FRAME_PATH_RESPONSE) \
-  | (1 << QUIC_FRAME_STOP_WAITING) | (1 << QUIC_FRAME_TIMESTAMP))
+  | (1 << QUIC_FRAME_STOP_WAITING) | (1 << QUIC_FRAME_TIMESTAMP)       \
+  | (1 << QUIC_FRAME_DATAGRAM))
 
 #endif
