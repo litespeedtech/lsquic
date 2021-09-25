@@ -8146,6 +8146,7 @@ write_datagram (struct ietf_full_conn *conn)
         ABORT_ERROR("adding DATAGRAME frame to packet failed: %d", errno);
         return 0;
     }
+    packet_out->po_regen_sz += w;
     packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     /* XXX The DATAGRAM frame should really be a regen.  Do it when we
