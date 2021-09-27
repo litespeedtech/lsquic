@@ -926,7 +926,7 @@ calculate_cwnd (struct lsquic_bbr *bbr, uint64_t bytes_acked,
     if (bbr->bbr_flags & BBR_FLAG_IS_AT_FULL_BANDWIDTH)
         bbr->bbr_cwnd = MIN(target_window, bbr->bbr_cwnd + bytes_acked);
     else if (add_bytes_acked &&
-             (bbr->bbr_cwnd_gain < target_window ||
+             (bbr->bbr_cwnd < target_window ||
               lsquic_bw_sampler_total_acked(&bbr->bbr_bw_sampler)
                                                         < bbr->bbr_init_cwnd))
         // If the connection is not yet out of startup phase, do not decrease
