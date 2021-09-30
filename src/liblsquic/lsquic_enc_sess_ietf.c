@@ -572,7 +572,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             cce->cce_seqno = seqno + 1;
             cce->cce_flags = CCE_SEQNO;
 
-            enc_sess->esi_enpub->enp_generate_scid(enc_sess->esi_conn,
+            enc_sess->esi_enpub->enp_generate_scid(
+                enc_sess->esi_enpub->enp_gen_scid_ctx, enc_sess->esi_conn,
                 &cce->cce_cid, enc_sess->esi_enpub->enp_settings.es_scid_len);
 
             /* Don't add to hash: migration must not start until *after*
@@ -2638,6 +2639,7 @@ iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
     pair = &enc_sess->esi_hsk_pairs[ENC_LEV_CLEAR];
     cleanup_crypto_ctx(&pair->ykp_ctx[0]);
     cleanup_crypto_ctx(&pair->ykp_ctx[1]);
+    cleanup_hp(&enc_sess->esi_hsk_hps[ENC_LEV_CLEAR]);
 
     if (0 == setup_handshake_keys(enc_sess, new_dcid))
     {

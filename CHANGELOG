@@ -1,3 +1,13 @@
+2021-09-30
+    - 3.0.3
+    - Generate ACK for DATAGRAM frame while avoid RETX (issue #312 #325).
+    - Fix BBR end of startup phase detection (issue #328).
+    - Fix HTTP/3 v1 retry handling (issue #332)
+    - Fix memory leak when reset dcid (issue #333)
+    - Fix double decrement for ifc_active_cids_count (#334)
+    - Fix uninitialized value in frame_reader/frame_writer (#316)
+    - Remove a few overly strict asserts.
+
 2021-06-16
     - 3.0.2
     - Do not timeout connection if peer sends PING frames.

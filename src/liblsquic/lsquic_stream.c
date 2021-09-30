@@ -3108,7 +3108,7 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
                 lsquic_packet_out_avail(packet_out), stream->id,
                 stream->tosend_off,
                 fg_ctx->fgc_fin(fg_ctx), size, fg_ctx->fgc_read, fg_ctx);
-    if (len < 0)
+    if (len <= 0)
         return len;
 
 #if LSQUIC_CONN_STATS
@@ -3223,7 +3223,8 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
         len = write_stream_frame(fg_ctx, size, packet_out);
         if (len > 0)
             return SWTP_OK;
-        assert(len < 0);
+        if (len == 0)
+            return SWTP_STOP;
         if (-len > (int) need_at_least)
         {
             LSQ_DEBUG("need more room (%d bytes) than initially calculated "
@@ -4617,6 +4618,13 @@ lsquic_stream_get_ctx (const lsquic_stream_t *stream)
 }
 
 
+void
+lsquic_stream_set_ctx (lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx)
+{
+    stream->st_ctx = ctx;
+}
+
+
 int
 lsquic_stream_refuse_push (lsquic_stream_t *stream)
 {
@@ -5067,7 +5075,8 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
                     (unsigned) data_frame->df_size - data_frame->df_read_off);
         else
         {
-            if (!(filter->hqfi_type == HQFT_HEADERS
+            if (!((filter->hqfi_type == HQFT_HEADERS
+                   || filter->hqfi_type == HQFT_PUSH_PROMISE)
                     && (filter->hqfi_flags & HQFI_FLAG_BLOCKED)))
                 assert(data_frame->df_read_off == data_frame->df_size);
             return 0;

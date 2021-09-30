@@ -6353,9 +6353,9 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
                 && (cce->cce_flags & CCE_SEQNO)
                 && cce->cce_seqno == seqno))
             break;
-
+    /* NOTE: https://github.com/litespeedtech/lsquic/issues/334
     conn->ifc_active_cids_count -= seqno >= conn->ifc_first_active_cid_seqno;
-
+    */
     if (cce < END_OF_CCES(lconn))
     {
         if (LSQUIC_CIDS_EQ(&cce->cce_cid, &packet_in->pi_dcid))

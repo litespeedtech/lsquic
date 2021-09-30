@@ -25,7 +25,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 3
 #define LSQUIC_MINOR_VERSION 0
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_PATCH_VERSION 3
 
 /**
  * Engine flags:
@@ -1688,6 +1688,12 @@ lsquic_stream_id (const lsquic_stream_t *s);
  */
 lsquic_stream_ctx_t *
 lsquic_stream_get_ctx (const lsquic_stream_t *s);
+
+/**
+ * Set user-supplied context associated with the stream.
+ */
+void
+lsquic_stream_set_ctx (lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx);
 
 /** Returns true if this is a pushed stream */
 int

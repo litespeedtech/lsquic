@@ -58,6 +58,17 @@ const char *const lsquic_ver2str[N_LSQVER] = {
 };
 
 
+const char *const lsquic_ver2altstr[N_LSQVER] = {
+    [LSQVER_043] = NULL,
+    [LSQVER_046] = NULL,
+    [LSQVER_050] = NULL,
+    [LSQVER_ID27] = "h3-27",
+    [LSQVER_ID29] = "h3-29",
+    [LSQVER_I001] = "h3",
+    [LSQVER_VERNEG] = "VERNEG",
+};
+
+
 enum lsquic_version
 lsquic_str2ver (const char *str, size_t len)
 {
@@ -71,12 +82,18 @@ lsquic_str2ver (const char *str, size_t len)
     }
 
     for (ver = 0; ver < N_LSQVER; ++ver)
+    {
         if (strlen(lsquic_ver2str[ver]) == len
             && strncasecmp(lsquic_ver2str[ver], str, len) == 0)
         {
             return ver;
         }
-
+        if (lsquic_ver2altstr[ver] && strlen(lsquic_ver2altstr[ver]) == len
+            && strncasecmp(lsquic_ver2altstr[ver], str, len) == 0)
+        {
+            return ver;
+        }
+    }
     return -1;
 }
 

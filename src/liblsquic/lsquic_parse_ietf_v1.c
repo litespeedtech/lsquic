@@ -386,7 +386,8 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
 
         /* Read as much as we can */
         nr = gsf_read(stream, p + dlen, size, &fin);
-        assert(nr != 0);
+        if (nr == 0)
+            return 0;
         assert(nr <= size);
 
         if (dlen)
