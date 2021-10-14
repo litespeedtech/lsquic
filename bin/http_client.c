@@ -1124,7 +1124,7 @@ init_x509_cert_store (const char *path)
 static int
 verify_server_cert (void *ctx, STACK_OF(X509) *chain)
 {
-    X509_STORE_CTX store_ctx;
+    X509_STORE_CTX *store_ctx = NULL;
     X509 *cert;
     int ver;
 
@@ -1134,12 +1134,16 @@ verify_server_cert (void *ctx, STACK_OF(X509) *chain)
             return -1;
     }
 
+    store_ctx = X509_STORE_CTX_new();
+    if (!store_ctx)
+        return -1;
+
     cert = sk_X509_shift(chain);
-    X509_STORE_CTX_init(&store_ctx, store, cert, chain);
+    X509_STORE_CTX_init(store_ctx, store, cert, chain);
 
-    ver = X509_verify_cert(&store_ctx);
+    ver = X509_verify_cert(store_ctx);
 
-    X509_STORE_CTX_cleanup(&store_ctx);
+    X509_STORE_CTX_free(store_ctx);
 
     if (ver != 1)
         LSQ_WARN("could not verify server certificate");
