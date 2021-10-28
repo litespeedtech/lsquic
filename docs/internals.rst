@@ -1854,7 +1854,7 @@ idle timer.
 The function ``process_incoming_packet`` contains some client-only logic
 for processing version negotiation and stateless retry packets. In the
 normal case, ``process_regular_packet()`` is called. This is where the
-incoming process is decrypted, the `Receive
+incoming packet is decrypted, the `Receive
 History <#receive-history>`__ is updated, ``parse_regular_packet()`` is
 called, and some post-processing takes place (most importantly,
 scheduling an ACK to be sent).
