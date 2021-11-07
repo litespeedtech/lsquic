@@ -89,7 +89,7 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-27, Draft-29, Draft-34,
+ * We currently support versions 43, 46, 50, Draft-27, Draft-29,
  * and IETF QUIC v1.
  * @see lsquic_version
  */
