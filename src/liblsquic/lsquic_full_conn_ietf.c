@@ -2767,8 +2767,8 @@ conn_ok_to_close (const struct ietf_full_conn *conn)
         || (
                !lsquic_send_ctl_have_outgoing_stream_frames(&conn->ifc_send_ctl)
             && !have_bidi_streams(conn)
-            && lsquic_send_ctl_have_unacked_stream_frames(
-                                                    &conn->ifc_send_ctl) == 0);
+            && !lsquic_send_ctl_have_unacked_stream_frames(
+                                                    &conn->ifc_send_ctl));
 }
 
 
