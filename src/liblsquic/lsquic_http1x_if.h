@@ -2,6 +2,8 @@
 #ifndef LSQUIC_HTTP1X_IF_H
 #define LSQUIC_HTTP1X_IF_H 1
 
+#include "lsquic_shared_support.h"
+
 struct lsquic_hset_if;
 struct lsquic_conn;
 
@@ -12,7 +14,7 @@ struct http1x_ctor_ctx
     int             is_server;
 };
 
-extern const struct lsquic_hset_if *const lsquic_http1x_if;
+LSQUIC_EXTERN const struct lsquic_hset_if *const lsquic_http1x_if;
 
 #define MAX_HTTP1X_HEADERS_SIZE (64 * 1024)
 

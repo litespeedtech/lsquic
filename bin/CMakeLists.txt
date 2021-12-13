@@ -18,22 +18,20 @@ IF(MSVC)
     ENDIF()
     LIST(APPEND LIBS ws2_32)
     LIST(APPEND LIBS iphlpapi)
+    LIST(APPEND LIBS ${GETOPT_LIB})
 ENDIF()
 
-IF(MSVC)
-    SET(GETOPT_C ../wincompat/getopt.c)
-ENDIF()
-add_executable(http_server http_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(http_server http_server.c prog.c test_common.c test_cert.c)
 IF(NOT MSVC)   #   TODO: port MD5 server and client to Windows
-add_executable(md5_server md5_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(md5_client md5_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(md5_server md5_server.c prog.c test_common.c test_cert.c)
+add_executable(md5_client md5_client.c prog.c test_common.c test_cert.c)
 ENDIF()
-add_executable(echo_server echo_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(echo_client echo_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(duck_server duck_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(duck_client duck_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(perf_client perf_client.c prog.c test_common.c test_cert.c ${GETOPT_C})
-add_executable(perf_server perf_server.c prog.c test_common.c test_cert.c ${GETOPT_C})
+add_executable(echo_server echo_server.c prog.c test_common.c test_cert.c)
+add_executable(echo_client echo_client.c prog.c test_common.c test_cert.c)
+add_executable(duck_server duck_server.c prog.c test_common.c test_cert.c)
+add_executable(duck_client duck_client.c prog.c test_common.c test_cert.c)
+add_executable(perf_client perf_client.c prog.c test_common.c test_cert.c)
+add_executable(perf_server perf_server.c prog.c test_common.c test_cert.c)
 
 
 IF (NOT MSVC)
@@ -53,8 +51,6 @@ add_executable(http_client
     prog.c
     test_common.c
     test_cert.c
-    ../wincompat/getopt.c
-    ../wincompat/getopt1.c
 )
 
 ENDIF()

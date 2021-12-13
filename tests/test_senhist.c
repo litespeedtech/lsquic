@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-
+#ifdef _MSC_VER
+#include "vc_compat.h"
+#endif
 #include "lsquic_int_types.h"
 #include "lsquic_senhist.h"
 #include "lsquic_types.h"

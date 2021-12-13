@@ -14,7 +14,8 @@
 #include "lsquic_parse.h"
 
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
+//static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043); // will not work on MSVC
+#define pf ((const struct parse_funcs *const)select_pf_by_ver(LSQVER_043))
 
 
 struct packno_bits_test {
@@ -205,7 +206,6 @@ static const struct packno_bits_test pb_tests[] = {
 static void
 run_pbt (int i)
 {
-    const struct parse_funcs *pf = select_pf_by_ver(LSQVER_043);
     const struct packno_bits_test *const pbt = &pb_tests[i];
     enum packno_bits packno_bits = pf->pf_calc_packno_bits(pbt->pbt_packno,
                                 pbt->pbt_least_unacked, pbt->pbt_n_in_flight);

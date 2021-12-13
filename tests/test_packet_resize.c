@@ -606,8 +606,11 @@ run_test (const struct test_spec *spec, enum lsquic_version version)
     LSQ_INFO("Running test on line %d: %s", spec->lineno, spec->desc);
     if (spec->versions && !(spec->versions & (1 << version)))
     {
-        LSQ_INFO("Not applicable to version %s, skip",
-                                                lsquic_ver2str[version]);
+#ifndef _MSC_VER
+        LSQ_INFO("Not applicable to version %s, skip", lsquic_ver2str[version]);
+#else
+        LSQ_INFO("Not applicable to version %d, skip", version);
+#endif
         return;
     }
 
@@ -765,7 +768,11 @@ main (int argc, char **argv)
     {
         if (!((1 << version) & LSQUIC_DF_VERSIONS))
             continue;
+#ifndef _MSC_VER
         LSQ_INFO("testing version %s", lsquic_ver2str[version]);
+#else
+    	LSQ_INFO("testing version %d", version);
+#endif
         for (spec = test_specs; spec < test_specs + sizeof(test_specs) / sizeof(test_specs[0]); ++spec)
             run_test(spec, version);
     }

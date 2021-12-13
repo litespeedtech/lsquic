@@ -2,6 +2,8 @@
 #ifndef LSQUIC_ENC_SESS_H
 #define LSQUIC_ENC_SESS_H 1
 
+#include "lsquic_shared_support.h"
+
 struct lsquic_alarmset;
 struct lsquic_engine_public;
 struct lsquic_packet_out;
@@ -315,27 +317,27 @@ struct enc_session_funcs_iquic
                                             const unsigned char *, size_t);
 };
 
-extern
+LSQUIC_EXTERN
 #ifdef NDEBUG
 const
 #endif
 struct enc_session_funcs_common lsquic_enc_session_common_gquic_1;
 
-extern
+LSQUIC_EXTERN
 #ifdef NDEBUG
 const
 #endif
 struct enc_session_funcs_common lsquic_enc_session_common_gquic_2;
 
-extern const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1;
+LSQUIC_EXTERN const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1;
 
-extern
+LSQUIC_EXTERN
 #ifdef NDEBUG
 const
 #endif
 struct enc_session_funcs_gquic lsquic_enc_session_gquic_gquic_1;
 
-extern const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
+LSQUIC_EXTERN const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
 
 #define select_esf_common_by_ver(ver) ( \
     ver == LSQVER_ID27 ? &lsquic_enc_session_common_ietf_v1 : \
@@ -353,9 +355,9 @@ extern const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1;
 
 extern const char *const lsquic_enclev2str[];
 
-extern const struct lsquic_stream_if lsquic_cry_sm_if;
+LSQUIC_EXTERN const struct lsquic_stream_if lsquic_cry_sm_if;
 
-extern const struct lsquic_stream_if lsquic_mini_cry_sm_if;
+LSQUIC_EXTERN const struct lsquic_stream_if lsquic_mini_cry_sm_if;
 
 /* RFC 7301, Section 3.2 */
 #define ALERT_NO_APPLICATION_PROTOCOL 120

@@ -12,7 +12,8 @@
 #include "lsquic_parse.h"
 
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
+//static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043); // will not work on MSVC
+#define pf ((const struct parse_funcs *const)select_pf_by_ver(LSQVER_043))
 
 struct float_test {
     uint64_t    long_time;

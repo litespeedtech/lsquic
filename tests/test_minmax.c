@@ -8,6 +8,10 @@
 
 #include "lsquic_minmax.h"
 
+#ifdef _MSC_VER
+#include "vc_compat.h"
+#endif
+
 /* Convert milliseconds to lsquic_time_t, which is microseconds */
 #define ms(val) ((val) * 1000)
 

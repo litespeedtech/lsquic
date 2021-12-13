@@ -52,7 +52,7 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 
-static const struct parse_funcs *g_pf = select_pf_by_ver(LSQVER_043);
+static const struct parse_funcs *g_pf; // = select_pf_by_ver(LSQVER_043); // will not work on MSVC, moved init to main()
 
 static int g_use_crypto_ctor;
 
@@ -1295,6 +1295,7 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
  *          Stream B is reset.  We should get a gapless sequence
  *          of packets 1, 2.
  */
+#ifndef NDEBUG
 static void
 test_gapless_elision_middle (struct test_objs *tobjs)
 {
@@ -1367,7 +1368,6 @@ test_gapless_elision_middle (struct test_objs *tobjs)
     lsquic_stream_destroy(streamA);
     lsquic_stream_destroy(streamB);
 }
-
 
 /* Test that when stream frame is elided and the packet is dropped,
  * the send controller produces a gapless sequence.
@@ -1456,6 +1456,7 @@ test_gapless_elision_beginning (struct test_objs *tobjs)
     lsquic_stream_destroy(streamA);
     lsquic_stream_destroy(streamB);
 }
+#endif
 
 
 
@@ -1599,8 +1600,10 @@ test_termination (void)
         { 1, 1, test_loc_data_rem_RST, },
         { 0, 1, test_loc_data_rem_SS, },
         { 1, 0, test_loc_RST_rem_FIN, },
+#ifndef NDEBUG
         { 1, 1, test_gapless_elision_beginning, },
         { 1, 1, test_gapless_elision_middle, },
+#endif
     }, *tf;
 
     for (tf = test_funcs; tf < test_funcs + sizeof(test_funcs) / sizeof(test_funcs[0]); ++tf)
@@ -2998,6 +3001,7 @@ test_bad_packbits_guess_3 (void)
 static void
 test_resize_buffered (void)
 {
+#ifndef NDEBUG
     ssize_t nw;
     struct test_objs tobjs;
     struct lsquic_stream *streams[1];
@@ -3046,6 +3050,7 @@ test_resize_buffered (void)
     lsquic_stream_destroy(streams[0]);
     deinit_test_objs(&tobjs);
     lsquic_send_ctl_set_max_bpq_count(10);
+#endif
 }
 
 
@@ -3059,6 +3064,7 @@ test_resize_buffered (void)
 static void
 test_resize_scheduled (void)
 {
+#ifndef NDEBUG // lsquic_send_ctl_set_max_bpq_count is debug only
     ssize_t nw;
     struct test_objs tobjs;
     struct lsquic_stream *streams[1];
@@ -3107,6 +3113,7 @@ test_resize_scheduled (void)
     lsquic_stream_destroy(streams[0]);
     deinit_test_objs(&tobjs);
     lsquic_send_ctl_set_max_bpq_count(10);
+#endif
 }
 
 
@@ -3671,7 +3678,9 @@ main_test_packetization (void)
 int
 main (int argc, char **argv)
 {
-    int opt;
+    g_pf = select_pf_by_ver(LSQVER_043);
+
+	int opt;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 

@@ -6,6 +6,7 @@
 
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_gquic.h"
+#include "lsquic_shared_support.h"
 
 struct lsquic_conn;
 struct lsquic_packet_in;
@@ -192,7 +193,6 @@ struct parse_funcs
     int
     (*pf_parse_path_resp_frame) (const unsigned char *buf, size_t,
                                                             uint64_t *resp);
-#ifndef NDEBUG    
     /* These float reading and writing functions assume `mem' has at least
      * 2 bytes.
      */
@@ -200,7 +200,6 @@ struct parse_funcs
     (*pf_write_float_time16) (lsquic_time_t time_us, void *mem);
     uint64_t
     (*pf_read_float_time16) (const void *mem);
-#endif    
     ssize_t
     (*pf_generate_simple_prst) (const lsquic_cid_t *cid,
                                                     unsigned char *, size_t);
@@ -334,11 +333,10 @@ struct parse_funcs
     (*pf_datagram_frame_size) (size_t);
 };
 
-
-extern const struct parse_funcs lsquic_parse_funcs_gquic_Q043;
-extern const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
-extern const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
-extern const struct parse_funcs lsquic_parse_funcs_ietf_v1;
+LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_gquic_Q043;
+LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_gquic_Q046;
+LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_gquic_Q050;
+LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_ietf_v1;
 
 #define select_pf_by_ver(ver) (                                             \
     (1 << (ver)) & (1 << LSQVER_043)                     ?                  \

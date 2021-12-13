@@ -26,7 +26,8 @@
 #include "lsquic_logger.h"
 
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
+//static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043); // will not work on MSVC
+#define pf ((const struct parse_funcs *const)select_pf_by_ver(LSQVER_043))
 
 static struct {
     unsigned char   buf[0x1000];
