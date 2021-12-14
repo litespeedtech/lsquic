@@ -94,6 +94,11 @@ FOREACH(TEST_NAME ${TESTS})
         TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
     ELSE()
         TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
+        # copy any dependencies local to the tests
+      ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+        COMMAND if not \"\"=="$<TARGET_RUNTIME_DLLS:test_${TEST_NAME}>" ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:test_${TEST_NAME}> $<TARGET_FILE_DIR:test_${TEST_NAME}>
+        COMMAND_EXPAND_LISTS
+      )
     ENDIF()
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
 ENDFOREACH()

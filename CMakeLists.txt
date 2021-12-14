@@ -12,6 +12,8 @@ OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
 
 INCLUDE(GNUInstallDirs)
 
+MESSAGE(STATUS "CMake v${CMAKE_VERSION}")
+
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
     EXECUTE_PROCESS(
