@@ -20,6 +20,10 @@
 #        define LSQUIC_EXTERN __declspec(dllimport) extern
 #      endif /* LSQUIC_EXPORTS */
 
+#    else
+
+#    define LSQUIC_EXTERN extern
+
 #    endif
 
 #  else /* _MSC_VER */
