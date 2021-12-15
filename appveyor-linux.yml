@@ -9,13 +9,20 @@ build: off
 init:
 
 cache:
-- boringssl -> appveyor-linux.yml # we define the commit in here
+- $HOME/.apt
+- boringssl -> boringssl-target.txt # we define the commit in here
 
 install:
 
 - sh: >-
 
-    if [[ -e boringssl/CMakeLists.txt ]] ; then
+    if [[ -e ~/.apt ]] ; then
+
+        sudo mv $HOME/.apt/* /var/cache/apt/archives/
+
+    fi
+
+    if [[ -e ./boringssl/CMakeLists.txt ]] ; then
 
         echo cached
 
@@ -25,11 +32,11 @@ install:
 
         cd boringssl
 
-        git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9
+        git checkout $(<../boringssl-target.txt)
 
         cmake .
 
-        make -j4
+        make -j2 crypto ssl decrepit
 
         cd ..
 
@@ -39,10 +46,30 @@ install:
 
     git submodule update --checkout --force --recursive
 
+    sudo apt update -qq
+
+    sudo apt -y --no-install-recommends install libevent-dev
+
+    mkdir -p $HOME/.apt
+
+    sudo mv /var/cache/apt/archives/libevent*.deb $HOME/.apt/
+
     cmake -DBORINGSSL_DIR=$PWD/boringssl .
 
-    make
+    make -j2 lsquic build-tests
 
 test_script:
 
-- sh: make test
+- sh:  >-
+
+    make test
+
+    make -j2 perf_server perf_client
+
+    ./bin/perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key &
+
+    PERF_SERVER_PID=$!
+
+    time ./bin/perf_client -L info -s ::1:8443 -p 104857600:104857600
+
+    kill $PERF_SERVER_PID
