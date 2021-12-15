@@ -22,7 +22,7 @@ install:
 
 cache:
 - c:\tools\vcpkg\installed
-- boringssl -> appveyor-windows.yml # we define the commit in here
+- boringssl -> appveyor-windows.yml, appveyor-windows.cmd # we define the commit in here
 
 build_script:
 
