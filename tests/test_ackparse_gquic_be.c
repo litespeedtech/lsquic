@@ -20,7 +20,8 @@
 
 static struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 0);
 
-static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043);
+//static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043); // will not work on MSVC
+#define pf ((const struct parse_funcs *const)select_pf_by_ver(LSQVER_043))
 
 
 static lsquic_packno_t

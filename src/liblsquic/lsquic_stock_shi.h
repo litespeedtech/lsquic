@@ -6,11 +6,11 @@
 #ifndef LSQUIC_STOCK_SHI
 #define LSQUIC_STOCK_SHI 1
 
+#include "lsquic_shared_support.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 
 struct stock_shared_hash;
 
@@ -25,6 +25,6 @@ lsquic_stock_shared_hash_destroy (struct stock_shared_hash *);
 }
 #endif
 
-extern const struct lsquic_shared_hash_if stock_shi;
+LSQUIC_EXTERN const struct lsquic_shared_hash_if stock_shi;
 
 #endif

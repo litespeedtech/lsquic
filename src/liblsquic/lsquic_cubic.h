@@ -6,6 +6,8 @@
 #ifndef LSQUIC_CUBIC_H
 #define LSQUIC_CUBIC_H 1
 
+#include "lsquic_shared_support.h"
+
 struct lsquic_conn;
 
 struct lsquic_cubic {
@@ -32,7 +34,7 @@ struct lsquic_cubic {
 
 #define TCP_MSS 1460
 
-extern const struct cong_ctl_if lsquic_cong_cubic_if;
+LSQUIC_EXTERN const struct cong_ctl_if lsquic_cong_cubic_if;
 
 void
 lsquic_cubic_set_flags (struct lsquic_cubic *cubic, enum cubic_flags flags);

@@ -5,6 +5,10 @@
 
 #include "lsquic_varint.h"
 
+#ifdef _MSC_VER
+#include "vc_compat.h"
+#endif
+
 #define MAX_INPUT_SZ 8
 
 struct test_read_varint

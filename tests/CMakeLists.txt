@@ -6,7 +6,6 @@ ENABLE_TESTING()
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_TEST=1")
 
 IF (MSVC)
-    SET(ADDL_SOURCES ../wincompat/getopt.c ../wincompat/getopt1.c)
     SET(LIB_FLAGS "-FORCE:MULTIPLE")
 ELSE()
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused-value")
@@ -91,12 +90,31 @@ ENDIF()
 
 FOREACH(TEST_NAME ${TESTS})
     ADD_EXECUTABLE(test_${TEST_NAME} test_${TEST_NAME}.c ${ADDL_SOURCES})
-    TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
+    IF(NOT MSVC)
+        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
+    ELSE()
+        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
+        # copy any dependencies local to the tests
+      #IF (${CMAKE_VERSION} VERSION_LESS "3.21.0")
+        ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"$ENV{VCPKG_ROOT}/installed/x64-windows$<$<CONFIG:Debug>:/debug>/bin/getopt.dll\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+          COMMAND_EXPAND_LISTS
+        )
+      #ELSE()
+      #  ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+      #    COMMAND if not \"\"=="$<TARGET_RUNTIME_DLLS:test_${TEST_NAME}>" ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:test_${TEST_NAME}> $<TARGET_FILE_DIR:test_${TEST_NAME}>
+      #    COMMAND_EXPAND_LISTS
+      #  )
+      #ENDIF()
+    ENDIF()
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
 ENDFOREACH()
 
 ADD_EXECUTABLE(test_stream test_stream.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(test_stream ${LIBS} ${LIB_FLAGS})
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(test_stream ${GETOPT_LIB})
+ENDIF()
 ADD_TEST(stream test_stream)
 ADD_TEST(stream_hash test_stream -h)
 ADD_TEST(stream_A test_stream -A)
@@ -114,20 +132,26 @@ ADD_EXECUTABLE(test_min_heap test_min_heap.c ../src/liblsquic/lsquic_min_heap.c)
 ADD_TEST(min_heap test_min_heap)
 
 SET(MALO_SRC test_malo.c ../src/liblsquic/lsquic_malo.c)
-IF(MSVC)
-    LIST(APPEND MALO_SRC ../wincompat/getopt.c)
-ENDIF()
 ADD_EXECUTABLE(test_malo_pooled ${MALO_SRC})
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(test_malo_pooled ${GETOPT_LIB})
+ENDIF()
 SET_TARGET_PROPERTIES(test_malo_pooled
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=1")
 ADD_TEST(malo_pooled test_malo_pooled)
 
 ADD_EXECUTABLE(test_malo_nopool ${MALO_SRC})
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(test_malo_nopool ${GETOPT_LIB})
+ENDIF()
 SET_TARGET_PROPERTIES(test_malo_nopool
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=0")
 ADD_TEST(malo_nopool test_malo_nopool)
 
 ADD_EXECUTABLE(test_minmax test_minmax.c ../src/liblsquic/lsquic_minmax.c)
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(test_minmax ${GETOPT_LIB})
+ENDIF()
 ADD_TEST(minmax test_minmax)
 
 ADD_EXECUTABLE(test_rechist test_rechist.c ../src/liblsquic/lsquic_rechist.c)

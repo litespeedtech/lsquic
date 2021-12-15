@@ -8,25 +8,36 @@ build: off
 
 init:
 
+cache:
+- boringssl -> appveyor-linux.yml # we define the commit in here
+
 install:
 
 - sh: >-
 
-    git clone https://boringssl.googlesource.com/boringssl
+    if [[ -e boringssl/CMakeLists.txt ]] ; then
 
-    cd boringssl
+        echo cached
 
-    git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9
+    else
 
-    cmake .
+        git clone https://boringssl.googlesource.com/boringssl
 
-    make -j4
+        cd boringssl
 
-    cd ..
+        git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9
+
+        cmake .
+
+        make -j4
+
+        cd ..
+
+    fi
 
     git submodule init
 
-    git submodule update
+    git submodule update --checkout --force --recursive
 
     cmake -DBORINGSSL_DIR=$PWD/boringssl .
 
