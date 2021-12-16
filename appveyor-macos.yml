@@ -3,12 +3,12 @@ version: 2.{branch}.{build}
 image:
 - MacOS
 
+cache:
+- boringssl -> boringssl-target.txt # we define the commit in here
+
 build: off
 
 init:
-
-cache:
-- boringssl -> boringssl-target.txt # we define the commit in here
 
 install:
 
@@ -36,7 +36,15 @@ install:
 
     git submodule init
 
-    git submodule update --checkout --force --recursive
+    n=0
+
+    until git submodule update --checkout --force --recursive ; do
+
+        [ "$n" -ge 10 ] && exit 1
+
+        n=$((n+1))
+
+    done
 
     cmake -DBORINGSSL_DIR=$PWD/boringssl .
 

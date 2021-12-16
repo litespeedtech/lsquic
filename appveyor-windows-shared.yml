@@ -14,18 +14,19 @@ install:
 
 - cmd: >-
 
-    vcpkg install zlib:x64-windows-static
+    vcpkg install zlib:x64-windows
 
-    vcpkg install libevent:x64-windows-static
+    vcpkg install libevent:x64-windows
 
-    vcpkg install pcre:x64-windows-static
+    vcpkg install pcre:x64-windows
 
     vcpkg install getopt:x64-windows
 
     vcpkg integrate install
+
 build_script:
 
-- cmd: appveyor-windows.cmd
+- cmd: appveyor-windows-shared.cmd
 
 test_script:
 
