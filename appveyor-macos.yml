@@ -1,25 +1,18 @@
 version: 2.{branch}.{build}
 
 image:
-- Ubuntu2004
+- MacOS
 
 build: off
 
 init:
 
 cache:
-- $HOME/.apt
 - boringssl -> boringssl-target.txt # we define the commit in here
 
 install:
 
 - sh: >-
-
-    if [[ -e ~/.apt ]] ; then
-
-        sudo mv $HOME/.apt/* /var/cache/apt/archives/
-
-    fi
 
     if [[ -e ./boringssl/CMakeLists.txt ]] ; then
 
@@ -44,14 +37,6 @@ install:
     git submodule init
 
     git submodule update --checkout --force --recursive
-
-    sudo apt update -qq
-
-    sudo apt -y --no-install-recommends install libevent-dev
-
-    mkdir -p $HOME/.apt
-
-    sudo mv /var/cache/apt/archives/libevent*.deb $HOME/.apt/
 
     cmake -DBORINGSSL_DIR=$PWD/boringssl .
 
