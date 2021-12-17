@@ -41,7 +41,6 @@ struct test {
 };
 
 
-
 static void
 run_test (const struct test *const test)
 {
@@ -80,156 +79,156 @@ run_test (const struct test *const test)
 int
 main (void)
 {
-	const struct test tests[] = {
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NULL,
-	        .packno = 0x01020304,
-	        .bits   = GQUIC_PACKNO_LEN_4,
-	        .len    = 1 + 8 + 0 + 4,
-	        .out    = {     (0 << 2)                                        /* Nonce present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x20                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      0x01, 0x02, 0x03, 0x04,                           /* Packet number */
-	        },
-	    },
+    const struct test tests[] = {
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NULL,
+            .packno = 0x01020304,
+            .bits   = GQUIC_PACKNO_LEN_4,
+            .len    = 1 + 8 + 0 + 4,
+            .out    = {     (0 << 2)                                        /* Nonce present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x20                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          0x01, 0x02, 0x03, 0x04,                           /* Packet number */
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NULL,
-	        .packno = 0x00,
-	        .bits   = GQUIC_PACKNO_LEN_1,
-	        .len    = 1 + 8 + 0 + 1,
-	        .out    = {     (0 << 2)                                        /* Nonce present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x00                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      0x00,                                             /* Packet number */
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NULL,
+            .packno = 0x00,
+            .bits   = GQUIC_PACKNO_LEN_1,
+            .len    = 1 + 8 + 0 + 1,
+            .out    = {     (0 << 2)                                        /* Nonce present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x00                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          0x00,                                             /* Packet number */
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NULL,
-	        .packno = 0x09,
-	        .bits   = GQUIC_PACKNO_LEN_1,
-	        .ver.buf= { 'Q', '0', '4', '3', },
-	        .len    = 1 + 8 + 4 + 0 + 1,
-	        .out    = {     (0 << 2)                                        /* Nonce present */
-	                      | 0x01                                            /* Version present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x00                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      'Q', '0', '4', '3',
-	                      0x09,                                             /* Packet number */
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NULL,
+            .packno = 0x09,
+            .bits   = GQUIC_PACKNO_LEN_1,
+            .ver.buf= { 'Q', '0', '4', '3', },
+            .len    = 1 + 8 + 4 + 0 + 1,
+            .out    = {     (0 << 2)                                        /* Nonce present */
+                          | 0x01                                            /* Version present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x00                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          'Q', '0', '4', '3',
+                          0x09,                                             /* Packet number */
+            },
+        },
 
-	#define NONCENSE "0123456789abcdefghijklmnopqrstuv"
-	#define NONCENSE_BYTES '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v'
+    #define NONCENSE "0123456789abcdefghijklmnopqrstuv"
+    #define NONCENSE_BYTES '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v'
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NONCENSE,
-	        .packno = 0x00,
-	        .bits   = GQUIC_PACKNO_LEN_1,
-	        .len    = 1 + 8 + 32 + 1,
-	        .out    = {     (1 << 2)                                        /* Nonce present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x00                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      NONCENSE_BYTES,
-	                      0x00,                                             /* Packet number */
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NONCENSE,
+            .packno = 0x00,
+            .bits   = GQUIC_PACKNO_LEN_1,
+            .len    = 1 + 8 + 32 + 1,
+            .out    = {     (1 << 2)                                        /* Nonce present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x00                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          NONCENSE_BYTES,
+                          0x00,                                             /* Packet number */
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0,    /* Do not set connection ID */
-	        .nonce  = NONCENSE,
-	        .packno = 0x00,
-	        .bits   = GQUIC_PACKNO_LEN_1,
-	        .len    = 1 + 0 + 32 + 1,
-	        .out    = {     (1 << 2)                                        /* Nonce present */
-	                      | 0x00                                            /* Packet number length */
-	                      ,
-	                      NONCENSE_BYTES,
-	                      0x00,                                             /* Packet number */
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0,    /* Do not set connection ID */
+            .nonce  = NONCENSE,
+            .packno = 0x00,
+            .bits   = GQUIC_PACKNO_LEN_1,
+            .len    = 1 + 0 + 32 + 1,
+            .out    = {     (1 << 2)                                        /* Nonce present */
+                          | 0x00                                            /* Packet number length */
+                          ,
+                          NONCENSE_BYTES,
+                          0x00,                                             /* Packet number */
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NONCENSE,
-	        .packno = 0x00,
-	        .bits   = GQUIC_PACKNO_LEN_1,
-	        .ver.buf= { 'Q', '0', '4', '3', },
-	        .len    = 1 + 8 + 4 + 32 + 1,
-	        .out    = {     (1 << 2)                                        /* Nonce present */
-	                      | 0x01                                            /* Version present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x00                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      'Q', '0', '4', '3',
-	                      NONCENSE_BYTES,
-	                      0x00,                                             /* Packet number */
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NONCENSE,
+            .packno = 0x00,
+            .bits   = GQUIC_PACKNO_LEN_1,
+            .ver.buf= { 'Q', '0', '4', '3', },
+            .len    = 1 + 8 + 4 + 32 + 1,
+            .out    = {     (1 << 2)                                        /* Nonce present */
+                          | 0x01                                            /* Version present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x00                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          'Q', '0', '4', '3',
+                          NONCENSE_BYTES,
+                          0x00,                                             /* Packet number */
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NONCENSE,
-	        .packno = 0xA0A1A2A3A4A5A6A7UL,
-	        .bits   = GQUIC_PACKNO_LEN_6,
-	        .len    = 1 + 8 + 32 + 6,
-	        .out    = {     (1 << 2)                                        /* Nonce present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x30                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      NONCENSE_BYTES,
-	                      0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NONCENSE,
+            .packno = 0xA0A1A2A3A4A5A6A7UL,
+            .bits   = GQUIC_PACKNO_LEN_6,
+            .len    = 1 + 8 + 32 + 6,
+            .out    = {     (1 << 2)                                        /* Nonce present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x30                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          NONCENSE_BYTES,
+                          0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+            },
+        },
 
-	    {
-	        .pf     = select_pf_by_ver(LSQVER_043),
-	        .bufsz  = GQUIC_MAX_PUBHDR_SZ,
-	        .cid    = 0x0102030405060708UL,
-	        .nonce  = NONCENSE,
-	        .packno = 0xA0A1A2A3A4A5A6A7UL,
-	        .bits   = GQUIC_PACKNO_LEN_6,
-	        .len    = 1 + 8 + 32 + 6,
-	        .out    = {     (1 << 2)                                        /* Nonce present */
-	                      | 0x08                                            /* Connection ID present */
-	                      | 0x30                                            /* Packet number length */
-	                      ,
-	                      0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
-	                      NONCENSE_BYTES,
-	                      0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
-	        },
-	    },
+        {
+            .pf     = select_pf_by_ver(LSQVER_043),
+            .bufsz  = GQUIC_MAX_PUBHDR_SZ,
+            .cid    = 0x0102030405060708UL,
+            .nonce  = NONCENSE,
+            .packno = 0xA0A1A2A3A4A5A6A7UL,
+            .bits   = GQUIC_PACKNO_LEN_6,
+            .len    = 1 + 8 + 32 + 6,
+            .out    = {     (1 << 2)                                        /* Nonce present */
+                          | 0x08                                            /* Connection ID present */
+                          | 0x30                                            /* Packet number length */
+                          ,
+                          0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,   /* Connection ID */
+                          NONCENSE_BYTES,
+                          0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+            },
+        },
 
-	};
+    };
 
     unsigned i;
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
