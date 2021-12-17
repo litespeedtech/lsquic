@@ -6,6 +6,9 @@ cache:
 - c:\tools\vcpkg\installed
 - boringssl -> boringssl-target.txt # we define the commit in here
 
+environment:
+  APPVEYOR_SAVE_CACHE_ON_ERROR: true
+
 init:
 
 - cmd: ''

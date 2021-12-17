@@ -229,19 +229,29 @@ IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
     ENDIF()
 
     # actually load vcpkg.cmake
+    MESSAGE(STATUS "Loading ${CMAKE_TOOLCHAIN_FILE}")
     INCLUDE("${CMAKE_TOOLCHAIN_FILE}")
 
-    FIND_PATH(GETOPT_INCLUDE_DIR NAMES getopt.h)
+    IF(CONFIG STREQUAL "Debug")
+        SET(VCPKG_INSTALLED_DIR_X64_WINDOWS "${VCPKG_INSTALLED_DIR}/x64-windows/Debug")
+    ELSE()
+        SET(VCPKG_INSTALLED_DIR_X64_WINDOWS "${VCPKG_INSTALLED_DIR}/x64-windows")
+    ENDIF()
+
+    FIND_PATH(GETOPT_INCLUDE_DIR NAMES getopt.h PATHS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/include")
+
     IF (GETOPT_INCLUDE_DIR)
         INCLUDE_DIRECTORIES(${GETOPT_INCLUDE_DIR})
     ELSE()
         MESSAGE(FATAL_ERROR "getopt.h was not found")
     ENDIF()
-        FIND_LIBRARY(GETOPT_LIB getopt)
+
+    FIND_LIBRARY(GETOPT_LIB getopt PATHS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/lib")
+
     IF(GETOPT_LIB)
         MESSAGE(STATUS "Found getopt: ${GETOPT_LIB}")
     ELSE()
-        MESSAGE(STATUS "getopt not found")
+        MESSAGE(STATUS "getopt library was not found")
     ENDIF()
 ENDIF()
 
