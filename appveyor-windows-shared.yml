@@ -3,11 +3,12 @@ version: 1.{branch}.{build}
 image: Visual Studio 2017
 
 cache:
-- c:\tools\vcpkg\installed -> appveyor-windows-shared.yml
+- c:\tools\vcpkg -> appveyor-windows-shared.yml,appveyor-update-vcpkg.cmd,c:\tools\vcpkg\.git\refs\heads\master
 - boringssl -> appveyor-windows-shared.cmd,boringssl-target.txt # we define the commit in here
 
 environment:
   APPVEYOR_SAVE_CACHE_ON_ERROR: true
+  VCPKG_DISABLE_METRICS: 1
 
 init:
 
@@ -16,6 +17,8 @@ init:
 install:
 
 - cmd: >-
+
+    call appveyor-update-vcpkg.cmd
 
     vcpkg install zlib:x64-windows
 

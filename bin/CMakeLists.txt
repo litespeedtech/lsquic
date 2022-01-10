@@ -120,8 +120,8 @@ ENDFOREACH()
 IF(MSVC)
   FOREACH(bin_target IN LISTS bin_targets)
     # copy any dependencies local to the targets
-    DD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy \"$<TARGET_FILE:lsquic>\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+    ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy \"$<TARGET_FILE:lsquic>\" \"$<TARGET_FILE_DIR:${bin_target}>\"
       COMMAND_EXPAND_LISTS
     )
     ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
