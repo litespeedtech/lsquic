@@ -1,9 +1,11 @@
 for /f "usebackq delims=#" %%a in (`"%programfiles(x86)%\Microsoft Visual Studio\Installer\vswhere" -latest -property installationPath`) do call "%%~a\VC\Auxiliary\Build\vcvars64.bat"
 
 msbuild /m RUN_TESTS.vcxproj
-if errorlevel 1 exit !errorlevel!
+set testserror=%errorlevel%
 
 wevtutil qe Application /q:"*[System[TimeCreated[timediff(@SystemTime) <= 1209600000]]]" /f:text /c:1
+
+if %testserror% neq 0 exit %testserror%
 
 msbuild /m bin\perf_server.vcxproj
 if errorlevel 1 exit !errorlevel!
