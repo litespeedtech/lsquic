@@ -14,10 +14,10 @@ if errorlevel 1 (
 
 	git reset --hard HEAD
 
-	git clean -fdx -e installed -e packages
-
 	bootstrap-vcpkg.bat
 
 )
+
+git clean -fdx -e installed -e packages
 
 popd
