@@ -19,11 +19,11 @@ if exist ".\boringssl\include\openssl\ssl.h" (
     git checkout %BORINGSSL_TARGET%
     rd /s /q .git
     cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=ON -DOPENSSL_NO_ASM=1 .
-    msbuild /m crypto\crypto.vcxproj
+    msbuild /m crypto\crypto.vcxproj /v:m
     if errorlevel 1 exit !errorlevel!
-    msbuild /m ssl\ssl.vcxproj
+    msbuild /m ssl\ssl.vcxproj /v:m
     if errorlevel 1 exit !errorlevel!
-    msbuild /m decrepit\decrepit.vcxproj
+    msbuild /m decrepit\decrepit.vcxproj /v:m
     if errorlevel 1 exit !errorlevel!
     cd ..
 )
@@ -39,8 +39,8 @@ if errorlevel 1 goto :retry_submodule_update
 
 cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DLSQUIC_SHARED_LIB=ON -DBUILD_SHARED_LIBS=ON -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DBORINGSSL_DIR=%cd%\boringssl -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON .
 
-msbuild /m src\liblsquic\lsquic.vcxproj
+msbuild /m src\liblsquic\lsquic.vcxproj /v:n
 if errorlevel 1 exit !errorlevel!
-msbuild /m tests\build-tests.vcxproj
+msbuild /m tests\build-tests.vcxproj /v:n
 if errorlevel 1 exit !errorlevel!
 
