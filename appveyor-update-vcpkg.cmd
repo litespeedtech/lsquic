@@ -14,7 +14,7 @@ if errorlevel 1 (
 
 	git reset --hard HEAD
 
-	git clean -fdx --exclude=c:\tools\vcpkg\installed
+	git clean -fdx -e installed -e packages
 
 	bootstrap-vcpkg.bat
 

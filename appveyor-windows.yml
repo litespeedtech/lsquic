@@ -8,7 +8,7 @@ cache:
 
 environment:
   APPVEYOR_SAVE_CACHE_ON_ERROR: true
-  VCPKG_DISABLE_METRICS: true
+  VCPKG_DISABLE_METRICS: 1
 
 init:
 
