@@ -7,6 +7,8 @@
 #cmakedefine HAVE_IP_DONTFRAG 1
 #cmakedefine HAVE_IP_MTU_DISCOVER 1
 #cmakedefine HAVE_REGEX 1
+#cmakedefine HAVE_PCRE 1
+#cmakedefine HAVE_PCRE2 1
 #cmakedefine HAVE_PREADV 1
 
 #define LSQUIC_DONTFRAG_SUPPORTED (HAVE_IP_DONTFRAG || HAVE_IP_MTU_DISCOVER)

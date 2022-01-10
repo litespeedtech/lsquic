@@ -93,23 +93,35 @@ ENDIF()
 
 FOREACH(TEST_NAME ${TESTS})
     ADD_EXECUTABLE(test_${TEST_NAME} test_${TEST_NAME}.c ${ADDL_SOURCES})
+
     IF(NOT MSVC)
-        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
+      TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
     ELSE()
-        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
-        # copy any dependencies local to the tests
-      IF (${CMAKE_VERSION} VERSION_LESS "3.21.0")
-        ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy \"${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/getopt.dll\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
-          COMMAND_EXPAND_LISTS
-        )
-      ELSE()
-        ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
-          COMMAND if not \"\"=="$<TARGET_RUNTIME_DLLS:test_${TEST_NAME}>" ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:test_${TEST_NAME}> $<TARGET_FILE_DIR:test_${TEST_NAME}>
-          COMMAND_EXPAND_LISTS
-        )
+      TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
+
+      # copy any dependencies local to the tests
+      ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy \"$<TARGET_FILE:lsquic>\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+        COMMAND_EXPAND_LISTS
+      )
+      ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy \"${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/getopt.dll\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+        COMMAND_EXPAND_LISTS
+      )
+      IF(EXISTS ${BORINGSSL_DLL_crypto})
+          ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_crypto}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+            COMMAND_EXPAND_LISTS
+          )
+      ENDIF()
+      IF(EXISTS ${BORINGSSL_DLL_ssl})
+          ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_ssl}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+            COMMAND_EXPAND_LISTS
+          )
       ENDIF()
     ENDIF()
+
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
     ADD_DEPENDENCIES(build-tests test_${TEST_NAME})
 ENDFOREACH()

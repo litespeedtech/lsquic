@@ -3,8 +3,8 @@ version: 1.{branch}.{build}
 image: Visual Studio 2017
 
 cache:
-- c:\tools\vcpkg\installed
-- boringssl -> boringssl-target.txt # we define the commit in here
+- c:\tools\vcpkg\installed -> appveyor-windows.yml
+- boringssl -> appveyor-windows.cmd,boringssl-target.txt # we define the commit in here
 
 environment:
   APPVEYOR_SAVE_CACHE_ON_ERROR: true
@@ -21,11 +21,12 @@ install:
 
     vcpkg install libevent:x64-windows-static
 
-    vcpkg install pcre:x64-windows-static
+    vcpkg install pcre2:x64-windows-static
 
     vcpkg install getopt:x64-windows
 
     vcpkg integrate install
+
 build_script:
 
 - cmd: appveyor-windows.cmd
@@ -33,3 +34,4 @@ build_script:
 test_script:
 
 - cmd: appveyor-windows-test.cmd
+

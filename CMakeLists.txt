@@ -152,40 +152,48 @@ ELSE()
 ENDIF()
 
 IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
-    FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
-                PATHS ${BORINGSSL_DIR}/include
-                NO_DEFAULT_PATH)
+  SET(BORINGSSL_INCLUDE "${BORINGSSL_DIR}/include")
 ENDIF()
+
 # This must be done before adding other include directories to take
 # precedence over header files from other SSL installs.
 
 IF (BORINGSSL_INCLUDE)
-    MESSAGE(STATUS "BoringSSL include directory ${BORINGSSL_INCLUDE}")
-    INCLUDE_DIRECTORIES(${BORINGSSL_INCLUDE})
+  MESSAGE(STATUS "BoringSSL include directory: ${BORINGSSL_INCLUDE}")
+  INCLUDE_DIRECTORIES(${BORINGSSL_INCLUDE})
 ELSE()
-    MESSAGE(FATAL_ERROR "BoringSSL headers not found")
+  MESSAGE(FATAL_ERROR "BoringSSL headers not found")
 ENDIF()
 
 IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
-    FOREACH(LIB_NAME ssl crypto decrepit)
-        IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES ${LIB_NAME}
-                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
-		PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
-                NO_DEFAULT_PATH)
+  FOREACH(LIB_NAME ssl crypto decrepit)
+    IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+        FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+            NAMES ${LIB_NAME}
+            PATHS ${BORINGSSL_DIR}/${LIB_NAME}
+            PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+            NO_DEFAULT_PATH)
+
+        IF(DEFINED BORINGSSL_DIR)
+          file(GLOB_RECURSE BORINGSSL_DLL_${LIB_NAME}
+              "${BORINGSSL_DIR}/**/${LIB_NAME}.dll")
         ELSE()
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
-                NO_DEFAULT_PATH)
+          file(GLOB_RECURSE BORINGSSL_DLL_${LIB_NAME}
+              "${BORINGSSL_INCLUDE}/../**/${LIB_NAME}.dll")
         ENDIF()
-        IF(BORINGSSL_LIB_${LIB_NAME})
-            MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
-        ELSE()
-            MESSAGE(STATUS "${LIB_NAME} library not found")
-        ENDIF()
-    ENDFOREACH()
+      ELSE()
+        FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+            NAMES lib${LIB_NAME}${LIB_SUFFIX}
+            PATHS ${BORINGSSL_DIR}/${LIB_NAME}
+            NO_DEFAULT_PATH)
+      ENDIF()
+
+      IF(BORINGSSL_LIB_${LIB_NAME})
+          MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+      ELSE()
+          MESSAGE(STATUS "${LIB_NAME} library not found")
+      ENDIF()
+  ENDFOREACH()
 
 ELSE()
 
@@ -221,38 +229,64 @@ IF(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     link_directories( /usr/local/lib )
 ENDIF()
 
-IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+IF (MSVC)
 
-    IF(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-      SET(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
-          CACHE STRING "")
-    ENDIF()
+  IF(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    SET(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "")
+  ELSEIF(NOT DEFINED ENV{VCPKG_ROOT} AND DEFINED CMAKE_TOOLCHAIN_FILE)
+    MESSAGE(STATUS "Attempting to guess VCPKG_ROOT...")
+    STRING(TOLOWER ${CMAKE_TOOLCHAIN_FILE} _VCPKG_ROOT)
+    STRING(REGEX REPLACE "^(.*)[\\/]scripts[\\/]buildsystems[\\/]vcpkg.cmake$" "\\1"
+     _VCPKG_ROOT "${_VCPKG_ROOT}")
+    SET(ENV{VCPKG_ROOT} "${_VCPKG_ROOT}")
+  ENDIF()
+  
+  MESSAGE(STATUS "VCPKG_ROOT: $ENV{VCPKG_ROOT}")
 
-    # actually load vcpkg.cmake
-    MESSAGE(STATUS "Loading ${CMAKE_TOOLCHAIN_FILE}")
-    INCLUDE("${CMAKE_TOOLCHAIN_FILE}")
+  # actually load vcpkg.cmake
+  MESSAGE(STATUS "Loading ${CMAKE_TOOLCHAIN_FILE}")
+  INCLUDE("${CMAKE_TOOLCHAIN_FILE}")
 
-    IF(CONFIG STREQUAL "Debug")
-        SET(VCPKG_INSTALLED_DIR_X64_WINDOWS "${VCPKG_INSTALLED_DIR}/x64-windows/Debug")
-    ELSE()
-        SET(VCPKG_INSTALLED_DIR_X64_WINDOWS "${VCPKG_INSTALLED_DIR}/x64-windows")
-    ENDIF()
+  IF(NOT DEFINED VCPKG_INSTALLED_DIR AND DEFINED _VCPKG_INSTALLED_DIR)
+    SET(VCPKG_INSTALLED_DIR "${_VCPKG_INSTALLED_DIR}")
+  ENDIF()
+  IF(NOT DEFINED VCPKG_INSTALLED_DIR AND DEFINED ENV{VCPKG_ROOT})
+    SET(VCPKG_INSTALLED_DIR "$ENV{VCPKG_ROOT}/installed")
+  ENDIF()
+  MESSAGE(STATUS "VCPKG_INSTALLED_DIR: ${VCPKG_INSTALLED_DIR}")
 
-    FIND_PATH(GETOPT_INCLUDE_DIR NAMES getopt.h PATHS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/include")
+  SET(VCPKG_INSTALLED_DIR_TRIPLET "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 
-    IF (GETOPT_INCLUDE_DIR)
-        INCLUDE_DIRECTORIES(${GETOPT_INCLUDE_DIR})
-    ELSE()
-        MESSAGE(FATAL_ERROR "getopt.h was not found")
-    ENDIF()
+  # add includes directory
+  MESSAGE(STATUS "Including ${VCPKG_INSTALLED_DIR_TRIPLET}/include")
+  INCLUDE_DIRECTORIES("${VCPKG_INSTALLED_DIR_TRIPLET}/include")
 
-    FIND_LIBRARY(GETOPT_LIB getopt PATHS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/lib")
+  SET(VCPKG_INSTALLED_DIR_X64_WINDOWS "${VCPKG_INSTALLED_DIR}/x64-windows")
 
-    IF(GETOPT_LIB)
-        MESSAGE(STATUS "Found getopt: ${GETOPT_LIB}")
-    ELSE()
-        MESSAGE(STATUS "getopt library was not found")
-    ENDIF()
+  IF(CONFIG STREQUAL "Debug")
+      SET(VCPKG_DEBUG "/Debug")
+  ELSE()
+      SET(VCPKG_DEBUG "")
+  ENDIF()
+
+  MESSAGE(STATUS "Looking for getopt.h (hint: ${VCPKG_INSTALLED_DIR_X64_WINDOWS}/include)")
+  # getopt is always shared on windows
+  FIND_PATH(GETOPT_INCLUDE_DIR NAMES getopt.h HINTS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/include")
+
+  IF (GETOPT_INCLUDE_DIR)
+      INCLUDE_DIRECTORIES(${GETOPT_INCLUDE_DIR})
+  ELSE()
+      MESSAGE(FATAL_ERROR "getopt.h was not found")
+  ENDIF()
+
+  FIND_LIBRARY(GETOPT_LIB getopt PATHS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}${VCPKG_DEBUG}/lib")
+
+  IF(GETOPT_LIB)
+      MESSAGE(STATUS "Found getopt: ${GETOPT_LIB}")
+  ELSE()
+      MESSAGE(STATUS "getopt library was not found")
+  ENDIF()
 ENDIF()
 
 # Find zlib and libevent header files and library files
