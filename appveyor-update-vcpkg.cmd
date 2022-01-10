@@ -10,14 +10,14 @@ if errorlevel 1 (
 
 	echo Updating vcpkg...
 
-	git pull
+	git pull -q
 
-	git reset --hard HEAD
+	git reset -q --hard HEAD
 
 	bootstrap-vcpkg.bat
 
 )
 
-git clean -fdx -e installed -e packages
+git clean -qfdx -e installed -e packages
 
 popd

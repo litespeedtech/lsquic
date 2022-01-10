@@ -3,7 +3,7 @@ for /f "usebackq delims=#" %%a in (`"%programfiles(x86)%\Microsoft Visual Studio
 msbuild /m RUN_TESTS.vcxproj
 set testserror=%errorlevel%
 
-wevtutil qe Application /q:"*[System[TimeCreated[timediff(@SystemTime) <= 1209600000]]]" /f:text /c:1
+wevtutil qe Application /q:"*[System[TimeCreated[timediff(@SystemTime) <= 1209600000]]]" /f:text
 
 if %testserror% neq 0 exit %testserror%
 
