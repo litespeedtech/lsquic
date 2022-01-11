@@ -299,6 +299,11 @@ ELSE()
 ENDIF()
 IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
     FIND_LIBRARY(ZLIB_LIB zlib)
+
+    # TODO: if zlib is not through vcpkg, need to do something else
+    IF (NOT VCPKG_TARGET_TRIPLET MATCHES "-static$" AND NOT EXISTS ${ZLIB_DLL})
+        FILE(GLOB_RECURSE ZLIB_DLL "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/zlib1.dll")
+    ENDIF()
 ELSEIF(CMAKE_SYSTEM_NAME STREQUAL Darwin)
     # XXX somehow FIND_LIBRARY() does not find zlib on Travis?
     SET(ZLIB_LIB z)

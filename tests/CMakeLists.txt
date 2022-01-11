@@ -120,6 +120,12 @@ FOREACH(TEST_NAME ${TESTS})
             COMMAND_EXPAND_LISTS
           )
       ENDIF()
+      IF(EXISTS ${ZLIB_DLL})
+        ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${ZLIB_DLL}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+          COMMAND_EXPAND_LISTS
+        )
+      ENDIF()
     ENDIF()
 
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
