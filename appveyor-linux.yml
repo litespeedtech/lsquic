@@ -5,7 +5,7 @@ image:
 
 cache:
 - $HOME/.apt
-- boringssl -> boringssl-target.txt # we define the commit in here
+- boringssl -> appveyor-linux.yml,boringssl-target.txt # we define the commit in here
 
 environment:
   APPVEYOR_SAVE_CACHE_ON_ERROR: true
@@ -39,23 +39,19 @@ install:
 
         git clone https://boringssl.googlesource.com/boringssl
 
-    fi
-
-    cd boringssl
-
-    if [[ -d .git ]] ; then
+        cd boringssl
 
         git reset --hard $(<../boringssl-target.txt)
 
         rm -rf .git
 
+        cmake .
+
+        make -j2 crypto ssl decrepit
+
+        cd ..
+
     fi
-
-    cmake .
-
-    make -j2 crypto ssl decrepit
-
-    cd ..
 
     git submodule init
 
