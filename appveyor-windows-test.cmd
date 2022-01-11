@@ -4,7 +4,7 @@ echo 1>killing-tests.tmp
 
 :: cmake test timeout doesn't seem to work right on windows?
 :: force loop kill all the tests after 10 minutes (600  seconds)
-start "" /b cmd /c "(timeout /t 600 /nobreak && call appveyor-windows-kill-tests.cmd)>nul"
+start "" /b cmd /c "call appveyor-windows-kill-tests.cmd 600>nul"
 
 msbuild /m RUN_TESTS.vcxproj /v:n
 
