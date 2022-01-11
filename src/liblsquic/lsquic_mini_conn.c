@@ -1853,8 +1853,10 @@ mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         process_deferred_packets(mc);
     }
     else
-        LSQ_DEBUG("won't defer more than %u packets: drop",
-                                                MINI_CONN_MAX_DEFERRED);
+    {
+        process_packet(mc, packet_in);
+        process_deferred_packets(mc);
+    }
 }
 
 
