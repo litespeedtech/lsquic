@@ -30,9 +30,9 @@ install:
 
     vcpkg integrate install
 
-    rd /s /q c:\tools\vcpkg\buildtrees
+    if exist c:\tools\vcpkg\buildtrees rd /s /q c:\tools\vcpkg\buildtrees
 
-    rd /s /q c:\tools\vcpkg\downloads
+    if exist c:\tools\vcpkg\downloads rd /s /q c:\tools\vcpkg\downloads
 
 build_script:
 

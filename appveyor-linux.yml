@@ -87,8 +87,6 @@ test_script:
 
     make -j2 perf_server perf_client
 
-    find . -name perf_server -o -name perf_client
-
     ./bin/perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key &
 
     PERF_SERVER_PID=$!

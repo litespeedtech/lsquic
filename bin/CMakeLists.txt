@@ -132,12 +132,6 @@ IF(MSVC)
       COMMAND ${CMAKE_COMMAND} -E copy \"${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/getopt.dll\" \"$<TARGET_FILE_DIR:${bin_target}>\"
       COMMAND_EXPAND_LISTS
     )
-    IF(EXISTS ${ZLIB_DLL})
-        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy \"${ZLIB_DLL}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
-          COMMAND_EXPAND_LISTS
-        )
-    ENDIF()
     IF(EXISTS ${BORINGSSL_DLL_crypto})
         ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_crypto}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
@@ -153,6 +147,12 @@ IF(MSVC)
     IF(EXISTS ${PCRE_DLL})
         ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy \"${PCRE_DLL}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+          COMMAND_EXPAND_LISTS
+        )
+    ENDIF()
+    IF(EXISTS ${ZLIB_DLL})
+        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${ZLIB_DLL}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
           COMMAND_EXPAND_LISTS
         )
     ENDIF()
