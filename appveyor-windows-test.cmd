@@ -1,5 +1,7 @@
 for /f "usebackq delims=#" %%a in (`"%programfiles(x86)%\Microsoft Visual Studio\Installer\vswhere" -latest -property installationPath`) do call "%%~a\VC\Auxiliary\Build\vcvars64.bat"
 
+start "" /b cmd /c "(timeout /t 600 /nobreak && taskkill /t /f /fi "imagename eq test_*")>nul"
+
 msbuild /m RUN_TESTS.vcxproj /v:n
 set testserror=%errorlevel%
 
