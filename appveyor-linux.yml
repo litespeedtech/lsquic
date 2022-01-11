@@ -9,7 +9,7 @@ build: off
 init:
 
 cache:
-- boringssl -> appveyor-linux.yml # we define the commit in here
+# - boringssl -> appveyor-linux.yml # we define the commit in here
 
 install:
 
