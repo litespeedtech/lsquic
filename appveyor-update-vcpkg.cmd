@@ -12,12 +12,12 @@ if errorlevel 1 (
 
 	git pull -q
 
-	git reset -q --hard HEAD
-
 	bootstrap-vcpkg.bat
 
 )
 
-git clean -qfdx -e installed -e packages
+git reset -q --hard HEAD
+
+git clean -fdx -e installed -e packages
 
 popd
