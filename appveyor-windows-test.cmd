@@ -1,9 +1,17 @@
 for /f "usebackq delims=#" %%a in (`"%programfiles(x86)%\Microsoft Visual Studio\Installer\vswhere" -latest -property installationPath`) do call "%%~a\VC\Auxiliary\Build\vcvars64.bat"
 
-start "" /b cmd /c "(timeout /t 600 /nobreak && taskkill /t /f /fi "imagename eq test_*")>nul"
+echo 1>killing-tests.tmp
+
+:: cmake test timeout doesn't seem to work right on windows?
+:: force loop kill all the tests after 10 minutes (600  seconds)
+start "" /b cmd /c "(timeout /t 600 /nobreak && call appveyor-windows-kill-tests.cmd)>nul"
 
 msbuild /m RUN_TESTS.vcxproj /v:n
+
+del /q killing-tests.tmp
+
 set testserror=%errorlevel%
+
 
 "C:\msys64\usr\bin\ldd.exe" "tests\Debug\test_cubic.exe"
 
