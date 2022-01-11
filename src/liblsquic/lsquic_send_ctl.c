@@ -2013,7 +2013,8 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
 
     if (packet_out->po_flags & PO_REPACKNO)
     {
-        if (packet_out->po_regen_sz < packet_out->po_data_sz)
+        if (packet_out->po_regen_sz < packet_out->po_data_sz
+            && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
         {
             update_for_resending(ctl, packet_out);
             packet_out->po_flags &= ~PO_REPACKNO;

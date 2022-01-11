@@ -332,7 +332,7 @@ ietf_v1_gen_stream_frame (unsigned char *buf, size_t buf_len,
     obits = 0, dbits = 0;
 #endif
 
-    assert(!!fin ^ !!size);
+    assert(!!fin || !!size);
 
     /* We do not check that stream_id, offset, and size are smaller
      * than 2^62: this is not necessary, as this code will never generate

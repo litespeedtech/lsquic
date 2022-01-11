@@ -25,7 +25,7 @@ install:
 
         cd boringssl
 
-        git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9
+        git checkout cf8d3ad3cea51cf7184307d54f465da62b7d8408
 
         cmake .
 
