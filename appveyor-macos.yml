@@ -31,13 +31,17 @@ install:
 
         rm -rf .git
 
-        cmake .
-
-        make -j2 crypto ssl decrepit
-
         cd ..
 
     fi
+
+    cd boringssl
+
+    cmake .
+
+    make -j2 crypto ssl decrepit
+
+    cd ..
 
     git submodule init
 
