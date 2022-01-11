@@ -18,6 +18,6 @@ if errorlevel 1 (
 
 git reset -q --hard HEAD
 
-git clean -fdx -e installed -e packages
+git clean -fdx -e installed -e packages -e vcpkg.exe
 
 popd
