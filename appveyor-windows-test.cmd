@@ -18,10 +18,14 @@ del /q killing-tests.tmp
 msbuild /m bin\perf_server.vcxproj /v:m
 msbuild /m bin\perf_client.vcxproj /v:m
 
+echo Starting perf_server
 start "" /b cmd /c "bin\Debug\perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key"
 
+echo Starting perf_client
 bin\Debug\perf_client -L info -s ::1:8443 -p 104857600:104857600
+echo perf_client exited with code %errorlevel%
 
+echo Perf run complete
 tskill perf_server
 
 :after_perf_test
