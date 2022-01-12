@@ -7,7 +7,6 @@ cache:
 - boringssl -> appveyor-windows-shared.cmd,boringssl-target.txt # we define the commit in here
 
 environment:
-  APPVEYOR_SAVE_CACHE_ON_ERROR: true
   VCPKG_DISABLE_METRICS: 1
 
 init:

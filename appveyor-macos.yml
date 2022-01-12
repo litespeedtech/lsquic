@@ -6,9 +6,6 @@ image:
 cache:
 - boringssl -> appveyor-macos.yml,boringssl-target.txt # we define the commit in here
 
-environment:
-  APPVEYOR_SAVE_CACHE_ON_ERROR: true
-
 build: off
 
 init:
