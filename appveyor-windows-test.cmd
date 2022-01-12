@@ -16,9 +16,7 @@ del /q killing-tests.tmp
 :: use ldd for diagnosing missing/incorrect shared (dll/so/dylib) libs
 :: "C:\msys64\usr\bin\ldd.exe" "tests\Debug\test_cubic.exe"
 msbuild /m bin\perf_server.vcxproj /v:m
-if errorlevel 1 goto :after_perf_test
 msbuild /m bin\perf_client.vcxproj /v:m
-if errorlevel 1 goto :after_perf_test
 
 start "" /b cmd /c "bin\Debug\perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key"
 
