@@ -100,41 +100,41 @@ run_test (const struct test *const test)
 int
 main (void)
 {
-	const struct test tests[] = {
+    const struct test tests[] = {
 
-	    {   .lineno     = __LINE__,
-	        .pf         = select_pf_by_ver(LSQVER_ID27),
-	        .offset     = 0,
-	        .data_sz    = 10,
-	        .data       = "0123456789",
-	        .avail      = 0x100,
-	        .out        =
-	        { /* Type */    0x06,
-	          /* Offset */  0x00,
-	          /* Size */    0x0A,
-	          /* Data */    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-	        },
-	        .len        = 1 + 1 + 1 + 10,
-	        .min_sz     = 1 + 1 + 1 + 1,
-	    },
+        {   .lineno     = __LINE__,
+            .pf         = select_pf_by_ver(LSQVER_ID27),
+            .offset     = 0,
+            .data_sz    = 10,
+            .data       = "0123456789",
+            .avail      = 0x100,
+            .out        =
+            { /* Type */    0x06,
+              /* Offset */  0x00,
+              /* Size */    0x0A,
+              /* Data */    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+            },
+            .len        = 1 + 1 + 1 + 10,
+            .min_sz     = 1 + 1 + 1 + 1,
+        },
 
-	    {   .lineno     = __LINE__,
-	        .pf         = select_pf_by_ver(LSQVER_ID27),
-	        .offset     = 500,
-	        .data_sz    = 10,
-	        .data       = "0123456789",
-	        .avail      = 0x100,
-	        .out        =
-	        { /* Type */    0x06,
-	          /* Offset */  0x41, 0xF4,
-	          /* Size */    0x0A,
-	          /* Data */    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-	        },
-	        .len        = 1 + 2 + 1 + 10,
-	        .min_sz     = 1 + 2 + 1 + 1,
-	    },
+        {   .lineno     = __LINE__,
+            .pf         = select_pf_by_ver(LSQVER_ID27),
+            .offset     = 500,
+            .data_sz    = 10,
+            .data       = "0123456789",
+            .avail      = 0x100,
+            .out        =
+            { /* Type */    0x06,
+              /* Offset */  0x41, 0xF4,
+              /* Size */    0x0A,
+              /* Data */    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+            },
+            .len        = 1 + 2 + 1 + 10,
+            .min_sz     = 1 + 2 + 1 + 1,
+        },
 
-	};
+    };
 
     unsigned i;
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)

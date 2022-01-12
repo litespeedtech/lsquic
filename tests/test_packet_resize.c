@@ -771,7 +771,7 @@ main (int argc, char **argv)
 #ifndef _MSC_VER
         LSQ_INFO("testing version %s", lsquic_ver2str[version]);
 #else
-    	LSQ_INFO("testing version %d", version);
+        LSQ_INFO("testing version %d", version);
 #endif
         for (spec = test_specs; spec < test_specs + sizeof(test_specs) / sizeof(test_specs[0]); ++spec)
             run_test(spec, version);

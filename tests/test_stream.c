@@ -3680,7 +3680,7 @@ main (int argc, char **argv)
 {
     g_pf = select_pf_by_ver(LSQVER_043);
 
-	int opt;
+    int opt;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 

@@ -3308,7 +3308,7 @@ abort_connection (struct lsquic_stream *stream)
         TAILQ_INSERT_TAIL(&stream->conn_pub->service_streams, stream,
                                                 next_service_stream);
     stream->sm_qflags |= SMQF_ABORT_CONN;
-    LSQ_WARN("connection will be aborted");
+    LSQ_INFO("connection will be aborted");
     maybe_conn_to_tickable(stream);
 }
 
