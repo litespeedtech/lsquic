@@ -5,7 +5,7 @@ image:
 
 cache:
 - $HOME/.apt
-- boringssl -> appveyor-linux.yml,boringssl-target.txt # we define the commit in here
+- boringssl -> boringssl-target.txt # we define the commit in here
 
 build: off
 

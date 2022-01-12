@@ -3,8 +3,8 @@ version: 1.{branch}.{build}
 image: Visual Studio 2022
 
 cache:
-- c:\tools\vcpkg -> appveyor-windows.yml,appveyor-update-vcpkg.cmd,c:\tools\vcpkg\.git\refs\heads\master
-- boringssl -> appveyor-windows.cmd,boringssl-target.txt # we define the commit in here
+- c:\tools\vcpkg -> c:\tools\vcpkg\.git\refs\heads\master
+- boringssl -> boringssl-target.txt # we define the commit in here
 
 environment:
   VCPKG_DISABLE_METRICS: 1

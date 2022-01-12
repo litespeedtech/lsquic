@@ -39,7 +39,8 @@ if errorlevel 1 goto :retry_submodule_update
 
 cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_GENERATOR_PLATFORM=x64 -DBUILD_SHARED_LIBS=OFF -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake -DBORINGSSL_DIR=%cd%\boringssl .
 
-msbuild /m src\liblsquic\lsquic.vcxproj /v:q
+msbuild /m src\liblsquic\lsquic.vcxproj /v:m
 if errorlevel 1 exit !errorlevel!
-msbuild /m tests\build-tests.vcxproj /v:q
+
+msbuild /m tests\build-tests.vcxproj /v:m
 if errorlevel 1 exit !errorlevel!

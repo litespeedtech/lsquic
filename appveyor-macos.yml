@@ -4,7 +4,7 @@ image:
 - MacOS
 
 cache:
-- boringssl -> appveyor-macos.yml,boringssl-target.txt # we define the commit in here
+- boringssl -> boringssl-target.txt # we define the commit in here
 
 build: off
 
