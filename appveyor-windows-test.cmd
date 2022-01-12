@@ -6,21 +6,22 @@ echo 1>killing-tests.tmp
 :: force loop kill all the tests after 10 minutes (600  seconds)
 start "" /b cmd /c "call appveyor-windows-kill-tests.cmd 600>nul"
 
-msbuild /m RUN_TESTS.vcxproj /v:n
+msbuild /m RUN_TESTS.vcxproj /v:q
 
 del /q killing-tests.tmp
 
 set testserror=%errorlevel%
 
-
 "C:\msys64\usr\bin\ldd.exe" "tests\Debug\test_cubic.exe"
 
-msbuild /m bin\perf_server.vcxproj /v:n
+set errorlevel=0
+
+msbuild /m bin\perf_server.vcxproj /v:q
 if errorlevel 1 goto :after_perf_test
-msbuild /m bin\perf_client.vcxproj /v:n
+msbuild /m bin\perf_client.vcxproj /v:q
 if errorlevel 1 goto :after_perf_test
 
-start "" /B bin\Debug\perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key
+start "" /b cmd /c "bin\Debug\perf_server -L notice -s ::1:8443 -c localhost,tests/localhost.pem,tests/localhost.key"
 
 bin\Debug\perf_client -L info -s ::1:8443 -p 104857600:104857600
 
