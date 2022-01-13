@@ -191,23 +191,33 @@ ELSE()
 
 
     FOREACH(LIB_NAME ssl crypto decrepit)
-        IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES ${LIB_NAME}
-                PATHS ${BORINGSSL_LIB}
-                PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
-                NO_DEFAULT_PATH)
-        ELSE()
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
-                NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                PATHS ${BORINGSSL_LIB}
-                PATH_SUFFIXES ${LIB_NAME}
-                NO_DEFAULT_PATH)
+        # If BORINGSSL_LIB is defined, try find each lib. Otherwise, user should define BORINGSSL_LIB_ssl,
+        # BORINGSSL_LIB_crypto and so on explicitly. For example, including boringssl and lsquic both via
+        # add_subdirectory:
+        #   add_subdirectory(third_party/boringssl)
+        #   set(BORINGSSL_LIB_ssl ssl)
+        #   set(BORINGSSL_LIB_crypto crypto)
+        #   set(BORINGSSL_LIB_decrepit decrepit)
+        #   add_subdirectory(third_party/lsquic)
+        IF (DEFINED BORINGSSL_LIB)
+            IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
+                FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                    NAMES ${LIB_NAME}
+                    PATHS ${BORINGSSL_LIB}
+                    PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+                    NO_DEFAULT_PATH)
+            ELSE()
+                FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                    NAMES lib${LIB_NAME}${LIB_SUFFIX}
+                    PATHS ${BORINGSSL_LIB}
+                    PATH_SUFFIXES ${LIB_NAME}
+                    NO_DEFAULT_PATH)
+            ENDIF()
         ENDIF()
         IF(BORINGSSL_LIB_${LIB_NAME})
-            MESSAGE(STATUS "Found ${BORINGSSL_LIB} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+            MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
         ELSE()
-            MESSAGE(STATUS "${BORINGSSL_LIB} library not found")
+            MESSAGE(FATAL_ERROR "BORINGSSL_LIB_${LIB_NAME} library not found")
         ENDIF()
     ENDFOREACH()
 
