@@ -1,4 +1,6 @@
 # Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 LIST(APPEND LIBS ${EVENT_LIB})
 
 IF(MSVC)
@@ -109,4 +111,4 @@ ELSE()
 CHECK_INCLUDE_FILES(regex.h HAVE_REGEX)
 ENDIF()
 
-CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/test_config.h.in ${CMAKE_CURRENT_SOURCE_DIR}/test_config.h)
+CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/test_config.h.in ${CMAKE_CURRENT_BINARY_DIR}/test_config.h)
