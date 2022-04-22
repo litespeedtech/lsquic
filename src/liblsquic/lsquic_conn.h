@@ -11,6 +11,8 @@
 #ifndef LSQUIC_CONN_H
 #define LSQUIC_CONN_H
 
+#include <lsquic_defines.h>
+
 #include <sys/queue.h>
 #ifndef WIN32
 #include <sys/socket.h>
@@ -396,7 +398,7 @@ void
 lsquic_generate_scid (void *, struct lsquic_conn *lconn, lsquic_cid_t *scid,
                                                                 unsigned len);
 
-void
+LSQUIC_CONN_API void
 lsquic_conn_retire_cid (lsquic_conn_t *lconn);
 
 #define lsquic_conn_adv_time(c) ((c)->cn_attq_elem->ae_adv_time)

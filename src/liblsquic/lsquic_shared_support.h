@@ -20,18 +20,24 @@
 #        define LSQUIC_EXTERN __declspec(dllimport) extern
 #      endif /* LSQUIC_EXPORTS */
 
-#    else
-
-#    define LSQUIC_EXTERN extern
-
 #    endif
 
 #  else /* _MSC_VER */
 
-#    define LSQUIC_EXTERN extern
+#    ifdef LSQUIC_SHARED_LIB
+
+#      define LSQUIC_EXTERN extern __attribute__((visibility("default")))
+
+#    endif
 
 #  endif /* _MSC_VER */
 
 #endif /* LSQUIC_EXTERN */
+
+#ifndef LSQUIC_EXTERN
+
+#  define LSQUIC_EXTERN extern
+
+#endif
 
 #endif /* LSQUIC_SHARED_SUPPORT */
