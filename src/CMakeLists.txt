@@ -1,4 +1,4 @@
 # Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.0...3.23)
 
 add_subdirectory(liblsquic)

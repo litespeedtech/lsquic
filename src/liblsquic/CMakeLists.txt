@@ -107,12 +107,12 @@ ELSE()
 ENDIF()
 
 ADD_CUSTOM_COMMAND(
-    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lsquic_versions_to_string.c
     COMMAND ${PERL}
-    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_SOURCE_DIR}/lsquic_versions_to_string.c
+    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_BINARY_DIR}/lsquic_versions_to_string.c
     DEPENDS ./gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
-SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} lsquic_versions_to_string.c)
+SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} ${CMAKE_CURRENT_BINARY_DIR}/lsquic_versions_to_string.c)
 SET(lsquic_STAT_SRCS ${lsquic_STAT_SRCS} ls-sfparser.c)
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DXXH_HEADER_NAME=\\\"lsquic_xxhash.h\\\"")
