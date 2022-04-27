@@ -2392,7 +2392,8 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     unsigned short n_buffered;
     enum stream_q_flags q_flags;
 
-    if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS))
+    if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
+        || (stream->stream_flags & STREAM_FINISHED))
         return;
 
     q_flags = stream->sm_qflags & SMQF_WRITE_Q_FLAGS;

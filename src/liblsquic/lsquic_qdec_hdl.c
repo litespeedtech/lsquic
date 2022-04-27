@@ -452,10 +452,6 @@ static void
 qdh_hblock_unblocked (void *stream_p)
 {
     struct lsquic_stream *const stream = stream_p;
-    union hblock_ctx *const u = stream->sm_hblock_ctx;
-    struct qpack_dec_hdl *qdh = u->ctx.qdh;
-
-    LSQ_DEBUG("header block for stream %"PRIu64" unblocked", stream->id);
     lsquic_stream_qdec_unblocked(stream);
 }
 

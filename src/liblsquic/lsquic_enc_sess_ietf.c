@@ -1654,9 +1654,9 @@ check_server_tps_for_violations (const struct enc_sess_iquic *enc_sess,
 
     for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
         if ((1 << tpi) & REDUCTION_PROHIBITED_TPS)
-            if (new_params->tp_numerics[tpi] > params_0rtt->tp_numerics[tpi])
+            if (new_params->tp_numerics[tpi] < params_0rtt->tp_numerics[tpi])
             {
-                LSQ_INFO("server's new TP %s increased in value from %"PRIu64
+                LSQ_INFO("server's new TP %s decreased in value from %"PRIu64
                     " to %"PRIu64, lsquic_tpi2str[tpi],
                         params_0rtt->tp_numerics[tpi],
                         new_params->tp_numerics[tpi]);

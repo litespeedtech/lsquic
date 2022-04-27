@@ -1816,23 +1816,23 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     unsigned msg_len, server_config_sz;
     struct message_writer mw;
 
-    if (enc_session->enpub->enp_server_config->lsc_scfg && (enc_session->enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
-        return enc_session->enpub->enp_server_config;
+    if (enpub->enp_server_config->lsc_scfg && (enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
+        return enpub->enp_server_config;
 
     ret = shi->shi_lookup(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE,
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
         if (config_has_correct_size(enc_session, scfg_ptr, real_len) &&
-                (enc_session->enpub->enp_server_config->lsc_scfg = scfg_ptr,
-                            enc_session->enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
+                (enpub->enp_server_config->lsc_scfg = scfg_ptr,
+                            enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
         {
             /* Why need to init here, because this memory may be read from SHM,
              * the struct is ready but AEAD_CTX is not ready.
              **/
-            EVP_AEAD_CTX_init(&enc_session->enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
-                              enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key, 16, 12, NULL);
-            return enc_session->enpub->enp_server_config;
+            EVP_AEAD_CTX_init(&enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
+                              enpub->enp_server_config->lsc_scfg->info.skt_key, 16, 12, NULL);
+            return enpub->enp_server_config;
         }
         else
         {
@@ -1850,12 +1850,12 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     MSG_LEN_ADD(msg_len, sizeof(temp_scfg->orbt));
     MSG_LEN_ADD(msg_len, sizeof(temp_scfg->expy));
 
-    server_config_sz = sizeof(*enc_session->enpub->enp_server_config->lsc_scfg) + MSG_LEN_VAL(msg_len);
-    enc_session->enpub->enp_server_config->lsc_scfg = malloc(server_config_sz);
-    if (!enc_session->enpub->enp_server_config->lsc_scfg)
+    server_config_sz = sizeof(*enpub->enp_server_config->lsc_scfg) + MSG_LEN_VAL(msg_len);
+    enpub->enp_server_config->lsc_scfg = malloc(server_config_sz);
+    if (!enpub->enp_server_config->lsc_scfg)
         return NULL;
 
-    temp_scfg = &enc_session->enpub->enp_server_config->lsc_scfg->info;
+    temp_scfg = &enpub->enp_server_config->lsc_scfg->info;
     RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
     RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
     RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
@@ -1866,7 +1866,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     temp_scfg->orbt = 0;
     temp_scfg->expy = t + settings->es_sttl;
 
-    MW_BEGIN(&mw, QTAG_SCFG, 8, enc_session->enpub->enp_server_config->lsc_scfg->scfg);
+    MW_BEGIN(&mw, QTAG_SCFG, 8, enpub->enp_server_config->lsc_scfg->scfg);
     MW_WRITE_BUFFER(&mw, QTAG_VER, enpub->enp_ver_tags_buf,
                                                 enpub->enp_ver_tags_len);
     MW_WRITE_UINT32(&mw, QTAG_AEAD, temp_scfg->aead);
@@ -1877,7 +1877,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     MW_WRITE_UINT64(&mw, QTAG_ORBT, temp_scfg->orbt);
     MW_WRITE_UINT64(&mw, QTAG_EXPY, temp_scfg->expy);
     MW_END(&mw);
-    assert(MW_P(&mw) == enc_session->enpub->enp_server_config->lsc_scfg->scfg + MSG_LEN_VAL(msg_len));
+    assert(MW_P(&mw) == enpub->enp_server_config->lsc_scfg->scfg + MSG_LEN_VAL(msg_len));
 
     temp_scfg->scfg_len = MSG_LEN_VAL(msg_len);
 
@@ -1887,17 +1887,17 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 //     shi->shi_delete(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE);
     void *scfg_key = strdup(SERVER_SCFG_KEY);
     shi->shi_insert(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
-            enc_session->enpub->enp_server_config->lsc_scfg, server_config_sz, t + settings->es_sttl);
+            enpub->enp_server_config->lsc_scfg, server_config_sz, t + settings->es_sttl);
 
     ret = shi->shi_lookup(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
         tmp_scfg_copy = scfg_ptr;
-        if (tmp_scfg_copy != enc_session->enpub->enp_server_config->lsc_scfg)
+        if (tmp_scfg_copy != enpub->enp_server_config->lsc_scfg)
         {
-            free(enc_session->enpub->enp_server_config->lsc_scfg);
-            enc_session->enpub->enp_server_config->lsc_scfg = tmp_scfg_copy;
+            free(enpub->enp_server_config->lsc_scfg);
+            enpub->enp_server_config->lsc_scfg = tmp_scfg_copy;
         }
     }
     else
@@ -1906,12 +1906,12 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
         LSQ_DEBUG("get_valid_scfg got an shi internal error.\n");
     }
 
-    ret = EVP_AEAD_CTX_init(&enc_session->enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
-                              enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key,
-                              sizeof(enc_session->enpub->enp_server_config->lsc_scfg->info.skt_key), 12, NULL);
+    ret = EVP_AEAD_CTX_init(&enpub->enp_server_config->lsc_stk_ctx, EVP_aead_aes_128_gcm(),
+                              enpub->enp_server_config->lsc_scfg->info.skt_key,
+                              sizeof(enpub->enp_server_config->lsc_scfg->info.skt_key), 12, NULL);
 
     LSQ_DEBUG("get_valid_scfg::EVP_AEAD_CTX_init return %d.", ret);
-    return enc_session->enpub->enp_server_config;
+    return enpub->enp_server_config;
 }
 
 
