@@ -3,7 +3,68 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 LIST(APPEND LIBS ${EVENT_LIB})
 
-IF(MSVC)
+# not working in appveyor-windows; odl cmake and vcpkg?
+INCLUDE(CheckIncludeFile)
+
+CHECK_INCLUDE_FILE(regex.h HAVE_REGEX)
+IF(NOT HAVE_REGEX)
+
+  #CHECK_INCLUDE_FILE(pcre2posix.h HAVE_PCRE2)
+
+  MESSAGE(STATUS "Checking ${VCPKG_INSTALLED_DIR_TRIPLET}/include")
+
+  FIND_PATH(PCRE2_INCLUDE_DIR NAMES pcre2posix.h HINTS "${VCPKG_INSTALLED_DIR_TRIPLET}/include")
+
+  IF (PCRE2_INCLUDE_DIR)
+      INCLUDE_DIRECTORIES(${PCRE2_INCLUDE_DIR})
+      SET(HAVE_PCRE2 1)
+  ENDIF()
+
+
+  IF(HAVE_PCRE2)
+    MESSAGE(STATUS "Found pcre2posix.h")
+    FIND_LIBRARY(PCRE_LIB NAMES pcre2-8 pcre2-8-static)
+    IF(PCRE_LIB)
+        MESSAGE(STATUS "Found pcre2-8: ${PCRE_LIB}")
+        IF(PCRE_LIB MATCHES "-static")
+            MESSAGE(STATUS "pcre2 is static")
+            ADD_DEFINITIONS(-DPCRE2_STATIC)
+        ENDIF()
+        LIST(APPEND LIBS ${PCRE_LIB})
+    ELSE()
+        MESSAGE(STATUS "pcre2-8 not found: http_server won't work")
+    ENDIF()
+
+    FIND_LIBRARY(PCREPOSIX_LIB NAMES pcre2-posix pcre2-posix-static)
+    IF(PCREPOSIX_LIB)
+        MESSAGE(STATUS "Found pcre2-posix: ${PCREPOSIX_LIB}")
+        LIST(APPEND LIBS ${PCREPOSIX_LIB})
+    ELSE()
+        MESSAGE(STATUS "pcre2-posix not found: http_server won't work")
+    ENDIF()
+    
+    IF(MSVC AND NOT VCPKG_TARGET_TRIPLET MATCHES "-static$")
+      FIND_PATH(PCRE_DLL "pcre2-8.dll" HINTS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin" REQUIRED)
+      FIND_PATH(PCREPOSIX_DLL "pcre2-posix.dll" HINTS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin" REQUIRED)
+      SET(PCRE_DLL "${PCRE_DLL}/pcre2-8.dll")
+      SET(PCREPOSIX_DLL "${PCREPOSIX_DLL}/pcre2-posix.dll")
+      MESSAGE(STATUS "Found pcre2-8.dll: ${PCRE_DLL}")
+      MESSAGE(STATUS "Found pcre2-posix.dll: ${PCREPOSIX_DLL}")
+    ENDIF()
+  ELSE()
+    MESSAGE(STATUS "pcre2posix.h not found.")
+    # NOT HAVE_PCRE2
+    #CHECK_INCLUDE_FILE(pcreposix.h HAVE_PCRE)
+    FIND_PATH(PCRE_INCLUDE_DIR NAMES pcreposix.h HINTS "${VCPKG_INSTALLED_DIR_TRIPLET}/include")
+
+    IF (PCRE_INCLUDE_DIR)
+        INCLUDE_DIRECTORIES(${PCRE_INCLUDE_DIR})
+        SET(HAVE_PCRE 1)
+    ENDIF()
+    IF(NOT HAVE_PCRE)
+      MESSAGE(FATAL_ERROR "no supported regex library found (regex, pcre, pcre2)")
+    ENDIF()
+    MESSAGE(STATUS "Found pcreposix.h")
     FIND_LIBRARY(PCRE_LIB pcre)
     IF(PCRE_LIB)
         MESSAGE(STATUS "Found pcre: ${PCRE_LIB}")
@@ -11,6 +72,7 @@ IF(MSVC)
     ELSE()
         MESSAGE(STATUS "pcre not found: http_server won't work")
     ENDIF()
+
     FIND_LIBRARY(PCREPOSIX_LIB pcreposix)
     IF(PCREPOSIX_LIB)
         MESSAGE(STATUS "Found pcreposix: ${PCREPOSIX_LIB}")
@@ -18,57 +80,86 @@ IF(MSVC)
     ELSE()
         MESSAGE(STATUS "pcreposix not found: http_server won't work")
     ENDIF()
+
+    IF(MSVC AND NOT VCPKG_TARGET_TRIPLET MATCHES "-static$")
+      FIND_PATH(PCRE_DLL "pcre.dll" HINTS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin" REQUIRED)
+      FIND_PATH(PCREPOSIX_DLL "pcreposix.dll" HINTS "${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin" REQUIRED)
+      SET(PCRE_DLL "${PCRE_DLL}/pcre.dll")
+      SET(PCREPOSIX_DLL "${PCRE_DLL}/pcreposix.dll")
+      MESSAGE(STATUS "Found pcre.dll: ${PCRE_DLL}")
+      MESSAGE(STATUS "Found pcreposix.dll: ${PCREPOSIX_DLL}")
+    ENDIF()
+  ENDIF()
+
+  IF (HAVE_PCRE OR HAVE_PCRE2)
+    SET(HAVE_REGEX 1)
+  ENDIF()
+ENDIF()
+
+IF(MSVC)
     LIST(APPEND LIBS ws2_32)
     LIST(APPEND LIBS iphlpapi)
     LIST(APPEND LIBS ${GETOPT_LIB})
 ENDIF()
 
-add_executable(http_server http_server.c prog.c test_common.c test_cert.c)
-IF(NOT MSVC)   #   TODO: port MD5 server and client to Windows
-add_executable(md5_server md5_server.c prog.c test_common.c test_cert.c)
-add_executable(md5_client md5_client.c prog.c test_common.c test_cert.c)
-ENDIF()
-add_executable(echo_server echo_server.c prog.c test_common.c test_cert.c)
-add_executable(echo_client echo_client.c prog.c test_common.c test_cert.c)
-add_executable(duck_server duck_server.c prog.c test_common.c test_cert.c)
-add_executable(duck_client duck_client.c prog.c test_common.c test_cert.c)
-add_executable(perf_client perf_client.c prog.c test_common.c test_cert.c)
-add_executable(perf_server perf_server.c prog.c test_common.c test_cert.c)
-
-
-IF (NOT MSVC)
-
-add_executable(http_client
-    http_client.c
-    prog.c
-    test_common.c
-    test_cert.c
-)
-
-#MSVC
-ELSE()
-
-add_executable(http_client
-    http_client.c
-    prog.c
-    test_common.c
-    test_cert.c
-)
-
-ENDIF()
-
-TARGET_LINK_LIBRARIES(http_client ${LIBS})
-TARGET_LINK_LIBRARIES(http_server ${LIBS})
+list(APPEND bin_targets http_client)
+list(APPEND bin_targets http_server)
+list(APPEND bin_targets echo_server)
+list(APPEND bin_targets echo_client)
+list(APPEND bin_targets duck_server)
+list(APPEND bin_targets duck_client)
+list(APPEND bin_targets perf_client)
+list(APPEND bin_targets perf_server)
 IF(NOT MSVC)
-TARGET_LINK_LIBRARIES(md5_server  ${LIBS})
-TARGET_LINK_LIBRARIES(md5_client  ${LIBS})
+list(APPEND bin_targets md5_server)
+list(APPEND bin_targets md5_client)
 ENDIF()
-TARGET_LINK_LIBRARIES(echo_server ${LIBS})
-TARGET_LINK_LIBRARIES(echo_client ${LIBS})
-TARGET_LINK_LIBRARIES(duck_server ${LIBS})
-TARGET_LINK_LIBRARIES(duck_client ${LIBS})
-TARGET_LINK_LIBRARIES(perf_client ${LIBS})
-TARGET_LINK_LIBRARIES(perf_server ${LIBS})
+
+#MESSAGE(STATUS "bin_targets: ${bin_targets}")
+#MESSAGE(STATUS "bin_targets LIBS: ${LIBS}")
+
+FOREACH(bin_target IN LISTS bin_targets)
+    add_executable(${bin_target} ${bin_target}.c prog.c test_common.c test_cert.c)
+    TARGET_LINK_LIBRARIES(${bin_target} ${LIBS})
+ENDFOREACH()
+
+IF(MSVC)
+  FOREACH(bin_target IN LISTS bin_targets)
+    # copy any dependencies local to the targets
+    ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy \"$<TARGET_FILE:lsquic>\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+      COMMAND_EXPAND_LISTS
+    )
+    ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy \"${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/getopt.dll\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+      COMMAND_EXPAND_LISTS
+    )
+    IF(EXISTS ${BORINGSSL_DLL_crypto})
+        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_crypto}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+          COMMAND_EXPAND_LISTS
+        )
+    ENDIF()
+    IF(EXISTS ${BORINGSSL_DLL_ssl})
+        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_ssl}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+          COMMAND_EXPAND_LISTS
+        )
+    ENDIF()
+    IF(EXISTS ${PCRE_DLL})
+        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${PCRE_DLL}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+          COMMAND_EXPAND_LISTS
+        )
+    ENDIF()
+    IF(EXISTS ${ZLIB_DLL})
+        ADD_CUSTOM_COMMAND(TARGET ${bin_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy \"${ZLIB_DLL}\" \"$<TARGET_FILE_DIR:${bin_target}>\"
+          COMMAND_EXPAND_LISTS
+        )
+    ENDIF()
+  ENDFOREACH()
+ENDIF()
 
 
 INCLUDE(CheckFunctionExists)
@@ -97,18 +188,13 @@ CHECK_SYMBOL_EXISTS(
     HAVE_PREADV
 )
 
-INCLUDE(CheckIncludeFiles)
-
-IF (MSVC AND PCRE_LIB)
-FIND_PATH(EVENT_INCLUDE_DIR NAMES pcreposix.h)
-IF (EVENT_INCLUDE_DIR)
-    MESSAGE(STATUS "found pcreposix.h")
-    SET(HAVE_REGEX 1)
-ELSE()
-    MESSAGE(FATAL_ERROR "event2/event.h was not found")
-ENDIF()
-ELSE()
-CHECK_INCLUDE_FILES(regex.h HAVE_REGEX)
+IF (MSVC)
+  FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h)
+  IF (EVENT_INCLUDE_DIR)
+      MESSAGE(STATUS "found event2/event.h")
+  ELSE()
+      MESSAGE(FATAL_ERROR "event2/event.h was not found")
+  ENDIF()
 ENDIF()
 
 CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/test_config.h.in ${CMAKE_CURRENT_BINARY_DIR}/test_config.h)

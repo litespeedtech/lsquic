@@ -36,11 +36,18 @@
 #include "test_cert.h"
 #include "prog.h"
 
-#if HAVE_REGEX
+
 #ifndef WIN32
+#if HAVE_REGEX
 #include <regex.h>
+#endif
 #else
+#if HAVE_PCRE2
+#include <pcre2posix.h>
+#elif HAVE_PCRE
 #include <pcreposix.h>
+#else
+#error Missing posix regular expression header.
 #endif
 #endif
 

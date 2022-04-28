@@ -87,27 +87,50 @@ IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     LIST(APPEND TESTS h3_framing)
 ENDIF()
 
+IF(NOT TARGET build-tests)
+    ADD_CUSTOM_TARGET(build-tests ALL)
+ENDIF()
 
 FOREACH(TEST_NAME ${TESTS})
     ADD_EXECUTABLE(test_${TEST_NAME} test_${TEST_NAME}.c ${ADDL_SOURCES})
+
     IF(NOT MSVC)
-        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
+      TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${LIB_FLAGS})
     ELSE()
-        TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
-        # copy any dependencies local to the tests
-      #IF (${CMAKE_VERSION} VERSION_LESS "3.21.0")
+      TARGET_LINK_LIBRARIES(test_${TEST_NAME} ${LIBS} ${GETOPT_LIB} ${LIB_FLAGS})
+
+      # copy any dependencies local to the tests
+      ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy \"$<TARGET_FILE:lsquic>\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+        COMMAND_EXPAND_LISTS
+      )
+      ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy \"${VCPKG_INSTALLED_DIR_X64_WINDOWS}/bin/getopt.dll\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+        COMMAND_EXPAND_LISTS
+      )
+      IF(EXISTS ${BORINGSSL_DLL_crypto})
+          ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_crypto}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+            COMMAND_EXPAND_LISTS
+          )
+      ENDIF()
+      IF(EXISTS ${BORINGSSL_DLL_ssl})
+          ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy \"${BORINGSSL_DLL_ssl}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+            COMMAND_EXPAND_LISTS
+          )
+      ENDIF()
+      IF(EXISTS ${ZLIB_DLL})
         ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy \"$ENV{VCPKG_ROOT}/installed/x64-windows$<$<CONFIG:Debug>:/debug>/bin/getopt.dll\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
+          COMMAND ${CMAKE_COMMAND} -E copy \"${ZLIB_DLL}\" \"$<TARGET_FILE_DIR:test_${TEST_NAME}>\"
           COMMAND_EXPAND_LISTS
         )
-      #ELSE()
-      #  ADD_CUSTOM_COMMAND(TARGET test_${TEST_NAME} POST_BUILD
-      #    COMMAND if not \"\"=="$<TARGET_RUNTIME_DLLS:test_${TEST_NAME}>" ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:test_${TEST_NAME}> $<TARGET_FILE_DIR:test_${TEST_NAME}>
-      #    COMMAND_EXPAND_LISTS
-      #  )
-      #ENDIF()
+      ENDIF()
     ENDIF()
+
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
+    SET_TESTS_PROPERTIES(${TEST_NAME} PROPERTIES TIMEOUT 300)
+    ADD_DEPENDENCIES(build-tests test_${TEST_NAME})
 ENDFOREACH()
 
 ADD_EXECUTABLE(test_stream test_stream.c ${ADDL_SOURCES})
@@ -119,6 +142,7 @@ ADD_TEST(stream test_stream)
 ADD_TEST(stream_hash test_stream -h)
 ADD_TEST(stream_A test_stream -A)
 ADD_TEST(stream_hash_A test_stream -A -h)
+ADD_DEPENDENCIES(build-tests test_stream)
 
 IF(NOT MSVC)
 ADD_EXECUTABLE(graph_cubic graph_cubic.c ${ADDL_SOURCES})
@@ -130,6 +154,7 @@ ENDIF()
 
 ADD_EXECUTABLE(test_min_heap test_min_heap.c ../src/liblsquic/lsquic_min_heap.c)
 ADD_TEST(min_heap test_min_heap)
+ADD_DEPENDENCIES(build-tests test_min_heap)
 
 SET(MALO_SRC test_malo.c ../src/liblsquic/lsquic_malo.c)
 ADD_EXECUTABLE(test_malo_pooled ${MALO_SRC})
@@ -139,6 +164,7 @@ ENDIF()
 SET_TARGET_PROPERTIES(test_malo_pooled
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=1")
 ADD_TEST(malo_pooled test_malo_pooled)
+ADD_DEPENDENCIES(build-tests test_malo_pooled)
 
 ADD_EXECUTABLE(test_malo_nopool ${MALO_SRC})
 IF(MSVC)
@@ -147,15 +173,19 @@ ENDIF()
 SET_TARGET_PROPERTIES(test_malo_nopool
     PROPERTIES COMPILE_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_USE_POOLS=0")
 ADD_TEST(malo_nopool test_malo_nopool)
+ADD_DEPENDENCIES(build-tests test_malo_nopool)
 
 ADD_EXECUTABLE(test_minmax test_minmax.c ../src/liblsquic/lsquic_minmax.c)
 IF(MSVC)
     TARGET_LINK_LIBRARIES(test_minmax ${GETOPT_LIB})
 ENDIF()
 ADD_TEST(minmax test_minmax)
+ADD_DEPENDENCIES(build-tests test_minmax)
 
 ADD_EXECUTABLE(test_rechist test_rechist.c ../src/liblsquic/lsquic_rechist.c)
 ADD_TEST(rechist test_rechist)
+ADD_DEPENDENCIES(build-tests test_rechist)
 
 ADD_EXECUTABLE(test_trechist test_trechist.c ../src/liblsquic/lsquic_trechist.c)
 ADD_TEST(trechist test_trechist)
+ADD_DEPENDENCIES(build-tests test_trechist)

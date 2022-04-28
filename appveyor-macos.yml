@@ -1,10 +1,9 @@
 version: 2.{branch}.{build}
 
 image:
-- Ubuntu2004
+- MacOS
 
 cache:
-- $HOME/.apt
 - boringssl -> boringssl-target.txt # we define the commit in here
 
 build: off
@@ -14,19 +13,6 @@ init:
 install:
 
 - sh: >-
-
-    if compgen -G "~/.apt/libevent-dev*.deb" ; then
-
-        sudo apt install -y ~/.apt/libevent-dev*.deb
-
-    else
-
-        sudo apt update -qq
-
-        sudo apt -y --no-install-recommends install libevent-dev
-
-    fi
-
 
     if [[ -f ./boringssl/include/openssl/ssl.h ]] ; then
 
@@ -65,10 +51,6 @@ install:
         n=$((n+1))
 
     done
-
-    mkdir -p $HOME/.apt
-
-    sudo mv -v /var/cache/apt/archives/libevent-dev*.deb $HOME/.apt/
 
     cmake -DBORINGSSL_DIR=$PWD/boringssl .
 
