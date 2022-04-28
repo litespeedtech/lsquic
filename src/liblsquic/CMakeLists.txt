@@ -130,9 +130,28 @@ ELSE()
   add_library(lsquic STATIC ${lsquic_STAT_SRCS})
 ENDIF()
 
+target_include_directories(
+    lsquic PUBLIC $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/lsquic>)
+
 install(TARGETS lsquic
     EXPORT lsquic-targets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    lsquic-config.cmake ${CMAKE_CURRENT_BINARY_DIR}/lsquic-config.cmake
+    INSTALL_DESTINATION share/lsquic
+    NO_CHECK_REQUIRED_COMPONENTS_MACRO
+    PATH_VARS CMAKE_INSTALL_INCLUDEDIR)
+
+install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/lsquic-config.cmake
+    DESTINATION share/lsquic)
+
+install(
+    EXPORT lsquic-targets
+    DESTINATION share/lsquic
+    NAMESPACE lsquic::
+    FILE lsquic-targets.cmake)
