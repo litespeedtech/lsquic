@@ -1,0 +1,10 @@
+{
+    "format": {
+        "tab_size": 4,
+        "xcommand_case": "lower",
+        "xkeyword_case": "upper"
+    },
+    "markup": {
+        "first_comment_is_literal": true
+    }
+}
