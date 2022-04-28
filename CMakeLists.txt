@@ -167,7 +167,7 @@ ELSE()
 ENDIF()
 
 IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
-    FOREACH(LIB_NAME ssl crypto decrepit)
+    FOREACH(LIB_NAME ssl crypto)
         IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
             FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
                 NAMES ${LIB_NAME}
@@ -190,14 +190,13 @@ IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
 ELSE()
 
 
-    FOREACH(LIB_NAME ssl crypto decrepit)
+    FOREACH(LIB_NAME ssl crypto)
         # If BORINGSSL_LIB is defined, try find each lib. Otherwise, user should define BORINGSSL_LIB_ssl,
         # BORINGSSL_LIB_crypto and so on explicitly. For example, including boringssl and lsquic both via
         # add_subdirectory:
         #   add_subdirectory(third_party/boringssl)
         #   set(BORINGSSL_LIB_ssl ssl)
         #   set(BORINGSSL_LIB_crypto crypto)
-        #   set(BORINGSSL_LIB_decrepit decrepit)
         #   add_subdirectory(third_party/lsquic)
         IF (DEFINED BORINGSSL_LIB)
             IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
