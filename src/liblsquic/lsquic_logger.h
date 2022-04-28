@@ -24,12 +24,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <lsquic_defines.h>
 #include "lsquic_shared_support.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
+
 #ifndef LSQUIC_LOWEST_LOG_LEVEL
 #   define LSQUIC_LOWEST_LOG_LEVEL LSQ_LOG_DEBUG
 #endif
@@ -126,7 +127,7 @@ struct lsquic_cid;
  * You can still use LSQ_LOG{0..3} directly.
  */
 
-void
+LSQUIC_LOGGER_API void
 lsquic_logger_log3 (enum lsq_log_level, enum lsquic_logger_module,
                     const struct lsquic_cid *conn_id,
                     lsquic_stream_id_t stream_id, const char *format, ...)
@@ -141,7 +142,7 @@ lsquic_logger_log3 (enum lsq_log_level, enum lsquic_logger_module,
     } while (0)
 
 
-void
+LSQUIC_LOGGER_API void
 lsquic_logger_log2 (enum lsq_log_level, enum lsquic_logger_module,
                     const struct lsquic_cid *conn_id, const char *format, ...)
 #if __GNUC__
@@ -162,7 +163,7 @@ lsquic_logger_log2 (enum lsq_log_level, enum lsquic_logger_module,
         }                                                                    \
     } while (0)
 
-void
+LSQUIC_LOGGER_API void
 lsquic_logger_log1 (enum lsq_log_level, enum lsquic_logger_module,
                     const char *format, ...)
 #if __GNUC__
@@ -181,7 +182,7 @@ lsquic_logger_log1 (enum lsq_log_level, enum lsquic_logger_module,
         }                                                                    \
     } while (0)
 
-void
+LSQUIC_LOGGER_API void
 lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
 #if __GNUC__
             __attribute__((format(printf, 2, 3)))
@@ -237,7 +238,7 @@ lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
 
 /* Shorthand for printing to file streams using internal lsquic_logger_if
  */
-void
+LSQUIC_LOGGER_API void
 lsquic_log_to_fstream (FILE *, unsigned llts);
 
 enum lsquic_logger_module

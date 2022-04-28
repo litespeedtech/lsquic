@@ -6,13 +6,15 @@
 #ifndef LSQUIC_UTIL_H
 #define LSQUIC_UTIL_H 1
 
+#include <lsquic_defines.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 struct sockaddr;
 
-lsquic_time_t
+LSQUIC_UTIL_API lsquic_time_t
 lsquic_time_now (void);
 
 void
@@ -35,7 +37,7 @@ lsquic_hex_encode (const void *src, size_t src_sz, void *dst, size_t dst_sz);
 size_t
 lsquic_hexdump (const void *src, size_t src_sz, char *out, size_t out_sz);
 
-void
+LSQUIC_UTIL_API void
 lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz);
 
 #define HEXSTR(buf, bufsz, out) \

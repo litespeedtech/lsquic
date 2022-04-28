@@ -2,6 +2,8 @@
 #ifndef LSQUIC_STREAM_H
 #define LSQUIC_STREAM_H
 
+#include <lsquic_defines.h>
+
 #define LSQUIC_STREAM_DEFAULT_PRIO 16   /* RFC 7540, Section 5.3.5 */
 
 
@@ -509,7 +511,7 @@ lsquic_stream_rst_frame_sent (lsquic_stream_t *);
 void
 lsquic_stream_stream_frame_sent (lsquic_stream_t *);
 
-void
+LSQUIC_STREAM_API void
 lsquic_stream_maybe_reset (struct lsquic_stream *, uint64_t error_code, int);
 
 void
