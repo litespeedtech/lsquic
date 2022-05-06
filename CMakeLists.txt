@@ -16,12 +16,13 @@ MESSAGE(STATUS "CMake v${CMAKE_VERSION}")
 
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
-    EXECUTE_PROCESS(
-        COMMAND ${PROJECT_SOURCE_DIR}/print-glibc-version.sh ${CMAKE_C_COMPILER}
-        OUTPUT_VARIABLE GLIBC_VERSION)
-    IF(NOT GLIBC_VERSION EQUAL "" AND GLIBC_VERSION VERSION_LESS 2.17)
-        SET(LIBS ${LIBS} rt)
-    ENDIF()
+    include(CheckSymbolExists)
+    check_symbol_exists(clock_getres "time.h" HAS_clock_getres_WITHOUT_LIBRT)
+
+    if(NOT HAS_clock_getres_WITHOUT_LIBRT)
+        find_library(RT_LIBRARY rt)
+        set(NEED_LIBRT_FOR_clock_getres ON)
+    endif()
 ELSEIF (CMAKE_SYSTEM_NAME STREQUAL "Android")
     # for android-ndk >= r19b
     set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY "BOTH")
