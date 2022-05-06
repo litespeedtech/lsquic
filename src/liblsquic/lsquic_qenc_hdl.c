@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_qenc_hdl.c -- QPACK encoder streams handler
  */
@@ -34,6 +34,7 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(qeh->qeh_conn)
 #include "lsquic_logger.h"
 
+#define QENC_MIN_DYN_TABLE_SIZE 32u
 
 static int
 qeh_write_type (struct qpack_enc_hdl *qeh)
@@ -123,6 +124,8 @@ lsquic_qeh_settings (struct qpack_enc_hdl *qeh, unsigned max_table_size,
     enc_opts = LSQPACK_ENC_OPT_STAGE_2
              | (server ? LSQPACK_ENC_OPT_SERVER : 0);
     qeh->qeh_tsu_sz = sizeof(qeh->qeh_tsu_buf);
+    if (QENC_MIN_DYN_TABLE_SIZE > dyn_table_size)
+        dyn_table_size = 0;
     if (0 != lsqpack_enc_init(&qeh->qeh_encoder, (void *) qeh->qeh_conn,
                 max_table_size, dyn_table_size, max_risked_streams, enc_opts,
                 qeh->qeh_tsu_buf, &qeh->qeh_tsu_sz))

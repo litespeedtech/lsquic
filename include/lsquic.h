@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef __LSQUIC_H__
 #define __LSQUIC_H__
 
@@ -24,8 +24,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 3
-#define LSQUIC_MINOR_VERSION 0
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_MINOR_VERSION 1
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:

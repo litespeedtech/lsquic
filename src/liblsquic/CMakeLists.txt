@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE.
 SET(lsquic_STAT_SRCS
     ls-qpack/lsqpack.c
     lsquic_adaptive_cc.c
@@ -159,3 +159,4 @@ install(
     DESTINATION share/lsquic
     NAMESPACE lsquic::
     FILE lsquic-targets.cmake)
+

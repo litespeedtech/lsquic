@@ -1,4 +1,4 @@
-# Copyright (c) 2017 - 2021 LiteSpeed Technologies Inc.  See LICENSE.
+# Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE.
 cmake_minimum_required(VERSION 3.0...3.23)
 
 
@@ -336,11 +336,3 @@ INSTALL(FILES
     include/lsxpack_header.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
 )
-
-if(WIN32)
-    # The other file in wincompat is not used in installed headers
-    INSTALL(FILES
-        wincompat/vc_compat.h
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
-    )
-endif()

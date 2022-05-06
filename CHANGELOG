@@ -1,3 +1,14 @@
+2022-05-06
+    - 3.1.0
+    - Better handling of transport parameter max_table_capcity < 32
+    - Fix NULL pointer dereference in handshake
+    - Fix 0-RTT transport parameter validation (issue #367)
+    - Remove unnecessary debug log to avoid NULL pointer dereference
+    - Tick connection on datagram write (pull #314)
+    - Do not dispatch write event for FINISHED stream
+    - Tweaks for CMake configuration (pull #354 #369 #370 #373 #374)
+    - Update ls-qpack to 2.3.0
+
 2022-01-10
     - 3.0.4
     - Fix overly strict assert()
