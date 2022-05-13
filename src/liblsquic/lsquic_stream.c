@@ -1095,12 +1095,11 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     LSQ_DEBUG("received stream frame, offset %"PRIu64", len %u; "
         "fin: %d", frame->data_frame.df_offset, frame->data_frame.df_size, !!frame->data_frame.df_fin);
 
+    rv = -1;
     if ((stream->sm_bflags & SMBF_USE_HEADERS)
                             && (stream->stream_flags & STREAM_HEAD_IN_FIN))
     {
-        lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
-        lsquic_malo_put(frame);
-        return -1;
+        goto release_packet_frame;
     }
 
     if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
@@ -1112,7 +1111,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
             "new final size %"PRIu64" from STREAM frame (id: %"PRIu64") does "
             "not match previous final size %"PRIu64, DF_END(frame),
             stream->id, stream->sm_fin_off);
-        return -1;
+        goto release_packet_frame;
     }
 
     got_next_offset = frame->data_frame.df_offset == stream->read_offset;
@@ -1123,7 +1122,6 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         /* Update maximum offset in the flow controller and check for flow
          * control violation:
          */
-        rv = -1;
         free_frame = !stream->data_in->di_if->di_own_on_ok;
         max_off = frame->data_frame.df_offset + frame->data_frame.df_size;
         if (0 != lsquic_stream_update_sfcw(stream, max_off))
@@ -1150,7 +1148,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
     else if (INS_FRAME_DUP == ins_frame)
     {
-        return 0;
+        rv = 0;
     }
     else if (INS_FRAME_OVERLAP == ins_frame)
     {
@@ -1160,15 +1158,15 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
         if (stream->data_in)
             goto insert_frame;
         stream->data_in = lsquic_data_in_error_new();
-        lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
-        lsquic_malo_put(frame);
-        return -1;
     }
     else
     {
         assert(INS_FRAME_ERR == ins_frame);
-        return -1;
     }
+release_packet_frame:
+    lsquic_packet_in_put(stream->conn_pub->mm, frame->packet_in);
+    lsquic_malo_put(frame);
+    return rv;
 }
 
 
