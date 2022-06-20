@@ -336,3 +336,10 @@ INSTALL(FILES
     include/lsxpack_header.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
 )
+
+if(WIN32)
+    install(FILES
+        wincompat/vc_compat.h
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
+    )
+endif()
