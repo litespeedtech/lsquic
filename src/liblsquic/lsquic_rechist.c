@@ -318,10 +318,10 @@ lsquic_rechist_received (lsquic_rechist_t *rechist, lsquic_packno_t packno,
     rechist->rh_elems[idx].re_low   = packno;
     rechist->rh_elems[idx].re_count = 1;
     rechist->rh_elems[idx].re_next  = next_idx;
-    if (next_idx == rechist->rh_head)
+    if (next_idx == (ptrdiff_t)rechist->rh_head)
         rechist->rh_head = idx;
     else
-        rechist->rh_elems[prev_idx].re_next  = idx;
+        rechist->rh_elems[prev_idx].re_next = idx;
 
     rechist_sanity_check(rechist);
     return REC_ST_OK;
