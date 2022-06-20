@@ -108,7 +108,7 @@ ENDIF()
 
 ADD_CUSTOM_COMMAND(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/lsquic_versions_to_string.c
-    COMMAND ${PERL}
+    COMMAND ${PERL_EXECUTABLE}
     ARGS ${CMAKE_CURRENT_SOURCE_DIR}/gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h ${CMAKE_CURRENT_BINARY_DIR}/lsquic_versions_to_string.c
     DEPENDS ./gen-verstrs.pl ${CMAKE_CURRENT_SOURCE_DIR}/../../include/lsquic.h
 )
