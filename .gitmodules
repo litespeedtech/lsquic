@@ -1,7 +1,6 @@
 [submodule "src/liblsquic/ls-qpack"]
 	path = src/liblsquic/ls-qpack
 	url = https://github.com/litespeedtech/ls-qpack
-        branch = v0.9.13
 [submodule "src/lshpack"]
 	path = src/lshpack
 	url = https://github.com/litespeedtech/ls-hpack
