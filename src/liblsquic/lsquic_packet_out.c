@@ -540,6 +540,11 @@ lsquic_packet_out_pad_over (struct lsquic_packet_out *packet_out,
     {
         if ((1 << frec->fe_frame_type) & frame_types)
         {
+            if ((1 << frec->fe_frame_type) & BQUIC_FRAME_REGEN_MASK)
+            {
+                packet_out->po_regen_sz -= frec->fe_len;
+            }
+
             memset(packet_out->po_data + frec->fe_off, 0, frec->fe_len);
             frec->fe_frame_type = QUIC_FRAME_PADDING;
         }
