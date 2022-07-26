@@ -964,6 +964,13 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
                 return -1;
             }
         }
+#if __linux__
+        else if (AF_INET6 == sa_local->sa_family)
+        {
+            int on = IP_PMTUDISC_PROBE;
+            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &on, sizeof(on));
+        }
+#endif
     }
 #endif
 
@@ -1156,6 +1163,13 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
                 return -1;
             }
         }
+#if __linux__
+        else if (AF_INET6 == sa_local->sa_family)
+        {
+            int on = IP_PMTUDISC_PROBE;
+            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &on, sizeof(on));
+        }
+#endif
     }
 #endif
 
