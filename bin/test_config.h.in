@@ -9,7 +9,7 @@
 #cmakedefine HAVE_REGEX 1
 #cmakedefine HAVE_PREADV 1
 
-#define LSQUIC_DONTFRAG_SUPPORTED (HAVE_IP_DONTFRAG || HAVE_IP_MTU_DISCOVER)
+#define LSQUIC_DONTFRAG_SUPPORTED (HAVE_IP_DONTFRAG || HAVE_IP_MTU_DISCOVER || HAVE_IPV6_MTU_DISCOVER)
 
 /* TODO: presumably it's the same on FreeBSD, test it.
  * See https://github.com/quicwg/base-drafts/wiki/ECN-in-QUIC
