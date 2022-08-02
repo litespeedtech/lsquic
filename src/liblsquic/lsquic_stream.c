@@ -1598,7 +1598,13 @@ stream_readf (struct lsquic_stream *stream,
                 errno = EBADMSG;
                 return -1;
             }
-            assert(stream->uh);
+
+            if (!stream->uh)
+            {
+                LSQ_DEBUG("cannot read: headers not available");
+                errno = EBADMSG;
+                return -1;
+            }
         }
         else
         {
