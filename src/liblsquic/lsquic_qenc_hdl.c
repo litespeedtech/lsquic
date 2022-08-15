@@ -301,15 +301,15 @@ qeh_in_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
     {
         if (nread < 0)
         {
-            LSQ_WARN("cannot read from encoder stream: %s", strerror(errno));
+            LSQ_WARN("cannot read from decoder stream: %s", strerror(errno));
             qeh->qeh_conn->cn_if->ci_internal_error(qeh->qeh_conn,
-                                        "cannot read from encoder stream");
+                                        "cannot read from decoder stream");
         }
         else
         {
-            LSQ_INFO("encoder stream closed by peer: abort connection");
+            LSQ_INFO("decoder stream closed by peer: abort connection");
             qeh->qeh_conn->cn_if->ci_abort_error(qeh->qeh_conn, 1,
-                HEC_CLOSED_CRITICAL_STREAM, "encoder stream closed");
+                HEC_CLOSED_CRITICAL_STREAM, "decoder stream closed");
         }
         lsquic_stream_wantread(stream, 0);
     }
