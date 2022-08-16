@@ -43,8 +43,6 @@ struct hash_elem
 static void
 free_key_data (struct hash_elem *he)
 {
-    if (he->data_sz)
-        free(he->data);
     free(he->key.buf);
 }
 
@@ -87,9 +85,17 @@ stock_shi_insert (void *hash_ctx, void *key, unsigned key_sz,
     he = lsquic_malo_get(hash->malo);
     if (!he)
         return -1;
-    he->key.buf = key;
+    he->key.buf = malloc(key_sz + data_sz + 1);
+    if (!he->key.buf)
+    {
+        lsquic_malo_put(he);
+        return -1;
+    }
+    memmove(he->key.buf, key, key_sz);
+    ((char *)(he->key.buf))[key_sz] = 0;
     he->key.sz  = key_sz;
-    he->data    = data;
+    he->data    = he->key.buf + he->key.sz + 1;
+    memmove(he->data, data, data_sz);
     he->data_sz = data_sz;
     he->expiry = expiry;
     memset(&he->lhash_elem, 0, sizeof(he->lhash_elem));

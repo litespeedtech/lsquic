@@ -4359,14 +4359,16 @@ void
 lsquic_stream_acked (struct lsquic_stream *stream,
                                             enum quic_frame_type frame_type)
 {
-    assert(stream->n_unacked);
-    --stream->n_unacked;
-    LSQ_DEBUG("ACKed; n_unacked: %u", stream->n_unacked);
-    if (frame_type == QUIC_FRAME_RST_STREAM)
+    if (stream->n_unacked > 0)
     {
-        SM_HISTORY_APPEND(stream, SHE_RST_ACKED);
-        LSQ_DEBUG("RESET that we sent has been acked by peer");
-        stream->stream_flags |= STREAM_RST_ACKED;
+        --stream->n_unacked;
+        LSQ_DEBUG("ACKed; n_unacked: %u", stream->n_unacked);
+        if (frame_type == QUIC_FRAME_RST_STREAM)
+        {
+            SM_HISTORY_APPEND(stream, SHE_RST_ACKED);
+            LSQ_DEBUG("RESET that we sent has been acked by peer");
+            stream->stream_flags |= STREAM_RST_ACKED;
+        }
     }
     if (0 == stream->n_unacked)
     {

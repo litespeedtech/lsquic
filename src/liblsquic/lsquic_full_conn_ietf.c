@@ -3130,6 +3130,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
     if (conn->ifc_flags & IFC_CREATED_OK)
         conn->ifc_enpub->enp_stream_if->on_conn_closed(&conn->ifc_conn);
+    assert(conn->ifc_conn.cn_conn_ctx == NULL);
     if (conn->ifc_conn.cn_enc_session)
         conn->ifc_conn.cn_esf.i->esfi_destroy(conn->ifc_conn.cn_enc_session);
     while (!STAILQ_EMPTY(&conn->ifc_stream_ids_to_ss))

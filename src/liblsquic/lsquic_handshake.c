@@ -3088,6 +3088,12 @@ decrypt_packet (struct lsquic_enc_session *enc_session, uint8_t path_id,
                sizeof(path_id_packet_number));
 
         *out_len = data_len;
+        if (data_len + *header_len > max_out_len)
+        {
+            LSQ_DEBUG("decrypt_packet size is larger than 1370, header: %zd, "
+                      "data: %zu, giveup.", *header_len, data_len);
+            return (enum enc_level) -1;
+        }
         ret = lsquic_aes_aead_dec(key,
                            buf, *header_len,
                            nonce, 12,

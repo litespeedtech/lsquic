@@ -89,7 +89,8 @@ get_or_generate_state (struct lsquic_engine_public *enpub, time_t now,
 {
     const struct lsquic_shared_hash_if *const shi = enpub->enp_shi;
     void *const ctx = enpub->enp_shi_ctx;
-    void *data, *copy, *key_copy;
+    void *data, *copy;
+    char key_copy[TOKGEN_SHM_KEY_SIZE];
     int s;
     unsigned sz;
     size_t bufsz;
@@ -166,28 +167,13 @@ get_or_generate_state (struct lsquic_engine_public *enpub, time_t now,
     memcpy(shm_state->tgss_magic_bottom, TOKGEN_SHM_MAGIC_BOTTOM,
                                         sizeof(TOKGEN_SHM_MAGIC_BOTTOM) - 1);
 
-    data = malloc(sizeof(*shm_state));
-    if (!data)
-    {
-        LSQ_ERROR("%s: malloc", __func__);
-        return -1;
-    }
-    memcpy(data, shm_state, sizeof(*shm_state));
-    key_copy = malloc(TOKGEN_SHM_KEY_SIZE);
-    if (!key_copy)
-    {
-        LSQ_ERROR("%s: malloc", __func__);
-        free(data);
-        return -1;
-    }
+    data = shm_state;
     memcpy(key_copy, TOKGEN_SHM_KEY, TOKGEN_SHM_KEY_SIZE);
     s = shi->shi_insert(ctx, key_copy, TOKGEN_SHM_KEY_SIZE, data,
                                                     sizeof(*shm_state), 0);
     if (s != 0)
     {
         LSQ_ERROR("cannot insert into SHM");
-        free(data);
-        free(key_copy);
         return -1;
     }
     sz = sizeof(*shm_state);

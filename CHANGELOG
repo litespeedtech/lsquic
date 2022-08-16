@@ -1,3 +1,13 @@
+2022-08-16
+    - 3.1.2
+    - Update ls-qpack to 2.4.0 to address a use-after-free bug
+    - Address a few corner cases that trigger assert failures.
+    - Properly handle unexpected large packet for gQUIC.
+    - Fix memory leak in shared hash interface
+    - Fix IPv6 MTU detection
+    - Fix wrong size used in packet regeneration.
+
+
 2022-05-13
     - 3.1.1
     - Fix memory leak in processing stream frames (isse #368)

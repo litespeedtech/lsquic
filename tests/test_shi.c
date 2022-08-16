@@ -24,30 +24,6 @@ static const struct pair {
 };
 
 
-struct data {
-    size_t   size;      /* Overall size including the payload */
-    char    *key;
-    char    *value;
-    char     data[0];   /* key followed by value */
-};
-
-
-static struct data *
-new_data (const char *key, const char *value)
-{
-    size_t klen = strlen(key);
-    size_t vlen = strlen(value);
-    size_t size = klen + vlen + 2 + sizeof(struct data);
-    struct data *data = malloc(size);
-    data->size = size;
-    data->key = data->data;
-    data->value = data->data + klen + 1;
-    memcpy(data->data, key, klen);
-    data->key[klen] = '\0';
-    memcpy(data->value, value, vlen);
-    data->value[vlen] = '\0';
-    return data;
-}
 
 
 #define N_PAIRS (sizeof(pairs) / sizeof(pairs[0]))
@@ -73,7 +49,6 @@ test_shi (const struct order *order)
     const time_t now = time(NULL);
     time_t expiry;
     void *datap;
-    struct data *data;
 
     hash = lsquic_stock_shared_hash_new();
 
@@ -84,9 +59,8 @@ test_shi (const struct order *order)
             expiry = now + 1;
         else
             expiry = 0;
-        data = new_data(pair->key, pair->value);
-        s = stock_shi.shi_insert(hash, strdup(data->key), strlen(data->key),
-                            data, data->size, expiry);
+        s = stock_shi.shi_insert(hash, (char *)pair->key, strlen(pair->key),
+                            (char *)pair->value, strlen(pair->value), expiry);
         assert(0 == s);
     }
 
@@ -107,11 +81,9 @@ test_shi (const struct order *order)
         }
         else
         {
-            data = datap;
             assert(1 == s);
-            assert(data_sz == data->size);
-            assert(0 == strcmp(pair->key, data->key));
-            assert(0 == strcmp(pair->value, data->value));
+            assert(data_sz == strlen(pair->value));
+            assert(0 == strncmp(pair->value, datap, data_sz));
         }
     }
 
