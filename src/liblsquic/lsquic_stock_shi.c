@@ -91,11 +91,11 @@ stock_shi_insert (void *hash_ctx, void *key, unsigned key_sz,
         lsquic_malo_put(he);
         return -1;
     }
-    memmove(he->key.buf, key, key_sz);
+    memmove((char *)he->key.buf, key, key_sz);
     ((char *)(he->key.buf))[key_sz] = 0;
     he->key.sz  = key_sz;
     he->data    = he->key.buf + he->key.sz + 1;
-    memmove(he->data, data, data_sz);
+    memmove((char *)he->data, data, data_sz);
     he->data_sz = data_sz;
     he->expiry = expiry;
     memset(&he->lhash_elem, 0, sizeof(he->lhash_elem));
