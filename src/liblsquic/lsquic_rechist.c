@@ -219,6 +219,8 @@ rechist_alloc_elem (struct lsquic_rechist *rechist)
     idx = find_free_slot(*mask);
     *mask |= 1ull << idx;
     ++rechist->rh_n_used;
+    /*Note that re_next is invalid at this point, caller must set it */
+
     return idx + i * BITS_PER_MASK;
 }
 
@@ -278,7 +280,7 @@ lsquic_rechist_received (lsquic_rechist_t *rechist, lsquic_packno_t packno,
     ptrdiff_t next_idx, prev_idx;
     int idx;
 
-    if (rechist->rh_n_alloced == 0)
+    if (rechist->rh_n_used == 0)
         goto first_elem;
 
     if (packno < rechist->rh_cutoff)
