@@ -39,9 +39,6 @@ struct lsquic_rechist {
         struct lsquic_packno_range      range;
         unsigned                        next;
     }                               rh_iter;
-#if LSQUIC_TEST
-    unsigned                        rh_n_ops;
-#endif
 };
 
 typedef struct lsquic_rechist lsquic_rechist_t;
