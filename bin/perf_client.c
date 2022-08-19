@@ -105,6 +105,7 @@ perf_client_on_conn_closed (struct lsquic_conn *conn)
 
     LSQ_NOTICE("Connection closed");
     conn_ctx = lsquic_conn_get_ctx(conn);
+    lsquic_conn_set_ctx(conn, NULL);
     free(conn_ctx);
     --s_n_conns;
     if (0 == s_n_conns)

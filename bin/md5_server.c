@@ -95,6 +95,8 @@ server_on_conn_closed (lsquic_conn_t *conn)
     else
         LSQ_NOTICE("Connection closed");
     TAILQ_REMOVE(&conn_h->server_ctx->conn_ctxs, conn_h, next_connh);
+
+    lsquic_conn_set_ctx(conn, NULL);
     free(conn_h);
 }
 

@@ -373,6 +373,7 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
     }
     event_active(cacos->event, 0, 0);
 
+    lsquic_conn_set_ctx(conn, NULL);
     free(conn_h);
 }
 
@@ -1328,6 +1329,7 @@ qif_client_on_conn_closed (lsquic_conn_t *conn)
     struct http_client_ctx *client_ctx = (void *) lsquic_conn_get_ctx(conn);
     LSQ_INFO("connection is closed: stop engine");
     prog_stop(client_ctx->prog);
+    lsquic_conn_set_ctx(conn, NULL);
 }
 
 

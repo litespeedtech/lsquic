@@ -40,6 +40,7 @@ static void
 duck_server_on_conn_closed (lsquic_conn_t *conn)
 {
     LSQ_NOTICE("siduck connection closed");
+    lsquic_conn_set_ctx(conn, NULL);
 }
 
 

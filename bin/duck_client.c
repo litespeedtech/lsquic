@@ -62,6 +62,8 @@ duck_client_on_conn_closed (lsquic_conn_t *conn)
     lsquic_conn_ctx_t *ctx = lsquic_conn_get_ctx(conn);
     LSQ_NOTICE("Connection closed, stop client");
     prog_stop((struct prog *) ctx);
+
+    lsquic_conn_set_ctx(conn, NULL);
 }
 
 

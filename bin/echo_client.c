@@ -65,6 +65,8 @@ echo_client_on_conn_closed (lsquic_conn_t *conn)
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
     LSQ_NOTICE("Connection closed");
     prog_stop(conn_h->client_ctx->prog);
+
+    lsquic_conn_set_ctx(conn, NULL);
     free(conn_h);
 }
 

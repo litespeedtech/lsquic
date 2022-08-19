@@ -375,6 +375,7 @@ http_server_on_conn_closed (lsquic_conn_t *conn)
         }
     }
     /* No provision is made to stop HTTP server */
+    lsquic_conn_set_ctx(conn, NULL);
     free(conn_h);
 }
 
