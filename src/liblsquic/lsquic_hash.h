@@ -6,6 +6,10 @@
 #ifndef LSQUIC_HASH_H
 #define LSQUIC_HASH_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct lsquic_hash;
 
 struct lsquic_hash_elem
@@ -58,4 +62,9 @@ lsquic_hash_count (struct lsquic_hash *);
 
 size_t
 lsquic_hash_mem_used (const struct lsquic_hash *);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif
