@@ -86,7 +86,6 @@
 #include "lsquic_handshake.h"
 #include "lsquic_crand.h"
 #include "lsquic_ietf.h"
-#include "lsquic_handshake.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ENGINE
 #include "lsquic_logger.h"
