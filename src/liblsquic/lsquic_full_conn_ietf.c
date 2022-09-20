@@ -1886,7 +1886,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
             &conn->ifc_rechist[pns], now, &has_missing, &packet_out->po_ack2ed,
             ecn_counts);
     if (w < 0) {
-        ABORT_ERROR("generating ACK frame failed: %d", errno);
+        ABORT_ERROR("%s generating ACK frame failed: %d", lsquic_pns2str[pns], errno);
         return -1;
     }
     CONN_STATS(out.acks, 1);
