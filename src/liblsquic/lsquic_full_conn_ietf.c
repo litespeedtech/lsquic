@@ -8201,6 +8201,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     CONN_STATS(n_ticks, 1);
 
+    CLOSE_IF_NECESSARY();
+
     if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
     {
         (void) /* If there is an error, we'll fail shortly */
