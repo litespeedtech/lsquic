@@ -205,31 +205,32 @@ test6 (void)
     lsquic_rechist_t rechist;
     char buf[256];
     long int time = 12087061905875;
-   
+    unsigned i;
+
     lsquic_rechist_init(&rechist, 0, 0);
-   
-    for (int i = 0; i <= 3; i++) 
-        lsquic_rechist_received(&rechist, i, (time += (i*10)));
+
+    for (i = 0; i <= 3; i++)
+        lsquic_rechist_received(&rechist, i, (time += (i * 10)));
     lsquic_rechist_stop_wait(&rechist, 2);
-    
+
     lsquic_rechist_received(&rechist, 4, (time += 10));
-    
+
     lsquic_rechist_stop_wait(&rechist, 3);
-    
+
     lsquic_rechist_received(&rechist, 5, (time += 10));
-    
+
     lsquic_rechist_stop_wait(&rechist, 3);
-    
+
     lsquic_rechist_received(&rechist, 6, (time += 10));
-    
+
     lsquic_rechist_stop_wait(&rechist, 9);
-    
+
     lsquic_rechist_received(&rechist, 7, (time += 10));
     lsquic_rechist_received(&rechist, 8, (time += 10));
     lsquic_rechist_received(&rechist, 9, (time += 10));
 
     rechist2str(&rechist, buf, sizeof(buf));
-    
+
     lsquic_rechist_cleanup(&rechist);
 }
 
