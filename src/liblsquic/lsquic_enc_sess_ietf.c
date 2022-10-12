@@ -2243,7 +2243,16 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     size_t out_sz;
     enum dec_packin dec_packin;
     int s;
-    const size_t dst_sz = packet_in->pi_data_sz;
+    /* 16Bytes: AEAD authentication tag
+     *
+     * [RFC5116 AEAD] Section 5.1
+     *  An authentication tag with a length of 16 octets (128bits) is used.
+     *
+     * [RFC9001 QUIC-TLS] Section 5.3
+     *  These cipher suites have a 16-byte authentication tag and
+     *  produce an output 16 bytes larger than their input.
+     */
+    const size_t dst_sz = packet_in->pi_data_sz - 16;
     unsigned char new_secret[EVP_MAX_KEY_LENGTH];
     struct crypto_ctx crypto_ctx_buf;
     char secret_str[EVP_MAX_KEY_LENGTH * 2 + 1];

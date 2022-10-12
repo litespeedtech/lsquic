@@ -261,6 +261,7 @@ struct lsquic_engine
     unsigned                           n_conns;
     lsquic_time_t                      deadline;
     lsquic_time_t                      resume_sending_at;
+    lsquic_time_t                      mem_logged_last;
     unsigned                           mini_conns_count;
     struct lsquic_purga               *purga;
 #if LSQUIC_CONN_STATS
@@ -960,6 +961,51 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
     --engine->n_conns;
     conn->cn_flags |= LSCONN_NEVER_TICKABLE;
     conn->cn_if->ci_destroy(conn);
+
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG)  /* log period: 10s */
+        && ((engine->mem_logged_last + 10000000 <= now) || (engine->n_conns == 0)))
+    {
+#define MAX_MM_STAT_LOG 4096
+        unsigned cur = 0;
+        unsigned ret = 0;
+        unsigned idx = 0;
+        char mm_log[MAX_MM_STAT_LOG] = {0};
+        struct pool_stats *poolst = NULL;
+
+        engine->mem_logged_last = now;
+
+        ret = snprintf(mm_log + cur, MAX_MM_STAT_LOG - cur,
+            "%p, conns: %u, mini_conns: %u. mm_stat, used: %zu"
+            ", pool(calls-objs_all-objs_out-max-avg-var), pib",
+            engine, engine->n_conns, engine->mini_conns_count,
+            lsquic_mm_mem_used(&engine->pub.enp_mm));
+        cur += ret;
+
+        for (idx = 0; idx < MM_N_IN_BUCKETS && cur < MAX_MM_STAT_LOG; idx++)
+        {
+            poolst = &engine->pub.enp_mm.packet_in_bstats[idx];
+            ret = snprintf(mm_log + cur, MAX_MM_STAT_LOG - cur,
+                ": [%u]%u-%u-%u-%u-%u-%u", idx,
+                poolst->ps_calls, poolst->ps_objs_all, poolst->ps_objs_out,
+                poolst->ps_max, poolst->ps_max_avg, poolst->ps_max_var);
+            cur += ret;
+        }
+
+        ret = snprintf(mm_log + cur, MAX_MM_STAT_LOG - cur, ", pob");
+        cur += ret;
+
+        for (idx = 0; idx < MM_N_OUT_BUCKETS && cur < MAX_MM_STAT_LOG; idx++)
+        {
+            poolst = &engine->pub.enp_mm.packet_out_bstats[idx];
+            ret = snprintf(mm_log + cur, MAX_MM_STAT_LOG - cur,
+                ": [%u]%u-%u-%u-%u-%u-%u", idx,
+                poolst->ps_calls, poolst->ps_objs_all, poolst->ps_objs_out,
+                poolst->ps_max, poolst->ps_max_avg, poolst->ps_max_var);
+            cur += ret;
+        }
+
+        LSQ_DEBUG("%s", mm_log);
+    }
 }
 
 
