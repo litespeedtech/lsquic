@@ -192,21 +192,15 @@ void
 lsquic_mm_put_packet_in (struct lsquic_mm *mm,
                                         struct lsquic_packet_in *packet_in)
 {
-#if LSQUIC_USE_POOLS
-    unsigned idx;
-    struct packet_in_buf *pib;
-
     assert(0 == packet_in->pi_refcnt);
     if (packet_in->pi_flags & PI_OWN_DATA)
     {
-        pib = (struct packet_in_buf *) packet_in->pi_data;
-        idx = packet_in_index(packet_in->pi_data_sz);
-        SLIST_INSERT_HEAD(&mm->packet_in_bufs[idx], pib, next_pib);
+        lsquic_mm_put_packet_in_buf(mm, packet_in->pi_data, packet_in->pi_data_sz);
     }
+
+#if LSQUIC_USE_POOLS
     TAILQ_INSERT_HEAD(&mm->free_packets_in, packet_in, pi_next);
 #else
-    if (packet_in->pi_flags & PI_OWN_DATA)
-        free(packet_in->pi_data);
     lsquic_malo_put(packet_in);
 #endif
 }
@@ -370,6 +364,42 @@ maybe_shrink_packet_out_bufs (struct lsquic_mm *mm, unsigned idx)
 #endif
 
 
+/* If average maximum falls under 1/4 of all objects allocated, release
+ * half of the objects allocated.
+ */
+static void
+maybe_shrink_packet_in_bufs (struct lsquic_mm *mm, unsigned idx)
+{
+    struct pool_stats *poolst;
+    struct packet_in_buf *pib;
+    unsigned n_to_leave;
+
+    poolst = &mm->packet_in_bstats[idx];
+    if (poolst->ps_max_avg * 4 < poolst->ps_objs_all)
+    {
+        n_to_leave = poolst->ps_objs_all / 2;
+        while (poolst->ps_objs_all > n_to_leave
+                        && (pib = SLIST_FIRST(&mm->packet_in_bufs[idx])))
+        {
+            SLIST_REMOVE_HEAD(&mm->packet_in_bufs[idx], next_pib);
+            free(pib);
+            --poolst->ps_objs_all;
+        }
+#if LSQUIC_LOG_POOL_STATS
+        LSQ_DEBUG("pib pool #%u; max avg %u; shrank from %u to %u objs",
+                idx, poolst->ps_max_avg, n_to_leave * 2, poolst->ps_objs_all);
+#endif
+    }
+#if LSQUIC_LOG_POOL_STATS
+    else
+    {
+        LSQ_DEBUG("pib pool #%u; max avg %u; objs: %u; won't shrink",
+                                idx, poolst->ps_max_avg, poolst->ps_objs_all);
+    }
+#endif
+}
+
+
 void
 lsquic_mm_put_packet_out (struct lsquic_mm *mm,
                           struct lsquic_packet_out *packet_out)
@@ -456,9 +486,25 @@ lsquic_mm_get_packet_in_buf (struct lsquic_mm *mm, size_t size)
     pib = SLIST_FIRST(&mm->packet_in_bufs[idx]);
     fiu_do_on("mm/packet_in_buf", FAIL_NOMEM);
     if (pib)
+    {
         SLIST_REMOVE_HEAD(&mm->packet_in_bufs[idx], next_pib);
+        poolst_allocated(&mm->packet_in_bstats[idx], 0);
+    }
     else
+    {
         pib = malloc(packet_in_sizes[idx]);
+        if (!pib)
+        {
+            return NULL;
+        }
+
+        poolst_allocated(&mm->packet_in_bstats[idx], 1);
+    }
+
+    if (poolst_has_new_sample(&mm->packet_in_bstats[idx]))
+    {
+        maybe_shrink_packet_in_bufs(mm, idx);
+    }
 #else
     pib = malloc(size);
 #endif
@@ -476,6 +522,12 @@ lsquic_mm_put_packet_in_buf (struct lsquic_mm *mm, void *mem, size_t size)
     pib = (struct packet_in_buf *) mem;
     idx = packet_in_index(size);
     SLIST_INSERT_HEAD(&mm->packet_in_bufs[idx], pib, next_pib);
+
+    poolst_freed(&mm->packet_in_bstats[idx]);
+    if (poolst_has_new_sample(&mm->packet_in_bstats[idx]))
+    {
+        maybe_shrink_packet_in_bufs(mm, idx);
+    }
 #else
     free(mem);
 #endif
