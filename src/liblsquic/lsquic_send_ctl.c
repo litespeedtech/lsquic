@@ -3424,6 +3424,8 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
 
     lsquic_alarmset_unset(ctl->sc_alset, AL_RETX_INIT + pns);
 
+    ctl->sc_flags &= ~(SC_LOST_ACK_INIT << pns);
+
     LSQ_DEBUG("emptied %s, destroyed %u packet%.*s", lsquic_pns2str[pns],
         count, count != 1, "s");
 }

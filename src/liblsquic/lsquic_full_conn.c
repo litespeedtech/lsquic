@@ -3411,6 +3411,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     ++conn->fc_stats.n_ticks;
 #endif
 
+    CLOSE_IF_NECESSARY();
+
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG)
         && conn->fc_mem_logged_last + 1000000 <= now)
     {

@@ -1886,7 +1886,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
             &conn->ifc_rechist[pns], now, &has_missing, &packet_out->po_ack2ed,
             ecn_counts);
     if (w < 0) {
-        ABORT_ERROR("generating ACK frame failed: %d", errno);
+        ABORT_ERROR("%s generating ACK frame failed: %d", lsquic_pns2str[pns], errno);
         return -1;
     }
     CONN_STATS(out.acks, 1);
@@ -8200,6 +8200,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 } while (0)
 
     CONN_STATS(n_ticks, 1);
+
+    CLOSE_IF_NECESSARY();
 
     if (conn->ifc_flags & IFC_HAVE_SAVED_ACK)
     {

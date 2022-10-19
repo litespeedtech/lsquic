@@ -44,6 +44,7 @@ struct lsquic_mm {
     TAILQ_HEAD(, lsquic_packet_in)  free_packets_in;
     SLIST_HEAD(, packet_out_buf)    packet_out_bufs[MM_N_OUT_BUCKETS];
     struct pool_stats               packet_out_bstats[MM_N_OUT_BUCKETS];
+    struct pool_stats               packet_in_bstats[MM_N_IN_BUCKETS];
     SLIST_HEAD(, packet_in_buf)     packet_in_bufs[MM_N_IN_BUCKETS];
     SLIST_HEAD(, four_k_page)       four_k_pages;
     SLIST_HEAD(, sixteen_k_page)    sixteen_k_pages;

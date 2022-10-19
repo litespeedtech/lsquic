@@ -527,12 +527,23 @@ h1h_prepare_decode (void *hset, struct lsxpack_header *xhdr, size_t req_space)
         if (0 == hwc->hwc_header_buf_nalloc
                                     || req_space > hwc->hwc_header_buf_nalloc)
         {
-            buf = malloc(req_space);
+            if (0 == hwc->hwc_header_buf_nalloc)
+            {
+                buf = malloc(req_space);
+            }
+            else
+            {
+                buf = realloc(hwc->hwc_xhdr.buf, req_space);
+            }
+
             if (!buf)
             {
-                LSQ_DEBUG("cannot allocate %zd bytes", req_space);
+                LSQ_WARN("cannot %s %zd bytes",
+                    hwc->hwc_header_buf_nalloc ? "reallocate to" : "allocate", req_space);
                 return NULL;
             }
+
+            hwc->hwc_xhdr.buf = buf;
             hwc->hwc_header_buf_nalloc = req_space;
         }
         else
