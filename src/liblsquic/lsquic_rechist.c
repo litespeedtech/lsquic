@@ -63,7 +63,7 @@ rechist_free_elem (struct lsquic_rechist *rechist, unsigned idx)
 static void
 rechist_dump_elem(struct rechist_elem *el)
 {
-    fprintf(stderr,"[%"PRIu64"-%"PRIu64"]", RE_HIGH(el), el->re_low);
+    fprintf(stderr, "[%" PRIu64 "-%" PRIu64 "]", RE_HIGH(el), el->re_low);
 }
 
 #ifdef __GNUC__
@@ -73,7 +73,8 @@ static void
 rechist_dump(struct lsquic_rechist *rechist)
 {
     fprintf(stderr,
-            "%p: cutoff %"PRIu64" l. acked %"PRIu64" masks %u alloced %u used %u max ranges %u head %u\n",
+            "%p: cutoff %" PRIu64 " l. acked %" PRIu64
+            " masks %u alloced %u used %u max ranges %u head %u\n",
             rechist,
             rechist->rh_cutoff, 
             rechist->rh_largest_acked_received,
@@ -219,7 +220,7 @@ rechist_alloc_elem (struct lsquic_rechist *rechist)
     idx = find_free_slot(*mask);
     *mask |= 1ull << idx;
     ++rechist->rh_n_used;
-    /*Note that re_next is invalid at this point, caller must set it */
+    /* Note that re_next is invalid at this point, caller must set it */
 
     return idx + i * BITS_PER_MASK;
 }
@@ -265,7 +266,7 @@ rechist_test_sanity (const struct lsquic_rechist *rechist)
     free(masks);
 }
 #define rechist_sanity_check(rechist_) do {                         \
-    rechist_test_sanity(rechist_);                              \
+        rechist_test_sanity(rechist_);                              \
 } while (0)
 #else
 #define rechist_sanity_check(rechist)

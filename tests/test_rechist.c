@@ -195,6 +195,7 @@ test5 (void)
     lsquic_rechist_cleanup(&rechist);
 }
 
+
 /* Regression test for bug where rechist ends up empty (rh_used == 0)
  * with invalid head entry with a self-referential next, and
  * lsquic_rechist_received would follow it because it didn't check rh_used.

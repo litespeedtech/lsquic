@@ -1,3 +1,10 @@
+2022-10-20
+    - 3.2.0
+    - Update ls-qpack to 2.5.0 to address a decoder bug
+    - Address a few corner cases that trigger assert failures.
+    - Properly handle unexpected large packet for gQUIC.
+
+
 2022-08-16
     - 3.1.2
     - Update ls-qpack to 2.4.0 to address a use-after-free bug
