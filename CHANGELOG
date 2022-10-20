@@ -1,8 +1,8 @@
 2022-10-20
     - 3.2.0
     - Update ls-qpack to 2.5.0 to address a decoder bug
-    - Address a few corner cases that trigger assert failures.
-    - Properly handle unexpected large packet for gQUIC.
+    - Assertion failure if poison packet was acked
+    - Fix packet_in pool memory leak
 
 
 2022-08-16
