@@ -2240,7 +2240,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     enum enc_level enc_level;
     enum packnum_space pns;
     lsquic_packno_t packno;
-    size_t out_sz;
     enum dec_packin dec_packin;
     int s;
     /* 16Bytes: AEAD authentication tag
@@ -2252,12 +2251,17 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
      *  These cipher suites have a 16-byte authentication tag and
      *  produce an output 16 bytes larger than their input.
      */
-    const size_t dst_sz = packet_in->pi_data_sz - 16;
+    size_t out_sz, dst_sz;
     unsigned char new_secret[EVP_MAX_KEY_LENGTH];
     struct crypto_ctx crypto_ctx_buf;
     char secret_str[EVP_MAX_KEY_LENGTH * 2 + 1];
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
+    if (packet_in->pi_data_sz <= 16) {
+        dec_packin = DECPI_TOO_SHORT;
+        goto err;
+    }
+    dst_sz = packet_in->pi_data_sz - 16;
     dst = lsquic_mm_get_packet_in_buf(&enpub->enp_mm, dst_sz);
     if (!dst)
     {
@@ -2450,10 +2454,10 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         enc_sess->esi_key_phase = key_phase;
     }
 
-    packet_in->pi_data_sz = packet_in->pi_header_sz + out_sz;
     if (packet_in->pi_flags & PI_OWN_DATA)
         lsquic_mm_put_packet_in_buf(&enpub->enp_mm, packet_in->pi_data,
                                                         packet_in->pi_data_sz);
+    packet_in->pi_data_sz = packet_in->pi_header_sz + out_sz;
     packet_in->pi_data = dst;
     packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED
                         | (enc_level << PIBIT_ENC_LEV_SHIFT);
