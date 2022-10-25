@@ -134,7 +134,7 @@ Additional Notes
 Control QUIC Settings via -o Flag
 ---------------------------------
 
-Most of the settings in struct squic_engine_settings can be controlled
+Most of the settings in struct lsquic_engine_settings can be controlled
 via -o flag.  With exception of es_versions, which is a bit mask, other
 es_* options can be mapped to corresponding -o value via s/^es_//:
 
