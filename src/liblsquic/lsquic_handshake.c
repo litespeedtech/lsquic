@@ -4177,15 +4177,11 @@ gquic2_esf_decrypt_packet (enc_session_t *enc_session_p,
     unsigned sample_off, packno_len, divers_nonce_len;
     enum gel gel;
     lsquic_packno_t packno;
-    size_t out_sz, dst_sz;
+    size_t out_sz;
     enum dec_packin dec_packin;
+    const size_t dst_sz = packet_in->pi_data_sz - IQUIC_TAG_LEN;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
-    dst_sz = packet_in->pi_data_sz - 16;
-    if (dst_sz <= 16) {
-        dec_packin = DECPI_TOO_SHORT;
-        goto err;
-    }
     dst = lsquic_mm_get_packet_in_buf(&enpub->enp_mm, dst_sz);
     if (!dst)
     {
