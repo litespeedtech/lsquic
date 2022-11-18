@@ -4179,7 +4179,7 @@ gquic2_esf_decrypt_packet (enc_session_t *enc_session_p,
     lsquic_packno_t packno;
     size_t out_sz;
     enum dec_packin dec_packin;
-    const size_t dst_sz = packet_in->pi_data_sz;
+    const size_t dst_sz = packet_in->pi_data_sz - IQUIC_TAG_LEN;
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 
     dst = lsquic_mm_get_packet_in_buf(&enpub->enp_mm, dst_sz);
@@ -4270,11 +4270,10 @@ gquic2_esf_decrypt_packet (enc_session_t *enc_session_p,
     }
 
     /* Bits 2 and 3 are not set and don't need to be checked in gQUIC */
-
-    packet_in->pi_data_sz = packet_in->pi_header_sz + out_sz;
     if (packet_in->pi_flags & PI_OWN_DATA)
         lsquic_mm_put_packet_in_buf(&enpub->enp_mm, packet_in->pi_data,
                                                         packet_in->pi_data_sz);
+    packet_in->pi_data_sz = packet_in->pi_header_sz + out_sz;
     packet_in->pi_data = dst;
     packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED
                         | (gel2el[gel] << PIBIT_ENC_LEV_SHIFT);
