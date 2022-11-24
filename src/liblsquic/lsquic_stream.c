@@ -1436,7 +1436,12 @@ lsquic_stream_rst_frame_sent (lsquic_stream_t *stream)
     stream->sm_qflags &= ~SMQF_SEND_RST;
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
-    stream->stream_flags |= STREAM_RST_SENT;
+
+    /* [RFC9000 QUIC] Section 19.4. RESET_Frames
+     *  An endpoint uses a RESET_STREAM frame (type=0x04)
+     *  to abruptly terminate the sending part of a stream.
+     */
+    stream->stream_flags |= STREAM_RST_SENT|STREAM_U_WRITE_DONE;
     maybe_finish_stream(stream);
 }
 
