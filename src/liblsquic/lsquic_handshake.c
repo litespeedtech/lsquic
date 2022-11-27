@@ -1810,7 +1810,6 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     time_t t = time(NULL);
     unsigned int real_len;
     SCFG_info_t *temp_scfg;
-    SCFG_t *tmp_scfg_copy = NULL;
     void *scfg_ptr;
     int ret;
     unsigned msg_len, server_config_sz;
@@ -1885,20 +1884,15 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 
 //     /* TODO: will shi_delete call free to release the buffer? */
 //     shi->shi_delete(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE);
-    void *scfg_key = strdup(SERVER_SCFG_KEY);
-    shi->shi_insert(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
+    shi->shi_insert(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE,
             enpub->enp_server_config->lsc_scfg, server_config_sz, t + settings->es_sttl);
 
-    ret = shi->shi_lookup(shi_ctx, scfg_key, SERVER_SCFG_KEY_SIZE,
+    ret = shi->shi_lookup(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE,
                           &scfg_ptr, &real_len);
     if (ret == 1)
     {
-        tmp_scfg_copy = scfg_ptr;
-        if (tmp_scfg_copy != enpub->enp_server_config->lsc_scfg)
-        {
-            free(enpub->enp_server_config->lsc_scfg);
-            enpub->enp_server_config->lsc_scfg = tmp_scfg_copy;
-        }
+        free(enpub->enp_server_config->lsc_scfg);
+        enpub->enp_server_config->lsc_scfg = scfg_ptr;
     }
     else
     {
