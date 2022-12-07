@@ -1708,6 +1708,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err3:
+    conn->ifc_enpub->enp_stream_if->on_conn_closed(&conn->ifc_conn);
     ietf_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 
