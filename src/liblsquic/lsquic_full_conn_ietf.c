@@ -1681,13 +1681,13 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->ifc_last_live_update = now;
 
+    if (0 != handshake_ok(&conn->ifc_conn))
+        goto err3;
+
     LSQ_DEBUG("Calling on_new_conn callback");
     conn->ifc_conn.cn_conn_ctx = conn->ifc_enpub->enp_stream_if->on_new_conn(
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
     conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
-
-    if (0 != handshake_ok(&conn->ifc_conn))
-        goto err3;
 
     conn->ifc_created = imc->imc_created;
     if (conn->ifc_idle_to)
@@ -1708,7 +1708,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err3:
-    conn->ifc_enpub->enp_stream_if->on_conn_closed(&conn->ifc_conn);
     ietf_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 
