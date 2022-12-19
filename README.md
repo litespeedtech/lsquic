@@ -46,13 +46,7 @@ cd boringssl
 
 You may need to install pre-requisites like zlib and libevent.
 
-2. Use specific BoringSSL version
-
-```
-git checkout a9670a8b476470e6f874fef3554e8059683e1413
-```
-
-3. Compile the library
+2. Compile the library
 
 ```
 cmake . &&  make
