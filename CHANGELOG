@@ -2,9 +2,9 @@
     - 3.3.0
     - Improve path validation logic to avoid sending padded packet to unverified
       peer, follow 3X anti-amplification rule.
-    - Optimize application callback when STOP_SENDING frame received.
+    - Optimize application callback when STOP_SENDING frame is received.
     - Improve new connection callback logic.
-    - Improve handling of closed connection.
+    - Improve handling of a closed connection.
     - Update BoringSSL to the most recent version.
     - Fix memory leaks in gquic handshake and packet handling.
     - Update ls-qpack to 2.5.1, ls-hpack to 2.3.1 to address compiler warnings
