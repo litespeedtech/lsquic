@@ -2291,8 +2291,9 @@ stream_dispatch_write_events_loop (lsquic_stream_t *stream)
     no_progress_count = 0;
     stream->stream_flags |= STREAM_LAST_WRITE_OK;
     while ((stream->sm_qflags & SMQF_WANT_WRITE)
-                && (stream->stream_flags & STREAM_LAST_WRITE_OK)
-                       && stream_writeable(stream))
+           && (stream->stream_flags & STREAM_LAST_WRITE_OK)
+           && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
+           && stream_writeable(stream))
     {
         progress = stream_progress(stream);
 
@@ -2415,6 +2416,7 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     if (stream->sm_bflags & SMBF_RW_ONCE)
     {
         if ((stream->sm_qflags & SMQF_WANT_WRITE)
+            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
             && stream_writeable(stream))
         {
             on_write = select_on_write(stream);

@@ -49,8 +49,9 @@ You may need to install pre-requisites like zlib and libevent.
 2. Use specific BoringSSL version
 
 ```
-git checkout a9670a8b476470e6f874fef3554e8059683e1413
+git checkout 31bad2514d21f6207f3925ba56754611c462a873
 ```
+Or, just try the latest master branch.
 
 3. Compile the library
 

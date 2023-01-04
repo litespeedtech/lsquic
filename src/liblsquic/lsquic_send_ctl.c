@@ -2346,8 +2346,8 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     packno = send_ctl_next_packno(ctl);
 
     packet_out->po_flags &= ~PO_SENT_SZ;
+    assert(packet_out->po_frame_types & ~BQUIC_FRAME_REGEN_MASK);
     packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
-    assert(packet_out->po_frame_types);
     packet_out->po_packno = packno;
     lsquic_packet_out_set_ecn(packet_out, ctl->sc_ecn);
 

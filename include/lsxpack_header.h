@@ -1,6 +1,6 @@
 /* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
-#ifndef LSXPACK_HEADER_H_v206
-#define LSXPACK_HEADER_H_v206
+#ifndef LSXPACK_HEADER_H_v207
+#define LSXPACK_HEADER_H_v207
 
 #ifdef __cplusplus
 extern "C" {
@@ -71,10 +71,10 @@ lsxpack_header_set_idx(lsxpack_header_t *hdr, int hpack_idx,
 {
     memset(hdr, 0, sizeof(*hdr));
     hdr->buf = (char *)val;
-    hdr->hpack_index = hpack_idx;
+    hdr->hpack_index = (uint8_t)hpack_idx;
     assert(hpack_idx != 0);
     assert(val_len <= LSXPACK_MAX_STRLEN);
-    hdr->val_len = val_len;
+    hdr->val_len = (lsxpack_strlen_t)val_len;
 }
 
 
@@ -84,11 +84,11 @@ lsxpack_header_set_qpack_idx(lsxpack_header_t *hdr, int qpack_idx,
 {
     memset(hdr, 0, sizeof(*hdr));
     hdr->buf = (char *)val;
-    hdr->qpack_index = qpack_idx;
+    hdr->qpack_index = (uint8_t)qpack_idx;
     assert(qpack_idx != -1);
     hdr->flags = LSXPACK_QPACK_IDX;
     assert(val_len <= LSXPACK_MAX_STRLEN);
-    hdr->val_len = val_len;
+    hdr->val_len = (lsxpack_strlen_t)val_len;
 }
 
 
@@ -99,13 +99,13 @@ lsxpack_header_set_offset(lsxpack_header_t *hdr, const char *buf,
 {
     memset(hdr, 0, sizeof(*hdr));
     hdr->buf = (char *)buf;
-    hdr->name_offset = name_offset;
+    hdr->name_offset = (lsxpack_strlen_t)name_offset;
     assert(name_len <= LSXPACK_MAX_STRLEN);
-    hdr->name_len = name_len;
+    hdr->name_len = (lsxpack_strlen_t)name_len;
     assert(name_offset + name_len + 2 <= LSXPACK_MAX_STRLEN);
-    hdr->val_offset = name_offset + name_len + 2;
+    hdr->val_offset = (lsxpack_strlen_t)(name_offset + name_len + 2);
     assert(val_len <= LSXPACK_MAX_STRLEN);
-    hdr->val_len = val_len;
+    hdr->val_len = (lsxpack_strlen_t)val_len;
 }
 
 
@@ -116,13 +116,13 @@ lsxpack_header_set_offset2(lsxpack_header_t *hdr, const char *buf,
 {
     memset(hdr, 0, sizeof(*hdr));
     hdr->buf = (char *)buf;
-    hdr->name_offset = name_offset;
+    hdr->name_offset = (lsxpack_strlen_t)name_offset;
     assert(name_len <= LSXPACK_MAX_STRLEN);
-    hdr->name_len = name_len;
+    hdr->name_len = (lsxpack_strlen_t)name_len;
     assert(val_offset <= LSXPACK_MAX_STRLEN);
-    hdr->val_offset = val_offset;
+    hdr->val_offset = (lsxpack_strlen_t)val_offset;
     assert(val_len <= LSXPACK_MAX_STRLEN);
-    hdr->val_len = val_len;
+    hdr->val_len = (lsxpack_strlen_t)val_len;
 }
 
 
@@ -133,11 +133,11 @@ lsxpack_header_prepare_decode(lsxpack_header_t *hdr,
     memset(hdr, 0, sizeof(*hdr));
     hdr->buf = out;
     assert(offset <= LSXPACK_MAX_STRLEN);
-    hdr->name_offset = offset;
+    hdr->name_offset = (lsxpack_strlen_t)offset;
     if (len > LSXPACK_MAX_STRLEN)
         hdr->val_len = LSXPACK_MAX_STRLEN;
     else
-        hdr->val_len = len;
+        hdr->val_len = (lsxpack_strlen_t)len;
 }
 
 
@@ -166,4 +166,4 @@ lsxpack_header_mark_val_changed(lsxpack_header_t *hdr)
 }
 #endif
 
-#endif //LSXPACK_HEADER_H_v206
+#endif //LSXPACK_HEADER_H_v207

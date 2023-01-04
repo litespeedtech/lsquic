@@ -87,7 +87,7 @@
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
 #define MAX_ANY_PACKETS_SINCE_LAST_ACK 20
 #define ACK_TIMEOUT                    (TP_DEF_MAX_ACK_DELAY * 1000)
-#define INITIAL_CHAL_TIMEOUT            25000
+#define INITIAL_CHAL_TIMEOUT            250000
 
 /* Retire original CID after this much time has elapsed: */
 #define RET_CID_TIMEOUT                 2000000
@@ -332,6 +332,10 @@ struct conn_path
         COP_GOT_NONPROB = 1 << 2,
         /* Spin bit is enabled on this path. */
         COP_SPIN_BIT    = 1 << 3,
+        /* Allow padding packet to 1200 bytes */
+        COP_ALLOW_MTU_PADDING = 1 << 4,
+        /* Verified that the path MTU is at least 1200 bytes */
+        COP_VALIDATED_MTU = 1 << 5,
     }                           cop_flags;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
@@ -1542,7 +1546,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         conn->ifc_flags |= IFC_IGNORE_INIT;
 
     conn->ifc_paths[0].cop_path = imc->imc_path;
-    conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED;
+    conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED|COP_ALLOW_MTU_PADDING;
     conn->ifc_used_paths = 1 << 0;
     maybe_enable_spin(conn, &conn->ifc_paths[0]);
     if (imc->imc_flags & IMC_ADDR_VALIDATED)
@@ -4592,9 +4596,11 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     if (copath->cop_n_chals >= sizeof(copath->cop_path_chals)
                                         / sizeof(copath->cop_path_chals[0]))
     {
-        /* TODO: path failure? */
-        assert(0);
-        return;
+        /* path failure? it is non-fatal, keep trying */
+        memmove(&copath->cop_path_chals[0], &copath->cop_path_chals[1],
+            sizeof(copath->cop_path_chals) - sizeof(copath->cop_path_chals[0]));
+        copath->cop_n_chals = sizeof(copath->cop_path_chals)
+                                        / sizeof(copath->cop_path_chals[0]) - 1;
     }
 
     need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();
@@ -4630,9 +4636,14 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     packet_out->po_frame_types |= QUIC_FTBIT_PATH_CHALLENGE;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     packet_out->po_regen_sz += w;
-    maybe_pad_packet(conn, packet_out);
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
-    lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + path_id,
+    /* Anti-amplification, only pad packet if allowed
+     *  (confirmed path or incoming packet >= 400 bytes). */
+    if (copath->cop_flags & COP_ALLOW_MTU_PADDING)
+        maybe_pad_packet(conn, packet_out);
+    /* Only retry for confirmed path */
+    if (copath->cop_flags & COP_VALIDATED)
+        lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + path_id,
                     now + (INITIAL_CHAL_TIMEOUT << (copath->cop_n_chals - 1)));
 }
 
@@ -5192,9 +5203,17 @@ process_path_response_frame (struct ietf_full_conn *conn,
     return 0;
 
   found:
-    path->cop_flags |= COP_VALIDATED;
-    conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
-    lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + path_id);
+    if (path->cop_flags & COP_ALLOW_MTU_PADDING)
+    {
+        path->cop_flags |= (COP_VALIDATED | COP_VALIDATED_MTU);
+        conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + path_id);
+    }
+    else
+    {
+        path->cop_flags |= (COP_VALIDATED | COP_ALLOW_MTU_PADDING);
+        conn->ifc_send_flags |= (SF_SEND_PATH_CHAL << path_id);
+    }
     switch ((path_id != conn->ifc_cur_path_id) |
                         (!!(path->cop_flags & COP_GOT_NONPROB) << 1))
     {
@@ -5522,7 +5541,8 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
             return 0;
         }
         lsquic_stream_stop_sending_in(stream, error_code);
-        lsquic_stream_call_on_new(stream);
+        if (!(conn->ifc_flags & IFC_HTTP))
+            lsquic_stream_call_on_new(stream);
     }
 
     return parsed_len;
@@ -6579,7 +6599,8 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
     uint64_t seqno, pack_tol, upd_mad;
     int parsed_len, ignore;
 
-    if (!(conn->ifc_flags & IFC_DELAYED_ACKS))
+    if (!conn->ifc_settings->es_delayed_acks
+        && !(conn->ifc_flags & IFC_DELAYED_ACKS))
     {
         ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
             "Received unexpected ACK_FREQUENCY frame (not negotiated)");
@@ -6857,7 +6878,11 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
         LSQ_DEBUGC("packet in DCID: %"CID_FMT"; changed: %d",
                                     CID_BITS(&packet_in->pi_dcid), dcid_changed);
         if (0 == init_new_path(conn, path, dcid_changed))
+        {
             path->cop_flags |= COP_INITIALIZED;
+            if (packet_in->pi_data_sz >= IQUIC_MIN_INIT_PACKET_SZ / 3)
+                path->cop_flags |= COP_ALLOW_MTU_PADDING;
+        }
         else
             return -1;
 
