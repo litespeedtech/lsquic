@@ -2519,14 +2519,6 @@ iquic_esf_global_cleanup (void)
 }
 
 
-static void *
-copy_X509 (void *cert)
-{
-    X509_up_ref(cert);
-    return cert;
-}
-
-
 static struct stack_st_X509 *
 iquic_esf_get_server_cert_chain (enc_session_t *enc_session_p)
 {
@@ -2536,9 +2528,7 @@ iquic_esf_get_server_cert_chain (enc_session_t *enc_session_p)
     if (enc_sess->esi_ssl)
     {
         chain = SSL_get_peer_cert_chain(enc_sess->esi_ssl);
-        return (struct stack_st_X509 *)
-            sk_deep_copy((const _STACK *) chain, sk_X509_call_copy_func,
-                copy_X509, sk_X509_call_free_func, (void(*)(void*))X509_free);
+        return X509_chain_up_ref(chain);
     }
     else
         return NULL;
