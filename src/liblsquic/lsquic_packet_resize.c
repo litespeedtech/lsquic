@@ -61,14 +61,23 @@ packet_resize_next_frec (struct packet_resize_ctx *prctx)
         prctx->prc_cur_packet = NULL; /* Not necessary; just future-proofing */
     }
 
-    prctx->prc_cur_packet = prctx->prc_pri->pri_next_packet(prctx->prc_data);
-    if (!prctx->prc_cur_packet)
+    do
     {
-        LSQ_DEBUG("out of input packets");
-        return NULL;
-    }
-    frec = lsquic_pofi_first(&prctx->prc_pofi, prctx->prc_cur_packet);
-    assert(frec);
+        prctx->prc_cur_packet = prctx->prc_pri->pri_next_packet(prctx->prc_data);
+        if (!prctx->prc_cur_packet)
+        {
+            LSQ_DEBUG("out of input packets");
+            return NULL;
+        }
+        frec = lsquic_pofi_first(&prctx->prc_pofi, prctx->prc_cur_packet);
+        if (frec == NULL)
+        {
+            LSQ_DEBUG("discard, no good frec from current packet %"PRIu64,
+                                        prctx->prc_cur_packet->po_packno);
+            prctx->prc_pri->pri_discard_packet(prctx->prc_data,
+                                                    prctx->prc_cur_packet);
+        }
+    } while (frec == NULL);
     LSQ_DEBUG("return first frec from new current packet %"PRIu64,
                                         prctx->prc_cur_packet->po_packno);
     return frec;

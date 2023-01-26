@@ -583,6 +583,9 @@ decr_conn_cap (struct lsquic_stream *stream, size_t incr)
     {
         assert(stream->conn_pub->conn_cap.cc_sent >= incr);
         stream->conn_pub->conn_cap.cc_sent -= incr;
+        LSQ_DEBUG("decrease cc_sent by %zd to %"PRIu64, incr,
+                  stream->conn_pub->conn_cap.cc_sent);
+
     }
 }
 
@@ -2048,8 +2051,11 @@ maybe_put_onto_write_q (lsquic_stream_t *stream, enum stream_q_flags flag)
 {
     assert(SMQF_WRITE_Q_FLAGS & flag);
     if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS))
+    {
+        LSQ_DEBUG("put on write queue");
         TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
                                                         next_write_stream);
+    }
     stream->sm_qflags |= flag;
 }
 
@@ -2401,6 +2407,8 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     uint64_t tosend_off;
     unsigned short n_buffered;
     enum stream_q_flags q_flags;
+
+    LSQ_DEBUG("dispatch_write_events");
 
     if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
         || (stream->stream_flags & STREAM_FINISHED))
@@ -2761,6 +2769,8 @@ incr_conn_cap (struct lsquic_stream *stream, size_t incr)
         stream->conn_pub->conn_cap.cc_sent += incr;
         assert(stream->conn_pub->conn_cap.cc_sent
                                     <= stream->conn_pub->conn_cap.cc_max);
+        LSQ_DEBUG("increase cc_sent by %zd to %"PRIu64, incr,
+               stream->conn_pub->conn_cap.cc_sent);
     }
 }
 
@@ -3976,8 +3986,7 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
                 bits = p[1] >> 6;
                 vint_write(p + 1, payload_sz - shortfall, bits, 1 << bits);
                 decr = shortfall;
-                if (stream->sm_bflags & SMBF_CONN_LIMITED)
-                    stream->conn_pub->conn_cap.cc_sent -= decr;
+                decr_conn_cap(stream, decr);
                 stream->sm_payload -= decr;
                 stream->tosend_off -= decr;
                 shortfall = 0;
@@ -3985,8 +3994,7 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
             else
             {
                 decr = payload_sz + 2 + (p[1] >> 6);
-                if (stream->sm_bflags & SMBF_CONN_LIMITED)
-                    stream->conn_pub->conn_cap.cc_sent -= decr;
+                decr_conn_cap(stream, decr);
                 stream->sm_payload -= payload_sz;
                 stream->tosend_off -= decr;
                 shortfall -= payload_sz;
@@ -3998,8 +4006,7 @@ lsquic_stream_pwritev (struct lsquic_stream *stream,
     else
     {
         const size_t shortfall = n_allocated - (size_t) nw;
-        if (stream->sm_bflags & SMBF_CONN_LIMITED)
-            stream->conn_pub->conn_cap.cc_sent -= shortfall;
+        decr_conn_cap(stream, shortfall);
         stream->sm_payload -= shortfall;
         stream->tosend_off -= shortfall;
     }

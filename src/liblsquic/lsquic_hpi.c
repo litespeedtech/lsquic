@@ -111,6 +111,7 @@ lsquic_hpi_init (void *iter_p, struct lsquic_stream *first,
     else
         while (1)
         {
+            HPI_DEBUG("add stream %"PRIu64, stream->id);
             add_stream_to_hpi(iter, stream);
             ++count;
             if (stream == last)

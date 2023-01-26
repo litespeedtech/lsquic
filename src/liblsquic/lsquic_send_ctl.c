@@ -1643,9 +1643,12 @@ static int
 send_ctl_can_send (struct lsquic_send_ctl *ctl)
 {
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
-    LSQ_DEBUG("%s: n_out: %u (unacked_all: %u); cwnd: %"PRIu64, __func__,
+    LSQ_DEBUG("%s: n_out: %u (unacked_all: %u); cwnd: %"PRIu64
+        "; ccfc: %"PRIu64"/%"PRIu64, __func__,
         n_out, ctl->sc_bytes_unacked_all,
-        ctl->sc_ci->cci_get_cwnd(CGP(ctl)));
+        ctl->sc_ci->cci_get_cwnd(CGP(ctl)),
+        ctl->sc_conn_pub->conn_cap.cc_sent,
+        ctl->sc_conn_pub->conn_cap.cc_max);
     if (ctl->sc_flags & SC_PACE)
     {
         if (n_out >= ctl->sc_ci->cci_get_cwnd(CGP(ctl)))

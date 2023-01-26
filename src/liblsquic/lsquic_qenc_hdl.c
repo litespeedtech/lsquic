@@ -423,7 +423,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     {
         if (headers->headers[i].buf == NULL)
             continue;
-        enc_sz = sizeof(enc_buf);
+        enc_sz = qeh->qeh_encoder.qpe_cur_max_capacity * 2;
         hea_sz = end - p;
         st = lsqpack_enc_encode(&qeh->qeh_encoder, enc_buf, &enc_sz, p,
                                 &hea_sz, &headers->headers[i], enc_flags);
@@ -515,6 +515,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
             "%.3f", total_enc_sz, lsquic_frab_list_size(&qeh->qeh_fral),
             *headers_sz, lsqpack_enc_ratio(&qeh->qeh_encoder));
         retval = QWH_PARTIAL;
+        lsquic_stream_wantwrite(qeh->qeh_enc_sm_out, 1);
         goto end;
     }
 

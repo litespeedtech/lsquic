@@ -1,3 +1,9 @@
+2023-01-26
+    - 3.3.1
+    - Fix blocked header encoding stream due to connection flow control congestion.
+    - Fix qeh_write_headers bug for Windows.
+    - Fix corner case for packet resizing.
+
 2023-01-04
     - 3.3.0
     - Improve path validation logic to avoid sending padded packet to unverified
