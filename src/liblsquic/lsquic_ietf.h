@@ -24,6 +24,7 @@ enum trans_error_code
     TEC_KEY_UPDATE_ERROR           =  0xE,
     TEC_AEAD_LIMIT_REACHED         =  0xF,
     TEC_NO_VIABLE_PATH             = 0x10,
+    TEC_VERSION_NEGOTIATION_ERROR  = 0x11,
 };
 
 /* Must be at least two */
@@ -33,12 +34,12 @@ enum trans_error_code
 #define IETF_RETRY_KEY_SZ 16
 #define IETF_RETRY_NONCE_SZ 12
 
-#define N_IETF_RETRY_VERSIONS 3
+#define N_IETF_RETRY_VERSIONS 4
 extern const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS];
 extern const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS];
 #define lsquic_version_2_retryver(ver_) (                       \
     (ver_) <= LSQVER_ID27 ? 0 :                                 \
     (ver_) <  LSQVER_I001 ? 1 :                                 \
-    2)
+    (ver_) == LSQVER_I002 ? 3 : 2)
 
 #endif

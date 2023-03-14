@@ -58,10 +58,10 @@ ietf_mini_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
 
 static const enum header_type el2hety[] =
 {
-    [ENC_LEV_INIT]  = HETY_HANDSHAKE,
-    [ENC_LEV_CLEAR] = HETY_INITIAL,
-    [ENC_LEV_FORW]  = HETY_NOT_SET,
-    [ENC_LEV_EARLY] = 0,    /* Invalid */
+    [ENC_LEV_HSK]  = HETY_HANDSHAKE,
+    [ENC_LEV_INIT] = HETY_INITIAL,
+    [ENC_LEV_APP]  = HETY_SHORT,
+    [ENC_LEV_0RTT] = 0,    /* Invalid */
 };
 
 
@@ -87,19 +87,13 @@ lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *conn)
 }
 
 
-#define imico_ecn_ok lsquic_mini_conn_ietf_ecn_ok
-
-
 static enum ecn
 imico_get_ecn (struct ietf_mini_conn *conn)
 {
     if (!conn->imc_enpub->enp_settings.es_ecn)
         return ECN_NOT_ECT;
-    else if (!conn->imc_sent_packnos /* We set ECT0 in first flight */
-                                                    || imico_ecn_ok(conn))
-        return ECN_ECT0;
     else
-        return ECN_NOT_ECT;
+        return ECN_ECT0;
 }
 
 
@@ -175,8 +169,54 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 static int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
-    return conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off >= conn->imc_ch_len;
+    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
+        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= conn->imc_ch_len;
+}
+
+
+static int
+imico_process_version_negociation (struct ietf_mini_conn *conn,
+                                   const struct transport_params *params)
+{
+    unsigned common_versions;
+    unsigned ver;
+    int i;
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    {
+        LSQ_DEBUG("client chosen version %s",
+                    lsquic_ver2str[params->tp_chosen_version]);
+        for (i = 1; i < params->tp_version_cnt; ++i)
+        {
+            LSQ_DEBUG("client available version %s",
+                      lsquic_ver2str[params->tp_version_info[i]]);
+            //EV_LOG_VER_NEG(LSQUIC_LOG_CONN_ID, "supports",
+            //               lsquic_ver2str[params->tp_version_info[i]]);
+        }
+    }
+    if (params->tp_chosen_version != conn->imc_conn.cn_version)
+    {
+        LSQ_DEBUG("client chosen version does not match the version in use %s",
+                    lsquic_ver2str[conn->imc_conn.cn_version]);
+        ietf_mini_conn_ci_abort_error(&conn->imc_conn, 0,
+                                      TEC_VERSION_NEGOTIATION_ERROR,
+            "chosen version mismatch");
+        return -1;
+    }
+    common_versions = conn->imc_enpub->enp_settings.es_versions
+                & params->tp_versions;
+    ver = highest_bit_set(common_versions);
+    if (conn->imc_conn.cn_version != ver)
+    {
+        LSQ_DEBUG("version negociation: switch version from %s to %s",
+                  lsquic_ver2str[conn->imc_conn.cn_version],
+                  lsquic_ver2str[ver]);
+        conn->imc_conn.cn_version = ver;
+        conn->imc_conn.cn_flags |= LSCONN_VER_UPDATED;
+        iquic_esfi_switch_version(conn->imc_conn.cn_enc_session,
+                                  &conn->imc_cces[0].cce_cid, 1);
+    }
+
+    return 0;
 }
 
 
@@ -204,6 +244,15 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
             }
             LSQ_DEBUG("read transport params, packet size is set to %hu bytes",
                                                 conn->imc_path.np_pack_size);
+            if (params->tp_set & (1 << TPI_VERSION_INFORMATION))
+            {
+                if (imico_process_version_negociation(conn, params) == -1)
+                {
+                    conn->imc_flags |= IMC_VER_NEG_FAILED;
+                    return -1;
+                }
+            }
+            iquic_esfi_init_server_tp(conn->imc_conn.cn_enc_session);
         }
         else
         {
@@ -215,6 +264,10 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
     return 0;
 }
 
+
+static int
+imico_generate_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
+                                                            lsquic_time_t now);
 
 static ssize_t
 imico_stream_write (void *stream, const void *bufp, size_t bufsz)
@@ -239,19 +292,32 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
         return bufsz;
     }
 
+    if (cryst->mcs_enc_level == ENC_LEV_INIT
+        && (conn->imc_flags & IMC_QUEUED_ACK_INIT))
+    {
+        imico_generate_ack(conn, PNS_INIT, lsquic_time_now());
+    }
+
     while (msg_ctx.buf < msg_ctx.end)
     {
         header_sz = lconn->cn_pf->pf_calc_crypto_frame_header_sz(
                             cryst->mcs_write_off, msg_ctx.end - msg_ctx.buf);
-        need = header_sz + 1;
+        need = header_sz + 500;
         packet_out = imico_get_packet_out(conn,
                                         el2hety[ cryst->mcs_enc_level ], need);
         if (!packet_out)
             return -1;
-
+        // NOTE: reduce the size of first crypto frame to combine packets
+        int avail = lsquic_packet_out_avail(packet_out);
+        if (cryst->mcs_enc_level == ENC_LEV_HSK
+            && cryst->mcs_write_off == 0
+            && avail > conn->imc_hello_pkt_remain - conn->imc_long_header_sz)
+        {
+            avail = conn->imc_hello_pkt_remain - conn->imc_long_header_sz;
+        }
         p = msg_ctx.buf;
         len = pf->pf_gen_crypto_frame(packet_out->po_data + packet_out->po_data_sz,
-                    lsquic_packet_out_avail(packet_out), 0, cryst->mcs_write_off, 0,
+                    avail, 0, cryst->mcs_write_off, 0,
                     msg_ctx.end - msg_ctx.buf, read_from_msg_ctx, &msg_ctx);
         if (len < 0)
             return len;
@@ -261,6 +327,8 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
         packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
         packet_out->po_flags |= PO_HELLO;
         cryst->mcs_write_off += msg_ctx.buf - p;
+        if (cryst->mcs_enc_level == ENC_LEV_INIT)
+            conn->imc_hello_pkt_remain = avail - len;
     }
 
     assert(msg_ctx.buf == msg_ctx.end);
@@ -299,8 +367,8 @@ imico_read_chlo_size (struct ietf_mini_conn *conn, const unsigned char *buf,
 {
     const unsigned char *const end = buf + sz;
 
-    assert(conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off < 4);
-    switch (conn->imc_streams[ENC_LEV_CLEAR].mcs_read_off)
+    assert(conn->imc_streams[ENC_LEV_INIT].mcs_read_off < 4);
+    switch (conn->imc_streams[ENC_LEV_INIT].mcs_read_off)
     {
     case 0:
         if (buf == end)
@@ -356,7 +424,7 @@ imico_stream_readf (void *stream,
         avail = DF_SIZE(frame) - frame->data_frame.df_read_off;
         buf = frame->data_frame.df_data + frame->data_frame.df_read_off;
         nread = readf(ctx, buf, avail, DF_FIN(frame));
-        if (cryst->mcs_enc_level == ENC_LEV_CLEAR && cryst->mcs_read_off < 4)
+        if (cryst->mcs_enc_level == ENC_LEV_INIT && cryst->mcs_read_off < 4)
             imico_read_chlo_size(conn, buf, nread);
         total_read += nread;
         cryst->mcs_read_off += nread;
@@ -468,7 +536,7 @@ imico_peer_addr_validated (struct ietf_mini_conn *conn, const char *how)
 
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
-               const struct lsquic_packet_in *packet_in,
+                           struct lsquic_packet_in *packet_in,
            enum lsquic_version version, int is_ipv4, const lsquic_cid_t *odcid,
            size_t udp_payload_size)
 {
@@ -480,7 +548,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
 
     if (!is_first_packet_ok(packet_in, udp_payload_size))
         return NULL;
-
+    packet_in->pi_flags |= PI_FIRST_INIT;
     conn = lsquic_malo_get(enpub->enp_mm.malo.mini_conn_ietf);
     if (!conn)
     {
@@ -539,9 +607,16 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     }
 
     esfi = select_esf_iquic_by_ver(version);
-    enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
-                &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
-                &conn->imc_cces[0].cce_cid, &conn->imc_path.np_dcid);
+    if (version > LSQVER_ID27)
+        enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
+                    &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
+                    odcid ? odcid : &conn->imc_cces[0].cce_cid,
+                    &conn->imc_path.np_dcid,
+                    odcid ? &conn->imc_cces[0].cce_cid : NULL);
+    else
+        enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
+                    &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
+                    odcid, &conn->imc_path.np_dcid, NULL);
     if (!enc_sess)
     {
         lsquic_malo_put(conn);
@@ -549,7 +624,8 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     }
 
     conn->imc_enpub = enpub;
-    conn->imc_created = packet_in->pi_received;
+    conn->imc_expire = packet_in->pi_received +
+                            enpub->enp_settings.es_handshake_to;
     if (enpub->enp_settings.es_base_plpmtu)
         conn->imc_path.np_pack_size = enpub->enp_settings.es_base_plpmtu;
     else if (is_ipv4)
@@ -576,8 +652,22 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     }
 #endif
 
+    conn->imc_long_header_sz = 1 /* Type */
+       + 4 /* Version */
+       + 1 /* DCIL */
+       + conn->imc_path.np_dcid.len
+       + 1 /* SCIL */
+       + CN_SCID(&conn->imc_conn)->len
+       + 0 /* HSK packet by server has no token */
+       + 2 /* Always use two bytes to encode payload length */
+       + 1 /* mini conn packet number < 256 */
+       + IQUIC_TAG_LEN
+       ;
+    conn->imc_hello_pkt_remain = conn->imc_path.np_pack_size
+                - conn->imc_long_header_sz - 1 /* token len */;
+
     LSQ_DEBUG("created mini connection object %p; max packet size=%hu",
-                                                conn, conn->imc_path.np_pack_size);
+                                     conn, conn->imc_path.np_pack_size);
     return &conn->imc_conn;
 }
 
@@ -679,7 +769,8 @@ ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
     const struct lsquic_packet_out *packet_out;
     size_t packet_size;
 
-    if (conn->imc_enpub->enp_flags & ENPUB_CAN_SEND)
+    if ((conn->imc_enpub->enp_flags & ENPUB_CAN_SEND)
+        && !(conn->imc_flags & IMC_AMP_CAPPED))
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
             if (!(packet_out->po_flags & PO_SENT))
             {
@@ -700,16 +791,115 @@ imico_can_send (const struct ietf_mini_conn *conn, size_t size)
 }
 
 
-static void
-imico_zero_pad (struct lsquic_packet_out *packet_out)
-{
-    size_t pad_size;
+// static void
+// imico_zero_pad (struct lsquic_packet_out *packet_out)
+// {
+//     size_t pad_size;
+//
+//     pad_size = lsquic_packet_out_avail(packet_out);
+//     memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
+//     packet_out->po_padding_sz = pad_size;
+//     packet_out->po_data_sz += pad_size;
+//     packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
+// }
 
-    pad_size = lsquic_packet_out_avail(packet_out);
-    memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
-    packet_out->po_data_sz += pad_size;
-    packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
+
+static lsquic_time_t
+imico_rechist_largest_recv (void *rechist_ctx);
+
+
+static int
+imico_build_ack_frame (struct ietf_mini_conn *conn, enum packnum_space pns,
+                       lsquic_time_t now, unsigned char *outbuf,
+                       size_t outbuf_sz, lsquic_packno_t *ack2ed)
+{
+    struct ietf_mini_rechist rechist;
+    uint64_t ecn_counts_buf[4];
+    const uint64_t *ecn_counts;
+    int not_used_has_missing, len;
+    if (conn->imc_incoming_ecn)
+    {
+        ecn_counts_buf[0]   = conn->imc_ecn_counts_in[pns][0];
+        ecn_counts_buf[1]   = conn->imc_ecn_counts_in[pns][1];
+        ecn_counts_buf[2]   = conn->imc_ecn_counts_in[pns][2];
+        ecn_counts_buf[3]   = conn->imc_ecn_counts_in[pns][3];
+        ecn_counts = ecn_counts_buf;
+    }
+    else
+        ecn_counts = NULL;
+    lsquic_imico_rechist_init(&rechist, conn, pns);
+    len = conn->imc_conn.cn_pf->pf_gen_ack_frame(outbuf, outbuf_sz,
+                lsquic_imico_rechist_first,
+                lsquic_imico_rechist_next, imico_rechist_largest_recv, &rechist,
+                now, &not_used_has_missing, ack2ed, ecn_counts);
+    if (len < 0)
+    {
+        LSQ_WARN("could not generate ACK frame");
+        return -1;
+    }
+    EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->imc_conn.cn_pf,
+                               outbuf, len);
+    return len;
 }
+
+
+static void
+remove_ack_frame (struct ietf_mini_conn *conn,
+                   struct lsquic_packet_out *packet_out)
+{
+    if (packet_out->po_regen_sz == 0)
+        return;
+
+    int l = packet_out->po_data_sz - packet_out->po_regen_sz
+            - packet_out->po_padding_sz;
+    memmove(packet_out->po_data ,
+            packet_out->po_data + packet_out->po_regen_sz, l);
+    memset(packet_out->po_data + l, 0, packet_out->po_regen_sz);
+    packet_out->po_padding_sz += packet_out->po_regen_sz;
+    packet_out->po_regen_sz = 0;
+}
+
+
+// static void
+// update_packet_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
+//                    struct lsquic_packet_out *packet_out)
+// {
+//     int len, need;
+//     unsigned char outbuf[1024];
+//     size_t outbuf_sz = sizeof(outbuf);
+//     lsquic_packno_t ack2ed;
+//
+//     len = imico_build_ack_frame(conn, pns, lsquic_time_now(), outbuf,
+//                       outbuf_sz, &ack2ed);
+//     if (len > packet_out->po_regen_sz + packet_out->po_padding_sz)
+//         return;
+//     need = len + !!(packet_out->po_frame_types & (1 << QUIC_FRAME_PING));
+//     LSQ_DEBUG("update leading ACK frame for packet %"PRIu64
+//               ", regen_sz: %hd, padding_sz: %hd, need: %d, len: %d",
+//               packet_out->po_packno, packet_out->po_regen_sz,
+//               packet_out->po_padding_sz, need, len);
+//
+//     if (need != packet_out->po_regen_sz)
+//     {
+//         int l = packet_out->po_data_sz - packet_out->po_regen_sz
+//                 - packet_out->po_padding_sz;
+//         memmove(packet_out->po_data + need,
+//                 packet_out->po_data + packet_out->po_regen_sz, l);
+//         if (packet_out->po_padding_sz)
+//         {
+//             if (need < packet_out->po_regen_sz)
+//                 memset(packet_out->po_data + need + l, 0,
+//                     packet_out->po_regen_sz - need);
+//             packet_out->po_padding_sz += packet_out->po_regen_sz - need;
+//         }
+//         else
+//             packet_out->po_data_sz -= packet_out->po_regen_sz - need;
+//         packet_out->po_regen_sz = need;
+//     }
+//     memmove(packet_out->po_data, outbuf, len);
+//     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
+//     packet_out->po_ack2ed = ack2ed;
+// }
 
 
 static struct lsquic_packet_out *
@@ -729,11 +919,31 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
          " ack-eliciting Initial packets to at least the smallest allowed
          " maximum datagram size of 1200 bytes.
          */
-        if (packet_out->po_header_type == HETY_INITIAL
-                && !(packet_out->po_frame_types & (1 << QUIC_FRAME_PADDING))
-                && (packet_out->po_frame_types & IQUIC_FRAME_ACKABLE_MASK)
-                && lsquic_packet_out_avail(packet_out) > 0)
-            imico_zero_pad(packet_out);
+        if (packet_out->po_header_type == HETY_INITIAL)
+        {
+            if (packet_out->po_frame_types & (1 << QUIC_FRAME_ACK)
+                && packet_out->po_retx_cnt > 0)
+            {
+                remove_ack_frame(conn, packet_out);
+            }
+
+            if (packet_out->po_retx_cnt > 0
+                && !imico_can_send(conn, IQUIC_MAX_IPv4_PACKET_SZ))
+            {
+                conn->imc_flags |= IMC_AMP_CAPPED;
+                LSQ_DEBUG("cannot send INIT packet #%"PRIu64" without "
+                          "enough quota", packet_out->po_packno);
+                return NULL;
+            }
+//             if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_PADDING))
+//                 && (packet_out->po_frame_types & IQUIC_FRAME_ACKABLE_MASK)
+//                 && lsquic_packet_out_avail(packet_out) > 0)
+//             {
+//                 LSQ_DEBUG("generated PADDING frame: %hd bytes for packet %"PRIu64,
+//                         lsquic_packet_out_avail(packet_out), packet_out->po_packno);
+//                 imico_zero_pad(packet_out);
+//             }
+        }
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
         if (!(to_coal
             && (packet_size + to_coal->prev_sz_sum
@@ -743,6 +953,7 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
         {
             if (!imico_can_send(conn, packet_size))
             {
+                conn->imc_flags |= IMC_AMP_CAPPED;
                 LSQ_DEBUG("cannot send packet %"PRIu64" of size %zu: client "
                     "address has not been validated", packet_out->po_packno,
                     packet_size);
@@ -778,7 +989,7 @@ imico_calc_retx_timeout (const struct ietf_mini_conn *conn)
     }
     else
         to = 300000;
-    return to << conn->imc_hsk_count;
+    return to;
 }
 
 
@@ -789,23 +1000,20 @@ ietf_mini_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
     const struct lsquic_packet_out *packet_out;
     lsquic_time_t exp_time, retx_time;
 
-    exp_time = conn->imc_created +
-                        conn->imc_enpub->enp_settings.es_handshake_to;
+    exp_time = conn->imc_expire;
 
     TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
         if (packet_out->po_flags & PO_SENT)
         {
-            retx_time = packet_out->po_sent + imico_calc_retx_timeout(conn);
+            retx_time = packet_out->po_sent + (imico_calc_retx_timeout(conn)
+                                            << (packet_out->po_retx_cnt >> 1));
             if (retx_time < exp_time)
             {
                 *why = N_AEWS + AL_RETX_HSK;
                 return retx_time;
             }
             else
-            {
-                *why = AEW_MINI_EXPIRE;
-                return exp_time;
-            }
+                break;
         }
 
     *why = AEW_MINI_EXPIRE;
@@ -1092,6 +1300,7 @@ static unsigned
 imico_process_ping_frame (IMICO_PROC_FRAME_ARGS)
 {
     LSQ_DEBUG("got a PING frame, do nothing");
+    EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
     return 1;
 }
 
@@ -1136,6 +1345,17 @@ imico_process_invalid_frame (IMICO_PROC_FRAME_ARGS)
 }
 
 
+static unsigned
+imico_process_invalid_frame_pv (IMICO_PROC_FRAME_ARGS)
+{
+    LSQ_DEBUG("invalid frame %u (%s)", p[0],
+        frame_type_2_str[ conn->imc_conn.cn_pf->pf_parse_frame_type(p, len) ]);
+    ietf_mini_conn_ci_abort_error(&conn->imc_conn, 0, TEC_PROTOCOL_VIOLATION,
+                "protocol violation detected while processing frame");
+    return 0;
+}
+
+
 static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
                                                 (IMICO_PROC_FRAME_ARGS) =
 {
@@ -1154,13 +1374,15 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
     [QUIC_FRAME_BLOCKED]            =  imico_process_invalid_frame,
     [QUIC_FRAME_STREAM_BLOCKED]     =  imico_process_invalid_frame,
     [QUIC_FRAME_STREAMS_BLOCKED]    =  imico_process_invalid_frame,
-    [QUIC_FRAME_NEW_CONNECTION_ID]  =  imico_process_invalid_frame,
+    [QUIC_FRAME_NEW_CONNECTION_ID]  =  imico_process_invalid_frame_pv,
     [QUIC_FRAME_STOP_SENDING]       =  imico_process_invalid_frame,
     [QUIC_FRAME_PATH_CHALLENGE]     =  imico_process_invalid_frame,
     [QUIC_FRAME_PATH_RESPONSE]      =  imico_process_invalid_frame,
     /* STREAM frame can only come in the App PNS and we delay those packets: */
     [QUIC_FRAME_STREAM]             =  imico_process_invalid_frame,
-    [QUIC_FRAME_HANDSHAKE_DONE]     =  imico_process_invalid_frame,
+    [QUIC_FRAME_RETIRE_CONNECTION_ID] =  imico_process_invalid_frame_pv,
+    [QUIC_FRAME_NEW_TOKEN]          =  imico_process_invalid_frame_pv,
+    [QUIC_FRAME_HANDSHAKE_DONE]     =  imico_process_invalid_frame_pv,
     [QUIC_FRAME_ACK_FREQUENCY]      =  imico_process_invalid_frame,
     [QUIC_FRAME_TIMESTAMP]          =  imico_process_invalid_frame,
 };
@@ -1185,6 +1407,16 @@ imico_process_packet_frame (struct ietf_mini_conn *conn,
     {
         LSQ_DEBUG("invalid frame %u at encryption level %s", type,
                                                 lsquic_enclev2str[enc_level]);
+        if (type == QUIC_FRAME_INVALID)
+            ietf_mini_conn_ci_abort_error(&conn->imc_conn, 0,
+                                          TEC_FRAME_ENCODING_ERROR,
+                                    "invalid frame %u at encryption level %s",
+                                          type, lsquic_enclev2str[enc_level]);
+        else
+            ietf_mini_conn_ci_abort_error(&conn->imc_conn, 0,
+                                          TEC_PROTOCOL_VIOLATION,
+                "protcol violation for invalid frame %u at encryption level %s",
+                                          type, lsquic_enclev2str[enc_level]);
         return 0;
     }
 }
@@ -1258,6 +1490,15 @@ ignore_init (struct ietf_mini_conn *conn)
 
     LSQ_DEBUG("henceforth, no Initial packets shall be sent or received; "
         "destroyed %u packet%.*s", count, count != 1, "s");
+
+    int ext_to = conn->imc_enpub->enp_settings.es_idle_timeout * 1000000
+            - conn->imc_enpub->enp_settings.es_handshake_to;
+    if (ext_to > 0)
+    {
+        conn->imc_expire += ext_to;
+        LSQ_DEBUG("extend mini-conn expire time to %d seconds",
+                conn->imc_enpub->enp_settings.es_idle_timeout);
+    }
 }
 
 
@@ -1397,6 +1638,10 @@ imico_switch_to_trechist (struct ietf_mini_conn *conn)
 }
 
 
+static int
+imico_generate_handshake_done (struct ietf_mini_conn *conn);
+
+
 /* Only a single packet is supported */
 static void
 ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
@@ -1416,6 +1661,7 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
      " that contain packets that are all discarded.
      */
     conn->imc_bytes_in += packet_in->pi_data_sz;
+    conn->imc_flags &= ~IMC_AMP_CAPPED;
 
     if (conn->imc_flags & IMC_ERROR)
     {
@@ -1446,6 +1692,15 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
     case DECPI_NOT_YET:
         imico_maybe_delay_processing(conn, packet_in);
         return;
+    case DECPI_BADCRYPT:
+        if (packet_in->pi_flags & PI_FIRST_INIT)
+        {
+            LSQ_DEBUG("possible packet corruption, destroy mini-conn.");
+            conn->imc_flags |= IMC_ERROR | IMC_CLOSE_RECVD;
+            /* avoid adding CID to black list */
+            conn->imc_conn.cn_flags |= LSCONN_NO_BL;
+        }
+        //fall through
     default:
         LSQ_DEBUG("could not decrypt packet");
         return;
@@ -1491,19 +1746,28 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         conn->imc_largest_recvd[pns] = packet_in->pi_received;
     imico_record_recvd_packno(conn, pns, packet_in->pi_packno);
 
+    if (!(conn->imc_flags & (IMC_QUEUED_ACK_INIT << pns)))
+    {
+        LSQ_DEBUG("queued ACK in %s", lsquic_pns2str[pns]);
+        conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
+    }
+    ++conn->imc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
+    conn->imc_incoming_ecn <<= 1;
+    conn->imc_incoming_ecn |= lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
+
     if (0 != imico_parse_regular_packet(conn, packet_in))
     {
         LSQ_DEBUG("connection is now in error state");
         conn->imc_flags |= IMC_ERROR;
         return;
     }
-
-    if (!(conn->imc_flags & (IMC_QUEUED_ACK_INIT << pns)))
-        LSQ_DEBUG("queued ACK in %s", lsquic_pns2str[pns]);
-    conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
-    ++conn->imc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
-    conn->imc_incoming_ecn <<= 1;
-    conn->imc_incoming_ecn |= lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
+    if (conn->imc_flags & IMC_HSK_OK)
+    {
+        if (lconn->cn_esf.i->esfi_in_init(lconn->cn_enc_session))
+            LSQ_DEBUG("still in init, defer HANDSHAKE_DONE");
+        else if (0 != imico_generate_handshake_done(conn))
+            conn->imc_flags |= IMC_ERROR;
+    }
 }
 
 
@@ -1563,12 +1827,11 @@ imico_repackage_packet (struct ietf_mini_conn *conn,
     if (packno > MAX_PACKETS)
         return -1;
 
-    LSQ_DEBUG("Packet %"PRIu64" repackaged for resending as packet %"PRIu64,
-                                                        oldno, packno);
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "packet %"PRIu64" repackaged for "
-        "resending as packet %"PRIu64, oldno, packno);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "schedule resend, repackage packet "
+                      "#%"PRIu64" -> #%"PRIu64, oldno, packno);
     packet_out->po_packno = packno;
     packet_out->po_flags &= ~PO_SENT;
+    ++packet_out->po_retx_cnt;
     lsquic_packet_out_set_ecn(packet_out, imico_get_ecn(conn));
     if (packet_out->po_flags & PO_ENCRYPTED)
         imico_return_enc_data(conn, packet_out);
@@ -1595,14 +1858,26 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
         next = TAILQ_NEXT(packet_out, po_next);
         if (packet_out->po_flags & PO_SENT)
         {
-            if (0 == retx_to)
-                retx_to = imico_calc_retx_timeout(conn);
-            if (packet_out->po_sent + retx_to < now)
+            if (packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
             {
-                LSQ_DEBUG("packet %"PRIu64" has been lost (rto: %"PRIu64")",
-                                                packet_out->po_packno, retx_to);
+                if (0 == retx_to)
+                    retx_to = imico_calc_retx_timeout(conn);
+                if (conn->imc_hsk_count == 0)
+                    packet_out->po_retx_cnt = 0;
+                if (packet_out->po_sent
+                    + (retx_to << (packet_out->po_retx_cnt >> 1)) < now)
+                {
+                    LSQ_DEBUG("packet %"PRIu64" has been lost (rto: %"PRIu64")",
+                              packet_out->po_packno,
+                              retx_to << (packet_out->po_retx_cnt >> 1));
+                    TAILQ_REMOVE(&conn->imc_packets_out, packet_out, po_next);
+                    TAILQ_INSERT_TAIL(&lost_packets, packet_out, po_next);
+                }
+            }
+            else
+            {
                 TAILQ_REMOVE(&conn->imc_packets_out, packet_out, po_next);
-                TAILQ_INSERT_TAIL(&lost_packets, packet_out, po_next);
+                imico_destroy_packet(conn, packet_out);
             }
         }
         else if (packet_size = lsquic_packet_out_total_sz(lconn, packet_out),
@@ -1617,8 +1892,7 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
     while ((packet_out = TAILQ_FIRST(&lost_packets)))
     {
         TAILQ_REMOVE(&lost_packets, packet_out, po_next);
-        if ((packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
-                            && 0 == imico_repackage_packet(conn, packet_out))
+        if (0 == imico_repackage_packet(conn, packet_out))
         {
             packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
             if (imico_can_send(conn, packet_size))
@@ -1738,8 +2012,28 @@ static const enum header_type pns2hety[] =
 {
     [PNS_INIT]  = HETY_INITIAL,
     [PNS_HSK]   = HETY_HANDSHAKE,
-    [PNS_APP]   = HETY_NOT_SET,
+    [PNS_APP]   = HETY_SHORT,
 };
+
+
+static int
+imico_generate_ping (struct ietf_mini_conn *conn,
+                     struct lsquic_packet_out *packet_out)
+{
+    int len;
+    len = conn->imc_conn.cn_pf->pf_gen_ping_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out));
+    if (len > 0)
+    {
+        packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+        packet_out->po_data_sz += len;
+        packet_out->po_regen_sz += len;
+        LSQ_DEBUG("wrote PING frame of size %d to packet %" PRIu64,
+                len,  packet_out->po_packno);
+    }
+    return 0;
+}
 
 
 static int
@@ -1748,47 +2042,28 @@ imico_generate_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
 {
     struct lsquic_packet_out *packet_out;
     enum header_type header_type;
-    struct ietf_mini_rechist rechist;
-    int not_used_has_missing, len;
-    uint64_t ecn_counts_buf[4];
-    const uint64_t *ecn_counts;
+    int len;
 
     header_type = pns2hety[pns];
-
-    if (conn->imc_incoming_ecn)
-    {
-        ecn_counts_buf[0]   = conn->imc_ecn_counts_in[pns][0];
-        ecn_counts_buf[1]   = conn->imc_ecn_counts_in[pns][1];
-        ecn_counts_buf[2]   = conn->imc_ecn_counts_in[pns][2];
-        ecn_counts_buf[3]   = conn->imc_ecn_counts_in[pns][3];
-        ecn_counts = ecn_counts_buf;
-    }
-    else
-        ecn_counts = NULL;
-
     packet_out = imico_get_packet_out(conn, header_type, 0);
     if (!packet_out)
         return -1;
 
-    /* Generate ACK frame */
-    lsquic_imico_rechist_init(&rechist, conn, pns);
-    len = conn->imc_conn.cn_pf->pf_gen_ack_frame(
-                packet_out->po_data + packet_out->po_data_sz,
-                lsquic_packet_out_avail(packet_out), lsquic_imico_rechist_first,
-                lsquic_imico_rechist_next, imico_rechist_largest_recv, &rechist,
-                now, &not_used_has_missing, &packet_out->po_ack2ed, ecn_counts);
+    len = imico_build_ack_frame(conn, pns, now,
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            &packet_out->po_ack2ed);
     if (len < 0)
-    {
-        LSQ_WARN("could not generate ACK frame");
         return -1;
-    }
-    EV_LOG_GENERATED_ACK_FRAME(LSQUIC_LOG_CONN_ID, conn->imc_conn.cn_pf,
-                        packet_out->po_data + packet_out->po_data_sz, len);
+
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     packet_out->po_data_sz += len;
     packet_out->po_regen_sz += len;
     conn->imc_flags &= ~(IMC_QUEUED_ACK_INIT << pns);
-    LSQ_DEBUG("wrote ACK frame of size %d in %s", len, lsquic_pns2str[pns]);
+    LSQ_DEBUG("wrote ACK frame of size %d in %s to packet %" PRIu64,
+              len, lsquic_pns2str[pns], packet_out->po_packno);
+    if (pns == PNS_INIT && conn->imc_hsk_count > 0)
+        imico_generate_ping(conn, packet_out);
     return 0;
 }
 
@@ -1801,9 +2076,10 @@ imico_generate_acks (struct ietf_mini_conn *conn, lsquic_time_t now)
     for (pns = PNS_INIT; pns < IMICO_N_PNS; ++pns)
         if (conn->imc_flags & (IMC_QUEUED_ACK_INIT << pns)
                 && !(pns == PNS_INIT && (conn->imc_flags & IMC_IGNORE_INIT)))
+        {
             if (0 != imico_generate_ack(conn, pns, now))
                 return -1;
-
+        }
     return 0;
 }
 
@@ -1847,6 +2123,13 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
         error_code = TEC_TRANSPORT_PARAMETER_ERROR;
         reason = "bad transport parameters";
         rlen = 24;
+    }
+    else if (conn->imc_flags & IMC_VER_NEG_FAILED)
+    {
+        is_app = 0;
+        error_code = TEC_VERSION_NEGOTIATION_ERROR;
+        reason = "version negociation failed";
+        rlen = 26;
     }
     else if (conn->imc_flags & IMC_HSK_FAILED)
     {
@@ -1953,7 +2236,7 @@ imico_generate_handshake_done (struct ietf_mini_conn *conn)
     int sz;
 
     need = conn->imc_conn.cn_pf->pf_handshake_done_frame_size();
-    packet_out = imico_get_packet_out(conn, HETY_NOT_SET, need);
+    packet_out = imico_get_packet_out(conn, HETY_SHORT, need);
     if (!packet_out)
         return -1;
     sz = conn->imc_conn.cn_pf->pf_gen_handshake_done_frame(
@@ -1980,12 +2263,20 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     enum tick_st tick;
 
-    if (conn->imc_created + conn->imc_enpub->enp_settings.es_handshake_to < now)
+    if (conn->imc_expire < now)
     {
         LSQ_DEBUG("connection expired: closing");
         return TICK_CLOSE;
     }
 
+    if (!(conn->imc_flags &
+                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS))
+                            && conn->imc_enpub->enp_settings.es_support_srej)
+    {
+        LSQ_DEBUG("Peer not validated and do not have transport parameters "
+            "on the first tick: retry");
+        return TICK_RETRY|TICK_CLOSE;
+    }
 
     if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
     {
@@ -1996,6 +2287,9 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         }
     }
 
+
+    if (lconn->cn_flags & (LSCONN_PROMOTED|LSCONN_PROMOTE_FAIL))
+        return TICK_CLOSE;
 
     tick = 0;
 
@@ -2131,6 +2425,7 @@ ietf_mini_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
 
     conn->imc_bytes_in += garbage_sz;
+    conn->imc_flags &= ~IMC_AMP_CAPPED;
     LSQ_DEBUG("count %zd bytes of garbage, new value: %u bytes", garbage_sz,
         conn->imc_bytes_in);
 }

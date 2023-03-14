@@ -111,6 +111,8 @@ typedef struct lsquic_packet_out
         PO_SCHED    = (1 <<14),         /* On scheduled queue */
         PO_SENT_SZ  = (1 <<15),
         PO_LONGHEAD = (1 <<16),
+        PO_ACKED_LOSS_CHAIN = (1<<17),
+
 #define POIPv6_SHIFT 20
         PO_IPv6     = (1 <<20),         /* Set if pmi_allocate was passed is_ipv6=1,
                                          *   otherwise unset.
@@ -185,6 +187,8 @@ typedef struct lsquic_packet_out
     unsigned char     *po_enc_data;
 
     lsquic_ver_tag_t   po_ver_tag;      /* Set if PO_VERSION is set */
+    unsigned short     po_retx_cnt;
+    unsigned short     po_padding_sz;
     unsigned char     *po_nonce;        /* Use to generate header if PO_NONCE is set */
     const struct network_path
                       *po_path;

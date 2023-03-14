@@ -103,7 +103,7 @@ main (void)
     const struct test tests[] = {
 
         {   .lineno     = __LINE__,
-            .pf         = select_pf_by_ver(LSQVER_ID27),
+            .pf         = select_pf_by_ver(LSQVER_I001),
             .offset     = 0,
             .data_sz    = 10,
             .data       = "0123456789",
@@ -119,7 +119,7 @@ main (void)
         },
 
         {   .lineno     = __LINE__,
-            .pf         = select_pf_by_ver(LSQVER_ID27),
+            .pf         = select_pf_by_ver(LSQVER_I001),
             .offset     = 500,
             .data_sz    = 10,
             .data       = "0123456789",

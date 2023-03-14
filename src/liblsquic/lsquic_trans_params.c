@@ -19,6 +19,7 @@
 #include "Ws2tcpip.h"
 #endif
 
+#include "lsquic.h"
 #include "lsquic_byteswap.h"
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
@@ -54,6 +55,7 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 14:        return TPI_ACTIVE_CONNECTION_ID_LIMIT;
     case 15:        return TPI_INITIAL_SOURCE_CID;
     case 16:        return TPI_RETRY_SOURCE_CID;
+    case 17:        return TPI_VERSION_INFORMATION;
     case 0x20:      return TPI_MAX_DATAGRAM_FRAME_SIZE;
 #if LSQUIC_TEST_QUANTUM_READINESS
     case 0xC37:     return TPI_QUANTUM_READINESS;
@@ -87,6 +89,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  0xE,
     [TPI_INITIAL_SOURCE_CID]                =  0xF,
     [TPI_RETRY_SOURCE_CID]                  =  0x10,
+    [TPI_VERSION_INFORMATION]               =  0x11,
     [TPI_MAX_DATAGRAM_FRAME_SIZE]           =  0x20,
 #if LSQUIC_TEST_QUANTUM_READINESS
     [TPI_QUANTUM_READINESS]                 =  0xC37,
@@ -267,6 +270,8 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
 #if LSQUIC_TEST_QUANTUM_READINESS
     const size_t quantum_sz = lsquic_tp_get_quantum_sz();
 #endif
+    lsquic_ver_tag_t tag;
+    int i;
 
     need = 0;
     set = params->tp_set;   /* Will turn bits off for default values */
@@ -356,6 +361,16 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             bits[tpi][0] = vint_val2bits(enum_2_tpi_val[tpi]);
             need += (1 << bits[tpi][0]) + 1 /* Zero length byte */;
         }
+
+    if (set & (1 << TPI_VERSION_INFORMATION))
+    {
+        tpi = TPI_VERSION_INFORMATION;
+        bits[tpi][0] = vint_val2bits(enum_2_tpi_val[tpi]);
+        bits[tpi][1] = vint_val2bits(params->tp_version_cnt << 2);
+        need += (1 << bits[tpi][0])
+                +  (1 << bits[tpi][1])
+                +  (params->tp_version_cnt << 2);
+    }
 
     if (need > bufsz || need > UINT16_MAX)
     {
@@ -458,6 +473,17 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                 p += quantum_sz;
                 break;
 #endif
+            case TPI_VERSION_INFORMATION:
+                //FIXME: generate supported version info.
+                vint_write(p, params->tp_version_cnt << 2,
+                                            bits[tpi][1], 1 << bits[tpi][1]);
+                p += 1 << bits[tpi][1];
+                for(i = 0; i < params->tp_version_cnt; ++i)
+                {
+                    tag = lsquic_ver2tag(params->tp_version_info[i]);
+                    WRITE_TO_P(&tag, 4);
+                }
+                break;
             }
         }
 
@@ -480,6 +506,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
     enum transport_param_id tpi;
     unsigned set_of_ids;
     int s;
+    lsquic_ver_tag_t tag;
 
     p = buf;
     end = buf + bufsz;
@@ -643,6 +670,31 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             if (q != p + len)
                 return -1;
             break;
+        case TPI_VERSION_INFORMATION:
+            if (len & 0x3)
+                return -1;
+            q = p;
+            while(q < p + len)
+            {
+                memmove(&tag, q, 4);
+                if (tag == 0)
+                    return -1;
+                int ver = lsquic_tag2ver(tag);
+                if (ver != -1)
+                {
+                    if (params->tp_version_cnt > 0)
+                        params->tp_versions |= 1 << ver;
+                    if (params->tp_version_cnt < sizeof(params->tp_version_info))
+                        params->tp_version_info[params->tp_version_cnt++] = ver;
+                }
+                else if (params->tp_version_cnt == 0)
+                    return -1;
+                q += 4;
+            }
+            if (!is_server && (params->tp_versions
+                            & (1 << params->tp_chosen_version)) == 0)
+                return -1;
+            break;
         default:
             /* Do nothing: skip this transport parameter */
             break;
@@ -693,6 +745,7 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
     enum transport_param_id tpi;
     char tok_str[sizeof(params->tp_stateless_reset_token) * 2 + 1];
     char addr_str[INET6_ADDRSTRLEN];
+    int i;
 
     for (tpi = 0; tpi <= MAX_NUMERIC_TPI; ++tpi)
         if (params->tp_set & (1 << tpi))
@@ -765,6 +818,23 @@ lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz)
             if (buf >= end)
                 return;
         }
+    }
+    if (params->tp_set & (1 << TPI_VERSION_INFORMATION))
+    {
+        nw = snprintf(buf, end - buf, "; version information: chosen: %s, available:",
+                      lsquic_ver2str[params->tp_chosen_version]);
+        buf += nw;
+        if (buf >= end)
+            return;
+        for(i = 1; i < params->tp_version_cnt; ++i)
+        {
+            nw = snprintf(buf, end - buf, " %s",
+                        lsquic_ver2str[params->tp_version_info[i]]);
+           buf += nw;
+            if (buf >= end)
+                return;
+         }
+
     }
 }
 
@@ -988,6 +1058,8 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
                 p += quantum_sz;
                 break;
 #endif
+            case TPI_VERSION_INFORMATION:
+                break;
             }
         }
 

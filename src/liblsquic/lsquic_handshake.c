@@ -767,7 +767,7 @@ gquic2_setup_handshake_keys (struct lsquic_enc_session *enc_session)
                                                     secret, sizeof(secret)))
             goto err;
         if (enc_session->es_flags & ES_LOG_SECRETS)
-            log_crypto_ctx(enc_session, ENC_LEV_CLEAR, i);
+            log_crypto_ctx(enc_session, ENC_LEV_INIT, i);
     }
 
     return 0;
@@ -3069,14 +3069,14 @@ decrypt_packet (struct lsquic_enc_session *enc_session, uint8_t path_id,
             key = enc_session->dec_ctx_f;
             memcpy(nonce, enc_session->dec_key_nonce_f, 4);
             LSQ_DEBUG("decrypt_packet using 'F' key...");
-            enc_level = ENC_LEV_FORW;
+            enc_level = ENC_LEV_APP;
         }
         else
         {
             key = enc_session->dec_ctx_i;
             memcpy(nonce, enc_session->dec_key_nonce_i, 4);
             LSQ_DEBUG("decrypt_packet using 'I' key...");
-            enc_level = ENC_LEV_INIT;
+            enc_level = ENC_LEV_HSK;
         }
         memcpy(nonce + 4, &path_id_packet_number,
                sizeof(path_id_packet_number));
@@ -3150,7 +3150,7 @@ lsquic_enc_session_decrypt (struct lsquic_enc_session *enc_session,
                         header_len, data_len, buf_out, max_out_len, out_len);
     else if (0 == verify_packet_hash(enc_session, version, buf, header_len,
                                      data_len, buf_out, max_out_len, out_len))
-        return ENC_LEV_CLEAR;
+        return ENC_LEV_INIT;
     else
         return -1;
 }
@@ -3247,7 +3247,7 @@ gquic_encrypt_buf (struct lsquic_enc_session *enc_session,
         memcpy(buf_out, header, header_len);
         memcpy(buf_out + header_len, md, HS_PKT_HASH_LENGTH);
         memcpy(buf_out + header_len + HS_PKT_HASH_LENGTH, data, data_len);
-        return ENC_LEV_CLEAR;
+        return ENC_LEV_INIT;
     }
     else
     {
@@ -3262,14 +3262,14 @@ gquic_encrypt_buf (struct lsquic_enc_session *enc_session,
             {
                 enc_session->server_start_use_final_key = 1;
             }
-            enc_level = ENC_LEV_INIT;
+            enc_level = ENC_LEV_HSK;
         }
         else
         {
             LSQ_DEBUG("lsquic_enc_session_encrypt using 'F' key...");
             key = enc_session->enc_ctx_f;
             memcpy(nonce, enc_session->enc_key_nonce_f, 4);
-            enc_level = ENC_LEV_FORW;
+            enc_level = ENC_LEV_APP;
         }
         path_id_packet_number = combine_path_id_pack_num(path_id, pack_num);
         memcpy(nonce + 4, &path_id_packet_number,
@@ -3964,9 +3964,9 @@ static const char *const gel2str[] =
 
 static const enum enc_level gel2el[] =
 {
-    [GEL_CLEAR] = ENC_LEV_CLEAR,
-    [GEL_EARLY] = ENC_LEV_EARLY,
-    [GEL_FORW]  = ENC_LEV_FORW,
+    [GEL_CLEAR] = ENC_LEV_INIT,
+    [GEL_EARLY] = ENC_LEV_0RTT,
+    [GEL_FORW]  = ENC_LEV_APP,
 };
 
 

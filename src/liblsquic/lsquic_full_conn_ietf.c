@@ -88,6 +88,7 @@
 #define MAX_ANY_PACKETS_SINCE_LAST_ACK 20
 #define ACK_TIMEOUT                    (TP_DEF_MAX_ACK_DELAY * 1000)
 #define INITIAL_CHAL_TIMEOUT            250000
+#define HSK_PING_TIMEOUT                200000
 
 /* Retire original CID after this much time has elapsed: */
 #define RET_CID_TIMEOUT                 2000000
@@ -191,6 +192,7 @@ enum send
     SEND_MAX_STREAMS_BIDI = SEND_MAX_STREAMS + SD_BIDI,
     SEND_MAX_STREAMS_UNI = SEND_MAX_STREAMS + SD_UNI,
     SEND_STOP_SENDING,
+    SEND_NEW_TOKEN,
     SEND_HANDSHAKE_DONE,
     SEND_ACK_FREQUENCY,
     N_SEND
@@ -220,6 +222,7 @@ enum send_flags
     SF_SEND_MAX_STREAMS_BIDI        = 1 << SEND_MAX_STREAMS_BIDI,
     SF_SEND_MAX_STREAMS_UNI         = 1 << SEND_MAX_STREAMS_UNI,
     SF_SEND_STOP_SENDING            = 1 << SEND_STOP_SENDING,
+    SF_SEND_NEW_TOKEN               = 1 << SEND_NEW_TOKEN,
     SF_SEND_HANDSHAKE_DONE          = 1 << SEND_HANDSHAKE_DONE,
     SF_SEND_ACK_FREQUENCY           = 1 << SEND_ACK_FREQUENCY,
 };
@@ -1356,7 +1359,10 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
     assert(versions);
     versions &= LSQUIC_IETF_VERSIONS;
-    ver = highest_bit_set(versions);
+    if (versions & (1 << LSQVER_I001))
+        ver = LSQVER_I001;
+    else
+        ver = highest_bit_set(versions);
     if (sess_resume)
     {
         sess_resume_version = lsquic_sess_resume_version(sess_resume, sess_resume_sz);
@@ -1432,13 +1438,13 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (!conn->ifc_conn.cn_enc_session)
         goto err2;
 
-    conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = lsquic_stream_new_crypto(
-        ENC_LEV_CLEAR, &conn->ifc_pub, &lsquic_cry_sm_if,
+    conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT] = lsquic_stream_new_crypto(
+                ENC_LEV_INIT, &conn->ifc_pub, &lsquic_cry_sm_if,
         conn->ifc_conn.cn_enc_session,
         SCF_IETF|SCF_DI_AUTOSWITCH|SCF_CALL_ON_NEW|SCF_CRITICAL);
-    if (!conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
+    if (!conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT])
         goto err3;
-    if (!lsquic_stream_get_ctx(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]))
+    if (!lsquic_stream_get_ctx(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]))
         goto err4;
     conn->ifc_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
@@ -1467,7 +1473,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err4:
-    lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
+    lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]);
   err3:
     conn->ifc_conn.cn_esf.i->esfi_destroy(conn->ifc_conn.cn_enc_session);
   err2:
@@ -1544,6 +1550,8 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         goto err1;
     if (imc->imc_flags & IMC_IGNORE_INIT)
         conn->ifc_flags |= IFC_IGNORE_INIT;
+    if (enpub->enp_settings.es_support_srej)
+        conn->ifc_send_flags |= SF_SEND_NEW_TOKEN;
 
     conn->ifc_paths[0].cop_path = imc->imc_path;
     conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED|COP_ALLOW_MTU_PADDING;
@@ -1603,6 +1611,11 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_process_incoming_packet = process_incoming_packet_fast;
 
     conn->ifc_send_ctl.sc_cur_packno = imc->imc_next_packno - 1;
+    conn->ifc_incoming_ecn = imc->imc_incoming_ecn;
+    conn->ifc_pub.rtt_stats = imc->imc_rtt_stats;
+
+    conn->ifc_last_live_update = now;
+
     lsquic_send_ctl_begin_optack_detection(&conn->ifc_send_ctl);
 
     for (pns = 0; pns < IMICO_N_PNS; ++pns)
@@ -1675,15 +1688,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         {
             conn->ifc_ecn_counts_in[pns][i]  = imc->imc_ecn_counts_in[pns][i];
         }
-    conn->ifc_incoming_ecn = imc->imc_incoming_ecn;
-    conn->ifc_pub.rtt_stats = imc->imc_rtt_stats;
-
-    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_RET_CIDS,
-                                            ret_cids_alarm_expired, conn);
-    lsquic_alarmset_set(&conn->ifc_alset, AL_RET_CIDS,
-                                            now + RET_CID_TIMEOUT);
-
-    conn->ifc_last_live_update = now;
 
     if (0 != handshake_ok(&conn->ifc_conn))
         goto err3;
@@ -1693,10 +1697,10 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                         conn->ifc_enpub->enp_stream_if_ctx, &conn->ifc_conn);
     conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
 
-    conn->ifc_created = imc->imc_created;
+    conn->ifc_created = now;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
-                                        imc->imc_created + conn->ifc_idle_to);
+                                        now + conn->ifc_idle_to);
     while ((packet_in = TAILQ_FIRST(&imc->imc_app_packets)))
     {
         TAILQ_REMOVE(&imc->imc_app_packets, packet_in, pi_next);
@@ -1901,6 +1905,16 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
                         packet_out->po_data + packet_out->po_data_sz, w);
     lsquic_send_ctl_scheduled_ack(&conn->ifc_send_ctl, pns,
                                                     packet_out->po_ack2ed);
+
+    // NOTE: Add a PING frame after ACK frame before HANDSHAKE_DONE, in a hacky way
+    if (!(conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        && packet_out->po_data_sz + w < packet_out->po_n_alloc)
+    {
+        LSQ_DEBUG("add a PING frame before HANDSHAKE_DONE");
+        *(packet_out->po_data + packet_out->po_data_sz + w) = '\x01';
+        ++w;
+    }
+
     packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                             QUIC_FRAME_ACK, packet_out->po_data_sz, w))
@@ -1914,7 +1928,8 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         conn->ifc_flags |= IFC_ACK_HAD_MISS;
     else
         conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
-    LSQ_DEBUG("Put %d bytes of ACK frame into packet on outgoing queue", w);
+    LSQ_DEBUG("Put %d bytes of ACK frame into packet %" PRIu64
+              " on outgoing queue", w, packet_out->po_packno);
     if (conn->ifc_n_cons_unretx >= conn->ifc_ping_unretx_thresh &&
                 !lsquic_send_ctl_have_outgoing_retx_frames(&conn->ifc_send_ctl))
     {
@@ -2031,6 +2046,58 @@ generate_max_data_frame (struct ietf_full_conn *conn)
     packet_out->po_frame_types |= QUIC_FTBIT_MAX_DATA;
     conn->ifc_send_flags &= ~SF_SEND_MAX_DATA;
     conn->ifc_last_max_data_off_sent = offset;
+}
+
+
+static void
+generate_new_token_frame (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    struct lsquic_packet_out *packet_out;
+    const struct network_path *path;
+    ssize_t token_sz;
+    size_t need;
+    int w;
+    unsigned char token_buf[MAX_RETRY_TOKEN_LEN];
+
+    path = &conn->ifc_paths[conn->ifc_cur_path_id].cop_path;
+    token_sz = lsquic_tg_token_size(conn->ifc_enpub->enp_tokgen, TOKEN_RESUME,
+                                                            NP_PEER_SA(path));
+    need = conn->ifc_conn.cn_pf->pf_new_token_frame_size(token_sz);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+        return;
+
+    token_sz = lsquic_tg_generate_resume(conn->ifc_enpub->enp_tokgen, token_buf,
+                                        sizeof(token_buf), NP_PEER_SA(path));
+    if (token_sz < 0)
+    {
+        LSQ_WARN("could not generate resume token");
+        conn->ifc_send_flags &= ~SF_SEND_NEW_TOKEN; /* Let's not try again */
+        return;
+    }
+
+    w = conn->ifc_conn.cn_pf->pf_gen_new_token_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), token_buf, token_sz);
+    if (w < 0)
+    {
+        ABORT_ERROR("generating NEW_TOKEN frame failed: %d", errno);
+        return;
+    }
+    LSQ_DEBUG("generated %d-byte NEW_TOKEN frame", w);
+    EV_LOG_GENERATED_NEW_TOKEN_FRAME(LSQUIC_LOG_CONN_ID, conn->ifc_conn.cn_pf,
+                        packet_out->po_data + packet_out->po_data_sz, w);
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+                            QUIC_FRAME_NEW_TOKEN, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return;
+    }
+    packet_out->po_frame_types |= QUIC_FTBIT_NEW_TOKEN;
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+
+    conn->ifc_send_flags &= ~SF_SEND_NEW_TOKEN;
+    (void) token_sz;
 }
 
 
@@ -3799,6 +3866,29 @@ handshake_ok (struct lsquic_conn *lconn)
     else
         dce->de_flags = DE_ASSIGNED;
 
+    if (!(conn->ifc_flags & IFC_SERVER)
+        && (params->tp_set & (1 << TPI_VERSION_INFORMATION)))
+    {
+        LSQ_DEBUG("server chosen version %s",
+                  lsquic_ver2str[params->tp_chosen_version]);
+        if (((1 << params->tp_chosen_version)
+            & conn->ifc_settings->es_versions) == 0)
+        {
+            ABORT_QUIETLY(0, TEC_VERSION_NEGOTIATION_ERROR,
+                          "server chosen version %s is not supported",
+                          lsquic_ver2str[params->tp_chosen_version]
+                         );
+            return -1;
+        }
+//         if (conn->ifc_conn.cn_version != params->tp_chosen_version)
+//         {
+//             LSQ_DEBUG("version negociation: switch version from %s to %s",
+//                   lsquic_ver2str[conn->ifc_conn.cn_version],
+//                   lsquic_ver2str[params->tp_chosen_version]);
+//             conn->ifc_conn.cn_version = params->tp_chosen_version;
+//         }
+    }
+
     LSQ_INFO("applied peer transport parameters");
 
     if ((conn->ifc_flags & (IFC_HTTP|IFC_HTTP_INITED)) == IFC_HTTP)
@@ -4413,7 +4503,8 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
     conn->ifc_mflags |= MF_CONN_CLOSE_PACK;
-    LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "generated CONNECTION_CLOSE frame in its own packet");
     conn->ifc_send_flags &= ~SF_SEND_CONN_CLOSE;
 }
 
@@ -4431,12 +4522,30 @@ log_conn_flow_control (struct ietf_full_conn *conn)
 
 
 static void
-generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
+generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t now)
 {
     struct lsquic_packet_out *packet_out;
+    int pns;
     int sz;
 
-    packet_out = get_writeable_packet(conn, 1);
+    if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
+        packet_out = get_writeable_packet(conn, 1);
+    else
+    {
+        conn->ifc_ping_period += HSK_PING_TIMEOUT;
+        lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
+                            now + conn->ifc_ping_period);
+        if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
+                                         ENC_LEV_HSK))
+            pns = PNS_HSK;
+        else
+            pns = PNS_INIT;
+        packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
+                                                    CUR_NPATH(conn));
+        if (packet_out)
+            lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
+
+    }
     if (!packet_out)
     {
         LSQ_DEBUG("cannot get writeable packet for PING frame");
@@ -4839,7 +4948,9 @@ static unsigned
 process_padding_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
-    return (unsigned) count_zero_bytes(p, len);
+    unsigned sz = (unsigned) count_zero_bytes(p, len);
+    EV_LOG_PADDING_FRAME_IN(LSQUIC_LOG_CONN_ID, sz);
+    return sz;
 }
 
 
@@ -5591,7 +5702,7 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
                                                                     parsed_len);
         return (unsigned) parsed_len;
     }
-    if (enc_level < ENC_LEV_INIT)
+    if (enc_level < ENC_LEV_HSK)
     {   /* Must be dup */
         LSQ_DEBUG("discard %d-byte CRYPTO frame on level %s", parsed_len,
                                                 lsquic_enclev2str[enc_level]);
@@ -5613,6 +5724,11 @@ process_crypto_frame_server (struct ietf_full_conn *conn,
         LSQ_DEBUG("handshake confirmed: send HANDSHAKE_DONE");
         conn->ifc_flags &= ~IFC_PROC_CRYPTO;
         conn->ifc_send_flags |= SF_SEND_HANDSHAKE_DONE;
+
+        lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_RET_CIDS,
+                                                ret_cids_alarm_expired, conn);
+        lsquic_alarmset_set(&conn->ifc_alset, AL_RET_CIDS,
+                                      lsquic_time_now() + RET_CID_TIMEOUT);
     }
 
     return (unsigned) parsed_len;
@@ -5653,7 +5769,7 @@ process_crypto_frame_client (struct ietf_full_conn *conn,
     EV_LOG_CRYPTO_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame, enc_level);
     LSQ_DEBUG("Got CRYPTO frame for enc level #%u", enc_level);
     if ((conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-                                                && enc_level != ENC_LEV_FORW)
+                                                && enc_level != ENC_LEV_APP)
     {
         LSQ_DEBUG("handshake complete: ignore CRYPTO frames in "
             "non-forward-secure packets");
@@ -5743,7 +5859,6 @@ process_stream_frame (struct ietf_full_conn *conn,
         return 0;
     }
     EV_LOG_STREAM_FRAME_IN(LSQUIC_LOG_CONN_ID, stream_frame);
-    LSQ_DEBUG("Got stream frame for stream #%"PRIu64, stream_frame->stream_id);
     CONN_STATS(in.stream_frames, 1);
     CONN_STATS(in.stream_data_sz, stream_frame->data_frame.df_size);
 
@@ -5941,7 +6056,6 @@ process_ping_frame (struct ietf_full_conn *conn,
      * return the length of this frame.
      */
     EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
-    LSQ_DEBUG("received PING");
     if (conn->ifc_flags & IFC_SERVER)
         log_conn_flow_control(conn);
 
@@ -6037,7 +6151,7 @@ process_max_data_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "MAX_DATA frame in; offset: %"PRIu64,
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX MAX_DATA frame; offset: %"PRIu64,
         max_data);
     if (max_data > conn->ifc_pub.conn_cap.cc_max)
     {
@@ -6067,7 +6181,7 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "MAX_STREAM_DATA frame in; "
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX MAX_STREAM_DATA frame; "
         "stream_id: %"PRIu64"; offset: %"PRIu64, stream_id, max_data);
     if (conn_is_receive_only_stream(conn, stream_id))
     {
@@ -6480,7 +6594,7 @@ process_stream_blocked_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "STREAM_BLOCKED frame in: stream "
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX STREAM_BLOCKED frame: stream "
         "%"PRIu64"; offset %"PRIu64, stream_id, peer_off);
     LSQ_DEBUG("received STREAM_BLOCKED frame: stream %"PRIu64
                                     "; offset %"PRIu64, stream_id, peer_off);
@@ -6546,7 +6660,7 @@ process_blocked_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "BLOCKED frame in: offset %"PRIu64,
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX BLOCKED frame: offset %"PRIu64,
                                                                     peer_off);
     LSQ_DEBUG("received BLOCKED frame: offset %"PRIu64, peer_off);
 
@@ -6576,7 +6690,7 @@ process_handshake_done_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "HANDSHAKE_DONE frame in");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX HANDSHAKE_DONE frame");
     LSQ_DEBUG("received HANDSHAKE_DONE frame");
 
     if (conn->ifc_flags & IFC_SERVER)
@@ -6612,11 +6726,11 @@ process_ack_frequency_frame (struct ietf_full_conn *conn,
     if (parsed_len < 0)
         return 0;
 
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "ACK_FREQUENCY(seqno: %"PRIu64"; "
-        "pack_tol: %"PRIu64"; upd: %"PRIu64"; ignore: %d) frame in", seqno,
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "RX ACK_FREQUENCY frame: (seqno: %"PRIu64"; "
+        "pack_tol: %"PRIu64"; upd: %"PRIu64"; ignore: %d)", seqno,
         pack_tol, upd_mad, ignore);
-    LSQ_DEBUG("ACK_FREQUENCY(seqno: %"PRIu64"; pack_tol: %"PRIu64"; "
-        "upd: %"PRIu64"; ignore: %d) frame in", seqno, pack_tol, upd_mad,
+    LSQ_DEBUG("RX ACK_FREQUENCY frame: (seqno: %"PRIu64"; pack_tol: %"PRIu64"; "
+        "upd: %"PRIu64"; ignore: %d)", seqno, pack_tol, upd_mad,
         ignore);
 
     if (pack_tol == 0)
@@ -6764,6 +6878,7 @@ process_packet_frame (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
             type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
         return 0;
     }
 }
@@ -7246,10 +7361,10 @@ ignore_init (struct ietf_full_conn *conn)
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_INIT]);
     if (!(conn->ifc_flags & IFC_SERVER))
     {
-        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR])
+        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT])
         {
-            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR]);
-            conn->ifc_u.cli.crypto_streams[ENC_LEV_CLEAR] = NULL;
+            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]);
+            conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT] = NULL;
         }
         conn->ifc_conn.cn_if = ietf_full_conn_iface_ptr;
     }
@@ -7265,10 +7380,10 @@ ignore_hsk (struct ietf_full_conn *conn)
     lsquic_send_ctl_empty_pns(&conn->ifc_send_ctl, PNS_HSK);
     lsquic_rechist_cleanup(&conn->ifc_rechist[PNS_HSK]);
     if (!(conn->ifc_flags & IFC_SERVER))
-        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT])
+        if (conn->ifc_u.cli.crypto_streams[ENC_LEV_HSK])
         {
-            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT]);
-            conn->ifc_u.cli.crypto_streams[ENC_LEV_INIT] = NULL;
+            lsquic_stream_destroy(conn->ifc_u.cli.crypto_streams[ENC_LEV_HSK]);
+            conn->ifc_u.cli.crypto_streams[ENC_LEV_HSK] = NULL;
         }
 }
 
@@ -7323,11 +7438,6 @@ process_regular_packet (struct ietf_full_conn *conn,
     CONN_STATS(in.packets, 1);
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
-    if (pns == PNS_INIT)
-        conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
-                                                                    packet_in);
-    else if (pns == PNS_HSK)
-        lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
     if ((pns == PNS_INIT && (conn->ifc_flags & IFC_IGNORE_INIT))
                     || (pns == PNS_HSK  && (conn->ifc_flags & IFC_IGNORE_HSK)))
     {
@@ -7422,6 +7532,12 @@ process_regular_packet (struct ietf_full_conn *conn,
             break;
         }
     }
+
+    if (pns == PNS_INIT)
+        conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
+                                                                    packet_in);
+    else if (pns == PNS_HSK)
+        lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
 
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
@@ -7534,7 +7650,7 @@ process_regular_packet (struct ietf_full_conn *conn,
         }
         conn->ifc_pub.bytes_in += packet_in->pi_data_sz;
         if ((conn->ifc_mflags & MF_VALIDATE_PATH) &&
-                (packet_in->pi_header_type == HETY_NOT_SET
+                (packet_in->pi_header_type == HETY_SHORT
               || packet_in->pi_header_type == HETY_HANDSHAKE))
         {
             conn->ifc_mflags &= ~MF_VALIDATE_PATH;
@@ -7562,7 +7678,24 @@ verneg_ok (const struct ietf_full_conn *conn)
     enum lsquic_version ver;
 
     ver = highest_bit_set(conn->ifc_u.cli.ifcli_ver_neg.vn_supp);
-    return (1 << ver) & LSQUIC_IETF_DRAFT_VERSIONS;
+    return (1 << ver) & LSQUIC_IETF_VERSIONS;
+}
+
+
+static void
+enable_ping_alarm_for_handshake (struct ietf_full_conn *conn)
+{
+    conn->ifc_ping_period = HSK_PING_TIMEOUT;
+    lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
+                        lsquic_time_now() + conn->ifc_ping_period);
+}
+
+
+static int
+switch_version (struct ietf_full_conn *conn, enum lsquic_version version)
+{
+    conn->ifc_conn.cn_version = version;
+    return iquic_esfi_switch_version(conn->ifc_conn.cn_enc_session, NULL, 0);
 }
 
 
@@ -7650,19 +7783,39 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if (packet_in->pi_version != conn->ifc_u.cli.ifcli_ver_neg.vn_ver)
+    {
+        if (!((1 << packet_in->pi_version)
+              & conn->ifc_u.cli.ifcli_ver_neg.vn_supp))
+        {
+            LSQ_DEBUG("server version doesn't match versions "
+                        "supported: ignore");
+            return 0;
+        }
+        LSQ_DEBUG("version negociation: server switched version from %s to %s",
+        lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver],
+        lsquic_ver2str[packet_in->pi_version]);
+        switch_version(conn, packet_in->pi_version);
+    }
+    else
+        conn->ifc_conn.cn_version = conn->ifc_u.cli.ifcli_ver_neg.vn_ver;
     assert(conn->ifc_u.cli.ifcli_ver_neg.vn_tag);
     assert(conn->ifc_u.cli.ifcli_ver_neg.vn_state != VN_END);
     conn->ifc_u.cli.ifcli_ver_neg.vn_state = VN_END;
     conn->ifc_u.cli.ifcli_ver_neg.vn_tag = NULL;
-    conn->ifc_conn.cn_version = conn->ifc_u.cli.ifcli_ver_neg.vn_ver;
     conn->ifc_conn.cn_flags |= LSCONN_VER_SET;
     LSQ_DEBUG("end of version negotiation: agreed upon %s",
-                    lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
+                    lsquic_ver2str[conn->ifc_conn.cn_version]);
     EV_LOG_VER_NEG(LSQUIC_LOG_CONN_ID,
-            "agreed", lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
-    conn->ifc_process_incoming_packet = process_incoming_packet_fast;
+            "agreed", lsquic_ver2str[conn->ifc_conn.cn_version]);
+    conn->ifc_process_incoming_packet = process_regular_packet;
 
-    return process_regular_packet(conn, packet_in);
+    if (process_regular_packet(conn, packet_in) == 0)
+    {
+        enable_ping_alarm_for_handshake(conn);
+        return 0;
+    }
+    return -1;
 }
 
 
@@ -7825,6 +7978,7 @@ static void (*const send_funcs[N_SEND])(
     [SEND_MAX_STREAMS_UNI]  = generate_max_streams_uni_frame,
     [SEND_MAX_STREAMS_BIDI] = generate_max_streams_bidi_frame,
     [SEND_STOP_SENDING] = generate_stop_sending_frames,
+    [SEND_NEW_TOKEN]    = generate_new_token_frame,
     [SEND_PATH_CHAL_PATH_0]    = generate_path_chal_0,
     [SEND_PATH_CHAL_PATH_1]    = generate_path_chal_1,
     [SEND_PATH_CHAL_PATH_2]    = generate_path_chal_2,
@@ -7849,7 +8003,7 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_PATH_RESP_PATH_2|SF_SEND_PATH_RESP_PATH_3\
     |SF_SEND_PING|SF_SEND_HANDSHAKE_DONE\
     |SF_SEND_ACK_FREQUENCY\
-    |SF_SEND_STOP_SENDING)
+    |SF_SEND_STOP_SENDING|SF_SEND_NEW_TOKEN)
 
 
 /* This should be called before lsquic_alarmset_ring_expired() */
@@ -8442,7 +8596,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
             goto end;
         }
     }
-    else if (conn->ifc_ping_period)
+    else if (conn->ifc_ping_period
+            && (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE))
     {
         lsquic_alarmset_unset(&conn->ifc_alset, AL_PING);
         lsquic_send_ctl_sanity_check(&conn->ifc_send_ctl);
@@ -8797,7 +8952,7 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
 
-    conn->ifc_pub.bytes_in = garbage_sz;
+    conn->ifc_pub.bytes_in += garbage_sz;
     LSQ_DEBUG("count %zd bytes of garbage, new value: %u bytes", garbage_sz,
         conn->ifc_pub.bytes_in);
 }
@@ -9481,6 +9636,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             break;
         case (0 << 8) | LSQVER_ID29:
         case (0 << 8) | LSQVER_I001:
+        case (0 << 8) | LSQVER_I002:
             callbacks = &hcsi_callbacks_client_29;
             break;
         default:
@@ -9488,6 +9644,7 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
             /* fallthru */
         case (1 << 8) | LSQVER_ID29:
         case (1 << 8) | LSQVER_I001:
+        case (1 << 8) | LSQVER_I002:
             callbacks = &hcsi_callbacks_server_29;
             break;
     }

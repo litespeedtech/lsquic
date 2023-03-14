@@ -18,7 +18,8 @@ static const unsigned char version_tags[N_LSQVER][4] =
     [LSQVER_ID27] = { 0xFF, 0, 0, 27, },
     [LSQVER_ID29] = { 0xFF, 0, 0, 29, },
     [LSQVER_I001] = {    0, 0, 0, 1, },
-    [LSQVER_VERNEG] = { 0xFA, 0xFA, 0xFA, 0xFA, },
+    [LSQVER_I002] = { 0x6B, 0x33, 0x43, 0xCF },
+    [LSQVER_RESVED] = { 0xFA, 0xFA, 0xFA, 0xFA, },
 };
 
 
@@ -47,6 +48,37 @@ lsquic_tag2ver (uint32_t ver_tag)
 }
 
 
+enum lsquic_version
+lsquic_tag2ver_fast (const unsigned char *tag)
+{
+    unsigned char ch;
+    ch = *tag;
+    if (ch == 'Q' && *(tag + 1) == '0')
+    {
+        if (*(tag + 2) == '5' && *(tag + 3) == '0')
+            return LSQVER_050;
+        else if (*(tag + 2) == '4' && *(tag + 3) == '6')
+            return LSQVER_046;
+    }
+    else if (ch == 0x6b && *(tag + 1) == 0x33
+             && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
+    {
+        return LSQVER_I002;
+    }
+    else if (ch == '\0' && *(tag + 1) == 0 && *(tag + 2) == 0)
+    {
+        if (*(tag + 3) == 0x01)
+            return LSQVER_I001;
+        else if (*(tag + 3) == 0x00)
+            return LSQVER_VERNEG;
+    }
+    else if ((ch & 0xf) == 0xa && (*(tag + 1) & 0xf) == 0xa
+            && (*(tag + 2) & 0xf) == 0xa && (*(tag + 3) & 0xf) == 0xa)
+        return LSQVER_RESVED;
+    return N_LSQVER;
+}
+
+
 const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_043] = "Q043",
     [LSQVER_046] = "Q046",
@@ -54,7 +86,8 @@ const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_ID27] = "FF00001B",
     [LSQVER_ID29] = "FF00001D",
     [LSQVER_I001] = "00000001",
-    [LSQVER_VERNEG] = "FAFAFAFA",
+    [LSQVER_I002] = "6B3343CF",
+    [LSQVER_RESVED] = "FAFAFAFA",
 };
 
 
@@ -65,7 +98,8 @@ const char *const lsquic_ver2altstr[N_LSQVER] = {
     [LSQVER_ID27] = "h3-27",
     [LSQVER_ID29] = "h3-29",
     [LSQVER_I001] = "h3",
-    [LSQVER_VERNEG] = "VERNEG",
+    [LSQVER_I002] = "h3-v2",
+    [LSQVER_RESVED] = "RESERVED",
 };
 
 

@@ -804,7 +804,7 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 #ifndef WIN32
     int flags;
 #endif
-    SOCKOPT_VAL on;
+    SOCKOPT_VAL on = 1;
     socklen_t socklen;
     char addr_str[0x20];
 
@@ -827,6 +827,14 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
     sockfd = socket(sa_local->sa_family, SOCK_DGRAM, 0);
     if (-1 == sockfd)
         return -1;
+
+    if (AF_INET6 == sa_local->sa_family
+        && setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY,
+                      CHAR_CAST &on, sizeof(on)) == -1)
+    {
+        close(sockfd);
+        return -1;
+    }
 
     if (0 != bind(sockfd, sa_local, socklen)) {
         saved_errno = errno;
@@ -977,9 +985,21 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 #if ECN_SUPPORTED
     on = 1;
     if (AF_INET == sa_local->sa_family)
-        s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS, CHAR_CAST &on, sizeof(on));
+    {
+        s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS,
+                       CHAR_CAST &on, sizeof(on));
+        if (!s)
+            s = setsockopt(sockfd, IPPROTO_IP, IP_TOS,
+                           CHAR_CAST &on, sizeof(on));
+    }
     else
-        s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS, CHAR_CAST &on, sizeof(on));
+    {
+        s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS,
+                       CHAR_CAST &on, sizeof(on));
+        if (!s)
+            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_TCLASS,
+                           CHAR_CAST &on, sizeof(on));
+    }
     if (0 != s)
     {
         saved_errno = errno;
@@ -987,6 +1007,8 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
         errno = saved_errno;
         return -1;
     }
+    LSQ_DEBUG("server ECN support is enabled.");
+
 #endif
 
     if (sport->sp_flags & SPORT_SET_SNDBUF)
@@ -1177,11 +1199,21 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
     {
         int on = 1;
         if (AF_INET == sa_local->sa_family)
+        {
             s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS,
-                                            CHAR_CAST &on, sizeof(on));
+                        CHAR_CAST &on, sizeof(on));
+            if (!s)
+                s = setsockopt(sockfd, IPPROTO_IP, IP_TOS,
+                            CHAR_CAST &on, sizeof(on));
+        }
         else
+        {
             s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS,
-                                            CHAR_CAST &on, sizeof(on));
+                        CHAR_CAST &on, sizeof(on));
+            if (!s)
+                s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_TCLASS,
+                            CHAR_CAST &on, sizeof(on));
+        }
         if (0 != s)
         {
             saved_errno = errno;
@@ -1189,6 +1221,7 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
             errno = saved_errno;
             return -1;
         }
+        LSQ_DEBUG("client ECN support is enabled.");
     }
 #endif
 
@@ -1796,6 +1829,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_spin = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "srej", 4))
+        {
+            settings->es_support_srej = atoi(val);
+            return 0;
+        }
         break;
     case 7:
         if (0 == strncmp(name, "version", 7))
@@ -1931,6 +1969,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         if (0 == strncmp(name, "handshake_to", 12))
         {
             settings->es_handshake_to = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "support_srej", 12))
+        {
+            settings->es_support_srej = atoi(val);
             return 0;
         }
         if (0 == strncmp(name, "delayed_acks", 12))

@@ -142,7 +142,7 @@ ietf_v1_packout_max_header_size (const struct lsquic_conn *lconn,
     enum packet_out_flags flags, size_t dcid_len, enum header_type header_type)
 {
     if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
-                                                && header_type == HETY_NOT_SET)
+                                                && header_type == HETY_SHORT)
         return ietf_v1_packout_header_size_short(flags, dcid_len);
     else
         return ietf_v1_packout_header_size_long_by_flags(lconn, header_type,
@@ -156,6 +156,15 @@ static const unsigned char header_type_to_bin[] = {
     [HETY_0RTT]         = 0x1,
     [HETY_HANDSHAKE]    = 0x2,
     [HETY_RETRY]        = 0x3,
+};
+
+
+/* [draft-ietf-quic-v2] Section-3.2 */
+static const unsigned char header_type_to_bin_v2[] = {
+    [HETY_INITIAL]      = 0x1,
+    [HETY_0RTT]         = 0x2,
+    [HETY_HANDSHAKE]    = 0x3,
+    [HETY_RETRY]        = 0x0,
 };
 
 
@@ -205,10 +214,16 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
 
     packno_bits = lsquic_packet_out_packno_bits(packet_out);
     p = buf;
-    *p++ = 0xC0
-         | ( header_type_to_bin[ packet_out->po_header_type ] << 4)
-         | packno_bits
-         ;
+    if (lconn->cn_version == LSQVER_I002)
+        *p++ = 0xC0
+            | ( header_type_to_bin_v2[ packet_out->po_header_type ] << 4)
+            | packno_bits
+            ;
+    else
+        *p++ = 0xC0
+            | ( header_type_to_bin[ packet_out->po_header_type ] << 4)
+            | packno_bits
+            ;
     ver_tag = lsquic_ver2tag(lconn->cn_version);
     memcpy(p, &ver_tag, sizeof(ver_tag));
     p += sizeof(ver_tag);
@@ -285,7 +300,7 @@ ietf_v1_gen_reg_pkt_header (const struct lsquic_conn *lconn,
             const struct lsquic_packet_out *packet_out, unsigned char *buf,
             size_t bufsz, unsigned *packno_off, unsigned *packno_len)
 {
-    if (packet_out->po_header_type == HETY_NOT_SET)
+    if (packet_out->po_header_type == HETY_SHORT)
         return gen_short_pkt_header(lconn, packet_out, buf, bufsz, packno_off,
                                                                     packno_len);
     else
@@ -301,7 +316,7 @@ ietf_v1_packout_size (const struct lsquic_conn *lconn,
     size_t sz;
 
     if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
-                                && packet_out->po_header_type == HETY_NOT_SET)
+                                && packet_out->po_header_type == HETY_SHORT)
         sz = ietf_v1_packout_header_size_short(packet_out->po_flags,
                                             packet_out->po_path->np_dcid.len);
     else
@@ -1700,16 +1715,21 @@ static const enum header_type bits2ht[4] =
 };
 
 
+static const enum header_type bits2ht_v2[4] =
+{
+    [0] = HETY_RETRY,
+    [1] = HETY_INITIAL,
+    [2] = HETY_0RTT,
+    [3] = HETY_HANDSHAKE,
+};
+
 #if LSQUIC_QIR
 /* Return true if the parsing function is to enforce the minimum DCID
  * length requirement as specified in IETF v1 and the I-Ds.
  */
 static int
-enforce_initial_dcil (lsquic_ver_tag_t tag)
+enforce_initial_dcil (enum lsquic_version version)
 {
-    enum lsquic_version version;
-
-    version = lsquic_tag2ver(tag);
     return version != (enum lsquic_version) -1
         && ((1 << version) & LSQUIC_IETF_VERSIONS);
 }
@@ -1723,22 +1743,28 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
 {
     const unsigned char *p = packet_in->pi_data;
     const unsigned char *const end = p + length;
-    lsquic_ver_tag_t tag;
     enum header_type header_type;
     unsigned dcil, scil;
-    int verneg, r;
+    int r;
     unsigned char first_byte;
     uint64_t payload_len, token_len;
 
     if (length < 6)
         return -1;
     first_byte = *p++;
-
-    memcpy(&tag, p, 4);
+    if ((packet_in->pi_flags & PI_VER_PARSED) == 0)
+    {
+        packet_in->pi_version = lsquic_tag2ver_fast(p);
+        packet_in->pi_flags |= PI_VER_PARSED;
+    }
     p += 4;
-    verneg = 0 == tag;
-    if (!verneg)
-        header_type = bits2ht[ (first_byte >> 4) & 3 ];
+    if (packet_in->pi_version != LSQVER_VERNEG)
+    {
+        if (packet_in->pi_version == LSQVER_I002)
+            header_type = bits2ht_v2[ (first_byte >> 4) & 3 ];
+        else
+            header_type = bits2ht[ (first_byte >> 4) & 3 ];
+    }
     else
         header_type = HETY_VERNEG;
 
@@ -1769,7 +1795,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     {
     case HETY_INITIAL:
 #if LSQUIC_QIR
-        if (!enforce_initial_dcil(tag))
+        if (!enforce_initial_dcil(packet_in->pi_version))
         {
             /* Count even zero-length DCID as having DCID */
             packet_in->pi_flags |= PI_CONN_ID;
@@ -1893,7 +1919,10 @@ lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
         return 0;
     first_byte = *p++;
 
-    header_type = bits2ht[ (first_byte >> 4) & 3 ];
+    if (*p != 0x6B)
+        header_type = bits2ht[ (first_byte >> 4) & 3 ];
+    else
+        header_type = bits2ht_v2[ (first_byte >> 4) & 3 ];
     if (header_type != HETY_INITIAL)
         return 0;
 

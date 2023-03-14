@@ -51,6 +51,7 @@ struct sockaddr;
 enum packet_req_type {
     PACKET_REQ_VERNEG,
     PACKET_REQ_PUBRES,
+    PACKET_REQ_RETRY,
     N_PREQ_TYPES,
 };
 
@@ -74,6 +75,12 @@ lsquic_prq_next_conn (struct pr_queue *);
 
 int
 lsquic_prq_have_pending (const struct pr_queue *);
+
+int
+lsquic_prq_new_req_ext (struct pr_queue *prq, enum packet_req_type type,
+    unsigned flags, enum lsquic_version version, unsigned short data_sz,
+    const lsquic_cid_t *dcid, const lsquic_cid_t *scid, void *peer_ctx,
+    const struct sockaddr *local_addr, const struct sockaddr *peer_addr);
 
 void
 lsquic_prq_drop (struct lsquic_conn *);

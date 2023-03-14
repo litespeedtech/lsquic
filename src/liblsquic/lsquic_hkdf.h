@@ -14,6 +14,10 @@
 #define HSK_SALT ((unsigned char *) \
                      "\x38\x76\x2c\xf7\xf5\x59\x34\xb3\x4d\x17" \
                      "\x9a\xe6\xa4\xc8\x0c\xad\xcc\xbb\x7f\x0a")
+/* [draft-ietf-quic-v2] Section 3.3.1 */
+#define HSK_SALT_V2 ((unsigned char *) \
+                     "\x0d\xed\xe3\xde\xf7\x00\xa6\xdb\x81\x93" \
+                     "\x81\xbe\x6e\x26\x9d\xcb\xf9\xbd\x2e\xd9")
 #define HSK_SALT_SZ (sizeof(HSK_SALT_BUF) - 1)
 
 #define CLIENT_LABEL "client in"

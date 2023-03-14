@@ -11,6 +11,7 @@
 #include <sys/types.h>
 
 #include <openssl/rand.h>
+#include <openssl/aead.h>
 
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
@@ -181,7 +182,7 @@ lsquic_Q046_parse_packet_in_short_begin (lsquic_packet_in_t *packet_in,
     packet_in->pi_packno = packno;
     p += packet_len;
 
-    packet_in->pi_header_type  = HETY_NOT_SET;
+    packet_in->pi_header_type  = HETY_SHORT;
     packet_in->pi_quic_ver     = 0;
     packet_in->pi_nonce        = 0;
     packet_in->pi_header_sz    = p - packet_in->pi_data;
@@ -320,8 +321,6 @@ popcount (unsigned v)
             ++count;
     return count;
 }
-
-
 #endif
 
 
@@ -379,3 +378,76 @@ lsquic_Q046_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
 }
 
 
+int
+lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
+        const struct lsquic_engine_public *enpub,
+        const lsquic_cid_t *scid, const lsquic_cid_t *dcid,
+        enum lsquic_version version, const struct sockaddr *sockaddr,
+        uint8_t random_nybble)
+{
+    struct token_generator *const tokgen = enpub->enp_tokgen;
+    const unsigned our_scid_len = enpub->enp_settings.es_scid_len;
+    unsigned char *const end = buf + bufsz;
+    unsigned char *p = buf;
+    lsquic_ver_tag_t ver_tag;
+    size_t ad_len, out_len;
+    unsigned ret_ver;
+    ssize_t sz;
+    const size_t INTEGRITY_TAG_LEN = 16;
+
+    /* [draft-ietf-quic-tls-25] Section 5.8 specifies the layout of the
+     * Retry Pseudo-Packet:
+     */
+    unsigned char ad_buf[
+        1 + MAX_CID_LEN     /* ODCID */
+      + 1 + 4               /* Type and version */
+      + 1 + MAX_CID_LEN     /* DCID */
+      + 1 + MAX_CID_LEN     /* SCID */
+      + MAX_RETRY_TOKEN_LEN /* Retry token */
+    ];
+
+    unsigned char tag[INTEGRITY_TAG_LEN];
+
+    /* See [draft-ietf-quic-transport-25], Section 17.2.5 */
+
+    if (bufsz < 1 + sizeof(ver_tag) + 1 + our_scid_len + 1 + dcid->len
+                        + MAX_RETRY_TOKEN_LEN + INTEGRITY_TAG_LEN)
+        return -1;
+
+    p = ad_buf;
+    *p++ = dcid->len;
+    memcpy(p, dcid->idbuf, dcid->len);
+    p += dcid->len;
+    *p++ = 0xC0
+         | (3 << 4)
+         | random_nybble
+         ;
+    ver_tag = lsquic_ver2tag(version);
+    memcpy(p, &ver_tag, sizeof(ver_tag));
+    p += sizeof(ver_tag);
+
+    *p++ = scid->len;
+    memcpy(p, scid->idbuf, scid->len);
+    p += scid->len;
+    *p++ = our_scid_len;
+    RAND_bytes(p, our_scid_len);
+    p += our_scid_len;
+    sz = lsquic_tg_generate_retry(tokgen, p, end - p,
+                        p - our_scid_len, our_scid_len, sockaddr, dcid);
+    if (sz < 0)
+        return -1;
+    p += sz;
+    ad_len = p - ad_buf;
+
+    ret_ver = lsquic_version_2_retryver(version);
+    out_len = sizeof(tag);
+    if (!(1 == EVP_AEAD_CTX_seal(&enpub->enp_retry_aead_ctx[ret_ver], tag,
+                &out_len, out_len, lsquic_retry_nonce_buf[ret_ver],
+                IETF_RETRY_NONCE_SZ,
+                NULL, 0, ad_buf, ad_len) && out_len == sizeof(tag)))
+        return -1;
+
+    memcpy(buf, ad_buf + 1 + dcid->len, ad_len - 1 - dcid->len);
+    memcpy(buf + ad_len - 1 - dcid->len, tag, sizeof(tag));
+    return ad_len - 1 - dcid->len + sizeof(tag);
+}

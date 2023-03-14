@@ -68,6 +68,11 @@ int
 lsquic_ietf_v1_gen_ver_nego_pkt (unsigned char *buf, size_t bufsz,
     const lsquic_cid_t *scid, const lsquic_cid_t *dcid, unsigned versions,
     uint8_t);
+int
+lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
+    const struct lsquic_engine_public *, const lsquic_cid_t *scid,
+    const lsquic_cid_t *dcid, enum lsquic_version, const struct sockaddr *,
+    uint8_t random_nybble);
 
 #define GQUIC_RESET_SZ 33
 ssize_t

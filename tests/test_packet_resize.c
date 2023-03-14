@@ -214,7 +214,7 @@ new_packet (struct test_ctx *ctx)
                                      */
 
     packet_out = lsquic_packet_out_new(&ctx->enpub.enp_mm, ctx->enpub.enp_mm.malo.packet_out, 1,
-                         &ctx->lconn, PACKNO_BITS_0, 0, NULL, &ctx->path, HETY_NOT_SET);
+                         &ctx->lconn, PACKNO_BITS_0, 0, NULL, &ctx->path, HETY_SHORT);
     if (packet_out)
         packet_out->po_packno = packno++;
 

@@ -226,6 +226,7 @@ struct lsquic_engine
                                          */
         ENG_CONNS_BY_ADDR
                         = (1 <<  9),    /* Connections are hashed by address */
+        ENG_FORCE_RETRY = (1 << 10),    /* Will force retry packets to be sent */
 #ifndef NDEBUG
         ENG_COALESCE    = (1 << 24),    /* Packet coalescing is enabled */
 #endif
@@ -307,6 +308,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
+        settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_SERVER;
         settings->es_init_max_stream_data_bidi_remote
@@ -325,6 +327,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
+        settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
         settings->es_init_max_stream_data_bidi_remote
@@ -373,6 +376,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_qpack_enc_max_size = LSQUIC_DF_QPACK_ENC_MAX_SIZE;
     settings->es_qpack_enc_max_blocked = LSQUIC_DF_QPACK_ENC_MAX_BLOCKED;
     settings->es_allow_migration = LSQUIC_DF_ALLOW_MIGRATION;
+    settings->es_retry_token_duration = LSQUIC_DF_RETRY_TOKEN_DURATION;
     settings->es_ql_bits         = LSQUIC_DF_QL_BITS;
     settings->es_spin            = LSQUIC_DF_SPIN;
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
@@ -756,7 +760,7 @@ lsquic_engine_new (unsigned flags,
     if (flags & LSENG_HTTP)
         engine->pub.enp_flags |= ENPUB_HTTP;
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) || LSQUIC_QIR
     {
         const char *env;
         env = getenv("LSQUIC_LOSE_PACKETS_RE");
@@ -775,6 +779,15 @@ lsquic_engine_new (unsigned flags,
                                                                         env);
         }
 #endif
+        env = getenv("LSQUIC_FORCE_RETRY");
+        if (env)
+        {
+            if (atoi(env))
+            {
+                engine->flags |= ENG_FORCE_RETRY;
+                LSQ_WARN("will force retry");
+            }
+        }
         env = getenv("LSQUIC_COALESCE");
         if (env)
         {
@@ -908,7 +921,7 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
     struct purga_el *puel;
 
     engine->mini_conns_count -= !!(conn->cn_flags & LSCONN_MINI);
-    if (engine->purga
+    if (engine->purga && !(conn->cn_flags & LSCONN_NO_BL)
         /* Blacklist all CIDs except for promoted mini connections */
             && (conn->cn_flags & (LSCONN_MINI|LSCONN_PROMOTED))
                                         != (LSCONN_MINI|LSCONN_PROMOTED))
@@ -1145,6 +1158,44 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
 }
 
 
+static void
+remove_conn_from_hash (lsquic_engine_t *engine, lsquic_conn_t *conn);
+
+
+static int
+promote_mini_conn (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
+                                                        lsquic_time_t now)
+{
+    lsquic_conn_t *new_conn;
+    EV_LOG_CONN_EVENT(lsquic_conn_log_cid( mini_conn ),
+                                        "promote to full conn");
+    assert( mini_conn->cn_flags & LSCONN_MINI);
+    new_conn = new_full_conn_server(engine, mini_conn, now);
+    if (new_conn)
+    {
+        new_conn->cn_last_sent = engine->last_sent;
+        eng_hist_inc(&engine->history, now, sl_new_full_conns);
+        mini_conn->cn_flags |= LSCONN_PROMOTED;
+        assert(engine->curr_conn == mini_conn);
+        engine->curr_conn = new_conn;
+
+        if (mini_conn->cn_flags & LSCONN_ATTQ)
+        {
+            lsquic_attq_remove(engine->attq, mini_conn);
+            (void) engine_decref_conn(engine, mini_conn, LSCONN_ATTQ);
+        }
+        if (mini_conn->cn_flags & LSCONN_HASHED)
+            remove_conn_from_hash(engine, mini_conn);
+
+        lsquic_mh_insert(&engine->conns_tickable, new_conn,
+                         new_conn->cn_last_ticked);
+        engine_incref_conn(new_conn, LSCONN_TICKABLE);
+        return 0;
+    }
+    return -1;
+}
+
+
 static enum
 {
     VER_NOT_SPECIFIED,
@@ -1200,6 +1251,38 @@ schedule_req_packet (struct lsquic_engine *engine, enum packet_req_type type,
                     lsquic_preqt2str[type], CID_BITS(&packet_in->pi_conn_id));
     else
         LSQ_DEBUG("cannot schedule %s packet", lsquic_preqt2str[type]);
+}
+
+
+static void
+schedule_mini_retry (struct lsquic_engine *engine, struct lsquic_conn *conn,
+                                                            lsquic_time_t now)
+{
+    const struct network_path *path;
+
+    assert(engine->pr_queue);
+    path = conn->cn_if->ci_get_path(conn, NULL);
+    if (!path)
+    {
+        LSQ_WARN("cannot fetch default path");
+        return;
+    }
+
+    assert(conn->cn_flags & LSCONN_IETF);
+    if (0 == lsquic_prq_new_req_ext(engine->pr_queue, PACKET_REQ_RETRY,
+                    0 /* Only supporting retry on IETF mini conns for now */,
+                    conn->cn_version, path->np_pack_size, &conn->cn_cid,
+                    &path->np_dcid, path->np_peer_ctx, NP_LOCAL_SA(path),
+                    NP_PEER_SA(path)
+                    ))
+        LSQ_DEBUGC("scheduled %s packet for mini conn %"CID_FMT,
+                        lsquic_preqt2str[PACKET_REQ_RETRY],
+                        CID_BITS(lsquic_conn_log_cid(conn)));
+    else
+        LSQ_DEBUGC("could not schedule %s packet for mini conn %"CID_FMT,
+                        lsquic_preqt2str[PACKET_REQ_RETRY],
+                        CID_BITS(lsquic_conn_log_cid(conn)));
+
 }
 
 
@@ -1423,8 +1506,60 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 
     if ((1 << version) & LSQUIC_IETF_VERSIONS)
     {
+        lsquic_cid_t odcid;
+        if (engine->pub.enp_settings.es_support_srej
+                                && HETY_INITIAL == packet_in->pi_header_type)
+        {
+            /* XXX Need to handle condition when packets are reordered? */
+            const int has_token
+                = packet_in->pi_token && packet_in->pi_token_size;
+            const int need_retry =
+                !!(engine->flags & ENG_FORCE_RETRY);
+            switch ((need_retry << 1) | has_token)
+            {
+            case (0 << 1) | 0:
+                odcid.len = 0;
+                goto create_ietf_mini_conn;
+            case (1 << 1) | 1:
+            case (0 << 1) | 1:
+                odcid.len = 0;
+                if (0 == lsquic_tg_validate_token(engine->pub.enp_tokgen,
+                                                packet_in, sa_peer, &odcid))
+                    goto create_ietf_mini_conn;
+        /* From [draft-ietf-quic-transport-30] Section 8.1.2:
+         " In response to processing an Initial containing a token that was
+         " provided in a Retry packet, a server cannot send another Retry
+         " packet; it can only refuse the connection or permit it to proceed.
+         */
+                if (TOKEN_RETRY == packet_in->pi_data[packet_in->pi_token])
+                {
+                    LSQ_DEBUGC("CID %"CID_FMT" has invalid Retry token",
+                                            CID_BITS(&packet_in->pi_conn_id));
+                    return NULL;
+                }
+                /* According to the spec, we SHOULD send CONNECTION_CLOSE
+                 * when receiving an invalid Retry token.  We don't do it
+                 * because it's a lot of code change for an event that is
+                 * not likely to happen: a major browser copying the token
+                 * incorrectly.
+                 */
+                break;
+            default:
+                assert(0);
+                /* fall-through */
+            case (1 << 1) | 0:
+                break;
+            }
+            schedule_req_packet(engine, PACKET_REQ_RETRY, packet_in, sa_local,
+                                                            sa_peer, peer_ctx);
+            return NULL;
+        }
+        else
+            odcid.len = 0;
+  create_ietf_mini_conn:
         conn = lsquic_mini_conn_ietf_new(&engine->pub, packet_in, version,
-                    sa_peer->sa_family == AF_INET, NULL, packet_in_size);
+                    sa_peer->sa_family == AF_INET, odcid.len ? &odcid : NULL,
+                    packet_in_size);
     }
     else
     {
@@ -1621,6 +1756,12 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 #endif
     QLOG_PACKET_RX(lsquic_conn_log_cid(conn), packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
+    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE))
+                    == (LSCONN_MINI | LSCONN_HANDSHAKE_DONE))
+    {
+        if (promote_mini_conn(engine, conn, lsquic_time_now()) == -1)
+            conn->cn_flags |= LSCONN_PROMOTE_FAIL;
+    }
     return 0;
 }
 
@@ -1900,7 +2041,8 @@ engine_incref_conn (lsquic_conn_t *conn, enum lsquic_conn_flags flag)
     assert(flag & CONN_REF_FLAGS);
     assert(!(conn->cn_flags & flag));
     conn->cn_flags |= flag;
-    LSQ_DEBUGC("incref conn %"CID_FMT", '%s' -> '%s'",
+    LSQ_DEBUGC("incref %sconn %"CID_FMT", '%s' -> '%s'",
+                    (conn->cn_flags &LSCONN_MINI) ? "mini-" : "",
                     CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags & ~flag, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
@@ -1920,7 +2062,8 @@ engine_decref_conn (lsquic_engine_t *engine, lsquic_conn_t *conn,
         assert(0 == (conn->cn_flags & LSCONN_HASHED));
 #endif
     conn->cn_flags &= ~flags;
-    LSQ_DEBUGC("decref conn %"CID_FMT", '%s' -> '%s'",
+    LSQ_DEBUGC("decref %sconn %"CID_FMT", '%s' -> '%s'",
+                    (conn->cn_flags &LSCONN_MINI) ? "mini-" : "",
                     CID_BITS(lsquic_conn_log_cid(conn)),
                     (refflags2str(conn->cn_flags | flags, str[0]), str[0]),
                     (refflags2str(conn->cn_flags, str[1]), str[1]));
@@ -2296,7 +2439,7 @@ lose_matching_packets (const lsquic_engine_t *engine, struct out_batch *batch,
 
     for (i = 0; i < n; ++i)
     {
-        snprintf(packno_str, sizeof(packno_str), "%"PRIu64,
+        snprintf(packno_str, sizeof(packno_str), "#%"PRIu64,
                                                 batch->packets[i]->po_packno);
         if (0 == regexec(&engine->lose_packets_re, packno_str, 0, NULL, 0))
         {
@@ -2662,7 +2805,7 @@ send_packets_out (struct lsquic_engine *engine,
                 goto end_for;
             }
         }
-        LSQ_DEBUGC("batched packet %"PRIu64" for connection %"CID_FMT,
+        LSQ_DEBUGC("batched packet #%"PRIu64" for connection %"CID_FMT,
                     packet_out->po_packno, CID_BITS(lsquic_conn_log_cid(conn)));
         if (packet_out->po_flags & PO_ENCRYPTED)
         {
@@ -2927,6 +3070,11 @@ process_connections (lsquic_engine_t *engine, conn_iter_f next_conn,
                 conn->cn_flags |= LSCONN_PROMOTED;
             }
             tick_st |= TICK_CLOSE;  /* Destroy mini connection */
+        }
+        if (tick_st & TICK_RETRY)
+        {
+            assert(conn->cn_flags & LSCONN_MINI);
+            schedule_mini_retry(engine, conn, now);
         }
         if (tick_st & TICK_SEND)
         {

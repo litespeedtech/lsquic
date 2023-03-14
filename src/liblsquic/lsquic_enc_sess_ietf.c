@@ -58,13 +58,6 @@
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(enc_sess->esi_conn)
 #include "lsquic_logger.h"
 
-#define KEY_LABEL "quic key"
-#define KEY_LABEL_SZ (sizeof(KEY_LABEL) - 1)
-#define IV_LABEL "quic iv"
-#define IV_LABEL_SZ (sizeof(IV_LABEL) - 1)
-#define PN_LABEL "quic hp"
-#define PN_LABEL_SZ (sizeof(PN_LABEL) - 1)
-
 #define N_HSK_PAIRS (N_ENC_LEVS - 1)
 
 static const struct alpn_map {
@@ -74,7 +67,8 @@ static const struct alpn_map {
     {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
     {   LSQVER_ID29, (unsigned char *) "\x05h3-29",     },
     {   LSQVER_I001, (unsigned char *) "\x02h3",        },
-    {   LSQVER_VERNEG, (unsigned char *) "\x02h3",      },
+    {   LSQVER_I002, (unsigned char *) "\x02h3",        },
+    {   LSQVER_RESVED, (unsigned char *) "\x02h3",      },
 };
 
 struct enc_sess_iquic;
@@ -159,11 +153,36 @@ struct crypto_ctx_pair
 };
 
 
+struct hsk_crypto
+{
+    struct crypto_ctx_pair pair;
+    struct header_prot     hp;
+};
+
+
+struct label_set
+{
+    const char *key;
+    const char *iv;
+    const char *hp;
+    int key_len;
+    int iv_len;
+    int hp_len;
+};
+
+static struct label_set hkdf_labels[2] =
+{
+    {   "quic key", "quic iv", "quic hp", 8, 7, 7 },
+    {   "quicv2 key", "quicv2 iv", "quicv2 hp", 10, 9, 9 }
+};
+
+
 /* [draft-ietf-quic-tls-12] Section 5.3.6 */
 static int
 init_crypto_ctx (struct crypto_ctx *crypto_ctx, const EVP_MD *md,
                  const EVP_AEAD *aead, const unsigned char *secret,
-                 size_t secret_sz, enum evp_aead_direction_t dir)
+                 size_t secret_sz, enum evp_aead_direction_t dir,
+                 struct label_set *key_iv)
 {
     crypto_ctx->yk_key_sz = EVP_AEAD_key_length(aead);
     crypto_ctx->yk_iv_sz = EVP_AEAD_nonce_length(aead);
@@ -174,9 +193,9 @@ init_crypto_ctx (struct crypto_ctx *crypto_ctx, const EVP_MD *md,
         return -1;
     }
 
-    lsquic_qhkdf_expand(md, secret, secret_sz, KEY_LABEL, KEY_LABEL_SZ,
+    lsquic_qhkdf_expand(md, secret, secret_sz, key_iv->key, key_iv->key_len,
         crypto_ctx->yk_key_buf, crypto_ctx->yk_key_sz);
-    lsquic_qhkdf_expand(md, secret, secret_sz, IV_LABEL, IV_LABEL_SZ,
+    lsquic_qhkdf_expand(md, secret, secret_sz, key_iv->iv, key_iv->iv_len,
         crypto_ctx->yk_iv_buf, crypto_ctx->yk_iv_sz);
     if (!EVP_AEAD_CTX_init_with_direction(&crypto_ctx->yk_aead_ctx, aead,
             crypto_ctx->yk_key_buf, crypto_ctx->yk_key_sz, IQUIC_TAG_LEN, dir))
@@ -216,13 +235,9 @@ struct enc_sess_iquic
     struct header_prot   esi_hp;
     struct crypto_ctx_pair
                          esi_pairs[2];
-    /* These are used during handshake.  There are three of them.
-     * esi_hsk_pairs and esi_hsk_hps are allocated and freed
-     * together.
-     */
-    struct crypto_ctx_pair *
-                         esi_hsk_pairs;
-    struct header_prot  *esi_hsk_hps;
+    /* These are used during handshake.  There are three of them. */
+    struct hsk_crypto   *esi_hsk_crypto;
+    struct hsk_crypto   *esi_vn_save;
     lsquic_packno_t      esi_max_packno[N_PNS];
     lsquic_cid_t         esi_odcid;
     lsquic_cid_t         esi_rscid; /* Retry SCID */
@@ -250,6 +265,7 @@ struct enc_sess_iquic
         ESI_MAX_PACKNO_HSK  = ESI_MAX_PACKNO_INIT << PNS_HSK,
         ESI_MAX_PACKNO_APP  = ESI_MAX_PACKNO_INIT << PNS_APP,
         ESI_HAVE_0RTT_TP = 1 << 20,
+        ESI_SWITCH_VER   = 1 << 21,
     }                    esi_flags;
     enum enc_level       esi_last_w;
     unsigned             esi_trasec_sz;
@@ -496,6 +512,20 @@ strip_hp (struct enc_sess_iquic *enc_sess,
 }
 
 
+static void
+set_tp_version_info (struct transport_params *params,
+                     unsigned versions, enum lsquic_version ver)
+{
+    assert(params->tp_version_cnt == 0);
+    params->tp_version_info[params->tp_version_cnt++] = ver;
+    if (versions & (1 << LSQVER_I002))
+        params->tp_version_info[params->tp_version_cnt++] = LSQVER_I002;
+    if (versions & (1 << LSQVER_I001))
+        params->tp_version_info[params->tp_version_cnt++] = LSQVER_I001;
+    params->tp_set |= 1 << TPI_VERSION_INFORMATION;
+}
+
+
 static int
 gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                                                                 size_t bufsz)
@@ -524,6 +554,11 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         {
             params.tp_original_dest_cid = enc_sess->esi_odcid;
             params.tp_set |= 1 << TPI_ORIGINAL_DEST_CID;
+        }
+        if (enc_sess->esi_flags & ESI_RSCID)
+        {
+            params.tp_retry_source_cid = enc_sess->esi_rscid;
+            params.tp_set |= 1 << TPI_RETRY_SOURCE_CID;
         }
 #if LSQUIC_PREFERRED_ADDR
         char addr_buf[INET6_ADDRSTRLEN + 6 /* port */ + 1];
@@ -660,6 +695,14 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                                             = TP_DEF_MAX_UDP_PAYLOAD_SIZE;
         params.tp_set |= 1 << TPI_MAX_DATAGRAM_FRAME_SIZE;
     }
+
+    if (enc_sess->esi_ver_neg && enc_sess->esi_ver_neg->vn_supp
+                                != (1u << enc_sess->esi_ver_neg->vn_ver))
+        set_tp_version_info(&params, enc_sess->esi_ver_neg->vn_supp,
+                            enc_sess->esi_ver_neg->vn_ver);
+    else if (enc_sess->esi_conn->cn_flags & LSCONN_VER_UPDATED)
+        set_tp_version_info(&params, settings->es_versions,
+                            enc_sess->esi_conn->cn_version);
 
     len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
                         &params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
@@ -1018,7 +1061,8 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
                     void *(crypto_streams)[4],
                     const struct crypto_stream_if *cryst_if,
                     const struct lsquic_cid *odcid,
-                    const struct lsquic_cid *iscid)
+                    const struct lsquic_cid *iscid,
+                    const struct lsquic_cid *rscid)
 {
     struct enc_sess_iquic *enc_sess;
 
@@ -1041,6 +1085,11 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
     {
         enc_sess->esi_odcid = *odcid;
         enc_sess->esi_flags |= ESI_ODCID;
+    }
+    if (rscid)
+    {
+        enc_sess->esi_rscid = *rscid;
+        enc_sess->esi_flags |= ESI_RSCID;
     }
     enc_sess->esi_iscid = *iscid;
     enc_sess->esi_flags |= ESI_ISCID;
@@ -1099,6 +1148,18 @@ log_crypto_pair (const struct enc_sess_iquic *enc_sess,
 }
 
 
+static const unsigned char *const lsquic_ver2salt[N_LSQVER] = {
+    [LSQVER_043] = HSK_SALT_PRE29,
+    [LSQVER_046] = HSK_SALT_PRE29,
+    [LSQVER_050] = HSK_SALT_PRE29,
+    [LSQVER_ID27] = HSK_SALT_PRE29,
+    [LSQVER_ID29] = HSK_SALT_PRE33,
+    [LSQVER_I001] = HSK_SALT,
+    [LSQVER_I002] = HSK_SALT_V2,
+    [LSQVER_RESVED] = HSK_SALT,
+};
+
+
 /* [draft-ietf-quic-tls-12] Section 5.3.2 */
 static int
 setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
@@ -1118,30 +1179,20 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
     unsigned char secret[2][SHA256_DIGEST_LENGTH];  /* client, server */
     unsigned char key[2][EVP_MAX_KEY_LENGTH];
     char hexbuf[EVP_MAX_MD_SIZE * 2 + 1];
+    struct label_set *labels;
 
-    if (!enc_sess->esi_hsk_pairs)
+    if (!enc_sess->esi_hsk_crypto)
     {
-        enc_sess->esi_hsk_pairs = calloc(N_HSK_PAIRS,
-                                            sizeof(enc_sess->esi_hsk_pairs[0]));
-        enc_sess->esi_hsk_hps = calloc(N_HSK_PAIRS,
-                                            sizeof(enc_sess->esi_hsk_hps[0]));
-        if (!(enc_sess->esi_hsk_pairs && enc_sess->esi_hsk_hps))
-        {
-            free(enc_sess->esi_hsk_pairs);
-            free(enc_sess->esi_hsk_hps);
+        enc_sess->esi_hsk_crypto = calloc(N_HSK_PAIRS,
+                                          sizeof(enc_sess->esi_hsk_crypto[0]));
+        if (!enc_sess->esi_hsk_crypto)
             return -1;
-        }
     }
-    pair = &enc_sess->esi_hsk_pairs[ENC_LEV_CLEAR];
+    pair = &enc_sess->esi_hsk_crypto[ENC_LEV_INIT].pair;
     pair->ykp_thresh = IQUIC_INVALID_PACKNO;
-    hp = &enc_sess->esi_hsk_hps[ENC_LEV_CLEAR];
+    hp = &enc_sess->esi_hsk_crypto[ENC_LEV_INIT].hp;
 
-    if (enc_sess->esi_conn->cn_version < LSQVER_ID29)
-        salt = HSK_SALT_PRE29;
-    else if (enc_sess->esi_conn->cn_version < LSQVER_I001)
-        salt = HSK_SALT_PRE33;
-    else
-        salt = HSK_SALT;
+    salt = lsquic_ver2salt[enc_sess->esi_conn->cn_version];
     HKDF_extract(hsk_secret, &hsk_secret_sz, md, cid->idbuf, cid->len,
                     salt, HSK_SALT_SZ);
     if (enc_sess->esi_flags & ESI_LOG_SECRETS)
@@ -1163,21 +1214,22 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
             HEXSTR(secret[1], sizeof(secret[1]), hexbuf));
     }
 
+    labels = &hkdf_labels[enc_sess->esi_conn->cn_version == LSQVER_I002];
     cliser = !!(enc_sess->esi_flags & ESI_SERVER);
     if (0 != init_crypto_ctx(&pair->ykp_ctx[!cliser], md, aead, secret[0],
-                sizeof(secret[0]), rw2dir(!cliser)))
+                sizeof(secret[0]), rw2dir(!cliser), labels))
         goto err;
     if (0 != init_crypto_ctx(&pair->ykp_ctx[cliser], md, aead, secret[1],
-                sizeof(secret[1]), rw2dir(cliser)))
+                sizeof(secret[1]), rw2dir(cliser), labels))
         goto err;
 
     hp->hp_gen_mask = gen_hp_mask_aes;
-    hp->hp_enc_level = ENC_LEV_CLEAR;
+    hp->hp_enc_level = ENC_LEV_INIT;
     key_len = EVP_AEAD_key_length(aead);
-    lsquic_qhkdf_expand(md, secret[!cliser], sizeof(secret[0]), PN_LABEL,
-        PN_LABEL_SZ, key[0], key_len);
-    lsquic_qhkdf_expand(md, secret[cliser], sizeof(secret[0]), PN_LABEL,
-        PN_LABEL_SZ, key[1], key_len);
+    lsquic_qhkdf_expand(md, secret[!cliser], sizeof(secret[0]), labels->hp,
+        labels->hp_len, key[0], key_len);
+    lsquic_qhkdf_expand(md, secret[cliser], sizeof(secret[0]), labels->hp,
+        labels->hp_len, key[1], key_len);
     if (enc_sess->esi_flags & ESI_LOG_SECRETS)
     {
         log_crypto_pair(enc_sess, pair, "handshake");
@@ -1218,29 +1270,42 @@ cleanup_hp (struct header_prot *hp)
 
 
 static void
+cleanup_hsk_crypto (struct hsk_crypto *c)
+{
+    cleanup_crypto_ctx(&c->pair.ykp_ctx[0]);
+    cleanup_crypto_ctx(&c->pair.ykp_ctx[1]);
+    cleanup_hp(&c->hp);
+}
+
+
+static void
+free_vn_save (struct enc_sess_iquic *enc_sess)
+{
+    if (enc_sess->esi_vn_save)
+    {
+        cleanup_hsk_crypto(enc_sess->esi_vn_save);
+        free(enc_sess->esi_vn_save);
+        enc_sess->esi_vn_save = NULL;
+    }
+}
+
+
+static void
 free_handshake_keys (struct enc_sess_iquic *enc_sess)
 {
-    struct crypto_ctx_pair *pair;
-    unsigned i;
+    struct hsk_crypto *c;
 
-    if (enc_sess->esi_hsk_pairs)
+    if (enc_sess->esi_hsk_crypto)
     {
-        assert(enc_sess->esi_hsk_hps);
-        for (pair = enc_sess->esi_hsk_pairs; pair <
-                enc_sess->esi_hsk_pairs + N_HSK_PAIRS; ++pair)
+        for (c = enc_sess->esi_hsk_crypto; c <
+                enc_sess->esi_hsk_crypto + N_HSK_PAIRS; ++c)
         {
-            cleanup_crypto_ctx(&pair->ykp_ctx[0]);
-            cleanup_crypto_ctx(&pair->ykp_ctx[1]);
+            cleanup_hsk_crypto(c);
         }
-        free(enc_sess->esi_hsk_pairs);
-        enc_sess->esi_hsk_pairs = NULL;
-        for (i = 0; i < N_HSK_PAIRS; ++i)
-            cleanup_hp(&enc_sess->esi_hsk_hps[i]);
-        free(enc_sess->esi_hsk_hps);
-        enc_sess->esi_hsk_hps = NULL;
+        free(enc_sess->esi_hsk_crypto);
+        enc_sess->esi_hsk_crypto = NULL;
     }
-    else
-        assert(!enc_sess->esi_hsk_hps);
+    free_vn_save(enc_sess);
 }
 
 
@@ -1342,6 +1407,33 @@ iquic_esf_set_conn (enc_session_t *enc_session_p, struct lsquic_conn *lconn)
 }
 
 
+int
+iquic_esfi_init_server_tp (struct enc_sess_iquic *const enc_sess)
+{
+    unsigned char trans_params[sizeof(struct transport_params)
+#if LSQUIC_TEST_QUANTUM_READINESS
+            + 4 + lsquic_tp_get_quantum_sz()
+#endif
+        ];
+    int transpa_len;
+    char errbuf[ERR_ERROR_STRING_BUF_LEN];
+    transpa_len = gen_trans_params(enc_sess, trans_params,
+                                   sizeof(trans_params));
+    if (transpa_len < 0)
+        return -1;
+
+    if (1 != SSL_set_quic_transport_params(enc_sess->esi_ssl, trans_params,
+                                                            transpa_len))
+    {
+        LSQ_ERROR("cannot set QUIC transport params: %s",
+            ERR_error_string(ERR_get_error(), errbuf));
+        return -1;
+    }
+
+    return 0;
+}
+
+
 static int
 iquic_esfi_init_server (enc_session_t *enc_session_p)
 {
@@ -1349,16 +1441,7 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     struct network_path *path;
     const struct alpn_map *am;
     unsigned quic_ctx_idx;
-    int transpa_len;
     SSL_CTX *ssl_ctx = NULL;
-    union {
-        char errbuf[ERR_ERROR_STRING_BUF_LEN];
-        unsigned char trans_params[sizeof(struct transport_params)
-#if LSQUIC_TEST_QUANTUM_READINESS
-            + 4 + lsquic_tp_get_quantum_sz()
-#endif
-        ];
-    } u;
 
     if (enc_sess->esi_enpub->enp_alpn)
         enc_sess->esi_alpn = enc_sess->esi_enpub->enp_alpn;
@@ -1388,8 +1471,9 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     enc_sess->esi_ssl = SSL_new(ssl_ctx);
     if (!enc_sess->esi_ssl)
     {
+        char errbuf[ERR_ERROR_STRING_BUF_LEN];
         LSQ_ERROR("cannot create SSL object: %s",
-            ERR_error_string(ERR_get_error(), u.errbuf));
+            ERR_error_string(ERR_get_error(), errbuf));
         return -1;
     }
 #if BORINGSSL_API_VERSION >= 13
@@ -1410,18 +1494,8 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         return -1;
     }
 
-    transpa_len = gen_trans_params(enc_sess, u.trans_params,
-                                                    sizeof(u.trans_params));
-    if (transpa_len < 0)
-        return -1;
-
-    if (1 != SSL_set_quic_transport_params(enc_sess->esi_ssl, u.trans_params,
-                                                            transpa_len))
-    {
-        LSQ_ERROR("cannot set QUIC transport params: %s",
-            ERR_error_string(ERR_get_error(), u.errbuf));
-        return -1;
-    }
+//     if (iquic_esfi_init_server_tp(enc_sess) == -1)
+//         return -1;
 
     SSL_clear_options(enc_sess->esi_ssl, SSL_OP_NO_TLSv1_3);
     if (enc_sess->esi_enpub->enp_lookup_cert)
@@ -1786,6 +1860,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
                                                             cidbuf[0]),
                     CID_BITS_B(cids[TP_CID_IDX(tpi)], cidbuf[1]));
             }
+            enc_sess->esi_conn->cn_flags |= LSCONN_NO_BL;
             return -1;
         }
     }
@@ -2026,28 +2101,44 @@ iquic_esfi_destroy (enc_session_t *enc_session_p)
 /* See [draft-ietf-quic-tls-14], Section 4 */
 static const enum enc_level hety2el[] =
 {
-    [HETY_NOT_SET]   = ENC_LEV_FORW,
+    [HETY_SHORT]     = ENC_LEV_APP,
     [HETY_VERNEG]    = 0,
-    [HETY_INITIAL]   = ENC_LEV_CLEAR,
+    [HETY_INITIAL]   = ENC_LEV_INIT,
     [HETY_RETRY]     = 0,
-    [HETY_HANDSHAKE] = ENC_LEV_INIT,
-    [HETY_0RTT]      = ENC_LEV_EARLY,
+    [HETY_HANDSHAKE] = ENC_LEV_HSK,
+    [HETY_0RTT]      = ENC_LEV_0RTT,
 };
 
 
 static const enum enc_level pns2enc_level[2][N_PNS] =
 {
     [0] = {
-        [PNS_INIT]  = ENC_LEV_CLEAR,
-        [PNS_HSK]   = ENC_LEV_INIT,
-        [PNS_APP]   = ENC_LEV_EARLY,
+        [PNS_INIT]  = ENC_LEV_INIT,
+        [PNS_HSK]   = ENC_LEV_HSK,
+        [PNS_APP]   = ENC_LEV_0RTT,
     },
     [1] = {
-        [PNS_INIT]  = ENC_LEV_CLEAR,
-        [PNS_HSK]   = ENC_LEV_INIT,
-        [PNS_APP]   = ENC_LEV_FORW,
+        [PNS_INIT]  = ENC_LEV_INIT,
+        [PNS_HSK]   = ENC_LEV_HSK,
+        [PNS_APP]   = ENC_LEV_APP,
     },
 };
+
+
+int
+iquic_esf_is_enc_level_ready (enc_session_t *enc_session_p,
+                              enum enc_level level)
+{
+    const struct enc_sess_iquic *enc_sess = enc_session_p;
+    const struct header_prot *hp;
+    if (level == ENC_LEV_APP)
+        hp = &enc_sess->esi_hp;
+    else if (enc_sess->esi_hsk_crypto)
+        hp = &enc_sess->esi_hsk_crypto[level].hp;
+    else
+        return 0;
+    return header_prot_inited(hp, 0);
+}
 
 
 static enum enc_packout
@@ -2075,17 +2166,17 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     pns = lsquic_packet_out_pns(packet_out);
     enc_level = pns2enc_level[ enc_sess->esi_have_forw ][ pns ];
 
-    if (enc_level == ENC_LEV_FORW)
+    if (enc_level == ENC_LEV_APP)
     {
         pair = &enc_sess->esi_pairs[ enc_sess->esi_key_phase ];
         crypto_ctx = &pair->ykp_ctx[ 1 ];
         hp = &enc_sess->esi_hp;
     }
-    else if (enc_sess->esi_hsk_pairs)
+    else if (enc_sess->esi_hsk_crypto)
     {
-        pair = &enc_sess->esi_hsk_pairs[ enc_level ];
+        pair = &enc_sess->esi_hsk_crypto[ enc_level ].pair;
         crypto_ctx = &pair->ykp_ctx[ 1 ];
-        hp = &enc_sess->esi_hsk_hps[ enc_level ];
+        hp = &enc_sess->esi_hsk_crypto[ enc_level ].hp;
     }
     else
     {
@@ -2146,7 +2237,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
                                             dst_sz, &packno_off, &packno_len);
     if (header_sz < 0)
         goto err;
-    if (enc_level == ENC_LEV_FORW)
+    if (enc_level == ENC_LEV_APP)
         dst[0] |= enc_sess->esi_key_phase << 2;
     dst[0] &= enc_sess->esi_grease | packet_out->po_path->np_dcid.idbuf[0];
 
@@ -2183,7 +2274,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
     lsquic_packet_out_set_enc_level(packet_out, enc_level);
     lsquic_packet_out_set_kp(packet_out, enc_sess->esi_key_phase);
 
-    if (enc_level == ENC_LEV_FORW && hp->hp_gen_mask != gen_hp_mask_chacha20)
+    if (enc_level == ENC_LEV_APP && hp->hp_gen_mask != gen_hp_mask_chacha20)
         apply_hp_batch(enc_sess, hp, packet_out, packno_off, packno_len);
     else
         apply_hp_immediately(enc_sess, hp, packet_out, packno_off, packno_len);
@@ -2218,9 +2309,14 @@ static struct ku_label
 }
 
 
-select_ku_label (const struct enc_sess_iquic *enc_sess)
+select_ku_label (enum lsquic_version version)
 {
-    return (struct ku_label) { "quic ku", 7, };
+    static struct ku_label labels[2] =
+    {
+        { "quic ku", 7, },
+        { "quicv2 ku", 9, }
+    };
+    return labels[version == LSQVER_I002];
 }
 
 
@@ -2267,10 +2363,10 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     }
 
     enc_level = hety2el[packet_in->pi_header_type];
-    if (enc_level == ENC_LEV_FORW)
+    if (enc_level == ENC_LEV_APP)
         hp = &enc_sess->esi_hp;
-    else if (enc_sess->esi_hsk_pairs)
-        hp = &enc_sess->esi_hsk_hps[ enc_level ];
+    else if (enc_sess->esi_hsk_crypto)
+        hp = &enc_sess->esi_hsk_crypto[ enc_level ].hp;
     else
         hp = NULL;
 
@@ -2299,7 +2395,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         packet_in->pi_data + sample_off,
         dst, packet_in->pi_header_sz, &packno_len);
 
-    if (enc_level == ENC_LEV_FORW)
+    if (enc_level == ENC_LEV_APP)
     {
         key_phase = (dst[0] & 0x04) > 0;
         pair = &enc_sess->esi_pairs[ key_phase ];
@@ -2314,7 +2410,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
                 || packet_in->pi_packno
                     > enc_sess->esi_pairs[enc_sess->esi_key_phase].ykp_thresh)
         {
-            const struct ku_label kl = select_ku_label(enc_sess);
+            const struct ku_label kl = select_ku_label(enc_sess->esi_conn->cn_version);
             lsquic_qhkdf_expand(enc_sess->esi_md,
                 enc_sess->esi_traffic_secrets[0], enc_sess->esi_trasec_sz,
                 kl.str, kl.len, new_secret, enc_sess->esi_trasec_sz);
@@ -2329,7 +2425,9 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
             crypto_ctx->yk_flags = 0;
             s = init_crypto_ctx(crypto_ctx, enc_sess->esi_md,
                         enc_sess->esi_aead, new_secret, enc_sess->esi_trasec_sz,
-                        evp_aead_open);
+                        evp_aead_open,
+                        &hkdf_labels[enc_sess->esi_conn->cn_version == LSQVER_I002]
+                               );
             if (s != 0)
             {
                 LSQ_ERROR("could not init open crypto ctx (key phase)");
@@ -2352,8 +2450,8 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     else
     {
         key_phase = 0;
-        assert(enc_sess->esi_hsk_pairs);
-        pair = &enc_sess->esi_hsk_pairs[ enc_level ];
+        assert(enc_sess->esi_hsk_crypto);
+        pair = &enc_sess->esi_hsk_crypto[ enc_level ].pair;
         crypto_ctx = &pair->ykp_ctx[ 0 ];
         if (UNLIKELY(0 == (crypto_ctx->yk_flags & YK_INITED)))
         {
@@ -2411,7 +2509,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
         if (dst[0] & 0x08)
             packet_in->pi_flags |= PI_LOSS_BIT;
     }
-    else if (dst[0] & (0x0C << (packet_in->pi_header_type == HETY_NOT_SET)))
+    else if (dst[0] & (0x0C << (packet_in->pi_header_type == HETY_SHORT)))
     {
         LSQ_DEBUG("reserved bits are not set to zero");
         dec_packin = DECPI_VIOLATION;
@@ -2422,7 +2520,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     {
         LSQ_DEBUG("decryption in the new key phase %u successful, rotate "
             "keys", key_phase);
-        const struct ku_label kl = select_ku_label(enc_sess);
+        const struct ku_label kl = select_ku_label(enc_sess->esi_conn->cn_version);
         pair->ykp_thresh = packet_in->pi_packno;
         pair->ykp_ctx[ 0 ] = crypto_ctx_buf;
         memcpy(enc_sess->esi_traffic_secrets[ 0 ], new_secret,
@@ -2434,7 +2532,8 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
                                                 enc_sess->esi_trasec_sz);
         s = init_crypto_ctx(&pair->ykp_ctx[1], enc_sess->esi_md,
                     enc_sess->esi_aead, new_secret, enc_sess->esi_trasec_sz,
-                    evp_aead_seal);
+                    evp_aead_seal,
+                    &hkdf_labels[enc_sess->esi_conn->cn_version == LSQVER_I002]);
         if (s != 0)
         {
             LSQ_ERROR("could not init seal crypto ctx (key phase)");
@@ -2457,8 +2556,6 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     packet_in->pi_data = dst;
     packet_in->pi_flags |= PI_OWN_DATA | PI_DECRYPTED
                         | (enc_level << PIBIT_ENC_LEV_SHIFT);
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "decrypted packet %"PRIu64,
-                                                    packet_in->pi_packno);
     pns = lsquic_enclev2pns[enc_level];
     if (packet_in->pi_packno > enc_sess->esi_max_packno[pns]
             || !(enc_sess->esi_flags & (ESI_MAX_PACKNO_INIT << pns)))
@@ -2622,23 +2719,58 @@ iquic_esfi_set_iscid (enc_session_t *enc_session_p,
 }
 
 
+int
+iquic_esfi_switch_version (enc_session_t *enc_session_p, lsquic_cid_t *dcid,
+                           int backup_keys)
+{
+    struct enc_sess_iquic *const enc_sess = enc_session_p;
+
+    enc_sess->esi_flags |= ESI_SWITCH_VER;
+
+    /* Free previous handshake keys */
+    assert(enc_sess->esi_hsk_crypto);
+    if (backup_keys)
+    {
+        if (!enc_sess->esi_vn_save)
+        {
+            enc_sess->esi_vn_save = calloc(1, sizeof(*enc_sess->esi_vn_save));
+            //skip error, non fatal
+        }
+        else
+            cleanup_hsk_crypto(enc_sess->esi_vn_save);
+        if (enc_sess->esi_vn_save)
+            *enc_sess->esi_vn_save = enc_sess->esi_hsk_crypto[ENC_LEV_INIT];
+    }
+    if (!enc_sess->esi_vn_save)
+        cleanup_hsk_crypto(&enc_sess->esi_hsk_crypto[ENC_LEV_INIT]);
+    else
+        memset(&enc_sess->esi_hsk_crypto[ENC_LEV_INIT], 0,
+               sizeof(enc_sess->esi_hsk_crypto[ENC_LEV_INIT]));
+
+    if (0 == setup_handshake_keys(enc_sess, dcid ? dcid : &enc_sess->esi_odcid))
+    {
+        LSQ_INFO("update handshake keys to version %s",
+                 lsquic_ver2str[enc_sess->esi_conn->cn_version]);
+        return 0;
+    }
+    else
+        return -1;
+}
+
+
 static int
 iquic_esfi_reset_dcid (enc_session_t *enc_session_p,
         const lsquic_cid_t *old_dcid, const lsquic_cid_t *new_dcid)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
-    struct crypto_ctx_pair *pair;
 
     enc_sess->esi_odcid = *old_dcid;
     enc_sess->esi_rscid = *new_dcid;
     enc_sess->esi_flags |= ESI_ODCID|ESI_RSCID|ESI_RETRY;
 
     /* Free previous handshake keys */
-    assert(enc_sess->esi_hsk_pairs);
-    pair = &enc_sess->esi_hsk_pairs[ENC_LEV_CLEAR];
-    cleanup_crypto_ctx(&pair->ykp_ctx[0]);
-    cleanup_crypto_ctx(&pair->ykp_ctx[1]);
-    cleanup_hp(&enc_sess->esi_hsk_hps[ENC_LEV_CLEAR]);
+    assert(enc_sess->esi_hsk_crypto);
+    cleanup_hsk_crypto(&enc_sess->esi_hsk_crypto[ENC_LEV_INIT]);
 
     if (0 == setup_handshake_keys(enc_sess, new_dcid))
     {
@@ -2812,7 +2944,7 @@ maybe_drop_SSL (struct enc_sess_iquic *enc_sess)
     if ((enc_sess->esi_flags & (ESI_HSK_CONFIRMED|ESI_HANDSHAKE_OK))
                             == (ESI_HSK_CONFIRMED|ESI_HANDSHAKE_OK)
         && enc_sess->esi_ssl
-        && lsquic_frab_list_empty(&enc_sess->esi_frals[ENC_LEV_FORW]))
+        && lsquic_frab_list_empty(&enc_sess->esi_frals[ENC_LEV_APP]))
     {
         if ((enc_sess->esi_flags & (ESI_SERVER|ESI_WANT_TICKET))
                                                             != ESI_WANT_TICKET)
@@ -2841,10 +2973,10 @@ no_sess_ticket (enum alarm_id alarm_id, void *ctx,
 
 
 typedef char enums_have_the_same_value[
-    (int) ssl_encryption_initial     == (int) ENC_LEV_CLEAR &&
-    (int) ssl_encryption_early_data  == (int) ENC_LEV_EARLY &&
-    (int) ssl_encryption_handshake   == (int) ENC_LEV_INIT  &&
-    (int) ssl_encryption_application == (int) ENC_LEV_FORW      ? 1 : -1];
+    (int) ssl_encryption_initial     == (int) ENC_LEV_INIT &&
+    (int) ssl_encryption_early_data  == (int) ENC_LEV_0RTT &&
+    (int) ssl_encryption_handshake   == (int) ENC_LEV_HSK  &&
+    (int) ssl_encryption_application == (int) ENC_LEV_APP      ? 1 : -1];
 
 static int
 set_secret (SSL *ssl, enum ssl_encryption_level_t level,
@@ -2862,6 +2994,7 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
     unsigned char key[EVP_MAX_KEY_LENGTH];
     char errbuf[ERR_ERROR_STRING_BUF_LEN];
 #define hexbuf errbuf
+    struct label_set *labels;
 
     enc_sess = SSL_get_ex_data(ssl, s_idx);
     if (!enc_sess)
@@ -2894,11 +3027,11 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
         secrets[0] = write_secret, secrets[1] = read_secret;
         */
 
-    if (enc_level < ENC_LEV_FORW)
+    if (enc_level < ENC_LEV_APP)
     {
-        assert(enc_sess->esi_hsk_pairs);
-        pair = &enc_sess->esi_hsk_pairs[enc_level];
-        hp = &enc_sess->esi_hsk_hps[enc_level];
+        assert(enc_sess->esi_hsk_crypto);
+        pair = &enc_sess->esi_hsk_crypto[enc_level].pair;
+        hp = &enc_sess->esi_hsk_crypto[enc_level].hp;
     }
     else
     {
@@ -2924,8 +3057,9 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
     else
         LSQ_DEBUG("set %s for level %u", rw2str[rw], enc_level);
 
+    labels = &hkdf_labels[enc_sess->esi_conn->cn_version == LSQVER_I002];
     if (0 != init_crypto_ctx(&pair->ykp_ctx[rw], crypa.md,
-                crypa.aead, secret, secret_len, rw2dir(rw)))
+                crypa.aead, secret, secret_len, rw2dir(rw), labels))
         goto err;
 
     if (pair->ykp_ctx[!rw].yk_flags & YK_INITED)
@@ -2943,8 +3077,8 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
     key_len = EVP_AEAD_key_length(crypa.aead);
     if (hp->hp_gen_mask == gen_hp_mask_aes)
     {
-        lsquic_qhkdf_expand(crypa.md, secret, secret_len, PN_LABEL, PN_LABEL_SZ,
-            key, key_len);
+        lsquic_qhkdf_expand(crypa.md, secret, secret_len, labels->hp,
+                            labels->hp_len, key, key_len);
         EVP_CIPHER_CTX_init(&hp->hp_u.cipher_ctx[rw]);
         if (!EVP_EncryptInit_ex(&hp->hp_u.cipher_ctx[rw], crypa.hp, NULL, key, 0))
         {
@@ -2953,8 +3087,8 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
         }
     }
     else
-        lsquic_qhkdf_expand(crypa.md, secret, secret_len, PN_LABEL, PN_LABEL_SZ,
-            hp->hp_u.buf[rw], key_len);
+        lsquic_qhkdf_expand(crypa.md, secret, secret_len, labels->hp,
+                            labels->hp_len, hp->hp_u.buf[rw], key_len);
     hp->hp_flags |= 1 << rw;
 
     if (enc_sess->esi_flags & ESI_LOG_SECRETS)
@@ -2965,7 +3099,7 @@ set_secret (SSL *ssl, enum ssl_encryption_level_t level,
             key_len, hexbuf));
     }
 
-    if (rw && enc_level == ENC_LEV_FORW)
+    if (rw && enc_level == ENC_LEV_APP)
         enc_sess->esi_have_forw = 1;
 
     return 1;
@@ -3106,7 +3240,7 @@ chsk_ietf_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
     enum enc_level enc_level;
 
     enc_level = enc_sess->esi_cryst_if->csi_enc_level(stream);
-    if (enc_level == ENC_LEV_CLEAR)
+    if (enc_level == ENC_LEV_INIT)
         enc_sess->esi_cryst_if->csi_wantwrite(stream, 1);
 
     LSQ_DEBUG("handshake stream created successfully");
@@ -3344,6 +3478,9 @@ const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
     /* [draft-ietf-quic-tls-33] Section 5.8 */
     (unsigned char *)
         "\xbe\x0c\x69\x0b\x9f\x66\x57\x5a\x1d\x76\x6b\x54\xe3\x68\xc8\x4e",
+    /* [draft-draft-ietf-quic-v2] Section 3.3.3 */
+    (unsigned char *)
+        "\x8f\xb4\xb0\x1b\x56\xac\x48\xe2\x60\xfb\xcb\xce\xad\x7c\xcc\x92",
 };
 
 
@@ -3355,6 +3492,8 @@ const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
     (unsigned char *) "\xe5\x49\x30\xf9\x7f\x21\x36\xf0\x53\x0a\x8c\x1c",
     /* [draft-ietf-quic-tls-33] Section 5.8 */
     (unsigned char *) "\x46\x15\x99\xd3\x5d\x63\x2b\xf2\x23\x98\x25\xbb",
+    /* [draft-draft-ietf-quic-v2] Section 3.3.3 */
+    (unsigned char *) "\xd8\x69\x69\xbc\x2d\x7c\x6d\x99\x90\xef\xb0\x4a",
 };
 
 

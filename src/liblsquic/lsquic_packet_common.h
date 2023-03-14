@@ -176,7 +176,8 @@ enum
 
 enum header_type
 {
-    HETY_NOT_SET,       /* This value must be zero */
+    HETY_NOT_SET,                   /* This value must be zero */
+    HETY_SHORT = HETY_NOT_SET,      /* This value must be zero */
     HETY_VERNEG,
     HETY_INITIAL,
     HETY_RETRY,
@@ -197,6 +198,7 @@ enum packnum_space
     PNS_INIT,
     PNS_HSK,
     PNS_APP,
+    IMICO_N_PNS = PNS_APP,
     N_PNS
 };
 
@@ -240,8 +242,9 @@ extern const char *const lsquic_pns2str[];
  * regenerating them.  This keeps the code simple(r).
  */
 #define IQUIC_FRAME_RETX_MASK (  \
-    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_PADDING|QUIC_FTBIT_PATH_RESPONSE    \
-            |QUIC_FTBIT_PATH_CHALLENGE|QUIC_FTBIT_ACK|QUIC_FTBIT_TIMESTAMP))
+    ALL_IQUIC_FRAMES & ~(QUIC_FTBIT_PADDING | QUIC_FTBIT_PATH_RESPONSE    \
+            | QUIC_FTBIT_PATH_CHALLENGE | QUIC_FTBIT_ACK \
+            | QUIC_FTBIT_TIMESTAMP | QUIC_FTBIT_PING))
 
 extern const enum quic_ft_bit lsquic_legal_frames_by_level[][4];
 

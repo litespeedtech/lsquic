@@ -25,9 +25,9 @@ struct sockaddr;
 extern "C" {
 #endif
 
-#define LSQUIC_MAJOR_VERSION 3
-#define LSQUIC_MINOR_VERSION 3
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_MAJOR_VERSION 4
+#define LSQUIC_MINOR_VERSION 0
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -82,12 +82,23 @@ enum lsquic_version
     LSQVER_I001,
 
     /**
-     * Special version to trigger version negotiation.
-     * [draft-ietf-quic-transport-11], Section 3.
+     * IETF QUIC v2.
      */
-    LSQVER_VERNEG,
+    LSQVER_I002,
 
-    N_LSQVER
+    /**
+     * Reserved version to trigger version negotiation.
+     * [rfc9000], Section 15.
+     */
+    LSQVER_RESVED,
+
+    N_LSQVER,
+
+    /**
+     *  The version 0x00000000 is reserved to represent version negotiation.
+     * [rfc9000], Section 15.
+     */
+    LSQVER_VERNEG
 };
 
 /**
@@ -103,19 +114,19 @@ enum lsquic_version
 #define LSQUIC_FORCED_TCID0_VERSIONS ((1 << LSQVER_046)|(1 << LSQVER_050))
 
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
-                            (1 << LSQVER_VERNEG))
+                            (1 << LSQVER_RESVED))
 
 #define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27))
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
 #define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) \
-                          | (1 << LSQVER_ID29) \
-                          | (1 << LSQVER_I001) | (1 << LSQVER_VERNEG))
+                          | (1 << LSQVER_ID29) | (1 << LSQVER_I001) \
+                          | (1 << LSQVER_I002) | (1 << LSQVER_RESVED))
 
 #define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) \
                                   | (1 << LSQVER_ID29) \
-                                  | (1 << LSQVER_VERNEG))
+                                  | (1 << LSQVER_RESVED))
 
 enum lsquic_hsk_status
 {
@@ -306,6 +317,10 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 #define LSQUIC_DF_STTL               86400
 #define LSQUIC_DF_MAX_INCHOATE     (1 * 1000 * 1000)
+
+#define LSQUIC_DF_SUPPORT_SREJ_SERVER  0
+#define LSQUIC_DF_SUPPORT_SREJ_CLIENT  0
+
 /** Do not use NSTP by default */
 #define LSQUIC_DF_SUPPORT_NSTP     0
 /** TODO: IETF QUIC clients do not support push */
@@ -354,6 +369,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Allow migration by default */
 #define LSQUIC_DF_ALLOW_MIGRATION 1
+
+/** Default retry token duration. */    /* Do not set this value to zero. */
+#define LSQUIC_DF_RETRY_TOKEN_DURATION 10
 
 /** Use QL loss bits by default */
 #define LSQUIC_DF_QL_BITS 2
@@ -543,6 +561,17 @@ struct lsquic_engine_settings {
      * only applicable in server mode.
      */
     unsigned        es_max_inchoate;
+
+    /**
+     * Support SREJ: for client side, this means supporting server's SREJ
+     * responses (this does not work yet) and for server side, this means
+     * generating SREJ instead of REJ when appropriate.
+     *
+     * For IETF QUIC, this sending stateless retries when appropriate.
+     * The IETF client always supports stateless retries and knows how to
+     * handle them.
+     */
+    int             es_support_srej;
 
     /**
      * Setting this value to 0 means that
@@ -862,6 +891,13 @@ struct lsquic_engine_settings {
      * The default is @ref LSQUIC_DF_ALLOW_MIGRATION
      */
     int             es_allow_migration;
+
+    /**
+     * Amount of time, in seconds, after which the server token included in
+     * a stateless retry expires.  If set to zero, the default value is
+     * used, which is @ref LSQUIC_DF_RETRY_TOKEN_DURATION
+     */
+     unsigned       es_retry_token_duration;
 
     /**
      * Use QL loss bits.  Allowed values are:

@@ -382,7 +382,7 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
         }
     }
 
-    assert(adj);    /* Otherwise why are we called? */
+    //assert(adj);    /* Otherwise why are we called? */
     packet_out->po_regen_sz = 0;
     packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
 }
@@ -479,7 +479,7 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
 static unsigned
 offset_to_dcid (const struct lsquic_packet_out *packet_out)
 {
-    if (packet_out->po_header_type == HETY_NOT_SET)
+    if (packet_out->po_header_type == HETY_SHORT)
         return 1;
     else
     {

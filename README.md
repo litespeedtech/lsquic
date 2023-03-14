@@ -14,8 +14,30 @@ and HTTP/3 functionality for servers and clients.  Most of the code in this
 distribution is used in our own products: LiteSpeed Web Server, LiteSpeed ADC,
 and OpenLiteSpeed.
 
-Currently supported QUIC versions are v1, Internet-Draft versions 29, and 27;
+Currently supported QUIC versions are v1, v2, Internet-Draft versions 29, and 27;
 and the older "Google" QUIC versions Q043, Q046, an Q050.
+
+Standard Compliance
+-------------------
+
+LiteSpeed QUIC is mostly compliant to the follow RFCs:
+
+- [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)
+- [RFC 9001](https://www.rfc-editor.org/rfc/rfc9001)
+- [RFC 9002](https://www.rfc-editor.org/rfc/rfc9002)
+- [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114)
+- [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204)
+
+QUIC protocol extensions
+------------------------
+
+The following QUIC protocol extensions are implemented:
+
+- [QUIC Version 2](https://www.rfc-editor.org/authors/rfc9369.html)
+- [Compatible Version Negotiation](https://datatracker.ietf.org/doc/draft-ietf-quic-version-negotiation/)
+- [Datagrams](https://datatracker.ietf.org/doc/html/rfc9221)`
+- [ACK Frequency](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
+- [Greasing the QUIC Bit](https://datatracker.ietf.org/doc/html/rfc9287)
 
 Documentation
 -------------
@@ -136,7 +158,7 @@ docker build -t lsquic .
 
 Then you can use the examples from the command line.  For example:
 ```
-sudo docker run -it --rm lsquic http_client -s www.google.com  -p / -o version=h3-29
+sudo docker run -it --rm lsquic http_client -s www.google.com  -p / -o version=h3
 sudo docker run -p 12345:12345/udp -v /path/to/certs:/mnt/certs -it --rm lsquic http_server -c www.example.com,/mnt/certs/chain,/mnt/certs/key
 ```
 

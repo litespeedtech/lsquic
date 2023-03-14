@@ -64,6 +64,7 @@ enum transport_param_id
 #if LSQUIC_TEST_QUANTUM_READINESS
     TPI_QUANTUM_READINESS,
 #endif
+    TPI_VERSION_INFORMATION,
     TPI_STATELESS_RESET_TOKEN,              LAST_TPI = TPI_STATELESS_RESET_TOKEN
 };
 
@@ -106,6 +107,10 @@ struct transport_params
 #define tp_original_dest_cid tp_cids[TP_CID_IDX(TPI_ORIGINAL_DEST_CID)]
 #define tp_initial_source_cid tp_cids[TP_CID_IDX(TPI_INITIAL_SOURCE_CID)]
 #define tp_retry_source_cid tp_cids[TP_CID_IDX(TPI_RETRY_SOURCE_CID)]
+    unsigned   tp_versions;
+    uint8_t    tp_version_cnt;
+    uint8_t    tp_version_info[7];
+#define tp_chosen_version tp_version_info[0]
 };
 
 #define MAX_TP_STR_SZ ((LAST_TPI + 1) *                                     \

@@ -486,7 +486,7 @@ gquic_Q050_packout_size (const struct lsquic_conn *lconn,
     size_t sz;
 
     if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
-                                && packet_out->po_header_type == HETY_NOT_SET)
+                                && packet_out->po_header_type == HETY_SHORT)
         sz = gquic_Q050_packout_header_size_short(lconn, packet_out->po_flags);
     else
         sz = gquic_Q050_packout_header_size_long_by_packet(lconn, packet_out);

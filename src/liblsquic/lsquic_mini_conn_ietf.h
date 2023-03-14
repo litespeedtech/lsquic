@@ -6,6 +6,8 @@
 #ifndef LSQUIC_MINI_CONN_IETF_H
 #define LSQUIC_MINI_CONN_IETF_H 1
 
+#include "lsquic_ietf.h"
+
 struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_packet_in;
@@ -32,14 +34,13 @@ typedef uint64_t packno_set_t;
  * connection is promoted.  This means we do not have to have data
  * structures to track the App PNS.
  */
-#define IMICO_N_PNS (N_PNS - 1)
 
 struct ietf_mini_conn
 {
     struct lsquic_conn              imc_conn;
     struct conn_cid_elem            imc_cces[3];
     struct lsquic_engine_public    *imc_enpub;
-    lsquic_time_t                   imc_created;
+    lsquic_time_t                   imc_expire;
     enum {
         IMC_ENC_SESS_INITED     = 1 << 0,
         IMC_QUEUED_ACK_INIT     = 1 << 1,
@@ -66,6 +67,8 @@ struct ietf_mini_conn
         IMC_PATH_CHANGED        = 1 << 21,
         IMC_HSK_DONE_SENT       = 1 << 22,
         IMC_TRECHIST            = 1 << 23,
+        IMC_VER_NEG_FAILED      = 1 << 24,
+        IMC_AMP_CAPPED          = 1 << 25,
     }                               imc_flags;
     struct mini_crypto_stream       imc_streams[N_ENC_LEVS];
     void                           *imc_stream_ps[N_ENC_LEVS];
@@ -87,7 +90,7 @@ struct ietf_mini_conn
     packno_set_t                    imc_acked_packnos[IMICO_N_PNS];
     lsquic_time_t                   imc_largest_recvd[IMICO_N_PNS];
     struct lsquic_rtt_stats         imc_rtt_stats;
-    unsigned                        imc_error_code;
+    enum trans_error_code           imc_error_code;
     unsigned                        imc_bytes_in;
     unsigned                        imc_bytes_out;
     unsigned short                  imc_crypto_frames_sz;
@@ -112,6 +115,8 @@ struct ietf_mini_conn
     unsigned char                   imc_delayed_packets_count;
 #define IMICO_MAX_STASHED_FRAMES 10u
     unsigned char                   imc_n_crypto_frames;
+    unsigned short                  imc_hello_pkt_remain;
+    unsigned char                   imc_long_header_sz;
     struct network_path             imc_path;
 };
 
@@ -128,7 +133,7 @@ struct ietf_mini_conn
 
 struct lsquic_conn *
 lsquic_mini_conn_ietf_new (struct lsquic_engine_public *,
-               const struct lsquic_packet_in *,
+               struct lsquic_packet_in *,
                enum lsquic_version, int is_ipv4, const struct lsquic_cid *,
                size_t udp_payload_size);
 

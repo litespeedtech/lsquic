@@ -57,23 +57,23 @@ lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
     switch (packet_in->pi_flags & (PI_FROM_MINI|PI_GQUIC))
     {
     case PI_FROM_MINI|PI_GQUIC:
-        LCID("packet in: %"PRIu64" (from mini)", packet_in->pi_packno);
+        LCID("RX packet #%"PRIu64" (mini)", packet_in->pi_packno);
         break;
     case PI_FROM_MINI:
-        LCID("packet in: %"PRIu64" (from mini), type: %s, ecn: %u",
+        LCID("RX packet #%"PRIu64" %s (mini), ecn: %u",
             packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
             lsquic_packet_in_ecn(packet_in));
         break;
     case PI_GQUIC:
         packet_sz = packet_in->pi_data_sz
             + (packet_in->pi_flags & PI_DECRYPTED ? GQUIC_PACKET_HASH_SZ : 0);
-        LCID("packet in: %"PRIu64", size: %u", packet_in->pi_packno, packet_sz);
+        LCID("RX packet #%"PRIu64", size: %u", packet_in->pi_packno, packet_sz);
         break;
     default:
         packet_sz = packet_in->pi_data_sz
             + (packet_in->pi_flags & PI_DECRYPTED ? IQUIC_TAG_LEN : 0);
         if (packet_in->pi_flags & PI_LOG_QL_BITS)
-            LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
+            LCID("RX packet #%"PRIu64" %s, size: %u; ecn: %u, spin: %d; "
                 "path: %hhu; Q: %d; L: %d",
                 packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
                 packet_sz,
@@ -83,7 +83,7 @@ lsquic_ev_log_packet_in (const lsquic_cid_t *cid,
                 ((packet_in->pi_flags & PI_SQUARE_BIT) > 0),
                 ((packet_in->pi_flags & PI_LOSS_BIT) > 0));
         else
-            LCID("packet in: %"PRIu64", type: %s, size: %u; ecn: %u, spin: %d; "
+            LCID("RX packet #%"PRIu64" %s, size: %u; ecn: %u, spin: %d; "
                 "path: %hhu",
                 packet_in->pi_packno, lsquic_hety2str[packet_in->pi_header_type],
                 packet_sz,
@@ -102,7 +102,7 @@ lsquic_ev_log_ack_frame_in (const lsquic_cid_t *cid,
     char buf[MAX_ACKI_STR_SZ];
 
     lsquic_acki2str(acki, buf, sizeof(buf));
-    LCID("ACK frame in: %s", buf);
+    LCID("RX ACK frame: %s", buf);
 }
 
 
@@ -110,7 +110,7 @@ void
 lsquic_ev_log_stream_frame_in (const lsquic_cid_t *cid,
                                         const struct stream_frame *frame)
 {
-    LCID("STREAM frame in: stream %"PRIu64"; offset %"PRIu64"; size %"PRIu16
+    LCID("RX STREAM frame: stream %"PRIu64"; offset %"PRIu64"; size %"PRIu16
         "; fin: %d", frame->stream_id, frame->data_frame.df_offset,
         frame->data_frame.df_size, (int) frame->data_frame.df_fin);
 }
@@ -120,7 +120,7 @@ void
 lsquic_ev_log_crypto_frame_in (const lsquic_cid_t *cid,
                         const struct stream_frame *frame, unsigned enc_level)
 {
-    LCID("CRYPTO frame in: level %u; offset %"PRIu64"; size %"PRIu16,
+    LCID("RX CRYPTO frame: level %u; offset %"PRIu64"; size %"PRIu16,
         enc_level, frame->data_frame.df_offset, frame->data_frame.df_size);
 }
 
@@ -129,7 +129,7 @@ void
 lsquic_ev_log_stop_waiting_frame_in (const lsquic_cid_t *cid,
                                                         lsquic_packno_t least)
 {
-    LCID("STOP_WAITING frame in: least unacked packno %"PRIu64, least);
+    LCID("RX STOP_WAITING frame: least unacked packno %"PRIu64, least);
 }
 
 
@@ -137,7 +137,7 @@ void
 lsquic_ev_log_window_update_frame_in (const lsquic_cid_t *cid,
                                 lsquic_stream_id_t stream_id, uint64_t offset)
 {
-    LCID("WINDOW_UPDATE frame in: stream %"PRIu64"; offset %"PRIu64,
+    LCID("RX WINDOW_UPDATE frame: stream %"PRIu64"; offset %"PRIu64,
         stream_id, offset);
 }
 
@@ -146,7 +146,7 @@ void
 lsquic_ev_log_blocked_frame_in (const lsquic_cid_t *cid,
                                             lsquic_stream_id_t stream_id)
 {
-    LCID("BLOCKED frame in: stream %"PRIu64, stream_id);
+    LCID("RX BLOCKED frame: stream %"PRIu64, stream_id);
 }
 
 
@@ -154,7 +154,7 @@ void
 lsquic_ev_log_connection_close_frame_in (const lsquic_cid_t *cid,
                     uint64_t error_code, int reason_len, const char *reason)
 {
-    LCID("CONNECTION_CLOSE frame in: error code %"PRIu64", reason: %.*s",
+    LCID("RX CONNECTION_CLOSE frame: error code %"PRIu64", reason: %.*s",
         error_code, reason_len, reason);
 }
 
@@ -163,7 +163,7 @@ void
 lsquic_ev_log_goaway_frame_in (const lsquic_cid_t *cid, uint32_t error_code,
             lsquic_stream_id_t stream_id, int reason_len, const char *reason)
 {
-    LCID("GOAWAY frame in: error code %"PRIu32", stream %"PRIu64
+    LCID("RX GOAWAY frame: error code %"PRIu32", stream %"PRIu64
         ", reason: %.*s", error_code, stream_id, reason_len, reason);
 }
 
@@ -172,7 +172,7 @@ void
 lsquic_ev_log_rst_stream_frame_in (const lsquic_cid_t *cid,
         lsquic_stream_id_t stream_id, uint64_t offset, uint64_t error_code)
 {
-    LCID("RST_STREAM frame in: error code %"PRIu64", stream %"PRIu64
+    LCID("RX RST_STREAM frame: error code %"PRIu64", stream %"PRIu64
         ", offset: %"PRIu64, error_code, stream_id, offset);
 }
 
@@ -181,7 +181,7 @@ void
 lsquic_ev_log_stop_sending_frame_in (const lsquic_cid_t *cid,
                         lsquic_stream_id_t stream_id, uint64_t error_code)
 {
-    LCID("STOP_SENDING frame in: error code %"PRIu64", stream %"PRIu64,
+    LCID("RX STOP_SENDING frame: error code %"PRIu64", stream %"PRIu64,
                                                      error_code, stream_id);
 }
 
@@ -189,14 +189,14 @@ lsquic_ev_log_stop_sending_frame_in (const lsquic_cid_t *cid,
 void
 lsquic_ev_log_padding_frame_in (const lsquic_cid_t *cid, size_t len)
 {
-    LCID("PADDING frame in of %zd bytes", len);
+    LCID("RX PADDING frame of %zd bytes", len);
 }
 
 
 void
 lsquic_ev_log_ping_frame_in (const lsquic_cid_t *cid)
 {
-    LCID("PING frame in");
+    LCID("RX PING frame");
 }
 
 
@@ -204,8 +204,9 @@ void
 lsquic_ev_log_packet_created (const lsquic_cid_t *cid,
                                 const struct lsquic_packet_out *packet_out)
 {
-    LCID("created packet %"PRIu64"; flags: version=%d, nonce=%d, conn_id=%d",
+    LCID("created packet #%"PRIu64" %s; flags: version=%d, nonce=%d, conn_id=%d",
         packet_out->po_packno,
+        lsquic_hety2str[packet_out->po_header_type],
         !!(packet_out->po_flags & PO_VERSION),
         !!(packet_out->po_flags & PO_NONCE),
         !!(packet_out->po_flags & PO_CONN_ID));
@@ -218,34 +219,34 @@ lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
 {
     char frames[lsquic_frame_types_str_sz];
     if (lsquic_packet_out_verneg(packet_out))
-        LCID("sent version negotiation packet, size %hu",
+        LCID("TX version negotiation packet, size %hu",
                                                     packet_out->po_data_sz);
     else if (lsquic_packet_out_retry(packet_out))
-        LCID("sent stateless retry packet, size %hu", packet_out->po_data_sz);
+        LCID("TX stateless retry packet, size %hu", packet_out->po_data_sz);
     else if (lsquic_packet_out_pubres(packet_out))
-        LCID("sent public reset packet, size %hu", packet_out->po_data_sz);
+        LCID("TX public reset packet, size %hu", packet_out->po_data_sz);
     else if (packet_out->po_lflags & POL_GQUIC)
-        LCID("sent packet %"PRIu64", size %hu, frame types: %s",
-            packet_out->po_packno, packet_out->po_enc_data_sz,
+        LCID("TX packet #%"PRIu64" (%s), size %hu",
+            packet_out->po_packno,
                 /* Frame types is a list of different frames types contained
                  * in the packet, no more.  Count and order of frames is not
                  * printed.
                  */
                 lsquic_frame_types_to_str(frames, sizeof(frames),
-                                                packet_out->po_frame_types));
+                                          packet_out->po_frame_types),
+             packet_out->po_enc_data_sz);
     else if (packet_out->po_lflags & POL_LOG_QL_BITS)
-        LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
-            "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u; "
+        LCID("TX packet #%"PRIu64" %s (%s), size %hu, "
+            "ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u; "
             "Q: %u; L: %u",
             packet_out->po_packno, lsquic_hety2str[packet_out->po_header_type],
-            lsquic_enclev2str[ lsquic_packet_out_enc_level(packet_out) ],
-            packet_out->po_enc_data_sz,
                 /* Frame types is a list of different frames types contained
                  * in the packet, no more.  Count and order of frames is not
                  * printed.
                  */
                 lsquic_frame_types_to_str(frames, sizeof(frames),
                                                 packet_out->po_frame_types),
+                packet_out->po_enc_data_sz,
                 lsquic_packet_out_ecn(packet_out),
                 /* spin bit value is only valid for short packet headers */
                 lsquic_packet_out_spin_bit(packet_out),
@@ -255,17 +256,16 @@ lsquic_ev_log_packet_sent (const lsquic_cid_t *cid,
                 lsquic_packet_out_square_bit(packet_out),
                 lsquic_packet_out_loss_bit(packet_out));
     else
-        LCID("sent packet %"PRIu64", type %s, crypto: %s, size %hu, frame "
-            "types: %s, ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u",
+        LCID("TX packet #%"PRIu64" %s (%s), size %hu, "
+            "ecn: %u, spin: %d; kp: %u, path: %hhu, flags: %u",
             packet_out->po_packno, lsquic_hety2str[packet_out->po_header_type],
-            lsquic_enclev2str[ lsquic_packet_out_enc_level(packet_out) ],
-            packet_out->po_enc_data_sz,
                 /* Frame types is a list of different frames types contained
                  * in the packet, no more.  Count and order of frames is not
                  * printed.
                  */
                 lsquic_frame_types_to_str(frames, sizeof(frames),
                                                 packet_out->po_frame_types),
+                packet_out->po_enc_data_sz,
                 lsquic_packet_out_ecn(packet_out),
                 /* spin bit value is only valid for short packet headers */
                 lsquic_packet_out_spin_bit(packet_out),
@@ -280,13 +280,14 @@ lsquic_ev_log_packet_not_sent (const lsquic_cid_t *cid,
                                 const struct lsquic_packet_out *packet_out)
 {
     char frames[lsquic_frame_types_str_sz];
-    LCID("unsent packet %"PRIu64", size %hu, frame types: %s",
-        packet_out->po_packno, packet_out->po_enc_data_sz,
+    LCID("unsent packet #%"PRIu64" %s, size %hu",
+        packet_out->po_packno,
             /* Frame types is a list of different frames types contained in
              * the packet, no more.  Count and order of frames is not printed.
              */
             lsquic_frame_types_to_str(frames, sizeof(frames),
-                                                packet_out->po_frame_types));
+                                      packet_out->po_frame_types),
+            packet_out->po_enc_data_sz);
 }
 
 

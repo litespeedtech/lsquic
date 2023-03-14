@@ -363,7 +363,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_version = tobjs->lconn.cn_pf == &lsquic_parse_funcs_ietf_v1 ?
-        LSQVER_ID27 : LSQVER_043;
+        LSQVER_I001 : LSQVER_043;
     tobjs->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
     network_path.np_pack_size = 1370;
     tobjs->lconn.cn_if = &our_conn_if;
@@ -1620,7 +1620,7 @@ test_termination (void)
         {
             init_test_ctl_settings(&g_ctl_settings);
             g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
-            init_test_objs(&tobjs, 0x4000, 0x4000, select_pf_by_ver(LSQVER_ID27));
+            init_test_objs(&tobjs, 0x4000, 0x4000, select_pf_by_ver(LSQVER_I001));
             tf->func(&tobjs);
             deinit_test_objs(&tobjs);
         }
@@ -2619,7 +2619,7 @@ test_changing_pack_size (void)
     enum lsquic_version versions_to_test[3] =
     {
         LSQVER_046,
-        LSQVER_ID27,
+        LSQVER_I001,
     };
 
     for (i = 0; i < 3; i++)
@@ -3005,7 +3005,7 @@ test_resize_buffered (void)
     ssize_t nw;
     struct test_objs tobjs;
     struct lsquic_stream *streams[1];
-    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID27);
+    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_I001);
     char buf[0x10000];
     unsigned char buf_out[0x10000];
     int s, fin;
@@ -3068,7 +3068,7 @@ test_resize_scheduled (void)
     ssize_t nw;
     struct test_objs tobjs;
     struct lsquic_stream *streams[1];
-    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_ID27);
+    const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_I001);
     char buf[0x10000];
     unsigned char buf_out[0x10000];
     int s, fin;
@@ -3260,8 +3260,8 @@ test_packetization (int schedule_stream_packets_immediately, int dispatch_once,
 
     if (g_use_crypto_ctor)
     {
-        stream_ids[0] = ENC_LEV_CLEAR;
-        stream_ids[1] = ENC_LEV_INIT;
+        stream_ids[0] = ENC_LEV_INIT;
+        stream_ids[1] = ENC_LEV_HSK;
     }
     else
     {
@@ -3754,7 +3754,7 @@ main (int argc, char **argv)
 
     /* Redo some tests using crypto streams and frames */
     g_use_crypto_ctor = 1;
-    g_pf = select_pf_by_ver(LSQVER_ID27);
+    g_pf = select_pf_by_ver(LSQVER_I001);
     main_test_packetization();
 
     return 0;

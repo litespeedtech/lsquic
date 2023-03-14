@@ -1608,7 +1608,7 @@ process_stream_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
 
     enc_level = lsquic_packet_in_enc_level(packet_in);
     if (!is_handshake_stream_id(conn, stream_frame->stream_id)
-        && enc_level == ENC_LEV_CLEAR)
+        && enc_level == ENC_LEV_INIT)
     {
         lsquic_malo_put(stream_frame);
         ABORT_ERROR("received unencrypted data for stream %"PRIu64,
