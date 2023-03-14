@@ -906,6 +906,7 @@ send_ctl_process_loss_chain_pkt (struct lsquic_send_ctl *ctl,
         break;
     default:
         assert(0);
+        state = "bad";
         break;
     }
     if (next && *next == chain_cur)

@@ -205,7 +205,7 @@ imico_process_version_negociation (struct ietf_mini_conn *conn,
     common_versions = conn->imc_enpub->enp_settings.es_versions
                 & params->tp_versions;
     ver = highest_bit_set(common_versions);
-    if (conn->imc_conn.cn_version != ver)
+    if (conn->imc_conn.cn_version != (enum lsquic_version)ver)
     {
         LSQ_DEBUG("version negociation: switch version from %s to %s",
                   lsquic_ver2str[conn->imc_conn.cn_version],

@@ -393,7 +393,7 @@ lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     size_t ad_len, out_len;
     unsigned ret_ver;
     ssize_t sz;
-    const size_t INTEGRITY_TAG_LEN = 16;
+#define INTEGRITY_TAG_LEN 16
 
     /* [draft-ietf-quic-tls-25] Section 5.8 specifies the layout of the
      * Retry Pseudo-Packet:

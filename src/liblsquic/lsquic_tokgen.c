@@ -1,6 +1,5 @@
 /* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
-#include <arpa/inet.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +7,7 @@
 #include <time.h>
 
 #ifndef WIN32
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #endif
