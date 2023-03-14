@@ -10,6 +10,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#else
+#include "vc_compat.h"
+#include <Ws2tcpip.h>
 #endif
 
 #include <openssl/aead.h>
