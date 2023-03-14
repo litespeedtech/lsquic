@@ -35,7 +35,7 @@ The following QUIC protocol extensions are implemented:
 
 - [QUIC Version 2](https://www.rfc-editor.org/authors/rfc9369.html)
 - [Compatible Version Negotiation](https://datatracker.ietf.org/doc/draft-ietf-quic-version-negotiation/)
-- [Datagrams](https://datatracker.ietf.org/doc/html/rfc9221)`
+- [Datagrams](https://datatracker.ietf.org/doc/html/rfc9221)
 - [ACK Frequency](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
 - [Greasing the QUIC Bit](https://datatracker.ietf.org/doc/html/rfc9287)
 
