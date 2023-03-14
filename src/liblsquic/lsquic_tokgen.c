@@ -705,7 +705,7 @@ tokgen_generate_token (struct token_generator *tokgen,
     unsigned char label[ LABEL_PREFIX_SZ + sizeof(crypter->nonce_counter) ];
     char in_str[(MAX_RETRY_TOKEN_LEN - RETRY_NONCE_LEN
                                                     - RETRY_TAG_LEN) * 2 + 1],
-         ad_str[ad_len * 2 + 1],
+         ad_str[MAX_CID_LEN * 2 + 1],
          token_str[MAX_RETRY_TOKEN_LEN * 2 + 1];
 
     if (bufsz < MAX_RETRY_TOKEN_LEN)
