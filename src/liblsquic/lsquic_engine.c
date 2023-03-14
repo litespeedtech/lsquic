@@ -1187,9 +1187,12 @@ promote_mini_conn (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
         if (mini_conn->cn_flags & LSCONN_HASHED)
             remove_conn_from_hash(engine, mini_conn);
 
-        lsquic_mh_insert(&engine->conns_tickable, new_conn,
-                         new_conn->cn_last_ticked);
-        engine_incref_conn(new_conn, LSCONN_TICKABLE);
+        if (!(new_conn->cn_flags & LSCONN_TICKABLE))
+        {
+            lsquic_mh_insert(&engine->conns_tickable, new_conn,
+                            new_conn->cn_last_ticked);
+            engine_incref_conn(new_conn, LSCONN_TICKABLE);
+        }
         return 0;
     }
     return -1;
