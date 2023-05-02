@@ -386,7 +386,7 @@ nocopy_di_insert_frame (struct data_in *data_in,
     ins_case = insert_frame(ncdi, new_frame, read_offset, &count);
     ins = ins_case & 0xFF;
     ins_case >>= 8;
-    LSQ_DEBUG("%s: ins: %d (case '%c')", __func__, ins, (char) ins_case);
+    LSQ_DEBUG("ins: %d (case '%c')", ins, (char) ins_case);
     switch (ins)
     {
     case INS_FRAME_OK:

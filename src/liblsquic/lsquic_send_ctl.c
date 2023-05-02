@@ -1712,8 +1712,8 @@ static int
 send_ctl_can_send (struct lsquic_send_ctl *ctl)
 {
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
-    LSQ_DEBUG("%s: n_out: %u (unacked_all: %u); cwnd: %"PRIu64
-        "; ccfc: %"PRIu64"/%"PRIu64, __func__,
+    LSQ_DEBUG("n_out: %u (unacked_all: %u); cwnd: %"PRIu64
+        "; ccfc: %"PRIu64"/%"PRIu64,
         n_out, ctl->sc_bytes_unacked_all,
         ctl->sc_ci->cci_get_cwnd(CGP(ctl)),
         ctl->sc_conn_pub->conn_cap.cc_sent,
@@ -1749,8 +1749,8 @@ send_ctl_can_send_pre_hsk (struct lsquic_send_ctl *ctl)
     if (bytes_out >= bytes_in * 2 + bytes_in / 2 /* This should work out
                                                 to around 3 on average */)
     {
-        LSQ_DEBUG("%s: amplification block: %u bytes in, %u bytes out",
-                                            __func__, bytes_in, bytes_out);
+        LSQ_DEBUG("amplification block: %u bytes in, %u bytes out",
+                                            bytes_in, bytes_out);
         return 0;
     }
     else
@@ -2608,7 +2608,7 @@ send_ctl_log_packet_q (const lsquic_send_ctl_t *ctl, const char *prefix,
     buf = malloc(bufsz);
     if (!buf)
     {
-        LSQ_ERROR("%s: malloc: %s", __func__, strerror(errno));
+        LSQ_ERROR("malloc: %s", strerror(errno));
         return;
     }
 

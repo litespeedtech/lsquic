@@ -1284,8 +1284,7 @@ mini_rechist_largest_recv (void *rechist_ctx)
     lsquic_time_t delta =  mc->mc_largest_recv[0]
                         + (mc->mc_largest_recv[1] << 8)
                         + (mc->mc_largest_recv[2] << 16);
-    LSQ_DEBUG("%s: largest received: %"PRIu64" usec since creation",
-                                                            __func__, delta);
+    LSQ_DEBUG("largest received: %"PRIu64" usec since creation", delta);
     return mc->mc_created + delta;
 }
 
@@ -1323,7 +1322,7 @@ mini_rechist_next (void *rechist_ctx)
     }
     else
         rechist->cur_set = 0;
-    LSQ_DEBUG("%s: return [%"PRIu64", %"PRIu64"]", __func__,
+    LSQ_DEBUG("return [%"PRIu64", %"PRIu64"]",
                                 rechist->range.low, rechist->range.high);
     return &rechist->range;
 }
@@ -1349,7 +1348,7 @@ least_unacked (const struct mini_conn *mc)
         packno = lowest_bit_set(unacked) + 1;
     else
         packno = highest_bit_set(mc->mc_sent_packnos) + 2;
-    LSQ_DEBUG("%s: least unacked: %"PRIu64, __func__, packno);
+    LSQ_DEBUG("least unacked: %"PRIu64, packno);
     return packno;
 }
 
@@ -1953,7 +1952,7 @@ mini_conn_ci_packet_sent (struct lsquic_conn *lconn,
         assert(mc->mc_flags & MC_UNSENT_ACK);
         mc->mc_flags &= ~MC_UNSENT_ACK;
     }
-    LSQ_DEBUG("%s: packet %"PRIu64" sent", __func__, packet_out->po_packno);
+    LSQ_DEBUG("packet %"PRIu64" sent", packet_out->po_packno);
     MCHIST_APPEND(mc, MCHE_PACKET_SENT);
 }
 
@@ -1964,7 +1963,7 @@ mini_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 {
     struct mini_conn *mc = (struct mini_conn *) lconn;
     packet_out->po_flags &= ~PO_SENT;
-    LSQ_DEBUG("%s: packet %"PRIu64" not sent", __func__, packet_out->po_packno);
+    LSQ_DEBUG("packet %"PRIu64" not sent", packet_out->po_packno);
     MCHIST_APPEND(mc, MCHE_PACKET_DELAYED);
 }
 
@@ -2056,7 +2055,7 @@ mini_conn_ci_destroy (struct lsquic_conn *lconn)
             mc->mc_hist_buf + hist_idx, (int) hist_idx, mc->mc_hist_buf);
 #else
     if (LSQ_LOG_ENABLED(log_level))
-        lsquic_logger_log2(log_level, LSQUIC_LOGGER_MODULE,
+        lsquic_logger_log2(log_level, LSQUIC_LOGGER_MODULE, __func__,
                                    LSQUIC_LOG_CONN_ID,
         "destroyed.  Diagnostics: conn flags: 0x%X, "
         "mc flags: 0x%X, "

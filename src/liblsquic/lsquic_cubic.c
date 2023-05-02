@@ -109,7 +109,7 @@ cubic_update (struct lsquic_cubic *cubic, lsquic_time_t now, unsigned n_bytes)
 void
 lsquic_cubic_set_flags (struct lsquic_cubic *cubic, enum cubic_flags flags)
 {
-    LSQ_DEBUG("%s(cubic, 0x%X)", __func__, flags);
+    LSQ_DEBUG("(cubic, 0x%X)", flags);
     cubic->cu_flags = flags;
 }
 
@@ -132,7 +132,7 @@ lsquic_cubic_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
     else
 #endif
         cubic->cu_sampling_rate = 100000;
-    LSQ_DEBUG("%s(cubic, $conn)", __func__);
+    LSQ_DEBUG("(cubic, $conn)");
     LSQ_INFO("initialized");
 }
 
@@ -163,7 +163,7 @@ static void
 lsquic_cubic_was_quiet (void *cong_ctl, lsquic_time_t now, uint64_t in_flight)
 {
     struct lsquic_cubic *const cubic = cong_ctl;
-    LSQ_DEBUG("%s(cubic, %"PRIu64")", __func__, now);
+    LSQ_DEBUG("(cubic, %"PRIu64")", now);
     cubic->cu_epoch_start = 0;
 }
 
@@ -176,7 +176,7 @@ lsquic_cubic_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
     lsquic_time_t rtt;
 
     rtt = now_time - packet_out->po_sent;
-    LSQ_DEBUG("%s(cubic, %"PRIu64", %"PRIu64", %d, %u)", __func__, now_time, rtt,
+    LSQ_DEBUG("(cubic, %"PRIu64", %"PRIu64", %d, %u)", now_time, rtt,
                                                         app_limited, n_bytes);
     if (0 == cubic->cu_min_delay || rtt < cubic->cu_min_delay)
     {
@@ -203,7 +203,7 @@ static void
 lsquic_cubic_loss (void *cong_ctl)
 {
     struct lsquic_cubic *const cubic = cong_ctl;
-    LSQ_DEBUG("%s(cubic)", __func__);
+    LSQ_DEBUG("(cubic)");
     cubic->cu_epoch_start = 0;
     if (FAST_CONVERGENCE && cubic->cu_cwnd < cubic->cu_last_max_cwnd)
         cubic->cu_last_max_cwnd = cubic->cu_cwnd * TWO_MINUS_BETA_OVER_TWO / 1024;
@@ -225,7 +225,7 @@ lsquic_cubic_timeout (void *cong_ctl)
     unsigned long cwnd;
 
     cwnd = cubic->cu_cwnd;
-    LSQ_DEBUG("%s(cubic)", __func__);
+    LSQ_DEBUG("(cubic)");
     cubic_reset(cubic);
     cubic->cu_ssthresh = cwnd / 2;
     cubic->cu_tcp_cwnd = 2 * TCP_MSS;

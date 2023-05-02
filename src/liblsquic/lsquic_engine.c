@@ -963,7 +963,7 @@ destroy_conn (struct lsquic_engine *engine, struct lsquic_conn *conn,
     if (engine->busy.current == conn)
     {
         char cidstr[MAX_CID_LEN * 2 + 1];
-        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS, __func__,
             "busy connection %s is destroyed",
             (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr));
         engine->busy.current = NULL;
@@ -1040,7 +1040,7 @@ maybe_grow_conn_heaps (struct lsquic_engine *engine)
     els = malloc(sizeof(els[0]) * count);
     if (!els)
     {
-        LSQ_ERROR("%s: malloc failed", __func__);
+        LSQ_ERROR("malloc failed");
         return -1;
     }
 
@@ -1939,7 +1939,7 @@ lsquic_engine_connect (lsquic_engine_t *engine, enum lsquic_version version,
 
     if (engine->flags & ENG_SERVER)
     {
-        LSQ_ERROR("`%s' must only be called in client mode", __func__);
+        LSQ_ERROR("must only be called in client mode");
         goto err;
     }
 
@@ -2891,7 +2891,7 @@ send_packets_out (struct lsquic_engine *engine,
 
     coi_reheap(&conns_iter, engine);
 
-    LSQ_DEBUG("%s: sent %u packet%.*s", __func__, n_sent, n_sent != 1, "s");
+    LSQ_DEBUG("sent %u packet%.*s", n_sent, n_sent != 1, "s");
 }
 
 
@@ -3005,7 +3005,7 @@ maybe_log_conn_stats (struct lsquic_engine *engine, struct lsquic_conn *conn,
     }
     else
     {
-        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+        lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS, __func__,
             "stop logging status for connection %s: no longer busy",
             (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr));
         engine->busy.current = NULL;
@@ -3329,7 +3329,7 @@ update_busy_detector (struct lsquic_engine *engine, struct lsquic_conn *conn,
         if (MAX_IMMED_TICKS == engine->busy.immed_ticks)
         {
             if (engine->busy.current != conn)
-                lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+                lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS, __func__,
                     "connection %s marked busy: it's had %u immediate ticks "
                     "in a row",
                     (lsquic_cid2str(lsquic_conn_log_cid(conn), cidstr), cidstr),

@@ -230,12 +230,12 @@ lsquic_frame_reader_destroy (struct lsquic_frame_reader *fr)
     assert(nread <= 0);                                                 \
     if (0 == nread)                                                     \
     {                                                                   \
-        LSQ_INFO("%s: unexpected EOF", __func__);                        \
+        LSQ_INFO("unexpected EOF");                                     \
         return -1;                                                      \
     }                                                                   \
     else                                                                \
     {                                                                   \
-        LSQ_WARN("%s: error reading from stream: %s", __func__,          \
+        LSQ_WARN("error reading from stream: %s",                   \
             strerror(errno));                                           \
         return -1;                                                      \
     }                                                                   \
@@ -690,7 +690,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     return;
 
   stream_error:
-    LSQ_INFO("%s: stream error %u", __func__, err);
+    LSQ_INFO("stream error %u", err);
     if (hset)
         fr->fr_hsi_if->hsi_discard_header_set(hset);
     fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, fr_get_stream_id(fr), err);

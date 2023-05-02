@@ -1788,7 +1788,7 @@ ietf_mini_conn_ci_packet_sent (struct lsquic_conn *lconn,
 #endif
     if (packet_out->po_header_type == HETY_HANDSHAKE)
         conn->imc_flags |= IMC_HSK_PACKET_SENT;
-    LSQ_DEBUG("%s: packet %"PRIu64" sent", __func__, packet_out->po_packno);
+    LSQ_DEBUG("packet %"PRIu64" sent", packet_out->po_packno);
 }
 
 
@@ -1802,7 +1802,7 @@ ietf_mini_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
     packet_out->po_flags &= ~PO_SENT;
     packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
     conn->imc_bytes_out -= packet_size;
-    LSQ_DEBUG("%s: packet %"PRIu64" not sent", __func__, packet_out->po_packno);
+    LSQ_DEBUG("packet %"PRIu64" not sent", packet_out->po_packno);
 }
 
 
@@ -1972,7 +1972,7 @@ imico_bitmask_rechist_next (struct ietf_mini_rechist *rechist)
     }
     else
         rechist->u.bitmask.cur_set = 0;
-    LSQ_DEBUG("%s: return [%"PRIu64", %"PRIu64"]", __func__,
+    LSQ_DEBUG("return [%"PRIu64", %"PRIu64"]",
                 rechist->u.bitmask.range.low, rechist->u.bitmask.range.high);
     return &rechist->u.bitmask.range;
 }

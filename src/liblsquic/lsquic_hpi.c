@@ -327,8 +327,7 @@ lsquic_hpi_next (void *iter_p)
         stream = next_nonincr(iter, prio);
 
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
-        HPI_DEBUG("%s: return stream %"PRIu64", incr: %u, priority %u",
-                                            __func__, stream->id, incr, prio);
+        HPI_DEBUG("return stream %"PRIu64", incr: %u, priority %u", stream->id, incr, prio);
     return stream;
 }
 

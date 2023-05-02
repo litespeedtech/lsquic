@@ -143,7 +143,7 @@ qdh_begin_out (struct qpack_dec_hdl *qdh)
 {
     if (0 != qdh_write_type(qdh))
     {
-        LSQ_WARN("%s: could not write to decoder", __func__);
+        LSQ_WARN("could not write to decoder");
         qdh->qdh_conn->cn_if->ci_internal_error(qdh->qdh_conn,
                                         "cannot write to decoder stream");
     }
@@ -280,7 +280,7 @@ qdh_out_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
 
     if (lsquic_frab_list_empty(&qdh->qdh_fral))
     {
-        LSQ_DEBUG("%s: nothing to write", __func__);
+        LSQ_DEBUG("nothing to write");
         lsquic_stream_wantwrite(stream, 0);
         return;
     }

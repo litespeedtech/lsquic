@@ -919,7 +919,7 @@ lsquic_gquic_be_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
     CHECKOUT(2);
     time_diff = now - rechist_largest_recv(rechist);
     lsquic_gquic_be_write_float_time16(time_diff, p);
-    LSQ_DEBUG("%s: diff: %"PRIu64"; encoded: 0x%04X", __func__, time_diff,
+    LSQ_DEBUG("diff: %"PRIu64"; encoded: 0x%04X", time_diff,
         *(uint16_t*)p);
     p += 2;
 

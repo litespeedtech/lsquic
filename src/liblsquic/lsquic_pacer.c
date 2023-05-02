@@ -59,7 +59,7 @@ lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
     if (n_in_flight == 0 && !in_recovery)
     {
         pacer->pa_burst_tokens = 10;
-        LSQ_DEBUG("%s: replenish tokens: %u", __func__, pacer->pa_burst_tokens);
+        LSQ_DEBUG("replenish tokens: %u", pacer->pa_burst_tokens);
     }
 
     if (pacer->pa_burst_tokens > 0)
@@ -68,7 +68,7 @@ lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
         pacer->pa_flags &= ~PA_LAST_SCHED_DELAYED;
         pacer->pa_next_sched = 0;
         pacer->pa_last_delayed = 0;
-        LSQ_DEBUG("%s: tokens: %u", __func__, pacer->pa_burst_tokens);
+        LSQ_DEBUG("tokens: %u", pacer->pa_burst_tokens);
         return;
     }
 
@@ -101,7 +101,7 @@ void
 lsquic_pacer_loss_event (struct pacer *pacer)
 {
     pacer->pa_burst_tokens = 0;
-    LSQ_DEBUG("%s: tokens: %u", __func__, pacer->pa_burst_tokens);
+    LSQ_DEBUG("tokens: %u", pacer->pa_burst_tokens);
 }
 
 
@@ -120,7 +120,7 @@ lsquic_pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
     else
         can = 1;
 
-    LSQ_DEBUG("%s: %d", __func__, can);
+    LSQ_DEBUG("%d", can);
     return can;
 }
 
