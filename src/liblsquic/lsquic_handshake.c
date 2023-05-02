@@ -1880,7 +1880,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
 
     temp_scfg->scfg_len = MSG_LEN_VAL(msg_len);
 
-    LSQ_DEBUG("%s called, return len %d.", __func__, temp_scfg->scfg_len);
+    LSQ_DEBUG("called, return len %d.", temp_scfg->scfg_len);
 
 //     /* TODO: will shi_delete call free to release the buffer? */
 //     shi->shi_delete(shi_ctx, SERVER_SCFG_KEY, SERVER_SCFG_KEY_SIZE);
@@ -2870,8 +2870,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
 
   end:
     LSQ_DEBUG("lsquic_enc_session_handle_chlo_reply called, buf in %d, return %d.", len, ret);
-    EV_LOG_CONN_EVENT(&enc_session->cid, "%s returning %s", __func__,
-                                                                he2str(ret));
+    EV_LOG_CONN_EVENT(&enc_session->cid, "returning %s", he2str(ret));
     return ret;
 }
 
@@ -3226,9 +3225,9 @@ gquic_encrypt_buf (struct lsquic_enc_session *enc_session,
     EVP_AEAD_CTX *key;
 
     if (enc_session)
-        LSQ_DEBUG("%s: hsk_state: %d", __func__, enc_session->hsk_state);
+        LSQ_DEBUG("hsk_state: %d", enc_session->hsk_state);
     else
-        LSQ_DEBUG("%s: enc_session is not set", __func__);
+        LSQ_DEBUG("enc_session is not set");
 
     if (!enc_session || enc_session->have_key == 0 || is_chlo)
     {
@@ -3361,8 +3360,7 @@ lsquic_enc_session_handle_chlo(enc_session_t *enc_session_p,
     }
 
   end:
-    EV_LOG_CONN_EVENT(&enc_session->cid, "%s returning %s", __func__,
-                                                            he2str(rtt));
+    EV_LOG_CONN_EVENT(&enc_session->cid, "returning %s", he2str(rtt));
     return rtt;
 }
 

@@ -245,7 +245,7 @@ void
 lsquic_logger_log3 (enum lsq_log_level log_level,
                     enum lsquic_logger_module module,
                     const lsquic_cid_t *conn_id, lsquic_stream_id_t stream_id,
-                    const char *fmt, ...)
+                    const char *caller, const char *fmt, ...)
 {
     const int saved_errno = errno;
     char cidbuf_[MAX_CID_LEN * 2 + 1];
@@ -261,9 +261,9 @@ lsquic_logger_log3 (enum lsq_log_level log_level,
             goto end;
         len += lb;
     }
-    lb = snprintf(buf + len, max - len, "[%s] [QUIC:%"CID_FMT"-%"PRIu64"] %s: ",
+    lb = snprintf(buf + len, max - len, "[%s] [QUIC:%"CID_FMT"-%"PRIu64"] %s::%s: ",
         lsq_loglevel2str[log_level], CID_BITS(conn_id),
-        stream_id, lsqlm_to_str[module]);
+        stream_id, lsqlm_to_str[module], caller);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -292,7 +292,8 @@ end:
 void
 lsquic_logger_log2 (enum lsq_log_level log_level,
                     enum lsquic_logger_module module,
-                    const struct lsquic_cid *conn_id, const char *fmt, ...)
+                    const struct lsquic_cid *conn_id, const char *caller,
+                    const char *fmt, ...)
 {
     const int saved_errno = errno;
     char cidbuf_[MAX_CID_LEN * 2 + 1];
@@ -309,8 +310,8 @@ lsquic_logger_log2 (enum lsq_log_level log_level,
         len += lb;
     }
 
-    lb = snprintf(buf + len, max - len, "[%s] [QUIC:%"CID_FMT"] %s: ",
-        lsq_loglevel2str[log_level], CID_BITS(conn_id), lsqlm_to_str[module]);
+    lb = snprintf(buf + len, max - len, "[%s] [QUIC:%"CID_FMT"] %s::%s: ",
+        lsq_loglevel2str[log_level], CID_BITS(conn_id), lsqlm_to_str[module], caller);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -339,7 +340,7 @@ end:
 void
 lsquic_logger_log1 (enum lsq_log_level log_level,
                     enum lsquic_logger_module module,
-                    const char *fmt, ...)
+                    const char *caller, const char *fmt, ...)
 {
     const int saved_errno = errno;
     size_t len = 0;
@@ -354,8 +355,8 @@ lsquic_logger_log1 (enum lsq_log_level log_level,
             goto end;
         len += lb;
     }
-    lb = snprintf(buf + len, max - len, "[%s] %s: ", lsq_loglevel2str[log_level],
-                                                lsqlm_to_str[module]);
+    lb = snprintf(buf + len, max - len, "[%s] %s::%s: ", lsq_loglevel2str[log_level],
+                                                lsqlm_to_str[module], caller);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -382,7 +383,8 @@ end:
 
 
 void
-lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
+lsquic_logger_log0 (enum lsq_log_level log_level, const char *caller,
+					const char *fmt, ...)
 {
     const int saved_errno = errno;
     size_t len = 0;
@@ -398,7 +400,7 @@ lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
         len += lb;
     }
 
-    lb = snprintf(buf + len, max - len, "[%s] ", lsq_loglevel2str[log_level]);
+    lb = snprintf(buf + len, max - len, "[%s] %s: ", lsq_loglevel2str[log_level], caller);
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
@@ -432,7 +434,7 @@ lsquic_logger_init (const struct lsquic_logger_if *lif, void *lctx,
     logger_ctx = lctx;
     if (llts < N_LLTS)
         g_llts = llts;
-    LSQ_DEBUG("%s called", __func__);
+    LSQ_DEBUG("called");
 }
 
 

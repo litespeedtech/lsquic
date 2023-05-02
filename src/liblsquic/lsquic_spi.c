@@ -119,7 +119,7 @@ find_and_set_lowest_priority (struct stream_prio_iter *iter)
 
     if (set >= 4)
     {
-        //SPI_DEBUG("%s: cannot find any", __func__);
+        //SPI_DEBUG("cannot find any");
         return -1;
     }
 
@@ -138,7 +138,7 @@ find_and_set_lowest_priority (struct stream_prio_iter *iter)
     assert(iter->spi_set[ set ] & (1ULL << bit));
 #endif
 
-    SPI_DEBUG("%s: prio %u -> %u", __func__, iter->spi_cur_prio, prio);
+    SPI_DEBUG("prio %u -> %u", iter->spi_cur_prio, prio);
     iter->spi_cur_prio = (unsigned char) prio;
     return 0;
 }
@@ -171,7 +171,7 @@ find_and_set_next_priority (struct stream_prio_iter *iter)
 
     if (set >= 4)
     {
-        //SPI_DEBUG("%s: cannot find any", __func__);
+        //SPI_DEBUG("cannot find any");
         return -1;
     }
 
@@ -191,7 +191,7 @@ find_and_set_next_priority (struct stream_prio_iter *iter)
     assert(iter->spi_set[ set ] & (1ULL << bit));
 #endif
 
-    SPI_DEBUG("%s: prio %u -> %u", __func__, iter->spi_cur_prio, prio);
+    SPI_DEBUG("prio %u -> %u", iter->spi_cur_prio, prio);
     iter->spi_cur_prio = (unsigned char) prio;
     return 0;
 }
@@ -212,7 +212,7 @@ lsquic_spi_first (void *iter_p)
     {
         if (0 != find_and_set_lowest_priority(iter))
         {
-            SPI_DEBUG("%s: return NULL", __func__);
+            SPI_DEBUG("return NULL, iter_p=%p", iter_p);
             return NULL;
         }
     }
@@ -220,7 +220,7 @@ lsquic_spi_first (void *iter_p)
     stream = TAILQ_FIRST(&iter->spi_streams[ iter->spi_cur_prio ]);
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
-        SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+        SPI_DEBUG("return stream %"PRIu64", priority %u",
                                             stream->id, iter->spi_cur_prio);
     return stream;
 }
@@ -237,14 +237,14 @@ lsquic_spi_next (void *iter_p)
     {
         iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
         if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
-            SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+            SPI_DEBUG("return stream %"PRIu64", priority %u",
                                             stream->id, iter->spi_cur_prio);
         return stream;
     }
 
     if (0 != find_and_set_next_priority(iter))
     {
-        //SPI_DEBUG("%s: return NULL", __func__);
+        //SPI_DEBUG("return NULL");
         return NULL;
     }
 
@@ -252,7 +252,7 @@ lsquic_spi_next (void *iter_p)
     iter->spi_next_stream = TAILQ_NEXT(stream, next_prio_stream);
 
     if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG) && !lsquic_stream_is_critical(stream))
-        SPI_DEBUG("%s: return stream %"PRIu64", priority %u", __func__,
+        SPI_DEBUG("return stream %"PRIu64", priority %u",
                                             stream->id, iter->spi_cur_prio);
     return stream;
 }

@@ -733,8 +733,8 @@ maybe_exit_startup_or_drain (struct lsquic_bbr *bbr, lsquic_time_t now,
     if (bbr->bbr_mode == BBR_MODE_DRAIN)
     {
         target_cwnd = get_target_cwnd(bbr, 1);
-        LSQ_DEBUG("%s: bytes in flight: %"PRIu64"; target cwnd: %"PRIu64,
-                                    __func__, bytes_in_flight, target_cwnd);
+        LSQ_DEBUG("bytes in flight: %"PRIu64"; target cwnd: %"PRIu64,
+                                    bytes_in_flight, target_cwnd);
         if (bytes_in_flight <= target_cwnd)
             enter_probe_bw_mode(bbr, now);
     }
@@ -799,9 +799,9 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
     {
         lsquic_bw_sampler_app_limited(&bbr->bbr_bw_sampler);
-        LSQ_DEBUG("%s: exit probe at: %"PRIu64"; now: %"PRIu64
+        LSQ_DEBUG("exit probe at: %"PRIu64"; now: %"PRIu64
             "; round start: %d; round passed: %d; rtt: %"PRIu64" usec",
-            __func__, bbr->bbr_exit_probe_rtt_at, now, is_round_start,
+            bbr->bbr_exit_probe_rtt_at, now, is_round_start,
             !!(bbr->bbr_flags & BBR_FLAG_PROBE_RTT_ROUND_PASSED),
             lsquic_rtt_stats_get_min_rtt(bbr->bbr_rtt_stats));
         if (bbr->bbr_exit_probe_rtt_at == 0)

@@ -23,13 +23,15 @@ struct stack_st_X509;
 /* Log a generic event not tied to any particular connection */
 #define EV_LOG_GENERIC_EVENT(...) do {                                      \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
-        lsquic_logger_log1(LSQ_LOG_DEBUG, LSQLM_EVENT, __VA_ARGS__);        \
+        lsquic_logger_log1(LSQ_LOG_DEBUG, LSQLM_EVENT, 						\
+        					__func__, __VA_ARGS__);        					\
 } while (0)
 
 /* Log a generic event associated with connection `cid' */
 #define EV_LOG_CONN_EVENT(cid, ...) do {                                    \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
-        lsquic_logger_log2(LSQ_LOG_DEBUG, LSQLM_EVENT, cid, __VA_ARGS__);   \
+        lsquic_logger_log2(LSQ_LOG_DEBUG, LSQLM_EVENT, cid, 				\
+        					__func__, __VA_ARGS__);   						\
 } while (0)
 
 void

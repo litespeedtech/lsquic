@@ -698,7 +698,7 @@ cid_throt_alarm_expired (enum alarm_id al_id, void *ctx,
                                     lsquic_time_t expiry, lsquic_time_t now)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
-    LSQ_DEBUG("%s", __func__);
+    LSQ_DEBUG("called");
     conn->ifc_send_flags |= SF_SEND_NEW_CID;
     return;
 }
@@ -1798,7 +1798,7 @@ generate_timestamp_frame (struct ietf_full_conn *conn,
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                             QUIC_FRAME_TIMESTAMP, packet_out->po_data_sz, w))
     {
-        LSQ_DEBUG("%s: adding frame to packet failed: %d", __func__, errno);
+        LSQ_DEBUG("adding frame to packet failed: %d", errno);
         return;
     }
     packet_out->po_frame_types |= 1 << QUIC_FRAME_TIMESTAMP;
@@ -3066,7 +3066,7 @@ retire_seqno (struct ietf_full_conn *conn, unsigned seqno)
         conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
     }
     else
-        LSQ_INFO("%s: cannot allocate dce", __func__);
+        LSQ_INFO("cannot allocate dce");
 }
 
 
@@ -3101,7 +3101,7 @@ ietf_full_conn_ci_retire_cid (struct lsquic_conn *lconn)
         }
     if (!dces[1])
     {
-        ABORT_WARN("%s: cannot find own DCID", __func__);
+        ABORT_WARN("cannot find own DCID");
         return;
     }
     if (!dces[0])
@@ -4326,13 +4326,13 @@ immediate_close (struct ietf_full_conn *conn)
                      conn_err.u.err, error_reason,
                      error_reason ? strlen(error_reason) : 0);
     if (sz < 0) {
-        LSQ_WARN("%s failed", __func__);
+        LSQ_WARN("failed");
         return TICK_CLOSE;
     }
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                     QUIC_FRAME_CONNECTION_CLOSE, packet_out->po_data_sz, sz))
     {
-        LSQ_WARN("%s: adding frame to packet failed: %d", __func__, errno);
+        LSQ_WARN("adding frame to packet failed: %d", errno);
         return TICK_CLOSE;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
@@ -4902,8 +4902,7 @@ ietf_full_conn_ci_next_tick_time (struct lsquic_conn *lconn, unsigned *why)
     {
         now = lsquic_time_now();
         if (pacer_time < now)
-            LSQ_DEBUG("%s: pacer is %"PRIu64" usec in the past", __func__,
-                                                            now - pacer_time);
+            LSQ_DEBUG("pacer is %"PRIu64" usec in the past", now - pacer_time);
     }
 
     if (alarm_time && pacer_time)
@@ -7192,15 +7191,14 @@ verify_retry_packet (struct ietf_full_conn *conn,
         /* Cover the theoretical possibility that we cannot fit the pseudo-
          * packet and 16-byte decrypted output into 4 KB:
          */
-        LSQ_INFO("%s: Retry packet is too long: %hu bytes", __func__,
-                                                        packet_in->pi_data_sz);
+        LSQ_INFO("Retry packet is too long: %hu bytes", packet_in->pi_data_sz);
         return -1;
     }
 
     pseudo_packet = lsquic_mm_get_4k(conn->ifc_pub.mm);
     if (!pseudo_packet)
     {
-        LSQ_INFO("%s: cannot allocate memory", __func__);
+        LSQ_INFO("cannot allocate memory");
         return -1;
     }
 
@@ -7344,7 +7342,7 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
 
     cce->cce_flags |= CCE_USED;
     lconn->cn_cur_cce_idx = cce - lconn->cn_cces;
-    LSQ_DEBUGC("%s: set SCID to %"CID_FMT, __func__, CID_BITS(CN_SCID(lconn)));
+    LSQ_DEBUGC("set SCID to %"CID_FMT, CID_BITS(CN_SCID(lconn)));
     LOG_SCIDS(conn);
 
     return 0;
@@ -8989,7 +8987,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     cwnd = conn->ifc_send_ctl.sc_ci->cci_get_cwnd(
                                             conn->ifc_send_ctl.sc_cong_ctl);
     lsquic_conn_stats_diff(&conn->ifc_stats, conn->ifc_last_stats, &diff_stats);
-    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS, __func__,
         "%s: ticks: %lu; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
         ", avail: %"PRIu64"; packets: sent: %lu, lost: %lu, retx: %lu, rcvd: %lu"
         "; batch: count: %u; min: %u; max: %u; avg: %.2f",
