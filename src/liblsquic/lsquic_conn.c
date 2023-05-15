@@ -274,9 +274,7 @@ lsquic_conn_status (struct lsquic_conn *lconn, char *errbuf, size_t bufsz)
 const lsquic_cid_t *
 lsquic_conn_log_cid (const struct lsquic_conn *lconn)
 {
-    if (lconn->cn_if && lconn->cn_if->ci_get_log_cid)
-        return lconn->cn_if->ci_get_log_cid(lconn);
-    return CN_SCID(lconn);
+    return &lconn->cn_logid;
 }
 
 

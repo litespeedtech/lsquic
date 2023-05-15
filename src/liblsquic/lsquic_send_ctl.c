@@ -297,7 +297,8 @@ retx_alarm_rings (enum alarm_id al_id, void *ctx, lsquic_time_t expiry, lsquic_t
         send_ctl_expire(ctl, pns, EXFI_LAST);
         break;
     case RETX_MODE_RTO:
-        if ( now - ctl->sc_last_rto_time >= calculate_packet_rto(ctl))
+        if ((ctl->sc_flags & SC_1RTT_ACKED)
+            || now - ctl->sc_last_rto_time >= calculate_packet_rto(ctl))
         {
             ctl->sc_last_rto_time = now;
             ++ctl->sc_n_consec_rtos;
@@ -923,7 +924,8 @@ static void
 send_ctl_acked_loss_chain (struct lsquic_send_ctl *ctl,
                         struct lsquic_packet_out *const packet_out,
                         struct lsquic_packet_out **next,
-                        lsquic_packno_t largest_acked)
+                        lsquic_packno_t largest_acked,
+                        signed char *do_rtt)
 {
     struct lsquic_packet_out *chain_cur, *chain_next;
     unsigned count;
@@ -932,13 +934,8 @@ send_ctl_acked_loss_chain (struct lsquic_send_ctl *ctl,
                                                     chain_cur = chain_next)
     {
         chain_next = chain_cur->po_loss_chain;
-        if (chain_cur->po_packno > packet_out->po_packno
-            && chain_cur->po_packno <= largest_acked
-            && (chain_cur->po_flags & PO_LOST) == 0)
-        {
-            chain_cur->po_flags |= PO_ACKED_LOSS_CHAIN;
-            continue;
-        }
+        if (chain_cur->po_packno == largest_acked)
+            *do_rtt = 1;
         send_ctl_process_loss_chain_pkt(ctl, chain_cur, next);
         ++count;
     }
@@ -1393,14 +1390,9 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             do_rtt |= packet_out->po_packno == largest_acked(acki);
             ctl->sc_ci->cci_ack(CGP(ctl), packet_out, packet_sz, now,
                                                              app_limited);
-            if (!(packet_out->po_flags & PO_ACKED_LOSS_CHAIN))
-                send_ctl_acked_loss_chain(ctl, packet_out, &next,
-                                          largest_acked(acki));
+            send_ctl_acked_loss_chain(ctl, packet_out, &next,
+                                      largest_acked(acki), &do_rtt);
             send_ctl_destroy_packet(ctl, packet_out);
-        }
-        else if (packet_out->po_flags & PO_ACKED_LOSS_CHAIN)
-        {
-            send_ctl_process_loss_chain_pkt(ctl, packet_out, &next);
         }
         packet_out = next;
     }
@@ -1419,7 +1411,8 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     losses_detected = send_ctl_detect_losses(ctl, pns, ack_recv_time);
     if (send_ctl_first_unacked_retx_packet(ctl, pns))
     {
-        if (!lsquic_alarmset_is_set(ctl->sc_alset, pns) && losses_detected)
+        if ((ctl->sc_flags & SC_1RTT_ACKED)
+            || (!lsquic_alarmset_is_set(ctl->sc_alset, pns) && losses_detected))
             set_retx_alarm(ctl, pns, now);
     }
     else

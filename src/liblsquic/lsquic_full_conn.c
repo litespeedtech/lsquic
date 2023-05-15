@@ -617,6 +617,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     conn->fc_conn.cn_cces = conn->fc_cces;
     conn->fc_conn.cn_cces_mask = 1;
     conn->fc_conn.cn_cid = cid;
+    conn->fc_conn.cn_logid = cid;
     conn->fc_flags = flags;
     conn->fc_enpub = enpub;
     conn->fc_pub.enpub = enpub;

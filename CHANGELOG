@@ -1,3 +1,9 @@
+2023-05-14
+    - 4.0.1
+    - Fix send_ctl bug.
+    - Make logid consistent
+    - Reduce memory usage for storing CIDs.
+
 2023-03-14
     - 4.0.0
     - Add support for QUICv2 (RFC9369).

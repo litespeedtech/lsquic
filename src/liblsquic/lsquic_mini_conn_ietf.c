@@ -565,15 +565,19 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_cces[0].cce_flags = CCE_USED;
     conn->imc_conn.cn_cces_mask = 1;
     lsquic_scid_from_packet_in(packet_in, &conn->imc_path.np_dcid);
-    LSQ_DEBUGC("recv SCID from client %"CID_FMT, CID_BITS(&conn->imc_cces[0].cce_cid));
-    LSQ_DEBUGC("recv DCID from client %"CID_FMT, CID_BITS(&conn->imc_path.np_dcid));
-
     /* Generate new SCID. Since is not the original SCID, it is given
      * a sequence number (0) and therefore can be retired by the client.
      */
     enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, &conn->imc_conn,
         &conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
 
+    if (conn->imc_path.np_dcid.len)
+        conn->imc_conn.cn_logid = conn->imc_path.np_dcid;
+    else
+        conn->imc_conn.cn_logid = conn->imc_conn.cn_cces[1].cce_cid;
+
+    LSQ_DEBUGC("recv SCID from client %"CID_FMT, CID_BITS(&conn->imc_cces[0].cce_cid));
+    LSQ_DEBUGC("recv DCID from client %"CID_FMT, CID_BITS(&conn->imc_path.np_dcid));
     LSQ_DEBUGC("generated SCID %"CID_FMT" at index %u, switching to it",
                 CID_BITS(&conn->imc_conn.cn_cces[1].cce_cid), 1);
     conn->imc_conn.cn_cces[1].cce_flags = CCE_SEQNO | CCE_USED;
@@ -2084,6 +2088,22 @@ imico_generate_acks (struct ietf_mini_conn *conn, lsquic_time_t now)
 }
 
 
+int
+lsquic_mini_conn_ietf_pre_promote(struct ietf_mini_conn *conn,
+                                  lsquic_time_t now)
+{
+    if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
+    {
+        if (0 != imico_generate_acks(conn, now))
+        {
+            conn->imc_flags |= IMC_ERROR;
+            return -1;
+        }
+    }
+    return 0;
+}
+
+
 static void
 imico_generate_conn_close (struct ietf_mini_conn *conn)
 {
@@ -2367,18 +2387,6 @@ ietf_mini_conn_ci_get_path (struct lsquic_conn *lconn,
 }
 
 
-static const lsquic_cid_t *
-ietf_mini_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
-{
-    struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
-
-    if (conn->imc_path.np_dcid.len)
-        return &conn->imc_path.np_dcid;
-    else
-        return CN_SCID(lconn);
-}
-
-
 static unsigned char
 ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             const struct sockaddr *local_sa, const struct sockaddr *peer_sa)
@@ -2437,7 +2445,6 @@ static const struct conn_iface mini_conn_ietf_iface = {
     .ci_count_garbage        =  ietf_mini_conn_ci_count_garbage,
     .ci_destroy              =  ietf_mini_conn_ci_destroy,
     .ci_get_engine           =  ietf_mini_conn_ci_get_engine,
-    .ci_get_log_cid          =  ietf_mini_conn_ci_get_log_cid,
     .ci_get_path             =  ietf_mini_conn_ci_get_path,
     .ci_hsk_done             =  ietf_mini_conn_ci_hsk_done,
     .ci_internal_error       =  ietf_mini_conn_ci_internal_error,

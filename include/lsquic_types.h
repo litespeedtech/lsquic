@@ -18,18 +18,15 @@
  */
 typedef struct lsquic_cid
 {
-    uint_fast8_t    len;
-    union {
-        uint8_t     buf[MAX_CID_LEN];
-        uint64_t    id;
-    }               u_cid;
-#define idbuf u_cid.buf
-}
+    uint8_t     buf[MAX_CID_LEN];
+#define idbuf buf
+    uint_fast8_t len;
+} __attribute__((__aligned__(8)))
 lsquic_cid_t;
 
 
 #define LSQUIC_CIDS_EQ(a, b) ((a)->len == 8 ? \
-    (b)->len == 8 && (a)->u_cid.id == (b)->u_cid.id : \
+    (b)->len == 8 && *(uint64_t *)((a)->buf) == *(uint64_t *)((b)->buf) : \
     (a)->len == (b)->len && 0 == memcmp((a)->idbuf, (b)->idbuf, (a)->len))
 
 /** Stream ID */

@@ -1152,7 +1152,7 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
         destroy_conn(engine, conn, now);
         return NULL;
     }
-    assert(!(conn->cn_flags & CONN_REF_FLAGS));
+    assert(!(conn->cn_flags & (CONN_REF_FLAGS & ~LSCONN_TICKABLE)));
     conn->cn_flags |= LSCONN_HASHED;
     return conn;
 }
@@ -1170,6 +1170,9 @@ promote_mini_conn (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
     EV_LOG_CONN_EVENT(lsquic_conn_log_cid( mini_conn ),
                                         "promote to full conn");
     assert( mini_conn->cn_flags & LSCONN_MINI);
+
+    lsquic_mini_conn_ietf_pre_promote((struct ietf_mini_conn *)mini_conn, now);
+
     new_conn = new_full_conn_server(engine, mini_conn, now);
     if (new_conn)
     {
@@ -1759,8 +1762,8 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 #endif
     QLOG_PACKET_RX(lsquic_conn_log_cid(conn), packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
-    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE))
-                    == (LSCONN_MINI | LSCONN_HANDSHAKE_DONE))
+    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF))
+                    == (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF))
     {
         if (promote_mini_conn(engine, conn, lsquic_time_now()) == -1)
             conn->cn_flags |= LSCONN_PROMOTE_FAIL;

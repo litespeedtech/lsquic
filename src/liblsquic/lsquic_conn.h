@@ -255,9 +255,6 @@ struct conn_iface
     (*ci_record_addrs) (struct lsquic_conn *, void *peer_ctx,
         const struct sockaddr *local_sa, const struct sockaddr *peer_sa);
 
-    const lsquic_cid_t *
-    (*ci_get_log_cid) (const struct lsquic_conn *);
-
     /* Optional method.  Only used by the IETF client code. */
     void
     (*ci_drop_crypto_streams) (struct lsquic_conn *);
@@ -344,6 +341,7 @@ struct lsquic_conn
     const struct conn_iface     *cn_if;
     const struct parse_funcs    *cn_pf;
     struct attq_elem            *cn_attq_elem;
+    lsquic_cid_t                 cn_logid;
     lsquic_time_t                cn_last_sent;
     lsquic_time_t                cn_last_ticked;
     struct conn_cid_elem        *cn_cces;   /* At least one is available */

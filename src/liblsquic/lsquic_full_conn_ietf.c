@@ -81,7 +81,7 @@
 #include "lsquic_qpack_exp.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
-#define LSQUIC_LOG_CONN_ID ietf_full_conn_ci_get_log_cid(&conn->ifc_conn)
+#define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
 
 #define MAX_RETR_PACKETS_SINCE_LAST_ACK 2
@@ -576,9 +576,6 @@ ignore_hsk (struct ietf_full_conn *);
 
 static unsigned
 ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *);
-
-static const lsquic_cid_t *
-ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *);
 
 static void
 ietf_full_conn_ci_destroy (struct lsquic_conn *);
@@ -1356,7 +1353,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                                                 / sizeof(conn->ifc_cces[0]);
     if (!ietf_full_conn_add_scid(conn, enpub, CCE_USED, now))
         goto err1;
-
+    conn->ifc_conn.cn_logid = *CN_SCID(&conn->ifc_conn);
     assert(versions);
     versions &= LSQUIC_IETF_VERSIONS;
     if (versions & (1 << LSQVER_I001))
@@ -1456,8 +1453,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver]);
     conn->ifc_process_incoming_packet = process_incoming_packet_verneg;
     conn->ifc_created = now;
-    LSQ_DEBUG("logging using %s SCID",
-        LSQUIC_LOG_CONN_ID == CN_SCID(&conn->ifc_conn) ? "client" : "server");
+    LSQ_DEBUG("logging using client SCID");
     if (sess_resume && (params
             = conn->ifc_conn.cn_esf.i->esfi_get_peer_transport_params(
                             conn->ifc_conn.cn_enc_session), params != NULL))
@@ -1537,7 +1533,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
             conn->ifc_scid_timestamp[i] = now;
         }
     ++conn->ifc_scid_seqno;
-
+    conn->ifc_conn.cn_logid = mini_conn->cn_logid;
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF | LSCONN_SERVER;
 
@@ -8804,25 +8800,6 @@ path_matches_local_sa (const struct network_path *path,
 }
 
 
-static const lsquic_cid_t *
-ietf_full_conn_ci_get_log_cid (const struct lsquic_conn *lconn)
-{
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-
-    if (lconn->cn_flags & LSCONN_SERVER)
-    {
-        if (CUR_DCID(conn)->len)
-            return CUR_DCID(conn);
-        else
-            return CN_SCID(lconn);
-    }
-    if (CN_SCID(lconn)->len)
-        return CN_SCID(lconn);
-    else
-        return CUR_DCID(conn);
-}
-
-
 static struct network_path *
 ietf_full_conn_ci_get_path (struct lsquic_conn *lconn,
                                                     const struct sockaddr *sa)
@@ -9025,7 +9002,6 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_drop_crypto_streams  =  ietf_full_conn_ci_drop_crypto_streams, \
     .ci_early_data_failed    =  ietf_full_conn_ci_early_data_failed, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
-    .ci_get_log_cid          =  ietf_full_conn_ci_get_log_cid, \
     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
     .ci_get_path             =  ietf_full_conn_ci_get_path, \
     .ci_going_away           =  ietf_full_conn_ci_going_away, \

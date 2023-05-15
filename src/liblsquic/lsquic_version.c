@@ -72,6 +72,13 @@ lsquic_tag2ver_fast (const unsigned char *tag)
         else if (*(tag + 3) == 0x00)
             return LSQVER_VERNEG;
     }
+    else if (ch == 0xff && *(tag + 1) == 0 && *(tag + 2) == 0)
+    {
+        if (*(tag + 3) == 0x1D)
+            return LSQVER_ID29;
+        else if (*(tag + 3) == 0x1B)
+            return LSQVER_ID27;
+    }
     else if ((ch & 0xf) == 0xa && (*(tag + 1) & 0xf) == 0xa
             && (*(tag + 2) & 0xf) == 0xa && (*(tag + 3) & 0xf) == 0xa)
         return LSQVER_RESVED;

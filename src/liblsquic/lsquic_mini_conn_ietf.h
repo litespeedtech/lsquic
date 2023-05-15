@@ -164,4 +164,8 @@ lsquic_imico_rechist_first (void *rechist_ctx);
 const struct lsquic_packno_range *
 lsquic_imico_rechist_next (void *rechist_ctx);
 
+int
+lsquic_mini_conn_ietf_pre_promote(struct ietf_mini_conn *conn,
+                                  lsquic_time_t now);
+
 #endif
