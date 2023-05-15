@@ -13,6 +13,14 @@
 #define MAX_CID_LEN 20
 #define GQUIC_CID_LEN 8
 
+#if defined(_MSC_VER)
+#define ALIGNED_(x) __declspec(align(x))
+#else
+#if defined(__GNUC__)
+#define ALIGNED_(x) __attribute__ ((aligned(x)))
+#endif
+#endif
+
 /**
  * Connection ID
  */
@@ -21,7 +29,7 @@ typedef struct lsquic_cid
     uint8_t     buf[MAX_CID_LEN];
 #define idbuf buf
     uint_fast8_t len;
-} __attribute__((__aligned__(8)))
+} ALIGNED_(8)
 lsquic_cid_t;
 
 
