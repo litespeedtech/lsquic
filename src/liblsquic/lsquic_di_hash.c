@@ -438,12 +438,10 @@ hash_di_insert_frame (struct data_in *data_in,
     ins = lsquic_data_in_hash_insert_data_frame(data_in, data_frame,
                                                                 read_offset);
     assert(ins != INS_FRAME_OVERLAP);
-    /* NOTE: Only release packet and frame for INS_FRAME_OK,
-     *        other cases are handled by caller */
+    /* NOTE: other cases are handled by caller */
     if (ins == INS_FRAME_OK)
     {
         lsquic_packet_in_put(hdi->hdi_conn_pub->mm, new_frame->packet_in);
-        lsquic_malo_put(new_frame);
     }
     return ins;
 }
