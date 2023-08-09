@@ -3368,6 +3368,8 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
                                     && lsquic_mh_count(&engine->conns_out))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
+    if (LSQ_LOG_ENABLED(L))
+    {
         conn = lsquic_mh_peek(&engine->conns_out);
         engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: went past deadline last time "
@@ -3375,6 +3377,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
             lsquic_mh_count(&engine->conns_out),
             lsquic_mh_count(&engine->conns_out) != 1, "s",
             CID_BITS(lsquic_conn_log_cid(conn)));
+    }
 #endif
 #if LSQUIC_CONN_STATS
         conn = lsquic_mh_peek(&engine->conns_out);
@@ -3388,8 +3391,11 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
         && engine->pr_queue && lsquic_prq_have_pending(engine->pr_queue))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
+    if (LSQ_LOG_ENABLED(L))
+    {
         engine->last_logged_conn = 0;
         LSQ_LOG(L, "next advisory tick is now: have pending PRQ elements");
+    }
 #endif
         *diff = 0;
         return 1;
@@ -3398,6 +3404,8 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     if (lsquic_mh_count(&engine->conns_tickable))
     {
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
+    if (LSQ_LOG_ENABLED(L))
+    {
         conn = lsquic_mh_peek(&engine->conns_tickable);
         engine->last_logged_conn = 0;
         LSQ_LOGC(L, "next advisory tick is now: have %u tickable "
@@ -3405,6 +3413,7 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
             lsquic_mh_count(&engine->conns_tickable),
             lsquic_mh_count(&engine->conns_tickable) != 1, "s",
             CID_BITS(lsquic_conn_log_cid(conn)));
+    }
 #endif
 #if LSQUIC_CONN_STATS
         conn = lsquic_mh_peek(&engine->conns_tickable);
@@ -3440,28 +3449,31 @@ lsquic_engine_earliest_adv_tick (lsquic_engine_t *engine, int *diff)
     now = lsquic_time_now();
     *diff = (int) ((int64_t) next_time - (int64_t) now);
 #if LSQUIC_DEBUG_NEXT_ADV_TICK
-    if (next_attq)
+    if (LSQ_LOG_ENABLED(L))
     {
-        /* Deduplicate consecutive log messages about the same reason for the
-         * same connection.
-         * If diff is always zero or diff reset to a higher value, event is
-         * still logged.
-         */
-        if (!((unsigned) next_attq->ae_why == engine->last_logged_ae_why
-                    && (uintptr_t) next_attq->ae_conn
-                                            == engine->last_logged_conn
-                    && *diff < engine->last_tick_diff))
+        if (next_attq)
         {
-            engine->last_logged_conn = (uintptr_t) next_attq->ae_conn;
-            engine->last_logged_ae_why = (unsigned) next_attq->ae_why;
-            engine->last_tick_diff = *diff;
-            LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
-                ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
-                lsquic_attq_why2str(next_attq->ae_why));
+            /* Deduplicate consecutive log messages about the same reason for the
+             * same connection.
+             * If diff is always zero or diff reset to a higher value, event is
+             * still logged.
+             */
+            if (!((unsigned) next_attq->ae_why == engine->last_logged_ae_why
+                        && (uintptr_t) next_attq->ae_conn
+                                                == engine->last_logged_conn
+                        && *diff < engine->last_tick_diff))
+            {
+                engine->last_logged_conn = (uintptr_t) next_attq->ae_conn;
+                engine->last_logged_ae_why = (unsigned) next_attq->ae_why;
+                engine->last_tick_diff = *diff;
+                LSQ_LOGC(L, "next advisory tick is %d usec away: conn %"CID_FMT
+                    ": %s", *diff, CID_BITS(lsquic_conn_log_cid(next_attq->ae_conn)),
+                    lsquic_attq_why2str(next_attq->ae_why));
+            }
         }
+        else
+            LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
     }
-    else
-        LSQ_LOG(L, "next advisory tick is %d usec away: resume sending", *diff);
 #endif
 
 #if LSQUIC_CONN_STATS
