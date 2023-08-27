@@ -236,6 +236,10 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *,
                     unsigned need_at_least, const struct network_path *,
                     const struct lsquic_stream *);
 
+int
+lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
+                                         struct lsquic_stream *stream);
+
 struct lsquic_packet_out *
 lsquic_send_ctl_get_packet_for_crypto (struct lsquic_send_ctl *ctl,
     unsigned need_at_least, enum packnum_space, const struct network_path *);

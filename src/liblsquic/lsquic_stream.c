@@ -3695,10 +3695,15 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
         }
         while (nwritten < len
                         && stream->sm_n_buffered < stream->sm_n_allocated);
-        return nwritten;
     }
     else
-        return stream_write_to_packets(stream, reader, thresh, swo);
+        nwritten = stream_write_to_packets(stream, reader, thresh, swo);
+    if ((stream->sm_qflags & SMQF_SEND_BLOCKED) &&
+        (stream->sm_bflags & SMBF_IETF))
+    {
+        lsquic_sendctl_gen_stream_blocked_frame(stream->conn_pub->send_ctl, stream);
+    }
+    return nwritten;
 }
 
 
