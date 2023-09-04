@@ -1011,6 +1011,7 @@ usage (const char *prog)
 "                 content-type: application/octet-stream and\n"
 "                 content-length\n"
 "   -K          Discard server response\n"
+"   -B          Header bypass\n"
 "   -I          Abort on incomplete reponse from server\n"
 "   -4          Prefer IPv4 when resolving hostname\n"
 "   -6          Prefer IPv6 when resolving hostname\n"
