@@ -7934,7 +7934,7 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     int s;
 
-    if (packet_out->po_frame_types & IQUIC_FRAME_RETX_MASK)
+    if (packet_out->po_frame_types & (IQUIC_FRAME_RETX_MASK | QUIC_FTBIT_ACK))
         conn->ifc_n_cons_unretx = 0;
     else
         ++conn->ifc_n_cons_unretx;
