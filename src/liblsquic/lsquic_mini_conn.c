@@ -1055,7 +1055,11 @@ continue_handshake (struct mini_conn *mc)
      */
     TAILQ_FOREACH(packet_in, &mc->mc_packets_in, pi_next)
     {
-        assert(n_hsk_chunks < sizeof(hsk_chunks) / sizeof(hsk_chunks[0]));
+        if (n_hsk_chunks >= sizeof(hsk_chunks) / sizeof(hsk_chunks[0])) {
+            LSQ_WARN("too many handshake packets");
+            return -1;
+        }
+
         if (0 == (packet_in->pi_flags & PI_HSK_STREAM))
             continue;
         s = parse_frame(packet_in->pi_data + packet_in->pi_hsk_stream,
