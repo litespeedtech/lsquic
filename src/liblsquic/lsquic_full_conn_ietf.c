@@ -2491,46 +2491,6 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
 }
 
 
-/* Return true if generated, false otherwise */
-static int
-generate_stream_blocked_frame (struct ietf_full_conn *conn,
-                                                struct lsquic_stream *stream)
-{
-    struct lsquic_packet_out *packet_out;
-    unsigned need;
-    uint64_t off;
-    int sz;
-
-    off = lsquic_stream_combined_send_off(stream);
-    need = conn->ifc_conn.cn_pf->pf_stream_blocked_frame_size(stream->id, off);
-    packet_out = get_writeable_packet(conn, need);
-    if (!packet_out)
-        return 0;
-    sz = conn->ifc_conn.cn_pf->pf_gen_stream_blocked_frame(
-                         packet_out->po_data + packet_out->po_data_sz,
-                         lsquic_packet_out_avail(packet_out), stream->id, off);
-    if (sz < 0)
-    {
-        ABORT_ERROR("Generating STREAM_BLOCKED frame failed");
-        return 0;
-    }
-    LSQ_DEBUG("generated %d-byte STREAM_BLOCKED "
-        "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated %d-byte STREAM_BLOCKED "
-        "frame; stream_id: %"PRIu64"; offset: %"PRIu64, sz, stream->id, off);
-    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
-                        QUIC_FRAME_STREAM_BLOCKED, packet_out->po_data_sz, sz))
-    {
-        ABORT_ERROR("adding frame to packet failed: %d", errno);
-        return 0;
-    }
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
-    lsquic_stream_blocked_frame_sent(stream);
-    return 1;
-}
-
-
 static int
 generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
                 lsquic_stream_id_t stream_id, enum http_error_code error_code)
@@ -2918,7 +2878,7 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
     if (stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA)
         r &= generate_max_stream_data_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_BLOCKED)
-        r &= generate_stream_blocked_frame(conn, stream);
+        r &= lsquic_sendctl_gen_stream_blocked_frame(&conn->ifc_send_ctl, stream);
     if (stream->sm_qflags & SMQF_SEND_RST)
         r &= generate_rst_stream_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)

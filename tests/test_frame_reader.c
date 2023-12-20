@@ -1134,8 +1134,9 @@ test_one_frt (const struct frame_reader_test *frt)
     stream.conn_pub = &conn_pub;
     conn_pub.lconn = &lconn;
 
-  top:
     lsquic_mm_init(&mm);
+
+  top:
     lshpack_dec_init(&hdec);
     memset(&input, 0, sizeof(input));
     memcpy(input.in_buf, frt->frt_buf, frt->frt_bufsz);

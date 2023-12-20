@@ -348,7 +348,10 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
     if (conn_h->client_ctx->hcc_flags & HCC_ABORT_ON_INCOMPLETE)
     {
         if (!(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN))
-            abort();
+        {
+            LSQ_INFO("abort incomplete connection");
+            exit(1);
+        }
     }
     --conn_h->client_ctx->hcc_n_open_conns;
 

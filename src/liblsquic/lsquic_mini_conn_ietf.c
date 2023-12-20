@@ -734,7 +734,7 @@ ietf_mini_conn_ci_hsk_done (struct lsquic_conn *lconn,
     {
     case LSQ_HSK_OK:
     case LSQ_HSK_RESUMED_OK:
-        conn->imc_flags |= IMC_HSK_OK;
+        conn->imc_flags |= IMC_HSK_OK | IMC_IGNORE_INIT;
         conn->imc_conn.cn_flags |= LSCONN_HANDSHAKE_DONE;
         LSQ_DEBUG("handshake OK");
         break;
@@ -1436,6 +1436,14 @@ imico_parse_regular_packet (struct ietf_mini_conn *conn,
     p = packet_in->pi_data + packet_in->pi_header_sz;
     pend = packet_in->pi_data + packet_in->pi_data_sz;
 
+    if (p >= pend)
+    {
+        ietf_mini_conn_ci_abort_error(&conn->imc_conn, 0,
+                                      TEC_PROTOCOL_VIOLATION,
+                                      "packet %"PRIu64" has no frames",
+                                      packet_in->pi_packno);
+        return -1;
+    }
     while (p < pend)
     {
         len = imico_process_packet_frame(conn, packet_in, p, pend - p);
@@ -1677,10 +1685,20 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         imico_maybe_validate_by_dcid(conn, &packet_in->pi_dcid);
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
-    if (pns == PNS_INIT && (conn->imc_flags & IMC_IGNORE_INIT))
+    if (pns == PNS_INIT)
     {
-        LSQ_DEBUG("ignore init packet");    /* Don't bother decrypting */
-        return;
+        if (conn->imc_flags & IMC_IGNORE_INIT)
+        {
+            LSQ_DEBUG("ignore init packet");    /* Don't bother decrypting */
+            return;
+        }
+        if (packet_in->pi_pkt_size
+            && packet_in->pi_pkt_size < IQUIC_MIN_INIT_PACKET_SZ)
+        {
+            LSQ_DEBUG("ignore init packet smaller than minimum size required");
+            /* Don't bother decrypting */
+            return;
+        }
     }
 
     dec_packin = lconn->cn_esf_c->esf_decrypt_packet(lconn->cn_enc_session,
@@ -1718,7 +1736,15 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         return;
     }
     else if (pns == PNS_HSK)
+    {
+        if (!LSQUIC_CIDS_EQ(CN_SCID(&conn->imc_conn), &packet_in->pi_dcid))
+        {
+            ietf_mini_conn_ci_abort_error(lconn, 0, TEC_PROTOCOL_VIOLATION,
+                    "protocol violation detected bad dcid for HSK pns");
+            return;
+        }
         imico_peer_addr_validated(conn, "handshake PNS");
+    }
 
     if (((conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3) < pns)
     {

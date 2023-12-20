@@ -364,6 +364,7 @@ maybe_shrink_packet_out_bufs (struct lsquic_mm *mm, unsigned idx)
 #endif
 
 
+#if LSQUIC_USE_POOLS
 /* If average maximum falls under 1/4 of all objects allocated, release
  * half of the objects allocated.
  */
@@ -398,6 +399,7 @@ maybe_shrink_packet_in_bufs (struct lsquic_mm *mm, unsigned idx)
     }
 #endif
 }
+#endif
 
 
 void

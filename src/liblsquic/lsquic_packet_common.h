@@ -148,28 +148,16 @@ lsquic_frame_types_to_str (char *buf, size_t bufsz, enum quic_ft_bit);
 enum packno_bits
 {
     PACKNO_BITS_0 = 0,
-    PACKNO_BITS_1 = 1,
-    PACKNO_BITS_2 = 2,
-    PACKNO_BITS_3 = 3,
-};
-
-
-/* GQUIC maps 0, 1, 2, 3 -> 1, 2, 4, 6 */
-enum
-{
     GQUIC_PACKNO_LEN_1 = PACKNO_BITS_0,
-    GQUIC_PACKNO_LEN_2 = PACKNO_BITS_1,
-    GQUIC_PACKNO_LEN_4 = PACKNO_BITS_2,
-    GQUIC_PACKNO_LEN_6 = PACKNO_BITS_3,
-};
-
-
-/* IQUIC maps 0, 1, 2, 3 -> 1, 2, 3, 4 (as of ID-17) */
-enum
-{
     IQUIC_PACKNO_LEN_1 = PACKNO_BITS_0,
+    PACKNO_BITS_1 = 1,
+    GQUIC_PACKNO_LEN_2 = PACKNO_BITS_1,
     IQUIC_PACKNO_LEN_2 = PACKNO_BITS_1,
+    PACKNO_BITS_2 = 2,
+    GQUIC_PACKNO_LEN_4 = PACKNO_BITS_2,
     IQUIC_PACKNO_LEN_3 = PACKNO_BITS_2,
+    PACKNO_BITS_3 = 3,
+    GQUIC_PACKNO_LEN_6 = PACKNO_BITS_3,
     IQUIC_PACKNO_LEN_4 = PACKNO_BITS_3,
 };
 

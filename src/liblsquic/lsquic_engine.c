@@ -3232,6 +3232,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
          * by PI_OWN_DATA flag.
          */
         packet_in->pi_data = (unsigned char *) packet_in_data;
+        packet_in->pi_pkt_size = packet_in_size;
         if (0 != parse_packet_in_begin(packet_in, packet_end - packet_in_data,
                                 engine->flags & ENG_SERVER,
                                 engine->pub.enp_settings.es_scid_len, &ppstate))

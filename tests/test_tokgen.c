@@ -35,6 +35,7 @@ main (int argc, char **argv)
     printf("\n");
 
     lsquic_tg_destroy(tg);
+    lsquic_stock_shared_hash_destroy(enpub.enp_shi_ctx);
 
     return 0;
 }

@@ -93,6 +93,7 @@ typedef struct lsquic_packet_in
     }                               pi_flags;
     /* pi_token and pi_token_size are set in Initial and Retry packets */
     unsigned short                  pi_token_size; /* Size of the token */
+    unsigned short                  pi_pkt_size;   /* Size of the whole packet */
     unsigned char                   pi_token;      /* Offset to token */
     /* pi_odcid and pi_odcid_len are only set in Retry packets for I-D < 25 */
     unsigned char                   pi_odcid;      /* Offset to Original DCID */
