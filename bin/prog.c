@@ -171,6 +171,11 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                   sndbuf=12345    # Sets SO_SNDBUF\n"
 "                   rcvbuf=12345    # Sets SO_RCVBUF\n"
 "   -W          Use stock PMI (malloc & free)\n"
+"   -A CC_ALGO  Congestion control algorithm.  The following algorithms are\n"
+"                 supported.\n"
+"                   1: Cubic\n"
+"                   2: BBRv1\n"
+"                   3: Adaptive congestion control (this is the default).\n"
     );
 
 #if HAVE_SENDMMSG
@@ -265,6 +270,9 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         return 0;
     case 'W':
         prog->prog_use_stock_pmi = 1;
+        return 0;
+    case 'A':
+        prog->prog_settings.es_cc_algo = atoi(optarg);
         return 0;
     case 'c':
         if (prog->prog_engine_flags & LSENG_SERVER)
