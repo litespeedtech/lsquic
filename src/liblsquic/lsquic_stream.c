@@ -2408,7 +2408,10 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     unsigned short n_buffered;
     enum stream_q_flags q_flags;
 
-    LSQ_DEBUG("dispatch_write_events");
+    LSQ_DEBUG("dispatch_write_events, sm_qflags: %d. stream_flags: %d, sm_bflags: %d, "
+                "max_send_off: %" PRIu64 ", tosend_off: %" PRIu64 ", sm_n_buffered: %u",
+              stream->sm_qflags, stream->stream_flags, stream->sm_bflags,
+              stream->max_send_off, stream->tosend_off, stream->sm_n_buffered);
 
     if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS)
         || (stream->stream_flags & STREAM_FINISHED))

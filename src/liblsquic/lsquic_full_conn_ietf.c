@@ -7493,7 +7493,11 @@ process_regular_packet (struct ietf_full_conn *conn,
         conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
                                                                     packet_in);
     else if (pns == PNS_HSK)
+    {
+        if ((conn->ifc_flags & (IFC_SERVER | IFC_IGNORE_INIT)) == IFC_SERVER)
+            ignore_init(conn);
         lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
+    }
 
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
