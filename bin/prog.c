@@ -171,6 +171,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                   sndbuf=12345    # Sets SO_SNDBUF\n"
 "                   rcvbuf=12345    # Sets SO_RCVBUF\n"
 "   -W          Use stock PMI (malloc & free)\n"
+"   -O BURST    Use UDP GSO (if available). BURST factor is the max packets\n"
+"               that can be aggregated in single sendmsg.\n"
     );
 
 #if HAVE_SENDMMSG
@@ -226,6 +228,34 @@ prog_print_common_options (const struct prog *prog, FILE *out)
     );
 }
 
+#if HAVE_GSO
+/* Test at runtime if the GSO support is available. setsockopt(UDP_SEGMENT)
+ * should be successful if the GSO is supported.
+ * Returns non-zero if GSO supported. */
+int supports_gso(void)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    int gso_size = 1400; // just for test
+
+    if(fd < 0) {
+        LSQ_ERROR("weird! socket failed");
+        return 0;
+    }
+    if (setsockopt(fd, SOL_UDP, UDP_SEGMENT, &gso_size, sizeof(gso_size))) {
+        LSQ_INFO("gso setsockopt failed. GSO not supp");
+        close(fd);
+        return 0;
+    }
+    LSQ_INFO("GSO is supported");
+    close(fd);
+    return 1;
+}
+#else
+int supports_gso(void)
+{
+    return 0;
+}
+#endif  // HAVE_GSO
 
 int
 prog_set_opt (struct prog *prog, int opt, const char *arg)
@@ -237,6 +267,11 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
 
     switch (opt)
     {
+    case 'O':
+        if(supports_gso()) {
+            prog->prog_gso_burst = (unsigned)atoi(arg);
+        }
+        return 0;
 #if LSQUIC_DONTFRAG_SUPPORTED
     case 'D':
         {
