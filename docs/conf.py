@@ -41,6 +41,7 @@ release = u'4.0.3'
 extensions = [
 # To make ours look like readthedocs.io, change theme to "sphinx_rtd_theme",
 # pip install sphinx_rtd_theme, and uncomment extensions:
+    "sphinx_rtd_theme",
 #    "sphinx.ext.intersphinx",
 #    "sphinx.ext.autodoc",
 #    "sphinx.ext.mathjax",
