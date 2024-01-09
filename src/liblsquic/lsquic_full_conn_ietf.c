@@ -755,6 +755,7 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
+    int has_send_flag;
 
     if (lsquic_conn_cap_avail(&conn->ifc_pub.conn_cap) == 0)
     {
@@ -769,12 +770,18 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
         stream = lsquic_hashelem_getdata(el);
         if (lsquic_stream_is_blocked(stream))
         {
-            if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
-                TAILQ_INSERT_TAIL(&conn->ifc_pub.sending_streams, stream,
-                                                            next_send_stream);
+            has_send_flag = (stream->sm_qflags & SMQF_SENDING_FLAGS);
             stream->sm_qflags |= SMQF_SEND_BLOCKED;
             LSQ_DEBUG("set SEND_BLOCKED flag on stream %"PRIu64, stream->id);
-            return;
+            if (!lsquic_sendctl_gen_stream_blocked_frame(
+                        stream->conn_pub->send_ctl, stream))
+            {
+                LSQ_DEBUG("failed to send STREAM_BLOCKED frame for"
+                        " stream %"PRIu64 " immedately, postpone.", stream->id);
+                if (!has_send_flag)
+                    TAILQ_INSERT_TAIL(&conn->ifc_pub.sending_streams, stream,
+                                                            next_send_stream);
+            }
         }
     }
 }
@@ -7387,6 +7394,7 @@ process_regular_packet (struct ietf_full_conn *conn,
     enum was_missing was_missing;
     int is_rechist_empty;
     unsigned char saved_path_id;
+    int is_dcid_changed;
 
     if (HETY_RETRY == packet_in->pi_header_type)
         return process_retry_packet(conn, packet_in);
@@ -7489,16 +7497,31 @@ process_regular_packet (struct ietf_full_conn *conn,
         }
     }
 
+    is_dcid_changed = !LSQUIC_CIDS_EQ(CN_SCID(&conn->ifc_conn),
+                                        &packet_in->pi_dcid);
     if (pns == PNS_INIT)
         conn->ifc_conn.cn_esf.i->esfi_set_iscid(conn->ifc_conn.cn_enc_session,
                                                                     packet_in);
-    else if (pns == PNS_HSK)
+    else
     {
-        if ((conn->ifc_flags & (IFC_SERVER | IFC_IGNORE_INIT)) == IFC_SERVER)
-            ignore_init(conn);
-        lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
+        if (is_dcid_changed)
+        {
+            if (LSQUIC_CIDS_EQ(&conn->ifc_conn.cn_cces[0].cce_cid,
+                            &packet_in->pi_dcid)
+                && !(conn->ifc_conn.cn_cces[0].cce_flags & CCE_SEQNO))
+            {
+                ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+                            "protocol violation detected bad dcid");
+                return -1;
+            }
+        }
+        if (pns == PNS_HSK)
+        {
+            if ((conn->ifc_flags & (IFC_SERVER | IFC_IGNORE_INIT)) == IFC_SERVER)
+                ignore_init(conn);
+            lsquic_send_ctl_maybe_calc_rough_rtt(&conn->ifc_send_ctl, pns - 1);
+        }
     }
-
     EV_LOG_PACKET_IN(LSQUIC_LOG_CONN_ID, packet_in);
 
     is_rechist_empty = lsquic_rechist_is_empty(&conn->ifc_rechist[pns]);
@@ -7522,8 +7545,7 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                     << packet_in->pi_path_id);
                 }
             }
-            else if (!LSQUIC_CIDS_EQ(CN_SCID(&conn->ifc_conn),
-                                                    &packet_in->pi_dcid))
+            else if (is_dcid_changed)
             {
                 if (0 != on_dcid_change(conn, &packet_in->pi_dcid))
                     return -1;

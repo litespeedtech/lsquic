@@ -1,3 +1,8 @@
+2024-01-08
+    - 4.0.4
+    - Fix DCID validation.
+    - Fix CPU spinning due to pending STREAM_BLOCKED frame.
+
 2023-12-25
     - 4.0.3
     - Fix session resumption bug introduced in 4.0.2.

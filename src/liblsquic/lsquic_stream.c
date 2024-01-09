@@ -2437,6 +2437,12 @@ lsquic_stream_dispatch_write_events (lsquic_stream_t *stream)
     else
         stream_dispatch_write_events_loop(stream);
 
+    if ((stream->sm_qflags & SMQF_SEND_BLOCKED) &&
+        (stream->sm_bflags & SMBF_IETF))
+    {
+        lsquic_sendctl_gen_stream_blocked_frame(stream->conn_pub->send_ctl, stream);
+    }
+
     /* Progress means either flags or offsets changed: */
     progress = !((stream->sm_qflags & SMQF_WRITE_Q_FLAGS) == q_flags &&
                         stream->tosend_off == tosend_off &&
