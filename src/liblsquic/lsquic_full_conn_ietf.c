@@ -7283,7 +7283,8 @@ on_dcid_change (struct ietf_full_conn *conn, const lsquic_cid_t *dcid_in)
     struct lsquic_conn *const lconn = &conn->ifc_conn;  /* Shorthand */
     struct conn_cid_elem *cce;
 
-    LSQ_DEBUG("peer switched its DCID, attempt to switch own SCID");
+    LSQ_DEBUGC("peer switched its DCID to %"CID_FMT
+              ", attempt to switch own SCID", CID_BITS(dcid_in));
 
     for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
         if (cce - lconn->cn_cces != lconn->cn_cur_cce_idx
@@ -7545,7 +7546,9 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                     << packet_in->pi_path_id);
                 }
             }
-            else if (is_dcid_changed)
+            else if (is_dcid_changed
+                && !LSQUIC_CIDS_EQ(CN_SCID(&conn->ifc_conn),
+                                   &packet_in->pi_dcid))
             {
                 if (0 != on_dcid_change(conn, &packet_in->pi_dcid))
                     return -1;
