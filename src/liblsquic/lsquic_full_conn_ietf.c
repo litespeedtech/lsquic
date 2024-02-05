@@ -767,7 +767,8 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
                          el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (lsquic_stream_is_blocked(stream))
+        if (lsquic_stream_is_blocked(stream)
+            && !lsquic_stream_is_write_reset(stream))
         {
             if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
                 TAILQ_INSERT_TAIL(&conn->ifc_pub.sending_streams, stream,
@@ -2820,7 +2821,18 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
     if (stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA)
         r &= generate_max_stream_data_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_BLOCKED)
-        r &= lsquic_sendctl_gen_stream_blocked_frame(&conn->ifc_send_ctl, stream);
+    {
+        if (lsquic_stream_is_write_reset(stream))
+        {
+            stream->sm_qflags &= ~SMQF_SEND_BLOCKED;
+            if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+                TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream,
+                             next_send_stream);
+        }
+        else
+            r &= lsquic_sendctl_gen_stream_blocked_frame(&conn->ifc_send_ctl,
+                                                         stream);
+    }
     if (stream->sm_qflags & SMQF_SEND_RST)
         r &= generate_rst_stream_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)
