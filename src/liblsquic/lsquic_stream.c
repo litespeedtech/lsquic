@@ -1316,6 +1316,8 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
     stream->stream_flags |= STREAM_SS_RECVD;
 
+    stream->sm_qflags &= ~SMQF_SEND_BLOCKED;
+
     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
