@@ -2812,6 +2812,11 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
                                             struct lsquic_stream *stream)
 {
     int r = 1;
+
+    LSQ_DEBUG("process_stream_ready_to_send: stream: %"PRIu64", "
+              "sm_qflags: %d. stream_flags: %d, sm_bflags: %d, ", stream->id,
+              stream->sm_qflags, stream->stream_flags, stream->sm_bflags);
+
     if (stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA)
         r &= generate_max_stream_data_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_BLOCKED)
