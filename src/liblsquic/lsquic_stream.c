@@ -1316,8 +1316,6 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
     stream->stream_flags |= STREAM_SS_RECVD;
 
-    stream->sm_qflags &= ~SMQF_SEND_BLOCKED;
-
     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
@@ -1335,6 +1333,15 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
         stream_reset(stream, 0, 0);
+
+    if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+                             | SMQF_SEND_STOP_SENDING))
+    {
+        stream->sm_qflags &= ~(SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
+                               | SMQF_SEND_STOP_SENDING);
+        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+            TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
+    }
 
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
