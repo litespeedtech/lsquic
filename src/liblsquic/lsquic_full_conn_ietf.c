@@ -453,6 +453,7 @@ struct ietf_full_conn
     unsigned                    ifc_n_slack_akbl[N_PNS];
     unsigned                    ifc_n_slack_all;    /* App PNS only */
     unsigned                    ifc_max_retx_since_last_ack;
+    unsigned short              ifc_max_udp_payload;    /* Cached TP */
     lsquic_time_t               ifc_max_ack_delay;
     uint64_t                    ifc_ecn_counts_in[N_PNS][4];
     lsquic_stream_id_t          ifc_max_req_id;
@@ -491,7 +492,8 @@ struct ietf_full_conn
     unsigned                    ifc_max_pack_tol_sent;
 #endif
     unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
-    unsigned short              ifc_max_udp_payload;    /* Cached TP */
+    unsigned short              ifc_min_dg_sz,
+                                ifc_max_dg_sz;
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
     union {
@@ -520,8 +522,6 @@ struct ietf_full_conn
     lsquic_time_t               ifc_ping_period;
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
-    unsigned short              ifc_min_dg_sz,
-                                ifc_max_dg_sz;
     struct packet_tolerance_stats
                                 ifc_pts;
 #if LSQUIC_CONN_STATS
@@ -768,7 +768,8 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
                          el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (lsquic_stream_is_blocked(stream))
+        if (lsquic_stream_is_blocked(stream)
+            && !lsquic_stream_is_write_reset(stream))
         {
             has_send_flag = (stream->sm_qflags & SMQF_SENDING_FLAGS);
             stream->sm_qflags |= SMQF_SEND_BLOCKED;
@@ -782,6 +783,7 @@ blocked_ka_alarm_expired (enum alarm_id al_id, void *ctx,
                     TAILQ_INSERT_TAIL(&conn->ifc_pub.sending_streams, stream,
                                                             next_send_stream);
             }
+            return;
         }
     }
 }
@@ -2882,10 +2884,26 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
                                             struct lsquic_stream *stream)
 {
     int r = 1;
+
+    LSQ_DEBUG("process_stream_ready_to_send: stream: %"PRIu64", "
+              "sm_qflags: %d. stream_flags: %d, sm_bflags: %d, ", stream->id,
+              stream->sm_qflags, stream->stream_flags, stream->sm_bflags);
+
     if (stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA)
         r &= generate_max_stream_data_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_BLOCKED)
-        r &= lsquic_sendctl_gen_stream_blocked_frame(&conn->ifc_send_ctl, stream);
+    {
+        if (lsquic_stream_is_write_reset(stream))
+        {
+            stream->sm_qflags &= ~SMQF_SEND_BLOCKED;
+            if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+                TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream,
+                             next_send_stream);
+        }
+        else
+            r &= lsquic_sendctl_gen_stream_blocked_frame(&conn->ifc_send_ctl,
+                                                         stream);
+    }
     if (stream->sm_qflags & SMQF_SEND_RST)
         r &= generate_rst_stream_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)

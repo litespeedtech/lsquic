@@ -904,12 +904,12 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     for (n = 0; received; ++n)
     {
-        if (received & (1U << n))
+        if (received & (1ULL << n))
             /* Setting `now' to zero is OK here, as we should have had at
              * least one other packet above.
              */
             lsquic_rechist_received(&conn->fc_rechist, n + 1, 0);
-        received &= ~(1U << n);
+        received &= ~(1ULL << n);
     }
 
     /* Mini connection sends out packets 1, 2, 3... and so on.  It deletes

@@ -2976,13 +2976,23 @@ lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
     unsigned need;
     uint64_t off;
     int sz;
+    int is_err;
 
     off = lsquic_stream_combined_send_off(stream);
     need = pf->pf_stream_blocked_frame_size(stream->id, off);
     packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need,
                        stream->conn_pub->path, stream);
     if (!packet_out)
-        return 0;
+    {
+        LSQ_DEBUG("failed to get packet_out with lsquic_send_ctl_get_packet_for_stream");
+        packet_out = lsquic_send_ctl_get_writeable_packet(ctl,
+                            PNS_APP, need, stream->conn_pub->path, 0, &is_err);
+        if (!packet_out)
+        {
+            LSQ_DEBUG("cannot get writeable packet for STREAM_BLOCKED frame");
+            return 0;
+        }
+    }
     sz = pf->pf_gen_stream_blocked_frame(
                          packet_out->po_data + packet_out->po_data_sz,
                          lsquic_packet_out_avail(packet_out), stream->id, off);
