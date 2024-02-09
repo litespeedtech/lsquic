@@ -2951,7 +2951,7 @@ create_delayed_streams (struct full_conn *conn)
     new_streams = malloc(sizeof(new_streams[0]) * avail);
     if (!new_streams)
     {
-        ABORT_WARN("%s: malloc failed", __func__);
+        ABORT_WARN("malloc failed");
         return;
     }
 
@@ -2964,8 +2964,7 @@ create_delayed_streams (struct full_conn *conn)
         new_streams[i] = new_stream(conn, generate_stream_id(conn), 0);
         if (!new_streams[i])
         {
-            ABORT_ERROR("%s: cannot create new stream: %s", __func__,
-                                                        strerror(errno));
+            ABORT_ERROR("cannot create new stream: %s", strerror(errno));
             goto cleanup;
         }
     }
@@ -3262,7 +3261,7 @@ immediate_close (struct full_conn *conn)
                      lsquic_packet_out_avail(packet_out), 0, error_code,
                      error_reason, error_reason ? strlen(error_reason) : 0);
     if (sz < 0) {
-        LSQ_WARN("%s failed", __func__);
+        LSQ_WARN("failed");
         return TICK_CLOSE;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
@@ -4365,8 +4364,7 @@ full_conn_ci_next_tick_time (lsquic_conn_t *lconn, unsigned *why)
     {
         now = lsquic_time_now();
         if (pacer_time < now)
-            LSQ_DEBUG("%s: pacer is %"PRIu64" usec in the past", __func__,
-                                                            now - pacer_time);
+            LSQ_DEBUG("pacer is %"PRIu64" usec in the past", now - pacer_time);
     }
 
     if (alarm_time && pacer_time)
@@ -4500,7 +4498,7 @@ full_conn_ci_log_stats (struct lsquic_conn *lconn)
     cwnd = conn->fc_send_ctl.sc_ci->cci_get_cwnd(
                                             conn->fc_send_ctl.sc_cong_ctl);
     lsquic_conn_stats_diff(&conn->fc_stats, conn->fc_last_stats, &diff_stats);
-    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
+    lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS, __func__,
         "%s: ticks: %lu; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
         ", avail: %"PRIu64"; packets: sent: %lu, lost: %lu, retx: %lu, rcvd: %lu"
         "; batch: count: %u; min: %u; max: %u; avg: %.2f",

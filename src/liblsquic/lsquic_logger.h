@@ -129,73 +129,81 @@ struct lsquic_cid;
 void
 lsquic_logger_log3 (enum lsq_log_level, enum lsquic_logger_module,
                     const struct lsquic_cid *conn_id,
-                    lsquic_stream_id_t stream_id, const char *format, ...)
+                    lsquic_stream_id_t stream_id, const char *caller,
+                    const char *format, ...)
 #if __GNUC__
-            __attribute__((format(printf, 5, 6)))
+            __attribute__((format(printf, 6, 7)))
 #endif
 ;
 #   define LSQ_LOG3(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log3(level, LSQUIC_LOGGER_MODULE,                  \
-                    LSQUIC_LOG_CONN_ID, LSQUIC_LOG_STREAM_ID, __VA_ARGS__);  \
+                    LSQUIC_LOG_CONN_ID, LSQUIC_LOG_STREAM_ID, __func__,		 \
+                    __VA_ARGS__);											 \
     } while (0)
 
 
 void
 lsquic_logger_log2 (enum lsq_log_level, enum lsquic_logger_module,
-                    const struct lsquic_cid *conn_id, const char *format, ...)
+                    const struct lsquic_cid *conn_id, const char *caller,
+                    const char *format, ...)
 #if __GNUC__
-            __attribute__((format(printf, 4, 5)))
+            __attribute__((format(printf, 5, 6)))
 #endif
 ;
 #   define LSQ_LOG2(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log2(level, LSQUIC_LOGGER_MODULE,                  \
-                                       LSQUIC_LOG_CONN_ID, __VA_ARGS__);     \
+                                       LSQUIC_LOG_CONN_ID, __func__,		 \
+                                       __VA_ARGS__);					     \
     } while (0)
 #   define LSQ_LOG2C(level, ...) do {                                        \
         if (LSQ_LOG_ENABLED(level))                                          \
         {                                                                    \
             char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
             lsquic_logger_log2(level, LSQUIC_LOGGER_MODULE,                  \
-                                       LSQUIC_LOG_CONN_ID, __VA_ARGS__);     \
+                                       LSQUIC_LOG_CONN_ID, __func__,		 \
+                                       __VA_ARGS__);					     \
         }                                                                    \
     } while (0)
 
 void
 lsquic_logger_log1 (enum lsq_log_level, enum lsquic_logger_module,
-                    const char *format, ...)
+                    const char *caller, const char *format, ...)
 #if __GNUC__
-            __attribute__((format(printf, 3, 4)))
+            __attribute__((format(printf, 4, 5)))
 #endif
 ;
 #   define LSQ_LOG1(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
-            lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE, __VA_ARGS__);    \
+            lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE,					 \
+            __func__, __VA_ARGS__);										     \
     } while (0)
 #   define LSQ_LOG1C(level, ...) do {                                        \
         if (LSQ_LOG_ENABLED(level))                                          \
         {                                                                    \
             char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
-            lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE, __VA_ARGS__);    \
+            lsquic_logger_log1(level, LSQUIC_LOGGER_MODULE,					 \
+            __func__, __VA_ARGS__);										     \
         }                                                                    \
     } while (0)
 
 void
-lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
+lsquic_logger_log0 (enum lsq_log_level, const char *caller,
+					const char *format, ...)
 #if __GNUC__
-            __attribute__((format(printf, 2, 3)))
+            __attribute__((format(printf, 3, 4)))
 #endif
 ;
 #   define LSQ_LOG0(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
-            lsquic_logger_log0(level, __VA_ARGS__);                          \
+            lsquic_logger_log0(level, __func__, __VA_ARGS__);                \
     } while (0)
 #   define LSQ_LOG0C(level, ...) do {                                        \
         if (LSQ_LOG_ENABLED(level))                                          \
         {                                                                    \
             char cidbuf_[MAX_CID_LEN * 2 + 1];                               \
-            lsquic_logger_log0(level, __VA_ARGS__);                          \
+            lsquic_logger_log0(level, __func__, __VA_ARGS__);                \
         }                                                                    \
     } while (0)
 

@@ -1657,8 +1657,8 @@ stream_readf (struct lsquic_stream *stream,
         return nread;
     total_nread += (size_t) nread;
 
-    LSQ_DEBUG("%s: read %zd bytes, read offset %"PRIu64", reached fin: %d",
-        __func__, total_nread, stream->read_offset,
+    LSQ_DEBUG("read %zd bytes, read offset %"PRIu64", reached fin: %d",
+        total_nread, stream->read_offset,
         !!(stream->stream_flags & STREAM_FIN_REACHED));
 
     if (total_nread)
@@ -3122,7 +3122,7 @@ verify_conn_cap (const struct lsquic_conn_public *conn_pub)
 
     assert(n_buffered + conn_pub->stream_frame_bytes
                                             == conn_pub->conn_cap.cc_sent);
-    LSQ_DEBUG("%s: cc_sent: %"PRIu64, __func__, conn_pub->conn_cap.cc_sent);
+    LSQ_DEBUG("cc_sent: %"PRIu64, conn_pub->conn_cap.cc_sent);
 }
 
 
@@ -4724,7 +4724,7 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 
     if (stream_is_read_reset(stream))
     {
-        LSQ_INFO("%s: stream is reset, no headers returned", __func__);
+        LSQ_INFO("stream is reset, no headers returned");
         errno = ECONNRESET;
         return NULL;
     }
@@ -4732,14 +4732,14 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
     if (!((stream->sm_bflags & SMBF_USE_HEADERS)
                                 && (stream->stream_flags & STREAM_HAVE_UH)))
     {
-        LSQ_INFO("%s: unexpected call, flags: 0x%X", __func__,
+        LSQ_INFO("unexpected call, flags: 0x%X",
                                                         stream->stream_flags);
         return NULL;
     }
 
     if (!stream->uh)
     {
-        LSQ_INFO("%s: headers unavailable (already fetched?)", __func__);
+        LSQ_INFO("headers unavailable (already fetched?)");
         return NULL;
     }
 
@@ -5447,7 +5447,7 @@ lsquic_stream_push_promise (struct lsquic_stream *stream,
 #ifdef FIU_ENABLE
     if (fiu_fail("stream/fail_initial_pp_write"))
     {
-        LSQ_NOTICE("%s: failed to write push promise (fiu)", __func__);
+        LSQ_NOTICE("failed to write push promise (fiu)");
         nw = -1;
     }
     else
@@ -5528,7 +5528,7 @@ lsquic_stream_set_http_prio (struct lsquic_stream *stream,
     {
         if (ehp->urgency > LSQUIC_MAX_HTTP_URGENCY)
         {
-            LSQ_INFO("%s: invalid urgency: %hhu", __func__, ehp->urgency);
+            LSQ_INFO("invalid urgency: %hhu", ehp->urgency);
             return -1;
         }
         stream->sm_priority = ehp->urgency;

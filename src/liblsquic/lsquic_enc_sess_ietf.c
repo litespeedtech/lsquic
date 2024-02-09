@@ -1243,7 +1243,7 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
             hp->hp_flags |= 1 << i;
         else
         {
-            LSQ_ERROR("%s: cannot initialize cipher %u", __func__, i);
+            LSQ_ERROR("cannot initialize cipher %u", i);
             goto err;
         }
     }
@@ -1569,7 +1569,7 @@ iquic_ssl_sess_to_resume_info (struct enc_sess_iquic *enc_sess, SSL *ssl,
     if (!buf)
     {
         OPENSSL_free(ticket_buf);
-        LSQ_INFO("%s: malloc failed", __func__);
+        LSQ_INFO("malloc failed");
         return -1;
     }
 
@@ -2604,7 +2604,7 @@ iquic_esf_global_init (int flags)
     }
     else
     {
-        LSQ_LOG1(LSQ_LOG_ERROR, "%s: could not select index", __func__);
+        LSQ_LOG1(LSQ_LOG_ERROR, "could not select index");
         return -1;
     }
 }
@@ -3625,7 +3625,7 @@ lsquic_ssl_sess_to_resume_info (SSL *ssl, SSL_SESSION *session,
     status = iquic_ssl_sess_to_resume_info(enc_sess, ssl, session, buf, buf_sz);
     if (status == 0)
     {
-        LSQ_DEBUG("%s called successfully, unset WANT_TICKET flag", __func__);
+        LSQ_DEBUG("called successfully, unset WANT_TICKET flag");
         enc_sess->esi_flags &= ~ESI_WANT_TICKET;
         lsquic_alarmset_unset(enc_sess->esi_alset, AL_SESS_TICKET);
     }
