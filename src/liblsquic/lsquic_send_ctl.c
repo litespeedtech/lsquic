@@ -1704,16 +1704,23 @@ lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 static int
 send_ctl_can_send (struct lsquic_send_ctl *ctl)
 {
+    uint64_t cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
-    LSQ_DEBUG("%s: n_out: %u (unacked_all: %u); cwnd: %"PRIu64
-        "; ccfc: %"PRIu64"/%"PRIu64, __func__,
-        n_out, ctl->sc_bytes_unacked_all,
-        ctl->sc_ci->cci_get_cwnd(CGP(ctl)),
+    LSQ_DEBUG("%s: sc_flags: 0x%X, b_out: %u = (%u + %u); b_retx: %u; cwnd: %"PRIu64
+        "; ccfc: %"PRIu64"/%"PRIu64"; n_scheduled: %d, n_in_flight_all: %d"
+        "; pa_burst: %d; pa_next: %lu; pa_now: %lu"
+        , __func__, ctl->sc_flags,
+        n_out, ctl->sc_bytes_unacked_all, ctl->sc_bytes_scheduled,
+        ctl->sc_bytes_unacked_retx, cwnd,
         ctl->sc_conn_pub->conn_cap.cc_sent,
-        ctl->sc_conn_pub->conn_cap.cc_max);
+        ctl->sc_conn_pub->conn_cap.cc_max,
+        ctl->sc_n_scheduled, ctl->sc_n_in_flight_all,
+        ctl->sc_pacer.pa_burst_tokens,
+        ctl->sc_pacer.pa_next_sched, ctl->sc_pacer.pa_now);
+
     if (ctl->sc_flags & SC_PACE)
     {
-        if (n_out >= ctl->sc_ci->cci_get_cwnd(CGP(ctl)))
+        if (n_out >= cwnd)
             return 0;
         if (lsquic_pacer_can_schedule(&ctl->sc_pacer,
                                ctl->sc_n_scheduled + ctl->sc_n_in_flight_all))
@@ -1728,7 +1735,7 @@ send_ctl_can_send (struct lsquic_send_ctl *ctl)
         return 0;
     }
     else
-        return n_out < ctl->sc_ci->cci_get_cwnd(CGP(ctl));
+        return n_out < cwnd;
 }
 
 

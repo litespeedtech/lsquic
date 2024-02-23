@@ -285,32 +285,41 @@ lsquic_send_ctl_ack_to_front (struct lsquic_send_ctl *, unsigned n_acks);
 #define lsquic_send_ctl_n_stop_waiting(ctl) \
                                     (+(ctl)->sc_n_stop_waiting)
 
-#define lsquic_send_ctl_n_stop_waiting_reset(ctl) do {      \
-    (ctl)->sc_n_stop_waiting = 0;                           \
-} while (0)
+static inline void
+lsquic_send_ctl_n_stop_waiting_reset(lsquic_send_ctl_t *ctl)
+{
+    ctl->sc_n_stop_waiting = 0;
+}
 
 void
 lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
 
-#define lsquic_send_ctl_tick_in(ctl, now) do {              \
-    if ((ctl)->sc_flags & SC_PACE)                          \
-    {                                                       \
-        (ctl)->sc_flags |= SC_SCHED_TICK;                   \
-        lsquic_pacer_tick_in(&(ctl)->sc_pacer, now);        \
-    }                                                       \
-    (ctl)->sc_flags &= ~SC_APP_LIMITED;                     \
-} while (0)
+static inline void
+lsquic_send_ctl_tick_in(lsquic_send_ctl_t *ctl, lsquic_time_t now)
+{
+    if ((ctl)->sc_flags & SC_PACE)
+    {
+        (ctl)->sc_flags |= SC_SCHED_TICK;
+        lsquic_pacer_tick_in(&(ctl)->sc_pacer, now);
+    }
+    (ctl)->sc_flags &= ~SC_APP_LIMITED;
+}
 
-#define lsquic_send_ctl_tick_out(ctl) do {                  \
-    if ((ctl)->sc_flags & SC_PACE)                          \
-        lsquic_pacer_tick_out(&(ctl)->sc_pacer);            \
-} while (0)
+static inline void
+lsquic_send_ctl_tick_out(lsquic_send_ctl_t *ctl)
+{
+    if ((ctl)->sc_flags & SC_PACE)
+        lsquic_pacer_tick_out(&(ctl)->sc_pacer);
+}
 
-#define lsquic_send_ctl_next_pacer_time(ctl) (              \
-    ((ctl)->sc_flags & SC_PACE)                             \
-        && lsquic_pacer_delayed(&(ctl)->sc_pacer)           \
-        ? lsquic_pacer_next_sched(&(ctl)->sc_pacer)         \
-        : 0 )
+static inline lsquic_time_t
+lsquic_send_ctl_next_pacer_time(lsquic_send_ctl_t *ctl)
+{
+    return ((ctl)->sc_flags & SC_PACE)
+            && lsquic_pacer_delayed(&(ctl)->sc_pacer)
+            ? lsquic_pacer_next_sched(&(ctl)->sc_pacer)
+            : 0;
+}
 
 enum packno_bits
 lsquic_send_ctl_packno_bits (struct lsquic_send_ctl *, enum packnum_space);

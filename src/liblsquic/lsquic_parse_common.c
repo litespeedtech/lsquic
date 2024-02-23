@@ -232,10 +232,12 @@ lsquic_dcid_from_packet (const unsigned char *buf, size_t bufsz,
     {
     /* Xs vary, Gs are iGnored: */
     /* 1X11 XGGG: */
+    /*
     case (0x80|0x40|0x20|0x10|0x08) >> 3:
     case (0x80|0x00|0x20|0x10|0x08) >> 3:
     case (0x80|0x40|0x20|0x10|0x00) >> 3:
     case (0x80|0x00|0x20|0x10|0x00) >> 3:
+    */
   Q046_long:
         /* lsquic_Q046_parse_packet_in_long_begin */
         if (bufsz < 14)

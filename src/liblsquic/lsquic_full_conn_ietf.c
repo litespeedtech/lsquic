@@ -1933,7 +1933,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         conn->ifc_flags |= IFC_ACK_HAD_MISS;
     else
         conn->ifc_flags &= ~IFC_ACK_HAD_MISS;
-    LSQ_DEBUG("Put %d bytes of ACK frame into packet %" PRIu64
+    LSQ_DEBUG("Put %d bytes of ACK frame into packet #%" PRIu64
               " on outgoing queue", w, packet_out->po_packno);
     if (conn->ifc_n_cons_unretx >= conn->ifc_ping_unretx_thresh &&
                 !lsquic_send_ctl_have_outgoing_retx_frames(&conn->ifc_send_ctl))
@@ -1944,6 +1944,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         /* This gives a range [12, 27]: */
         conn->ifc_ping_unretx_thresh = 12
                     + lsquic_crand_get_nybble(conn->ifc_enpub->enp_crand);
+        conn->ifc_n_cons_unretx = 0;
     }
 
     conn->ifc_n_slack_akbl[pns] = 0;
@@ -7941,7 +7942,7 @@ ietf_full_conn_ci_packet_sent (struct lsquic_conn *lconn,
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     int s;
 
-    if (packet_out->po_frame_types & (IQUIC_FRAME_RETX_MASK | QUIC_FTBIT_ACK))
+    if (packet_out->po_frame_types & (IQUIC_FRAME_RETX_MASK))
         conn->ifc_n_cons_unretx = 0;
     else
         ++conn->ifc_n_cons_unretx;
@@ -8574,7 +8575,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
                     || 0 != lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl))
                 )
         {
-            RETURN_IF_OUT_OF_PACKETS();
+            /* CONNECTION_CLOSE frame should not be congestion controlled.
+            RETURN_IF_OUT_OF_PACKETS(); */
             generate_connection_close_packet(conn);
             tick |= TICK_SEND|TICK_CLOSE;
         }
