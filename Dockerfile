@@ -1,13 +1,17 @@
-FROM ubuntu:16.04
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update && \
-    apt-get install -y build-essential git cmake software-properties-common \
+    apt-get install -y apt-utils build-essential git cmake software-properties-common \
                        zlib1g-dev libevent-dev
 
-RUN add-apt-repository ppa:gophers/archive && \
+RUN add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && \
-    apt-get install -y golang-1.9-go && \
-    cp /usr/lib/go-1.9/bin/go* /usr/bin/.
+    apt-get install -y golang-1.21-go && \
+    cp /usr/lib/go-1.21/bin/go* /usr/bin/.
+
+ENV GOROOT /usr/lib/go-1.21
 
 RUN mkdir /src
 WORKDIR /src
@@ -15,9 +19,9 @@ WORKDIR /src
 RUN mkdir /src/lsquic
 COPY ./ /src/lsquic/
 
-RUN git clone https://boringssl.googlesource.com/boringssl && \
+RUN git clone https://github.com/google/boringssl.git && \
     cd boringssl && \
-    git checkout a2278d4d2cabe73f6663e3299ea7808edfa306b9 && \
+    git checkout 9fc1c33e9c21439ce5f87855a6591a9324e569fd && \
     cmake . && \
     make
 
