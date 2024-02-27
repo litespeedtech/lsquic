@@ -22,22 +22,22 @@ Standard Compliance
 
 LiteSpeed QUIC is mostly compliant to the follow RFCs:
 
-- [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)
-- [RFC 9001](https://www.rfc-editor.org/rfc/rfc9001)
-- [RFC 9002](https://www.rfc-editor.org/rfc/rfc9002)
-- [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114)
-- [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204)
+- [RFC 9000](https://www.rfc-editor.org/rfc/rfc9000) QUIC: A UDP-Based Multiplexed and Secure Transport
+- [RFC 9001](https://www.rfc-editor.org/rfc/rfc9001) Using TLS to Secure QUIC
+- [RFC 9002](https://www.rfc-editor.org/rfc/rfc9002) QUIC Loss Detection and Congestion Control
+- [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114) HTTP/3
+- [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204) QPACK: Field Compression for HTTP/3
 
 QUIC protocol extensions
 ------------------------
 
 The following QUIC protocol extensions are implemented:
 
-- [QUIC Version 2](https://www.rfc-editor.org/authors/rfc9369.html)
-- [Compatible Version Negotiation](https://datatracker.ietf.org/doc/draft-ietf-quic-version-negotiation/)
-- [Datagrams](https://datatracker.ietf.org/doc/html/rfc9221)
+- [RFC 9368](https://www.rfc-editor.org/rfc/rfc9368) Compatible Version Negotiation for QUIC
+- [RFC 9369](https://www.rfc-editor.org/rfc/rfc9369) QUIC Version 2
+- [RFC 9221](https://www.rfc-editor.org/rfc/rfc9221) An Unreliable Datagram Extension to QUIC
+- [RFC 9287](https://www.rfc-editor.org/rfc/rfc9287) Greasing the QUIC Bit
 - [ACK Frequency](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
-- [Greasing the QUIC Bit](https://datatracker.ietf.org/doc/html/rfc9287)
 
 Documentation
 -------------
@@ -71,7 +71,7 @@ You may need to install pre-requisites like zlib and libevent.
 2. Use specific BoringSSL version
 
 ```
-git checkout 31bad2514d21f6207f3925ba56754611c462a873
+git checkout 9fc1c33e9c21439ce5f87855a6591a9324e569fd
 ```
 Or, just try the latest master branch.
 
