@@ -1,3 +1,8 @@
+2024-02-28
+    - 4.0.7
+    - Fix overly strict 0-RTT packet DCID validation.
+    - Update docker build.
+
 2024-02-23
     - 4.0.6
     - Fix ACK handling.

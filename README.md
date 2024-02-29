@@ -111,8 +111,7 @@ as follows:
 ```
 git clone https://github.com/litespeedtech/lsquic.git
 cd lsquic
-git submodule init
-git submodule update
+git submodule update --init
 ```
 
 2. Compile the library
@@ -147,8 +146,7 @@ The library and the example client and server can be built with Docker.
 Initialize Git submodules:
 ```
 cd lsquic
-git submodule init
-git submodule update
+git submodule update --init
 ```
 
 Build the Docker image:

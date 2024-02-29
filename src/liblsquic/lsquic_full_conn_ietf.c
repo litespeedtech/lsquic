@@ -7524,7 +7524,7 @@ process_regular_packet (struct ietf_full_conn *conn,
                                                                     packet_in);
     else
     {
-        if (is_dcid_changed)
+        if (is_dcid_changed && HETY_0RTT != packet_in->pi_header_type)
         {
             if (LSQUIC_CIDS_EQ(&conn->ifc_conn.cn_cces[0].cce_cid,
                             &packet_in->pi_dcid)
