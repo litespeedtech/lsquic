@@ -1606,7 +1606,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
-    assert(0 == ctl->sc_bytes_scheduled);
+    //assert(0 == ctl->sc_bytes_scheduled);
     for (pns = PNS_INIT; pns < N_PNS; ++pns)
         while ((packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns])))
         {

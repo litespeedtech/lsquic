@@ -467,6 +467,7 @@ struct ietf_full_conn
     }                           ifc_peer_hq_settings;
     struct dcid_elem           *ifc_dces[MAX_IETF_CONN_DCIDS];
     TAILQ_HEAD(, dcid_elem)     ifc_to_retire;
+    unsigned                    ifc_n_to_retire;
     unsigned                    ifc_scid_seqno;
     lsquic_time_t               ifc_scid_timestamp[MAX_SCID];
     /* Last 8 packets had ECN markings? */
@@ -1277,6 +1278,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     TAILQ_INIT(&conn->ifc_pub.service_streams);
     STAILQ_INIT(&conn->ifc_stream_ids_to_ss);
     TAILQ_INIT(&conn->ifc_to_retire);
+    conn->ifc_n_to_retire = 0;
 
     lsquic_alarmset_init(&conn->ifc_alset, &conn->ifc_conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_IDLE, idle_alarm_expired, conn);
@@ -2293,6 +2295,7 @@ generate_retire_cid_frame (struct ietf_full_conn *conn)
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
 
     TAILQ_REMOVE(&conn->ifc_to_retire, dce, de_next_to_ret);
+    --conn->ifc_n_to_retire;
     lsquic_malo_put(dce);
 
     if (TAILQ_EMPTY(&conn->ifc_to_retire))
@@ -2306,6 +2309,13 @@ static void
 generate_retire_cid_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 {
     int s;
+
+    if (conn->ifc_n_to_retire >= MAX_IETF_CONN_DCIDS * 3)
+    {
+        ABORT_QUIETLY(0, TEC_CONNECTION_ID_LIMIT_ERROR,
+            "too many (%d) CIDs to retire", conn->ifc_n_to_retire);
+        return;
+    }
 
     do
         s = generate_retire_cid_frame(conn);
@@ -3027,6 +3037,7 @@ retire_dcid (struct ietf_full_conn *conn, struct dcid_elem **dce)
     if ((*dce)->de_hash_el.qhe_flags & QHE_HASHED)
         lsquic_hash_erase(conn->ifc_enpub->enp_srst_hash, &(*dce)->de_hash_el);
     TAILQ_INSERT_TAIL(&conn->ifc_to_retire, *dce, de_next_to_ret);
+    ++conn->ifc_n_to_retire;
     LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32"", (*dce)->de_seqno);
     *dce = NULL;
     conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
@@ -3044,6 +3055,7 @@ retire_seqno (struct ietf_full_conn *conn, unsigned seqno)
         memset(dce, 0, sizeof(*dce));
         dce->de_seqno = seqno;
         TAILQ_INSERT_TAIL(&conn->ifc_to_retire, dce, de_next_to_ret);
+        ++conn->ifc_n_to_retire;
         LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32, seqno);
         conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
     }
@@ -3175,6 +3187,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     while ((dce = TAILQ_FIRST(&conn->ifc_to_retire)))
     {
         TAILQ_REMOVE(&conn->ifc_to_retire, dce, de_next_to_ret);
+        --conn->ifc_n_to_retire;
         lsquic_malo_put(dce);
     }
     lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
@@ -3376,6 +3389,7 @@ retire_cid_from_tp (struct ietf_full_conn *conn,
                                                     sizeof(dce->de_srst));
     dce->de_flags = DE_SRST;
     TAILQ_INSERT_TAIL(&conn->ifc_to_retire, dce, de_next_to_ret);
+    ++conn->ifc_n_to_retire;
     LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32, dce->de_seqno);
     conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
 }

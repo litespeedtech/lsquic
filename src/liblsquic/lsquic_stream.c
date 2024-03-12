@@ -1888,6 +1888,11 @@ stream_shutdown_write (lsquic_stream_t *stream)
             {
                 LSQ_DEBUG("turned on FIN flag in the yet-unsent STREAM frame");
                 stream->stream_flags |= STREAM_FIN_SENT;
+                if (stream->sm_qflags & SMQF_WANT_FLUSH)
+                {
+                    LSQ_DEBUG("turned off SMQF_WANT_FLUSH flag as FIN flag is turned on.");
+                    maybe_remove_from_write_q(stream, SMQF_WANT_FLUSH);
+                }
             }
             else
             {
@@ -3459,6 +3464,11 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
                 if (use_framing && seen_ok)
                     maybe_close_varsize_hq_frame(stream);
                 stream->stream_flags |= STREAM_FIN_SENT;
+                if (stream->sm_qflags & SMQF_WANT_FLUSH)
+                {
+                    LSQ_DEBUG("turned off SMQF_WANT_FLUSH flag as FIN has been sent.");
+                    maybe_remove_from_write_q(stream, SMQF_WANT_FLUSH);
+                }
                 goto end;
             }
             else
