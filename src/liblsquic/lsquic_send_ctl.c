@@ -3169,7 +3169,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
 
     LSQ_DEBUG("drop oversized buffered packet #%"PRIu64, packet_out->po_packno);
     TAILQ_REMOVE(&packet_q->bpq_packets, packet_out, po_next);
-    ++packet_q->bpq_count;
+    --packet_q->bpq_count;
     assert(packet_out->po_loss_chain == packet_out);
     send_ctl_destroy_packet(ctl, packet_out);
     return 0;

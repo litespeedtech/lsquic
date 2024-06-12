@@ -26,7 +26,7 @@ author = u'LiteSpeed Technologies'
 # The short X.Y version
 version = u'4.0'
 # The full version, including alpha/beta/rc tags
-release = u'4.0.8'
+release = u'4.0.9'
 
 
 # -- General configuration ---------------------------------------------------
