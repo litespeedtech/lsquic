@@ -1777,7 +1777,7 @@ usage (const char *prog)
 "                 write; negative means always use remaining file size.\n"
 "                 Incompatible with -w.\n"
 #endif
-"   -y DELAY    Delay response for this many seconds -- use for debugging\n"
+"   -Y DELAY    Delay response for this many seconds -- use for debugging\n"
 "   -Q ALPN     Use hq mode; ALPN could be \"hq-29\", for example.\n"
             , prog);
 }
@@ -1987,7 +1987,7 @@ main (int argc, char **argv)
                                                         "cannot use -P\n");
             exit(EXIT_FAILURE);
 #endif
-        case 'y':
+        case 'Y':
             server_ctx.delay_resp_sec = atoi(optarg);
             break;
         case 'h':
