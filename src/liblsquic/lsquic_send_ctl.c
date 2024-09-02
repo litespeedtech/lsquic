@@ -1552,9 +1552,9 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
         if (!lsquic_send_ctl_can_send(ctl))
             return NULL;
 
+  pop_lost_packet:	
         if (packet_out_total_sz(lost_packet) <= SC_PACK_SIZE(ctl))
         {
-  pop_lost_packet:
             TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
             lost_packet->po_flags &= ~PO_LOST;
             lost_packet->po_flags |= PO_RETX;
@@ -1567,7 +1567,20 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
             if (0 == split_lost_packet(ctl, lost_packet))
             {
                 lost_packet = TAILQ_FIRST(&ctl->sc_lost_packets);
-                goto pop_lost_packet;
+                while (lost_packet != NULL && lost_packet->po_regen_sz >= lost_packet->po_data_sz)
+                {
+                    LSQ_DEBUG("Dropping packet %"PRIu64" from lost queue",
+                              lost_packet->po_packno);
+                    TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
+                    lost_packet->po_flags &= ~PO_LOST;
+                    send_ctl_destroy_chain(ctl, lost_packet, NULL);
+                    send_ctl_destroy_packet(ctl, lost_packet);
+                    lost_packet = TAILQ_FIRST(&ctl->sc_lost_packets);
+                }
+                if (!lost_packet)
+                    return NULL;
+              	else 
+                    goto pop_lost_packet;
             }
             lconn->cn_if->ci_internal_error(lconn,
                                                 "error resizing lost packet");
