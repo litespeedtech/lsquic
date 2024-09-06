@@ -19,15 +19,14 @@ WORKDIR /src
 RUN mkdir /src/lsquic
 COPY ./ /src/lsquic/
 
-RUN git clone https://github.com/google/boringssl.git && \
+RUN git clone --depth=1 https://github.com/google/boringssl.git && \
     cd boringssl && \
-    git checkout 9fc1c33e9c21439ce5f87855a6591a9324e569fd && \
     cmake . && \
     make
 
 ENV EXTRA_CFLAGS -DLSQUIC_QIR=1
 RUN cd /src/lsquic && \
-    cmake -DBORINGSSL_DIR=/src/boringssl . && \
+    cmake -DBORINGSSL_DIR=/src/boringssl -D BORINGSSL_LIB_crypto=/src/boringssl/build/crypto/libcrypto.a -DBORINGSSL_LIB_SSL=/src/boringssl/build/ssl/libssl.a . && \
     make
 
 RUN cd lsquic && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
