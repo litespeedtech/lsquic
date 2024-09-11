@@ -1569,8 +1569,10 @@ send_ctl_next_lost (lsquic_send_ctl_t *ctl)
                 lost_packet = TAILQ_FIRST(&ctl->sc_lost_packets);
                 while (lost_packet != NULL && lost_packet->po_regen_sz >= lost_packet->po_data_sz)
                 {
-                    LSQ_DEBUG("Dropping packet %"PRIu64" from lost queue",
-                              lost_packet->po_packno);
+                    LSQ_DEBUG("Dropping packet %"PRIu64
+                              " from lost queue, data size: %d, frames: %x",
+                              lost_packet->po_packno, lost_packet->po_data_sz,
+                              lost_packet->po_frame_types);
                     TAILQ_REMOVE(&ctl->sc_lost_packets, lost_packet, po_next);
                     lost_packet->po_flags &= ~PO_LOST;
                     send_ctl_destroy_chain(ctl, lost_packet, NULL);

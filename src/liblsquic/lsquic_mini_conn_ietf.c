@@ -265,6 +265,16 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
 }
 
 
+static void
+imico_zero_pad (struct lsquic_packet_out *packet_out, size_t pad_size)
+{
+    memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
+    packet_out->po_padding_sz = pad_size;
+    packet_out->po_data_sz += pad_size;
+    packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
+}
+
+
 static int
 imico_generate_ack (struct ietf_mini_conn *conn, enum packnum_space pns,
                                                             lsquic_time_t now);
@@ -309,11 +319,14 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
             return -1;
         // NOTE: reduce the size of first crypto frame to combine packets
         int avail = lsquic_packet_out_avail(packet_out);
+        int coalescing = 0;
         if (cryst->mcs_enc_level == ENC_LEV_HSK
             && cryst->mcs_write_off == 0
-            && avail > conn->imc_hello_pkt_remain - conn->imc_long_header_sz)
+            && avail > (int)conn->imc_hello_pkt_remain - conn->imc_long_header_sz)
         {
             avail = conn->imc_hello_pkt_remain - conn->imc_long_header_sz;
+            conn->imc_hello_pkt_remain = 0;
+            coalescing = 1;
         }
         p = msg_ctx.buf;
         len = pf->pf_gen_crypto_frame(packet_out->po_data + packet_out->po_data_sz,
@@ -326,9 +339,15 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
         packet_out->po_data_sz += len;
         packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
         packet_out->po_flags |= PO_HELLO;
+        if (coalescing && len < avail)
+        {
+            LSQ_DEBUG("generated PADDING frame: %d bytes for packet %"PRIu64,
+                         avail - len, packet_out->po_packno);
+            imico_zero_pad(packet_out, avail - len);
+        }
         cryst->mcs_write_off += msg_ctx.buf - p;
         if (cryst->mcs_enc_level == ENC_LEV_INIT)
-            conn->imc_hello_pkt_remain = avail - len;
+            conn->imc_hello_pkt_remain = lsquic_packet_out_avail(packet_out);
     }
 
     assert(msg_ctx.buf == msg_ctx.end);
@@ -795,19 +814,6 @@ imico_can_send (const struct ietf_mini_conn *conn, size_t size)
 }
 
 
-// static void
-// imico_zero_pad (struct lsquic_packet_out *packet_out)
-// {
-//     size_t pad_size;
-//
-//     pad_size = lsquic_packet_out_avail(packet_out);
-//     memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
-//     packet_out->po_padding_sz = pad_size;
-//     packet_out->po_data_sz += pad_size;
-//     packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
-// }
-
-
 static lsquic_time_t
 imico_rechist_largest_recv (void *rechist_ctx);
 
@@ -939,14 +945,19 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
                           "enough quota", packet_out->po_packno);
                 return NULL;
             }
-//             if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_PADDING))
-//                 && (packet_out->po_frame_types & IQUIC_FRAME_ACKABLE_MASK)
-//                 && lsquic_packet_out_avail(packet_out) > 0)
-//             {
-//                 LSQ_DEBUG("generated PADDING frame: %hd bytes for packet %"PRIu64,
-//                         lsquic_packet_out_avail(packet_out), packet_out->po_packno);
-//                 imico_zero_pad(packet_out);
-//             }
+            // NOTE: do not padd INIT packet only, here, instead pad the coalesced
+            //       later, can save one packet, more efficient.
+            // if (!(packet_out->po_frame_types & (1 << QUIC_FRAME_PADDING))
+            //     && (packet_out->po_frame_types & IQUIC_FRAME_ACKABLE_MASK)
+            //     && IQUIC_MIN_INIT_PACKET_SZ > packet_out->po_data_sz)
+            // {
+            //     size_t pad_size;
+            //
+            //     pad_size = IQUIC_MIN_INIT_PACKET_SZ - packet_out->po_data_sz;
+            //     LSQ_DEBUG("generated PADDING frame: %zd bytes for packet %"PRIu64,
+            //             pad_size, packet_out->po_packno);
+            //     imico_zero_pad(packet_out, pad_size);
+            // }
         }
         packet_size = lsquic_packet_out_total_sz(lconn, packet_out);
         if (!(to_coal

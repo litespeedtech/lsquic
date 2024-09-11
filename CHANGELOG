@@ -1,3 +1,12 @@
+2024-09-09
+    - 4.0.11
+    - Fix assert failure related to splitting a large packet.
+
+2024-07-02
+    - 4.0.10
+    - Fix server initial packet padding.
+    - Fix a handshake failure corner case due to packet corruption.
+
 2024-06-12
     - 4.0.9
     - Fix bpq_count (issue #504).

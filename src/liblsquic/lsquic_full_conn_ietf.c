@@ -4561,6 +4561,7 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         return;
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_regen_sz += sz;
     packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
     LSQ_DEBUG("wrote PING frame");
     conn->ifc_send_flags &= ~SF_SEND_PING;
@@ -7800,6 +7801,8 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
         lsquic_send_ctl_expire_all(&conn->ifc_send_ctl);
         return 0;
     }
+    else if (HETY_RETRY == packet_in->pi_header_type)
+        return process_retry_packet(conn, packet_in);
 
     if (packet_in->pi_version != conn->ifc_u.cli.ifcli_ver_neg.vn_ver)
     {
@@ -8147,6 +8150,7 @@ check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
      * resized, only discarded.
      */
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_regen_sz += sz;
     packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
     avail = lsquic_packet_out_avail(packet_out);
     if (avail)
