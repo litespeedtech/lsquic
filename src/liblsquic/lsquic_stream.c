@@ -783,6 +783,8 @@ lsquic_stream_call_on_close (lsquic_stream_t *stream)
         stream->stream_flags |= STREAM_ONCLOSE_DONE;
         SM_HISTORY_APPEND(stream, SHE_ONCLOSE_CALL);
         stream->stream_if->on_close(stream, stream->st_ctx);
+        if (stream->sm_qflags & SMQF_WANT_WRITE)
+            maybe_remove_from_write_q(stream, SMQF_WANT_WRITE);
     }
     else
         assert(0);
@@ -2064,6 +2066,7 @@ static void
 maybe_put_onto_write_q (lsquic_stream_t *stream, enum stream_q_flags flag)
 {
     assert(SMQF_WRITE_Q_FLAGS & flag);
+    assert(!(stream->stream_flags & STREAM_ONCLOSE_DONE));
     if (!(stream->sm_qflags & SMQF_WRITE_Q_FLAGS))
     {
         LSQ_DEBUG("put on write queue");

@@ -1,3 +1,7 @@
+2024-09-23
+    - 4.0.12
+    - Fix stream WANT_WRITE flag that causes busy looping.
+
 2024-09-09
     - 4.0.11
     - Fix assert failure related to splitting a large packet.
