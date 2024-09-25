@@ -1511,7 +1511,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     struct lsquic_packet_out *packet_out;
     struct lsquic_packet_in *packet_in;
     struct conn_cid_elem *cce;
-    int have_outgoing_ack;
     lsquic_packno_t next_packno;
     lsquic_time_t now;
     enum packnum_space pns;
@@ -1644,7 +1643,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
      * been lost.  We take ownership of all packets in mc_packets_out; those
      * that are not on the list are recorded in fc_send_ctl.sc_senhist.
      */
-    have_outgoing_ack = 0;
     next_packno = ~0ULL;
     /* mini conn may drop Init packets, making gaps; don't warn about them: */
     conn->ifc_send_ctl.sc_senhist.sh_flags |= SH_GAP_OK;
@@ -1680,8 +1678,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
             LSQ_DEBUG("got unsent packet_out %"PRIu64" from mini (will send)",
                                                    packet_out->po_packno);
             lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
-            have_outgoing_ack |= packet_out->po_frame_types &
-                                                (1 << QUIC_FRAME_ACK);
         }
     }
     conn->ifc_send_ctl.sc_senhist.sh_flags &= ~SH_GAP_OK;
