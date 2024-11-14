@@ -2,7 +2,9 @@
 cmake_minimum_required(VERSION 3.0...3.23)
 
 
-PROJECT(lsquic C)
+PROJECT(lsquic C CXX)
+
+SET(LIBS "-lstdc++")
 
 OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
