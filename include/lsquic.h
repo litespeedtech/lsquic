@@ -1439,6 +1439,12 @@ lsquic_engine_packet_in (lsquic_engine_t *,
         void *peer_ctx, int ecn);
 
 /**
+ * Returns current number of connections processed by the engine. Both mini and full connections included
+ */
+unsigned
+lsquic_engine_get_conns_count (lsquic_engine_t *engine);
+
+/**
  * Process tickable connections.  This function must be called often enough so
  * that packets and connections do not expire.
  */
