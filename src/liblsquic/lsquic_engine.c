@@ -2213,6 +2213,11 @@ drop_all_mini_conns (lsquic_engine_t *engine)
     cub_flush(&cub);
 }
 
+unsigned
+lsquic_engine_get_conns_count (lsquic_engine_t *engine)
+{
+    return engine->n_conns;
+}
 
 void
 lsquic_engine_process_conns (lsquic_engine_t *engine)
