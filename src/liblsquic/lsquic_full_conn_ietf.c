@@ -1196,8 +1196,11 @@ ietf_full_conn_add_scid (struct ietf_full_conn *conn,
     }
 
     if (enpub->enp_settings.es_scid_len)
-        enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, lconn, &cce->cce_cid,
-                                            enpub->enp_settings.es_scid_len);
+    {
+        cce->cce_cid.len = enpub->enp_settings.es_scid_len;
+        enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, lconn,
+                                 cce->cce_cid.buf, cce->cce_cid.len);
+    }
 
     cce->cce_seqno = conn->ifc_scid_seqno++;
     cce->cce_flags |= CCE_SEQNO | flags;
@@ -7254,6 +7257,7 @@ process_retry_packet (struct ietf_full_conn *conn,
         LSQ_DEBUG("cannot verify retry packet: ignore it");
         return 0;
     }
+    LSQ_INFO("Received a retry packet.  Will retry.");
 
     if (0 != lsquic_send_ctl_retry(&conn->ifc_send_ctl,
                     packet_in->pi_data + packet_in->pi_token,
@@ -7272,7 +7276,6 @@ process_retry_packet (struct ietf_full_conn *conn,
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_HSK);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_RETX_APP);
 
-    LSQ_INFO("Received a retry packet.  Will retry.");
     conn->ifc_flags |= IFC_RETRIED;
     return 0;
 }

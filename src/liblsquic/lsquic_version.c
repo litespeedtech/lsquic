@@ -53,19 +53,7 @@ lsquic_tag2ver_fast (const unsigned char *tag)
 {
     unsigned char ch;
     ch = *tag;
-    if (ch == 'Q' && *(tag + 1) == '0')
-    {
-        if (*(tag + 2) == '5' && *(tag + 3) == '0')
-            return LSQVER_050;
-        else if (*(tag + 2) == '4' && *(tag + 3) == '6')
-            return LSQVER_046;
-    }
-    else if (ch == 0x6b && *(tag + 1) == 0x33
-             && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
-    {
-        return LSQVER_I002;
-    }
-    else if (ch == '\0' && *(tag + 1) == 0 && *(tag + 2) == 0)
+    if (ch == '\0' && *(tag + 1) == 0 && *(tag + 2) == 0)
     {
         if (*(tag + 3) == 0x01)
             return LSQVER_I001;
@@ -78,6 +66,49 @@ lsquic_tag2ver_fast (const unsigned char *tag)
             return LSQVER_ID29;
         else if (*(tag + 3) == 0x1B)
             return LSQVER_ID27;
+    }
+    else if (ch == 0x6b && *(tag + 1) == 0x33
+             && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
+    {
+        return LSQVER_I002;
+    }
+    else if (ch == 'Q' && *(tag + 1) == '0')
+    {
+        if (*(tag + 2) == '5' && *(tag + 3) == '0')
+            return LSQVER_050;
+        else if (*(tag + 2) == '4' && *(tag + 3) == '6')
+            return LSQVER_046;
+    }
+    else if ((ch & 0xf) == 0xa && (*(tag + 1) & 0xf) == 0xa
+            && (*(tag + 2) & 0xf) == 0xa && (*(tag + 3) & 0xf) == 0xa)
+        return LSQVER_RESVED;
+    return N_LSQVER;
+}
+
+
+enum lsquic_version
+lsquic_tag2ver_ietf (const unsigned char *tag)
+{
+    unsigned char ch;
+    ch = *tag;
+    if (ch == '\0' && *(tag + 1) == 0 && *(tag + 2) == 0)
+    {
+        if (*(tag + 3) == 0x01)
+            return LSQVER_I001;
+        else if (*(tag + 3) == 0x00)
+            return LSQVER_VERNEG;
+    }
+    else if (ch == 0xff && *(tag + 1) == 0 && *(tag + 2) == 0)
+    {
+        if (*(tag + 3) == 0x1D)
+            return LSQVER_ID29;
+        else if (*(tag + 3) == 0x1B)
+            return LSQVER_ID27;
+    }
+    else if (ch == 0x6b && *(tag + 1) == 0x33
+             && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
+    {
+        return LSQVER_I002;
     }
     else if ((ch & 0xf) == 0xa && (*(tag + 1) & 0xf) == 0xa
             && (*(tag + 2) & 0xf) == 0xa && (*(tag + 3) & 0xf) == 0xa)

@@ -220,7 +220,7 @@ lsquic_cid_from_packet (const unsigned char *buf, size_t bufsz,
 
 int
 lsquic_dcid_from_packet (const unsigned char *buf, size_t bufsz,
-                                unsigned server_cid_len, unsigned *cid_len)
+                                unsigned server_cid_len, uint8_t *cid_len)
 {
     const unsigned char *p;
     unsigned dcil, scil;

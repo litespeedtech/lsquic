@@ -239,20 +239,19 @@ lsquic_generate_cid (lsquic_cid_t *cid, size_t len)
 
 
 void
-lsquic_generate_scid (void *ctx, struct lsquic_conn *lconn, lsquic_cid_t *scid,
+lsquic_generate_scid (void *ctx, struct lsquic_conn *lconn, uint8_t *cid,
                                                                 unsigned len)
 {
     if (len)
-        lsquic_generate_cid(scid, len);
-    else
-        scid->len = len;
+        RAND_bytes(cid, len);
 }
 
 
 void
 lsquic_generate_cid_gquic (lsquic_cid_t *cid)
 {
-    lsquic_generate_cid(cid, GQUIC_CID_LEN);
+    RAND_bytes(cid->idbuf, GQUIC_CID_LEN);
+    cid->len = GQUIC_CID_LEN;
 }
 
 

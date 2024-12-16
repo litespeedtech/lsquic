@@ -15,6 +15,9 @@ enum lsquic_version
 lsquic_tag2ver (uint32_t ver_tag);
 
 enum lsquic_version
+lsquic_tag2ver_ietf (const unsigned char *tag);
+
+enum lsquic_version
 lsquic_tag2ver_fast (const unsigned char * tag);
 
 extern const char *const lsquic_ver2str[];

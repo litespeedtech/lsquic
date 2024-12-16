@@ -394,7 +394,7 @@ void
 lsquic_generate_cid_gquic (lsquic_cid_t *cid);
 
 void
-lsquic_generate_scid (void *, struct lsquic_conn *lconn, lsquic_cid_t *scid,
+lsquic_generate_scid (void *, struct lsquic_conn *lconn, uint8_t *scid,
                                                                 unsigned len);
 
 void

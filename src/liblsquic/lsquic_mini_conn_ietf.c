@@ -581,14 +581,15 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_conn.cn_n_cces = sizeof(conn->imc_cces)
                                                 / sizeof(conn->imc_cces[0]);
     conn->imc_cces[0].cce_cid = packet_in->pi_dcid;
-    conn->imc_cces[0].cce_flags = CCE_USED;
+    conn->imc_cces[0].cce_flags = CCE_USED | CCE_REG;
     conn->imc_conn.cn_cces_mask = 1;
     lsquic_scid_from_packet_in(packet_in, &conn->imc_path.np_dcid);
     /* Generate new SCID. Since is not the original SCID, it is given
      * a sequence number (0) and therefore can be retired by the client.
      */
+    conn->imc_conn.cn_cces[1].cce_cid.len = enpub->enp_settings.es_scid_len;
     enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, &conn->imc_conn,
-        &conn->imc_conn.cn_cces[1].cce_cid, enpub->enp_settings.es_scid_len);
+        conn->imc_conn.cn_cces[1].cce_cid.buf, enpub->enp_settings.es_scid_len);
 
     if (conn->imc_path.np_dcid.len)
         conn->imc_conn.cn_logid = conn->imc_path.np_dcid;

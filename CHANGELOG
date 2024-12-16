@@ -1,3 +1,11 @@
+2024-12-16
+    - 4.1.0
+    - Update to ls-qpack v2.6.0 to fix a infinite loop.
+    - Add lsquic_engine_get_conns_count() API
+    - Updated ea_generate_scid() API
+    - Fix retry packet SCID generation to follow engine API.
+    - Fix QUICv2 header protection key when retry packet is involved.
+
 2024-09-23
     - 4.0.12
     - Fix stream WANT_WRITE flag that causes busy looping.

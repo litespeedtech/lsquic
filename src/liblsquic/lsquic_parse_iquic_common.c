@@ -430,7 +430,7 @@ lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     memcpy(p, scid->idbuf, scid->len);
     p += scid->len;
     *p++ = our_scid_len;
-    RAND_bytes(p, our_scid_len);
+    enpub->enp_generate_scid(enpub->enp_gen_scid_ctx, NULL, p, our_scid_len);
     p += our_scid_len;
     sz = lsquic_tg_generate_retry(tokgen, p, end - p,
                         p - our_scid_len, our_scid_len, sockaddr, dcid);

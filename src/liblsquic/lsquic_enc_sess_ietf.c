@@ -607,9 +607,10 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             cce->cce_seqno = seqno + 1;
             cce->cce_flags = CCE_SEQNO;
 
+            cce->cce_cid.len = enc_sess->esi_enpub->enp_settings.es_scid_len;
             enc_sess->esi_enpub->enp_generate_scid(
                 enc_sess->esi_enpub->enp_gen_scid_ctx, enc_sess->esi_conn,
-                &cce->cce_cid, enc_sess->esi_enpub->enp_settings.es_scid_len);
+                cce->cce_cid.buf, cce->cce_cid.len);
 
             /* Don't add to hash: migration must not start until *after*
              * handshake is complete.
@@ -1180,6 +1181,8 @@ setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
     unsigned char key[2][EVP_MAX_KEY_LENGTH];
     char hexbuf[EVP_MAX_MD_SIZE * 2 + 1];
     struct label_set *labels;
+
+    LSQ_INFOC("setup_handshake_keys for DCID %"CID_FMT, CID_BITS(cid));
 
     if (!enc_sess->esi_hsk_crypto)
     {
@@ -2746,8 +2749,14 @@ iquic_esfi_switch_version (enc_session_t *enc_session_p, lsquic_cid_t *dcid,
     else
         memset(&enc_sess->esi_hsk_crypto[ENC_LEV_INIT], 0,
                sizeof(enc_sess->esi_hsk_crypto[ENC_LEV_INIT]));
-
-    if (0 == setup_handshake_keys(enc_sess, dcid ? dcid : &enc_sess->esi_odcid))
+    if (!dcid)
+    {
+        if (enc_sess->esi_flags & ESI_RETRY)
+            dcid = &enc_sess->esi_rscid;
+        else
+            dcid = &enc_sess->esi_odcid;
+    }
+    if (0 == setup_handshake_keys(enc_sess, dcid))
     {
         LSQ_INFO("update handshake keys to version %s",
                  lsquic_ver2str[enc_sess->esi_conn->cn_version]);

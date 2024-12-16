@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 0
-#define LSQUIC_PATCH_VERSION 12
+#define LSQUIC_MINOR_VERSION 1
+#define LSQUIC_PATCH_VERSION 0
 
 /**
  * Engine flags:
@@ -1377,10 +1377,16 @@ struct lsquic_engine_api
      * Optional interface to control the creation of connection IDs
      */
     void                               (*ea_generate_scid)(void *ctx,
-                                lsquic_conn_t *, lsquic_cid_t *, unsigned);
+                                lsquic_conn_t *, uint8_t *, unsigned);
     /** Passed to ea_generate_scid() */
     void                                *ea_gen_scid_ctx;
 };
+
+/**
+ * Returns current number of connections processed by the engine. Both mini and full connections included
+ */
+unsigned
+lsquic_engine_get_conns_count (lsquic_engine_t *engine);
 
 /**
  * Create new engine.
@@ -1437,12 +1443,6 @@ lsquic_engine_packet_in (lsquic_engine_t *,
         const unsigned char *packet_in_data, size_t packet_in_size,
         const struct sockaddr *sa_local, const struct sockaddr *sa_peer,
         void *peer_ctx, int ecn);
-
-/**
- * Returns current number of connections processed by the engine. Both mini and full connections included
- */
-unsigned
-lsquic_engine_get_conns_count (lsquic_engine_t *engine);
 
 /**
  * Process tickable connections.  This function must be called often enough so
@@ -2085,7 +2085,7 @@ lsquic_cid_from_packet (const unsigned char *, size_t bufsz, lsquic_cid_t *cid);
  */
 int
 lsquic_dcid_from_packet (const unsigned char *, size_t bufsz,
-                                unsigned server_cid_len, unsigned *cid_len);
+                                unsigned server_cid_len, uint8_t *cid_len);
 
 /**
  * Returns true if there are connections to be processed, false otherwise.
