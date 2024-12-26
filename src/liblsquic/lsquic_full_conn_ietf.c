@@ -6223,10 +6223,6 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
                 && (!valid_stream_id(conn->ifc_max_req_id)
                     || conn->ifc_max_req_id < stream_id))
                 conn->ifc_max_req_id = stream_id;
-            if (SD_UNI == ((stream_id >> SD_SHIFT) & 1)
-                && (!valid_stream_id(conn->ifc_max_uni_req_id)
-                    || conn->ifc_max_uni_req_id < stream_id))
-                conn->ifc_max_uni_req_id = stream_id;
         }
         else
         {
