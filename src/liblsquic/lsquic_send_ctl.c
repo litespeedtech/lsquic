@@ -2474,7 +2474,7 @@ lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *ctl)
     while ((packet_out = send_ctl_next_lost(ctl)))
     {
         //assert(packet_out->po_regen_sz < packet_out->po_data_sz);
-        if (packet_out->po_regen_sz == packet_out->po_data_sz) {
+        if (packet_out->po_regen_sz >= packet_out->po_data_sz) {
             LSQ_ERROR("Packet %"PRIu64" po_regen_sz is equal to po_data_sz",
                       packet_out->po_packno);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
