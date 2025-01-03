@@ -6186,6 +6186,21 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
+        && SIT_BIDI_SERVER == (stream_id & SIT_MASK))
+    {
+        ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
+                                                    "is not allowed to initiate bidirectional streams (got "
+                                                    "STREAM frame for stream %"PRIu64, stream_id);
+        return 0;
+    }
+
+    if (conn->ifc_flags & IFC_CLOSING)
+    {
+        LSQ_DEBUG("Connection closing: ignore frame");
+        return parsed_len;
+    }
+
     stream = find_stream_by_id(conn, stream_id);
     if (stream)
         lsquic_stream_window_update(stream, max_data);
@@ -6223,6 +6238,8 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
                 && (!valid_stream_id(conn->ifc_max_req_id)
                     || conn->ifc_max_req_id < stream_id))
                 conn->ifc_max_req_id = stream_id;
+
+            lsquic_stream_window_update(stream, max_data);
         }
         else
         {
