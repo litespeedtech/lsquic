@@ -6194,9 +6194,59 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
                                                                     stream_id);
     else
     {
-        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received MAX_STREAM_DATA "
-            "frame on never-opened stream %"PRIu64, stream_id);
-        return 0;
+        if (is_peer_initiated(conn, stream_id))
+        {
+            if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
+                && SIT_BIDI_SERVER == (stream_id & SIT_MASK))
+            {
+                ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
+                                                            "is not allowed to initiate bidirectional streams (got "
+                                                            "STREAM frame for stream %"PRIu64, stream_id);
+                return 0;
+            }
+
+            if (conn->ifc_flags & IFC_CLOSING)
+            {
+                LSQ_DEBUG("Connection closing: ignore frame");
+                return parsed_len;
+            }
+
+            const lsquic_stream_id_t max_allowed =
+                    conn->ifc_max_allowed_stream_id[stream_id & SIT_MASK];
+            if (stream_id >= max_allowed)
+            {
+                ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR, "incoming stream "
+                                                         "%"PRIu64" exceeds allowed max of %"PRIu64,
+                              stream_id, max_allowed);
+                return 0;
+            }
+            if (conn->ifc_flags & IFC_GOING_AWAY)
+            {
+                LSQ_DEBUG("going away: reject new incoming stream %"PRIu64,
+                          stream_id);
+                maybe_schedule_ss_for_stream(conn, stream_id,
+                                             HEC_REQUEST_REJECTED);
+                return parsed_len;
+            }
+            stream = new_stream(conn, stream_id, SCF_CALL_ON_NEW);
+            if (!stream)
+            {
+                ABORT_ERROR("cannot create new stream: %s", strerror(errno));
+                return 0;
+            }
+            if (SD_BIDI == ((stream_id >> SD_SHIFT) & 1)
+                && (!valid_stream_id(conn->ifc_max_req_id)
+                    || conn->ifc_max_req_id < stream_id))
+                conn->ifc_max_req_id = stream_id;
+
+            lsquic_stream_window_update(stream, max_data);
+        }
+        else
+        {
+            ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received MAX_STREAM_DATA "
+                                                     "frame on never-opened stream %"PRIu64, stream_id);
+            return 0;
+        }
     }
 
     return parsed_len;
