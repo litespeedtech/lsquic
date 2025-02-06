@@ -21,7 +21,7 @@ static const struct data_in *error_data_in_ptr;
 
 
 struct data_in *
-lsquic_data_in_error_new (struct lsquic_conn_public *conn_pub)
+lsquic_data_in_error_new ()
 {
     return (struct data_in *) error_data_in_ptr;
 }
