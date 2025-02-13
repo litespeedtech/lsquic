@@ -106,6 +106,6 @@ lsquic_data_in_hash_insert_data_frame (struct data_in *data_in,
                 const struct data_frame *data_frame, uint64_t read_offset);
 
 struct data_in *
-lsquic_data_in_error_new ();
+lsquic_data_in_error_new (void);
 
 #endif
