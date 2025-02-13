@@ -1,6 +1,6 @@
 2024-12-16
     - 4.1.0
-    - Update to ls-qpack v2.6.0 to fix a infinite loop.
+    - Update to ls-qpack v2.6.1 to fix a infinite loop.
     - Fix packet packing problem for post-quantum support
     - Add lsquic_engine_get_conns_count() API
     - Updated ea_generate_scid() API
