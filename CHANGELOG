@@ -1,7 +1,12 @@
+2025-02-18
+    - 4.2.0
+    - Address hash flood attack for lsquic_hash by switching to rapidhash with stronger random seed.
+    - Fix packet packing problem for post-quantum support.
+    - Add configuration to control version negotiation and amplification factor.
+
 2024-12-16
     - 4.1.0
     - Update to ls-qpack v2.6.1 to fix a infinite loop.
-    - Fix packet packing problem for post-quantum support
     - Add lsquic_engine_get_conns_count() API
     - Updated ea_generate_scid() API
     - Fix retry packet SCID generation to follow engine API.

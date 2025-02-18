@@ -43,6 +43,7 @@
 #endif
 
 #include <openssl/aead.h>
+#include <openssl/rand.h>
 
 #include "lsquic.h"
 #include "lsquic_types.h"
@@ -398,6 +399,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_ptpc_err_divisor= LSQUIC_DF_PTPC_ERR_DIVISOR;
     settings->es_delay_onclose   = LSQUIC_DF_DELAY_ONCLOSE;
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
+    settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
+    settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
 }
 
 
@@ -545,6 +548,7 @@ lsquic_engine_new (unsigned flags,
     size_t alpn_len;
     unsigned i;
     char err_buf[100];
+    uint64_t seed;
 
     if (!api->ea_packets_out)
     {
@@ -669,6 +673,8 @@ lsquic_engine_new (unsigned flags,
     if (hash_conns_by_addr(engine))
         engine->flags |= ENG_CONNS_BY_ADDR;
     engine->conns_hash = lsquic_hash_create();
+    RAND_bytes((uint8_t *)&seed, 8);
+    lsquic_hash_set_seed(engine->conns_hash, seed);
     engine->pub.enp_tokgen = lsquic_tg_new(&engine->pub);
     if (!engine->pub.enp_tokgen)
         return NULL;
@@ -1094,6 +1100,8 @@ insert_conn_into_hash (struct lsquic_engine *engine, struct lsquic_conn *conn,
         {
             cce = &conn->cn_cces[n];
             assert(!(cce->cce_hash_el.qhe_flags & QHE_HASHED));
+            LSQ_DEBUGC("Insert into connection hash-table by CID %"CID_FMT,
+                    CID_BITS(&cce->cce_cid));
             if (lsquic_hash_insert(engine->conns_hash, cce->cce_cid.idbuf,
                                     cce->cce_cid.len, conn, &cce->cce_hash_el))
                 done |= 1 << n;
@@ -1413,6 +1421,8 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
         LSQ_DEBUG("packet header does not have connection ID: discarding");
         return NULL;
     }
+    LSQ_DEBUGC("To find connection by CID %"CID_FMT,
+                    CID_BITS(&packet_in->pi_conn_id));
     el = lsquic_hash_find(engine->conns_hash,
                     packet_in->pi_conn_id.idbuf, packet_in->pi_conn_id.len);
 
@@ -1492,7 +1502,8 @@ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
     switch (version_matches(engine, packet_in, &version))
     {
     case VER_UNSUPPORTED:
-        if (engine->flags & ENG_SERVER)
+        if ((engine->flags & ENG_SERVER) &&
+                            engine->pub.enp_settings.es_send_verneg)
             schedule_req_packet(engine, PACKET_REQ_VERNEG, packet_in,
                                                 sa_local, sa_peer, peer_ctx);
         return NULL;
@@ -3564,8 +3575,10 @@ lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
     assert(cce_idx < conn->cn_n_cces);
 
     if (cce->cce_hash_el.qhe_flags & QHE_HASHED)
+    {
+        LSQ_DEBUGC("drop from conn hash-table CID %"CID_FMT, CID_BITS(&cce->cce_cid));
         lsquic_hash_erase(engine->conns_hash, &cce->cce_hash_el);
-
+    }
     if (engine->purga)
     {
         peer_ctx = lsquic_conn_get_peer_ctx(conn, NULL);

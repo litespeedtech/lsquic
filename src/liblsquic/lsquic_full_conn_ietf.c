@@ -6210,7 +6210,6 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
                 LSQ_DEBUG("Connection closing: ignore frame");
                 return parsed_len;
             }
-
             const lsquic_stream_id_t max_allowed =
                     conn->ifc_max_allowed_stream_id[stream_id & SIT_MASK];
             if (stream_id >= max_allowed)

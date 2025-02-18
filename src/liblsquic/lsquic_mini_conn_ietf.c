@@ -318,11 +318,11 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
         if (!packet_out)
             return -1;
         // NOTE: reduce the size of first crypto frame to combine packets
-        int avail = lsquic_packet_out_avail(packet_out);
+        unsigned avail = lsquic_packet_out_avail(packet_out);
         int coalescing = 0;
         if (cryst->mcs_enc_level == ENC_LEV_HSK
             && cryst->mcs_write_off == 0
-            && avail > (int)conn->imc_hello_pkt_remain - conn->imc_long_header_sz)
+            && avail > (unsigned)conn->imc_hello_pkt_remain - conn->imc_long_header_sz)
         {
             avail = conn->imc_hello_pkt_remain - conn->imc_long_header_sz;
             conn->imc_hello_pkt_remain = 0;
@@ -339,7 +339,7 @@ imico_stream_write (void *stream, const void *bufp, size_t bufsz)
         packet_out->po_data_sz += len;
         packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
         packet_out->po_flags |= PO_HELLO;
-        if (coalescing && len < avail)
+        if (coalescing && len < (int)avail)
         {
             LSQ_DEBUG("generated PADDING frame: %d bytes for packet %"PRIu64,
                          avail - len, packet_out->po_packno);
@@ -810,7 +810,8 @@ static int
 imico_can_send (const struct ietf_mini_conn *conn, size_t size)
 {
     return (conn->imc_flags & IMC_ADDR_VALIDATED)
-        || conn->imc_bytes_in * 3 >= conn->imc_bytes_out + size
+        || conn->imc_bytes_in * conn->imc_enpub->enp_settings.es_amp_factor
+                        >= conn->imc_bytes_out + size
         ;
 }
 
@@ -2331,6 +2332,8 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
                     (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS))
                             && conn->imc_enpub->enp_settings.es_support_srej)
     {
+        if (conn->imc_flags & IMC_ERROR)
+            goto close_on_error;
         LSQ_DEBUG("Peer not validated and do not have transport parameters "
             "on the first tick: retry");
         return TICK_RETRY|TICK_CLOSE;
@@ -2356,7 +2359,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
   close_on_error:
         if (!(conn->imc_flags & IMC_CLOSE_RECVD))
             imico_generate_conn_close(conn);
-        tick |= TICK_CLOSE;
+        tick = TICK_CLOSE;
     }
     else if (conn->imc_flags & IMC_HSK_OK)
     {

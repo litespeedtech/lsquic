@@ -37,7 +37,7 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_sizes.h"
 #include "lsquic_handshake.h"
-#include "lsquic_xxhash.h"
+#include "lsquic_rapidhash.h"
 #include "lsquic_crand.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PRQ
@@ -134,13 +134,13 @@ comp_reqs (const void *s1, const void *s2, size_t n)
 }
 
 
-static unsigned
-hash_req (const void *p, size_t len, unsigned seed)
+static uint64_t
+hash_req (const void *p, size_t len, uint64_t seed)
 {
     const struct packet_req *req;
 
     req = p;
-    return XXH32(req->pr_dcid.idbuf, req->pr_dcid.len, seed);
+    return rapidhash_withSeed(req->pr_dcid.idbuf, req->pr_dcid.len, seed);
 }
 
 

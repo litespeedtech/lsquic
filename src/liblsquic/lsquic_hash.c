@@ -8,12 +8,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
+#include <time.h>
+
 #ifdef WIN32
 #include <vc_compat.h>
+#else
+#include <sys/time.h>
+#include <unistd.h>
+#endif
+
+#if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
+#include <mach/mach_time.h>
 #endif
 
 #include "lsquic_hash.h"
-#include "lsquic_xxhash.h"
+#include "lsquic_rapidhash.h"
 
 TAILQ_HEAD(hels_head, lsquic_hash_elem);
 
@@ -26,15 +35,47 @@ struct lsquic_hash
                              qh_all;
     struct lsquic_hash_elem *qh_iter_next;
     int                    (*qh_cmp)(const void *, const void *, size_t);
-    unsigned               (*qh_hash)(const void *, size_t, unsigned seed);
+    uint64_t               (*qh_hash)(const void *, size_t, uint64_t seed);
     unsigned                 qh_count;
     unsigned                 qh_nbits;
+    uint64_t                 qh_hash_seed;
 };
+
+
+static uint64_t get_seed()
+{
+    static uint64_t seed = 0;
+    if (seed == 0)
+    {
+#if defined(WIN32)
+        LARGE_INTEGER counter;
+        QueryPerformanceCounter(&counter);
+        seed = counter.QuadPart;
+#elif defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0
+        struct timespec ts;
+        (void) clock_gettime(CLOCK_MONOTONIC, &ts);
+        seed = ts.tv_sec * 1000000000 + ts.tv_nsec;
+#elif defined(__APPLE__)
+        seed = mach_absolute_time();
+#else
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        seed = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
+#endif
+        srand(seed);
+        for(unsigned i = 0; i < (seed & 0xf) + 1; ++i)
+        {
+            seed = (seed << 8) | (seed >> 56);
+            seed ^= rand();
+        }
+    }
+    return seed;
+}
 
 
 struct lsquic_hash *
 lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
-                    unsigned (*hashf)(const void *, size_t, unsigned seed))
+                    uint64_t (*hashf)(const void *, size_t, uint64_t seed))
 {
     struct hels_head *buckets;
     struct lsquic_hash *hash;
@@ -62,6 +103,8 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
+    hash->qh_hash_seed = get_seed() ^ (uint64_t)hash
+                        ^ ((uint64_t)buckets << 32) ^ rand();
     return hash;
 }
 
@@ -69,7 +112,17 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
 struct lsquic_hash *
 lsquic_hash_create (void)
 {
-    return lsquic_hash_create_ext(memcmp, XXH32);
+    return lsquic_hash_create_ext(memcmp, rapidhash_withSeed);
+}
+
+
+int
+lsquic_hash_set_seed (struct lsquic_hash * hash, uint64_t seed)
+{
+    if (hash->qh_count > 0)
+        return -1;
+    hash->qh_hash_seed = seed;
+    return 0;
 }
 
 
@@ -119,7 +172,8 @@ struct lsquic_hash_elem *
 lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
                     unsigned key_sz, void *value, struct lsquic_hash_elem *el)
 {
-    unsigned buckno, hash_val;
+    uint64_t hash_val;
+    unsigned buckno;
 
     if (el->qhe_flags & QHE_HASHED)
         return NULL;
@@ -128,7 +182,7 @@ lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
                                             0 != lsquic_hash_grow(hash))
         return NULL;
 
-    hash_val = hash->qh_hash(key, key_sz, (uintptr_t) hash);
+    hash_val = hash->qh_hash(key, key_sz, hash->qh_hash_seed);
     buckno = BUCKNO(hash->qh_nbits, hash_val);
     TAILQ_INSERT_TAIL(&hash->qh_all, el, qhe_next_all);
     TAILQ_INSERT_TAIL(&hash->qh_buckets[buckno], el, qhe_next_bucket);
@@ -145,10 +199,11 @@ lsquic_hash_insert (struct lsquic_hash *hash, const void *key,
 struct lsquic_hash_elem *
 lsquic_hash_find (struct lsquic_hash *hash, const void *key, unsigned key_sz)
 {
-    unsigned buckno, hash_val;
+    uint64_t hash_val;
+    unsigned buckno;
     struct lsquic_hash_elem *el;
 
-    hash_val = hash->qh_hash(key, key_sz, (uintptr_t) hash);
+    hash_val = hash->qh_hash(key, key_sz, hash->qh_hash_seed);
     buckno = BUCKNO(hash->qh_nbits, hash_val);
     TAILQ_FOREACH(el, &hash->qh_buckets[buckno], qhe_next_bucket)
         if (hash_val == el->qhe_hash_val &&

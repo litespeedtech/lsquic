@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 1
+#define LSQUIC_MINOR_VERSION 2
 #define LSQUIC_PATCH_VERSION 0
 
 /**
@@ -335,6 +335,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  */
 #define LSQUIC_DF_SEND_PRST        0
 
+/**
+ * By default, LSQUIC will send Version Negotiation packets in response to
+ * packets that specify unknown versions.
+ */
+#define LSQUIC_DF_SEND_VERNEG      1
+
 /** By default, infinite loop checks are turned on */
 #define LSQUIC_DF_PROGRESS_CHECK    1000
 
@@ -397,6 +403,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Turn on timestamp extension by default */
 #define LSQUIC_DF_TIMESTAMPS 1
+
+/** default anti-amplification factor is 3 */
+#define LSQUIC_DF_AMP_FACTOR 3
 
 /* Use Adaptive CC by default */
 #define LSQUIC_DF_CC_ALGO 3
@@ -1092,6 +1101,20 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_CHECK_TP_SANITY
      */
     int             es_check_tp_sanity;
+
+    /**
+     * This is the anti-amplification factor when peer address has not be verified.
+     *
+     * Default value is @ref LSQUIC_DF_AMP_FACTOR
+     */
+    int             es_amp_factor;
+
+    /**
+     * If set to true value, the library will send Version Negotiation packets
+     * in response to incoming packets with unsupported versions.
+     * The default is @ref LSQUIC_DF_SEND_VERNEG.
+     */
+    int             es_send_verneg;
 };
 
 /* Initialize `settings' to default values */

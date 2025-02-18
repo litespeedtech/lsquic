@@ -10,7 +10,7 @@
 #include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_int_types.h"
-#include "lsquic_xxhash.h"
+#include "lsquic_rapidhash.h"
 #include "lsquic_purga.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_PURGA
@@ -162,7 +162,7 @@ lsquic_purga_add (struct lsquic_purga *purga, const lsquic_cid_t *cid,
         .puel_type      = putype,
     };
 
-    hash = XXH64(cid->idbuf, cid->len, 0);
+    hash = rapidhash_withSeed(cid->idbuf, cid->len, 0);
     for (i = 0; i < BLOOM_N_FUNCS; ++i)
     {
         bit = (unsigned) hash & (BLOOM_BITS_PER_EL - 1);
@@ -206,7 +206,7 @@ lsquic_purga_contains (struct lsquic_purga *purga, const lsquic_cid_t *cid)
     if (!page)
         goto end;
 
-    cid_hash = XXH64(cid->idbuf, cid->len, 0);
+    cid_hash = rapidhash_withSeed(cid->idbuf, cid->len, 0);
     do
     {
 #ifndef NDEBUG
