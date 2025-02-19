@@ -268,14 +268,13 @@ stream_inside_callback (const lsquic_stream_t *stream)
 static void
 maybe_update_last_progress (struct lsquic_stream *stream)
 {
-    if (stream->conn_pub && !lsquic_stream_is_critical(stream))
+    if (stream->conn_pub && !lsquic_stream_is_critical(stream) && stream->conn_pub->last_prog)
     {
-        if (stream->conn_pub->last_prog != stream->conn_pub->last_tick)
-            LSQ_DEBUG("update last progress to %"PRIu64,
-                                            stream->conn_pub->last_tick);
-        stream->conn_pub->last_prog = stream->conn_pub->last_tick;
+        stream->conn_pub->last_prog = lsquic_time_now();
+        LSQ_DEBUG("update last progress to %"PRIu64,
+                                        stream->conn_pub->last_prog);
 #ifndef NDEBUG
-        stream->sm_last_prog = stream->conn_pub->last_tick;
+        stream->sm_last_prog = stream->conn_pub->last_prog;
 #endif
     }
 }

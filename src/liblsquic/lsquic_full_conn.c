@@ -3355,17 +3355,15 @@ maybe_set_noprogress_alarm (struct full_conn *conn, lsquic_time_t now)
 
     if (conn->fc_flags & FC_NOPROG_TIMEOUT)
     {
-        if (conn->fc_pub.last_tick)
+        if (conn->fc_pub.last_prog)
         {
             exp = conn->fc_pub.last_prog + conn->fc_enpub->enp_noprog_timeout;
             if (!lsquic_alarmset_is_set(&conn->fc_alset, AL_IDLE)
                                     || exp < conn->fc_alset.as_expiry[AL_IDLE])
                 lsquic_alarmset_set(&conn->fc_alset, AL_IDLE, exp);
-            conn->fc_pub.last_tick = now;
         }
         else
         {
-            conn->fc_pub.last_tick = now;
             conn->fc_pub.last_prog = now;
         }
     }

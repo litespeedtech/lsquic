@@ -1299,9 +1299,9 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         if (packet_out && (packet_out->po_frame_types & QUIC_FTBIT_PING)
             && ctl->sc_conn_pub->last_prog)
         {
+            ctl->sc_conn_pub->last_prog = lsquic_time_now();
             LSQ_DEBUG("ACK to PING frame, update last progress to %"PRIu64,
-                                            ctl->sc_conn_pub->last_tick);
-            ctl->sc_conn_pub->last_prog = ctl->sc_conn_pub->last_tick;
+                                            ctl->sc_conn_pub->last_prog);
         }
     }
 
