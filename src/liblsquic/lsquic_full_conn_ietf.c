@@ -6055,9 +6055,11 @@ process_ping_frame (struct ietf_full_conn *conn,
     if (conn->ifc_flags & IFC_SERVER)
         log_conn_flow_control(conn);
 
-    LSQ_DEBUG("received PING frame, update last progress to %"PRIu64,
-                                            conn->ifc_pub.last_tick);
-    conn->ifc_pub.last_prog = conn->ifc_pub.last_tick;
+    if (conn->ifc_pub.last_prog) {
+        conn->ifc_pub.last_prog = lsquic_time_now();
+        LSQ_DEBUG("received PING frame, update last progress to %"PRIu64,
+                                                conn->ifc_pub.last_prog);
+    }
 
     return 1;
 }
@@ -8083,17 +8085,15 @@ maybe_set_noprogress_alarm (struct ietf_full_conn *conn, lsquic_time_t now)
 
     if (conn->ifc_mflags & MF_NOPROG_TIMEOUT)
     {
-        if (conn->ifc_pub.last_tick)
+        if (conn->ifc_pub.last_prog)
         {
             exp = conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout;
             if (!lsquic_alarmset_is_set(&conn->ifc_alset, AL_IDLE)
                                     || exp < conn->ifc_alset.as_expiry[AL_IDLE])
                 lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, exp);
-            conn->ifc_pub.last_tick = now;
         }
         else
         {
-            conn->ifc_pub.last_tick = now;
             conn->ifc_pub.last_prog = now;
         }
     }
