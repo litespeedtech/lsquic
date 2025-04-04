@@ -4378,6 +4378,32 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
     return stream->conn_pub->lconn;
 }
 
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+void
+lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
+    s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+}
+
+int
+lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
+    return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
+}
+
+int
+lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
+    return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
+}
+
+int
+lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
+    if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
+    {
+        return s->webtransport_session_stream_id;
+    }
+
+    return -1;
+}
+#endif
 
 int
 lsquic_stream_close (lsquic_stream_t *stream)
@@ -4906,6 +4932,23 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+            if(stream->conn_pub->enpub->enp_settings.es_webtransport_server) {
+                // 4.2.  Bidirectional Streams, https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/05/
+#define WEBTRANSPORT_BIDI_STREAM_TYPE (0x41)
+                if(filter->hqfi_type == WEBTRANSPORT_BIDI_STREAM_TYPE) {
+                    // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
+                    // flag for webtransport_session_stream_id stream in app code
+                    stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
+                    stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+                    // disable header processing as we will not have any headers for this stream anymore
+                    stream->sm_bflags &= ~SMBF_USE_HEADERS;
+                    filter->hqfi_type = HQFT_DATA;
+                    filter->hqfi_left = UINT64_MAX; // set data size infinite to keep processing till stream reset
+                    goto end;
+                }
+            }
+#endif
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);

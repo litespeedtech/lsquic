@@ -121,7 +121,12 @@ int
 lsquic_hcso_write_settings (struct hcso_writer *writer,
                         unsigned max_header_list_size,
                         unsigned dyn_table_size, unsigned max_risked_streams,
-                        int is_server)
+                        int is_server
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                        , int webtransport_server,
+                        unsigned max_webtransport_server_streams
+#endif
+                        )
 {
     unsigned char *p;
     unsigned bits;
@@ -135,10 +140,10 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
 #   define frame_size_len 2
 #endif
     unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
-        /* There are maximum three settings that need to be written out and
+        /* There are maximum seven settings that need to be written out and
          * each value can be encoded in maximum 8 bytes:
          */
-        + 3 * (
+        + 7 * (
 #ifdef NDEBUG
             1   /* Each setting needs 1-byte varint number, */
 #else
@@ -182,6 +187,50 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, max_risked_streams, bits, 1 << bits);
         p += 1 << bits;
     }
+
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+    if (is_server && webtransport_server && max_webtransport_server_streams)
+    {
+        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
+#define SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742)
+#define SETTINGS_ENABLE_WEBTRANSPORT_VALUE (1)
+        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_WEBTRANSPORT);
+        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(SETTINGS_ENABLE_WEBTRANSPORT_VALUE);
+        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT_VALUE, bits, 1 << bits);
+        p += 1 << bits;
+
+        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
+#define WEBTRANSPORT_MAX_SESSIONS (0x2b603743)
+        bits = hcso_setting_type2bits(writer, WEBTRANSPORT_MAX_SESSIONS);
+        vint_write(p, WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(max_webtransport_server_streams);
+        vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
+        p += 1 << bits;
+
+        /* Write out H3_DATAGRAM_ENABLED */
+#define H3_DATAGRAM_ENABLED (0x33)
+#define H3_DATAGRAM_ENABLED_VALUE (1)
+        bits = hcso_setting_type2bits(writer, H3_DATAGRAM_ENABLED);
+        vint_write(p, H3_DATAGRAM_ENABLED, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(H3_DATAGRAM_ENABLED_VALUE);
+        vint_write(p, H3_DATAGRAM_ENABLED_VALUE, bits, 1 << bits);
+        p += 1 << bits;
+
+        /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
+#define SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8)
+#define SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE (1)
+        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_CONNECT_PROTOCOL);
+        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE);
+        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE, bits, 1 << bits);
+        p += 1 << bits;
+    }
+#endif
 
 #ifdef NDEBUG
     buf[1] = p - buf - 2;

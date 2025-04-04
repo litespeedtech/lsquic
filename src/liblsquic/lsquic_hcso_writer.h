@@ -23,7 +23,11 @@ struct hcso_writer
 
 int
 lsquic_hcso_write_settings (struct hcso_writer *,
-                                        unsigned, unsigned, unsigned, int);
+                            unsigned, unsigned, unsigned, int
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+                            ,int, unsigned
+#endif
+                            );
 
 int
 lsquic_hcso_write_goaway (struct hcso_writer *, lsquic_stream_id_t);
