@@ -101,6 +101,9 @@ struct hq_filter
     struct varint_read2_state   hqfi_vint2_state;
     /* No need to copy the values: use it directly */
 #define hqfi_left hqfi_vint2_state.vr2s_two
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+#define hqfi_webtransport_session_id hqfi_vint2_state.vr2s_two
+#endif
 #define hqfi_type hqfi_vint2_state.vr2s_one
     struct varint_read_state    hqfi_vint1_state;
 #define hqfi_push_id hqfi_vint1_state.value
@@ -192,7 +195,13 @@ enum stream_b_flags
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
     SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
     SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+    SMBF_WEBTRANSPORT_SESSION_STREAM     = 1 <<14,  /* WEBTRANSPORT session stream */
+    SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM = 1 <<15,  /* WEBTRANSPORT client initiated bidi stream */
+#define N_SMBF_FLAGS 16
+#else
 #define N_SMBF_FLAGS 14
+#endif
 };
 
 
@@ -377,7 +386,9 @@ struct lsquic_stream
     enum stream_d_flags             sm_dflags:8;
     signed char                     sm_saved_want_write;
     signed char                     sm_has_frame;
-
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+    lsquic_stream_id_t              webtransport_session_stream_id;
+#endif
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
