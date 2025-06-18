@@ -64,6 +64,9 @@ if [ "$ROLE" = server ]; then
             handshake|transfer|longrtt|resumption|blackhole|multiconnect|chacha20|zerortt)
                 VERSIONS='-o version=h3-29 -o version=h3 -o scid_iss_rate=0 -Q hq-interop'
                 ;;
+            connectionmigration)
+                VERSIONS='-o version=h3-29 -o version=h3 -o scid_iss_rate=0 -o preferred_v4=server4:4433 -o preferred_v6=server6:4433 -Q hq-interop'
+                ;;
             retry)
                 VERSIONS='-o version=h3-29 -o version=h3 -o srej=1 -Q hq-interop'
                 FORCE_RETRY=1
@@ -81,7 +84,7 @@ if [ "$ROLE" = server ]; then
         -c server4,/certs/cert.pem,/certs/priv.key \
         -c server6,/certs/cert.pem,/certs/priv.key \
         -c server46,/certs/cert.pem,/certs/priv.key \
-        -s ::0:443 -s 0.0.0.0:443 -s 193.167.100.100:12345 \
+        -s ::0:443 -s 0.0.0.0:443 -s ::0:4433 -s 0.0.0.0:4433 -s 193.167.100.100:12345 \
         -r /www -L debug 2>/logs/$TESTCASE.out
 elif [ "$ROLE" = debug-server ]; then
     exec /usr/bin/http_server $SERVER_PARAMS
@@ -94,7 +97,7 @@ elif [ "$ROLE" = client ]; then
             v2)
                 VERSIONS='-o version=h3-v2 -o version=h3 -Q hq-interop'
                 ;;
-            handshake|transfer|longrtt|retry|multiplexing|blackhole)
+            handshake|transfer|longrtt|retry|multiplexing|blackhole|connectionmigration)
                 VERSIONS='-o version=h3 -Q hq-interop'
                 ;;
             multiconnect)

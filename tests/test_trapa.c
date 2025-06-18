@@ -271,7 +271,7 @@ main (int argc, char **argv)
             decode_file(optarg);
             return 0;
         case 'l':
-            lsquic_log_to_fstream(stderr, 0);
+            lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt(optarg);
             break;
         default:

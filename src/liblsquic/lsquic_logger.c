@@ -426,7 +426,7 @@ end:
 
 void
 lsquic_logger_init (const struct lsquic_logger_if *lif, void *lctx,
-                    unsigned llts)
+                    enum lsquic_logger_timestamp_style llts)
 {
     logger_if  = lif;
     logger_ctx = lctx;
@@ -473,7 +473,8 @@ lsquic_str_to_log_level (const char *str)
 void
 lsquic_log_to_fstream (FILE *file, unsigned llts)
 {
-    lsquic_logger_init(&file_logger_if, file, llts);
+    lsquic_logger_init(&file_logger_if, file,
+                       (enum lsquic_logger_timestamp_style)llts);
 }
 
 

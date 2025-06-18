@@ -334,3 +334,15 @@ lsquic_conn_get_sni (struct lsquic_conn *lconn)
     else
         return NULL;
 }
+
+
+int
+lsquic_conn_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
+{
+    if (!lconn || !info)
+        return -1;
+    if (lconn->cn_if && lconn->cn_if->ci_get_info)
+        return lconn->cn_if->ci_get_info(lconn, info);
+    return -1;
+}
+

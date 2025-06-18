@@ -4378,21 +4378,25 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
     return stream->conn_pub->lconn;
 }
 
+
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 void
 lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
     s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
 }
 
+
 int
 lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
     return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
 }
 
+
 int
 lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
     return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
 }
+
 
 int
 lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
@@ -4403,6 +4407,8 @@ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
 
     return -1;
 }
+
+
 #endif
 
 int

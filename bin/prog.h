@@ -47,9 +47,7 @@ struct prog
     int                             prog_ipver;     /* 0, 4, or 6 */
     enum {
         PROG_FLAG_COOLDOWN  = 1 << 0,
-#if LSQUIC_PREFERRED_ADDR
         PROG_SEARCH_ADDRS   = 1 << 1,
-#endif
     }                               prog_flags;
 };
 

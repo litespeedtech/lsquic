@@ -138,10 +138,7 @@ create_lsquic_reader_ctx (const char *filename);
 void
 destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
-#define LITESPEED_ID "lsquic" "/" TOSTRING(LSQUIC_MAJOR_VERSION) "." \
-            TOSTRING(LSQUIC_MINOR_VERSION) "." TOSTRING(LSQUIC_PATCH_VERSION)
+#define LITESPEED_ID "lsquic/" LSQUIC_VERSION_STR
 
 struct header_buf
 {

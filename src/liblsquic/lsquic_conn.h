@@ -293,6 +293,10 @@ struct conn_iface
     /* Optional method */
     void
     (*ci_early_data_failed) (struct lsquic_conn *);
+
+    int
+    (*ci_get_info) (lsquic_conn_t *conn, struct lsquic_conn_info *info);
+
 };
 
 #define LSCONN_CCE_BITS 3

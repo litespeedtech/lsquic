@@ -688,7 +688,7 @@ main (int argc, char **argv)
         switch (opt)
         {
         case 'l':
-            lsquic_log_to_fstream(stderr, 0);
+            lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt(optarg);
             break;
         default:

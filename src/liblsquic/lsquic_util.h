@@ -44,7 +44,7 @@ lsquic_hexstr (const unsigned char *buf, size_t bufsz, char *out, size_t outsz);
 int
 lsquic_sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b);
 
-void
+char *
 lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz);
 
 #define SA2STR(sa_, buf_) (lsquic_sockaddr2str(sa_, buf_, sizeof(buf_)), buf_)

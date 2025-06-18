@@ -85,15 +85,11 @@ prog_init (struct prog *prog, unsigned flags,
     prog->prog_api.ea_pmi           = &pmi;
     prog->prog_api.ea_pmi_ctx       = &prog->prog_pba;
     prog->prog_api.ea_get_ssl_ctx   = get_ssl_ctx;
-#if LSQUIC_PREFERRED_ADDR
-    if (getenv("LSQUIC_PREFERRED_ADDR4") || getenv("LSQUIC_PREFERRED_ADDR6"))
-        prog->prog_flags |= PROG_SEARCH_ADDRS;
-#endif
 
     /* Non prog-specific initialization: */
     lsquic_global_init(flags & LSENG_SERVER ? LSQUIC_GLOBAL_SERVER :
                                                     LSQUIC_GLOBAL_CLIENT);
-    lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
+    lsquic_log_to_fstream(stderr, LLTS_HHMMSSUS);
     lsquic_logger_lopt("=notice");
     return 0;
 }
@@ -765,6 +761,13 @@ prog_prep (struct prog *prog)
         if (prog->prog_engine_flags & LSENG_SERVER)
             LSQ_WARN("Not a single service specified.  Use -c option.");
         prog->prog_api.ea_lookup_cert = no_cert;
+    }
+
+    if (prog->prog_engine_flags & LSENG_SERVER)
+    {
+        if (memcmp(prog->prog_settings.es_preferred_address,
+                "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 24) != 0)
+            prog->prog_flags |= PROG_SEARCH_ADDRS;
     }
 
     prog->prog_eb = event_base_new();

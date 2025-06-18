@@ -49,9 +49,6 @@ static const struct conn_iface mini_conn_ietf_iface;
 
 static unsigned highest_bit_set (unsigned long long);
 
-static int
-imico_can_send (const struct ietf_mini_conn *, size_t);
-
 static void
 ietf_mini_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
                                 unsigned error_code, const char *fmt, ...);
@@ -65,7 +62,7 @@ static const enum header_type el2hety[] =
 };
 
 
-static void
+static inline void
 imico_destroy_packet (struct ietf_mini_conn *conn,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -87,7 +84,7 @@ lsquic_mini_conn_ietf_ecn_ok (const struct ietf_mini_conn *conn)
 }
 
 
-static enum ecn
+static inline enum ecn
 imico_get_ecn (struct ietf_mini_conn *conn)
 {
     if (!conn->imc_enpub->enp_settings.es_ecn)
@@ -138,7 +135,7 @@ imico_get_packet_out (struct ietf_mini_conn *conn,
 }
 
 
-static struct ietf_mini_conn *
+static inline struct ietf_mini_conn *
 cryst_get_conn (const struct mini_crypto_stream *cryst)
 {
     return (void *)
@@ -166,7 +163,7 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 }
 
 
-static int
+static inline int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
     return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
@@ -265,7 +262,7 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
 }
 
 
-static void
+static inline void
 imico_zero_pad (struct lsquic_packet_out *packet_out, size_t pad_size)
 {
     memset(packet_out->po_data + packet_out->po_data_sz, 0, pad_size);
@@ -481,7 +478,7 @@ imico_stream_readf (void *stream,
 }
 
 
-static int
+static inline int
 imico_stream_wantX (struct mini_crypto_stream *cryst, int bit, int is_want)
 {
     int old;
@@ -526,7 +523,7 @@ static const struct crypto_stream_if crypto_stream_if =
 };
 
 
-static int
+static inline int
 is_first_packet_ok (const struct lsquic_packet_in *packet_in,
                                                     size_t udp_payload_size)
 {
@@ -542,7 +539,7 @@ is_first_packet_ok (const struct lsquic_packet_in *packet_in,
 }
 
 
-static void
+static inline void
 imico_peer_addr_validated (struct ietf_mini_conn *conn, const char *how)
 {
     if (!(conn->imc_flags & IMC_ADDR_VALIDATED))
@@ -779,6 +776,16 @@ ietf_mini_conn_ci_tls_alert (struct lsquic_conn *lconn, uint8_t alert)
 }
 
 
+static inline int
+imico_can_send (const struct ietf_mini_conn *conn, size_t size)
+{
+    return (conn->imc_flags & IMC_ADDR_VALIDATED)
+        || conn->imc_bytes_in * conn->imc_enpub->enp_settings.es_amp_factor
+                        >= conn->imc_bytes_out + size
+        ;
+}
+
+
 /* A mini connection is only tickable if it has unsent packets.  This can
  * occur when packet sending is delayed.
  *
@@ -803,16 +810,6 @@ ietf_mini_conn_ci_is_tickable (struct lsquic_conn *lconn)
             }
 
     return 0;
-}
-
-
-static int
-imico_can_send (const struct ietf_mini_conn *conn, size_t size)
-{
-    return (conn->imc_flags & IMC_ADDR_VALIDATED)
-        || conn->imc_bytes_in * conn->imc_enpub->enp_settings.es_amp_factor
-                        >= conn->imc_bytes_out + size
-        ;
 }
 
 
@@ -1694,7 +1691,7 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         return;
     }
 
-    if (!(conn->imc_flags & IMC_ADDR_VALIDATED))
+    if (!(conn->imc_flags & (IMC_ADDR_VALIDATED | IMC_PATH_CHANGED)))
         imico_maybe_validate_by_dcid(conn, &packet_in->pi_dcid);
 
     pns = lsquic_hety2pns[ packet_in->pi_header_type ];
@@ -1756,7 +1753,8 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
                     "protocol violation detected bad dcid for HSK pns");
             return;
         }
-        imico_peer_addr_validated(conn, "handshake PNS");
+        if (!(conn->imc_flags & (IMC_ADDR_VALIDATED | IMC_PATH_CHANGED)))
+            imico_peer_addr_validated(conn, "handshake PNS");
     }
 
     if (((conn->imc_flags >> IMCBIT_PNS_BIT_SHIFT) & 3) < pns)
@@ -1849,7 +1847,7 @@ ietf_mini_conn_ci_packet_not_sent (struct lsquic_conn *lconn,
 }
 
 
-static void
+static inline void
 imico_return_enc_data (struct ietf_mini_conn *conn,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -1861,7 +1859,7 @@ imico_return_enc_data (struct ietf_mini_conn *conn,
 }
 
 
-static int
+static inline int
 imico_repackage_packet (struct ietf_mini_conn *conn,
                                         struct lsquic_packet_out *packet_out)
 {
@@ -1949,7 +1947,7 @@ imico_handle_losses_and_have_unsent (struct ietf_mini_conn *conn,
 }
 
 
-static int
+static inline int
 imico_have_packets_to_send (struct ietf_mini_conn *conn, lsquic_time_t now)
 {
     return imico_handle_losses_and_have_unsent(conn, now);
@@ -1975,7 +1973,7 @@ lsquic_imico_rechist_init (struct ietf_mini_rechist *rechist,
 }
 
 
-static lsquic_time_t
+static inline lsquic_time_t
 imico_rechist_largest_recv (void *rechist_ctx)
 {
     struct ietf_mini_rechist *rechist = rechist_ctx;
@@ -2059,7 +2057,7 @@ static const enum header_type pns2hety[] =
 };
 
 
-static int
+static inline int
 imico_generate_ping (struct ietf_mini_conn *conn,
                      struct lsquic_packet_out *packet_out)
 {
@@ -2455,7 +2453,8 @@ ietf_mini_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             SA2STR(NP_PEER_SA(&conn->imc_path), path_str[1]),
             SA2STR(local_sa, path_str[2]),
             SA2STR(peer_sa, path_str[3]));
-        conn->imc_flags |= IMC_PATH_CHANGED;
+        conn->imc_flags = (conn->imc_flags & ~IMC_ADDR_VALIDATED)
+                            | IMC_PATH_CHANGED;
     }
 
     len = local_sa->sa_family == AF_INET ? sizeof(struct sockaddr_in)

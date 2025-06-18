@@ -46,14 +46,13 @@
 #include "../src/liblsquic/lsquic_logger.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
-/* include directly for reset_stream testing */
-#include "../src/liblsquic/lsquic_varint.h"
-#include "../src/liblsquic/lsquic_hq.h"
-#include "../src/liblsquic/lsquic_sfcw.h"
 #include "../src/liblsquic/lsquic_hash.h"
+#if LSQUIC_QIR
+/* include directly for reset_stream testing */
 #include "../src/liblsquic/lsquic_stream.h"
 /* include directly for retire_cid testing */
 #include "../src/liblsquic/lsquic_conn.h"
+#endif
 #include "lsxpack_header.h"
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -786,6 +785,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         {
             st_h->sh_nread += (size_t) nread;
             s_stat_downloaded_bytes += nread;
+#if LSQUIC_QIR
             /* test stream_reset after some number of read bytes */
             if (client_ctx->hcc_reset_after_nbytes &&
                 s_stat_downloaded_bytes > client_ctx->hcc_reset_after_nbytes)
@@ -801,6 +801,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 client_ctx->hcc_retire_cid_after_nbytes = 0;
                 break;
             }
+#endif
             if (!g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
             {
                 /* First read is assumed to be the first byte */

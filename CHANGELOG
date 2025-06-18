@@ -1,3 +1,10 @@
+2025-06-17
+    - 4.3.0
+    - Add WebTransport support.
+    - Fix IETF QUIC IP spoofing amplification attack.
+    - Improve preferred address migration implementation, pass interop tests.
+    - Add lsquic_conn_get_info() API to retrieve information about a connection.
+
 2025-02-18
     - 4.2.0
     - Address hash flood attack for lsquic_hash by switching to rapidhash with stronger random seed.

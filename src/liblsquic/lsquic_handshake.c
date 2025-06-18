@@ -845,7 +845,7 @@ lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
                 break;
             case RTT_DESERIALIZE_BAD_CERT_SIZE:
                 LSQ_ERROR("provided sess_resume has bad cert size");
-                free(item);
+                free_c_cert_item(item);
                 break;
             case RTT_DESERIALIZE_OK:
                 memcpy(enc_session->hs_ctx.pubs, info->spubs, 32);

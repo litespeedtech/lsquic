@@ -24,13 +24,12 @@
 /**
  * Connection ID
  */
-typedef struct lsquic_cid
+typedef struct ALIGNED_(8) lsquic_cid
 {
     uint8_t     buf[MAX_CID_LEN];
 #define idbuf buf
     uint_fast8_t len;
-} ALIGNED_(8)
-lsquic_cid_t;
+} lsquic_cid_t;
 
 
 #define LSQUIC_CIDS_EQ(a, b) ((a)->len == 8 ? \

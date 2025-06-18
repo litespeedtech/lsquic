@@ -31,7 +31,6 @@
 #include "prog.h"
 
 #include "../src/liblsquic/lsquic_logger.h"
-#include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_byteswap.h"
 
 struct scenario

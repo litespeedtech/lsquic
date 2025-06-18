@@ -90,6 +90,7 @@ typedef struct lsquic_packet_in
         PI_LOSS_BIT     = (1 <<16),
         PI_VER_PARSED   = (1 <<17),
         PI_FIRST_INIT   = (1 <<18),
+        PI_RETIRED_PATH = (1 <<19),
     }                               pi_flags;
     /* pi_token and pi_token_size are set in Initial and Retry packets */
     unsigned short                  pi_token_size; /* Size of the token */

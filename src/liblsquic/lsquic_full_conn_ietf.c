@@ -29,6 +29,7 @@
 #include "lsquic_packet_in.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_hash.h"
+#include "lsquic_cong_ctl.h"
 #include "lsquic_conn.h"
 #include "lsquic_rechist.h"
 #include "lsquic_senhist.h"
@@ -339,6 +340,8 @@ struct conn_path
         COP_ALLOW_MTU_PADDING = 1 << 4,
         /* Verified that the path MTU is at least 1200 bytes */
         COP_VALIDATED_MTU = 1 << 5,
+        /* This path is retired */
+        COP_RETIRED = 1 << 6,
     }                           cop_flags;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
@@ -3905,7 +3908,6 @@ handshake_ok (struct lsquic_conn *lconn)
 
     if (!(conn->ifc_flags & IFC_SERVER))
         lsquic_send_ctl_0rtt_to_1rtt(&conn->ifc_send_ctl);
-
     return 0;
 }
 
@@ -4730,8 +4732,8 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
         ABORT_ERROR("generating PATH_CHALLENGE frame failed: %d", errno);
         return;
     }
-    LSQ_DEBUG("generated %d-byte PATH_CHALLENGE frame; challenge: %s"
-        ", seq: %u", w,
+    LSQ_DEBUG("generated %d-byte PATH_CHALLENGE frame for path %d; challenge: %s"
+        ", seq: %u", w, path_id,
         HEXSTR((unsigned char *) &copath->cop_path_chals[copath->cop_n_chals],
             sizeof(copath->cop_path_chals[copath->cop_n_chals]), hexbuf),
         copath->cop_n_chals);
@@ -5256,6 +5258,7 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
                                     &conn->ifc_paths[path_id].cop_path);
 
     assert(conn->ifc_cur_path_id != path_id);
+    CUR_CPATH(conn)->cop_flags |= COP_RETIRED;
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "switched paths");
     if (keep_path_properties)
@@ -7506,28 +7509,36 @@ process_regular_packet (struct ietf_full_conn *conn,
      * MUST discard these packets.
      *      [draft-ietf-quic-transport-20], Section 9
      */
-    if (packet_in->pi_path_id != conn->ifc_cur_path_id
-        && 0 == (conn->ifc_flags & IFC_SERVER)
+    if (0 == (conn->ifc_flags & IFC_SERVER)
+        && packet_in->pi_path_id != conn->ifc_cur_path_id
         && !(packet_in->pi_path_id == conn->ifc_mig_path_id
-                && migra_is_on(conn, conn->ifc_mig_path_id)))
+                //&& migra_is_on(conn, conn->ifc_mig_path_id)
+             ))
     {
-        /* The "known server address" is recorded in the current path. */
-        switch ((NP_IS_IPv6(CUR_NPATH(conn)) << 1) |
-                 NP_IS_IPv6(&conn->ifc_paths[packet_in->pi_path_id].cop_path))
+        if ((conn->ifc_paths[packet_in->pi_path_id].cop_flags & COP_RETIRED))
         {
-        case (1 << 1) | 1:  /* IPv6 */
-            if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
-                        &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
-                goto known_peer_addr;
-            break;
-        case (0 << 1) | 0:  /* IPv4 */
-            if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
-                        &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
-                goto known_peer_addr;
-            break;
+            packet_in->pi_flags |= PI_RETIRED_PATH;
         }
-        LSQ_DEBUG("ignore packet from unknown server address");
-        return 0;
+        else
+        {
+            /* The "known server address" is recorded in the current path. */
+            switch ((NP_IS_IPv6(CUR_NPATH(conn)) << 1) |
+                    NP_IS_IPv6(&conn->ifc_paths[packet_in->pi_path_id].cop_path))
+            {
+            case (1 << 1) | 1:  /* IPv6 */
+                if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
+                            &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
+                    goto known_peer_addr;
+                break;
+            case (0 << 1) | 0:  /* IPv4 */
+                if (lsquic_sockaddr_eq(NP_PEER_SA(CUR_NPATH(conn)), NP_PEER_SA(
+                            &conn->ifc_paths[packet_in->pi_path_id].cop_path)))
+                    goto known_peer_addr;
+                break;
+            }
+            LSQ_DEBUG("ignore packet from unknown server address");
+            return 0;
+        }
     }
   known_peer_addr:
 
@@ -7622,7 +7633,8 @@ process_regular_packet (struct ietf_full_conn *conn,
             record_dcid(conn, packet_in);
         saved_path_id = conn->ifc_cur_path_id;
         parse_regular_packet(conn, packet_in);
-        if (saved_path_id == conn->ifc_cur_path_id)
+        if (saved_path_id == conn->ifc_cur_path_id
+            && !(packet_in->pi_flags & PI_RETIRED_PATH))
         {
             if (conn->ifc_cur_path_id != packet_in->pi_path_id)
             {
@@ -9016,6 +9028,32 @@ ietf_full_conn_ci_count_garbage (struct lsquic_conn *lconn, size_t garbage_sz)
 }
 
 
+int
+ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    memset(info, 0, sizeof(*info));
+    info->lci_cwnd = conn->ifc_send_ctl.sc_ci->cci_get_cwnd(
+                                            conn->ifc_send_ctl.sc_cong_ctl);
+    info->lci_rtt = lsquic_rtt_stats_get_srtt(&conn->ifc_pub.rtt_stats);
+    info->lci_rttvar = lsquic_rtt_stats_get_rttvar(&conn->ifc_pub.rtt_stats);
+    info->lci_rtt_min = lsquic_rtt_stats_get_min_rtt(&conn->ifc_pub.rtt_stats);
+    info->lci_pmtu = conn->ifc_paths[conn->ifc_cur_path_id].cop_path.np_pack_size;
+    info->lci_bw_estimate = conn->ifc_send_ctl.sc_ci->cci_pacing_rate(
+                                            conn->ifc_send_ctl.sc_cong_ctl, 1);
+
+#if LSQUIC_CONN_STATS
+    info->lci_bytes_rcvd = conn->ifc_stats.in.bytes;
+    info->lci_bytes_sent = conn->ifc_stats.out.bytes;
+    info->lci_pkts_rcvd  = conn->ifc_stats.in.packets;
+    info->lci_pkts_sent  = conn->ifc_stats.out.packets;
+    info->lci_pkts_lost  = conn->ifc_stats.out.lost_packets;
+    info->lci_pkts_retx  = conn->ifc_stats.out.retx_packets;
+#endif
+    return 0;
+}
+
+
 #if LSQUIC_CONN_STATS
 static const struct conn_stats *
 ietf_full_conn_ci_get_stats (struct lsquic_conn *lconn)
@@ -9024,8 +9062,6 @@ ietf_full_conn_ci_get_stats (struct lsquic_conn *lconn)
     return &conn->ifc_stats;
 }
 
-
-#include "lsquic_cong_ctl.h"
 
 static void
 ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
@@ -9114,6 +9150,7 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_packet_not_sent     =  ietf_full_conn_ci_packet_not_sent,
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
     .ci_packet_too_large    =  ietf_full_conn_ci_packet_too_large,
+    .ci_get_info            =  ietf_full_conn_ci_get_info,
 #if LSQUIC_CONN_STATS
     .ci_get_stats           =  ietf_full_conn_ci_get_stats,
     .ci_log_stats           =  ietf_full_conn_ci_log_stats,

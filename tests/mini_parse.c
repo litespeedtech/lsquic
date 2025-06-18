@@ -67,7 +67,7 @@ main (int argc, char **argv)
     memset(&enpub, 0, sizeof(enpub));
     lsquic_mm_init(&enpub.enp_mm);
 
-    lsquic_log_to_fstream(stderr, 0);
+    lsquic_log_to_fstream(stderr, LLTS_NONE);
     lsq_log_levels[LSQLM_MINI_CONN] = LSQ_LOG_DEBUG;
     lsq_log_levels[LSQLM_NOMODULE]  = LSQ_LOG_DEBUG;
 

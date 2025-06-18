@@ -113,11 +113,11 @@ main (int argc, char **argv)
             bloom_hit_sea = atoi(optarg);
             break;
         case 'l':
-            lsquic_log_to_fstream(stderr, 0);
+            lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt(optarg);
             break;
         case 'v':
-            lsquic_log_to_fstream(stderr, 0);
+            lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt("purga=debug");
             break;
         default:

@@ -370,7 +370,7 @@ int
 main (void)
 {
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
-    lsquic_log_to_fstream(stderr, 0);
+    lsquic_log_to_fstream(stderr, LLTS_NONE);
     lsq_log_levels[LSQLM_PARSE]   = LSQ_LOG_DEBUG;
 
     test1();

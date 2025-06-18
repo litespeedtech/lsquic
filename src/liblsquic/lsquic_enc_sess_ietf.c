@@ -9,9 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#if LSQUIC_PREFERRED_ADDR
-#include <arpa/inet.h>
-#endif
 
 #include <openssl/chacha.h>
 #include <openssl/hkdf.h>
@@ -560,73 +557,51 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
             params.tp_retry_source_cid = enc_sess->esi_rscid;
             params.tp_set |= 1 << TPI_RETRY_SOURCE_CID;
         }
-#if LSQUIC_PREFERRED_ADDR
-        char addr_buf[INET6_ADDRSTRLEN + 6 /* port */ + 1];
-        const char *s, *colon;
-        struct lsquic_conn *conn;
-        struct conn_cid_elem *cce;
-        unsigned seqno;
-        s = getenv("LSQUIC_PREFERRED_ADDR4");
-        if (s && strlen(s) < sizeof(addr_buf) && (colon = strchr(s, ':')))
+        if (memcmp(settings->es_preferred_address,
+                    "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 24) != 0)
         {
-            strncpy(addr_buf, s, colon - s);
-            addr_buf[colon - s] = '\0';
-            inet_pton(AF_INET, addr_buf, params.tp_preferred_address.ipv4_addr);
-            params.tp_preferred_address.ipv4_port = atoi(colon + 1);
-            params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
-        }
-        s = getenv("LSQUIC_PREFERRED_ADDR6");
-        if (s && strlen(s) < sizeof(addr_buf) && (colon = strrchr(s, ':')))
-        {
-            strncpy(addr_buf, s, colon - s);
-            addr_buf[colon - s] = '\0';
-            inet_pton(AF_INET6, addr_buf,
-                                        params.tp_preferred_address.ipv6_addr);
-            params.tp_preferred_address.ipv6_port = atoi(colon + 1);
-            params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
-        }
-        conn = enc_sess->esi_conn;
-        if ((params.tp_set & (1 << TPI_PREFERRED_ADDRESS))
-                            && (1 << conn->cn_n_cces) - 1 != conn->cn_cces_mask)
-        {
-            seqno = 0;
-            for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
+            memcpy(&params.tp_preferred_address.ipv4_addr,
+                   settings->es_preferred_address, 24);
+
+            struct lsquic_conn *conn;
+            struct conn_cid_elem *cce;
+            unsigned seqno;
+            conn = enc_sess->esi_conn;
+            if ((1 << conn->cn_n_cces) - 1 != conn->cn_cces_mask)
             {
-                if (lconn->cn_cces_mask & (1 << (cce - lconn->cn_cces)))
+                seqno = 0;
+                for (cce = lconn->cn_cces; cce < END_OF_CCES(lconn); ++cce)
                 {
-                    if ((cce->cce_flags & CCE_SEQNO) && cce->cce_seqno > seqno)
-                        seqno = cce->cce_seqno;
+                    if (lconn->cn_cces_mask & (1 << (cce - lconn->cn_cces)))
+                    {
+                        if ((cce->cce_flags & CCE_SEQNO) && cce->cce_seqno > seqno)
+                            seqno = cce->cce_seqno;
+                    }
+                    else
+                        break;
                 }
-                else
-                    break;
-            }
-            if (cce == END_OF_CCES(lconn))
-            {
-                goto cant_use_prefaddr;
-            }
-            cce->cce_seqno = seqno + 1;
-            cce->cce_flags = CCE_SEQNO;
+                if (cce != END_OF_CCES(lconn))
+                {
+                    cce->cce_seqno = seqno + 1;
+                    cce->cce_flags = CCE_SEQNO;
 
-            cce->cce_cid.len = enc_sess->esi_enpub->enp_settings.es_scid_len;
-            enc_sess->esi_enpub->enp_generate_scid(
-                enc_sess->esi_enpub->enp_gen_scid_ctx, enc_sess->esi_conn,
-                cce->cce_cid.buf, cce->cce_cid.len);
+                    cce->cce_cid.len = enc_sess->esi_enpub->enp_settings.es_scid_len;
+                    enc_sess->esi_enpub->enp_generate_scid(
+                        enc_sess->esi_enpub->enp_gen_scid_ctx, enc_sess->esi_conn,
+                        cce->cce_cid.buf, cce->cce_cid.len);
 
-            /* Don't add to hash: migration must not start until *after*
-             * handshake is complete.
-             */
-            conn->cn_cces_mask |= 1 << (cce - conn->cn_cces);
-            params.tp_preferred_address.cid = cce->cce_cid;
-            lsquic_tg_generate_sreset(enc_sess->esi_enpub->enp_tokgen,
-                &params.tp_preferred_address.cid,
-                params.tp_preferred_address.srst);
+                    /* Don't add to hash: migration must not start until *after*
+                    * handshake is complete.
+                    */
+                    conn->cn_cces_mask |= 1 << (cce - conn->cn_cces);
+                    params.tp_preferred_address.cid = cce->cce_cid;
+                    lsquic_tg_generate_sreset(enc_sess->esi_enpub->enp_tokgen,
+                        &params.tp_preferred_address.cid,
+                        params.tp_preferred_address.srst);
+                    params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
+                }
+            }
         }
-        else
-        {
-  cant_use_prefaddr:
-            params.tp_set &= ~(1 << TPI_PREFERRED_ADDRESS);
-        }
-#endif
     }
 #if LSQUIC_TEST_QUANTUM_READINESS
     {

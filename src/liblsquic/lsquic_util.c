@@ -284,7 +284,7 @@ lsquic_sockaddr_eq (const struct sockaddr *a, const struct sockaddr *b)
 }
 
 
-void
+char *
 lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
 {
     unsigned short port;
@@ -313,6 +313,7 @@ lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
     len = strlen(buf);
     if (len < (int) sz)
         snprintf(buf + len, sz - (size_t) len, ":%hu", port);
+    return buf;
 }
 
 

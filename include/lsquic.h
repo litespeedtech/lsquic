@@ -11,7 +11,7 @@
  */
 
 #include <stdarg.h>
-#include <lsquic_types.h>
+#include "lsquic_types.h"
 #ifndef WIN32
 #include <sys/uio.h>
 #include <time.h>
@@ -26,8 +26,13 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 2
+#define LSQUIC_MINOR_VERSION 3
 #define LSQUIC_PATCH_VERSION 0
+
+#define LSQUIC_QUOTE(x)     #x
+#define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
+#define LSQUIC_VERSION_STR  LSQUIC_SVAL(LSQUIC_MAJOR_VERSION) "." \
+    LSQUIC_SVAL(LSQUIC_MINOR_VERSION) "." LSQUIC_SVAL(LSQUIC_PATCH_VERSION)
 
 /**
  * Engine flags:
@@ -1123,6 +1128,17 @@ struct lsquic_engine_settings {
      */
     int             es_send_verneg;
 
+    /**
+     * This is the preferred_address used in server's transport parameter
+     * It contains an address and port for both IPv4 and IPv6. It is copied directly
+     * as the addresses part of preferred_address value. Includes:
+     * Four-byte IPv4 Address, two-byte IPv4 Port,
+     * a 16-byte IPv6 Address, two-byte IPv6 Port.
+     *
+     * The default is all zero, which indicates perferred_address is not set
+     */
+    uint8_t         es_preferred_address[24];
+
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**
      * Enable datagram extension for http3 server.  Allowed values are 0 and 1.
@@ -2101,6 +2117,25 @@ lsquic_conn_get_sni (lsquic_conn_t *);
  */
 void
 lsquic_conn_abort (lsquic_conn_t *);
+
+struct lsquic_conn_info
+{
+    uint32_t lci_cwnd;
+    uint32_t lci_pmtu;
+    uint32_t lci_rtt;
+    uint32_t lci_rttvar;
+    uint32_t lci_rtt_min;
+    uint64_t lci_bytes_rcvd;
+    uint64_t lci_bytes_sent;
+    uint64_t lci_pkts_rcvd;
+    uint64_t lci_pkts_sent;
+    uint64_t lci_pkts_lost;
+    uint64_t lci_pkts_retx;
+    uint64_t lci_bw_estimate;
+};
+
+int
+lsquic_conn_get_info (lsquic_conn_t *conn, struct lsquic_conn_info *info);
 
 /**
  * Helper function: convert list of versions as specified in the argument

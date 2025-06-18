@@ -1632,7 +1632,7 @@ main (int argc, char **argv)
             fuzz_pwritev_input = optarg;
             break;
         case 'l':
-            lsquic_log_to_fstream(stderr, 0);
+            lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt(optarg);
             break;
         default:

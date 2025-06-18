@@ -228,6 +228,39 @@ sport_destroy (struct service_port *sport)
 }
 
 
+static char *
+sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
+{
+    unsigned short port;
+    int len;
+
+    switch (addr->sa_family)
+    {
+    case AF_INET:
+        port = ntohs(((struct sockaddr_in *) addr)->sin_port);
+        if (!inet_ntop(AF_INET, &((struct sockaddr_in *) addr)->sin_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    case AF_INET6:
+        port = ntohs(((struct sockaddr_in6 *) addr)->sin6_port);
+        if (!inet_ntop(AF_INET6, &((struct sockaddr_in6 *) addr)->sin6_addr,
+                                                                    buf, sz))
+            buf[0] = '\0';
+        break;
+    default:
+        port = 0;
+        (void) snprintf(buf, sz, "<invalid family %d>", addr->sa_family);
+        break;
+    }
+
+    len = strlen(buf);
+    if (len < (int) sz)
+        snprintf(buf + len, sz - (size_t) len, ":%hu", port);
+    return buf;
+}
+
+
 struct service_port *
 sport_new (const char *optarg, struct prog *prog)
 {
@@ -600,6 +633,14 @@ read_one_packet (struct read_iter *iter)
         sport->drop_init = 1;
     sport->n_dropped = n_dropped;
 #endif
+    char localaddr_str[80];
+    char remoteaddr_str[80];
+    LSQ_DEBUG("[%s] RX packet %zd bytes from: %s",
+            sockaddr2str((struct sockaddr *)local_addr, localaddr_str,
+                         sizeof(localaddr_str)),
+            nread, sockaddr2str(
+                (struct sockaddr *)&packs_in->peer_addresses[iter->ri_idx],
+                remoteaddr_str, sizeof(remoteaddr_str)));
 
 #ifndef WIN32
     packs_in->vecs[iter->ri_idx].iov_len = nread;
@@ -1557,7 +1598,6 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
 #endif
 
 
-#if LSQUIC_PREFERRED_ADDR
 static const struct service_port *
 find_sport (struct prog *prog, const struct sockaddr *local_sa)
 {
@@ -1574,15 +1614,23 @@ find_sport (struct prog *prog, const struct sockaddr *local_sa)
                                              : sizeof(struct sockaddr_in6);
             if (0 == memcmp(addr, local_sa, len))
                 return sport;
+            if (((struct sockaddr_in *)addr)->sin_port ==
+                ((struct sockaddr_in *)local_sa)->sin_port)
+            {
+                if ((addr->sa_family == AF_INET
+                        && ((struct sockaddr_in *)addr)->sin_addr.s_addr
+                            == INADDR_ANY)
+                    ||(addr->sa_family == AF_INET6
+                        && (IN6_IS_ADDR_UNSPECIFIED(
+                            &((struct sockaddr_in6 *)addr)->sin6_addr))))
+                    return sport;
+            }
         }
     }
 
     assert(0);
     return NULL;
 }
-
-
-#endif
 
 
 static int
@@ -1655,10 +1703,8 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
     do
     {
         sport = specs[n].peer_ctx;
-#if LSQUIC_PREFERRED_ADDR
         if (sport->sp_prog->prog_flags & PROG_SEARCH_ADDRS)
             sport = find_sport(sport->sp_prog, specs[n].local_sa);
-#endif
 #ifndef WIN32
         msg.msg_name       = (void *) specs[n].dest_sa;
         msg.msg_namelen    = (AF_INET == specs[n].dest_sa->sa_family ?
@@ -1734,6 +1780,14 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 #endif
             break;
         }
+        char localaddr_str[80];
+        char remoteaddr_str[80];
+        LSQ_DEBUG("[%s] TX packet %d bytes to: %s",
+                sockaddr2str((struct sockaddr *)&sport->sp_local_addr,
+                             localaddr_str, sizeof(localaddr_str)),
+                s, sockaddr2str(specs[n].dest_sa,
+                    remoteaddr_str, sizeof(remoteaddr_str)));
+
         ++n;
     }
     while (n < count);
@@ -1776,6 +1830,47 @@ sport_packets_out (void *ctx, const struct lsquic_out_spec *specs,
     else
 #endif
         return send_packets_one_by_one(specs, count);
+}
+
+
+int
+set_perferred_address(uint8_t *addr, uint16_t *port, const char *s, int family)
+{
+    char addr_buf[1024];
+    const char *colon;
+    if (s && strlen(s) < sizeof(addr_buf) && (colon = strrchr(s, ':')))
+    {
+        strncpy(addr_buf, s, colon - s);
+        addr_buf[colon - s] = '\0';
+        if (inet_pton(family, addr_buf, addr))
+        {
+            *port = atoi(colon + 1);
+            //params.tp_set |= 1 << TPI_PREFERRED_ADDRESS;
+            return 1;
+        }
+        else
+        {
+            struct addrinfo hints, *res = NULL;
+            int ret;
+            memset(&hints, 0, sizeof(hints));
+            hints.ai_flags = AI_NUMERICSERV;
+            hints.ai_family = family;
+            ret = getaddrinfo(addr_buf, colon + 1, &hints, &res);
+            if (ret != 0)
+            {
+                LSQ_ERROR("could not resolve %s:%s: %s", addr_buf, colon + 1,
+                                                       gai_strerror(ret));
+                return 0;
+            }
+            if (family == AF_INET)
+                memcpy(addr, &((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr, 4);
+            else
+                memcpy(addr, &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr, 16);
+            *port = atoi(colon + 1);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 
@@ -1981,6 +2076,20 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_delayed_acks = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "preferred_v4", 12))
+        {
+            set_perferred_address(settings->es_preferred_address,
+                (uint16_t *)&settings->es_preferred_address[4], val, AF_INET);
+            return 0;
+        }
+        if (0 == strncmp(name, "preferred_v6", 12))
+        {
+            set_perferred_address(&settings->es_preferred_address[6],
+                (uint16_t *)&settings->es_preferred_address[22],
+                                  val, AF_INET6);
+            return 0;
+        }
+
         break;
     case 13:
         if (0 == strncmp(name, "support_tcid0", 13))
