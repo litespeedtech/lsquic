@@ -276,6 +276,15 @@ lsquic_conn_log_cid (const struct lsquic_conn *lconn)
     return &lconn->cn_logid;
 }
 
+int
+lsquic_conn_want_cctk_write (struct lsquic_conn *lconn, int is_want)
+{
+    LSQ_WARN("+++++++++++++++++++++  lsquic_conn_want_cctk_write: %p: %p", lconn->cn_if, lconn->cn_if->ci_want_cctk_write);
+    if (lconn->cn_if && lconn->cn_if->ci_want_cctk_write)
+        return lconn->cn_if->ci_want_cctk_write(lconn, is_want);
+    else
+        return -1;
+}
 
 int
 lsquic_conn_want_datagram_write (struct lsquic_conn *lconn, int is_want)

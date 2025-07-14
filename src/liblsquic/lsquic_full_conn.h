@@ -57,4 +57,7 @@ struct dcid_elem
 int
 lsquic_gquic_full_conn_srej (struct lsquic_conn *);
 
+static int
+full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want);
+
 #endif

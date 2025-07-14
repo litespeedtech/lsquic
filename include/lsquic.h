@@ -1903,6 +1903,10 @@ lsquic_conn_get_sockaddr(lsquic_conn_t *c,
 
 /* Returns previous value */
 int
+lsquic_conn_want_cctk_write (lsquic_conn_t *, int is_want);
+
+/* Returns previous value */
+int
 lsquic_conn_want_datagram_write (lsquic_conn_t *, int is_want);
 
 /* Get minimum datagram size.  By default, this value is zero. */

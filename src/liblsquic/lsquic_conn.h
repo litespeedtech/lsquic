@@ -280,6 +280,10 @@ struct conn_iface
 
     /* Optional method. */
     int
+    (*ci_want_cctk_write) (struct lsquic_conn *, int);
+
+    /* Optional method. */
+    int
     (*ci_want_datagram_write) (struct lsquic_conn *, int);
 
     /* Optional method */

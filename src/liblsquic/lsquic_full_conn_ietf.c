@@ -146,6 +146,7 @@ enum ifull_conn_flags
     IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
     IFC_TIMESTAMPS    = 1 << 30, /* Timestamps are enabled */
     IFC_DATAGRAMS     = 1u<< 31, /* Datagrams are enabled */
+    IFC_CCTK          = 1u<< 32, /* CCTK are enabled */
 };
 
 
@@ -160,6 +161,7 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_WANT_CCTK_WRITE  = 1 << 9,
 };
 
 
@@ -2952,6 +2954,31 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
     generate_ack_frame_for_pns(conn, packet_out, PNS_APP, lsquic_time_now());
 }
 
+static int
+ietf_full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    int old;
+
+    if (conn->ifc_flags & IFC_CCTK)
+    {
+        old = !!(conn->ifc_mflags & MF_WANT_CCTK_WRITE);
+        if (is_want)
+        {
+            conn->ifc_mflags |= MF_WANT_CCTK_WRITE;
+            if (lsquic_send_ctl_can_send (&conn->ifc_send_ctl))
+                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
+                        &conn->ifc_conn);
+        }
+        else
+            conn->ifc_mflags &= ~MF_WANT_CCTK_WRITE;
+        LSQ_DEBUG("turn %s \"want CCTK write\" flag",
+                is_want ? "on" : "off");
+        return old;
+    }
+    else
+        return -1;
+}
 
 static int
 ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
@@ -3669,6 +3696,19 @@ apply_trans_params (struct ietf_full_conn *conn,
             ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
     }
 
+    //get it from transport param
+    LSQ_DEBUG("tpi_cc_reuse: %llu", params->tpi_cc_reuse);
+    LSQ_DEBUG("tpi_init_time_of_cctk: %llu", params->tpi_init_time_of_cctk);
+    LSQ_DEBUG("tpi_send_peroid_of_cctk: %llu", params->tpi_send_peroid_of_cctk);
+    LSQ_DEBUG("tpi_joint_cc_opt: %llu", params->tpi_joint_cc_opt);
+    LSQ_DEBUG("tpi_net_type: %llu", params->tpi_net_type);
+    LSQ_DEBUG("tpi_init_rtt: %llu", params->tpi_init_rtt);
+    LSQ_DEBUG("tpi_suggest_send_rate: %llu", params->tpi_suggest_send_rate);
+    LSQ_DEBUG("tpi_cc_version: %llu", params->tpi_cc_version);
+
+    if (params->tpi_cc_reuse)
+        conn->ifc_flags |= IFC_CCTK;
+
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
@@ -4205,6 +4245,11 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
         if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
         {
             LSQ_DEBUG("tickable: send DATA_BLOCKED frame");
+            goto check_can_send;
+        }
+        if (conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
+        {
+            LSQ_DEBUG("tickable: want to write CCTK frame");
             goto check_can_send;
         }
         if (conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
@@ -8377,6 +8422,45 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
     return 0;
 }
 
+/* Return true if CCTK was written, false otherwise */
+static int
+write_cctk (struct ietf_full_conn *conn)
+{
+    struct lsquic_packet_out *packet_out;
+    size_t need;
+    int w;
+
+    need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(conn->ifc_min_dg_sz);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+        return 0;
+
+    w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+            conn->ifc_max_dg_sz,
+            conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
+    if (w < 0)
+    {
+        LSQ_DEBUG("could not generate DATAGRAM frame");
+        return 0;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+            QUIC_FRAME_CCTK, packet_out->po_data_sz, w))
+    {
+        ABORT_ERROR("adding CCTK frame to packet failed: %d", errno);
+        return 0;
+    }
+    packet_out->po_regen_sz += w;
+    packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    /* XXX The DATAGRAM frame should really be a regen.  Do it when we
+     * no longer require these frame types to be at the beginning of the
+     * packet.
+     */
+
+    return 1;
+}
 
 /* Return true if datagram was written, false otherwise */
 static int
@@ -8594,6 +8678,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
     if (!write_is_possible(conn))
         goto end_write;
+
+    if (conn->ifc_mflags & MF_WANT_CCTK_WRITE)
+        write_cctk(conn);
 
     while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
         if (!write_is_possible(conn))
@@ -9104,7 +9191,8 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_status               =  ietf_full_conn_ci_status, \
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
-    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert,   \
+    .ci_want_cctk_write      =  ietf_full_conn_ci_want_cctk_write, \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
 

@@ -1134,7 +1134,7 @@ ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
     uint64_t val;
     int s;
 
-    if (len > 0 && buf[0] < 0x40)
+    if (len > 0 && buf[0] < 0x70)
         return lsquic_iquic_byte2type[buf[0]];
 
     s = vint_read(buf, buf + len, &val);

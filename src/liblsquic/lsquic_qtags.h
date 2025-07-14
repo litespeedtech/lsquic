@@ -59,4 +59,26 @@
 /* Stateless reset token.  Used in Q044 and later. */
 #define QTAG_SRST TAG('S', 'R', 'S', 'T')
 
+/*
+ * TikTok specific CHLO flags
+ */
+/* Congestion Control ReusE */
+#define QTAG_CCRE   TAG('C', 'C', 'R', 'E')
+/* Init Time of Congestion control Token */
+#define QTAG_ITCT   TAG('I', 'T', 'C', 'T')
+/* Send Period of Congestion control Token frame */
+#define QTAG_SPCT   TAG('S', 'P', 'C', 'T')
+/* Joint Congestion Control Optimization */
+#define QTAG_JCCO   TAG('J', 'C', 'C', 'O')
+/* Network TYPe of client */
+#define QTAG_NTYP   TAG('N', 'T', 'Y', 'P')
+/* Init RTT observed by client */
+//#define QTAG_IRTT   TAG('I', 'R', 'T', 'T')
+/* Suggest Sending Rate */
+#define QTAG_SSR    TAG('S', 'S', 'R', '\0')
+/* Congestion Control ToKen */
+#define QTAG_CCTK   TAG('C', 'C', 'T', 'K')
+/* Congestion Control FeedBack */
+#define QTAG_CCFB   TAG('C', 'C', 'F', 'B')
+
 #endif

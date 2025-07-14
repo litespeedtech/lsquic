@@ -65,7 +65,22 @@ enum transport_param_id
     TPI_QUANTUM_READINESS,
 #endif
     TPI_VERSION_INFORMATION,
-    TPI_STATELESS_RESET_TOKEN,              LAST_TPI = TPI_STATELESS_RESET_TOKEN
+    TPI_STATELESS_RESET_TOKEN,          LAST_TPI_ENCODE = TPI_STATELESS_RESET_TOKEN, //FIXME implement encode for CCTK parameters
+
+    /*
+    * CCTK parameters
+    */
+    TPI_CC_REUSE,
+    TPI_INIT_TIME_OF_CCTK,
+    TPI_SEND_PEROID_OF_CCTK,
+    TPI_JOINT_CC_OPT,
+    TPI_NET_TYPE,
+    TPI_INIT_RTT,
+    TPI_SUGGEST_SEND_RATE,
+    TPI_CC_VERSION,                     MAX_NUMERIC_CCTK_TPI = TPI_CC_VERSION,
+
+    TPI_CC_TOKEN,
+    TPI_CC_FEEDBACK,                    LAST_TPI = TPI_CC_FEEDBACK
 };
 
 #define TP_CID_IDX(tpi_) ((tpi_) - FIRST_TP_CID)
@@ -93,6 +108,16 @@ struct transport_params
 #define tp_max_ack_delay                    tp_numerics[TPI_MAX_ACK_DELAY]
 #define tp_active_connection_id_limit       tp_numerics[TPI_ACTIVE_CONNECTION_ID_LIMIT]
 #define tp_loss_bits                        tp_numerics[TPI_LOSS_BITS]
+
+    uint64_t                tp_numerics_cctk[MAX_NUMERIC_CCTK_TPI + 1];
+#define tpi_cc_reuse                        tp_numerics_cctk[TPI_CC_REUSE]
+#define tpi_init_time_of_cctk               tp_numerics_cctk[TPI_INIT_TIME_OF_CCTK]
+#define tpi_send_peroid_of_cctk             tp_numerics_cctk[TPI_SEND_PEROID_OF_CCTK]
+#define tpi_joint_cc_opt                    tp_numerics_cctk[TPI_JOINT_CC_OPT]
+#define tpi_net_type                        tp_numerics_cctk[TPI_NET_TYPE]
+#define tpi_init_rtt                        tp_numerics_cctk[TPI_INIT_RTT]
+#define tpi_suggest_send_rate               tp_numerics_cctk[TPI_SUGGEST_SEND_RATE]
+#define tpi_cc_version                      tp_numerics_cctk[TPI_CC_VERSION]
 
     uint8_t     tp_stateless_reset_token[IQUIC_SRESET_TOKEN_SZ];
     struct {

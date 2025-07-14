@@ -120,6 +120,7 @@ enum full_conn_flags {
                       = (1 <<23),
     FC_GOT_SREJ       = (1 <<24),   /* Don't schedule ACK alarm */
     FC_NOPROG_TIMEOUT = (1 <<25),
+    FC_WANT_CCTK_WRITE= (1 <<26),
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -2853,6 +2854,33 @@ generate_stop_waiting_frame (struct full_conn *conn)
     EV_LOG_GENERATED_STOP_WAITING_FRAME(LSQUIC_LOG_CONN_ID, least_unacked);
 }
 
+static void
+generate_cctk_frame (struct full_conn *conn)
+{
+    LSQ_DEBUG("------------ generate_cctk_frame---------------------");
+    lsquic_packet_out_t *packet_out =
+            get_writeable_packet(conn, GQUIC_CCTK_FRAME_SZ);
+    if (!packet_out)
+        return;
+
+    unsigned char tokens[GQUIC_CCTK_FRAME_SZ];
+    int tokens_len = GQUIC_CCTK_FRAME_SZ - 1;
+
+    int sz = conn->fc_conn.cn_pf->pf_gen_cctk_frame(
+            packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out), tokens, tokens_len);
+    if (sz < 0) {
+        ABORT_ERROR("gen_cctk_frame failed");
+        return;
+    }
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
+    //conn->fc_flags &= ~FC_SEND_GOAWAY;
+    //conn->fc_flags |=  FC_GOAWAY_SENT;
+    LSQ_DEBUG("wrote CCTK frame: stream id: %"PRIu64,
+            conn->fc_max_peer_stream_id);
+   // maybe_close_conn(conn);
+}
 
 static int
 process_stream_ready_to_send (struct full_conn *conn, lsquic_stream_t *stream)
@@ -3530,6 +3558,12 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (conn->fc_flags & FC_SEND_GOAWAY)
     {
         generate_goaway_frame(conn);
+        CLOSE_IF_NECESSARY();
+    }
+
+    if (conn->fc_flags & FC_WANT_CCTK_WRITE)
+    {
+        generate_cctk_frame(conn);
         CLOSE_IF_NECESSARY();
     }
 
@@ -4564,6 +4598,8 @@ static const struct conn_iface full_conn_iface = {
     .ci_packet_not_sent      =  full_conn_ci_packet_not_sent,
     .ci_packet_sent          =  full_conn_ci_packet_sent,
     .ci_record_addrs         =  full_conn_ci_record_addrs,
+
+    .ci_want_cctk_write      =  full_conn_ci_want_cctk_write,
     /* gQUIC connection does not need this functionality because it only
      * uses one CID and it's liveness is updated automatically by the
      * caller when packets come in.
@@ -4577,3 +4613,30 @@ static const struct conn_iface full_conn_iface = {
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;
+
+static int
+full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    int old;
+
+//    if (conn->fc_flags & IFC_CCTK)
+    {
+        old = !!(conn->fc_flags & FC_WANT_CCTK_WRITE);
+        if (is_want)
+        {
+            conn->fc_flags |= FC_WANT_CCTK_WRITE;
+            if (lsquic_send_ctl_can_send (&conn->fc_send_ctl))
+                lsquic_engine_add_conn_to_tickable(conn->fc_enpub,
+                        &conn->fc_conn);
+        }
+        else
+            conn->fc_flags &= ~FC_WANT_CCTK_WRITE;
+        LSQ_DEBUG("turn %s \"want CCTK write\" flag",
+                is_want ? "on" : "off");
+        return old;
+    }
+    //else
+    //    return -1;
+}
+
