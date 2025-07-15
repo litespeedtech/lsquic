@@ -2863,12 +2863,9 @@ generate_cctk_frame (struct full_conn *conn)
     if (!packet_out)
         return;
 
-    unsigned char tokens[GQUIC_CCTK_FRAME_SZ];
-    int tokens_len = GQUIC_CCTK_FRAME_SZ - 1;
-
     int sz = conn->fc_conn.cn_pf->pf_gen_cctk_frame(
             packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), tokens, tokens_len);
+            lsquic_packet_out_avail(packet_out), &conn->fc_send_ctl);
     if (sz < 0) {
         ABORT_ERROR("gen_cctk_frame failed");
         return;

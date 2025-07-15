@@ -82,6 +82,7 @@ SET(lsquic_STAT_SRCS
     lsquic_util.c
     lsquic_varint.c
     lsquic_version.c
+    lsquic_cctk.c
 )
 
 IF(NOT MSVC)
