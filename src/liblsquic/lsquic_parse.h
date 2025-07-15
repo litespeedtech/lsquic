@@ -335,6 +335,8 @@ struct parse_funcs
 
     int
     (*pf_gen_cctk_frame) (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl);
+    unsigned
+    (*pf_cctk_frame_size) (size_t);
 };
 
 LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_gquic_Q043;

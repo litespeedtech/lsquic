@@ -161,7 +161,7 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
-    MF_WANT_CCTK_WRITE  = 1 << 9,
+    MF_WANT_CCTK        = 1 << 9,
 };
 
 
@@ -2962,16 +2962,16 @@ ietf_full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want)
 
     if (conn->ifc_flags & IFC_CCTK)
     {
-        old = !!(conn->ifc_mflags & MF_WANT_CCTK_WRITE);
+        old = !!(conn->ifc_mflags & MF_WANT_CCTK);
         if (is_want)
         {
-            conn->ifc_mflags |= MF_WANT_CCTK_WRITE;
+            conn->ifc_mflags |= MF_WANT_CCTK;
             if (lsquic_send_ctl_can_send (&conn->ifc_send_ctl))
                 lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
                         &conn->ifc_conn);
         }
         else
-            conn->ifc_mflags &= ~MF_WANT_CCTK_WRITE;
+            conn->ifc_mflags &= ~MF_WANT_CCTK;
         LSQ_DEBUG("turn %s \"want CCTK write\" flag",
                 is_want ? "on" : "off");
         return old;
@@ -8426,23 +8426,45 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 static int
 write_cctk (struct ietf_full_conn *conn)
 {
+    LSQ_DEBUG("----------------------------- write_cctk ---------------------------");
     struct lsquic_packet_out *packet_out;
     size_t need;
     int w;
 
-    need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(conn->ifc_min_dg_sz);
+    //FIXME get the size of the tokens
+    need = conn->ifc_conn.cn_pf->pf_cctk_frame_size(124);
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
         return 0;
 
-    w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+    unsigned char tokens[124] = {
+            0xaa, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef,
+            };
+    size_t tokens_sz = 124;
+
+    w = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
             packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
-            conn->ifc_max_dg_sz,
-            conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
+            lsquic_packet_out_avail(packet_out),
+            tokens, tokens_sz);
+
     if (w < 0)
     {
-        LSQ_DEBUG("could not generate DATAGRAM frame");
+        LSQ_DEBUG("could not generate CCTK frame");
         return 0;
     }
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
@@ -8454,11 +8476,6 @@ write_cctk (struct ietf_full_conn *conn)
     packet_out->po_regen_sz += w;
     packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
-    /* XXX The DATAGRAM frame should really be a regen.  Do it when we
-     * no longer require these frame types to be at the beginning of the
-     * packet.
-     */
-
     return 1;
 }
 
@@ -8679,8 +8696,12 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (!write_is_possible(conn))
         goto end_write;
 
-    if (conn->ifc_mflags & MF_WANT_CCTK_WRITE)
+    if (conn->ifc_mflags & MF_WANT_CCTK)
+    {
         write_cctk(conn);
+        // clear want cctk
+        conn->ifc_mflags &= ~MF_WANT_CCTK;
+    }
 
     while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
         if (!write_is_possible(conn))
