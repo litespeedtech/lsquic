@@ -2899,8 +2899,6 @@ generate_cctk_frame (struct full_conn *conn)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
-    //conn->fc_flags &= ~FC_SEND_GOAWAY;
-    //conn->fc_flags |=  FC_GOAWAY_SENT;
     LSQ_DEBUG("wrote CCTK frame: stream id: %"PRIu64,
             conn->fc_max_peer_stream_id);
    // maybe_close_conn(conn);
@@ -3590,7 +3588,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         if (conn->fc_flags & FC_CCTK)
         {
             LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
-            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.init_time * 10) );
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.init_time * 1000) );
         }
         // clear want cctk
         conn->fc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
@@ -3602,7 +3600,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         {
             generate_cctk_frame(conn);
             LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
-            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.send_period * 10) );
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.send_period * 1000) );
             CLOSE_IF_NECESSARY();
         }
         // clear send cctk

@@ -2271,40 +2271,32 @@ ietf_v1_gen_datagram_frame (unsigned char *buf, size_t bufsz, size_t min_sz,
         return -1;
 }
 
-static unsigned
-ietf_v1_cctk_frame_size (size_t sz)
-{
-    return 2u + vint_size(sz) + sz;
-}
-
-
 static int
 ietf_v1_gen_cctk_frame (unsigned char *buf, size_t bufsz,
-        unsigned char *tokens, size_t tokens_size)
+        lsquic_send_ctl_t * send_ctl)
 {
     unsigned bits, len_sz;
     ssize_t nw;
 
-    if (tokens_size)
-        bits = vint_val2bits(tokens_size);
-    else
-        bits = vint_val2bits(bufsz);
+    size_t tokens_sz = sizeof(struct cctk_frame);
+    bits = vint_val2bits(tokens_sz);
     len_sz = 1u << bits;
 
-    if (2 + len_sz + tokens_size > bufsz)
+    if (2 + len_sz + tokens_sz > bufsz)
     {
         errno = ENOBUFS;
         return -1;
     }
 
-    if (tokens_size >= 0)
+    if (tokens_sz >= 0)
     {
         // use 2 bytes from frame type (0x60) https://datatracker.ietf.org/doc/html/rfc9000#integer-summary
         vint_write(&buf[0], (uint64_t) 0x60, 1, 2);
-        vint_write(&buf[2], (uint64_t) tokens_size, bits, len_sz);
-        memcpy(buf + 2 + len_sz, tokens, tokens_size);
+        vint_write(&buf[2], (uint64_t) tokens_sz, bits, len_sz);
+        size_t hz = 2 + len_sz;
+        lsquic_gquic_be_gen_cctk_frame(buf + hz, bufsz - hz, send_ctl);
 
-        return 2 + len_sz + tokens_size;
+        return hz + tokens_sz;
     }
     else
         return -1;
@@ -2386,5 +2378,4 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_gen_datagram_frame            =  ietf_v1_gen_datagram_frame,
     .pf_datagram_frame_size           =  ietf_v1_datagram_frame_size,
     .pf_gen_cctk_frame                =  ietf_v1_gen_cctk_frame,
-    .pf_cctk_frame_size               =  ietf_v1_cctk_frame_size,
 };

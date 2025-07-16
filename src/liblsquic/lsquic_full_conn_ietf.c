@@ -8423,7 +8423,8 @@ write_cctk (struct ietf_full_conn *conn)
     int w;
 
     //FIXME get the size of the tokens
-    need = conn->ifc_conn.cn_pf->pf_cctk_frame_size(124);
+    size_t sz = sizeof(struct cctk_frame);
+    need = 2u + vint_size(sz) + sz; //conn->ifc_conn.cn_pf->pf_cctk_frame_size();
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
         return 0;
@@ -8672,7 +8673,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (conn->ifc_flags & IFC_CCTK)
         {
             LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
-            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.init_time * 10) );
+            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.init_time * 1000) );
         }
         // clear want cctk
         conn->ifc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
@@ -8684,7 +8685,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         {
             write_cctk(conn);
             LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
-            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.send_period * 10) );
+            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.send_period * 1000) );
         }
         // clear send cctk
         conn->ifc_send_flags &= ~SF_SEND_CCTK;
