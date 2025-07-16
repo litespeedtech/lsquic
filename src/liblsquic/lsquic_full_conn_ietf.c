@@ -8419,33 +8419,35 @@ write_cctk (struct ietf_full_conn *conn)
 {
     LSQ_DEBUG("----------------------------- write_cctk ---------------------------");
     struct lsquic_packet_out *packet_out;
-    size_t sz_sz = 1;
-    int w;
+    int sz_sz = vint_size(sizeof(struct cctk_frame));
+    int sz;
 
     packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
     if (!packet_out)
         return 0;
 
-    w = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
+    sz = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
             packet_out->po_data + packet_out->po_data_sz + sz_sz,
             lsquic_packet_out_avail(packet_out) - sz_sz,
             &conn->ifc_send_ctl);
 
-    if (w < 0)
+    if (sz < 0)
     {
         LSQ_DEBUG("could not generate CCTK frame");
         return 0;
     }
-    *((char *)(packet_out->po_data + packet_out->po_data_sz)) = (char) w;
+    unsigned sz_bits = vint_val2bits(sz);
+    vint_write(packet_out->po_data + packet_out->po_data_sz, sz, sz_bits, 1 << sz_bits);
+    sz += sz_sz;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
-            QUIC_FRAME_CCTK, packet_out->po_data_sz, w))
+            QUIC_FRAME_CCTK, packet_out->po_data_sz, sz))
     {
         ABORT_ERROR("adding CCTK frame to packet failed: %d", errno);
         return 0;
     }
-    packet_out->po_regen_sz += w;
+    packet_out->po_regen_sz += sz;
     packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
     return 1;
 }
 

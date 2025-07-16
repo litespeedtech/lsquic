@@ -2884,7 +2884,7 @@ generate_stop_waiting_frame (struct full_conn *conn)
 static void
 generate_cctk_frame (struct full_conn *conn)
 {
-    int sz_sz = 1;
+    int sz_sz = vint_size(sizeof(struct cctk_frame));
     LSQ_DEBUG("------------ generate_cctk_frame---------------------");
     lsquic_packet_out_t *packet_out =
             get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
@@ -2898,8 +2898,10 @@ generate_cctk_frame (struct full_conn *conn)
         ABORT_ERROR("gen_cctk_frame failed");
         return;
     }
-    *((char *)(packet_out->po_data + packet_out->po_data_sz)) = (char) sz;
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz + sz_sz);
+    unsigned sz_bits = vint_val2bits(sz);
+    vint_write(packet_out->po_data + packet_out->po_data_sz, sz, sz_bits, 1 << sz_bits);
+    sz += sz_sz;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
     LSQ_DEBUG("wrote CCTK frame: stream id: %"PRIu64,
             conn->fc_max_peer_stream_id);
