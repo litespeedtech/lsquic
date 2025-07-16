@@ -1,5 +1,5 @@
 #include <sys/queue.h>
-
+#include <time.h>
 #include "lsquic.h"
 #include "lsquic_int_types.h"
 #include "lsquic_cong_ctl.h"
@@ -81,25 +81,51 @@ int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     return sizeof(sizeof(struct cctk_frame));
 }
 
+void sockaddr_to_16(const struct sockaddr *sa, unsigned char *cip /*must point to char[16]*/) {
+    if (sa->sa_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+        memcpy(cip, &sin->sin_addr.s_addr, 4);
+    } else if (sa->sa_family == AF_INET6) {
+        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
+        memcpy(cip, sin6->sin6_addr.s6_addr, 16);
+    } else {
+        memset(cip, 0, 16); // Unknown family, zero out cip
+    }
+}
+
 int
-lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl)
+lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t * send_ctl)
 {
     if( buf_len < sizeof(cctk_zero_frame) )
         return -1;
     
     struct cctk_data cctk = {0};
-    
-    //struct sockaddr *local, *remote;
-    //lsquic_conn_get_sockaddr(conn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
+    struct lsquic_conn_public *conn_pub = send_ctl->sc_conn_pub;
+
+    struct sockaddr *local, *remote;
+    lsquic_conn_get_sockaddr(conn_pub->lconn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
+    sockaddr_to_16(remote, cctk.cip);
 
     cctk.version = 1;
-    cctk.stmp = (unsigned long) lsquic_time_now();
-    struct lsquic_conn_public *conn = send_ctl->sc_conn_pub;
-    cctk.srtt = (unsigned int)conn->rtt_stats.srtt;
-    cctk.mrtt = (unsigned int)conn->rtt_stats.min_rtt;
-    cctk.rttv = (unsigned int)conn->rtt_stats.rttvar;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    cctk.stmp = (unsigned long) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+    cctk.ntyp = cctk_ctx->net_type;
+
+    /*cctk.slst = (send_ctl->sc_cong_ctl->cc_flags & CC_SLOW_START) ? 1 : 0;
+    cctk.mflg = send_ctl->sc_ci->cci_get_max_in_flight(send_ctl->sc_cong_ctl);
+    cctk.bw = send_ctl->sc_bw_sampler->bs_bw;
+    cctk.mbw = send_ctl->sc_bw_sampler->bs_max_bw;
+    cctk.thpt = send_ctl->sc_thpt;
+    cctk.plr = send_ctl->sc_plr;*/
+
+    cctk.srtt = (unsigned int)conn_pub->rtt_stats.srtt;
+    cctk.mrtt = (unsigned int)conn_pub->rtt_stats.min_rtt;
+    cctk.rttv = (unsigned int)conn_pub->rtt_stats.rttvar;
     unsigned long cwd = send_ctl->sc_ci->cci_get_cwnd(send_ctl->sc_cong_ctl);
-    if( cwd > cctk.mcwd ) {
+    if( cwd > cctk_ctx->max_cwnd ) {
+        cctk_ctx->max_cwnd = cwd;
         cctk.mcwd = cwd;
     }
 

@@ -3,9 +3,6 @@
 
 typedef struct lsquic_send_ctl lsquic_send_ctl_t;
 
-int
-lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl);
-
 struct cctk_data {
     char version;
     unsigned long stmp;          // timestamp in seconds since epoch
@@ -21,6 +18,13 @@ struct cctk_data {
     unsigned long mbw;           //Max bandwidth in bytes per second
     unsigned long thpt;           //throughput in bytes per second, retransmitted data excluded.
     unsigned char plr;            // The Packet Loss Rate
+};
+
+struct cctk_ctx {
+        unsigned init_time;
+        unsigned send_period;
+        unsigned char net_type;
+        unsigned long max_cwnd; // Maximum congestion window bytes
 };
 
 #pragma pack(1)
@@ -54,4 +58,8 @@ struct cctk_frame {
     unsigned char plr;            // The Packet Loss Rate
 };
 #pragma pack()
+
+int
+lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len,  struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t *send_ctl);
+
 #endif
