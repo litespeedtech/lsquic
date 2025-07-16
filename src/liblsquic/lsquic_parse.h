@@ -7,6 +7,7 @@
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_shared_support.h"
+#include "lsquic_cctk.h"
 
 struct lsquic_conn;
 struct lsquic_packet_in;
@@ -333,7 +334,7 @@ struct parse_funcs
     (*pf_datagram_frame_size) (size_t);
 
     int
-    (*pf_gen_cctk_frame) (unsigned char *buf, size_t buf_len, unsigned char *tokens, size_t tokens_len);
+    (*pf_gen_cctk_frame) (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl);
     unsigned
     (*pf_cctk_frame_size) (size_t);
 };

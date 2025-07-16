@@ -1043,21 +1043,6 @@ gquic_Q043_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
     return -1;
 }
 
-int
-lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, unsigned char *tokens, size_t tokens_len)
-{
-    if (buf_len > tokens_len)
-    {
-        buf[0] = (unsigned char)tokens_len;
-        memcpy(buf + 1, tokens, tokens_len);
-        return 1;
-    }
-    else
-        return -1;
-}
-
-
-
 const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
     .pf_gen_reg_pkt_header            =  lsquic_gquic_be_gen_reg_pkt_header,
