@@ -33,7 +33,7 @@
 #include "lsquic_cctk.h"
 
 const struct cctk_frame cctk_zero_frame = {
-    .version = 1,
+    .version = 0x01,
     ._key_stmp = {'S', 'T', 'M', 'P'},
     .stmp = 0,
     ._key_slst = {'S', 'L', 'S', 'T'},

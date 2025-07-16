@@ -36,6 +36,7 @@
 #include "lsquic_pacer.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_byteswap.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_stream.h"
@@ -879,7 +880,7 @@ cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
         lsquic_time_t now)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
-    LSQ_DEBUG("CCTK alarm rang: schedule CCTL frame to be generated");
+    LSQ_INFO("CCTK alarm rang: schedule CCTL frame to be generated");
     conn->ifc_send_flags |= SF_SEND_CCTK;
 }
 
@@ -8417,18 +8418,18 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 static int
 write_cctk (struct ietf_full_conn *conn)
 {
-    LSQ_DEBUG("----------------------------- write_cctk ---------------------------");
+    LSQ_INFO("----------------------------- write_cctk ---------------------------");
     struct lsquic_packet_out *packet_out;
     int sz_sz = vint_size(sizeof(struct cctk_frame));
     int sz;
 
-    packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
+    packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz /* frame size */ + 2 /* frame type*/);
     if (!packet_out)
         return 0;
 
     sz = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
-            packet_out->po_data + packet_out->po_data_sz + sz_sz,
-            lsquic_packet_out_avail(packet_out) - sz_sz,
+            packet_out->po_data + packet_out->po_data_sz ,
+            lsquic_packet_out_avail(packet_out) ,
             &conn->ifc_send_ctl);
 
     if (sz < 0)
@@ -8436,9 +8437,6 @@ write_cctk (struct ietf_full_conn *conn)
         LSQ_DEBUG("could not generate CCTK frame");
         return 0;
     }
-    unsigned sz_bits = vint_val2bits(sz);
-    vint_write(packet_out->po_data + packet_out->po_data_sz, sz, sz_bits, 1 << sz_bits);
-    sz += sz_sz;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
             QUIC_FRAME_CCTK, packet_out->po_data_sz, sz))
     {
@@ -8448,6 +8446,7 @@ write_cctk (struct ietf_full_conn *conn)
     packet_out->po_regen_sz += sz;
     packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    LSQ_INFO("wrote CCTK frame");
     return 1;
 }
 
@@ -8663,20 +8662,23 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     maybe_conn_flush_special_streams(conn);
 
-    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_HIGHEST_PRIO);
-    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
-    if (!write_is_possible(conn))
-        goto end_write;
-
     if (conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
         if (conn->ifc_flags & IFC_CCTK)
         {
-            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
+            LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
             lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.init_time * 1000) );
+        }
+        else
+        {
+            LSQ_DEBUG("IFC_CCTK not set");
         }
         // clear want cctk
         conn->ifc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
+    }
+    else
+    {
+        LSQ_DEBUG("LSCONN_WANT_CCTK not set");
     }
 
     if (conn->ifc_send_flags & SF_SEND_CCTK)
@@ -8684,12 +8686,24 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (conn->ifc_flags & IFC_CCTK)
         {
             write_cctk(conn);
-            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
+            LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
             lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.send_period * 1000) );
+        }
+        else
+        {
+            LSQ_DEBUG("IFC_CCTK not set");
         }
         // clear send cctk
         conn->ifc_send_flags &= ~SF_SEND_CCTK;
     }
+    {
+        LSQ_DEBUG("SF_SEND_CCTK not set");
+    }
+
+    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_HIGHEST_PRIO);
+    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
+    if (!write_is_possible(conn))
+        goto end_write;
 
     while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
         if (!write_is_possible(conn))

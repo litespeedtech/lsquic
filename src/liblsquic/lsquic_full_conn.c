@@ -2579,7 +2579,7 @@ cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
         lsquic_time_t now)
 {
     struct full_conn *conn = ctx;
-    LSQ_DEBUG("CCTK alarm rang: schedule CCTK frame to be generated");
+    LSQ_INFO("CCTK alarm rang: schedule CCTK frame to be generated");
     conn->fc_flags |= FC_SEND_CCTK;
 }
 
@@ -2884,8 +2884,8 @@ generate_stop_waiting_frame (struct full_conn *conn)
 static void
 generate_cctk_frame (struct full_conn *conn)
 {
-    int sz_sz = vint_size(sizeof(struct cctk_frame));
-    LSQ_DEBUG("------------ generate_cctk_frame---------------------");
+    int sz_sz = 1;
+    LSQ_INFO("------------ generate_cctk_frame---------------------");
     lsquic_packet_out_t *packet_out =
             get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
     if (!packet_out)
@@ -2898,12 +2898,10 @@ generate_cctk_frame (struct full_conn *conn)
         ABORT_ERROR("gen_cctk_frame failed");
         return;
     }
-    unsigned sz_bits = vint_val2bits(sz);
-    vint_write(packet_out->po_data + packet_out->po_data_sz, sz, sz_bits, 1 << sz_bits);
-    sz += sz_sz;
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
+    *((char *)(packet_out->po_data + packet_out->po_data_sz)) = (char) sz;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz + sz_sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
-    LSQ_DEBUG("wrote CCTK frame: stream id: %"PRIu64,
+    LSQ_INFO("wrote CCTK frame: stream id: %"PRIu64,
             conn->fc_max_peer_stream_id);
    // maybe_close_conn(conn);
 }
@@ -3587,11 +3585,15 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         CLOSE_IF_NECESSARY();
     }
 
+    LSQ_DEBUG("LSCONN_WANT_CCTK: %d", conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK);
+    LSQ_DEBUG("LSCONN_WANT_CCTKFC_CCTK: %d", conn->fc_flags & FC_CCTK);
+    LSQ_DEBUG("FC_SEND_CCTK: %d", conn->fc_flags & FC_SEND_CCTK);
+
     if (conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
         if (conn->fc_flags & FC_CCTK)
         {
-            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
+            LSQ_INFO("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
             lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.init_time * 1000) );
         }
         // clear want cctk
