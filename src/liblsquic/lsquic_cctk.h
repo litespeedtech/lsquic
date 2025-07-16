@@ -25,7 +25,6 @@ struct cctk_data {
 
 #pragma pack(1)
 struct cctk_frame {
-    char size;
     char version;
     char _key_stmp[4];
     unsigned long stmp;          // timestamp in seconds since epoch

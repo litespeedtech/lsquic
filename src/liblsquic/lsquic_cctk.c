@@ -33,7 +33,6 @@
 #include "lsquic_cctk.h"
 
 const struct cctk_frame cctk_zero_frame = {
-    .size = sizeof(struct cctk_frame),
     .version = 1,
     ._key_stmp = {'S', 'T', 'M', 'P'},
     .stmp = 0,
@@ -63,7 +62,7 @@ const struct cctk_frame cctk_zero_frame = {
     .plr = 0
 };
 
-void cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
+int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     memcpy(frame, &cctk_zero_frame, sizeof(struct cctk_frame));
     frame->version = data->version;
     frame->stmp = data->stmp;
@@ -79,16 +78,20 @@ void cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     frame->mbw = data->mbw;
     frame->thpt = data->thpt;
     frame->plr = data->plr;
+    return sizeof(sizeof(struct cctk_frame));
 }
 
 int
 lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl)
 {
-    if (buf_len < (unsigned int)cctk_zero_frame.size)
+    if( buf_len < sizeof(cctk_zero_frame) )
         return -1;
     
     struct cctk_data cctk = {0};
     
+    //struct sockaddr *local, *remote;
+    //lsquic_conn_get_sockaddr(conn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
+
     cctk.stmp = (unsigned long) lsquic_time_now();
     struct lsquic_conn_public *conn = send_ctl->sc_conn_pub;
     cctk.srtt = (unsigned int)conn->rtt_stats.srtt;
@@ -99,6 +102,5 @@ lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_
         cctk.mcwd = cwd;
     }
 
-    cctk_fill_frame(&cctk, (struct cctk_frame *)buf);
-    return 0;
+    return cctk_fill_frame(&cctk, (struct cctk_frame *)buf);
 }

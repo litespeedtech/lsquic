@@ -8419,19 +8419,16 @@ write_cctk (struct ietf_full_conn *conn)
 {
     LSQ_DEBUG("----------------------------- write_cctk ---------------------------");
     struct lsquic_packet_out *packet_out;
-    size_t need;
+    size_t sz_sz = 1;
     int w;
 
-    //FIXME get the size of the tokens
-    size_t sz = sizeof(struct cctk_frame);
-    need = 2u + vint_size(sz) + sz; //conn->ifc_conn.cn_pf->pf_cctk_frame_size();
-    packet_out = get_writeable_packet(conn, need);
+    packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
     if (!packet_out)
         return 0;
 
     w = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
-            packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out),
+            packet_out->po_data + packet_out->po_data_sz + sz_sz,
+            lsquic_packet_out_avail(packet_out) - sz_sz,
             &conn->ifc_send_ctl);
 
     if (w < 0)
@@ -8439,6 +8436,7 @@ write_cctk (struct ietf_full_conn *conn)
         LSQ_DEBUG("could not generate CCTK frame");
         return 0;
     }
+    *((char *)(packet_out->po_data + packet_out->po_data_sz)) = (char) w;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
             QUIC_FRAME_CCTK, packet_out->po_data_sz, w))
     {

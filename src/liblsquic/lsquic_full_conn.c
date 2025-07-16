@@ -2884,20 +2884,22 @@ generate_stop_waiting_frame (struct full_conn *conn)
 static void
 generate_cctk_frame (struct full_conn *conn)
 {
+    int sz_sz = 1;
     LSQ_DEBUG("------------ generate_cctk_frame---------------------");
     lsquic_packet_out_t *packet_out =
-            get_writeable_packet(conn, GQUIC_CCTK_FRAME_SZ);
+            get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz);
     if (!packet_out)
         return;
 
     int sz = conn->fc_conn.cn_pf->pf_gen_cctk_frame(
-            packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), &conn->fc_send_ctl);
+            packet_out->po_data + packet_out->po_data_sz + sz_sz,
+            lsquic_packet_out_avail(packet_out)-sz_sz, &conn->fc_send_ctl);
     if (sz < 0) {
         ABORT_ERROR("gen_cctk_frame failed");
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
+    *((char *)(packet_out->po_data + packet_out->po_data_sz)) = (char) sz;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz + sz_sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
     LSQ_DEBUG("wrote CCTK frame: stream id: %"PRIu64,
             conn->fc_max_peer_stream_id);
