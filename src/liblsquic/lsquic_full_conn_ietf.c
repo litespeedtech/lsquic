@@ -197,6 +197,7 @@ enum send
     SEND_NEW_TOKEN,
     SEND_HANDSHAKE_DONE,
     SEND_ACK_FREQUENCY,
+    SEND_CCTK,
     N_SEND
 };
 
@@ -227,6 +228,7 @@ enum send_flags
     SF_SEND_NEW_TOKEN               = 1 << SEND_NEW_TOKEN,
     SF_SEND_HANDSHAKE_DONE          = 1 << SEND_HANDSHAKE_DONE,
     SF_SEND_ACK_FREQUENCY           = 1 << SEND_ACK_FREQUENCY,
+    SF_SEND_CCTK                    = 1 << SEND_CCTK,
 };
 
 #define SF_SEND_PATH_CHAL_ALL \
@@ -532,6 +534,11 @@ struct ietf_full_conn
                                *ifc_last_stats;
 #endif
     struct ack_info             ifc_ack;
+
+    struct {
+        unsigned init_time;
+        unsigned send_period;
+    } ifc_cctk;
 };
 
 #define CUR_CPATH(conn_) (&(conn_)->ifc_paths[(conn_)->ifc_cur_path_id])
@@ -867,6 +874,14 @@ ping_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
     conn->ifc_send_flags |= SF_SEND_PING;
 }
 
+static void
+cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+        lsquic_time_t now)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    LSQ_DEBUG("CCTK alarm rang: schedule CCTL frame to be generated");
+    conn->ifc_send_flags |= SF_SEND_CCTK;
+}
 
 static void
 retire_cid (struct ietf_full_conn *, struct conn_cid_elem *, lsquic_time_t);
@@ -1297,6 +1312,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_MTU_PROBE, mtu_probe_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_CCTK, cctk_alarm_expired, conn);
     /* For Init and Handshake, we don't expect many ranges at all.  For
      * the regular receive history, set limit to a value that would never
      * be reached under normal circumstances, yet small enough that would
@@ -2955,32 +2971,6 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
 }
 
 static int
-ietf_full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want)
-{
-    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    int old;
-
-    if (conn->ifc_flags & IFC_CCTK)
-    {
-        old = !!(conn->ifc_mflags & MF_WANT_CCTK);
-        if (is_want)
-        {
-            conn->ifc_mflags |= MF_WANT_CCTK;
-            if (lsquic_send_ctl_can_send (&conn->ifc_send_ctl))
-                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
-                        &conn->ifc_conn);
-        }
-        else
-            conn->ifc_mflags &= ~MF_WANT_CCTK;
-        LSQ_DEBUG("turn %s \"want CCTK write\" flag",
-                is_want ? "on" : "off");
-        return old;
-    }
-    else
-        return -1;
-}
-
-static int
 ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
@@ -3699,15 +3689,16 @@ apply_trans_params (struct ietf_full_conn *conn,
     //get it from transport param
     LSQ_DEBUG("tpi_cc_reuse: %llu", params->tpi_cc_reuse);
     LSQ_DEBUG("tpi_init_time_of_cctk: %llu", params->tpi_init_time_of_cctk);
-    LSQ_DEBUG("tpi_send_peroid_of_cctk: %llu", params->tpi_send_peroid_of_cctk);
+    LSQ_DEBUG("tpi_send_period_of_cctk: %llu", params->tpi_send_period_of_cctk);
     LSQ_DEBUG("tpi_joint_cc_opt: %llu", params->tpi_joint_cc_opt);
     LSQ_DEBUG("tpi_net_type: %llu", params->tpi_net_type);
     LSQ_DEBUG("tpi_init_rtt: %llu", params->tpi_init_rtt);
     LSQ_DEBUG("tpi_suggest_send_rate: %llu", params->tpi_suggest_send_rate);
     LSQ_DEBUG("tpi_cc_version: %llu", params->tpi_cc_version);
-
     if (params->tpi_cc_reuse)
         conn->ifc_flags |= IFC_CCTK;
+    conn->ifc_cctk.init_time = params->tpi_init_time_of_cctk;
+    conn->ifc_cctk.send_period = params->tpi_send_period_of_cctk;
 
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
@@ -8696,11 +8687,27 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (!write_is_possible(conn))
         goto end_write;
 
-    if (conn->ifc_mflags & MF_WANT_CCTK)
+    if (conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
-        write_cctk(conn);
+        if (conn->ifc_flags & IFC_CCTK)
+        {
+            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
+            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.init_time * 10) );
+        }
         // clear want cctk
-        conn->ifc_mflags &= ~MF_WANT_CCTK;
+        conn->ifc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
+    }
+
+    if (conn->ifc_send_flags & SF_SEND_CCTK)
+    {
+        if (conn->ifc_flags & IFC_CCTK)
+        {
+            write_cctk(conn);
+            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
+            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.send_period * 10) );
+        }
+        // clear send cctk
+        conn->ifc_send_flags &= ~SF_SEND_CCTK;
     }
 
     while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
@@ -9213,7 +9220,6 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
     .ci_tls_alert            =  ietf_full_conn_ci_tls_alert,   \
-    .ci_want_cctk_write      =  ietf_full_conn_ci_want_cctk_write, \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
 

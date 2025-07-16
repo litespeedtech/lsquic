@@ -72,7 +72,7 @@ enum transport_param_id
     */
     TPI_CC_REUSE,
     TPI_INIT_TIME_OF_CCTK,
-    TPI_SEND_PEROID_OF_CCTK,
+    TPI_SEND_PERIOD_OF_CCTK,
     TPI_JOINT_CC_OPT,
     TPI_NET_TYPE,
     TPI_INIT_RTT,
@@ -112,7 +112,7 @@ struct transport_params
     uint64_t                tp_numerics_cctk[MAX_NUMERIC_CCTK_TPI + 1];
 #define tpi_cc_reuse                        tp_numerics_cctk[TPI_CC_REUSE]
 #define tpi_init_time_of_cctk               tp_numerics_cctk[TPI_INIT_TIME_OF_CCTK]
-#define tpi_send_peroid_of_cctk             tp_numerics_cctk[TPI_SEND_PEROID_OF_CCTK]
+#define tpi_send_period_of_cctk             tp_numerics_cctk[TPI_SEND_PERIOD_OF_CCTK]
 #define tpi_joint_cc_opt                    tp_numerics_cctk[TPI_JOINT_CC_OPT]
 #define tpi_net_type                        tp_numerics_cctk[TPI_NET_TYPE]
 #define tpi_init_rtt                        tp_numerics_cctk[TPI_INIT_RTT]

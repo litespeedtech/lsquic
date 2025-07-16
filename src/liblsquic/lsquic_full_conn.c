@@ -120,7 +120,8 @@ enum full_conn_flags {
                       = (1 <<23),
     FC_GOT_SREJ       = (1 <<24),   /* Don't schedule ACK alarm */
     FC_NOPROG_TIMEOUT = (1 <<25),
-    FC_WANT_CCTK_WRITE= (1 <<26),
+    FC_CCTK           = (1 <<26),
+    FC_SEND_CCTK      = (1 <<27),
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -230,6 +231,10 @@ struct full_conn
     unsigned                     fc_orig_versions;      /* Client only */
     enum enc_level               fc_crypto_enc_level;
     struct ack_info              fc_ack;
+    struct {
+        unsigned init_time;
+        unsigned send_period;
+    } fc_cctk;
 };
 
 static const struct ver_neg server_ver_neg;
@@ -267,6 +272,9 @@ handshake_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_
 
 static void
 ack_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+
+static void
+cctk_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static lsquic_stream_t *
 new_stream (struct full_conn *conn, lsquic_stream_id_t stream_id,
@@ -516,7 +524,7 @@ maybe_send_settings (struct full_conn *conn)
 static int
 apply_peer_settings (struct full_conn *conn)
 {
-    uint32_t cfcw, sfcw, mids;
+    uint32_t cfcw, sfcw, mids, ccre, itct, spct;
     unsigned n;
     const struct {
         uint32_t    tag;
@@ -526,6 +534,9 @@ apply_peer_settings (struct full_conn *conn)
         { QTAG_CFCW, &cfcw, "CFCW", },
         { QTAG_SFCW, &sfcw, "SFCW", },
         { QTAG_MIDS, &mids, "MIDS", },
+        { QTAG_CCRE, &ccre, "CCRE", },
+        { QTAG_ITCT, &itct, "ITCT", },
+        { QTAG_SPCT, &spct, "SPCT", },
     };
 
 #ifndef NDEBUG
@@ -541,9 +552,15 @@ apply_peer_settings (struct full_conn *conn)
             return -1;
         }
 
-    LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u",
-        cfcw, sfcw, mids);
+    LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u; CCRE: %u; ITCT: %u; SPCT: %u",
+        cfcw, sfcw, mids, ccre, itct, spct);
     lsquic_full_conn_on_peer_config(conn, cfcw, sfcw, mids);
+
+    if (ccre)
+        conn->fc_flags |= FC_CCTK;
+    conn->fc_cctk.init_time = itct;
+    conn->fc_cctk.send_period = spct;
+
     return 0;
 }
 
@@ -663,6 +680,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_ACK_APP, ack_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_PING, ping_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->fc_alset, AL_HANDSHAKE, handshake_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->fc_alset, AL_CCTK, cctk_alarm_expired, conn);
     lsquic_set64_init(&conn->fc_closed_stream_ids[0]);
     lsquic_set64_init(&conn->fc_closed_stream_ids[1]);
     lsquic_cfcw_init(&conn->fc_pub.cfcw, &conn->fc_pub, conn->fc_settings->es_cfcw);
@@ -2556,6 +2574,15 @@ ping_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
     conn->fc_flags |= FC_SEND_PING;
 }
 
+static void
+cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+        lsquic_time_t now)
+{
+    struct full_conn *conn = ctx;
+    LSQ_DEBUG("CCTK alarm rang: schedule CCTK frame to be generated");
+    conn->fc_flags |= FC_SEND_CCTK;
+}
+
 
 static lsquic_packet_out_t *
 get_writeable_packet (struct full_conn *conn, unsigned need_at_least)
@@ -3558,11 +3585,30 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         CLOSE_IF_NECESSARY();
     }
 
-    if (conn->fc_flags & FC_WANT_CCTK_WRITE)
+    if (conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
-        generate_cctk_frame(conn);
-        CLOSE_IF_NECESSARY();
+        if (conn->fc_flags & FC_CCTK)
+        {
+            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.init_time * 10) );
+        }
+        // clear want cctk
+        conn->fc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
     }
+
+    if (conn->fc_flags & FC_SEND_CCTK)
+    {
+        if (conn->fc_flags & FC_CCTK)
+        {
+            generate_cctk_frame(conn);
+            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.send_period * 10) );
+            CLOSE_IF_NECESSARY();
+        }
+        // clear send cctk
+        conn->fc_flags &= ~FC_SEND_CCTK;
+    }
+
 
     n = lsquic_send_ctl_reschedule_packets(&conn->fc_send_ctl);
     if (n > 0)
@@ -4596,7 +4642,6 @@ static const struct conn_iface full_conn_iface = {
     .ci_packet_sent          =  full_conn_ci_packet_sent,
     .ci_record_addrs         =  full_conn_ci_record_addrs,
 
-    .ci_want_cctk_write      =  full_conn_ci_want_cctk_write,
     /* gQUIC connection does not need this functionality because it only
      * uses one CID and it's liveness is updated automatically by the
      * caller when packets come in.
@@ -4610,30 +4655,4 @@ static const struct conn_iface full_conn_iface = {
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;
-
-static int
-full_conn_ci_want_cctk_write (struct lsquic_conn *lconn, int is_want)
-{
-    struct full_conn *conn = (struct full_conn *) lconn;
-    int old;
-
-//    if (conn->fc_flags & IFC_CCTK)
-    {
-        old = !!(conn->fc_flags & FC_WANT_CCTK_WRITE);
-        if (is_want)
-        {
-            conn->fc_flags |= FC_WANT_CCTK_WRITE;
-            if (lsquic_send_ctl_can_send (&conn->fc_send_ctl))
-                lsquic_engine_add_conn_to_tickable(conn->fc_enpub,
-                        &conn->fc_conn);
-        }
-        else
-            conn->fc_flags &= ~FC_WANT_CCTK_WRITE;
-        LSQ_DEBUG("turn %s \"want CCTK write\" flag",
-                is_want ? "on" : "off");
-        return old;
-    }
-    //else
-    //    return -1;
-}
 

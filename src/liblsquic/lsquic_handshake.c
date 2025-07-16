@@ -3548,6 +3548,16 @@ lsquic_enc_session_get_peer_setting (enc_session_t *enc_session_p,
         }
         else
             return -1;
+    case QTAG_CCRE:
+        if (enc_session->hs_ctx.set & HSET_CCRE)
+            *val = 1;
+        return 1;
+    case QTAG_ITCT:
+        *val = enc_session->hs_ctx.itct;
+        return 0;
+    case QTAG_SPCT:
+        *val = enc_session->hs_ctx.spct;
+        return 0;
     }
 
     /* XXX For the following values, there is no record which were present

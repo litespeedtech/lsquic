@@ -68,7 +68,7 @@ tpi_val_2_enum (uint64_t tpi_val)
 
     case 0x60:      return TPI_CC_REUSE;
     case 0x61:      return TPI_INIT_TIME_OF_CCTK;
-    case 0x62:      return TPI_SEND_PEROID_OF_CCTK;
+    case 0x62:      return TPI_SEND_PERIOD_OF_CCTK;
     case 0x63:      return TPI_JOINT_CC_OPT;
     case 0x64:      return TPI_NET_TYPE;
     case 0x65:      return TPI_INIT_RTT;
@@ -113,7 +113,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
     [TPI_CC_REUSE]                          = 0x60,
     [TPI_INIT_TIME_OF_CCTK]                 = 0x61,
-    [TPI_SEND_PEROID_OF_CCTK]               = 0x62,
+    [TPI_SEND_PERIOD_OF_CCTK]               = 0x62,
     [TPI_JOINT_CC_OPT]                      = 0x63,
     [TPI_NET_TYPE]                          = 0x64,
     [TPI_INIT_RTT]                          = 0x65,
@@ -155,7 +155,7 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
 
     [TPI_CC_REUSE]                          =  "cc_reuse",
     [TPI_INIT_TIME_OF_CCTK]                 =  "init_time_of_cctk",
-    [TPI_SEND_PEROID_OF_CCTK]               =  "send_peroid_of_cctk",
+    [TPI_SEND_PERIOD_OF_CCTK]               =  "send_peroid_of_cctk",
     [TPI_JOINT_CC_OPT]                      =  "joint_cc_opt",
     [TPI_NET_TYPE]                          =  "net_type",
     [TPI_INIT_RTT]                          =  "init_rtt",
@@ -221,7 +221,7 @@ static const uint64_t max_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
 {
     [TPI_CC_REUSE]                          =  1,
     [TPI_INIT_TIME_OF_CCTK]                 =  5000,
-    [TPI_SEND_PEROID_OF_CCTK]               =  5000,
+    [TPI_SEND_PERIOD_OF_CCTK]               =  5000,
     [TPI_JOINT_CC_OPT]                      =  VINT_MAX_VALUE,
     [TPI_NET_TYPE]                          =  VINT_MAX_VALUE,
     [TPI_INIT_RTT]                          =  VINT_MAX_VALUE,
@@ -233,7 +233,7 @@ static const uint64_t max_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
 static const uint64_t min_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
 {
     [TPI_INIT_TIME_OF_CCTK]                 =  200,
-    [TPI_SEND_PEROID_OF_CCTK]               =  1000,
+    [TPI_SEND_PERIOD_OF_CCTK]               =  1000,
 };
 
 
@@ -656,7 +656,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             break;
         case TPI_CC_REUSE:
         case TPI_INIT_TIME_OF_CCTK:
-        case TPI_SEND_PEROID_OF_CCTK:
+        case TPI_SEND_PERIOD_OF_CCTK:
         case TPI_JOINT_CC_OPT:
         case TPI_NET_TYPE:
         case TPI_INIT_RTT:

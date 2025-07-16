@@ -39,6 +39,7 @@ enum alarm_id {
     AL_SESS_TICKET,
     AL_BLOCKED_KA,      /* Blocked Keep-Alive */
     AL_PACK_TOL,        /* Calculate packet tolerance */
+    AL_CCTK,
     MAX_LSQUIC_ALARMS
 };
 
@@ -61,6 +62,7 @@ enum alarm_id_bit {
     ALBIT_BLOCKED_KA  = 1 << AL_BLOCKED_KA,
     ALBIT_MTU_PROBE = 1 << AL_MTU_PROBE,
     ALBIT_PACK_TOL = 1 << AL_PACK_TOL,
+    ALBIT_CCTK     = 1 << AL_CCTK,
 };
 
 

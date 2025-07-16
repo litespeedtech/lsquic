@@ -62,6 +62,7 @@ enum lsquic_conn_flags {
     LSCONN_RETRY_CONN     = (1 <<24),   /* This is a retry connection */
     LSCONN_VER_UPDATED    = (1 <<25),
     LSCONN_NO_BL          = (1 <<26),
+    LSCONN_WANT_CCTK      = (1 <<27)
 };
 
 /* A connection may have things to send and be closed at the same time.
@@ -277,10 +278,6 @@ struct conn_iface
 
     void
     (*ci_ack_rollback) (struct lsquic_conn *, struct ack_state *);
-
-    /* Optional method. */
-    int
-    (*ci_want_cctk_write) (struct lsquic_conn *, int);
 
     /* Optional method. */
     int
