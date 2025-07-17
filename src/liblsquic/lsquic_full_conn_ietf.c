@@ -147,7 +147,6 @@ enum ifull_conn_flags
     IFC_DELAYED_ACKS  = 1 << 29, /* Delayed ACKs are enabled */
     IFC_TIMESTAMPS    = 1 << 30, /* Timestamps are enabled */
     IFC_DATAGRAMS     = 1u<< 31, /* Datagrams are enabled */
-    IFC_CCTK          = 1u<< 32, /* CCTK are enabled */
 };
 
 
@@ -162,7 +161,8 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
-    MF_WANT_CCTK        = 1 << 9,
+    MF_CCTK             = 1 << 9, /* CCTK are enabled */
+    MF_WANT_CCTK        = 1 <<10,
 };
 
 
@@ -3697,7 +3697,10 @@ apply_trans_params (struct ietf_full_conn *conn,
     LSQ_DEBUG("tpi_suggest_send_rate: %llu", params->tpi_suggest_send_rate);
     LSQ_DEBUG("tpi_cc_version: %llu", params->tpi_cc_version);
     if (params->tpi_cc_reuse)
-        conn->ifc_flags |= IFC_CCTK;
+    {
+        LSQ_DEBUG("cctk enabled");
+        conn->ifc_mflags |= MF_CCTK;
+    }
     conn->ifc_cctk.init_time = params->tpi_init_time_of_cctk;
     conn->ifc_cctk.send_period = params->tpi_send_period_of_cctk;
 
@@ -8662,12 +8665,23 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     maybe_conn_flush_special_streams(conn);
 
+    LSQ_DEBUG("LSCONN_WANT_CCTK: %d", conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK);
+    LSQ_DEBUG("MF_CCTK: %d", conn->ifc_mflags & MF_CCTK);
+    LSQ_DEBUG("FC_SEND_CCTK: %d", conn->ifc_send_flags & SF_SEND_CCTK);
+
+
     if (conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
-        if (conn->ifc_flags & IFC_CCTK)
+        if (conn->ifc_mflags & MF_CCTK)
         {
-            LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
-            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.init_time * 1000) );
+            if (conn->ifc_cctk.init_time > 0)
+            {
+                LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
+                lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now()+(conn->ifc_cctk.init_time*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk init_time: %d", conn->ifc_cctk.init_time);
+            }
         }
         else
         {
@@ -8683,11 +8697,17 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     if (conn->ifc_send_flags & SF_SEND_CCTK)
     {
-        if (conn->ifc_flags & IFC_CCTK)
+        if (conn->ifc_mflags & MF_CCTK)
         {
             write_cctk(conn);
-            LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
-            lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now() + (conn->ifc_cctk.send_period * 1000) );
+            if (conn->ifc_cctk.send_period > 0)
+            {
+                LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
+                lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now()+(conn->ifc_cctk.send_period*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk send_period: %d", conn->ifc_cctk.send_period);
+            }
         }
         else
         {

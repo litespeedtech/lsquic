@@ -3586,15 +3586,21 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     }
 
     LSQ_DEBUG("LSCONN_WANT_CCTK: %d", conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK);
-    LSQ_DEBUG("LSCONN_WANT_CCTKFC_CCTK: %d", conn->fc_flags & FC_CCTK);
+    LSQ_DEBUG("FC_CCTK: %d", conn->fc_flags & FC_CCTK);
     LSQ_DEBUG("FC_SEND_CCTK: %d", conn->fc_flags & FC_SEND_CCTK);
 
     if (conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
     {
         if (conn->fc_flags & FC_CCTK)
         {
-            LSQ_INFO("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
-            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.init_time * 1000) );
+            if (conn->fc_cctk.init_time > 0)
+            {
+                LSQ_INFO("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
+                lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.init_time*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk init_time: %d", conn->fc_cctk.init_time);
+            }
         }
         // clear want cctk
         conn->fc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
@@ -3604,9 +3610,16 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     {
         if (conn->fc_flags & FC_CCTK)
         {
+
             generate_cctk_frame(conn);
-            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
-            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now() + (conn->fc_cctk.send_period * 1000) );
+            if (conn->fc_cctk.send_period > 0)
+            {
+                LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
+                lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.send_period*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk send_period: %d", conn->fc_cctk.send_period);
+            }
             CLOSE_IF_NECESSARY();
         }
         // clear send cctk

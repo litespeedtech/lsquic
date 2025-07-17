@@ -92,6 +92,7 @@ lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_
     //struct sockaddr *local, *remote;
     //lsquic_conn_get_sockaddr(conn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
 
+    cctk.version = 1;
     cctk.stmp = (unsigned long) lsquic_time_now();
     struct lsquic_conn_public *conn = send_ctl->sc_conn_pub;
     cctk.srtt = (unsigned int)conn->rtt_stats.srtt;
