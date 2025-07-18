@@ -1,3 +1,7 @@
+2025-07-17
+    - 4.3.1
+    - Fix a memory leak in lsquic_engine_packet_in()
+
 2025-06-17
     - 4.3.0
     - Add WebTransport support.

@@ -746,7 +746,7 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
         if (sess_resume_version < N_LSQVER && ((1 << sess_resume_version) & versions))
             version = sess_resume_version;
     }
-    esf_g = select_esf_gquic_by_ver(version);
+    esf_g = &lsquic_enc_session_gquic_gquic_1;
     lsquic_generate_cid_gquic(&cid);
     if (!max_packet_size)
     {

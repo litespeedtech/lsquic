@@ -42,7 +42,11 @@ lsquic_qeh_settings (struct qpack_enc_hdl *, unsigned max_table_size,
 void
 lsquic_qeh_cleanup (struct qpack_enc_hdl *);
 
-#define lsquic_qeh_has_dec_stream(qeh) ((qeh)->qeh_dec_sm_in != NULL)
+static inline unsigned
+lsquic_qeh_has_dec_stream (const struct qpack_enc_hdl *qeh)
+{
+    return qeh->qeh_dec_sm_in != NULL;
+}
 
 enum qwh_status {
     QWH_FULL,   /* All bytes written to encoder stream.  This is also returned

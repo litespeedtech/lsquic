@@ -6,15 +6,6 @@
 
 #include "lsquic_int_types.h"
 
-enum PACKET_PUBLIC_FLAGS
-{
-  PACKET_PUBLIC_FLAGS_VERSION = 1,
-  PACKET_PUBLIC_FLAGS_RST = 2,
-  PACKET_PUBLIC_FLAGS_NONCE = 4,
-  PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID = 8,
-  PACKET_PUBLIC_FLAGS_MULTIPATH = 1 << 6,
-  PACKET_PUBLIC_FLAGS_TWO_OR_MORE_BYTES = 1 << 7,
-};
 
 #define GQUIC_FRAME_ACKABLE_MASK (                               \
     (1 << QUIC_FRAME_STREAM)                                \
@@ -83,7 +74,11 @@ enum PACKET_PUBLIC_FLAGS
 #define GQUIC_GOAWAY_FRAME_SZ 11  /* Type (1) + Error code (4) + Stream ID (4) +
                                                 Reason phrase length (2) */
 
-#define gquic_packno_bits2len(b) (((b) << 1) + !(b))
+static inline uint64_t
+gquic_packno_bits2len (uint64_t b)
+{
+    return (b << 1) + !b;
+}
 
 lsquic_packno_t
 lsquic_restore_packno (lsquic_packno_t cur_packno,

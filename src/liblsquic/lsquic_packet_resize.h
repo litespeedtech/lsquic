@@ -47,7 +47,10 @@ lsquic_packet_resize_init (struct packet_resize_ctx *,
 struct lsquic_packet_out *
 lsquic_packet_resize_next (struct packet_resize_ctx *);
 
-#define lsquic_packet_resize_is_error(prctx_) \
-                                    (!!((prctx_)->prc_flags & PRC_ERROR))
+static inline unsigned
+lsquic_packet_resize_is_error (struct packet_resize_ctx *prctx_)
+{
+    return !!(prctx_->prc_flags & PRC_ERROR);
+}
 
 #endif

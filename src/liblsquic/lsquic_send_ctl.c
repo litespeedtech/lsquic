@@ -1412,7 +1412,8 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     if (send_ctl_first_unacked_retx_packet(ctl, pns))
     {
         if ((ctl->sc_flags & SC_1RTT_ACKED)
-            || (!lsquic_alarmset_is_set(ctl->sc_alset, pns) && losses_detected))
+            || (!lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_INIT + pns)
+                && losses_detected))
             set_retx_alarm(ctl, pns, now);
     }
     else

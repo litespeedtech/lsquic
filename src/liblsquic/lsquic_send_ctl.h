@@ -5,6 +5,7 @@
 #include <sys/queue.h>
 
 #include "lsquic_types.h"
+#include "lsquic_packet_out.h"
 
 #ifndef LSQUIC_SEND_STATS
 #   define LSQUIC_SEND_STATS 1
@@ -12,7 +13,6 @@
 
 TAILQ_HEAD(lsquic_packets_tailq, lsquic_packet_out);
 
-struct lsquic_packet_out;
 struct ack_info;
 struct lsquic_alarmset;
 struct lsquic_engine_public;
@@ -194,12 +194,17 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *);
 void
 lsquic_send_ctl_expire_all (lsquic_send_ctl_t *ctl);
 
-#define lsquic_send_ctl_n_in_flight(ctl) (+(ctl)->sc_n_in_flight)
+static inline unsigned
+lsquic_send_ctl_n_scheduled (const lsquic_send_ctl_t *ctl)
+{
+    return +(ctl)->sc_n_scheduled;
+}
 
-#define lsquic_send_ctl_n_scheduled(ctl) (+(ctl)->sc_n_scheduled)
-
-#define lsquic_send_ctl_largest_ack2ed(ctl, pns) \
-                                            (+(ctl)->sc_largest_ack2ed[pns])
+static inline unsigned 
+lsquic_send_ctl_largest_ack2ed (const lsquic_send_ctl_t *ctl, unsigned pns)
+{
+    return +(ctl)->sc_largest_ack2ed[pns];
+}
 
 void
 lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl);
@@ -247,20 +252,30 @@ lsquic_send_ctl_get_packet_for_crypto (struct lsquic_send_ctl *ctl,
 unsigned
 lsquic_send_ctl_reschedule_packets (lsquic_send_ctl_t *);
 
-#define lsquic_send_ctl_lost_ack(ctl) \
-    (((ctl)->sc_flags & (SC_LOST_ACK_INIT|SC_LOST_ACK_HSK|SC_LOST_ACK_APP)) \
-                                                        >> SCBIT_LOST_ACK_SHIFT)
+static inline unsigned
+lsquic_send_ctl_lost_ack (const lsquic_send_ctl_t *ctl)
+{
+    return ((ctl)->sc_flags & (SC_LOST_ACK_INIT|SC_LOST_ACK_HSK|SC_LOST_ACK_APP)) 
+                                                        >> SCBIT_LOST_ACK_SHIFT;
+}
 
-#define lsquic_send_ctl_scheduled_ack(ctl, pns, acked) do {         \
-    (ctl)->sc_flags &= ~(SC_LOST_ACK_INIT << pns);                  \
-    if (PNS_APP == pns)                                             \
-        (ctl)->sc_largest_acked = acked;                            \
-} while (0)
+static inline void
+lsquic_send_ctl_scheduled_ack (lsquic_send_ctl_t *ctl, int pns,
+                               lsquic_packno_t acked)
+{
+    ctl->sc_flags &= ~(SC_LOST_ACK_INIT << pns);
+    if (PNS_APP == pns)
+        ctl->sc_largest_acked = acked;
+}
 
 void
 lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *, int);
 
-#define lsquic_send_ctl_turn_nstp_on(ctl) ((ctl)->sc_flags |= SC_NSTP)
+static inline unsigned
+lsquic_send_ctl_turn_nstp_on (lsquic_send_ctl_t *ctl)
+{
+    return (ctl)->sc_flags |= SC_NSTP;
+}
 
 void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, lsquic_stream_id_t);
@@ -268,9 +283,11 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, lsquic_stream_id_t);
 int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);
 
-#define lsquic_send_ctl_maybe_squeeze_sched(ctl) (                  \
-    (ctl)->sc_n_scheduled && lsquic_send_ctl_squeeze_sched(ctl)     \
-)
+static inline unsigned 
+lsquic_send_ctl_maybe_squeeze_sched (lsquic_send_ctl_t *ctl)
+{
+    return (ctl)->sc_n_scheduled && lsquic_send_ctl_squeeze_sched(ctl);
+}
 
 /* Same return value as for squeezing, but without actual squeezing. */
 int
@@ -282,11 +299,14 @@ lsquic_send_ctl_reset_packnos (lsquic_send_ctl_t *);
 void
 lsquic_send_ctl_ack_to_front (struct lsquic_send_ctl *, unsigned n_acks);
 
-#define lsquic_send_ctl_n_stop_waiting(ctl) \
-                                    (+(ctl)->sc_n_stop_waiting)
+static inline unsigned 
+lsquic_send_ctl_n_stop_waiting (const lsquic_send_ctl_t *ctl)
+{
+    return +(ctl)->sc_n_stop_waiting;
+}
 
 static inline void
-lsquic_send_ctl_n_stop_waiting_reset(lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_n_stop_waiting_reset (lsquic_send_ctl_t *ctl)
 {
     ctl->sc_n_stop_waiting = 0;
 }
@@ -295,7 +315,7 @@ void
 lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
 
 static inline void
-lsquic_send_ctl_tick_in(lsquic_send_ctl_t *ctl, lsquic_time_t now)
+lsquic_send_ctl_tick_in (lsquic_send_ctl_t *ctl, lsquic_time_t now)
 {
     if ((ctl)->sc_flags & SC_PACE)
     {
@@ -306,14 +326,14 @@ lsquic_send_ctl_tick_in(lsquic_send_ctl_t *ctl, lsquic_time_t now)
 }
 
 static inline void
-lsquic_send_ctl_tick_out(lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_tick_out (lsquic_send_ctl_t *ctl)
 {
     if ((ctl)->sc_flags & SC_PACE)
         lsquic_pacer_tick_out(&(ctl)->sc_pacer);
 }
 
 static inline lsquic_time_t
-lsquic_send_ctl_next_pacer_time(lsquic_send_ctl_t *ctl)
+lsquic_send_ctl_next_pacer_time (lsquic_send_ctl_t *ctl)
 {
     return ((ctl)->sc_flags & SC_PACE)
             && lsquic_pacer_delayed(&(ctl)->sc_pacer)
@@ -327,16 +347,24 @@ lsquic_send_ctl_packno_bits (struct lsquic_send_ctl *, enum packnum_space);
 int
 lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *, enum buf_packet_type);
 
-#define lsquic_send_ctl_has_buffered(ctl) (                                 \
-    TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets)  \
- || TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets  ))
+static inline unsigned
+lsquic_send_ctl_has_buffered (const lsquic_send_ctl_t *ctl)
+{
+    return TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets)
+        || TAILQ_FIRST(&(ctl)->sc_buffered_packets[BPT_OTHER_PRIO].bpq_packets);
+}
 
-#define lsquic_send_ctl_has_buffered_high(ctl) (                            \
-    !TAILQ_EMPTY(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets))
+static inline unsigned
+lsquic_send_ctl_has_buffered_high (const lsquic_send_ctl_t *ctl)
+{
+    return !TAILQ_EMPTY(&(ctl)->sc_buffered_packets[BPT_HIGHEST_PRIO].bpq_packets);
+}
 
-#define lsquic_send_ctl_invalidate_bpt_cache(ctl) do {      \
-    (ctl)->sc_cached_bpt.stream_id = UINT64_MAX;            \
-} while (0)
+static inline void
+lsquic_send_ctl_invalidate_bpt_cache (lsquic_send_ctl_t *ctl)
+{
+    (ctl)->sc_cached_bpt.stream_id = UINT64_MAX;
+}
 
 #ifndef NDEBUG
 enum packno_bits
@@ -359,10 +387,13 @@ lsquic_send_ctl_set_max_bpq_count (unsigned);
 size_t
 lsquic_send_ctl_mem_used (const struct lsquic_send_ctl *);
 
-#define lsquic_send_ctl_set_buffer_stream_packets(ctl, b) do {  \
-    (ctl)->sc_flags &= ~SC_BUFFER_STREAM;                       \
-    (ctl)->sc_flags |= -!!(b) & SC_BUFFER_STREAM;               \
-} while (0)
+static inline void
+lsquic_send_ctl_set_buffer_stream_packets (
+    struct lsquic_send_ctl *ctl, enum send_ctl_flags b)
+{
+    (ctl)->sc_flags &= ~SC_BUFFER_STREAM;
+    (ctl)->sc_flags |= -!!(b) & SC_BUFFER_STREAM;
+}
 
 int
 lsquic_send_ctl_turn_on_fin (struct lsquic_send_ctl *,
@@ -371,12 +402,15 @@ lsquic_send_ctl_turn_on_fin (struct lsquic_send_ctl *,
 int
 lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
 
-#define lsquic_send_ctl_incr_pack_sz(ctl, packet, delta) do {   \
-    (packet)->po_data_sz += (delta);                            \
-    if ((packet)->po_flags & PO_SCHED)                          \
-        (ctl)->sc_bytes_scheduled += (delta);                   \
-    lsquic_send_ctl_sanity_check(ctl);                          \
-} while (0)
+static inline void
+lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
+                              struct lsquic_packet_out *packet, int delta)
+{
+    packet->po_data_sz += delta;
+    if (packet->po_flags & PO_SCHED)
+        (ctl)->sc_bytes_scheduled += delta;
+    lsquic_send_ctl_sanity_check(ctl);
+}
 
 int
 lsquic_send_ctl_sched_is_blocked (struct lsquic_send_ctl *);
@@ -413,15 +447,21 @@ lsquic_send_ctl_resize (struct lsquic_send_ctl *);
 void
 lsquic_send_ctl_return_enc_data (struct lsquic_send_ctl *);
 
-#define lsquic_send_ctl_1rtt_acked(ctl) ((ctl)->sc_flags & SC_1RTT_ACKED)
+static inline unsigned
+lsquic_send_ctl_1rtt_acked (const struct lsquic_send_ctl *ctl)
+{
+    return (ctl)->sc_flags & SC_1RTT_ACKED;
+}
 
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
                                             const struct network_path *);
 
-#define lsquic_send_ctl_do_ql_bits(ctl) do {                       \
-    (ctl)->sc_flags |= SC_QL_BITS;                                 \
-} while (0)
+static inline void
+lsquic_send_ctl_do_ql_bits (struct lsquic_send_ctl *ctl)
+{
+    (ctl)->sc_flags |= SC_QL_BITS;
+}
 
 void
 lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *,
@@ -434,12 +474,19 @@ void
 lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);
 
 /* Has immediately sendable packets */
-#define lsquic_send_ctl_has_sendable(ctl_) \
-    (lsquic_send_ctl_n_scheduled(ctl_) > 0 \
-                && lsquic_send_ctl_next_packet_to_send_predict(ctl_))
+static inline unsigned
+lsquic_send_ctl_has_sendable (struct lsquic_send_ctl *ctl_)
+{
+    return lsquic_send_ctl_n_scheduled(ctl_) > 0 
+           && lsquic_send_ctl_next_packet_to_send_predict(ctl_);
+}
 
-#define lsquic_send_ctl_in_recovery(ctl_) ((ctl_)->sc_largest_acked_packno \
-    && (ctl_)->sc_largest_acked_packno <= (ctl_)->sc_largest_sent_at_cutback)
+static inline unsigned
+lsquic_send_ctl_in_recovery (const struct lsquic_send_ctl *ctl_)
+{
+    return (ctl_)->sc_largest_acked_packno
+           && (ctl_)->sc_largest_acked_packno <= (ctl_)->sc_largest_sent_at_cutback;
+}
 
 #define send_ctl_in_recovery lsquic_send_ctl_in_recovery
 

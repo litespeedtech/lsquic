@@ -79,23 +79,30 @@ void
 lsquic_alarmset_init_alarm (lsquic_alarmset_t *, enum alarm_id,
                             lsquic_alarm_cb_f, void *cb_ctx);
 
-#define lsquic_alarmset_set(alarmset, al_id, exp) do {                  \
-    (alarmset)->as_armed_set |= 1 << (al_id);                           \
-    (alarmset)->as_expiry[al_id] = exp;                                 \
-} while (0)
+void
+lsquic_alarmset_log (const lsquic_alarmset_t *alset, enum alarm_id id);
 
-#define lsquic_alarmset_unset(alarmset, al_id) do {                     \
-    (alarmset)->as_armed_set &= ~(1 << (al_id));                        \
-} while (0)
+static inline void
+lsquic_alarmset_set (lsquic_alarmset_t *alarmset, enum alarm_id al_id,
+                     lsquic_time_t exp)
+{
+    alarmset->as_armed_set |= 1 << al_id;
+    alarmset->as_expiry[al_id] = exp;
+    //lsquic_alarmset_log(alarmset, al_id);
+}
 
-#define lsquic_alarmset_is_set(alarmset, al_id) \
-                            ((alarmset)->as_armed_set & (1 << (al_id)))
+static inline void
+lsquic_alarmset_unset (lsquic_alarmset_t *alarmset, enum alarm_id al_id)
+{   alarmset->as_armed_set &= ~(1 << al_id);        }
 
-#define lsquic_alarmset_are_set(alarmset, flags) \
-                            ((alarmset)->as_armed_set & (flags))
+static inline unsigned
+lsquic_alarmset_is_set (const lsquic_alarmset_t *alarmset, enum alarm_id al_id)
+{   return alarmset->as_armed_set & (1 << al_id);   }
 
-#define lsquic_alarmset_is_inited(alarmset_, al_id_) (                  \
-    (alarmset_)->as_alarms[al_id_].callback)
+static inline unsigned
+lsquic_alarmset_is_inited (const lsquic_alarmset_t *alarmset,
+                           enum alarm_id al_id)
+{   return alarmset->as_alarms[al_id].callback != NULL;     }
 
 /* Timers "fire," alarms "ring." */
 void

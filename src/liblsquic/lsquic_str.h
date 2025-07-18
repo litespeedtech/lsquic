@@ -19,11 +19,17 @@ typedef struct lsquic_str lsquic_str_t;
 lsquic_str_t *
 lsquic_str_new (const char *, size_t);
 
-#define lsquic_str_len(lstr) (+(lstr)->len)
+static inline size_t
+lsquic_str_len (const lsquic_str_t *lstr)
+{
+    return +lstr->len;
+}
 
-#define lsquic_str_setlen(lstr, len_) do {                              \
-    (lstr)->len = len_;                                                 \
-} while (0)
+static inline void
+lsquic_str_setlen (lsquic_str_t *lstr, size_t len)
+{
+    lstr->len = len;
+}
 
 void
 lsquic_str_setto (lsquic_str_t *, const void *, size_t);
@@ -40,14 +46,24 @@ lsquic_str_delete (lsquic_str_t *);
 char *
 lsquic_str_prealloc (lsquic_str_t *, size_t);
 
-#define lsquic_str_buf(lstr) ((char *) (lstr)->str)
+static inline char *
+lsquic_str_buf (const lsquic_str_t *lstr)
+{
+    return (char *) lstr->str;
+}
 
-#define lsquic_str_cstr(lstr) ((const char *) (lstr)->str)
+static inline const char *
+lsquic_str_cstr (const lsquic_str_t *lstr)
+{
+    return (const char *) lstr->str;
+}
 
-#define lsquic_str_blank(lstr) do {                                     \
-    (lstr)->str = NULL;                                                 \
-    (lstr)->len = 0;                                                    \
-} while (0)
+static inline void
+lsquic_str_blank (lsquic_str_t *lstr)
+{
+    lstr->str = NULL;
+    lstr->len = 0;
+}
 
 int
 lsquic_str_bcmp (const void *, const void *);
@@ -55,9 +71,11 @@ lsquic_str_bcmp (const void *, const void *);
 lsquic_str_t *
 lsquic_str_copy (lsquic_str_t *, const lsquic_str_t *);
 
-#define lsquic_str_set(lstr, src, len_) do {                            \
-    (lstr)->str = src;                                                  \
-    (lstr)->len = len_;                                                 \
-} while (0)
+static inline void
+lsquic_str_set (lsquic_str_t *lstr, char *src, size_t len_)
+{
+    lstr->str = src;
+    lstr->len = len_;
+}
 
 #endif

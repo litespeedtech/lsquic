@@ -6,6 +6,7 @@
 #ifndef LSQUIC_PACKET_IN_H
 #define LSQUIC_PACKET_IN_H 1
 
+#include "lsquic_packet_common.h"
 
 struct lsquic_packet_in;
 struct lsquic_cid;
@@ -113,34 +114,69 @@ typedef struct lsquic_packet_in
 } lsquic_packet_in_t;
 
 
-#define lsquic_packet_in_public_flags(p) ((p)->pi_data[0])
+static inline unsigned char 
+lsquic_packet_in_public_flags (const lsquic_packet_in_t *p)
+{
+    return p->pi_data[0];
+}
 
-#define lsquic_packet_in_is_gquic_prst(p) \
-    (((p)->pi_flags & PI_GQUIC) \
-        && (lsquic_packet_in_public_flags(p) & PACKET_PUBLIC_FLAGS_RST))
+static inline unsigned
+lsquic_packet_in_is_gquic_prst (const lsquic_packet_in_t *p)
+{
+    return ((p->pi_flags & PI_GQUIC)
+        && (p->pi_data[0] & PACKET_PUBLIC_FLAGS_RST));
+}
 
-#define lsquic_packet_in_is_verneg(p) \
-    (((p)->pi_flags & PI_GQUIC) ? \
-        lsquic_packet_in_public_flags(p) & PACKET_PUBLIC_FLAGS_VERSION : \
-        (p)->pi_header_type == HETY_VERNEG)
+static inline unsigned
+lsquic_packet_in_is_verneg (const lsquic_packet_in_t *p)
+{
+    return ((p->pi_flags & PI_GQUIC) ?
+        p->pi_data[0] & PACKET_PUBLIC_FLAGS_VERSION :
+        p->pi_header_type == HETY_VERNEG);
+}
 
-#define lsquic_packet_in_packno_bits(p) \
-                        (((p)->pi_flags >> PIBIT_BITS_SHIFT) & 3)
+static inline unsigned
+lsquic_packet_in_packno_bits (const lsquic_packet_in_t *p)
+{
+    return (p->pi_flags >> PIBIT_BITS_SHIFT) & 3;
+}
 
-#define lsquic_packet_in_upref(p) (++(p)->pi_refcnt)
+static inline unsigned short
+lsquic_packet_in_upref (lsquic_packet_in_t *p)
+{
+    return ++p->pi_refcnt;
+}
 
-#define lsquic_packet_in_get(p) (lsquic_packet_in_upref(p), (p))
+static inline lsquic_packet_in_t *
+lsquic_packet_in_get (lsquic_packet_in_t *p)
+{
+    lsquic_packet_in_upref(p);
+    return p;
+}
 
-#define lsquic_packet_in_nonce(p) \
-                    ((p)->pi_nonce ? (p)->pi_data + (p)->pi_nonce : NULL)
+static inline unsigned char *
+lsquic_packet_in_nonce (const lsquic_packet_in_t *p)
+{     
+    return p->pi_nonce ? p->pi_data + p->pi_nonce : NULL;
+}
 
-#define lsquic_packet_in_enc_level(p) \
-    (((p)->pi_flags >> PIBIT_ENC_LEV_SHIFT) & 0x3)
+static inline unsigned
+lsquic_packet_in_enc_level (const lsquic_packet_in_t *p)
+{
+    return (p->pi_flags >> PIBIT_ENC_LEV_SHIFT) & 0x3;
+}
 
-#define lsquic_packet_in_ecn(p) \
-    (((p)->pi_flags >> PIBIT_ECN_SHIFT) & 0x3)
+static inline unsigned
+lsquic_packet_in_ecn (const lsquic_packet_in_t *p)
+{
+    return (p->pi_flags >> PIBIT_ECN_SHIFT) & 0x3;
+}
 
-#define lsquic_packet_in_spin_bit(p) (((p)->pi_flags & PI_SPIN_BIT) > 0)
+static inline unsigned
+lsquic_packet_in_spin_bit (const lsquic_packet_in_t *p)
+{
+    return (p->pi_flags & PI_SPIN_BIT) > 0;
+}
 
 /* PATH_CHALLENGE, PATH_RESPONSE, NEW_CONNECTION_ID, and PADDING frames
  * are "probing frames", and all other frames are "non-probing frames".
@@ -149,10 +185,13 @@ typedef struct lsquic_packet_in
  *
  * [draft-ietf-quic-transport-20], Section 9.1
  */
-#define lsquic_packet_in_non_probing(p) \
-   (!!((p)->pi_frame_types & ~(QUIC_FTBIT_PATH_CHALLENGE                \
-                        |QUIC_FTBIT_PATH_RESPONSE|QUIC_FTBIT_PADDING    \
-                        |QUIC_FTBIT_NEW_CONNECTION_ID)))
+static inline unsigned
+lsquic_packet_in_non_probing(const lsquic_packet_in_t *p)
+{
+   return (!!(p->pi_frame_types & ~(QUIC_FTBIT_PATH_CHALLENGE
+                        |QUIC_FTBIT_PATH_RESPONSE|QUIC_FTBIT_PADDING
+                        |QUIC_FTBIT_NEW_CONNECTION_ID)));
+}
 
 /* The version iterator is used on a version negotiation packet only.
  * The iterator functions return 1 when next version is returned and

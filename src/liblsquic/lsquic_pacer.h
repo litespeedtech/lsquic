@@ -55,9 +55,17 @@ lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
 void
 lsquic_pacer_loss_event (struct pacer *);
 
-#define lsquic_pacer_delayed(pacer) ((pacer)->pa_flags & PA_LAST_SCHED_DELAYED)
+static inline int
+lsquic_pacer_delayed (const struct pacer *pacer)
+{
+    return pacer->pa_flags & PA_LAST_SCHED_DELAYED;
+}
 
-#define lsquic_pacer_next_sched(pacer) (+(pacer)->pa_next_sched)
+static inline lsquic_time_t 
+lsquic_pacer_next_sched (struct pacer *pacer)
+{
+    return +pacer->pa_next_sched;
+}
 
 int
 lsquic_pacer_can_schedule_probe (const struct pacer *,

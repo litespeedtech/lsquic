@@ -100,6 +100,10 @@ elif [ "$ROLE" = client ]; then
             handshake|transfer|longrtt|retry|multiplexing|blackhole|connectionmigration)
                 VERSIONS='-o version=h3 -Q hq-interop'
                 ;;
+            chacha20)
+                VERSIONS='-o version=h3 -Q hq-interop'
+                export OPENSSL_ia32cap=~0x200000200000000
+                ;;
             multiconnect)
                 VERSIONS='-o version=h3 -Q hq-interop'
                 N_REQS=1

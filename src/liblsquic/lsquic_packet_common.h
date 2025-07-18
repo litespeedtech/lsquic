@@ -2,6 +2,18 @@
 #ifndef LSQUIC_PACKET_COMMON_H
 #define LSQUIC_PACKET_COMMON_H 1
 
+
+enum PACKET_PUBLIC_FLAGS
+{
+  PACKET_PUBLIC_FLAGS_VERSION = 1,
+  PACKET_PUBLIC_FLAGS_RST = 2,
+  PACKET_PUBLIC_FLAGS_NONCE = 4,
+  PACKET_PUBLIC_FLAGS_8BYTE_CONNECTION_ID = 8,
+  PACKET_PUBLIC_FLAGS_MULTIPATH = 1 << 6,
+  PACKET_PUBLIC_FLAGS_TWO_OR_MORE_BYTES = 1 << 7,
+};
+
+
 /* The list of frames contains frames both in GQUIC and in IETF QUIC.
  * They are marked as follows:
  *  G   Applicable to GQUIC only
@@ -151,7 +163,11 @@ extern const char *const lsquic_hety2str[];
 #define IQUIC_INVALID_PACKNO (IQUIC_MAX_PACKNO + 1)
 
 /* IETF QUIC only: */
-#define is_valid_packno(packno) ((packno) <= IQUIC_MAX_PACKNO)
+static inline int 
+is_valid_packno (uint64_t packno)
+{
+    return packno <= IQUIC_MAX_PACKNO;
+}
 
 enum packnum_space
 {

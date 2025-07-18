@@ -17,10 +17,24 @@ struct frame_buf
     unsigned char           frab_buf[0];
 };
 
-#define frab_left_to_read(f) ((f)->frab_size - (f)->frab_off)
-#define frab_left_to_write(f) ((f)->frab_buf_size - \
-                        (unsigned short) sizeof(*(f)) - (f)->frab_size)
-#define frab_write_to(f) ((f)->frab_buf + (f)->frab_size)
+static inline unsigned short
+frab_left_to_read (struct frame_buf *f)
+{
+    return f->frab_size - f->frab_off;
+}
+
+static inline unsigned short
+frab_left_to_write (struct frame_buf *f)
+{
+    return f->frab_buf_size -
+                        (unsigned short) sizeof(*f) - f->frab_size;
+}
+
+static inline unsigned char *
+frab_write_to (struct frame_buf *f)
+{
+    return f->frab_buf + f->frab_size;
+}
 
 TAILQ_HEAD(frame_buf_head, frame_buf);
 
@@ -51,7 +65,11 @@ lsquic_frab_list_size (void *);
 size_t
 lsquic_frab_list_read (void *, void *, size_t);
 
-#define lsquic_frab_list_empty(fral) TAILQ_EMPTY(&(fral)->fl_frabs)
+static inline int 
+lsquic_frab_list_empty (const struct frab_list *fral)
+{
+    return TAILQ_EMPTY(&(fral)->fl_frabs);
+}
 
 size_t
 lsquic_frab_list_mem_used (const struct frab_list *);

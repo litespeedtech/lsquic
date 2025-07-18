@@ -8,6 +8,8 @@
 #ifndef LSQUIC_ENG_HIST
 #define LSQUIC_ENG_HIST
 
+#include "lsquic_int_types.h"
+
 #define ENG_HIST_ENABLED 1
 
 #define ENG_HIST_BITS    2
@@ -42,20 +44,25 @@ struct eng_hist
 
 
 #if ENG_HIST_ENABLED
+#include <string.h>
 
 /* Initialize engine history */
-#define eng_hist_init(eh) do {                                              \
-    memset(eh, 0, sizeof(*(eh)));                                           \
-    (eh)->eh_cur_idx = (eh)->eh_prev_idx =                                  \
-                            time(NULL) & (ENG_HIST_NELEMS - 1);             \
-} while (0)
+static inline void 
+eng_hist_init (struct eng_hist *eh)
+{
+    memset(eh, 0, sizeof(*eh));
+    eh->eh_cur_idx = eh->eh_prev_idx =
+                            time(NULL) & (ENG_HIST_NELEMS - 1);
+}
 
 
 /* Clear slice at current index */
-#define eng_hist_clear_cur(eh) do {                                         \
-    memset(&(eh)->eh_slices[(eh)->eh_cur_idx], 0,                           \
-                                    sizeof(struct hist_slice));             \
-} while (0)
+static inline void 
+eng_hist_clear_cur (struct eng_hist *eh)
+{
+    memset(&eh->eh_slices[eh->eh_cur_idx], 0,
+                                    sizeof(struct hist_slice));
+}
 
 
 void
@@ -63,18 +70,20 @@ lsquic_eng_hist_log (const struct eng_hist *);
 
 
 /* Switch to next slice if necessary */
-#define eng_hist_tick(eh, now) do {                                         \
-    if (0 == (now))                                                         \
-        (eh)->eh_cur_idx = time(NULL)        & (ENG_HIST_NELEMS - 1);       \
-    else                                                                    \
-        (eh)->eh_cur_idx = ((now) / 1000000) & (ENG_HIST_NELEMS - 1);       \
-    if ((eh)->eh_cur_idx != (eh)->eh_prev_idx)                              \
-    {                                                                       \
-        lsquic_eng_hist_log(eh);                                            \
-        eng_hist_clear_cur(eh);                                             \
-        (eh)->eh_prev_idx = (eh)->eh_cur_idx;                               \
-    }                                                                       \
-} while (0)
+static inline void 
+eng_hist_tick (struct eng_hist *eh, lsquic_time_t now)
+{
+    if (0 == (now))
+        eh->eh_cur_idx = time(NULL)        & (ENG_HIST_NELEMS - 1);
+    else
+        eh->eh_cur_idx = ((now) / 1000000) & (ENG_HIST_NELEMS - 1);
+    if (eh->eh_cur_idx != eh->eh_prev_idx)
+    {
+        lsquic_eng_hist_log(eh);
+        eng_hist_clear_cur(eh);
+        eh->eh_prev_idx = eh->eh_cur_idx;
+    }
+}
 
 
 /* Increment element `what'.  Slice increment is handled in this macro, too. */

@@ -28,11 +28,23 @@ lsquic_mh_insert (struct min_heap *, void *item, uint64_t val);
 void *
 lsquic_mh_pop (struct min_heap *);
 
-#define lsquic_mh_peek(heap) ((heap)->mh_elems[0].mhe_item)
+static inline void *
+lsquic_mh_peek (struct min_heap *heap)
+{
+    return heap->mh_elems[0].mhe_item;
+}
 
-#define lsquic_mh_count(heap) (+(heap)->mh_nelem)
+static inline unsigned 
+lsquic_mh_count (struct min_heap *heap)
+{
+    return +heap->mh_nelem;
+}
 
-#define lsquic_mh_nalloc(heap) (+(heap)->mh_nalloc)
+static inline unsigned 
+lsquic_mh_nalloc (const struct min_heap *heap)
+{
+    return +heap->mh_nalloc;
+}
 
 #define MHE_PARENT(i) ((i - 1) / 2)
 #define MHE_LCHILD(i) (2 * i + 1)

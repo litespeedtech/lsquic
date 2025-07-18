@@ -441,10 +441,13 @@ void
 lsquic_stream_destroy (lsquic_stream_t *);
 
 /* True if either read or write side of the stream has been reset */
-#define lsquic_stream_is_reset(stream) \
-    (((stream)->stream_flags & \
-                    (STREAM_RST_RECVD|STREAM_RST_SENT|STREAM_SS_RECVD)) \
-        || ((stream)->sm_qflags & SMQF_SEND_RST))
+static inline unsigned
+lsquic_stream_is_reset (const lsquic_stream_t *stream)
+{
+    return (stream->stream_flags &
+            (STREAM_RST_RECVD|STREAM_RST_SENT|STREAM_SS_RECVD))
+            || (stream->sm_qflags & SMQF_SEND_RST);
+}
 
 int
 lsquic_stream_is_write_reset (const struct lsquic_stream *);
@@ -535,18 +538,30 @@ lsquic_stream_received_goaway (lsquic_stream_t *);
 void
 lsquic_stream_acked (struct lsquic_stream *, enum quic_frame_type);
 
-#define lsquic_stream_is_closed(s)                                          \
-    (((s)->stream_flags & (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE))         \
-                            == (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE))
+static inline unsigned
+lsquic_stream_is_closed (const lsquic_stream_t *s)
+{
+    return (s->stream_flags & (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE))
+            == (STREAM_U_READ_DONE|STREAM_U_WRITE_DONE);
+}
+
 int
 lsquic_stream_update_sfcw (lsquic_stream_t *, uint64_t max_off);
 
 int
 lsquic_stream_set_priority_internal (lsquic_stream_t *, unsigned priority);
 
-#define lsquic_stream_is_critical(s) ((s)->sm_bflags & SMBF_CRITICAL)
+static inline unsigned
+lsquic_stream_is_critical (const lsquic_stream_t *s)
+{
+    return s->sm_bflags & SMBF_CRITICAL;
+}
 
-#define lsquic_stream_is_crypto(s) ((s)->sm_bflags & SMBF_CRYPTO)
+static inline unsigned
+lsquic_stream_is_crypto (const lsquic_stream_t *s)
+{
+    return s->sm_bflags & SMBF_CRYPTO;
+}
 
 size_t
 lsquic_stream_mem_used (const struct lsquic_stream *);
@@ -554,7 +569,11 @@ lsquic_stream_mem_used (const struct lsquic_stream *);
 const lsquic_cid_t *
 lsquic_stream_cid (const struct lsquic_stream *);
 
-#define lsquic_stream_has_data_to_flush(stream) ((stream)->sm_n_buffered > 0)
+static inline unsigned
+lsquic_stream_has_data_to_flush (const lsquic_stream_t *stream)
+{
+    return stream->sm_n_buffered > 0;
+}
 
 int
 lsquic_stream_readable (struct lsquic_stream *);
@@ -570,7 +589,11 @@ size_t
 lsquic_stream_flush_threshold (const struct lsquic_stream *, unsigned);
 #endif
 
-#define crypto_level(stream) (UINT64_MAX - (stream)->id)
+static inline uint64_t
+crypto_level (const lsquic_stream_t *stream)
+{
+    return UINT64_MAX - stream->id;
+}
 
 void
 lsquic_stream_set_stream_if (struct lsquic_stream *,
@@ -638,8 +661,12 @@ lsquic_stream_header_is_trailer (const struct lsquic_stream *);
 int
 lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 
-#define lsquic_stream_is_blocked(stream_) ((stream_)->blocked_off && \
-                        (stream_)->blocked_off == (stream_)->max_send_off)
+static inline unsigned
+lsquic_stream_is_blocked (const lsquic_stream_t *stream_)
+{
+    return stream_->blocked_off &&
+           stream_->blocked_off == stream_->max_send_off;
+}
 
 void
 lsquic_stream_ss_frame_sent (struct lsquic_stream *);

@@ -4,11 +4,13 @@
  */
 
 #include <assert.h>
+#include <inttypes.h>
 #include <string.h>
 
 #include "lsquic_types.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_alarmset.h"
+#include "lsquic_util.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_ALARMSET
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(alset->as_conn)
@@ -98,4 +100,17 @@ lsquic_alarmset_mintime (const lsquic_alarmset_t *alset, enum alarm_id *idp)
     }
     else
         return 0;
+}
+
+
+void
+lsquic_alarmset_log (const lsquic_alarmset_t *alset, enum alarm_id id)
+{
+    if (LSQ_LOG_ENABLED(LSQ_LOG_DEBUG))
+    {
+        lsquic_time_t now = lsquic_time_now();
+        LSQ_DEBUG("set %s new %"PRIu64"; exp %"PRIu64" diff %"PRIu64,
+                  lsquic_alid2str[id], now, alset->as_expiry[id],
+                  alset->as_expiry[id] - now);
+    }
 }

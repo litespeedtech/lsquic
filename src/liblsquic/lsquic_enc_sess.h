@@ -346,12 +346,6 @@ LSQUIC_EXTERN const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf
     ver == LSQVER_050 ? &lsquic_enc_session_common_gquic_2 : \
     &lsquic_enc_session_common_gquic_1 )
 
-#define select_esf_gquic_by_ver(ver) ( \
-    ver ? &lsquic_enc_session_gquic_gquic_1 : &lsquic_enc_session_gquic_gquic_1)
-
-#define select_esf_iquic_by_ver(ver) ( \
-    ver ? &lsquic_enc_session_iquic_ietf_v1 : &lsquic_enc_session_iquic_ietf_v1)
-
 extern const char *const lsquic_enclev2str[];
 
 LSQUIC_EXTERN const struct lsquic_stream_if lsquic_cry_sm_if;

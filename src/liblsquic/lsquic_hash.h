@@ -48,7 +48,11 @@ lsquic_hash_insert (struct lsquic_hash *, const void *key, unsigned key_sz,
 struct lsquic_hash_elem *
 lsquic_hash_find (struct lsquic_hash *, const void *key, unsigned key_sz);
 
-#define lsquic_hashelem_getdata(el) ((el)->qhe_value)
+static inline void * 
+lsquic_hashelem_getdata (const struct lsquic_hash_elem *el)
+{
+    return el->qhe_value;
+}
 
 void
 lsquic_hash_erase (struct lsquic_hash *, struct lsquic_hash_elem *);

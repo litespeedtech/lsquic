@@ -627,7 +627,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
         }
     }
 
-    esfi = select_esf_iquic_by_ver(version);
+    esfi = &lsquic_enc_session_iquic_ietf_v1;
     if (version > LSQVER_ID27)
         enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
                     &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
@@ -656,7 +656,7 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     conn->imc_conn.cn_pf = select_pf_by_ver(version);
     conn->imc_conn.cn_esf.i = esfi;
     conn->imc_conn.cn_enc_session = enc_sess;
-    conn->imc_conn.cn_esf_c = select_esf_common_by_ver(version);
+    conn->imc_conn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     TAILQ_INIT(&conn->imc_packets_out);
     TAILQ_INIT(&conn->imc_app_packets);
     TAILQ_INIT(&conn->imc_crypto_frames);

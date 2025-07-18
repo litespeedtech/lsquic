@@ -208,31 +208,62 @@ typedef struct lsquic_packet_out
  * in po_flags.  The cost is a bit of complexity.  This will save us four bytes.
  */
 
-#define lsquic_packet_out_avail(p) ((unsigned short) \
-                                        ((p)->po_n_alloc - (p)->po_data_sz))
+static inline unsigned short
+lsquic_packet_out_avail (const lsquic_packet_out_t *p)
+{
+    return (unsigned short)(p->po_n_alloc - p->po_data_sz);
+}
 
-#define lsquic_packet_out_packno_bits(p) (((p)->po_flags >> POBIT_SHIFT) & 0x3)
+static inline unsigned
+lsquic_packet_out_packno_bits (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags >> POBIT_SHIFT) & 0x3;
+}
 
-#define lsquic_packet_out_set_packno_bits(p, b) do {                    \
-    (p)->po_flags &= ~(0x3 << POBIT_SHIFT);                             \
-    (p)->po_flags |= ((b) & 0x3) << POBIT_SHIFT;                        \
-} while (0)
+static inline void
+lsquic_packet_out_set_packno_bits (lsquic_packet_out_t *p, unsigned b)
+{
+    p->po_flags &= ~(0x3 << POBIT_SHIFT);
+    p->po_flags |= ((b) & 0x3) << POBIT_SHIFT;
+}
 
-#define lsquic_packet_out_ipv6(p) ((int)(((p)->po_flags >> POIPv6_SHIFT) & 1))
+static inline int
+lsquic_packet_out_ipv6 (const lsquic_packet_out_t *p)
+{
+    return (int)((p->po_flags >> POIPv6_SHIFT) & 1);
+}
 
-#define lsquic_packet_out_set_ipv6(p, b) do {                           \
-    (p)->po_flags &= ~(1 << POIPv6_SHIFT);                              \
-    (p)->po_flags |= ((b) & 1) << POIPv6_SHIFT;                         \
-} while (0)
+static inline void
+lsquic_packet_out_set_ipv6 (lsquic_packet_out_t *p, unsigned b)
+{
+    p->po_flags &= ~(1 << POIPv6_SHIFT);
+    p->po_flags |= ((b) & 1) << POIPv6_SHIFT;
+}
 
-#define lsquic_packet_out_spin_bit(p) (((p)->po_flags & PO_SPIN_BIT) > 0)
-#define lsquic_packet_out_square_bit(p) (((p)->po_lflags & POL_SQUARE_BIT) > 0)
-#define lsquic_packet_out_loss_bit(p) (((p)->po_lflags & POL_LOSS_BIT) > 0)
+static inline unsigned
+lsquic_packet_out_spin_bit (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags & PO_SPIN_BIT) > 0;
+}
 
-#define lsquic_packet_out_set_spin_bit(p, b) do {                       \
-    (p)->po_flags &= ~PO_SPIN_BIT;                                      \
-    (p)->po_flags |= ((b) & 1) << POSPIN_SHIFT;                         \
-} while (0)
+static inline unsigned
+lsquic_packet_out_square_bit (const lsquic_packet_out_t *p)
+{
+    return (p->po_lflags & POL_SQUARE_BIT) > 0;
+}
+
+static inline unsigned
+lsquic_packet_out_loss_bit (const lsquic_packet_out_t *p)
+{
+    return (p->po_lflags & POL_LOSS_BIT) > 0;
+}
+
+static inline void 
+lsquic_packet_out_set_spin_bit (lsquic_packet_out_t *p, unsigned b)
+{
+    p->po_flags &= ~PO_SPIN_BIT;
+    p->po_flags |= ((b) & 1) << POSPIN_SHIFT;
+}
 
 #define lsquic_po_header_length(lconn, po_flags, dcid_len, header_type) (   \
     lconn->cn_pf->pf_packout_max_header_size(lconn, po_flags, dcid_len,     \
@@ -259,42 +290,75 @@ typedef struct lsquic_packet_out
         (p)->po_sent_sz : lsquic_packet_out_total_sz(lconn, p))
 #endif
 
-#define lsquic_packet_out_verneg(p) \
-    (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) == (PO_NOENCRYPT|PO_VERNEG))
+static inline unsigned
+lsquic_packet_out_verneg (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) == (PO_NOENCRYPT|PO_VERNEG);
+}
 
-#define lsquic_packet_out_pubres(p) \
-    (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) ==  PO_NOENCRYPT           )
+static inline unsigned 
+lsquic_packet_out_pubres (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) ==  PO_NOENCRYPT;
+}
 
-#define lsquic_packet_out_retry(p) \
-    (((p)->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) == (PO_NOENCRYPT|PO_RETRY) )
+static inline unsigned 
+lsquic_packet_out_retry (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags & (PO_NOENCRYPT|PO_VERNEG|PO_RETRY)) == (PO_NOENCRYPT|PO_RETRY);
+}
 
-#define lsquic_packet_out_set_enc_level(p, level) do {                      \
-    (p)->po_lflags &= ~(3 << POLEV_SHIFT);                                  \
-    (p)->po_lflags |= level << POLEV_SHIFT;                                 \
-} while (0)
+static inline void 
+lsquic_packet_out_set_enc_level (lsquic_packet_out_t *p, unsigned level)
+{
+    p->po_lflags &= ~(3 << POLEV_SHIFT);
+    p->po_lflags |= level << POLEV_SHIFT;
+}
 
-#define lsquic_packet_out_enc_level(p)  (((p)->po_lflags >> POLEV_SHIFT) & 3)
+static inline unsigned 
+lsquic_packet_out_enc_level (const lsquic_packet_out_t *p)
+{
+    return (p->po_lflags >> POLEV_SHIFT) & 3;
+}
 
-#define lsquic_packet_out_set_kp(p, kp) do {                                \
-    (p)->po_lflags &= ~(1 << POKP_SHIFT);                                   \
-    (p)->po_lflags |= kp << POKP_SHIFT;                                     \
-} while (0)
+static inline void 
+lsquic_packet_out_set_kp (lsquic_packet_out_t *p, unsigned kp)
+{
+    p->po_lflags &= ~(1 << POKP_SHIFT);
+    p->po_lflags |= kp << POKP_SHIFT;
+}
 
-#define lsquic_packet_out_kp(p)  (((p)->po_lflags >> POKP_SHIFT) & 1)
+static inline unsigned 
+lsquic_packet_out_kp (const lsquic_packet_out_t *p)
+{
+    return (p->po_lflags >> POKP_SHIFT) & 1;
+}
 
-#define lsquic_packet_out_set_pns(p, pns) do {                              \
-    (p)->po_flags &= ~(3 << POPNS_SHIFT);                                   \
-    (p)->po_flags |= pns << POPNS_SHIFT;                                    \
-} while (0)
+static inline void 
+lsquic_packet_out_set_pns (lsquic_packet_out_t *p, unsigned pns)
+{
+    p->po_flags &= ~(3 << POPNS_SHIFT);
+    p->po_flags |= pns << POPNS_SHIFT;
+}
 
-#define lsquic_packet_out_pns(p)  (((p)->po_flags >> POPNS_SHIFT) & 3)
+static inline unsigned 
+lsquic_packet_out_pns (const lsquic_packet_out_t *p)
+{
+    return (p->po_flags >> POPNS_SHIFT) & 3;
+}
 
-#define lsquic_packet_out_set_ecn(p, ecn) do {                              \
-    (p)->po_lflags &= ~(3 << POECN_SHIFT);                                  \
-    (p)->po_lflags |= ecn << POECN_SHIFT;                                   \
-} while (0)
+static inline void
+lsquic_packet_out_set_ecn (lsquic_packet_out_t *p, unsigned ecn)
+{
+    p->po_lflags &= ~(3 << POECN_SHIFT);
+    p->po_lflags |= ecn << POECN_SHIFT;
+}
 
-#define lsquic_packet_out_ecn(p)  (((p)->po_lflags >> POECN_SHIFT) & 3)
+static inline unsigned 
+lsquic_packet_out_ecn (const lsquic_packet_out_t *p)
+{
+    return (p->po_lflags >> POECN_SHIFT) & 3;
+}
 
 struct packet_out_frec_iter {
     lsquic_packet_out_t         *packet_out;

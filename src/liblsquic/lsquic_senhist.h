@@ -27,12 +27,14 @@ typedef struct lsquic_senhist {
     }                           sh_flags;
 } lsquic_senhist_t;
 
-#define lsquic_senhist_init(hist, is_ietf) do {                         \
-    if (is_ietf)                                                        \
-        (hist)->sh_last_sent = ~0ull;                                   \
-    else                                                                \
-        (hist)->sh_last_sent = 0;                                       \
-} while (0)
+static inline void
+lsquic_senhist_init (lsquic_senhist_t *hist, unsigned is_ietf)
+{
+    if (is_ietf)
+        (hist)->sh_last_sent = ~0ull;
+    else
+        (hist)->sh_last_sent = 0;
+}
 
 #define lsquic_senhist_cleanup(hist)
 
@@ -67,6 +69,10 @@ typedef struct lsquic_senhist {
 void
 lsquic_senhist_tostr (lsquic_senhist_t *hist, char *buf, size_t bufsz);
 
-#define lsquic_senhist_mem_used(hist) (sizeof(*(hist)))
+static inline size_t
+lsquic_senhist_mem_used(const lsquic_senhist_t *hist)
+{
+    return sizeof(*(hist));
+}
 
 #endif

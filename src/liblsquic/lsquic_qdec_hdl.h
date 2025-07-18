@@ -48,7 +48,11 @@ lsquic_qdh_init (struct qpack_dec_hdl *, struct lsquic_conn *,
 void
 lsquic_qdh_cleanup (struct qpack_dec_hdl *);
 
-#define lsquic_qdh_has_enc_stream(qdh) ((qdh)->qdh_enc_sm_in != NULL)
+static inline unsigned
+lsquic_qdh_has_enc_stream (const struct qpack_dec_hdl *qdh)
+{
+    return qdh->qdh_enc_sm_in != NULL;
+}
 
 enum header_in_status
 {

@@ -39,9 +39,13 @@ struct http_frame_header        /* RFC 7540, Section 4.1 */
     unsigned char   hfh_stream_id[4];
 };
 
-#define hfh_get_length(hfh) (  ((hfh)->hfh_length[0] << 16) |   \
-                               ((hfh)->hfh_length[1] <<  8) |   \
-                                (hfh)->hfh_length[2]            )
+static inline unsigned int
+hfh_get_length (struct http_frame_header *hfh)
+{
+    return hfh->hfh_length[0] << 16 |
+           hfh->hfh_length[1] <<  8 |
+           hfh->hfh_length[2];
+}
 
 enum settings_param             /* RFC 7540, Section 6.5.2 */
 {

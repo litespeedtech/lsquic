@@ -127,7 +127,9 @@ struct header_prot
     }                   hp_u;
 };
 
-#define header_prot_inited(hp_, rw_) ((hp_)->hp_flags & (1 << (rw_)))
+static inline unsigned
+header_prot_inited(const struct header_prot *hp, int rw_flag)
+{   return hp->hp_flags & rw_flag;      }
 
 
 struct crypto_ctx
@@ -2115,7 +2117,7 @@ iquic_esf_is_enc_level_ready (enc_session_t *enc_session_p,
         hp = &enc_sess->esi_hsk_crypto[level].hp;
     else
         return 0;
-    return header_prot_inited(hp, 0);
+    return header_prot_inited(hp, HP_CAN_READ);
 }
 
 
@@ -2348,7 +2350,7 @@ iquic_esf_decrypt_packet (enc_session_t *enc_session_p,
     else
         hp = NULL;
 
-    if (UNLIKELY(!(hp && header_prot_inited(hp, 0))))
+    if (UNLIKELY(!(hp && header_prot_inited(hp, HP_CAN_READ))))
     {
         LSQ_DEBUG("header protection for level %u not initialized yet",
                                                                 enc_level);

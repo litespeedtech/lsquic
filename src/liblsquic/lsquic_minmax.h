@@ -21,9 +21,17 @@ struct minmax
     struct minmax_sample    samples[3];
 };
 
-#define minmax_get_idx(minmax_, idx_) ((minmax_)->samples[idx_].value)
+static inline uint64_t 
+minmax_get_idx (const struct minmax *minmax_, int idx_)
+{
+    return minmax_->samples[idx_].value;
+}
 
-#define minmax_get(minmax_) minmax_get_idx(minmax_, 0)
+static inline uint64_t 
+minmax_get (const struct minmax *minmax_)
+{
+    return minmax_get_idx(minmax_, 0);
+}
 
 #define minmax_reset(minmax_, sample_) do {                             \
     (minmax_)->samples[0] = (minmax_)->samples[1]                       \

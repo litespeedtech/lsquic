@@ -5,7 +5,11 @@
 #define IQUIC_MAX_IPv4_PACKET_SZ 1252
 #define IQUIC_MAX_IPv6_PACKET_SZ 1232
 
-#define iquic_packno_bits2len(b) ((b) + 1)
+static inline unsigned
+iquic_packno_bits2len(uint64_t b)
+{
+    return (b) + 1;
+}
 
 /* [draft-ietf-quic-transport-22] Section 7.2:
  "

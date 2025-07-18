@@ -5,6 +5,7 @@
 
 #ifndef LSQUIC_CONN_FLOW_H
 #define LSQUIC_CONN_FLOW_H 1
+#include <assert.h>
 
 struct lsquic_conn_public;
 
@@ -27,15 +28,20 @@ struct lsquic_conn_cap {
 };
 
 
-#define lsquic_conn_cap_init(cc, max) do {                          \
-    (cc)->cc_sent = 0;                                              \
-    (cc)->cc_max = max;                                             \
-} while (0)
+static inline void 
+lsquic_conn_cap_init (struct lsquic_conn_cap *cc, uint64_t max)
+{
+    cc->cc_sent = 0;
+    cc->cc_max = max;
+}
 
 
-#define lsquic_conn_cap_avail(cap) (                                \
-    (assert((cap)->cc_max >= (cap)->cc_sent)),                      \
-        (cap)->cc_max - (cap)->cc_sent)
+static inline uint64_t 
+lsquic_conn_cap_avail (const struct lsquic_conn_cap *cap)
+{
+    assert(cap->cc_max >= cap->cc_sent);
+    return cap->cc_max - cap->cc_sent;
+}
 
 
 void
@@ -48,11 +54,23 @@ lsquic_cfcw_init (lsquic_cfcw_t *, struct lsquic_conn_public *,
 int
 lsquic_cfcw_fc_offsets_changed (lsquic_cfcw_t *);
 
-#define lsquic_cfcw_get_fc_recv_off(fc) (+(fc)->cf_recv_off)
+static inline uint64_t 
+lsquic_cfcw_get_fc_recv_off (struct lsquic_cfcw *fc)
+{
+    return +fc->cf_recv_off;
+}
 
-#define lsquic_cfcw_get_max_recv_off(fc) (+(fc)->cf_max_recv_off)
+static inline uint64_t 
+lsquic_cfcw_get_max_recv_off (struct lsquic_cfcw *fc)
+{
+    return +fc->cf_max_recv_off;
+}
 
-#define lsquic_cfcw_get_max_recv_window(fc) (+(fc)->cf_max_recv_win)
+static inline uint64_t 
+lsquic_cfcw_get_max_recv_window (struct lsquic_cfcw *fc)
+{
+    return +fc->cf_max_recv_win;
+}
 
 /* Returns false if flow control violation is encountered */
 int

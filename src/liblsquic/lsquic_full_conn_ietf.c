@@ -1383,7 +1383,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
         if (sess_resume_version < N_LSQVER && ((1 << sess_resume_version) & versions))
             ver = sess_resume_version;
     }
-    esfi = select_esf_iquic_by_ver(ver);
+    esfi = &lsquic_enc_session_iquic_ietf_v1;
 
     if (0 != ietf_full_conn_init(conn, enpub, flags,
                                                 enpub->enp_settings.es_ecn))
@@ -1439,7 +1439,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
                                             conn->ifc_u.cli.ifcli_max_push_id);
     }
     conn->ifc_conn.cn_pf = select_pf_by_ver(ver);
-    conn->ifc_conn.cn_esf_c = select_esf_common_by_ver(ver);
+    conn->ifc_conn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     conn->ifc_conn.cn_esf.i = esfi;
     lsquic_generate_cid(CUR_DCID(conn), 0);
     conn->ifc_conn.cn_enc_session =

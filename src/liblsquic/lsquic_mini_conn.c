@@ -223,7 +223,7 @@ lsquic_mini_conn_new (struct lsquic_engine_public *enp,
     mc->mc_conn.cn_version = version;
     mc->mc_conn.cn_pf = select_pf_by_ver(version);
     mc->mc_conn.cn_esf_c = select_esf_common_by_ver(version);
-    mc->mc_conn.cn_esf.g = select_esf_gquic_by_ver(version);
+    mc->mc_conn.cn_esf.g = &lsquic_enc_session_gquic_gquic_1;
     mc->mc_conn.cn_cid = packet_in->pi_conn_id;
     mc->mc_conn.cn_logid = packet_in->pi_conn_id;
     mc->mc_conn.cn_flags = LSCONN_MINI | LSCONN_SERVER;

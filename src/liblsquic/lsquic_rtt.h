@@ -20,10 +20,22 @@ lsquic_rtt_stats_update (struct lsquic_rtt_stats *, lsquic_time_t send_delta,
                                                     lsquic_time_t lack_delta);
 
 
-#define lsquic_rtt_stats_get_srtt(stats) ((stats)->srtt)
+static inline lsquic_time_t
+lsquic_rtt_stats_get_srtt (const struct lsquic_rtt_stats *stats)
+{
+    return (stats)->srtt;
+}
 
-#define lsquic_rtt_stats_get_rttvar(stats) ((stats)->rttvar)
+static inline lsquic_time_t
+lsquic_rtt_stats_get_rttvar (const struct lsquic_rtt_stats *stats)
+{
+    return (stats)->rttvar;
+}
 
-#define lsquic_rtt_stats_get_min_rtt(stats) (+(stats)->min_rtt)
+static inline lsquic_time_t
+lsquic_rtt_stats_get_min_rtt (const struct lsquic_rtt_stats *stats)
+{
+    return +(stats)->min_rtt;
+}
 
 #endif

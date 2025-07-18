@@ -45,7 +45,11 @@ struct ack_info
 /* This macro cannot be used in IETF QUIC as zero is a valid packet number.
  * Hopefully the Chrome bug will have been fixed by then.
  */
-#define empty_ack_frame(acki) (largest_acked(acki) == 0)
+static inline unsigned
+empty_ack_frame (const struct ack_info *acki)
+{
+    return largest_acked(acki) == 0;
+}
 
 /* gaf_: generate ACK frame */
 struct lsquic_packno_range;
@@ -399,7 +403,11 @@ lsquic_gquic_po_header_sz (enum packet_out_flags flags);
  *
  * Assumes that only two low bits are set.
  */
-#define twobit_to_1246(bits) ((bits) * 2 + !(bits))
+static inline unsigned
+twobit_to_1246 (unsigned bits)
+{
+    return bits * 2 + !bits;
+}
 
 /* This maps two bits as follows:
  *  00  ->  1
@@ -409,7 +417,11 @@ lsquic_gquic_po_header_sz (enum packet_out_flags flags);
  *
  * Assumes that only two low bits are set.
  */
-#define twobit_to_1248(bits) (1 << (bits))
+static inline unsigned
+twobit_to_1248 (unsigned bits)
+{
+    return 1 << bits;
+}
 
 #define ECN_COUNTS_STR  " ECT(0): 01234567879012345678790;" \
                         " ECT(1): 01234567879012345678790;" \

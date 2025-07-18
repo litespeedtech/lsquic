@@ -3296,6 +3296,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             {
                 packet_in_data += packet_in->pi_data_sz;
                 maybe_count_garbage(engine, packet_in->pi_data_sz);
+                lsquic_mm_put_packet_in(&engine->pub.enp_mm, packet_in);
                 continue;
             }
         }

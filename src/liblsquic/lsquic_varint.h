@@ -4,11 +4,20 @@
 
 #define VINT_MASK ((1 << 6) - 1)
 
-/* See [draft-ietf-quic-transport-11], section-7.1 */
-#define vint_val2bits(val) (    \
-    ((val) >= (1 << 6)) + ((val) >= (1 << 14)) + ((val) >= (1 << 30)))
+#include <string.h>
 
-#define vint_size(val) (1u << vint_val2bits(val))
+/* See [draft-ietf-quic-transport-11], section-7.1 */
+static inline uint64_t
+vint_val2bits (uint64_t val)
+{
+    return ((val) >= (1 << 6)) + ((val) >= (1 << 14)) + ((val) >= (1 << 30));
+}
+
+static inline uint64_t
+vint_size (uint64_t val)
+{
+    return 1u << vint_val2bits(val);
+}
 
 #define VINT_MAX_VALUE ((1ull << 62) - 1)
 
@@ -18,7 +27,12 @@
  *  2 -> 30
  *  3 -> 62
  */
-#define vint_bits2shift(bits) ((1 << (3 + (bits))) - 2)
+
+static inline uint64_t
+vint_bits2shift (uint64_t bits)
+{
+    return (1 << (3 + (bits))) - 2;
+}
 
 #define VINT_MAX_B(bits_) ((1ull << (vint_bits2shift(bits_))) - 1)
 
@@ -66,18 +80,23 @@ lsquic_varint_read_two (const unsigned char **p, const unsigned char *end,
                             struct varint_read2_state *);
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-#define vint_write(dst, val, bits, len) do {                                \
-    uint64_t buf_ = (val)                                                   \
-                  | (uint64_t) (bits) << vint_bits2shift(bits);             \
-    buf_ = bswap_64(buf_);                                                  \
-    memcpy(dst, (unsigned char *) &buf_ + 8 - (len), (len));                \
-} while (0)
+#include <byteswap.h>
+static inline void
+vint_write (void *dst, uint64_t val, uint64_t bits, size_t len)
+{
+    uint64_t buf_ = (val)
+                    | (uint64_t) (bits) << vint_bits2shift(bits);
+    buf_ = bswap_64(buf_);
+    memcpy(dst, (unsigned char *) &buf_ + 8 - (len), (len));
+}
 #else
-#define vint_write(dst, val, bits, len) do {                                \
-    uint64_t buf_ = (val)                                                   \
-                  | (uint64_t) (bits) << vint_bits2shift(bits);             \
-    memcpy(dst, (unsigned char *) &buf_ + 8 - (len), (len));                \
-} while (0)
+static inline void
+vint_write (void *dst, uint64_t val, uint64_t bits, size_t len)
+{                                \
+    uint64_t buf_ = (val)
+                    | (uint64_t) (bits) << vint_bits2shift(bits);
+    memcpy(dst, (unsigned char *) &buf_ + 8 - (len), (len));
+}
 #endif
 
 #endif

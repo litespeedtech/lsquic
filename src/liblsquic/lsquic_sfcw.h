@@ -35,9 +35,17 @@ lsquic_sfcw_init (lsquic_sfcw_t *, unsigned initial_max_recv_window,
 int
 lsquic_sfcw_fc_offsets_changed (lsquic_sfcw_t *);
 
-#define lsquic_sfcw_get_fc_recv_off(fc) ((fc)->sf_recv_off)
+static inline uint64_t
+lsquic_sfcw_get_fc_recv_off (const lsquic_sfcw_t *fc)
+{
+    return fc->sf_recv_off;
+}
 
-#define lsquic_sfcw_get_max_recv_off(fc) ((fc)->sf_max_recv_off)
+static inline uint64_t
+lsquic_sfcw_get_max_recv_off (const lsquic_sfcw_t *fc)
+{
+    return fc->sf_max_recv_off;
+}
 
 /* Returns false if flow control violation is encountered */
 int
@@ -48,9 +56,11 @@ lsquic_sfcw_set_max_recv_off (lsquic_sfcw_t *, uint64_t);
 void
 lsquic_sfcw_set_read_off (lsquic_sfcw_t *, uint64_t);
 
-#define lsquic_sfcw_consume_rem(sfcw) do {                        \
-    lsquic_sfcw_set_read_off(sfcw,                                \
-                    lsquic_sfcw_get_max_recv_off(sfcw));          \
-} while (0)
+static inline void 
+lsquic_sfcw_consume_rem(lsquic_sfcw_t *sfcw)
+{
+    lsquic_sfcw_set_read_off(sfcw,
+                    lsquic_sfcw_get_max_recv_off(sfcw));
+}
 
 #endif
