@@ -65,6 +65,18 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0xDE1A:    return TPI_MIN_ACK_DELAY;
     case 0xFF02DE1A:return TPI_MIN_ACK_DELAY_02;
     case 0x7158:    return TPI_TIMESTAMPS;
+
+    case 0x60:      return TPI_CC_REUSE;
+    case 0x61:      return TPI_INIT_TIME_OF_CCTK;
+    case 0x62:      return TPI_SEND_PERIOD_OF_CCTK;
+    case 0x63:      return TPI_JOINT_CC_OPT;
+    case 0x64:      return TPI_NET_TYPE;
+    case 0x65:      return TPI_INIT_RTT;
+    case 0x66:      return TPI_SUGGEST_SEND_RATE;
+    case 0x67:      return TPI_CC_TOKEN;
+    case 0x68:      return TPI_CC_FEEDBACK;
+    case 0x69:      return TPI_CC_VERSION;
+
     default:        return INT_MAX;
     }
 }
@@ -99,6 +111,16 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_MIN_ACK_DELAY_02]                  =  0xFF02DE1A,
     [TPI_TIMESTAMPS]                        =  0x7158,
     [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
+    [TPI_CC_REUSE]                          = 0x60,
+    [TPI_INIT_TIME_OF_CCTK]                 = 0x61,
+    [TPI_SEND_PERIOD_OF_CCTK]               = 0x62,
+    [TPI_JOINT_CC_OPT]                      = 0x63,
+    [TPI_NET_TYPE]                          = 0x64,
+    [TPI_INIT_RTT]                          = 0x65,
+    [TPI_SUGGEST_SEND_RATE]                 = 0x66,
+    [TPI_CC_TOKEN]                          = 0x67,
+    [TPI_CC_FEEDBACK]                       = 0x68,
+    [TPI_CC_VERSION]                        = 0x69,
 };
 
 
@@ -130,6 +152,17 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
     [TPI_MIN_ACK_DELAY_02]                  =  "min_ack_delay_02",
     [TPI_TIMESTAMPS]                        =  "timestamps",
     [TPI_GREASE_QUIC_BIT]                   =  "grease_quic_bit",
+
+    [TPI_CC_REUSE]                          =  "cc_reuse",
+    [TPI_INIT_TIME_OF_CCTK]                 =  "init_time_of_cctk",
+    [TPI_SEND_PERIOD_OF_CCTK]               =  "send_peroid_of_cctk",
+    [TPI_JOINT_CC_OPT]                      =  "joint_cc_opt",
+    [TPI_NET_TYPE]                          =  "net_type",
+    [TPI_INIT_RTT]                          =  "init_rtt",
+    [TPI_SUGGEST_SEND_RATE]                 =  "suggest_send_rate",
+    [TPI_CC_TOKEN]                          =  "cc_token",
+    [TPI_CC_FEEDBACK]                       =  "cc_feedback",
+    [TPI_CC_VERSION]                        =  "cc_version",
 };
 #define tpi2str lsquic_tpi2str
 
@@ -182,6 +215,25 @@ static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
     [TPI_MIN_ACK_DELAY_02]                  =  1,
     [TPI_ACTIVE_CONNECTION_ID_LIMIT]        =  2,
     [TPI_TIMESTAMPS]                        =  TS_WANT_THEM,
+};
+
+static const uint64_t max_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
+{
+    [TPI_CC_REUSE]                          =  1,
+    [TPI_INIT_TIME_OF_CCTK]                 =  5000,
+    [TPI_SEND_PERIOD_OF_CCTK]               =  5000,
+    [TPI_JOINT_CC_OPT]                      =  VINT_MAX_VALUE,
+    [TPI_NET_TYPE]                          =  VINT_MAX_VALUE,
+    [TPI_INIT_RTT]                          =  VINT_MAX_VALUE,
+    [TPI_SUGGEST_SEND_RATE]                 =  VINT_MAX_VALUE,
+    [TPI_CC_VERSION]                        =  VINT_MAX_VALUE,
+};
+
+
+static const uint64_t min_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
+{
+    [TPI_INIT_TIME_OF_CCTK]                 =  200,
+    [TPI_SEND_PERIOD_OF_CCTK]               =  1000,
 };
 
 
@@ -266,7 +318,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
     uint16_t u16;
     enum transport_param_id tpi;
     unsigned set;
-    unsigned bits[LAST_TPI + 1][3 /* ID, length, value */];
+    unsigned bits[LAST_TPI_ENCODE + 1][3 /* ID, length, value */];
 #if LSQUIC_TEST_QUANTUM_READINESS
     const size_t quantum_sz = lsquic_tp_get_quantum_sz();
 #endif
@@ -397,7 +449,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
 } while (0)
 #endif
 
-    for (tpi = 0; tpi <= LAST_TPI; ++tpi)
+    for (tpi = 0; tpi <= LAST_TPI_ENCODE; ++tpi)
         if (set & (1 << tpi))
         {
             vint_write(p, enum_2_tpi_val[tpi], bits[tpi][0],
@@ -483,6 +535,9 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                     tag = lsquic_ver2tag(params->tp_version_info[i]);
                     WRITE_TO_P(&tag, 4);
                 }
+                break;
+            default:
+                /* Do nothing: skip this transport parameter */
                 break;
             }
         }
@@ -593,11 +648,59 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                             "param %s of length %"PRIu64, tpi2str[tpi], len);
                     return -1;
                 }
-            default:
+                default:
                 LSQ_DEBUG("invalid length=%"PRIu64" for numeric transport "
                                             "parameter %s", len, tpi2str[tpi]);
                 return -1;
             }
+            break;
+        case TPI_CC_REUSE:
+        case TPI_INIT_TIME_OF_CCTK:
+        case TPI_SEND_PERIOD_OF_CCTK:
+        case TPI_JOINT_CC_OPT:
+        case TPI_NET_TYPE:
+        case TPI_INIT_RTT:
+        case TPI_SUGGEST_SEND_RATE:
+        case TPI_CC_VERSION:
+            switch (len)
+            {
+            case 1:
+            case 2:
+            case 4:
+                s = vint_read(p, p+len, &params->tp_numerics_cctk[tpi]);
+                if (s==(int) len)
+                {
+                    if (params->tp_numerics_cctk[tpi]>max_cctk_vals[tpi])
+                    {
+                        LSQ_DEBUG("numeric cctk value of %s is too large "
+                                  "(%"PRIu64" vs maximum of %"PRIu64, tpi2str[tpi],
+                                params->tp_numerics_cctk[tpi], max_cctk_vals[tpi]);
+                        return -1;
+                    }
+                    else if (params->tp_numerics_cctk[tpi]<min_cctk_vals[tpi])
+                    {
+                        LSQ_DEBUG("numeric cctkvalue of %s is too small "
+                                  "(%"PRIu64" vs minimum of %"PRIu64, tpi2str[tpi],
+                                params->tp_numerics_cctk[tpi], min_cctk_vals[tpi]);
+                        return -1;
+                    }
+                    break;
+                }
+                else
+                {
+                    LSQ_DEBUG("%d cannot read the value of numeric cctk transport "
+                              "param %s of length %"PRIu64, s, tpi2str[tpi], len);
+                    return -1;
+                }
+            default:
+                LSQ_DEBUG("invalid length=%"PRIu64" for numeric transport "
+                                                  "parameter %s", len, tpi2str[tpi]);
+                return -1;
+            }
+            break;
+        case TPI_CC_TOKEN:
+        case TPI_CC_FEEDBACK:
+            //TODO handle tokens
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
         case TPI_GREASE_QUIC_BIT:
@@ -848,7 +951,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
     uint16_t u16;
     enum transport_param_id tpi;
     unsigned set;
-    unsigned bits[LAST_TPI + 1][3 /* ID, length, value */];
+    unsigned bits[LAST_TPI_ENCODE + 1][3 /* ID, length, value */];
 #if LSQUIC_TEST_QUANTUM_READINESS
     const size_t quantum_sz = lsquic_tp_get_quantum_sz();
 #endif
@@ -980,7 +1083,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
 } while (0)
 #endif
 
-    for (tpi = 0; tpi <= LAST_TPI; ++tpi)
+    for (tpi = 0; tpi <= LAST_TPI_ENCODE; ++tpi)
         if (set & (1 << tpi))
         {
             vint_write(p, enum_2_tpi_val[tpi], bits[tpi][0],
@@ -1059,6 +1162,9 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
                 break;
 #endif
             case TPI_VERSION_INFORMATION:
+                break;
+            default:
+                /* Do nothing: skip this transport parameter */
                 break;
             }
         }

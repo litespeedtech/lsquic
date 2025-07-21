@@ -83,6 +83,8 @@ enum PACKET_PUBLIC_FLAGS
 #define GQUIC_GOAWAY_FRAME_SZ 11  /* Type (1) + Error code (4) + Stream ID (4) +
                                                 Reason phrase length (2) */
 
+#define GQUIC_CCTK_FRAME_SZ sizeof(struct cctk_frame)  /* Type (1) + Token Len(1) + Token key (52) + Token value (72) */
+
 #define gquic_packno_bits2len(b) (((b) << 1) + !(b))
 
 lsquic_packno_t

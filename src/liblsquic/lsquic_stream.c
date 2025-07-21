@@ -4107,7 +4107,6 @@ send_headers_ietf (struct lsquic_stream *stream,
     if (!buf)
         return -1;
 #endif
-
     if (stream->stream_flags & STREAM_PUSHING)
     {
         LSQ_DEBUG("push promise still being written, cannot send header now");
@@ -4177,6 +4176,8 @@ send_headers_ietf (struct lsquic_stream *stream,
                 stream->stream_flags |= STREAM_HEADERS_SENT;
                 stream_hblock_sent(stream);
                 LSQ_DEBUG("wrote all %zu bytes of header block", hblock_sz);
+                // want CCTK frame after sending headers
+                stream->conn_pub->lconn->cn_flags |= LSCONN_WANT_CCTK;
                 goto end;
             }
             LSQ_DEBUG("wrote only %zd bytes of header block, stash", nw);
@@ -4209,7 +4210,6 @@ send_headers_ietf (struct lsquic_stream *stream,
     stream->sm_hblock_sz = hblock_sz - (size_t) nw;
     stream->sm_hblock_off = 0;
     LSQ_DEBUG("stashed %u bytes of header block", stream->sm_hblock_sz);
-
   end:
     rv = 0;
   clean:
@@ -4236,6 +4236,8 @@ send_headers_gquic (struct lsquic_stream *stream,
         stream->stream_flags |= STREAM_HEADERS_SENT;
         if (eos)
             stream->stream_flags |= STREAM_FIN_SENT;
+        // want CCTK frame after sending headers
+        stream->conn_pub->lconn->cn_flags |= LSCONN_WANT_CCTK;
         LSQ_INFO("sent headers");
     }
     else

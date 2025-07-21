@@ -37,6 +37,7 @@
 #include "lsquic_pacer.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_byteswap.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_stream.h"
@@ -161,6 +162,8 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_CCTK             = 1 << 9, /* CCTK are enabled */
+    MF_WANT_CCTK        = 1 <<10,
 };
 
 
@@ -196,6 +199,7 @@ enum send
     SEND_NEW_TOKEN,
     SEND_HANDSHAKE_DONE,
     SEND_ACK_FREQUENCY,
+    SEND_CCTK,
     N_SEND
 };
 
@@ -226,6 +230,7 @@ enum send_flags
     SF_SEND_NEW_TOKEN               = 1 << SEND_NEW_TOKEN,
     SF_SEND_HANDSHAKE_DONE          = 1 << SEND_HANDSHAKE_DONE,
     SF_SEND_ACK_FREQUENCY           = 1 << SEND_ACK_FREQUENCY,
+    SF_SEND_CCTK                    = 1 << SEND_CCTK,
 };
 
 #define SF_SEND_PATH_CHAL_ALL \
@@ -533,6 +538,11 @@ struct ietf_full_conn
                                *ifc_last_stats;
 #endif
     struct ack_info             ifc_ack;
+
+    struct {
+        unsigned init_time;
+        unsigned send_period;
+    } ifc_cctk;
 };
 
 #define CUR_CPATH(conn_) (&(conn_)->ifc_paths[(conn_)->ifc_cur_path_id])
@@ -868,6 +878,14 @@ ping_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
     conn->ifc_send_flags |= SF_SEND_PING;
 }
 
+static void
+cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
+        lsquic_time_t now)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+    LSQ_INFO("CCTK alarm rang: schedule CCTL frame to be generated");
+    conn->ifc_send_flags |= SF_SEND_CCTK;
+}
 
 static void
 retire_cid (struct ietf_full_conn *, struct conn_cid_elem *, lsquic_time_t);
@@ -1298,6 +1316,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_3, path_chal_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_BLOCKED_KA, blocked_ka_alarm_expired, conn);
     lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_MTU_PROBE, mtu_probe_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_CCTK, cctk_alarm_expired, conn);
     /* For Init and Handshake, we don't expect many ranges at all.  For
      * the regular receive history, set limit to a value that would never
      * be reached under normal circumstances, yet small enough that would
@@ -2955,7 +2974,6 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
     generate_ack_frame_for_pns(conn, packet_out, PNS_APP, lsquic_time_now());
 }
 
-
 static int
 ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
 {
@@ -3672,6 +3690,23 @@ apply_trans_params (struct ietf_full_conn *conn,
             ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
     }
 
+    //get it from transport param
+    LSQ_DEBUG("tpi_cc_reuse: %llu", params->tpi_cc_reuse);
+    LSQ_DEBUG("tpi_init_time_of_cctk: %llu", params->tpi_init_time_of_cctk);
+    LSQ_DEBUG("tpi_send_period_of_cctk: %llu", params->tpi_send_period_of_cctk);
+    LSQ_DEBUG("tpi_joint_cc_opt: %llu", params->tpi_joint_cc_opt);
+    LSQ_DEBUG("tpi_net_type: %llu", params->tpi_net_type);
+    LSQ_DEBUG("tpi_init_rtt: %llu", params->tpi_init_rtt);
+    LSQ_DEBUG("tpi_suggest_send_rate: %llu", params->tpi_suggest_send_rate);
+    LSQ_DEBUG("tpi_cc_version: %llu", params->tpi_cc_version);
+    if (params->tpi_cc_reuse)
+    {
+        LSQ_DEBUG("cctk enabled");
+        conn->ifc_mflags |= MF_CCTK;
+    }
+    conn->ifc_cctk.init_time = params->tpi_init_time_of_cctk;
+    conn->ifc_cctk.send_period = params->tpi_send_period_of_cctk;
+
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
@@ -4207,6 +4242,11 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
         if (conn->ifc_conn.cn_flags & LSCONN_SEND_BLOCKED)
         {
             LSQ_DEBUG("tickable: send DATA_BLOCKED frame");
+            goto check_can_send;
+        }
+        if (conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
+        {
+            LSQ_DEBUG("tickable: want to write CCTK frame");
             goto check_can_send;
         }
         if (conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE)
@@ -8389,6 +8429,41 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
     return 0;
 }
 
+/* Return true if CCTK was written, false otherwise */
+static int
+write_cctk (struct ietf_full_conn *conn)
+{
+    LSQ_INFO("----------------------------- write_cctk ---------------------------");
+    struct lsquic_packet_out *packet_out;
+    int sz_sz = vint_size(sizeof(struct cctk_frame));
+    int sz;
+
+    packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz /* frame size */ + 2 /* frame type*/);
+    if (!packet_out)
+        return 0;
+
+    sz = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
+            packet_out->po_data + packet_out->po_data_sz ,
+            lsquic_packet_out_avail(packet_out) ,
+            &conn->ifc_send_ctl);
+
+    if (sz < 0)
+    {
+        LSQ_DEBUG("could not generate CCTK frame");
+        return 0;
+    }
+    if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
+            QUIC_FRAME_CCTK, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding CCTK frame to packet failed: %d", errno);
+        return 0;
+    }
+    packet_out->po_regen_sz += sz;
+    packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    LSQ_INFO("wrote CCTK frame");
+    return 1;
+}
 
 /* Return true if datagram was written, false otherwise */
 static int
@@ -8601,6 +8676,61 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
 
     maybe_conn_flush_special_streams(conn);
+
+    LSQ_DEBUG("LSCONN_WANT_CCTK: %d", conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK);
+    LSQ_DEBUG("MF_CCTK: %d", conn->ifc_mflags & MF_CCTK);
+    LSQ_DEBUG("FC_SEND_CCTK: %d", conn->ifc_send_flags & SF_SEND_CCTK);
+
+
+    if (conn->ifc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
+    {
+        if (conn->ifc_mflags & MF_CCTK)
+        {
+            if (conn->ifc_cctk.init_time > 0)
+            {
+                LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.init_time);
+                lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now()+(conn->ifc_cctk.init_time*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk init_time: %d", conn->ifc_cctk.init_time);
+            }
+        }
+        else
+        {
+            LSQ_DEBUG("IFC_CCTK not set");
+        }
+        // clear want cctk
+        conn->ifc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
+    }
+    else
+    {
+        LSQ_DEBUG("LSCONN_WANT_CCTK not set");
+    }
+
+    if (conn->ifc_send_flags & SF_SEND_CCTK)
+    {
+        if (conn->ifc_mflags & MF_CCTK)
+        {
+            write_cctk(conn);
+            if (conn->ifc_cctk.send_period > 0)
+            {
+                LSQ_INFO("set send CCTK alarm after: %d ms", conn->ifc_cctk.send_period);
+                lsquic_alarmset_set(&conn->ifc_alset, AL_CCTK, lsquic_time_now()+(conn->ifc_cctk.send_period*1000));
+            } else
+            {
+                LSQ_WARN("invalid cctk send_period: %d", conn->ifc_cctk.send_period);
+            }
+        }
+        else
+        {
+            LSQ_DEBUG("IFC_CCTK not set");
+        }
+        // clear send cctk
+        conn->ifc_send_flags &= ~SF_SEND_CCTK;
+    }
+    {
+        LSQ_DEBUG("SF_SEND_CCTK not set");
+    }
 
     s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_HIGHEST_PRIO);
     conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
@@ -9140,7 +9270,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_status               =  ietf_full_conn_ci_status, \
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
-    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_tls_alert            =  ietf_full_conn_ci_tls_alert,   \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
 

@@ -1043,7 +1043,6 @@ gquic_Q043_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
     return -1;
 }
 
-
 const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
     .pf_gen_reg_pkt_header            =  lsquic_gquic_be_gen_reg_pkt_header,
@@ -1086,4 +1085,6 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_gen_handshake_done_frame      =  gquic_Q043_gen_handshake_done_frame,
     .pf_parse_handshake_done_frame    =  gquic_Q043_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  gquic_Q043_handshake_done_frame_size,
+    // qQUIC CCTK frame
+    .pf_gen_cctk_frame                =  lsquic_gquic_be_gen_cctk_frame,
 };

@@ -276,7 +276,6 @@ lsquic_conn_log_cid (const struct lsquic_conn *lconn)
     return &lconn->cn_logid;
 }
 
-
 int
 lsquic_conn_want_datagram_write (struct lsquic_conn *lconn, int is_want)
 {

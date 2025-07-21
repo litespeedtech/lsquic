@@ -37,6 +37,7 @@ enum quic_frame_type
     QUIC_FRAME_ACK_FREQUENCY,       /* I */
     QUIC_FRAME_TIMESTAMP,           /* I */
     QUIC_FRAME_DATAGRAM,            /* I */
+    QUIC_FRAME_CCTK,                /* B */
     N_QUIC_FRAMES
 };
 
@@ -68,6 +69,7 @@ enum quic_ft_bit {
     QUIC_FTBIT_ACK_FREQUENCY     = 1 << QUIC_FRAME_ACK_FREQUENCY,
     QUIC_FTBIT_TIMESTAMP         = 1 << QUIC_FRAME_TIMESTAMP,
     QUIC_FTBIT_DATAGRAM          = 1 << QUIC_FRAME_DATAGRAM,
+    QUIC_FTBIT_CCTK              = 1 << QUIC_FRAME_CCTK,
 };
 
 extern const char * const frame_type_2_str[N_QUIC_FRAMES];

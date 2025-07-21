@@ -7,6 +7,7 @@
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_shared_support.h"
+#include "lsquic_cctk.h"
 
 struct lsquic_conn;
 struct lsquic_packet_in;
@@ -331,6 +332,9 @@ struct parse_funcs
         struct lsquic_conn *);
     unsigned
     (*pf_datagram_frame_size) (size_t);
+
+    int
+    (*pf_gen_cctk_frame) (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl);
 };
 
 LSQUIC_EXTERN const struct parse_funcs lsquic_parse_funcs_gquic_Q043;
@@ -367,7 +371,7 @@ lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *, size_t length
 enum quic_frame_type
 lsquic_parse_frame_type_gquic_Q035_thru_Q046 (const unsigned char *, size_t);
 
-extern const enum quic_frame_type lsquic_iquic_byte2type[0x40];
+extern const enum quic_frame_type lsquic_iquic_byte2type[0x70];
 
 size_t
 lsquic_calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,

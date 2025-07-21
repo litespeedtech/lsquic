@@ -134,6 +134,8 @@ typedef struct hs_ctx_st
         HSET_IRTT     =   (1 << 3),
         HSET_SRST     =   (1 << 4),
         HSET_XLCT     =   (1 << 5),     /* xlct is set */
+        HSET_CCRE     =   (1 << 6),
+        HSET_JCCO     =   (1 << 7),
     }           set;
     enum {
         HOPT_NSTP     =   (1 << 0),     /* NSTP option present in COPT */
@@ -165,6 +167,15 @@ typedef struct hs_ctx_st
     unsigned char srst[SRST_LENGTH];
     
     uint32_t    rrej;
+
+    uint32_t    itct;
+    uint32_t    spct;
+    uint32_t    ntyp;
+    uint32_t    ssr;
+    uint8_t     jcco;
+    struct lsquic_str cctk;
+    struct lsquic_str ccfb;
+
     struct lsquic_str ccs;
     struct lsquic_str uaid;
     struct lsquic_str sni;   /* 0 rtt */
@@ -1028,6 +1039,8 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
     hs_ctx_t * hs_ctx = &enc_session->hs_ctx;
     int is_client = (head_tag != QTAG_CHLO);
 
+    LSQ_DEBUG("Parse tag '%.*s'", 4, (char *)&tag);
+
     switch(tag)
     {
     case QTAG_PDMD:
@@ -1280,6 +1293,122 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         }
         hs_ctx->set |= HSET_XLCT;
         hs_ctx->xlct = get_tag_value_i64(val, len);
+        break;
+
+    case QTAG_CCRE:
+        if (!is_client) {
+            if (len != 1) {
+                LSQ_INFO("Unexpected size of CCRE: %u instead of %d bytes",
+                         len, 1);
+                return -1;
+            }
+            if (*val != 0x01) {
+                LSQ_INFO("Unexpected value of CCRE: %u instead of 0x01",
+                         *val);
+                return -1;
+            }
+            hs_ctx->set |= HSET_CCRE;
+        } else
+            LSQ_INFO("unexpected CCRE");
+        break;
+
+    case QTAG_ITCT:
+        if (!is_client)
+        {
+            if (0 != get_tag_val_u32(val, len, &hs_ctx->itct))
+            {
+                LSQ_INFO("Unexpected size of ITCT: %u instead of %zu bytes",
+                        len, sizeof(hs_ctx->itct));
+                return -1;
+            }
+        }
+        else
+            LSQ_INFO("unexpected ITCT");
+        break;
+
+    case QTAG_SPCT:
+        if (!is_client)
+        {
+            if (0 != get_tag_val_u32(val, len, &hs_ctx->spct))
+            {
+                LSQ_INFO("Unexpected size of SPCT: %u instead of %zu bytes",
+                        len, sizeof(hs_ctx->spct));
+                return -1;
+            }
+        }
+        else
+            LSQ_INFO("unexpected SPCT");
+        break;
+
+    case QTAG_JCCO:
+        if (!is_client)
+        {
+            if (len!=1)
+            {
+                LSQ_INFO("Unexpected size of JCCO: %u instead of %d bytes",
+                        len, 1);
+                return -1;
+            }
+            hs_ctx->jcco = *val;
+            hs_ctx->set |= HSET_JCCO;
+        }
+        else
+            LSQ_INFO("unexpected JCCO");
+        break;
+
+    case QTAG_NTYP:
+        if (!is_client)
+        {
+            if (0 != get_tag_val_u32(val, len, &hs_ctx->ntyp))
+            {
+                LSQ_INFO("Unexpected size of NTYP: %u instead of %zu bytes",
+                        len, sizeof(hs_ctx->ntyp));
+                return -1;
+            }
+        }
+        else
+            LSQ_INFO("unexpected NTYP");
+        break;
+
+/*    case QTAG_IRTT:
+        if (is_client)
+        {
+            hs_ctx->irtt = get_tag_value_u32(val, len);
+        }
+        else
+            LSQ_INFO("unexpected IRTT");
+        break;*/
+
+    case QTAG_SSR:
+        if (!is_client)
+        {
+            if (0 != get_tag_val_u32(val, len, &hs_ctx->ssr))
+            {
+                LSQ_INFO("Unexpected size of SSR: %u instead of %zu bytes",
+                        len, sizeof(hs_ctx->ssr));
+                return -1;
+            }
+        }
+        else
+            LSQ_INFO("unexpected SSR");
+        break;
+
+    case QTAG_CCTK:
+        if (!is_client)
+        {
+            //TODO: read value
+        }
+        else
+            LSQ_INFO("unexpected CCTK");
+        break;
+
+    case QTAG_CCFB:
+        if (is_client)
+        {
+            //TODO: read value
+        }
+        else
+            LSQ_INFO("unexpected CCFB");
         break;
 
     default:
@@ -3419,6 +3548,18 @@ lsquic_enc_session_get_peer_setting (enc_session_t *enc_session_p,
         }
         else
             return -1;
+    case QTAG_CCRE:
+        if (enc_session->hs_ctx.set & HSET_CCRE)
+            *val = 1;
+        else
+            *val = 0;
+        return 0;
+    case QTAG_ITCT:
+        *val = enc_session->hs_ctx.itct;
+        return 0;
+    case QTAG_SPCT:
+        *val = enc_session->hs_ctx.spct;
+        return 0;
     }
 
     /* XXX For the following values, there is no record which were present

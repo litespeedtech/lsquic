@@ -42,6 +42,7 @@ const char * const frame_type_2_str[N_QUIC_FRAMES] = {
     [QUIC_FRAME_ACK_FREQUENCY]     =  "QUIC_FRAME_ACK_FREQUENCY",
     [QUIC_FRAME_TIMESTAMP]         =  "QUIC_FRAME_TIMESTAMP",
     [QUIC_FRAME_DATAGRAM]          =  "QUIC_FRAME_DATAGRAM",
+    [QUIC_FRAME_CCTK]              =  "QUIC_FRAME_CCTK",
 };
 
 
