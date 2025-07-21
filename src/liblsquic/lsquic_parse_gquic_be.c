@@ -1052,7 +1052,7 @@ gquic_gen_cctk_frame (unsigned char *buf, size_t bufsz, struct cctk_ctx *cctk_ct
     bits = vint_val2bits(tokens_sz);
     len_sz = 1u << bits;
 
-    if (2 + len_sz + tokens_sz > bufsz)
+    if (1 + len_sz + tokens_sz > bufsz)
     {
         errno = ENOBUFS;
         return -1;
@@ -1061,9 +1061,9 @@ gquic_gen_cctk_frame (unsigned char *buf, size_t bufsz, struct cctk_ctx *cctk_ct
     if (tokens_sz > 0)
     {
         // use 2 bytes from frame type (0x60) https://datatracker.ietf.org/doc/html/rfc9000#integer-summary
-        vint_write(&buf[0], (uint64_t) 0x60, 1, 2);
-        vint_write(&buf[2], (uint64_t) tokens_sz, bits, len_sz);
-        size_t hz = 2 + len_sz;
+        buf[0] = 0x1f;
+        vint_write(&buf[1], (uint64_t) tokens_sz, bits, len_sz);
+        size_t hz = 1 + len_sz;
         lsquic_write_cctk_frame_payload(buf + hz, bufsz - hz,  cctk_ctx, send_ctl);
 
         return hz + tokens_sz;
