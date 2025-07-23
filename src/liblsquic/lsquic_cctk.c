@@ -1,5 +1,5 @@
 #include <sys/queue.h>
-
+#include <time.h>
 #include "lsquic.h"
 #include "lsquic_int_types.h"
 #include "lsquic_cong_ctl.h"
@@ -26,6 +26,8 @@
 #include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_cong_ctl.h"
+#include "lsquic_mm.h"
+#include "lsquic_engine_public.h"
 #include "lsquic_util.h"
 
 #include <string.h>
@@ -81,27 +83,113 @@ int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     return sizeof(sizeof(struct cctk_frame));
 }
 
+enum CC_ALGS {
+    CC_ALG_CUBIC = 1,
+    CC_ALG_BBR = 2,
+    CC_ALG_ADAPTIVE = 3,
+};
+
+void * get_cc_ctx(char cc_type, lsquic_send_ctl_t *send_ctl) {
+    struct lsquic_engine_public *enpub = send_ctl->sc_enpub;
+    switch (cc_type)
+    {
+    case CC_ALG_CUBIC:
+        if(enpub->enp_settings.es_cc_algo != CC_ALG_BBR)
+            return &send_ctl->sc_adaptive_cc.acc_cubic;
+        else
+            return NULL;
+    case CC_ALG_BBR:
+        if(enpub->enp_settings.es_cc_algo != CC_ALG_CUBIC)
+            return &send_ctl->sc_adaptive_cc.acc_bbr;
+        else
+            return NULL;
+    case CC_ALG_ADAPTIVE:
+    default:
+        return &send_ctl->sc_adaptive_cc;
+    }
+    return NULL;
+}
+
+void sockaddr_to_16(const struct sockaddr *sa, unsigned char *cip /*must point to char[16]*/) {
+    if (sa->sa_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)sa;
+        memcpy(cip, &sin->sin_addr.s_addr, 4);
+    } else if (sa->sa_family == AF_INET6) {
+        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)sa;
+        memcpy(cip, sin6->sin6_addr.s6_addr, 16);
+    } else {
+        memset(cip, 0, 16); // Unknown family, zero out cip
+    }
+}
+
 int
-lsquic_gquic_be_gen_cctk_frame (unsigned char *buf, size_t buf_len, lsquic_send_ctl_t * send_ctl)
+lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t * send_ctl)
 {
     if( buf_len < sizeof(cctk_zero_frame) )
         return -1;
     
     struct cctk_data cctk = {0};
-    
-    //struct sockaddr *local, *remote;
-    //lsquic_conn_get_sockaddr(conn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
+    struct lsquic_conn_public *conn_pub = send_ctl->sc_conn_pub;
 
+    struct sockaddr *local, *remote;
+    lsquic_conn_get_sockaddr(conn_pub->lconn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
+    sockaddr_to_16(remote, cctk.cip);
+
+    // STMP - timestamp
     cctk.version = 1;
-    cctk.stmp = (unsigned long) lsquic_time_now();
-    struct lsquic_conn_public *conn = send_ctl->sc_conn_pub;
-    cctk.srtt = (unsigned int)conn->rtt_stats.srtt;
-    cctk.mrtt = (unsigned int)conn->rtt_stats.min_rtt;
-    cctk.rttv = (unsigned int)conn->rtt_stats.rttvar;
-    unsigned long cwd = send_ctl->sc_ci->cci_get_cwnd(send_ctl->sc_cong_ctl);
-    if( cwd > cctk.mcwd ) {
-        cctk.mcwd = cwd;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    cctk.stmp = (unsigned long) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+    // NTYP - network type
+    cctk.ntyp = cctk_ctx->net_type;
+
+    // MFLG - max in flight bytes
+    unsigned int in_flight = send_ctl->sc_bytes_unacked_all;
+    if( in_flight > cctk_ctx->max_in_flight ) {
+        cctk_ctx->max_in_flight = in_flight;
     }
+
+    // SRTT
+    cctk.srtt = (unsigned int)conn_pub->rtt_stats.srtt;
+    // MRTT
+    cctk.mrtt = (unsigned int)conn_pub->rtt_stats.min_rtt;
+    // RTTV
+    cctk.rttv = (unsigned int)conn_pub->rtt_stats.rttvar;
+    // MCWD - max congestion window
+    unsigned long cwd = send_ctl->sc_ci->cci_get_cwnd(send_ctl->sc_cong_ctl);
+    if( cwd > cctk_ctx->max_cwnd ) {
+        cctk_ctx->max_cwnd = cwd;
+    }
+    cctk.mcwd = cctk_ctx->max_cwnd;
+
+    // BW
+    cctk.bw = send_ctl->sc_ci->cci_pacing_rate(send_ctl->sc_cong_ctl, 1);
+    // MBW - max bandwidth
+    if( cctk.bw > cctk_ctx->max_bw ) {
+        cctk_ctx->max_bw = cctk.bw;
+    }
+    cctk.mbw = cctk_ctx->max_bw;
+
+    // THPT - throughput
+    cctk.thpt = cctk.bw; // FIXME: for now assuming throughput is same as current bandwidth
+
+    // PLR percentage of lost packets
+    #if LSQUIC_SEND_STATS
+    if(send_ctl->sc_stats.n_total_sent > 0) {
+        cctk.plr = send_ctl->sc_loss_count * 100 / send_ctl->sc_stats.n_total_sent;
+    }
+    #endif
+
+    struct lsquic_bbr *bbr = get_cc_ctx(CC_ALG_BBR, send_ctl);
+    struct lsquic_cubic *cubic = get_cc_ctx(CC_ALG_CUBIC, send_ctl);
+    
+    // SLST - slow start
+    if (bbr)
+        cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
+    else
+        cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
+    
 
     return cctk_fill_frame(&cctk, (struct cctk_frame *)buf);
 }

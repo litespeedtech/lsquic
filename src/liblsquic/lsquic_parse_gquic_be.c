@@ -1043,6 +1043,35 @@ gquic_Q043_parse_handshake_done_frame (const unsigned char *buf, size_t buf_len)
     return -1;
 }
 
+static int
+gquic_gen_cctk_frame (unsigned char *buf, size_t bufsz, struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t * send_ctl)
+{
+    unsigned bits, len_sz;
+
+    size_t tokens_sz = sizeof(struct cctk_frame);
+    bits = vint_val2bits(tokens_sz);
+    len_sz = 1u << bits;
+
+    if (1 + len_sz + tokens_sz > bufsz)
+    {
+        errno = ENOBUFS;
+        return -1;
+    }
+
+    if (tokens_sz > 0)
+    {
+        // use 2 bytes from frame type (0x60) https://datatracker.ietf.org/doc/html/rfc9000#integer-summary
+        buf[0] = 0x1f;
+        vint_write(&buf[1], (uint64_t) tokens_sz, bits, len_sz);
+        size_t hz = 1 + len_sz;
+        lsquic_write_cctk_frame_payload(buf + hz, bufsz - hz,  cctk_ctx, send_ctl);
+
+        return hz + tokens_sz;
+    }
+    else
+        return -1;
+}
+
 const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
 {
     .pf_gen_reg_pkt_header            =  lsquic_gquic_be_gen_reg_pkt_header,
@@ -1086,5 +1115,5 @@ const struct parse_funcs lsquic_parse_funcs_gquic_Q043 =
     .pf_parse_handshake_done_frame    =  gquic_Q043_parse_handshake_done_frame,
     .pf_handshake_done_frame_size     =  gquic_Q043_handshake_done_frame_size,
     // qQUIC CCTK frame
-    .pf_gen_cctk_frame                =  lsquic_gquic_be_gen_cctk_frame,
+    .pf_gen_cctk_frame                =  gquic_gen_cctk_frame,
 };

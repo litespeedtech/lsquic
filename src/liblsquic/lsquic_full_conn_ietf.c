@@ -539,10 +539,7 @@ struct ietf_full_conn
 #endif
     struct ack_info             ifc_ack;
 
-    struct {
-        unsigned init_time;
-        unsigned send_period;
-    } ifc_cctk;
+    struct cctk_ctx             ifc_cctk;
 };
 
 #define CUR_CPATH(conn_) (&(conn_)->ifc_paths[(conn_)->ifc_cur_path_id])
@@ -3706,6 +3703,7 @@ apply_trans_params (struct ietf_full_conn *conn,
     }
     conn->ifc_cctk.init_time = params->tpi_init_time_of_cctk;
     conn->ifc_cctk.send_period = params->tpi_send_period_of_cctk;
+    conn->ifc_cctk.net_type = params->tpi_net_type;
 
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
@@ -8445,6 +8443,7 @@ write_cctk (struct ietf_full_conn *conn)
     sz = conn->ifc_conn.cn_pf->pf_gen_cctk_frame(
             packet_out->po_data + packet_out->po_data_sz ,
             lsquic_packet_out_avail(packet_out) ,
+            &conn->ifc_cctk,
             &conn->ifc_send_ctl);
 
     if (sz < 0)
