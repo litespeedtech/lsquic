@@ -24,6 +24,8 @@ struct cctk_ctx {
         unsigned init_time;
         unsigned send_period;
         unsigned char net_type;
+        unsigned int max_in_flight;
+        unsigned long max_bw;
         unsigned long max_cwnd; // Maximum congestion window bytes
 };
 
