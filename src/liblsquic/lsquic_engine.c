@@ -1074,10 +1074,18 @@ maybe_grow_conn_heaps (struct lsquic_engine *engine)
     }
 
     LSQ_DEBUG("grew heaps to %u elements", count / 2);
-    memcpy(&els[0], engine->conns_tickable.mh_elems,
+    
+    if (lsquic_mh_count(&engine->conns_tickable) > 0)
+    {
+        memcpy(&els[0], engine->conns_tickable.mh_elems,
                 sizeof(els[0]) * lsquic_mh_count(&engine->conns_tickable));
-    memcpy(&els[count / 2], engine->conns_out.mh_elems,
+    }
+    if (lsquic_mh_count(&engine->conns_out) > 0)
+    {
+        memcpy(&els[count / 2], engine->conns_out.mh_elems,
                 sizeof(els[0]) * lsquic_mh_count(&engine->conns_out));
+    }
+
     free(engine->conns_tickable.mh_elems);
     engine->conns_tickable.mh_elems = els;
     engine->conns_out.mh_elems = &els[count / 2];
