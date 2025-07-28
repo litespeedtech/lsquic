@@ -16,8 +16,12 @@ struct cctk_data {
     unsigned int mflg;           //Max in flight bytes
     unsigned long bw;             //bandwidth in bytes per second
     unsigned long mbw;           //Max bandwidth in bytes per second
-    unsigned long thpt;           //throughput in bytes per second, retransmitted data excluded.
-    unsigned char plr;            // The Packet Loss Rate
+    unsigned long thpt;          //throughput in bytes per second, retransmitted data excluded.
+    unsigned char plr;           // The Packet Loss Rate
+    unsigned long srat;          // Send bit rate in bytes per second  
+    unsigned long rrat;          // Receive bit rate in bytes per second
+    unsigned long irat;          // receive bitrate last second from application
+    unsigned int blen;           // Buffer length in connection level   
 };
 
 struct cctk_ctx {
@@ -27,6 +31,9 @@ struct cctk_ctx {
         unsigned int max_in_flight;
         unsigned long max_bw;
         unsigned long max_cwnd; // Maximum congestion window bytes
+        unsigned long last_ts;
+        unsigned long last_bytes_in;
+        unsigned long last_bytes_out;
 };
 
 #pragma pack(1)
@@ -58,6 +65,14 @@ struct cctk_frame {
     unsigned long thpt;           //throughput in bytes per second, retransmitted data excluded.
     char _key_plr[4];
     unsigned char plr;            // The Packet Loss Rate
+    char _key_srat[4];
+    unsigned long srat;          // Send bit rate in bytes per second
+    char _key_rrat[4];
+    unsigned long rrat;          // Receive bit rate in bytes per second
+    char _key_irat[4];
+    unsigned long irat;         // Input bit rate in bytes per second
+    char _key_blen[4];
+    unsigned int blen;          // Buffer length in connection level
 };
 #pragma pack()
 

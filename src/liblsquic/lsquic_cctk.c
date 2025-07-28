@@ -35,7 +35,7 @@
 #include "lsquic_cctk.h"
 
 const struct cctk_frame cctk_zero_frame = {
-    .version = 0x01,
+    .version = 0x02,
     ._key_stmp = {'S', 'T', 'M', 'P'},
     .stmp = 0,
     ._key_slst = {'S', 'L', 'S', 'T'},
@@ -61,8 +61,16 @@ const struct cctk_frame cctk_zero_frame = {
     ._key_thpt = {'T', 'H', 'P', 'T'},
     .thpt = 0,
     ._key_plr = {'P', 'L', 'R', '\0'},
-    .plr = 0
-};
+    .plr = 0,
+    ._key_srat = {'S', 'R', 'A', 'T'},
+    .srat = 0,
+    ._key_rrat = {'R', 'R', 'A', 'T'},
+    .rrat = 0,
+    ._key_irat = {'I', 'R', 'A', 'T'},
+    .irat = 0,
+    ._key_blen = {'B', 'L', 'E', 'N'},
+    .blen = 0
+};  
 
 int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     memcpy(frame, &cctk_zero_frame, sizeof(struct cctk_frame));
@@ -80,6 +88,10 @@ int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     frame->mbw = data->mbw;
     frame->thpt = data->thpt;
     frame->plr = data->plr;
+    frame->srat = data->srat;
+    frame->rrat = data->rrat;
+    frame->irat = data->irat;
+    frame->blen = data->blen;
     return sizeof(sizeof(struct cctk_frame));
 }
 
@@ -136,7 +148,7 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     sockaddr_to_16(remote, cctk.cip);
 
     // STMP - timestamp
-    cctk.version = 1;
+    cctk.version = 2;
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     cctk.stmp = (unsigned long) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
@@ -190,6 +202,25 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     else
         cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
     
+    #if LSQUIC_CONN_STATS
+    
+    const struct conn_stats *conn_stats = conn_pub->conn_stats;
+
+    double retx_rate = (double) conn_stats->out.retx_packets / (double) conn_stats->out.packets;
+    cctk.thpt = (unsigned long)((double)cctk.thpt * (1.0 - retx_rate));
+
+    unsigned long time_diff = cctk.stmp - cctk_ctx->last_ts;
+    if( time_diff > 0 && cctk_ctx->last_ts > 0 ) {
+        unsigned long bytes_diff_in = conn_stats->in.bytes - cctk_ctx->last_bytes_in;
+        unsigned long bytes_diff_out = conn_stats->out.bytes - cctk_ctx->last_bytes_out;
+        cctk.srat = 1000000 * bytes_diff_out / time_diff; 
+        cctk.rrat = 1000000 * bytes_diff_in / time_diff;
+    }
+    cctk_ctx->last_ts = cctk.stmp;
+    cctk_ctx->last_bytes_in = conn_stats->in.bytes;
+    cctk_ctx->last_bytes_out = conn_stats->out.bytes;
+
+    #endif
 
     return cctk_fill_frame(&cctk, (struct cctk_frame *)buf);
 }
