@@ -522,7 +522,7 @@ maybe_send_settings (struct full_conn *conn)
 static int
 apply_peer_settings (struct full_conn *conn)
 {
-    uint32_t cfcw, sfcw, mids, ccre, itct, spct;
+    uint32_t cfcw, sfcw, mids, ccre, itct, spct, ntyp;
     unsigned n;
     const struct {
         uint32_t    tag;
@@ -535,6 +535,7 @@ apply_peer_settings (struct full_conn *conn)
         { QTAG_CCRE, &ccre, "CCRE", },
         { QTAG_ITCT, &itct, "ITCT", },
         { QTAG_SPCT, &spct, "SPCT", },
+        { QTAG_NTYP, &ntyp, "NTYP", },
     };
 
 #ifndef NDEBUG
@@ -558,6 +559,7 @@ apply_peer_settings (struct full_conn *conn)
         conn->fc_flags |= FC_CCTK;
     conn->fc_cctk.init_time = itct;
     conn->fc_cctk.send_period = spct;
+    conn->fc_cctk.net_type = ntyp;
 
     return 0;
 }
