@@ -134,6 +134,38 @@ void sockaddr_to_16(const struct sockaddr *sa, unsigned char *cip /*must point t
     }
 }
 
+unsigned int 
+lsquic_conn_buffered_sum(const struct lsquic_conn_public *conn_pub)
+{
+    unsigned int sum = 0;
+    
+    struct lsquic_hash *all_streams = conn_pub->all_streams;
+
+    for (struct lsquic_hash_elem *el = lsquic_hash_first(all_streams); el;
+                                     el = lsquic_hash_next(all_streams))
+    {
+        const lsquic_stream_t *stream = lsquic_hashelem_getdata(el);
+        sum += stream->sm_n_buffered;
+    }
+    return sum;
+}
+
+unsigned int 
+lsquic_conn_written_sum(const struct lsquic_conn_public *conn_pub)
+{
+    unsigned int sum = 0;
+    
+    struct lsquic_hash *all_streams = conn_pub->all_streams;
+
+    for (struct lsquic_hash_elem *el = lsquic_hash_first(all_streams); el;
+                                     el = lsquic_hash_next(all_streams))
+    {
+        const lsquic_stream_t *stream = lsquic_hashelem_getdata(el);
+        sum += stream->tosend_off;
+    }
+    return sum;
+}
+
 int
 lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t * send_ctl)
 {
@@ -201,24 +233,31 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
         cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
     else
         cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
-    
+
+    // BLEN - buffer length in connection level
+    cctk.blen = lsquic_conn_buffered_sum(conn_pub);
+
     #if LSQUIC_CONN_STATS
     
     const struct conn_stats *conn_stats = conn_pub->conn_stats;
 
     double retx_rate = (double) conn_stats->out.retx_packets / (double) conn_stats->out.packets;
     cctk.thpt = (unsigned long)((double)cctk.thpt * (1.0 - retx_rate));
-
+    unsigned long written_total = 0;
     unsigned long time_diff = cctk.stmp - cctk_ctx->last_ts;
     if( time_diff > 0 && cctk_ctx->last_ts > 0 ) {
         unsigned long bytes_diff_in = conn_stats->in.bytes - cctk_ctx->last_bytes_in;
         unsigned long bytes_diff_out = conn_stats->out.bytes - cctk_ctx->last_bytes_out;
         cctk.srat = 1000000 * bytes_diff_out / time_diff; 
         cctk.rrat = 1000000 * bytes_diff_in / time_diff;
+        written_total = lsquic_conn_written_sum(conn_pub);
+        unsigned long written_diff = written_total - cctk_ctx->last_written;
+        cctk.irat = 1000000 * written_diff / time_diff;
     }
     cctk_ctx->last_ts = cctk.stmp;
     cctk_ctx->last_bytes_in = conn_stats->in.bytes;
     cctk_ctx->last_bytes_out = conn_stats->out.bytes;
+    cctk_ctx->last_written = written_total;
 
     #endif
 
