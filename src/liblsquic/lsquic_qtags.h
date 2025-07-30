@@ -72,6 +72,7 @@
 #define QTAG_JCCO   TAG('J', 'C', 'C', 'O')
 /* Network TYPe of client */
 #define QTAG_NTYP   TAG('N', 'T', 'Y', 'P')
+#define QTAG_CCVE   TAG('C', 'C', 'V', 'E')
 /* Init RTT observed by client */
 //#define QTAG_IRTT   TAG('I', 'R', 'T', 'T')
 /* Suggest Sending Rate */

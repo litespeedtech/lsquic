@@ -1,6 +1,8 @@
 #ifndef LSQUIC_CCTK_H
 #define LSQUIC_CCTK_H
 
+#include <stddef.h>
+
 typedef struct lsquic_send_ctl lsquic_send_ctl_t;
 
 struct cctk_data {
@@ -25,6 +27,7 @@ struct cctk_data {
 };
 
 struct cctk_ctx {
+        unsigned char version; // Version of the CCTK protocol
         unsigned init_time;
         unsigned send_period;
         unsigned char net_type;
@@ -75,6 +78,12 @@ struct cctk_frame {
     unsigned int blen;          // Buffer length in connection level
 };
 #pragma pack()
+
+#define CCTK_SIZE_V1 (offsetof(struct cctk_frame, _key_srat))
+#define CCTK_SIZE_V2 (sizeof(struct cctk_frame))
+
+size_t
+lsquic_cctk_frame_size(const struct cctk_ctx *cctk_ctx);
 
 int
 lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len,  struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t *send_ctl);
