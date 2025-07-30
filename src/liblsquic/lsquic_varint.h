@@ -80,7 +80,7 @@ lsquic_varint_read_two (const unsigned char **p, const unsigned char *end,
                             struct varint_read2_state *);
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
-#include <lsquic_byteswap.h>
+#include "lsquic_byteswap.h"
 static inline void
 vint_write (void *dst, uint64_t val, uint64_t bits, size_t len)
 {
