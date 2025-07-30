@@ -555,9 +555,25 @@ apply_peer_settings (struct full_conn *conn)
     lsquic_full_conn_on_peer_config(conn, cfcw, sfcw, mids);
 
     if (ccre)
+    {
         conn->fc_flags |= FC_CCTK;
-    conn->fc_cctk.init_time = itct;
-    conn->fc_cctk.send_period = spct;
+        if (itct>=200 && itct<=5000)
+        {
+            conn->fc_cctk.init_time = itct;
+        }
+        else
+        {
+            conn->fc_cctk.init_time = 500;
+        }
+        if (spct>=1000 && spct<=5000)
+        {
+            conn->fc_cctk.send_period = spct;
+        }
+        else
+        {
+            conn->fc_cctk.send_period = 3000;
+        }
+    }
 
     return 0;
 }
@@ -2882,7 +2898,6 @@ generate_stop_waiting_frame (struct full_conn *conn)
 static void
 generate_cctk_frame (struct full_conn *conn)
 {
-    LSQ_INFO("------------ generate_cctk_frame---------------------");
     lsquic_packet_out_t *packet_out =
             get_writeable_packet(conn, sizeof(struct cctk_frame));
     if (!packet_out)

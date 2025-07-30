@@ -217,6 +217,13 @@ static const uint64_t min_vals[MAX_NUMERIC_TPI + 1] =
     [TPI_TIMESTAMPS]                        =  TS_WANT_THEM,
 };
 
+static const uint64_t def_cctk_vals[MAX_NUMERIC_CCTK_TPI+1] =
+{
+     [TPI_INIT_TIME_OF_CCTK]                =  500,
+     [TPI_SEND_PERIOD_OF_CCTK]              =  3000,
+};
+
+
 static const uint64_t max_cctk_vals[MAX_NUMERIC_CCTK_TPI + 1] =
 {
     [TPI_CC_REUSE]                          =  1,
@@ -675,14 +682,14 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
                         LSQ_DEBUG("numeric cctk value of %s is too large "
                                   "(%"PRIu64" vs maximum of %"PRIu64, tpi2str[tpi],
                                 params->tp_numerics_cctk[tpi], max_cctk_vals[tpi]);
-                        return -1;
+                        params->tp_numerics_cctk[tpi] = def_cctk_vals[tpi];
                     }
                     else if (params->tp_numerics_cctk[tpi]<min_cctk_vals[tpi])
                     {
                         LSQ_DEBUG("numeric cctkvalue of %s is too small "
                                   "(%"PRIu64" vs minimum of %"PRIu64, tpi2str[tpi],
                                 params->tp_numerics_cctk[tpi], min_cctk_vals[tpi]);
-                        return -1;
+                        params->tp_numerics_cctk[tpi] = def_cctk_vals[tpi];
                     }
                     break;
                 }
