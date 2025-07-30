@@ -6,6 +6,7 @@
 #ifndef LSQUIC_PACKET_OUT_H
 #define LSQUIC_PACKET_OUT_H 1
 
+#include "lsquic_packet_common.h"
 #include <sys/queue.h>
 
 struct malo;
@@ -214,14 +215,14 @@ lsquic_packet_out_avail (const lsquic_packet_out_t *p)
     return (unsigned short)(p->po_n_alloc - p->po_data_sz);
 }
 
-static inline unsigned
+static inline enum packno_bits
 lsquic_packet_out_packno_bits (const lsquic_packet_out_t *p)
 {
-    return (p->po_flags >> POBIT_SHIFT) & 0x3;
+    return (enum packno_bits)((p->po_flags >> POBIT_SHIFT) & 0x3);
 }
 
 static inline void
-lsquic_packet_out_set_packno_bits (lsquic_packet_out_t *p, unsigned b)
+lsquic_packet_out_set_packno_bits (lsquic_packet_out_t *p, enum packno_bits b)
 {
     p->po_flags &= ~(0x3 << POBIT_SHIFT);
     p->po_flags |= ((b) & 0x3) << POBIT_SHIFT;
@@ -335,16 +336,16 @@ lsquic_packet_out_kp (const lsquic_packet_out_t *p)
 }
 
 static inline void 
-lsquic_packet_out_set_pns (lsquic_packet_out_t *p, unsigned pns)
+lsquic_packet_out_set_pns (lsquic_packet_out_t *p, enum packnum_space pns)
 {
     p->po_flags &= ~(3 << POPNS_SHIFT);
     p->po_flags |= pns << POPNS_SHIFT;
 }
 
-static inline unsigned 
+static inline enum packnum_space
 lsquic_packet_out_pns (const lsquic_packet_out_t *p)
 {
-    return (p->po_flags >> POPNS_SHIFT) & 3;
+    return (enum packnum_space)((p->po_flags >> POPNS_SHIFT) & 3);
 }
 
 static inline void
