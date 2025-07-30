@@ -8431,7 +8431,6 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 static int
 write_cctk (struct ietf_full_conn *conn)
 {
-    LSQ_INFO("----------------------------- write_cctk ---------------------------");
     struct lsquic_packet_out *packet_out;
     int sz_sz = vint_size(sizeof(struct cctk_frame));
     int sz;
