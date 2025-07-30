@@ -1724,7 +1724,7 @@ send_ctl_can_send (struct lsquic_send_ctl *ctl)
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
     LSQ_DEBUG("%s: sc_flags: 0x%X, b_out: %u = (%u + %u); b_retx: %u; cwnd: %"PRIu64
         "; ccfc: %"PRIu64"/%"PRIu64"; n_scheduled: %d, n_in_flight_all: %d"
-        "; pa_burst: %d; pa_next: %lu; pa_now: %lu"
+        "; pa_burst: %d; pa_next: %"PRIu64"; pa_now: %"PRIu64
         , __func__, ctl->sc_flags,
         n_out, ctl->sc_bytes_unacked_all, ctl->sc_bytes_scheduled,
         ctl->sc_bytes_unacked_retx, cwnd,
