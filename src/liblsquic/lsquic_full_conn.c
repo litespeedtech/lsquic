@@ -578,6 +578,7 @@ apply_peer_settings (struct full_conn *conn)
     }
     conn->fc_cctk.version = (unsigned char) ccve;
     conn->fc_cctk.net_type = ntyp;
+
     return 0;
 }
 

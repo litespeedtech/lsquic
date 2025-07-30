@@ -37,6 +37,7 @@ struct cctk_ctx {
         unsigned long last_ts;
         unsigned long last_bytes_in;
         unsigned long last_bytes_out;
+        unsigned long last_written;
 };
 
 #pragma pack(1)

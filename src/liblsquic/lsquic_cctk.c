@@ -270,7 +270,6 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
         goto finish;
     }
 
-
     // BLEN - buffer length in connection level
     cctk.blen = lsquic_conn_buffered_sum(conn_pub);
 
