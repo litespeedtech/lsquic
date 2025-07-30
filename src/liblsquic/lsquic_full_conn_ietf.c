@@ -3703,6 +3703,7 @@ apply_trans_params (struct ietf_full_conn *conn,
     }
     conn->ifc_cctk.init_time = params->tpi_init_time_of_cctk;
     conn->ifc_cctk.send_period = params->tpi_send_period_of_cctk;
+    conn->ifc_cctk.version = params->tpi_cc_version;
     conn->ifc_cctk.net_type = params->tpi_net_type;
 
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
@@ -8432,10 +8433,10 @@ static int
 write_cctk (struct ietf_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
-    int sz_sz = vint_size(sizeof(struct cctk_frame));
-    int sz;
-
-    packet_out = get_writeable_packet(conn, sizeof(struct cctk_frame) + sz_sz /* frame size */ + 2 /* frame type*/);
+    int sz = lsquic_cctk_frame_size(&conn->ifc_cctk);
+    int sz_sz = vint_size(sz);
+    
+    packet_out = get_writeable_packet(conn, sz + sz_sz /* frame size */ + 2 /* frame type*/);
     if (!packet_out)
         return 0;
 

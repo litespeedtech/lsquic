@@ -522,7 +522,7 @@ maybe_send_settings (struct full_conn *conn)
 static int
 apply_peer_settings (struct full_conn *conn)
 {
-    uint32_t cfcw, sfcw, mids, ccre, itct, spct, ntyp;
+    uint32_t cfcw, sfcw, mids, ccre, itct, spct, ntyp, ccve;
     unsigned n;
     const struct {
         uint32_t    tag;
@@ -536,6 +536,7 @@ apply_peer_settings (struct full_conn *conn)
         { QTAG_ITCT, &itct, "ITCT", },
         { QTAG_SPCT, &spct, "SPCT", },
         { QTAG_NTYP, &ntyp, "NTYP", },
+        { QTAG_CCVE, &ccve, "CCVE", },
     };
 
 #ifndef NDEBUG
@@ -575,6 +576,7 @@ apply_peer_settings (struct full_conn *conn)
             conn->fc_cctk.send_period = 3000;
         }
     }
+    conn->fc_cctk.version = (unsigned char) ccve;
     conn->fc_cctk.net_type = ntyp;
 
     return 0;
@@ -2901,7 +2903,7 @@ static void
 generate_cctk_frame (struct full_conn *conn)
 {
     lsquic_packet_out_t *packet_out =
-            get_writeable_packet(conn, sizeof(struct cctk_frame));
+            get_writeable_packet(conn, lsquic_cctk_frame_size(&conn->fc_cctk));
     if (!packet_out)
         return;
 

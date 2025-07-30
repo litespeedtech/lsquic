@@ -72,8 +72,8 @@ const struct cctk_frame cctk_zero_frame = {
     .blen = 0
 };  
 
-int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
-    memcpy(frame, &cctk_zero_frame, sizeof(struct cctk_frame));
+int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame, size_t frame_len) {
+    memcpy(frame, &cctk_zero_frame, frame_len);
     frame->version = data->version;
     frame->stmp = data->stmp;
     frame->slst = data->slst;
@@ -88,11 +88,17 @@ int cctk_fill_frame(const struct cctk_data *data, struct cctk_frame *frame) {
     frame->mbw = data->mbw;
     frame->thpt = data->thpt;
     frame->plr = data->plr;
+    if (frame_len <= CCTK_SIZE_V1) {
+        return CCTK_SIZE_V1;
+    }
     frame->srat = data->srat;
     frame->rrat = data->rrat;
     frame->irat = data->irat;
     frame->blen = data->blen;
-    return sizeof(sizeof(struct cctk_frame));
+    if (frame_len <= CCTK_SIZE_V2) {
+        return CCTK_SIZE_V2;
+    }
+    return sizeof(struct cctk_frame);
 }
 
 enum CC_ALGS {
@@ -166,12 +172,28 @@ lsquic_conn_written_sum(const struct lsquic_conn_public *conn_pub)
     return sum;
 }
 
+size_t
+lsquic_cctk_frame_size(const struct cctk_ctx *cctk_ctx)
+{
+    switch (cctk_ctx->version)
+    {
+    case 1:
+        return CCTK_SIZE_V1;
+    case 2:
+    default:
+        return CCTK_SIZE_V2;
+    }
+}
+
 int
 lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk_ctx *cctk_ctx, lsquic_send_ctl_t * send_ctl)
 {
-    if( buf_len < sizeof(cctk_zero_frame) )
+    size_t cctk_size = lsquic_cctk_frame_size(cctk_ctx);
+    if (buf_len < cctk_size)
         return -1;
-    
+    else
+        buf_len = cctk_size;
+
     struct cctk_data cctk = {0};
     struct lsquic_conn_public *conn_pub = send_ctl->sc_conn_pub;
 
@@ -179,11 +201,30 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     lsquic_conn_get_sockaddr(conn_pub->lconn, (const struct sockaddr **)&local, (const struct sockaddr **)&remote);
     sockaddr_to_16(remote, cctk.cip);
 
+    switch (cctk_size)
+    {
+    case CCTK_SIZE_V1:
+        cctk.version = 1;
+        break;
+    case CCTK_SIZE_V2:
+    default:
+        cctk.version = 2;
+        break;
+    }
+    
     // STMP - timestamp
-    cctk.version = 2;
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     cctk.stmp = (unsigned long) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+
+    struct lsquic_bbr *bbr = get_cc_ctx(CC_ALG_BBR, send_ctl);
+    struct lsquic_cubic *cubic = get_cc_ctx(CC_ALG_CUBIC, send_ctl);
+    
+    // SLST - slow start
+    if (bbr)
+        cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
+    else
+        cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
 
     // NTYP - network type
     cctk.ntyp = cctk_ctx->net_type;
@@ -225,20 +266,14 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     }
     #endif
 
-    struct lsquic_bbr *bbr = get_cc_ctx(CC_ALG_BBR, send_ctl);
-    struct lsquic_cubic *cubic = get_cc_ctx(CC_ALG_CUBIC, send_ctl);
-    
-    // SLST - slow start
-    if (bbr)
-        cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
-    else
-        cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
+    if (cctk_ctx->version <= 1) {
+        goto finish;
+    }
 
     // BLEN - buffer length in connection level
     cctk.blen = lsquic_conn_buffered_sum(conn_pub);
 
     #if LSQUIC_CONN_STATS
-    
     const struct conn_stats *conn_stats = conn_pub->conn_stats;
 
     double retx_rate = (double) conn_stats->out.retx_packets / (double) conn_stats->out.packets;
@@ -254,12 +289,13 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
         unsigned long written_diff = written_total - cctk_ctx->last_written;
         cctk.irat = 1000000 * written_diff / time_diff;
     }
-    cctk_ctx->last_ts = cctk.stmp;
+    
     cctk_ctx->last_bytes_in = conn_stats->in.bytes;
     cctk_ctx->last_bytes_out = conn_stats->out.bytes;
     cctk_ctx->last_written = written_total;
-
     #endif
-
-    return cctk_fill_frame(&cctk, (struct cctk_frame *)buf);
+    
+finish:
+    cctk_ctx->last_ts = cctk.stmp;
+    return cctk_fill_frame(&cctk, (struct cctk_frame *)buf, buf_len);
 }

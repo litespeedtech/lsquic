@@ -1048,7 +1048,7 @@ gquic_gen_cctk_frame (unsigned char *buf, size_t bufsz, struct cctk_ctx *cctk_ct
 {
     unsigned bits, len_sz;
 
-    size_t tokens_sz = sizeof(struct cctk_frame);
+    size_t tokens_sz = lsquic_cctk_frame_size(cctk_ctx);
     bits = vint_val2bits(tokens_sz);
     len_sz = 1u << bits;
 
