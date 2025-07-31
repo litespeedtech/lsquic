@@ -171,6 +171,7 @@ typedef struct hs_ctx_st
     uint32_t    itct;
     uint32_t    spct;
     uint32_t    ntyp;
+    unsigned char    ccve;
     uint32_t    ssr;
     uint8_t     jcco;
     struct lsquic_str cctk;
@@ -1368,6 +1369,21 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         }
         else
             LSQ_INFO("unexpected NTYP");
+        break;
+
+    case QTAG_CCVE:
+        if (!is_client)
+        {
+            if (len != sizeof(hs_ctx->ccve))
+            {
+                LSQ_INFO("Unexpected size of CCVE: %u instead of %zu bytes",
+                        len, sizeof(hs_ctx->ccve));
+                return -1;
+            }
+            hs_ctx->ccve = *val;
+        }
+        else
+            LSQ_INFO("unexpected CCVE");
         break;
 
 /*    case QTAG_IRTT:
@@ -3559,6 +3575,12 @@ lsquic_enc_session_get_peer_setting (enc_session_t *enc_session_p,
         return 0;
     case QTAG_SPCT:
         *val = enc_session->hs_ctx.spct;
+        return 0;
+    case QTAG_NTYP:
+        *val = enc_session->hs_ctx.ntyp;
+        return 0;
+    case QTAG_CCVE:
+        *val = enc_session->hs_ctx.ccve;
         return 0;
     }
 

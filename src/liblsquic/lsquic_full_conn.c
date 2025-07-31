@@ -522,21 +522,22 @@ maybe_send_settings (struct full_conn *conn)
 static int
 apply_peer_settings (struct full_conn *conn)
 {
-    uint32_t cfcw, sfcw, mids, ccre, itct, spct, ntyp, ccve;
+    uint32_t cfcw, sfcw, mids, ccre=0, itct=0, spct=0, ntyp=0, ccve=1;
     unsigned n;
     const struct {
         uint32_t    tag;
         uint32_t   *val;
         const char *tag_str;
+        const char optional;
     } tags[] = {
-        { QTAG_CFCW, &cfcw, "CFCW", },
-        { QTAG_SFCW, &sfcw, "SFCW", },
-        { QTAG_MIDS, &mids, "MIDS", },
-        { QTAG_CCRE, &ccre, "CCRE", },
-        { QTAG_ITCT, &itct, "ITCT", },
-        { QTAG_SPCT, &spct, "SPCT", },
-        { QTAG_NTYP, &ntyp, "NTYP", },
-        { QTAG_CCVE, &ccve, "CCVE", },
+        { QTAG_CFCW, &cfcw, "CFCW", 0},
+        { QTAG_SFCW, &sfcw, "SFCW", 0},
+        { QTAG_MIDS, &mids, "MIDS", 0},
+        { QTAG_CCRE, &ccre, "CCRE", 1},
+        { QTAG_ITCT, &itct, "ITCT", 1},
+        { QTAG_SPCT, &spct, "SPCT", 1},
+        { QTAG_NTYP, &ntyp, "NTYP", 1},
+        { QTAG_CCVE, &ccve, "CCVE", 1},
     };
 
 #ifndef NDEBUG
@@ -549,7 +550,10 @@ apply_peer_settings (struct full_conn *conn)
                     conn->fc_conn.cn_enc_session, tags[n].tag, tags[n].val))
         {
             LSQ_INFO("peer did not supply value for %s", tags[n].tag_str);
-            return -1;
+            if (tags[n].optional)
+                continue;
+            else            
+                return -1;
         }
 
     LSQ_DEBUG("peer settings: CFCW: %u; SFCW: %u; MIDS: %u; CCRE: %u; ITCT: %u; SPCT: %u",
