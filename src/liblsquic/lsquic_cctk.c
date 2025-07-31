@@ -177,11 +177,11 @@ lsquic_cctk_frame_size(const struct cctk_ctx *cctk_ctx)
 {
     switch (cctk_ctx->version)
     {
-    case 1:
-        return CCTK_SIZE_V1;
     case 2:
-    default:
         return CCTK_SIZE_V2;
+    case 1:
+    default:
+        return CCTK_SIZE_V1;
     }
 }
 
@@ -203,12 +203,12 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
 
     switch (cctk_size)
     {
-    case CCTK_SIZE_V1:
-        cctk.version = 1;
-        break;
     case CCTK_SIZE_V2:
-    default:
         cctk.version = 2;
+        break;
+    case CCTK_SIZE_V1:
+    default:
+        cctk.version = 1;
         break;
     }
     
