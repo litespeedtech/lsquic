@@ -602,8 +602,11 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         tpi = tpi_val_2_enum(param_id);
         if (tpi <= LAST_TPI)
         {
-            if (set_of_ids & (1 << tpi))
+           /* if (set_of_ids & (1 << tpi))
+            {
+                LSQ_DEBUG("set_of_ids & (1 << tpi : tpi:%d", tpi);
                 return -1;
+            }*/
             set_of_ids |= 1 << tpi;
         }
         switch (tpi)

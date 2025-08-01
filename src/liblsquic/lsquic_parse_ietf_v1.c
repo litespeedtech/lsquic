@@ -48,6 +48,7 @@
 
 #define FRAME_TYPE_ACK_FREQUENCY    0xAF
 #define FRAME_TYPE_TIMESTAMP        0x2F5
+#define FRAME_TYPE_CCTK             0x60
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
@@ -1134,7 +1135,7 @@ ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
     uint64_t val;
     int s;
 
-    if (len > 0 && buf[0] < 0x70)
+    if (len > 0 && buf[0] < 0x40)
         return lsquic_iquic_byte2type[buf[0]];
 
     s = vint_read(buf, buf + len, &val);
@@ -1143,6 +1144,7 @@ ietf_v1_parse_frame_type (const unsigned char *buf, size_t len)
         {
         case FRAME_TYPE_ACK_FREQUENCY:  return QUIC_FRAME_ACK_FREQUENCY;
         case FRAME_TYPE_TIMESTAMP:      return QUIC_FRAME_TIMESTAMP;
+        case FRAME_TYPE_CCTK:           return QUIC_FRAME_CCTK;
         default:    break;
         }
 
