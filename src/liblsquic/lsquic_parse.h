@@ -371,7 +371,7 @@ lsquic_Q050_parse_packet_in_long_begin (struct lsquic_packet_in *, size_t length
 enum quic_frame_type
 lsquic_parse_frame_type_gquic_Q035_thru_Q046 (const unsigned char *, size_t);
 
-extern const enum quic_frame_type lsquic_iquic_byte2type[0x70];
+extern const enum quic_frame_type lsquic_iquic_byte2type[0x40];
 
 size_t
 lsquic_calc_stream_frame_header_sz_gquic (lsquic_stream_id_t stream_id,
