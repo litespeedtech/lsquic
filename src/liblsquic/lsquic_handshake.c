@@ -1960,6 +1960,7 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
     unsigned msg_len, server_config_sz;
     struct message_writer mw;
 
+
     if (enpub->enp_server_config->lsc_scfg && (enpub->enp_server_config->lsc_scfg->info.expy > (uint64_t)t))
         return enpub->enp_server_config;
 
@@ -2000,15 +2001,15 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
         return NULL;
 
     temp_scfg = &enpub->enp_server_config->lsc_scfg->info;
-    RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
-    RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
-    RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
+    memcpy(temp_scfg->skt_key, "abe55ythyerkfjsdklhgdjlsfslkf", sizeof(temp_scfg->skt_key));
+    memcpy(temp_scfg->sscid, "hqeroi1r7hsgjseowrwesg", sizeof(temp_scfg->sscid));
+    memcpy(temp_scfg->priv_key, "umlqq1/UVDbA+TBZteF6e73a4J4v4W3Jfj", sizeof(temp_scfg->priv_key));
     lsquic_c255_get_pub_key(temp_scfg->priv_key, spubs + 3);
     temp_scfg->aead = settings->es_aead;
     temp_scfg->kexs = settings->es_kexs;
     temp_scfg->pdmd = settings->es_pdmd;
     temp_scfg->orbt = 0;
-    temp_scfg->expy = t + settings->es_sttl;
+    temp_scfg->expy = 0xFFFFFFFFFFFFFFFF;
 
     MW_BEGIN(&mw, QTAG_SCFG, 8, enpub->enp_server_config->lsc_scfg->scfg);
     MW_WRITE_BUFFER(&mw, QTAG_VER, enpub->enp_ver_tags_buf,
