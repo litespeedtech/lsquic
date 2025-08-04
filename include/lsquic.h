@@ -473,6 +473,13 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Default allowed server webtransport streams count */
 #define LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS 10
 #endif
+
+struct lsquic_custom_0rtt {
+    unsigned char   sscid[16];
+    unsigned char   priv_key[32];
+    unsigned char   skt_key[16];
+};
+
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -1154,6 +1161,7 @@ struct lsquic_engine_settings {
      */
     unsigned        es_max_webtransport_server_streams;
 #endif    
+    struct lsquic_custom_0rtt  *custom_0rtt;
 };
 
 /* Initialize `settings' to default values */
