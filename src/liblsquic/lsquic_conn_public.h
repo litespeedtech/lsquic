@@ -49,6 +49,10 @@ struct lsquic_conn_public {
     }                               u;
     enum {
         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
+        CP_STREAM_WANT_CCTK     = 1 << 1,   /* Intention to send inital CCTK */
+        CP_STREAM_SEND_CCTK     = 1 << 2,   /* Sending of CCTK is enabled */
+        CP_CCTK_ENABLE          = 1 << 3,   /* flag to enable CCTK */
+        CP_PER_CONNECTION_CCTK  = 1 << 4,   /* CCTK is sent periodically as long as conn exists, otherwise stop ending it on closing stream */
     }                               cp_flags;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS

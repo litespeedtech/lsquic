@@ -122,7 +122,6 @@ enum full_conn_flags {
     FC_GOT_SREJ       = (1 <<24),   /* Don't schedule ACK alarm */
     FC_NOPROG_TIMEOUT = (1 <<25),
     FC_CCTK           = (1 <<26),
-    FC_SEND_CCTK      = (1 <<27),
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -2602,7 +2601,7 @@ cctk_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct full_conn *conn = ctx;
     LSQ_INFO("CCTK alarm rang: schedule CCTK frame to be generated");
-    conn->fc_flags |= FC_SEND_CCTK;
+    conn->fc_pub.cp_flags |= CP_STREAM_SEND_CCTK;
 }
 
 
@@ -3604,45 +3603,37 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         CLOSE_IF_NECESSARY();
     }
 
-    LSQ_DEBUG("LSCONN_WANT_CCTK: %d", conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK);
-    LSQ_DEBUG("FC_CCTK: %d", conn->fc_flags & FC_CCTK);
-    LSQ_DEBUG("FC_SEND_CCTK: %d", conn->fc_flags & FC_SEND_CCTK);
-
-    if (conn->fc_pub.lconn->cn_flags & LSCONN_WANT_CCTK)
+    if ((conn->fc_flags & FC_CCTK) && (conn->fc_pub.cp_flags & CP_STREAM_WANT_CCTK))
     {
-        if (conn->fc_flags & FC_CCTK)
+        conn->fc_pub.cp_flags |= CP_CCTK_ENABLE; // enable  CCTK
+        if (conn->fc_cctk.init_time>0)
         {
-            if (conn->fc_cctk.init_time > 0)
-            {
-                LSQ_INFO("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
-                lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.init_time*1000));
-            } else
-            {
-                LSQ_WARN("invalid cctk init_time: %d", conn->fc_cctk.init_time);
-            }
+            LSQ_INFO("set send CCTK alarm after: %d ms", conn->fc_cctk.init_time);
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.init_time*1000));
+        }
+        else
+        {
+            LSQ_WARN("invalid cctk init_time: %d", conn->fc_cctk.init_time);
         }
         // clear want cctk
-        conn->fc_pub.lconn->cn_flags &= ~LSCONN_WANT_CCTK;
+        conn->fc_pub.cp_flags &= ~CP_STREAM_WANT_CCTK;
     }
 
-    if (conn->fc_flags & FC_SEND_CCTK)
+    if ((conn->fc_pub.cp_flags & CP_CCTK_ENABLE) && (conn->fc_pub.cp_flags & CP_STREAM_SEND_CCTK))
     {
-        if (conn->fc_flags & FC_CCTK)
+        generate_cctk_frame(conn);
+        if (conn->fc_cctk.send_period>0)
         {
-
-            generate_cctk_frame(conn);
-            if (conn->fc_cctk.send_period > 0)
-            {
-                LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
-                lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.send_period*1000));
-            } else
-            {
-                LSQ_WARN("invalid cctk send_period: %d", conn->fc_cctk.send_period);
-            }
-            CLOSE_IF_NECESSARY();
+            LSQ_DEBUG("set send CCTK alarm after: %d ms", conn->fc_cctk.send_period);
+            lsquic_alarmset_set(&conn->fc_alset, AL_CCTK, lsquic_time_now()+(conn->fc_cctk.send_period*1000));
         }
+        else
+        {
+            LSQ_WARN("invalid cctk send_period: %d", conn->fc_cctk.send_period);
+        }
+        CLOSE_IF_NECESSARY();
         // clear send cctk
-        conn->fc_flags &= ~FC_SEND_CCTK;
+        conn->fc_pub.cp_flags &= ~CP_STREAM_SEND_CCTK;
     }
 
 

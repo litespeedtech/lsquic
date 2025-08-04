@@ -644,6 +644,14 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     struct stream_hq_frame *shf;
     struct uncompressed_headers *uh;
 
+    LSQ_DEBUG("CCTK lsquic_stream_destroy %d", stream->conn_pub->cp_flags & CP_PER_CONNECTION_CCTK);
+    if ((stream->conn_pub->cp_flags & CP_PER_CONNECTION_CCTK)==0 && (stream->stream_flags & STREAM_CCTK))
+    {
+        LSQ_DEBUG("stopping sending CCTK frame");
+        // disble all CCTK flags
+        stream->conn_pub->cp_flags &= ~CP_CCTK_ENABLE;
+    }
+
     stream->stream_flags |= STREAM_U_WRITE_DONE|STREAM_U_READ_DONE;
     if ((stream->stream_flags & (STREAM_ONNEW_DONE|STREAM_ONCLOSE_DONE)) ==
                                                             STREAM_ONNEW_DONE)
@@ -4177,7 +4185,8 @@ send_headers_ietf (struct lsquic_stream *stream,
                 stream_hblock_sent(stream);
                 LSQ_DEBUG("wrote all %zu bytes of header block", hblock_sz);
                 // want CCTK frame after sending headers
-                stream->conn_pub->lconn->cn_flags |= LSCONN_WANT_CCTK;
+                stream->conn_pub->cp_flags |= CP_STREAM_WANT_CCTK;
+                stream->stream_flags |= STREAM_CCTK;
                 goto end;
             }
             LSQ_DEBUG("wrote only %zd bytes of header block, stash", nw);
@@ -4237,8 +4246,8 @@ send_headers_gquic (struct lsquic_stream *stream,
         if (eos)
             stream->stream_flags |= STREAM_FIN_SENT;
         // want CCTK frame after sending headers
-        stream->conn_pub->lconn->cn_flags |= LSCONN_WANT_CCTK;
-        LSQ_INFO("sent headers");
+        stream->conn_pub->cp_flags |= CP_STREAM_WANT_CCTK;
+        stream->stream_flags |= STREAM_CCTK;
     }
     else
         LSQ_WARN("could not send headers: %s", strerror(errno));
