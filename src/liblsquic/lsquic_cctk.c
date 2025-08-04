@@ -221,19 +221,21 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     struct lsquic_cubic *cubic = get_cc_ctx(CC_ALG_CUBIC, send_ctl);
     
     // SLST - slow start
-    if (bbr)
-        cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
-    else
+    if (cubic)
         cctk.slst = (cubic->cu_cwnd < cubic->cu_ssthresh) ? 1 : 0;
+    else
+        cctk.slst = (bbr->bbr_mode == BBR_MODE_STARTUP) ? 1 : 0;
+        
 
     // NTYP - network type
     cctk.ntyp = cctk_ctx->net_type;
 
     // MFLG - max in flight bytes
-    unsigned int in_flight = send_ctl->sc_bytes_unacked_all;
+    unsigned long in_flight = send_ctl->sc_bytes_unacked_all;
     if( in_flight > cctk_ctx->max_in_flight ) {
         cctk_ctx->max_in_flight = in_flight;
     }
+    cctk.mflg = cctk_ctx->max_in_flight;
 
     // SRTT
     cctk.srtt = (unsigned int)conn_pub->rtt_stats.srtt;
@@ -272,7 +274,7 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
 
     // BLEN - buffer length in connection level
     cctk.blen = lsquic_conn_buffered_sum(conn_pub);
-
+    
     #if LSQUIC_CONN_STATS
     const struct conn_stats *conn_stats = conn_pub->conn_stats;
 
@@ -281,16 +283,16 @@ lsquic_write_cctk_frame_payload (unsigned char *buf, size_t buf_len, struct cctk
     unsigned long written_total = 0;
     unsigned long time_diff = cctk.stmp - cctk_ctx->last_ts;
     if( time_diff > 0 && cctk_ctx->last_ts > 0 ) {
-        unsigned long bytes_diff_in = conn_stats->in.bytes - cctk_ctx->last_bytes_in;
+        unsigned long bytes_diff_acked = (conn_stats->out.bytes - in_flight) - cctk_ctx->last_bytes_acked;
         unsigned long bytes_diff_out = conn_stats->out.bytes - cctk_ctx->last_bytes_out;
         cctk.srat = 1000000 * bytes_diff_out / time_diff; 
-        cctk.rrat = 1000000 * bytes_diff_in / time_diff;
+        cctk.rrat = 1000000 * bytes_diff_acked / time_diff;
         written_total = lsquic_conn_written_sum(conn_pub);
         unsigned long written_diff = written_total - cctk_ctx->last_written;
         cctk.irat = 1000000 * written_diff / time_diff;
     }
     
-    cctk_ctx->last_bytes_in = conn_stats->in.bytes;
+    cctk_ctx->last_bytes_acked = conn_stats->out.bytes - in_flight;
     cctk_ctx->last_bytes_out = conn_stats->out.bytes;
     cctk_ctx->last_written = written_total;
     #endif

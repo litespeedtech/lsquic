@@ -35,7 +35,7 @@ struct cctk_ctx {
         unsigned long max_bw;
         unsigned long max_cwnd; // Maximum congestion window bytes
         unsigned long last_ts;
-        unsigned long last_bytes_in;
+        unsigned long last_bytes_acked;
         unsigned long last_bytes_out;
         unsigned long last_written;
 };
