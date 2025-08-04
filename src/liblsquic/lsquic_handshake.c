@@ -2001,9 +2001,16 @@ get_valid_scfg (const struct lsquic_enc_session *enc_session,
         return NULL;
 
     temp_scfg = &enpub->enp_server_config->lsc_scfg->info;
-    memcpy(temp_scfg->skt_key, "abe55ythyerkfjsdklhgdjlsfslkf", sizeof(temp_scfg->skt_key));
-    memcpy(temp_scfg->sscid, "hqeroi1r7hsgjseowrwesg", sizeof(temp_scfg->sscid));
-    memcpy(temp_scfg->priv_key, "umlqq1/UVDbA+TBZteF6e73a4J4v4W3Jfj", sizeof(temp_scfg->priv_key));
+    if (settings->custom_0rtt) {
+        memcpy(temp_scfg->skt_key, settings->custom_0rtt->skt_key, sizeof(temp_scfg->skt_key));
+        memcpy(temp_scfg->sscid, settings->custom_0rtt->sscid, sizeof(temp_scfg->sscid));
+        memcpy(temp_scfg->priv_key, settings->custom_0rtt->sscid, sizeof(temp_scfg->priv_key));
+    } else {
+        RAND_bytes(temp_scfg->skt_key, sizeof(temp_scfg->skt_key));
+        RAND_bytes(temp_scfg->sscid, sizeof(temp_scfg->sscid));
+        RAND_bytes(temp_scfg->priv_key, sizeof(temp_scfg->priv_key));
+    }
+    
     lsquic_c255_get_pub_key(temp_scfg->priv_key, spubs + 3);
     temp_scfg->aead = settings->es_aead;
     temp_scfg->kexs = settings->es_kexs;
