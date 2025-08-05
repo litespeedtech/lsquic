@@ -14,12 +14,11 @@ OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
 OPTION(LSQUIC_WEBTRANSPORT "Enable WebTransport support" OFF)
 
 INCLUDE(GNUInstallDirs)
+INCLUDE(CheckSymbolExists)
 
 MESSAGE(STATUS "CMake v${CMAKE_VERSION}")
-
 IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # If using older glibc, need to link with -lrt.  See clock_getres(2).
-    include(CheckSymbolExists)
     check_symbol_exists(clock_getres "time.h" HAS_clock_getres_WITHOUT_LIBRT)
 
     if(NOT HAS_clock_getres_WITHOUT_LIBRT)
@@ -136,10 +135,6 @@ ENDIF()
 
 ENDIF() #MSVC
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS}")
-
-MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
-
 find_package(Perl)
 IF(NOT PERL_FOUND)
     MESSAGE(FATAL_ERROR "Perl not found -- need it to generate source code")
@@ -160,37 +155,41 @@ ELSE()
     ENDIF()
 ENDIF()
 
-IF (NOT DEFINED BORINGSSL_INCLUDE AND DEFINED BORINGSSL_DIR)
-    FIND_PATH(BORINGSSL_INCLUDE NAMES openssl/ssl.h
-                PATHS ${BORINGSSL_DIR}/include
+IF (NOT DEFINED SSLLIB_INCLUDE AND DEFINED LIBSSL_DIR)
+    FIND_PATH(SSLLIB_INCLUDE NAMES openssl/ssl.h
+                PATHS ${LIBSSL_DIR}/include
                 NO_DEFAULT_PATH)
 ENDIF()
 # This must be done before adding other include directories to take
 # precedence over header files from other SSL installs.
 
-IF (BORINGSSL_INCLUDE)
-    MESSAGE(STATUS "BoringSSL include directory ${BORINGSSL_INCLUDE}")
-    INCLUDE_DIRECTORIES(${BORINGSSL_INCLUDE})
+IF (SSLLIB_INCLUDE)
+    MESSAGE(STATUS "TLS library include directory ${SSLLIB_INCLUDE}")
+    INCLUDE_DIRECTORIES(${SSLLIB_INCLUDE})
 ELSE()
-    MESSAGE(FATAL_ERROR "BoringSSL headers not found")
+    MESSAGE(FATAL_ERROR "TLS library headers not found")
 ENDIF()
 
-IF (NOT DEFINED BORINGSSL_LIB AND DEFINED BORINGSSL_DIR)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS} -I${SSLLIB_INCLUDE}")
+
+MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
+
+IF (NOT DEFINED LIBSSL_LIB AND DEFINED LIBSSL_DIR)
     FOREACH(LIB_NAME ssl crypto)
         IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+            FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                 NAMES ${LIB_NAME}
-                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
-		PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
+                PATHS ${LIBSSL_DIR}/ ${LIBSSL_DIR}/ssl/ ${LIBSSL_DIR}/crypto/
+                PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
                 NO_DEFAULT_PATH)
         ELSE()
-            FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+            FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                 NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                PATHS ${BORINGSSL_DIR}/${LIB_NAME}
+                PATHS ${LIBSSL_DIR} ${LIBSSL_DIR}/ssl/ ${LIBSSL_DIR}/crypto/
                 NO_DEFAULT_PATH)
         ENDIF()
-        IF(BORINGSSL_LIB_${LIB_NAME})
-            MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+        IF(LIBSSL_LIB_${LIB_NAME})
+            MESSAGE(STATUS "Found ${LIB_NAME} library: ${LIBSSL_LIB_${LIB_NAME}}")
         ELSE()
             MESSAGE(STATUS "${LIB_NAME} library not found")
         ENDIF()
@@ -200,36 +199,66 @@ ELSE()
 
 
     FOREACH(LIB_NAME ssl crypto)
-        # If BORINGSSL_LIB is defined, try find each lib. Otherwise, user should define BORINGSSL_LIB_ssl,
-        # BORINGSSL_LIB_crypto and so on explicitly. For example, including boringssl and lsquic both via
+        # If LIBSSL_LIB is defined, try find each lib. Otherwise, user should define LIBSSL_LIB_ssl,
+        # LIBSSL_LIB_crypto and so on explicitly. For example, including boringssl and lsquic both via
         # add_subdirectory:
         #   add_subdirectory(third_party/boringssl)
-        #   set(BORINGSSL_LIB_ssl ssl)
-        #   set(BORINGSSL_LIB_crypto crypto)
+        #   set(LIBSSL_LIB_ssl ssl)
+        #   set(LIBSSL_LIB_crypto crypto)
         #   add_subdirectory(third_party/lsquic)
-        IF (DEFINED BORINGSSL_LIB)
+        IF (DEFINED LIBSSL_LIB)
             IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
-                FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                     NAMES ${LIB_NAME}
-                    PATHS ${BORINGSSL_LIB}
+                    PATHS ${LIBSSL_LIB}
                     PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
                     NO_DEFAULT_PATH)
             ELSE()
-                FIND_LIBRARY(BORINGSSL_LIB_${LIB_NAME}
+                FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                     NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                    PATHS ${BORINGSSL_LIB}
+                    PATHS ${LIBSSL_DIR} ${LIBSSL_DIR}/ssl ${LIBSSL_DIR}/crypto
                     PATH_SUFFIXES ${LIB_NAME}
                     NO_DEFAULT_PATH)
             ENDIF()
         ENDIF()
-        IF(BORINGSSL_LIB_${LIB_NAME})
-            MESSAGE(STATUS "Found ${LIB_NAME} library: ${BORINGSSL_LIB_${LIB_NAME}}")
+        IF(LIBSSL_LIB_${LIB_NAME})
+            MESSAGE(STATUS "Found ${LIB_NAME} library: ${LIBSSL_LIB_${LIB_NAME}}")
         ELSE()
-            MESSAGE(FATAL_ERROR "BORINGSSL_LIB_${LIB_NAME} library not found")
+            MESSAGE(FATAL_ERROR "LIBSSL_LIB_${LIB_NAME} library not found")
         ENDIF()
     ENDFOREACH()
 
 ENDIF()
+
+IF ("${LIBSSL_LIB_ssl}" MATCHES "\\.a" OR "${LIBSSL_LIB_ssl}" MATCHES "\\.lib")
+    SET(STATIC_BUILD "yes")
+ELSE()
+    SET(STATIC_BUILD "no")
+ENDIF()
+
+if ("${STATIC_BUILD}" STREQUAL "yes")
+    SET(CMAKE_REQUIRED_LIBRARIES "${LIBSSL_LIB_ssl};${LIBSSL_LIB_crypto}")
+    SET(CMAKE_EXE_LINKER_FLAGS "-pthread -lstdc++")
+ELSE()
+    SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath=${LIBSSL_DIR} -L${LIBSSL_DIR} -lssl -lcrypto")
+ENDIF()
+check_symbol_exists(SSL_provide_quic_data openssl/ssl.h HAVE_SSL_PROVIDE_QUIC_DATA)
+IF(NOT HAVE_SSL_PROVIDE_QUIC_DATA)
+    check_symbol_exists(SSL_set_quic_tls_cbs openssl/ssl.h HAVE_SSL_SET_QUIC_TLS_CBS)
+    IF(NOT HAVE_SSL_SET_QUIC_TLS_CBS)
+        MESSAGE(FATAL_ERROR "TLS library implementation contains no 3rd party quic api:")
+    ELSE()
+        SET(QUIC_TLS_LIB "OPENSSL")
+        MESSAGE(STATUS "TLS library is canonical OpenSSL")
+        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_OPENSSL")
+    ENDIF()
+ELSE()
+    SET(QUIC_TLS_LIB "BORINGSSL")
+    MESSAGE(STATUS "TLS library is BoringSSL")
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_BORINGSSL")
+ENDIF()
+UNSET(CMAKE_EXE_LINKER_FLAGS)
+UNSET(CMAKE_REQUIRED_LIBRARIES)
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 INCLUDE_DIRECTORIES(include)
@@ -276,7 +305,7 @@ ELSE()
     MESSAGE(STATUS "zlib not found")
 ENDIF()
 
-SET(LIBS lsquic ${BORINGSSL_LIB_ssl} ${BORINGSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
+SET(LIBS lsquic ${LIBSSL_LIB_ssl} ${LIBSSL_LIB_crypto} ${ZLIB_LIB} ${LIBS})
 
 IF (LSQUIC_BIN)
     FIND_PATH(EVENT_INCLUDE_DIR NAMES event2/event.h
