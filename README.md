@@ -123,14 +123,14 @@ Statically:
 
 ```
 # $BORINGSSL is the top-level BoringSSL directory from the previous step
-cmake -DBORINGSSL_DIR=$BORINGSSL .
+cmake -DLIBSSL_DIR=$BORINGSSL .
 make
 ```
 
 As a dynamic library:
 
 ```
-cmake -DLSQUIC_SHARED_LIB=1 -DBORINGSSL_DIR=$BORINGSSL .
+cmake -DLSQUIC_SHARED_LIB=1 -DLIBSSL_DIR=$BORINGSSL .
 make
 ```
 
