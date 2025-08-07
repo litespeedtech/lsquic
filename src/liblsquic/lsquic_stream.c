@@ -759,7 +759,7 @@ maybe_finish_stream (lsquic_stream_t *stream)
             && (stream->stream_flags & STREAM_FIN_REACHED))
     {
         LSQ_DEBUG("stopping sending CCTK frame");
-        // disble all CCTK flags
+        // disable all CCTK flags
         stream->conn_pub->cp_flags &= ~CP_CCTK_ENABLE;
     }
 }
