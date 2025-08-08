@@ -8458,7 +8458,7 @@ write_cctk (struct ietf_full_conn *conn)
     packet_out->po_regen_sz += sz;
     packet_out->po_frame_types |= QUIC_FTBIT_CCTK;
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
-    LSQ_INFO("wrote CCTK frame");
+    LSQ_DEBUG("write CCTK frame");
     return 1;
 }
 
@@ -8687,8 +8687,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
             LSQ_WARN("invalid cctk init_time: %d", conn->ifc_cctk.init_time);
         }
 
-        // clear want cctk
+        // clear want/send cctk
         conn->ifc_pub.cp_flags &= ~CP_STREAM_WANT_CCTK;
+        conn->ifc_pub.cp_flags &= ~CP_STREAM_SEND_CCTK;
     }
 
     if ((conn->ifc_pub.cp_flags & CP_CCTK_ENABLE) && (conn->ifc_pub.cp_flags & CP_STREAM_SEND_CCTK))

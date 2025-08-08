@@ -2919,7 +2919,7 @@ generate_cctk_frame (struct full_conn *conn)
     }
     lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CCTK;
-    LSQ_INFO("wrote CCTK frame: stream id: %"PRIu64,
+    LSQ_DEBUG("generate CCTK frame: stream id: %"PRIu64,
             conn->fc_max_peer_stream_id);
    // maybe_close_conn(conn);
 }
@@ -3615,8 +3615,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         {
             LSQ_WARN("invalid cctk init_time: %d", conn->fc_cctk.init_time);
         }
-        // clear want cctk
+        // clear want/send cctk
         conn->fc_pub.cp_flags &= ~CP_STREAM_WANT_CCTK;
+        conn->fc_pub.cp_flags &= ~CP_STREAM_SEND_CCTK;
     }
 
     if ((conn->fc_pub.cp_flags & CP_CCTK_ENABLE) && (conn->fc_pub.cp_flags & CP_STREAM_SEND_CCTK))

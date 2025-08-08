@@ -650,6 +650,8 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         LSQ_DEBUG("stopping sending CCTK frame");
         // disble all CCTK flags
         stream->conn_pub->cp_flags &= ~CP_CCTK_ENABLE;
+        stream->conn_pub->cp_flags &= ~CP_STREAM_SEND_CCTK;
+        stream->conn_pub->cp_flags &= ~CP_STREAM_WANT_CCTK;
     }
 
     stream->stream_flags |= STREAM_U_WRITE_DONE|STREAM_U_READ_DONE;
@@ -754,14 +756,6 @@ maybe_finish_stream (lsquic_stream_t *stream)
     if (0 == (stream->stream_flags & STREAM_FINISHED) &&
                                                     stream_is_finished(stream))
         lsquic_stream_force_finish(stream);
-
-    if ((stream->conn_pub->cp_flags & CP_PER_CONNECTION_CCTK) == 0 && (stream->stream_flags & STREAM_CCTK)
-            && (stream->stream_flags & STREAM_FIN_REACHED))
-    {
-        LSQ_DEBUG("stopping sending CCTK frame");
-        // disable all CCTK flags
-        stream->conn_pub->cp_flags &= ~CP_CCTK_ENABLE;
-    }
 }
 
 
@@ -4354,6 +4348,15 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
     }
 
     SM_HISTORY_APPEND(stream, SHE_RESET);
+
+    if ((stream->conn_pub->cp_flags & CP_PER_CONNECTION_CCTK) == 0 && (stream->stream_flags & STREAM_CCTK))
+    {
+        LSQ_DEBUG("stopping sending CCTK frame");
+        // disable all CCTK flags
+        stream->conn_pub->cp_flags &= ~CP_CCTK_ENABLE;
+        stream->conn_pub->cp_flags &= ~CP_STREAM_SEND_CCTK;
+        stream->conn_pub->cp_flags &= ~CP_STREAM_WANT_CCTK;
+    }
 
     LSQ_INFO("reset, error code %"PRIu64, error_code);
     stream->error_code = error_code;
