@@ -8,7 +8,7 @@
 #include <openssl/x509.h>
 #include <openssl/rand.h>
 #include <openssl/curve25519.h>
-#include <openssl/hkdf.h>
+#include <openssl/kdf.h>
 #include <openssl/hmac.h>
 
 #include <zlib.h>
@@ -206,7 +206,7 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
                 uint16_t sub_key_len, uint8_t *sub_key,
                 uint8_t *c_hp, uint8_t *s_hp)
 {
-    const unsigned L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len
+    size_t L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len
             + sub_key_len
             + (c_hp ? c_key_len : 0)
             + (s_hp ? s_key_len : 0)
@@ -218,14 +218,35 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
       + 32                      /* Subkey */
       + EVP_MAX_KEY_LENGTH * 2  /* Header protection */
     ];
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+    int ret = -1;
 
     assert((size_t) L <= sizeof(output));
 
-#ifndef NDEBUG
-    const int s =
+    if (ctx == NULL)
+        goto err;
+    
+    if (EVP_PKEY_derive_init(ctx) <= 0)
+        goto err;
+#ifdef HAVE_BORINGSSL
+    if (EVP_PKEY_CTX_hkdf_mode(ctx, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
+        goto err;
+#else
+    if (EVP_PKEY_CTX_set_hkdf_mode(ctx, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
+        goto err;
 #endif
-    HKDF_expand(output, L, EVP_sha256(), prk, 32, info, info_len);
-    assert(s);
+    if (EVP_PKEY_CTX_set_hkdf_md(ctx, EVP_sha256()) <= 0)
+        goto err;
+
+    if(EVP_PKEY_CTX_set1_hkdf_key(ctx, prk, 32) <= 0)
+        goto err;
+
+    if (EVP_PKEY_CTX_add1_hkdf_info(ctx, info, info_len) <= 0)
+        goto err;
+
+    if (EVP_PKEY_derive(ctx, output, &L) <= 0)
+        goto err;
+
     p = output;
     if (c_key_len)
     {
@@ -262,7 +283,10 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
         memcpy(s_hp, p, s_key_len);
         p += s_key_len;
     }
-    return 0;
+    ret = 0;
+err:
+    EVP_PKEY_CTX_free(ctx);
+    return ret;
 }
 
 
