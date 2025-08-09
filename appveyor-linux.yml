@@ -20,7 +20,7 @@ install:
         echo cached
 
     else
-
+        ccache -C
         git clone https://boringssl.googlesource.com/boringssl
 
         cd boringssl
