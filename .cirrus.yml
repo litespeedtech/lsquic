@@ -15,6 +15,6 @@ task:
     script:
         - git submodule init
         - git submodule update
-        - cmake -DBORINGSSL_DIR=$PWD/boringssl .
+        - cmake -DLIBSSL_DIR=$PWD/boringssl .
         - make
         - make test
