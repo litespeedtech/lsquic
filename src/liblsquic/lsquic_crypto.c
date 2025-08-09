@@ -167,12 +167,28 @@ void lsquic_serialize_fnv128_short(uint128 v, uint8_t *md)
 #endif
 
 
-static void sha256(const uint8_t *buf, int len, uint8_t *h)
+static int sha256(const uint8_t *buf, int len, uint8_t *h)
 {
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    SHA256_Update(&ctx, buf, len);
-    SHA256_Final(h, &ctx);
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned int outlen = 0;
+    int ret = -1;
+
+    if (ctx == NULL)
+        return -1;
+
+    if (!EVP_DigestInit(ctx, EVP_sha256()))
+        goto err;
+
+    if (!EVP_DigestUpdate(ctx, buf, len))
+        goto err;
+
+    if (!EVP_DigestFinal(ctx, h, &outlen))
+        goto err;
+
+    ret = 0;
+err:
+    EVP_MD_CTX_free(ctx);
+    return ret;
 }
 
 
@@ -461,7 +477,9 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
     EVP_MD_CTX sign_context;
     EVP_PKEY_CTX* pkey_ctx = NULL;
     
-    sha256(chlo_data, chlo_data_len, chlo_hash);
+    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
+        return -1;
+
     EVP_MD_CTX_init(&sign_context);
     if (!EVP_DigestSignInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)priv_key))
         return -1;
@@ -504,7 +522,9 @@ verify_prof0 (const uint8_t *chlo_data, size_t chlo_data_len,
     EVP_PKEY_CTX* pkey_ctx = NULL;
     int ret = 0;
     EVP_MD_CTX_init(&sign_context);
-    sha256(chlo_data, chlo_data_len, chlo_hash);
+    
+    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
+        return -3;
     
     // discarding const below to quiet compiler warning on call to ssl library code
     if (!EVP_DigestVerifyInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)pub_key))
