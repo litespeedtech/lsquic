@@ -39,7 +39,7 @@ install:
 
     git submodule update --checkout --force --recursive
 
-    cmake -DBORINGSSL_DIR=$PWD/boringssl .
+    cmake -DLIBSSL_DIR=$PWD/boringssl .
 
     make
 
