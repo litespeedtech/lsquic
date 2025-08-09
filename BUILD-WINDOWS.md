@@ -86,7 +86,7 @@ to build an optimized version of the library, but that won't build tests):
    cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DBUILD_SHARED_LIBS=OFF ^
         -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_BUILD_TYPE=Debug ^
         -DCMAKE_TOOLCHAIN_FILE=c:/tools/vcpkg/scripts/buildsystems/vcpkg.cmake ^
-        -DBORINGSSL_DIR=%boringssl% .
+        -DLIBSSL_DIR=%boringssl% .
    ```
 
 Compile everything (add `/m` flag if you have processors to spare):
