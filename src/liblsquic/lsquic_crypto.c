@@ -7,7 +7,7 @@
 #include <openssl/stack.h>
 #include <openssl/x509.h>
 #include <openssl/rand.h>
-#include <openssl/curve25519.h>
+#include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/hmac.h>
 
@@ -358,13 +358,44 @@ lsquic_export_key_material(const unsigned char *ikm, uint32_t ikm_len,
 
 void lsquic_c255_get_pub_key(unsigned char *priv_key, unsigned char pub_key[32])
 {
-    X25519_public_from_private(pub_key, priv_key);
+    int len = 32;
+    size_t outlen;
+    EVP_PKEY *key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, priv_key, len);
+    
+    if (key != NULL)
+        EVP_PKEY_get_raw_public_key(key, pub_key, &outlen);
+    EVP_PKEY_free(key);
 }
 
 
 int lsquic_c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, unsigned char *shared_key)
 {
-    return X25519(shared_key, priv_key, peer_pub_key);
+    int ret = -1;
+    int len = 32;
+    size_t outlen;
+    EVP_PKEY *my_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, priv_key, len);
+    EVP_PKEY *pub_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, peer_pub_key, len);
+    EVP_PKEY_CTX *ctx = NULL;
+
+    if (my_key == NULL || pub_key == NULL)
+        goto err;
+
+    ctx = EVP_PKEY_CTX_new(my_key, NULL);
+    if (ctx == NULL)
+        goto err;
+
+    if (!EVP_PKEY_derive_init(ctx))
+        goto err;
+    if (!EVP_PKEY_derive_set_peer(ctx, pub_key))
+        goto err;
+    if (!EVP_PKEY_derive(ctx, shared_key, &outlen))
+        goto err;
+    ret = 0;
+err:
+    EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(pub_key);
+    EVP_PKEY_free(my_key);
+    return ret;
 }
 
 
