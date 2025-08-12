@@ -238,7 +238,7 @@ ENDIF()
 
 if ("${STATIC_BUILD}" STREQUAL "yes")
     SET(CMAKE_REQUIRED_LIBRARIES "${LIBSSL_LIB_ssl};${LIBSSL_LIB_crypto}")
-    SET(CMAKE_EXE_LINKER_FLAGS "-pthread -lstdc++")
+    LIST(APPEND CMAKE_REQUIRED_LIBRARIES "-pthread -lstdc++")
 ELSE()
     SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath=${LIBSSL_DIR} -L${LIBSSL_DIR} -lssl -lcrypto")
 ENDIF()
