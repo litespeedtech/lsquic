@@ -49,6 +49,9 @@
 #include "../src/liblsquic/lsquic_hash.h"
 #if LSQUIC_QIR
 /* include directly for reset_stream testing */
+#include "../src/liblsquic/lsquic_sfcw.h"
+#include "../src/liblsquic/lsquic_varint.h"
+#include "../src/liblsquic/lsquic_hq.h"
 #include "../src/liblsquic/lsquic_stream.h"
 /* include directly for retire_cid testing */
 #include "../src/liblsquic/lsquic_conn.h"
