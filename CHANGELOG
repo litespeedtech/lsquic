@@ -1,6 +1,8 @@
-2025-07-17
+2025-08-13
     - 4.3.1
-    - Fix a memory leak in lsquic_engine_packet_in()
+    - Fix a memory leak in packet processing.
+    - Refactor macros to inline functions.
+    - Refactor build system and some crypto APIs to be compatible with openssl.
 
 2025-06-17
     - 4.3.0
