@@ -5,8 +5,8 @@ if exist ".\boringssl\CMakeLists.txt" (
 ) else (
     git clone https://boringssl.googlesource.com/boringssl
     cd boringssl
-    git checkout cf8d3ad3cea51cf7184307d54f465da62b7d8408
-    cmake -DCMAKE_GENERATOR_PLATFORM=x64 --config Debug -DBUILD_SHARED_LIBS=OFF -DOPENSSL_NO_ASM=1 .
+    git checkout 0.20250807.0
+    cmake -DCMAKE_GENERATOR_PLATFORM=x64 -DCMAKE_BUILD_TYPE=Debug -DBUILD_SHARED_LIBS=OFF -DOPENSSL_NO_ASM=1 .
     msbuild /m ALL_BUILD.vcxproj
     cd ..
 )

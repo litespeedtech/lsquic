@@ -119,6 +119,7 @@ SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4459")	# hide global declaration
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4706")	# assignment within conditional expression
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4090")	# different 'const' qualifier (TODO: debug ls-sfparser.c)
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4305")	# truncation from double to float
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4201") # Allow nameless structs
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
 IF(LSQUIC_SHARED_LIB)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_SHARED_LIB")
@@ -239,7 +240,7 @@ ENDIF()
 if ("${STATIC_BUILD}" STREQUAL "yes")
     SET(CMAKE_REQUIRED_INCLUDES "${SSLLIB_INCLUDE}")
     SET(CMAKE_REQUIRED_LIBRARIES "${LIBSSL_LIB_ssl};${LIBSSL_LIB_crypto}")
-    SET(CMAKE_EXE_LINKER_FLAGS "-pthread -lstdc++")
+    LIST(APPEND CMAKE_REQUIRED_LIBRARIES "-pthread -lstdc++")
 ELSE()
     SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath=${LIBSSL_DIR} -L${LIBSSL_DIR} -lssl -lcrypto")
 ENDIF()

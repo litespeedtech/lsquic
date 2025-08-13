@@ -7,8 +7,8 @@
 #include <openssl/stack.h>
 #include <openssl/x509.h>
 #include <openssl/rand.h>
-#include <openssl/curve25519.h>
-#include <openssl/hkdf.h>
+#include <openssl/evp.h>
+#include <openssl/kdf.h>
 #include <openssl/hmac.h>
 
 #include <zlib.h>
@@ -167,12 +167,28 @@ void lsquic_serialize_fnv128_short(uint128 v, uint8_t *md)
 #endif
 
 
-static void sha256(const uint8_t *buf, int len, uint8_t *h)
+static int sha256(const uint8_t *buf, int len, uint8_t *h)
 {
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    SHA256_Update(&ctx, buf, len);
-    SHA256_Final(h, &ctx);
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned int outlen = 0;
+    int ret = -1;
+
+    if (ctx == NULL)
+        return -1;
+
+    if (!EVP_DigestInit(ctx, EVP_sha256()))
+        goto err;
+
+    if (!EVP_DigestUpdate(ctx, buf, len))
+        goto err;
+
+    if (!EVP_DigestFinal(ctx, h, &outlen))
+        goto err;
+
+    ret = 0;
+err:
+    EVP_MD_CTX_free(ctx);
+    return ret;
 }
 
 
@@ -206,7 +222,7 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
                 uint16_t sub_key_len, uint8_t *sub_key,
                 uint8_t *c_hp, uint8_t *s_hp)
 {
-    const unsigned L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len
+    size_t L = c_key_len + s_key_len + c_key_iv_len + s_key_iv_len
             + sub_key_len
             + (c_hp ? c_key_len : 0)
             + (s_hp ? s_key_len : 0)
@@ -218,14 +234,35 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
       + 32                      /* Subkey */
       + EVP_MAX_KEY_LENGTH * 2  /* Header protection */
     ];
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+    int ret = -1;
 
     assert((size_t) L <= sizeof(output));
 
-#ifndef NDEBUG
-    const int s =
+    if (ctx == NULL)
+        goto err;
+    
+    if (EVP_PKEY_derive_init(ctx) <= 0)
+        goto err;
+#ifdef HAVE_BORINGSSL
+    if (EVP_PKEY_CTX_hkdf_mode(ctx, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
+        goto err;
+#else
+    if (EVP_PKEY_CTX_set_hkdf_mode(ctx, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) <= 0)
+        goto err;
 #endif
-    HKDF_expand(output, L, EVP_sha256(), prk, 32, info, info_len);
-    assert(s);
+    if (EVP_PKEY_CTX_set_hkdf_md(ctx, EVP_sha256()) <= 0)
+        goto err;
+
+    if(EVP_PKEY_CTX_set1_hkdf_key(ctx, prk, 32) <= 0)
+        goto err;
+
+    if (EVP_PKEY_CTX_add1_hkdf_info(ctx, info, info_len) <= 0)
+        goto err;
+
+    if (EVP_PKEY_derive(ctx, output, &L) <= 0)
+        goto err;
+
     p = output;
     if (c_key_len)
     {
@@ -262,7 +299,10 @@ int lshkdf_expand(const unsigned char *prk, const unsigned char *info, int info_
         memcpy(s_hp, p, s_key_len);
         p += s_key_len;
     }
-    return 0;
+    ret = 0;
+err:
+    EVP_PKEY_CTX_free(ctx);
+    return ret;
 }
 
 
@@ -318,13 +358,44 @@ lsquic_export_key_material(const unsigned char *ikm, uint32_t ikm_len,
 
 void lsquic_c255_get_pub_key(unsigned char *priv_key, unsigned char pub_key[32])
 {
-    X25519_public_from_private(pub_key, priv_key);
+    int len = 32;
+    size_t outlen;
+    EVP_PKEY *key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, priv_key, len);
+    
+    if (key != NULL)
+        EVP_PKEY_get_raw_public_key(key, pub_key, &outlen);
+    EVP_PKEY_free(key);
 }
 
 
 int lsquic_c255_gen_share_key(unsigned char *priv_key, unsigned char *peer_pub_key, unsigned char *shared_key)
 {
-    return X25519(shared_key, priv_key, peer_pub_key);
+    int ret = -1;
+    int len = 32;
+    size_t outlen;
+    EVP_PKEY *my_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, priv_key, len);
+    EVP_PKEY *pub_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, peer_pub_key, len);
+    EVP_PKEY_CTX *ctx = NULL;
+
+    if (my_key == NULL || pub_key == NULL)
+        goto err;
+
+    ctx = EVP_PKEY_CTX_new(my_key, NULL);
+    if (ctx == NULL)
+        goto err;
+
+    if (!EVP_PKEY_derive_init(ctx))
+        goto err;
+    if (!EVP_PKEY_derive_set_peer(ctx, pub_key))
+        goto err;
+    if (!EVP_PKEY_derive(ctx, shared_key, &outlen))
+        goto err;
+    ret = 0;
+err:
+    EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(pub_key);
+    EVP_PKEY_free(my_key);
+    return ret;
 }
 
 
@@ -437,7 +508,9 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
     EVP_MD_CTX sign_context;
     EVP_PKEY_CTX* pkey_ctx = NULL;
     
-    sha256(chlo_data, chlo_data_len, chlo_hash);
+    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
+        return -1;
+
     EVP_MD_CTX_init(&sign_context);
     if (!EVP_DigestSignInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)priv_key))
         return -1;
@@ -480,7 +553,9 @@ verify_prof0 (const uint8_t *chlo_data, size_t chlo_data_len,
     EVP_PKEY_CTX* pkey_ctx = NULL;
     int ret = 0;
     EVP_MD_CTX_init(&sign_context);
-    sha256(chlo_data, chlo_data_len, chlo_hash);
+    
+    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
+        return -3;
     
     // discarding const below to quiet compiler warning on call to ssl library code
     if (!EVP_DigestVerifyInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)pub_key))
