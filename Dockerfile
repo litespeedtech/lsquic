@@ -26,7 +26,7 @@ RUN git clone --depth=1 https://github.com/google/boringssl.git && \
 
 ENV EXTRA_CFLAGS -DLSQUIC_QIR=1
 RUN cd /src/lsquic && \
-    cmake -DLIBSSL_DIR=/src/boringssl -D LIBSSL_LIB_crypto=/src/boringssl/build/crypto/libcrypto.a -DLIBSSL_LIB_SSL=/src/boringssl/build/ssl/libssl.a . && \
+    cmake -DLIBSSL_DIR=/src/boringssl . && \
     make
 
 RUN cd lsquic && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
