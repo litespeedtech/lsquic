@@ -505,39 +505,46 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
 {
     uint8_t chlo_hash[32] = {0};
     size_t chlo_hash_len = 32; /* SHA256 */
-    EVP_MD_CTX sign_context;
+    EVP_MD_CTX *sign_context = NULL;
     EVP_PKEY_CTX* pkey_ctx = NULL;
-    
-    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
-        return -1;
+    int ret = -1;
 
-    EVP_MD_CTX_init(&sign_context);
-    if (!EVP_DigestSignInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)priv_key))
-        return -1;
-    
+    if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
+        goto err;
+
+    sign_context = EVP_MD_CTX_new();
+    if (sign_context == NULL)
+        goto err;
+
+    if (!EVP_DigestSignInit(sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)priv_key))
+        goto err;
+
     EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING);
     EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1);
     
-    if (!EVP_DigestSignUpdate(&sign_context, s_hs_signature, sizeof(s_hs_signature)) ||
-        !EVP_DigestSignUpdate(&sign_context, (const uint8_t*)(&chlo_hash_len), 4) ||
-        !EVP_DigestSignUpdate(&sign_context, chlo_hash, chlo_hash_len) ||
-        !EVP_DigestSignUpdate(&sign_context, scfg_data, scfg_data_len))
+    if (!EVP_DigestSignUpdate(sign_context, s_hs_signature, sizeof(s_hs_signature)) ||
+        !EVP_DigestSignUpdate(sign_context, (const uint8_t*)(&chlo_hash_len), 4) ||
+        !EVP_DigestSignUpdate(sign_context, chlo_hash, chlo_hash_len) ||
+        !EVP_DigestSignUpdate(sign_context, scfg_data, scfg_data_len))
     {
-        return -1;
+        goto err;
     }
     
     size_t len = 0;
-    if (!EVP_DigestSignFinal(&sign_context, NULL, &len)) {
-        return -1;
+    if (!EVP_DigestSignFinal(sign_context, NULL, &len)) {
+        goto err;
     }
 
+    ret = -2;
     if (len > *buf_len)
-        return -2;
+        goto err;
     if (buf)
-        EVP_DigestSignFinal(&sign_context, buf, buf_len);
-    
-    EVP_MD_CTX_cleanup(&sign_context);
-    return 0;
+        EVP_DigestSignFinal(sign_context, buf, buf_len);
+
+    ret = 0;
+err:
+    EVP_MD_CTX_free(sign_context);
+    return ret;
 }
 
 
@@ -549,37 +556,44 @@ verify_prof0 (const uint8_t *chlo_data, size_t chlo_data_len,
 {
     uint8_t chlo_hash[32] = {0};
     size_t chlo_hash_len = 32; /* SHA256 */
-    EVP_MD_CTX sign_context;
+    EVP_MD_CTX *sign_context = NULL;
     EVP_PKEY_CTX* pkey_ctx = NULL;
-    int ret = 0;
-    EVP_MD_CTX_init(&sign_context);
+    int ret = -3;
+
+    sign_context = EVP_MD_CTX_new();
+    if (sign_context == NULL)
+        goto err;
     
     if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
-        return -3;
-    
+        goto err;
+
+    ret = -4;
     // discarding const below to quiet compiler warning on call to ssl library code
-    if (!EVP_DigestVerifyInit(&sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)pub_key))
-        return -4;
+    if (!EVP_DigestVerifyInit(sign_context, &pkey_ctx, EVP_sha256(), NULL, (EVP_PKEY *)pub_key))
+        goto err;
     
     EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING);
     EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1);
     
-    
-    if (!EVP_DigestVerifyUpdate(&sign_context, s_hs_signature, sizeof(s_hs_signature)) ||
-        !EVP_DigestVerifyUpdate(&sign_context, (const uint8_t*)(&chlo_hash_len), 4) ||
-        !EVP_DigestVerifyUpdate(&sign_context, chlo_hash, chlo_hash_len) ||
-        !EVP_DigestVerifyUpdate(&sign_context, scfg_data, scfg_data_len))
+   
+    ret = -3; /* set to -3, to avoid same as "not enough data" -2 */
+    if (!EVP_DigestVerifyUpdate(sign_context, s_hs_signature, sizeof(s_hs_signature)) ||
+        !EVP_DigestVerifyUpdate(sign_context, (const uint8_t*)(&chlo_hash_len), 4) ||
+        !EVP_DigestVerifyUpdate(sign_context, chlo_hash, chlo_hash_len) ||
+        !EVP_DigestVerifyUpdate(sign_context, scfg_data, scfg_data_len))
     {
-        return -3;  /* set to -3, to avoid same as "not enough data" -2 */
+        goto err;
     }
     
-    ret = EVP_DigestVerifyFinal(&sign_context, buf, len);
-    EVP_MD_CTX_cleanup(&sign_context);
+    ret = EVP_DigestVerifyFinal(sign_context, buf, len);
     
     if (ret == 1)
-        return 0; //OK
+        ret =  0; //OK
     else
-        return -1;  //failed
+        ret = -1;  //failed
+err:
+    EVP_MD_CTX_free(sign_context);
+    return ret;
 }
 
 
