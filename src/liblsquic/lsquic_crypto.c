@@ -598,9 +598,13 @@ lsquic_crypto_init (void)
 {
     if (crypto_inited)
         return ;
-    
+
+/* OpenSSL initializes automatically and is no need to call init if we use
+   default options. */
+#ifdef HAVE_BORINGSSL
     //SSL_library_init();
     CRYPTO_library_init();
+#endif
     /* XXX Should we seed? If yes, wherewith? */ // RAND_seed(seed, seed_len);
     
 #if defined( __x86_64 )||defined( __x86_64__ )
