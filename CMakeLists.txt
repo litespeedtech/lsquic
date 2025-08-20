@@ -6,6 +6,7 @@ PROJECT(lsquic C CXX)
 
 SET(LIBS "-lstdc++")
 
+SET(LSQUIC_LIBSSL "" CACHE STRING "Specify SSL library used, can be BORINGSSL or OPENSSL")
 OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
 OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
@@ -158,22 +159,27 @@ ENDIF()
 
 IF(DEFINED BORINGSSL_DIR AND NOT DEFINED LIBSSL_DIR)
     SET(LIBSSL_DIR ${BORINGSSL_DIR})
+    SET(LSQUIC_LIBSSL "BORINGSSL")
 ENDIF()
 
 IF(DEFINED BORINGSSL_LIB AND NOT DEFINED LIBSSL_LIB)
     SET(LIBSSL_LIB ${BORINGSSL_LIB})
+    SET(LSQUIC_LIBSSL "BORINGSSL")
 ENDIF()
 
 IF(DEFINED BORINGSSL_LIB_ssl AND NOT DEFINED LIBSSL_LIB_ssl)
     SET(LIBSSL_LIB_ssl ${BORINGSSL_LIB_ssl})
+    SET(LSQUIC_LIBSSL "BORINGSSL")
 ENDIF()
 
 IF(DEFINED BORINGSSL_LIB_crypto AND NOT DEFINED LIBSSL_LIB_crypto)
     SET(LIBSSL_LIB_crypto ${BORINGSSL_LIB_crypto})
+    SET(LSQUIC_LIBSSL "BORINGSSL")
 ENDIF()
 
 IF (DEFINED BORINGSSL_INCLUDE AND NOT DEFINED SSLLIB_INCLUDE)
     SET(SSLLIB_INCLUDE ${BORINGSSL_INCLUDE})
+    SET(LSQUIC_LIBSSL "BORINGSSL")
 ENDIF()
 
 IF (NOT DEFINED SSLLIB_INCLUDE AND DEFINED LIBSSL_DIR)
@@ -196,17 +202,18 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  ${MY_CMAKE_FLAGS} $ENV{EXTRA_CFLAGS} -I${SS
 MESSAGE(STATUS "Compiler flags: ${CMAKE_C_FLAGS}")
 
 IF (NOT DEFINED LIBSSL_LIB AND DEFINED LIBSSL_DIR)
+    SET(LIBSSL_LIB ${LIBSSL_DIR})
     FOREACH(LIB_NAME ssl crypto)
         IF (CMAKE_SYSTEM_NAME STREQUAL Windows)
             FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                 NAMES ${LIB_NAME}
-                PATHS ${LIBSSL_DIR}/ ${LIBSSL_DIR}/lib/ ${LIBSSL_DIR}/ssl/ ${LIBSSL_DIR}/crypto/
+                PATHS ${LIBSSL_LIB}/ ${LIBSSL_LIB}/lib/ ${LIBSSL_LIB}/ssl/ ${LIBSSL_LIB}/crypto/
                 PATH_SUFFIXES Debug Release MinSizeRel RelWithDebInfo
                 NO_DEFAULT_PATH)
         ELSE()
             FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                 NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                PATHS ${LIBSSL_DIR} ${LIBSSL_DIR}/lib/ ${LIBSSL_DIR}/ssl/ ${LIBSSL_DIR}/crypto/
+                PATHS ${LIBSSL_LIB} ${LIBSSL_LIB}/lib/ ${LIBSSL_LIB}/ssl/ ${LIBSSL_LIB}/crypto/
                 NO_DEFAULT_PATH)
         ENDIF()
         IF(LIBSSL_LIB_${LIB_NAME})
@@ -237,7 +244,7 @@ ELSE()
             ELSE()
                 FIND_LIBRARY(LIBSSL_LIB_${LIB_NAME}
                     NAMES lib${LIB_NAME}${LIB_SUFFIX}
-                    PATHS ${LIBSSL_LIB} ${LIBSSL_DIR}/lib/ ${LIBSSL_LIB}/ssl ${LIBSSL_LIB}/crypto
+                    PATHS ${LIBSSL_LIB} ${LIBSSL_LIB}/lib/ ${LIBSSL_LIB}/ssl ${LIBSSL_LIB}/crypto
                     PATH_SUFFIXES ${LIB_NAME}
                     NO_DEFAULT_PATH)
             ENDIF()
@@ -257,31 +264,41 @@ ELSE()
     SET(STATIC_BUILD "no")
 ENDIF()
 
-SET(CMAKE_REQUIRED_INCLUDES "${SSLLIB_INCLUDE}")
-if ("${STATIC_BUILD}" STREQUAL "yes")
-    SET(CMAKE_REQUIRED_LIBRARIES "${LIBSSL_LIB_ssl};${LIBSSL_LIB_crypto}")
-    LIST(APPEND CMAKE_REQUIRED_LIBRARIES "-pthread -lstdc++")
-ELSE()
-    SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath=${LIBSSL_DIR} -L${LIBSSL_DIR} -lssl -lcrypto")
-ENDIF()
-check_symbol_exists(SSL_provide_quic_data openssl/ssl.h HAVE_SSL_PROVIDE_QUIC_DATA)
-IF(NOT HAVE_SSL_PROVIDE_QUIC_DATA)
-    check_symbol_exists(SSL_set_quic_tls_cbs openssl/ssl.h HAVE_SSL_SET_QUIC_TLS_CBS)
-    IF(NOT HAVE_SSL_SET_QUIC_TLS_CBS)
-        MESSAGE(FATAL_ERROR "TLS library implementation contains no 3rd party quic api:")
-    ELSE()
-        SET(QUIC_TLS_LIB "OPENSSL")
-        MESSAGE(STATUS "TLS library is canonical OpenSSL")
-        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_OPENSSL")
-    ENDIF()
-ELSE()
+if ("${LSQUIC_LIBSSL}" STREQUAL "BORINGSSL")
+
     SET(QUIC_TLS_LIB "BORINGSSL")
-    MESSAGE(STATUS "TLS library is BoringSSL")
+    MESSAGE(STATUS "Force BoringSSL, skip TLS library detection.")
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_BORINGSSL")
+
+ELSE()
+
+    SET(CMAKE_REQUIRED_INCLUDES "${SSLLIB_INCLUDE}")
+    if ("${STATIC_BUILD}" STREQUAL "yes")
+        SET(CMAKE_REQUIRED_LIBRARIES "${LIBSSL_LIB_ssl};${LIBSSL_LIB_crypto}")
+        LIST(APPEND CMAKE_REQUIRED_LIBRARIES "-pthread -lstdc++")
+    ELSE()
+        SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-rpath=${LIBSSL_LIB} -L${LIBSSL_LIB} -lssl -lcrypto")
+    ENDIF()
+    check_symbol_exists(SSL_provide_quic_data openssl/ssl.h HAVE_SSL_PROVIDE_QUIC_DATA)
+    IF(NOT HAVE_SSL_PROVIDE_QUIC_DATA)
+        check_symbol_exists(SSL_set_quic_tls_cbs openssl/ssl.h HAVE_SSL_SET_QUIC_TLS_CBS)
+        IF(NOT HAVE_SSL_SET_QUIC_TLS_CBS)
+            MESSAGE(FATAL_ERROR "TLS library implementation contains no 3rd party quic api:")
+        ELSE()
+            SET(QUIC_TLS_LIB "OPENSSL")
+            MESSAGE(STATUS "TLS library is canonical OpenSSL")
+            SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_OPENSSL")
+        ENDIF()
+    ELSE()
+        SET(QUIC_TLS_LIB "BORINGSSL")
+        MESSAGE(STATUS "TLS library is BoringSSL")
+        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_BORINGSSL")
+    ENDIF()
+    UNSET(CMAKE_REQUIRED_INCLUDES)
+    UNSET(CMAKE_EXE_LINKER_FLAGS)
+    UNSET(CMAKE_REQUIRED_LIBRARIES)
+
 ENDIF()
-UNSET(CMAKE_REQUIRED_INCLUDES)
-UNSET(CMAKE_EXE_LINKER_FLAGS)
-UNSET(CMAKE_REQUIRED_LIBRARIES)
 
 SET(CMAKE_INCLUDE_CURRENT_DIR ON)
 INCLUDE_DIRECTORIES(include)
