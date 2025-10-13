@@ -1530,9 +1530,13 @@ process_ping_frame (struct full_conn *conn, lsquic_packet_in_t *packet_in,
      * return the length of this frame.
      */
     EV_LOG_PING_FRAME_IN(LSQUIC_LOG_CONN_ID);
-    LSQ_DEBUG("received PING");
     if (conn->fc_flags & FC_SERVER)
         log_conn_flow_control(conn);
+
+    LSQ_DEBUG("received PING frame, update last progress to %"PRIu64,
+                                            conn->fc_pub.last_tick);
+    conn->fc_pub.last_prog = conn->fc_pub.last_tick;
+
     return 1;
 }
 
