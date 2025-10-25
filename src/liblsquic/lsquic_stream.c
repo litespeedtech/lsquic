@@ -261,22 +261,16 @@ stream_inside_callback (const lsquic_stream_t *stream)
 }
 
 
-/* This is an approximation.  If data is written or read outside of the
- * event loop, last_prog will be somewhat out of date, but it's close
- * enough for our purposes.
- */
 static void
-maybe_update_last_progress (struct lsquic_stream *stream)
+maybe_register_progress (struct lsquic_stream *stream)
 {
+    struct lsquic_conn *lconn;
+
+    /* XXX: move the check into the constructor? */
     if (stream->conn_pub && !lsquic_stream_is_critical(stream))
     {
-        if (stream->conn_pub->last_prog != stream->conn_pub->last_tick)
-            LSQ_DEBUG("update last progress to %"PRIu64,
-                                            stream->conn_pub->last_tick);
-        stream->conn_pub->last_prog = stream->conn_pub->last_tick;
-#ifndef NDEBUG
-        stream->sm_last_prog = stream->conn_pub->last_tick;
-#endif
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_user_stream_progress(lconn);
     }
 }
 
@@ -1710,7 +1704,7 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     nread = stream_readf(stream, readf, ctx);
     if (nread >= 0)
-        maybe_update_last_progress(stream);
+        maybe_register_progress(stream);
 
     return nread;
 }
@@ -3460,7 +3454,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
             if (!seen_ok++)
             {
                 maybe_conn_to_tickable_if_writeable(stream, 0);
-                maybe_update_last_progress(stream);
+                maybe_register_progress(stream);
             }
             if (fg_ctx.fgc_fin(&fg_ctx))
             {
@@ -4801,7 +4795,7 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
         stream->stream_flags |= STREAM_FIN_REACHED;
         SM_HISTORY_APPEND(stream, SHE_REACH_FIN);
     }
-    maybe_update_last_progress(stream);
+    maybe_register_progress(stream);
     LSQ_DEBUG("return header set");
     return hset;
 }

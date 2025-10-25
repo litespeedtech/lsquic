@@ -321,6 +321,11 @@ ack_rollback (struct lsquic_conn *lconn, struct ack_state *ack_state)
     s_snapshot_state |= SNAPSHOT_STATE_ROLLED_BACK;
 }
 
+static void
+user_stream_progress (struct lsquic_conn *lconn)
+{
+}
+
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = can_write_ack,
@@ -328,6 +333,7 @@ static const struct conn_iface our_conn_if =
     .ci_get_path      = get_network_path,
     .ci_ack_snapshot  = ack_snapshot,
     .ci_ack_rollback  = ack_rollback,
+    .ci_user_stream_progress = user_stream_progress,
 };
 
 

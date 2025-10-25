@@ -164,11 +164,17 @@ abort_error (struct lsquic_conn *lconn, int is_app,
 {
 }
 
+static void
+user_stream_progress (struct lsquic_conn *lconn)
+{
+}
+
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = unit_test_doesnt_write_ack,
     .ci_get_path      = get_network_path,
     .ci_abort_error   = abort_error,
+    .ci_user_stream_progress = user_stream_progress,
 };
 
 
