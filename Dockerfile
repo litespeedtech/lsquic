@@ -1,4 +1,4 @@
-FROM ubuntu:20.04 as build-lsquic
+FROM ubuntu:20.04 AS build-lsquic
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -30,16 +30,16 @@ COPY ./ /src/lsquic/
 RUN git clone --depth=1 https://github.com/google/boringssl.git && \
     cd boringssl && \
     cmake . && \
-    make
+    make -j10
 
 ENV EXTRA_CFLAGS -DLSQUIC_QIR=1
 RUN cd /src/lsquic && \
     cmake -DLIBSSL_DIR=/src/boringssl . && \
-    make
+    make -j10
 
 RUN cd lsquic && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
 
-FROM martenseemann/quic-network-simulator-endpoint:latest as lsquic-qir
+FROM martenseemann/quic-network-simulator-endpoint:latest AS lsquic-qir
 COPY --from=build-lsquic /usr/bin/http_client /usr/bin/http_server /usr/bin/
 COPY qir/run_endpoint.sh .
 RUN chmod +x run_endpoint.sh
