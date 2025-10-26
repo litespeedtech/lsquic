@@ -8,11 +8,10 @@ RUN apt-get update && \
 
 # Install CMake 3.22 or higher (required by BoringSSL)
 RUN wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh && \
-    wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh.sha256 && \
-    sha256sum -c cmake-3.22.0-linux-x86_64.sh.sha256 && \
+    echo "b23922a3416bb21b31735ec0179b72b3f219e94c78748ff0c163640a5881bdf3  cmake-3.22.0-linux-x86_64.sh" | sha256sum -c && \
     chmod +x cmake-3.22.0-linux-x86_64.sh && \
     ./cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local && \
-    rm cmake-3.22.0-linux-x86_64.sh cmake-3.22.0-linux-x86_64.sh.sha256
+    rm cmake-3.22.0-linux-x86_64.sh
 
 RUN add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && \
@@ -30,12 +29,12 @@ COPY ./ /src/lsquic/
 RUN git clone --depth=1 https://github.com/google/boringssl.git && \
     cd boringssl && \
     cmake . && \
-    make -j10
+    make
 
 ENV EXTRA_CFLAGS -DLSQUIC_QIR=1
 RUN cd /src/lsquic && \
     cmake -DLIBSSL_DIR=/src/boringssl . && \
-    make -j10
+    make
 
 RUN cd lsquic && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
 
