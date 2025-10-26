@@ -2600,7 +2600,12 @@ lsquic_send_ctl_have_delayed_packets (const lsquic_send_ctl_t *ctl)
 {
     const struct lsquic_packet_out *packet_out;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
-        if (packet_out->po_regen_sz < packet_out->po_data_sz)
+        /* MTU probes are scheduled after the delayed packet check.
+         * Exclude them to avoid blocking stream writability.
+         */
+        if (packet_out->po_flags & PO_MTU_PROBE)
+            continue;
+        else if (packet_out->po_regen_sz < packet_out->po_data_sz)
             return 1;
     return 0;
 }
