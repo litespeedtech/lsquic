@@ -1,10 +1,17 @@
-FROM ubuntu:20.04 as build-lsquic
+FROM ubuntu:20.04 AS build-lsquic
 
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update && \
-    apt-get install -y apt-utils build-essential git cmake software-properties-common \
-                       zlib1g-dev libevent-dev
+    apt-get install -y apt-utils build-essential git software-properties-common \
+                       zlib1g-dev libevent-dev wget
+
+# Install CMake 3.22 or higher (required by BoringSSL)
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh && \
+    echo "b23922a3416bb21b31735ec0179b72b3f219e94c78748ff0c163640a5881bdf3  cmake-3.22.0-linux-x86_64.sh" | sha256sum -c && \
+    chmod +x cmake-3.22.0-linux-x86_64.sh && \
+    ./cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local && \
+    rm cmake-3.22.0-linux-x86_64.sh
 
 RUN add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && \
@@ -31,7 +38,7 @@ RUN cd /src/lsquic && \
 
 RUN cd lsquic && cp bin/http_client /usr/bin/ && cp bin/http_server /usr/bin
 
-FROM martenseemann/quic-network-simulator-endpoint:latest as lsquic-qir
+FROM martenseemann/quic-network-simulator-endpoint:latest AS lsquic-qir
 COPY --from=build-lsquic /usr/bin/http_client /usr/bin/http_server /usr/bin/
 COPY qir/run_endpoint.sh .
 RUN chmod +x run_endpoint.sh
