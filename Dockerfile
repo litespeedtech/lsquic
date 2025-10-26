@@ -8,9 +8,11 @@ RUN apt-get update && \
 
 # Install CMake 3.22 or higher (required by BoringSSL)
 RUN wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh && \
+    wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh.sha256 && \
+    sha256sum -c cmake-3.22.0-linux-x86_64.sh.sha256 && \
     chmod +x cmake-3.22.0-linux-x86_64.sh && \
     ./cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local && \
-    rm cmake-3.22.0-linux-x86_64.sh
+    rm cmake-3.22.0-linux-x86_64.sh cmake-3.22.0-linux-x86_64.sh.sha256
 
 RUN add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && \
