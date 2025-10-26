@@ -3,8 +3,14 @@ FROM ubuntu:20.04 as build-lsquic
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update && \
-    apt-get install -y apt-utils build-essential git cmake software-properties-common \
-                       zlib1g-dev libevent-dev
+    apt-get install -y apt-utils build-essential git software-properties-common \
+                       zlib1g-dev libevent-dev wget
+
+# Install CMake 3.22 or higher (required by BoringSSL)
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.22.0/cmake-3.22.0-linux-x86_64.sh && \
+    chmod +x cmake-3.22.0-linux-x86_64.sh && \
+    ./cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local && \
+    rm cmake-3.22.0-linux-x86_64.sh
 
 RUN add-apt-repository ppa:longsleep/golang-backports && \
     apt-get update && \
