@@ -3373,6 +3373,14 @@ full_conn_ci_ack_rollback (struct lsquic_conn *lconn, struct ack_state *opaque)
 }
 
 
+static int
+noprogress_timeout_is_enabled (const struct full_conn *conn)
+{
+    /* Once set, this alarm is always enabled */
+    return 0 != lsquic_alarmset_is_set(&conn->fc_alset, AL_USER_STREAM);
+}
+
+
 static void
 full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 {
@@ -3380,7 +3388,7 @@ full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
     lsquic_time_t const expiry = conn->fc_last_tick
                                         + conn->fc_enpub->enp_noprog_timeout;
 
-    if (lsquic_alarmset_is_set(&conn->fc_alset, AL_USER_STREAM)
+    if (noprogress_timeout_is_enabled(conn)
                         && expiry > conn->fc_alset.as_expiry[AL_USER_STREAM])
     {
         lsquic_alarmset_set(&conn->fc_alset, AL_USER_STREAM, expiry);
