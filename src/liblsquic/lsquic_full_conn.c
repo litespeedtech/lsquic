@@ -119,7 +119,6 @@ enum full_conn_flags {
     FC_ABORT_COMPLAINED
                       = (1 <<23),
     FC_GOT_SREJ       = (1 <<24),   /* Don't schedule ACK alarm */
-    FC_NOPROG_TIMEOUT = (1 <<25),
 };
 
 #define FC_IMMEDIATE_CLOSE_FLAGS \
@@ -225,6 +224,7 @@ struct full_conn
     STAILQ_HEAD(, stream_id_to_reset)
                                  fc_stream_ids_to_reset;
     lsquic_time_t                fc_saved_ack_received;
+    lsquic_time_t                fc_last_tick;
     struct network_path          fc_path;
     unsigned                     fc_orig_versions;      /* Client only */
     enum enc_level               fc_crypto_enc_level;
@@ -257,6 +257,9 @@ static const struct ver_neg server_ver_neg;
 
 static void
 idle_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
+
+static void
+user_stream_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
 
 static void
 ping_alarm_expired (enum alarm_id, void *ctx, lsquic_time_t expiry, lsquic_time_t now);
@@ -599,6 +602,24 @@ is_handshake_stream_id (const struct full_conn *conn,
 }
 
 
+static void
+maybe_install_noprogress_timer (struct full_conn *conn)
+{
+    if (conn->fc_settings->es_noprogress_timeout)
+    {
+        LSQ_DEBUG("enable noprogress timeout of %u seconds",
+                                    conn->fc_settings->es_noprogress_timeout);
+        conn->fc_last_tick = lsquic_time_now();
+        lsquic_alarmset_init_alarm(&conn->fc_alset, AL_USER_STREAM,
+                                            user_stream_alarm_expired, conn);
+        lsquic_alarmset_set(&conn->fc_alset, AL_USER_STREAM,
+                    conn->fc_last_tick + conn->fc_enpub->enp_noprog_timeout);
+    }
+    else
+        LSQ_DEBUG("noprogress timeout disabled");
+}
+
+
 static struct full_conn *
 new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
                  unsigned flags, enum lsquic_version version)
@@ -700,8 +721,6 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     if (conn->fc_settings->es_support_push)
         conn->fc_flags |= FC_SUPPORT_PUSH;
     conn->fc_conn.cn_n_cces = sizeof(conn->fc_cces) / sizeof(conn->fc_cces[0]);
-    if (conn->fc_settings->es_noprogress_timeout)
-        conn->fc_flags |= FC_NOPROG_TIMEOUT;
     return conn;
 
   cleanup_on_error:
@@ -787,9 +806,11 @@ lsquic_gquic_full_conn_client_new (struct lsquic_engine_public *enpub,
                 .stream_if     = &lsquic_client_hsk_stream_if;
     conn->fc_stream_ifs[STREAM_IF_HSK].stream_if_ctx = &conn->fc_hsk_ctx.client;
     conn->fc_orig_versions = versions;
+    const lsquic_time_t now = lsquic_time_now();
+    conn->fc_last_tick = now;
     if (conn->fc_settings->es_handshake_to)
         lsquic_alarmset_set(&conn->fc_alset, AL_HANDSHAKE,
-                    lsquic_time_now() + conn->fc_settings->es_handshake_to);
+                                    now + conn->fc_settings->es_handshake_to);
     if (!new_stream_ext(conn, hsk_stream_id(conn), STREAM_IF_HSK,
             SCF_CALL_ON_NEW|SCF_DI_AUTOSWITCH|SCF_CRITICAL|SCF_CRYPTO
             |(conn->fc_conn.cn_version >= LSQVER_050 ? SCF_CRYPTO_FRAMES : 0)))
@@ -861,6 +882,9 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
 
     conn->fc_hsk_ctx.server.lconn = lconn_full;
     conn->fc_hsk_ctx.server.enpub = enpub;
+
+    const lsquic_time_t now = lsquic_time_now();
+    conn->fc_last_tick = now;
 
     /* TODO Optimize: we don't need an actual crypto stream and handler
      * on the server side, as we don't do anything with it.  We can
@@ -1002,7 +1026,8 @@ lsquic_gquic_full_conn_server_new (struct lsquic_engine_public *enpub,
         if (have_outgoing_ack)
             reset_ack_state(conn);
         lsquic_alarmset_set(&conn->fc_alset, AL_IDLE,
-                    lsquic_time_now() + conn->fc_settings->es_idle_conn_to);
+                                    now + conn->fc_settings->es_idle_conn_to);
+        maybe_install_noprogress_timer(conn);
         EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "created full connection");
         LSQ_INFO("Created new server connection");
         return &conn->fc_conn;
@@ -2518,21 +2543,22 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct full_conn *conn = ctx;
 
-    if ((conn->fc_flags & FC_NOPROG_TIMEOUT)
-        && conn->fc_pub.last_prog + conn->fc_enpub->enp_noprog_timeout < now)
-    {
-        LSQ_DEBUG("connection timed out due to lack of progress");
-        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out due to "
-                                                            "lack of progress");
-        /* Different flag so that CONNECTION_CLOSE frame is sent */
-        conn->fc_flags |= FC_ABORTED;
-    }
-    else
-    {
-        LSQ_DEBUG("connection timed out");
-        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
-        conn->fc_flags |= FC_TIMED_OUT;
-    }
+    LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
+    conn->fc_flags |= FC_TIMED_OUT;
+}
+
+
+static void
+user_stream_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now)
+{
+    struct full_conn *conn = ctx;
+
+    LSQ_DEBUG("connection timed out due to lack of progress");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out due to "
+                                                        "lack of progress");
+    conn->fc_flags |= FC_ABORTED;
 }
 
 
@@ -3347,27 +3373,25 @@ full_conn_ci_ack_rollback (struct lsquic_conn *lconn, struct ack_state *opaque)
 }
 
 
-/* This should be called before lsquic_alarmset_ring_expired() */
-static void
-maybe_set_noprogress_alarm (struct full_conn *conn, lsquic_time_t now)
+static int
+noprogress_timeout_is_enabled (const struct full_conn *conn)
 {
-    lsquic_time_t exp;
+    /* Once set, this alarm is always enabled */
+    return 0 != lsquic_alarmset_is_set(&conn->fc_alset, AL_USER_STREAM);
+}
 
-    if (conn->fc_flags & FC_NOPROG_TIMEOUT)
+
+static void
+full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
+{
+    struct full_conn *const conn = (struct full_conn *) lconn;
+    lsquic_time_t const expiry = conn->fc_last_tick
+                                        + conn->fc_enpub->enp_noprog_timeout;
+
+    if (noprogress_timeout_is_enabled(conn)
+                        && expiry > conn->fc_alset.as_expiry[AL_USER_STREAM])
     {
-        if (conn->fc_pub.last_tick)
-        {
-            exp = conn->fc_pub.last_prog + conn->fc_enpub->enp_noprog_timeout;
-            if (!lsquic_alarmset_is_set(&conn->fc_alset, AL_IDLE)
-                                    || exp < conn->fc_alset.as_expiry[AL_IDLE])
-                lsquic_alarmset_set(&conn->fc_alset, AL_IDLE, exp);
-            conn->fc_pub.last_tick = now;
-        }
-        else
-        {
-            conn->fc_pub.last_tick = now;
-            conn->fc_pub.last_prog = now;
-        }
+        lsquic_alarmset_set(&conn->fc_alset, AL_USER_STREAM, expiry);
     }
 }
 
@@ -3428,7 +3452,7 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
         conn->fc_flags &= ~FC_HAVE_SAVED_ACK;
     }
 
-    maybe_set_noprogress_alarm(conn, now);
+    conn->fc_last_tick = now;
 
     lsquic_send_ctl_tick_in(&conn->fc_send_ctl, now);
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
@@ -3662,20 +3686,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 
 
 static void
-set_earliest_idle_alarm (struct full_conn *conn, lsquic_time_t idle_conn_to)
-{
-    lsquic_time_t exp;
-
-    if (conn->fc_pub.last_prog
-        && (assert(conn->fc_flags & FC_NOPROG_TIMEOUT),
-            exp = conn->fc_pub.last_prog + conn->fc_enpub->enp_noprog_timeout,
-            exp < idle_conn_to))
-        idle_conn_to = exp;
-    lsquic_alarmset_set(&conn->fc_alset, AL_IDLE, idle_conn_to);
-}
-
-
-static void
 full_conn_ci_packet_in (lsquic_conn_t *lconn, lsquic_packet_in_t *packet_in)
 {
     struct full_conn *conn = (struct full_conn *) lconn;
@@ -3683,7 +3693,7 @@ full_conn_ci_packet_in (lsquic_conn_t *lconn, lsquic_packet_in_t *packet_in)
 #if LSQUIC_CONN_STATS
     conn->fc_stats.in.bytes += packet_in->pi_data_sz;
 #endif
-    set_earliest_idle_alarm(conn,
+    lsquic_alarmset_set(&conn->fc_alset, AL_IDLE,
                 packet_in->pi_received + conn->fc_settings->es_idle_conn_to);
     if (0 == (conn->fc_flags & FC_ERROR))
         if (0 != process_incoming_packet(conn, packet_in))
@@ -3759,6 +3769,7 @@ full_conn_ci_hsk_done (lsquic_conn_t *lconn, enum lsquic_hsk_status status)
                                                                         status);
     if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK)
     {
+        maybe_install_noprogress_timer(conn);
         if (conn->fc_stream_ifs[STREAM_IF_STD].stream_if->on_sess_resume_info)
             conn->fc_conn.cn_esf.g->esf_maybe_dispatch_sess_resume(
                 conn->fc_conn.cn_enc_session,
@@ -4574,6 +4585,7 @@ static const struct conn_iface full_conn_iface = {
     .ci_write_ack            =  full_conn_ci_write_ack,
     .ci_push_stream          =  full_conn_ci_push_stream,
     .ci_tls_alert            =  full_conn_ci_tls_alert,
+    .ci_user_stream_progress =  full_conn_ci_user_stream_progress,
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;

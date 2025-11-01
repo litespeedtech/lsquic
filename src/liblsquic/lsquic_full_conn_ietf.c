@@ -153,7 +153,7 @@ enum ifull_conn_flags
 enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
-    MF_NOPROG_TIMEOUT   = 1 << 1,
+    /* HOLE */                      /* <- Hole!  Reuse me! */
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
@@ -524,6 +524,7 @@ struct ietf_full_conn
     }                           ifc_u;
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
+    lsquic_time_t               ifc_last_tick;
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
@@ -662,21 +663,22 @@ idle_alarm_expired (enum alarm_id al_id, void *ctx, lsquic_time_t expiry,
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
 
-    if ((conn->ifc_mflags & MF_NOPROG_TIMEOUT)
-        && conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout < now)
-    {
-        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out due to "
-                                                            "lack of progress");
-        /* Different flag so that CONNECTION_CLOSE frame is sent */
-        ABORT_QUIETLY(0, TEC_APPLICATION_ERROR,
-                                "connection timed out due to lack of progress");
-    }
-    else
-    {
-        LSQ_DEBUG("connection timed out");
-        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
-        conn->ifc_flags |= IFC_TIMED_OUT;
-    }
+    LSQ_DEBUG("connection timed out");
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out");
+    conn->ifc_flags |= IFC_TIMED_OUT;
+}
+
+
+static void
+user_stream_alarm_expired (enum alarm_id al_id, void *ctx,
+                                    lsquic_time_t expiry, lsquic_time_t now)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) ctx;
+
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "connection timed out due to "
+                                                        "lack of progress");
+    ABORT_QUIETLY(0, TEC_APPLICATION_ERROR,
+                            "connection timed out due to lack of progress");
 }
 
 
@@ -1336,8 +1338,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_ping_unretx_thresh = 20;
     conn->ifc_max_retx_since_last_ack = MAX_RETR_PACKETS_SINCE_LAST_ACK;
     conn->ifc_max_ack_delay = ACK_TIMEOUT;
-    if (conn->ifc_settings->es_noprogress_timeout)
-        conn->ifc_mflags |= MF_NOPROG_TIMEOUT;
     if (conn->ifc_settings->es_ext_http_prio)
         conn->ifc_pii = &ext_prio_iter_if;
     else
@@ -1363,6 +1363,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     if (!conn)
         goto err0;
     now = lsquic_time_now();
+    conn->ifc_last_tick = now;
     /* Set the flags early so that correct CID is used for logging */
     conn->ifc_conn.cn_flags |= LSCONN_IETF;
     conn->ifc_conn.cn_cces = conn->ifc_cces;
@@ -1527,6 +1528,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     if (!conn)
         goto err0;
     now = lsquic_time_now();
+    conn->ifc_last_tick = now;
     conn->ifc_conn.cn_cces = conn->ifc_cces;
     conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
                                                 / sizeof(conn->ifc_cces[0]);
@@ -3811,6 +3813,23 @@ init_http (struct ietf_full_conn *conn)
     return 0;
 }
 
+static void
+maybe_install_noprogress_timer (struct ietf_full_conn *conn)
+{
+    if (conn->ifc_settings->es_noprogress_timeout)
+    {
+        LSQ_DEBUG("enable noprogress timeout of %u seconds",
+                                    conn->ifc_settings->es_noprogress_timeout);
+        conn->ifc_last_tick = lsquic_time_now();
+        lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_USER_STREAM,
+                                            user_stream_alarm_expired, conn);
+        lsquic_alarmset_set(&conn->ifc_alset, AL_USER_STREAM,
+                    conn->ifc_last_tick + conn->ifc_enpub->enp_noprog_timeout);
+    }
+    else
+        LSQ_DEBUG("noprogress timeout disabled");
+}
+
 
 static int
 handshake_ok (struct lsquic_conn *lconn)
@@ -3904,6 +3923,7 @@ handshake_ok (struct lsquic_conn *lconn)
 
     if (can_issue_cids(conn))
         conn->ifc_send_flags |= SF_SEND_NEW_CID;
+    maybe_install_noprogress_timer(conn);
     maybe_create_delayed_streams(conn);
 
     if (!(conn->ifc_flags & IFC_SERVER))
@@ -6064,10 +6084,6 @@ process_ping_frame (struct ietf_full_conn *conn,
     if (conn->ifc_flags & IFC_SERVER)
         log_conn_flow_control(conn);
 
-    LSQ_DEBUG("received PING frame, update last progress to %"PRIu64,
-                                            conn->ifc_pub.last_tick);
-    conn->ifc_pub.last_prog = conn->ifc_pub.last_tick;
-
     return 1;
 }
 
@@ -7916,29 +7932,15 @@ process_incoming_packet_fast (struct ietf_full_conn *conn,
 
 
 static void
-set_earliest_idle_alarm (struct ietf_full_conn *conn, lsquic_time_t idle_conn_to)
-{
-    lsquic_time_t exp;
-
-    if (conn->ifc_pub.last_prog
-        && (assert(conn->ifc_mflags & MF_NOPROG_TIMEOUT),
-            exp = conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout,
-            exp < idle_conn_to))
-        idle_conn_to = exp;
-    if (idle_conn_to)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, idle_conn_to);
-}
-
-
-static void
 ietf_full_conn_ci_packet_in (struct lsquic_conn *lconn,
                              struct lsquic_packet_in *packet_in)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
 
     CONN_STATS(in.bytes, packet_in->pi_data_sz);
-    set_earliest_idle_alarm(conn, conn->ifc_idle_to
-                    ? packet_in->pi_received + conn->ifc_idle_to : 0);
+    if (conn->ifc_idle_to)
+        lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE,
+                                packet_in->pi_received + conn->ifc_idle_to);
     if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
         if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
             conn->ifc_flags |= IFC_ERROR;
@@ -8091,31 +8093,6 @@ static void (*const send_funcs[N_SEND])(
     |SF_SEND_PING|SF_SEND_HANDSHAKE_DONE\
     |SF_SEND_ACK_FREQUENCY\
     |SF_SEND_STOP_SENDING|SF_SEND_NEW_TOKEN)
-
-
-/* This should be called before lsquic_alarmset_ring_expired() */
-static void
-maybe_set_noprogress_alarm (struct ietf_full_conn *conn, lsquic_time_t now)
-{
-    lsquic_time_t exp;
-
-    if (conn->ifc_mflags & MF_NOPROG_TIMEOUT)
-    {
-        if (conn->ifc_pub.last_tick)
-        {
-            exp = conn->ifc_pub.last_prog + conn->ifc_enpub->enp_noprog_timeout;
-            if (!lsquic_alarmset_is_set(&conn->ifc_alset, AL_IDLE)
-                                    || exp < conn->ifc_alset.as_expiry[AL_IDLE])
-                lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, exp);
-            conn->ifc_pub.last_tick = now;
-        }
-        else
-        {
-            conn->ifc_pub.last_tick = now;
-            conn->ifc_pub.last_prog = now;
-        }
-    }
-}
 
 
 static void
@@ -8431,6 +8408,29 @@ write_datagram (struct ietf_full_conn *conn)
 }
 
 
+static int
+noprogress_timeout_is_enabled (const struct ietf_full_conn *conn)
+{
+    /* Once set, this alarm is always enabled */
+    return 0 != lsquic_alarmset_is_set(&conn->ifc_alset, AL_USER_STREAM);
+}
+
+
+static void
+ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    lsquic_time_t const expiry = conn->ifc_last_tick
+                                        + conn->ifc_enpub->enp_noprog_timeout;
+
+    if (noprogress_timeout_is_enabled(conn)
+                        && expiry > conn->ifc_alset.as_expiry[AL_USER_STREAM])
+    {
+        lsquic_alarmset_set(&conn->ifc_alset, AL_USER_STREAM, expiry);
+    }
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -8477,7 +8477,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         conn->ifc_flags &= ~IFC_HAVE_SAVED_ACK;
     }
 
-    maybe_set_noprogress_alarm(conn, now);
+    conn->ifc_last_tick = now;
 
     lsquic_send_ctl_tick_in(&conn->ifc_send_ctl, now);
     lsquic_send_ctl_set_buffer_stream_packets(&conn->ifc_send_ctl, 1);
@@ -9142,6 +9142,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_tick                 =  ietf_full_conn_ci_tick, \
     .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
+    .ci_user_stream_progress =  ietf_full_conn_ci_user_stream_progress, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
 
 static const struct conn_iface ietf_full_conn_iface = {

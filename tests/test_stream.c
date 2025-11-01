@@ -342,12 +342,17 @@ write_ack (struct lsquic_conn *lconn, struct lsquic_packet_out *packet_out)
     packet_out->po_regen_sz += ack_size;
 }
 
+static void
+user_stream_progress (struct lsquic_conn *lconn)
+{
+}
 
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = can_write_ack,
     .ci_get_path      = get_network_path,
     .ci_write_ack     = write_ack,
+    .ci_user_stream_progress = user_stream_progress,
 };
 
 #if LSQUIC_CONN_STATS

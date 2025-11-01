@@ -33,6 +33,7 @@ struct echo_server_ctx {
     TAILQ_HEAD(, lsquic_conn_ctx)   conn_ctxs;
     unsigned max_reqs;
     int n_conn;
+    enum { MODE_ECHO, MODE_SINK, } mode;
     struct sport_head sports;
     struct prog *prog;
 };
@@ -129,8 +130,18 @@ echo_server_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     else if ('\n' == st_h->buf[ st_h->buf_off - 1 ])
     {
         /* Found end of line: echo it back */
-        lsquic_stream_wantwrite(stream, 1);
-        lsquic_stream_wantread(stream, 0);
+        switch (st_h->server_ctx->mode)
+        {
+            case MODE_ECHO:
+                lsquic_stream_wantwrite(stream, 1);
+                lsquic_stream_wantread(stream, 0);
+                break;
+            default:
+            case MODE_SINK:
+                LSQ_DEBUG("swallow line in sink mode");
+                st_h->buf_off = 0;
+                break;
+        }
     }
     else if (st_h->buf_off == sizeof(st_h->buf))
     {
@@ -187,6 +198,7 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
+"   -I      Sink mode: do not echo anything back\n"
                 , prog);
 }
 
@@ -206,11 +218,15 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER, &server_ctx.sports,
                                         &server_echo_stream_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "hn:")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "hn:I")))
     {
         switch (opt) {
         case 'n':
             server_ctx.n_conn = atoi(optarg);
+            break;
+        case 'I':
+            LSQ_NOTICE("sink mode: will not echo anything back");
+            server_ctx.mode = MODE_SINK;
             break;
         case 'h':
             usage(argv[0]);

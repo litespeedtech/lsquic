@@ -261,22 +261,15 @@ stream_inside_callback (const lsquic_stream_t *stream)
 }
 
 
-/* This is an approximation.  If data is written or read outside of the
- * event loop, last_prog will be somewhat out of date, but it's close
- * enough for our purposes.
- */
 static void
 maybe_update_last_progress (struct lsquic_stream *stream)
 {
+    struct lsquic_conn *lconn;
+
     if (stream->conn_pub && !lsquic_stream_is_critical(stream))
     {
-        if (stream->conn_pub->last_prog != stream->conn_pub->last_tick)
-            LSQ_DEBUG("update last progress to %"PRIu64,
-                                            stream->conn_pub->last_tick);
-        stream->conn_pub->last_prog = stream->conn_pub->last_tick;
-#ifndef NDEBUG
-        stream->sm_last_prog = stream->conn_pub->last_tick;
-#endif
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_user_stream_progress(lconn);
     }
 }
 

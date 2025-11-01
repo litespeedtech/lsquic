@@ -297,6 +297,12 @@ struct conn_iface
     int
     (*ci_get_info) (lsquic_conn_t *conn, struct lsquic_conn_info *info);
 
+    /* Used by the stream module to report that one of the user streams has
+     * been read from or written to.  This is what underpins the "no progress
+     * timeout" mechanism: see @ref es_noprogress_timeout.
+     */
+    void
+    (*ci_user_stream_progress) (struct lsquic_conn *);
 };
 
 #define LSCONN_CCE_BITS 3

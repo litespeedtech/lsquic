@@ -352,11 +352,6 @@ struct lsquic_stream
 
     uint64_t                        sm_last_frame_off;
 
-#ifndef NDEBUG
-    /* Last time stream made progress */
-    lsquic_time_t                   sm_last_prog;
-#endif
-
     /* Content length specified in incoming `content-length' header field.
      * Used to verify size of DATA frames.
      */
