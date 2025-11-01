@@ -262,11 +262,10 @@ stream_inside_callback (const lsquic_stream_t *stream)
 
 
 static void
-maybe_register_progress (struct lsquic_stream *stream)
+maybe_update_last_progress (struct lsquic_stream *stream)
 {
     struct lsquic_conn *lconn;
 
-    /* XXX: move the check into the constructor? */
     if (stream->conn_pub && !lsquic_stream_is_critical(stream))
     {
         lconn = stream->conn_pub->lconn;
@@ -1704,7 +1703,7 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     nread = stream_readf(stream, readf, ctx);
     if (nread >= 0)
-        maybe_register_progress(stream);
+        maybe_update_last_progress(stream);
 
     return nread;
 }
@@ -3454,7 +3453,7 @@ stream_write_to_packets (lsquic_stream_t *stream, struct lsquic_reader *reader,
             if (!seen_ok++)
             {
                 maybe_conn_to_tickable_if_writeable(stream, 0);
-                maybe_register_progress(stream);
+                maybe_update_last_progress(stream);
             }
             if (fg_ctx.fgc_fin(&fg_ctx))
             {
@@ -4795,7 +4794,7 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
         stream->stream_flags |= STREAM_FIN_REACHED;
         SM_HISTORY_APPEND(stream, SHE_REACH_FIN);
     }
-    maybe_register_progress(stream);
+    maybe_update_last_progress(stream);
     LSQ_DEBUG("return header set");
     return hset;
 }
