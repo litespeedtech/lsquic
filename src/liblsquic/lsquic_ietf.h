@@ -4,7 +4,7 @@
 
 /* Things specific to the IETF version of QUIC that do not fit anywhere else */
 
-/* [draft-ietf-quic-transport-33] Section 20 */
+/* [RFC 9000] Section 20 (Error Codes) */
 enum trans_error_code
 {
     TEC_NO_ERROR                   =  0x0,
@@ -30,7 +30,7 @@ enum trans_error_code
 /* Must be at least two */
 #define MAX_IETF_CONN_DCIDS 8
 
-/* [draft-ietf-quic-tls-25] Section 5.8 */
+/* [RFC 9001] Section 5.8 (Retry Packet Integrity) */
 #define IETF_RETRY_KEY_SZ 16
 #define IETF_RETRY_NONCE_SZ 12
 

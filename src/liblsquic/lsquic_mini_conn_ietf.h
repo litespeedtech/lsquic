@@ -120,7 +120,7 @@ struct ietf_mini_conn
     struct network_path             imc_path;
 };
 
-/* [draft-ietf-quic-transport-24] Section 7.4
+/* [RFC 9000] Section 7.5 (Cryptographic Message Buffering):
  *
  " Implementations MUST support buffering at least 4096 bytes of data
  " received in CRYPTO frames out of order.  Endpoints MAY choose to

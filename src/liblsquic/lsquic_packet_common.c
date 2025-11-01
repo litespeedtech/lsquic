@@ -89,7 +89,7 @@ const char *const lsquic_hety2str[] =
 };
 
 
-/* [draft-ietf-quic-tls-14], Section 4 */
+/* [RFC 9001], Section 4.1.4 (Packet Numbers) */
 const enum packnum_space lsquic_hety2pns[] =
 {
     [HETY_SHORT]        = PNS_APP,
@@ -101,7 +101,7 @@ const enum packnum_space lsquic_hety2pns[] =
 };
 
 
-/* [draft-ietf-quic-tls-14], Section 4 */
+/* [RFC 9001], Section 4.1.4 (Packet Numbers) */
 const enum packnum_space lsquic_enclev2pns[] =
 {
     [ENC_LEV_INIT]      = PNS_INIT,

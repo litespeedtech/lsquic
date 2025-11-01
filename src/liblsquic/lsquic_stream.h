@@ -602,7 +602,7 @@ lsquic_stream_set_stream_if (struct lsquic_stream *,
 uint64_t
 lsquic_stream_combined_send_off (const struct lsquic_stream *);
 
-/* [draft-ietf-quic-transport-16] Section 3.1 */
+/* [RFC 9000] Section 3.1 (Stream States - Sending) */
 enum stream_state_sending
 {
     SSS_READY,
@@ -618,7 +618,7 @@ extern const char *const lsquic_sss2str[];
 enum stream_state_sending
 lsquic_stream_sending_state (const struct lsquic_stream *);
 
-/* [draft-ietf-quic-transport-16] Section 3.2 */
+/* [RFC 9000] Section 3.2 (Stream States - Receiving) */
 enum stream_state_receiving
 {
     SSR_RECV,

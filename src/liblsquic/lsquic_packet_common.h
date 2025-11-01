@@ -206,13 +206,13 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_TIMESTAMP          \
     |  QUIC_FTBIT_CRYPTO             )
 
-/* [draft-ietf-quic-transport-24] Section 1.2 */
+/* [RFC 9000] Section 13.2.1 (Frames and Frame Types) */
 #define IQUIC_FRAME_ACKABLE_MASK (  \
     (ALL_IQUIC_FRAMES | QUIC_FTBIT_DATAGRAM) \
         & ~(QUIC_FTBIT_ACK | QUIC_FTBIT_PADDING \
             | QUIC_FTBIT_CONNECTION_CLOSE | QUIC_FTBIT_TIMESTAMP))
 
-/* [draft-ietf-quic-transport-20], Section 13.2 */
+/* [RFC 9000], Section 13.3 (Retransmission of Information) */
 /* We bend some rules and retransmit BLOCKED, MAX_DATA, MAX_STREAM_DATA,
  * MAX_STREAMS, STREAM_BLOCKED, and STREAMS_BLOCKED frames instead of
  * regenerating them.  This keeps the code simple(r).

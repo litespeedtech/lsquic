@@ -3293,7 +3293,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
             break;
         }
 
-        /* [draft-ietf-quic-transport-30] Section 12.2:
+        /* [RFC 9000] Section 12.2 (Coalescing Packets):
          * " Receivers SHOULD ignore any subsequent packets with a different
          * " Destination Connection ID than the first packet in the datagram.
          */

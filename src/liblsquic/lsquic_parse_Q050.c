@@ -35,7 +35,7 @@
 #include "lsquic_logger.h"
 
 
-/* [draft-ietf-quic-transport-24] Section-17.2 */
+/* [RFC 9000] Section 17.2 (Long Header Packet Types) */
 static const enum header_type bits2ht[4] =
 {
     [0] = HETY_INITIAL,
@@ -318,7 +318,7 @@ gquic_Q050_packout_header_size_long_by_flags (const struct lsquic_conn *lconn,
 }
 
 
-/* [draft-ietf-quic-transport-17] Section-17.2 */
+/* [RFC 9000] Section 17.2 (Long Header Packet Types) */
 static const unsigned char header_type_to_bin[] = {
     [HETY_INITIAL]      = 0x0,
     [HETY_0RTT]         = 0x1,

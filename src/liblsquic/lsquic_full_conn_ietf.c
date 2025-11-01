@@ -6514,9 +6514,9 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
     uint64_t seqno;
     int parsed_len;
 
-    /* [draft-ietf-quic-transport-25] Section 19.16
+    /* [RFC 9000] Section 19.16 (RETIRE_CONNECTION_ID Frame):
      *
-     * - Peer cannot retire zero-lenth CID. (MUST treat as PROTOCOL_VIOLATION)
+     * - Peer cannot retire zero-length CID. (MUST treat as PROTOCOL_VIOLATION)
      * - Peer cannot retire CID with sequence number that has not been
      *   allocated yet. (MUST treat as PROTOCOL_VIOLATION)
      * - Peer cannot retire CID that matches the DCID in packet.
@@ -6608,7 +6608,7 @@ process_new_token_frame (struct ietf_full_conn *conn,
     }
 
     if (conn->ifc_flags & IFC_SERVER)
-    {   /* [draft-ietf-quic-transport-34] Section 19.7 */
+    {   /* [RFC 9000] Section 19.7 (NEW_TOKEN Frame) */
         ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
                                     "received unexpected NEW_TOKEN frame");
         return 0;
@@ -7286,7 +7286,7 @@ process_retry_packet (struct ietf_full_conn *conn,
 
     if (conn->ifc_flags & (IFC_SERVER|IFC_RETRIED))
     {
-        /* [draft-ietf-quic-transport-24] Section 17.2.5:
+        /* [RFC 9000] Section 17.2.5 (Retry Packet):
          " After the client has received and processed an Initial or Retry
          " packet from the server, it MUST discard any subsequent Retry
          " packets that it receives.
@@ -7301,7 +7301,7 @@ process_retry_packet (struct ietf_full_conn *conn,
                     packet_in->pi_scid_len))
     {
         /*
-         * [draft-ietf-quic-transport-24] Section 17.2.5:
+         * [RFC 9000] Section 17.2.5 (Retry Packet):
          " A client MUST discard a Retry packet that contains a Source
          " Connection ID field that is identical to the Destination
          " Connection ID field of its Initial packet.
@@ -7716,8 +7716,8 @@ process_regular_packet (struct ietf_full_conn *conn,
         if (PNS_APP == pns
                 && (cpath = &conn->ifc_paths[packet_in->pi_path_id],
                                             cpath->cop_flags & COP_SPIN_BIT)
-                /* [draft-ietf-quic-transport-30] Section 17.3.1 talks about
-                 * how spin bit value is set.
+                /* [RFC 9000] Section 17.3.1 (1-RTT Packet) talks about how
+                 * spin bit value is set.
                  */
                 && (packet_in->pi_packno > cpath->cop_max_packno
                     /* Zero means "unset", in which case any incoming packet
@@ -7831,7 +7831,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
             }
         }
 
-        /* [draft-ietf-quic-transport-28] Section 6.2:
+        /* [RFC 9000] Section 6.2 (Using Server Retry):
          " A client MUST discard a Version Negotiation packet that lists the
          " QUIC version selected by the client.
          */
@@ -7842,7 +7842,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
             return 0;
         }
 
-        /* [draft-ietf-quic-transport-28] Section 6.2:
+        /* [RFC 9000] Section 6.2 (Using Server Retry):
          " A client that supports only this version of QUIC MUST abandon the
          " current connection attempt if it receives a Version Negotiation
          " packet [...]
@@ -8693,7 +8693,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         conn->ifc_send_flags &= ~SF_SEND_PING;   /* It may have rung */
     }
 
-    /* [draft-ietf-quic-transport-11] Section 7.9:
+    /* [RFC 9000] Section 19.2 (PING Frame):
      *
      *     The PING frame can be used to keep a connection alive when an
      *     application or application protocol wishes to prevent the connection
@@ -9354,7 +9354,7 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
     case 3: /* HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS */
     case 4: /* HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE */
     case 5: /* HTTP/2 SETTINGS_MAX_FRAME_SIZE */
-        /* [draft-ietf-quic-http-30] Section 7.2.4.1 */
+        /* [RFC 9114] Section 7.2.4.1 (Defined SETTINGS Parameters) */
         ABORT_QUIETLY(1, HEC_SETTINGS_ERROR, "unexpected HTTP/2 setting "
             "%"PRIu64, setting_id);
         break;

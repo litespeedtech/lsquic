@@ -133,10 +133,10 @@ struct transport_params
 #define TP_DEF_MAX_ACK_DELAY 25u
 #define TP_DEF_ACTIVE_CONNECTION_ID_LIMIT 2
 
-/* [draft-ietf-quic-transport-34], Section 18.2 */
+/* [RFC 9000], Section 18.2 */
 #define TP_MAX_ACK_DELAY_EXP 20
 
-/* [draft-ietf-quic-transport-18], Section 18.1 */
+/* [RFC 9000], Section 18.2 */
 #define TP_MAX_MAX_ACK_DELAY ((1u << 14) - 1)
 
 #define TP_DEFAULT_VALUES                                                             \
@@ -191,7 +191,7 @@ lsquic_tp_has_pref_ipv6 (const struct transport_params *);
 
 extern const char * const lsquic_tpi2str[LAST_TPI + 1];
 
-/* From [draft-huitema-quic-ts-03] */
+/* From [draft-huitema-quic-ts-08] */
 #define TS_WANT_THEM            1
 #define TS_GENERATE_THEM        2
 
@@ -201,7 +201,7 @@ lsquic_tp_get_quantum_sz (void);
 #endif
 
 #define SERVER_0RTT_TPS                                              (0 \
-    /* [draft-ietf-quic-transport-31] Section 7.4.1: */                 \
+    /* [RFC 9000] Section 7.4.1 (Accepting and Rejecting 0-RTT): */     \
     | (1 << TPI_ACTIVE_CONNECTION_ID_LIMIT)                             \
     | (1 << TPI_INIT_MAX_DATA)                                          \
     | (1 << TPI_INIT_MAX_STREAMS_UNI)                                   \
@@ -213,14 +213,16 @@ lsquic_tp_get_quantum_sz (void);
     | (1 << TPI_MAX_UDP_PAYLOAD_SIZE)                                   \
     | (1 << TPI_DISABLE_ACTIVE_MIGRATION)                               \
     /* Not including TPI_LOSS_BITS, see                              */ \
-    /* draft-ferrieuxhamchaoui-quic-lossbits-03, Section 5.1         */ \
-    /* [draft-ietf-quic-datagram-01] Section 3:                      */ \
+    /* [draft-ferrieuxhamchaoui-quic-lossbits-03], Section 5.1       */ \
+    /* [RFC 9221] Section 3:                                         */ \
     | (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)                                \
-    /* [draft-iyengar-quic-delayed-ack-01] does not specfiy, store:  */ \
+    /* [draft-ietf-quic-ack-frequency-12] Section 3 does not specify */ \
+    /* whether min_ack_delay should be stored for 0-RTT, we store:   */ \
     | (1 << TPI_MIN_ACK_DELAY)                                          \
-    /* [draft-iyengar-quic-delayed-ack-02] does not specfiy, store:  */ \
+    /* Support both -01 and -02 versions of delayed-ack draft (now   */ \
+    /* superseded by ack-frequency-12). Functionally identical:      */ \
     | (1 << TPI_MIN_ACK_DELAY_02)                                       \
-    /* [draft-huitema-quic-ts-03] does not specfiy, store:           */ \
+    /* [draft-huitema-quic-ts-08] does not specify, store:           */ \
     | (1 << TPI_TIMESTAMPS)                                             \
 )
 

@@ -31,7 +31,7 @@
 #include "lsquic_ietf.h"
 
 
-/* [draft-ietf-quic-transport-17] Section-17.2 */
+/* [RFC 9000] Section 17.2 (Long Header Packet Types) */
 static const enum header_type bits2ht[4] =
 {
     [0] = HETY_INITIAL,
@@ -395,8 +395,8 @@ lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     ssize_t sz;
 #define INTEGRITY_TAG_LEN 16
 
-    /* [draft-ietf-quic-tls-25] Section 5.8 specifies the layout of the
-     * Retry Pseudo-Packet:
+    /* [RFC 9001] Section 5.8 (Retry Packet Integrity) specifies the layout
+     * of the Retry Pseudo-Packet:
      */
     unsigned char ad_buf[
         1 + MAX_CID_LEN     /* ODCID */

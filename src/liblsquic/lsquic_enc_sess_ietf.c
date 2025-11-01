@@ -176,7 +176,7 @@ static struct label_set hkdf_labels[2] =
 };
 
 
-/* [draft-ietf-quic-tls-12] Section 5.3.6 */
+/* [RFC 9001] Section 5.1 (Packet Protection Keys) */
 static int
 init_crypto_ctx (struct crypto_ctx *crypto_ctx, const EVP_MD *md,
                  const EVP_AEAD *aead, const unsigned char *secret,
@@ -1138,14 +1138,14 @@ static const unsigned char *const lsquic_ver2salt[N_LSQVER] = {
 };
 
 
-/* [draft-ietf-quic-tls-12] Section 5.3.2 */
+/* [RFC 9001] Section 5.2 (Initial Secrets) */
 static int
 setup_handshake_keys (struct enc_sess_iquic *enc_sess, const lsquic_cid_t *cid)
 {
     const EVP_MD *const md = EVP_sha256();
     const EVP_AEAD *const aead = EVP_aead_aes_128_gcm();
-    /* [draft-ietf-quic-tls-12] Section 5.6.1: AEAD_AES_128_GCM implies
-     * 128-bit AES-CTR.
+    /* [RFC 9001] Sections 5.3 and 5.4.3: AEAD_AES_128_GCM implies
+     * 128-bit AES-CTR for header protection.
      */
     const EVP_CIPHER *const cipher = EVP_aes_128_ecb();
     struct crypto_ctx_pair *pair;
@@ -1656,7 +1656,7 @@ get_crypto_params (const struct enc_sess_iquic *enc_sess,
 
     iv_sz = EVP_AEAD_nonce_length(params->aead);
     if (iv_sz < 8)
-        iv_sz = 8;  /* [draft-ietf-quic-tls-11], Section 5.3 */
+        iv_sz = 8;  /* Old drafts used 8-byte nonce */
     if (iv_sz > EVP_MAX_IV_LENGTH)
     {
         LSQ_DEBUG("iv size %u is too large", iv_sz);
@@ -1667,7 +1667,7 @@ get_crypto_params (const struct enc_sess_iquic *enc_sess,
 }
 
 
-/* [draft-ietf-quic-transport-31] Section 7.4.1:
+/* [RFC 9001] Section 7.4.1 (Accepting and Rejecting 0-RTT):
  " If 0-RTT data is accepted by the server, the server MUST NOT reduce
  " any limits or alter any values that might be violated by the client
  " with its 0-RTT data.  In particular, a server that accepts 0-RTT data
@@ -2174,7 +2174,7 @@ iquic_esf_encrypt_packet (enc_session_t *enc_session_p,
 
     if (packet_out->po_data_sz < 3)
     {
-        /* [draft-ietf-quic-tls-20] Section 5.4.2 */
+        /* [RFC 9001] Section 5.4.2 (Packet Protection) */
         enum packno_bits bits = lsquic_packet_out_packno_bits(packet_out);
         unsigned len = iquic_packno_bits2len(bits);
         if (packet_out->po_data_sz + len < 4)
@@ -3455,16 +3455,16 @@ const struct lsquic_stream_if lsquic_mini_cry_sm_if =
 
 const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
 {
-    /* [draft-ietf-quic-tls-25] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (draft-25 for backward compatibility) */
     (unsigned char *)
         "\x4d\x32\xec\xdb\x2a\x21\x33\xc8\x41\xe4\x04\x3d\xf2\x7d\x44\x30",
-    /* [draft-ietf-quic-tls-29] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (draft-29 for backward compatibility) */
     (unsigned char *)
         "\xcc\xce\x18\x7e\xd0\x9a\x09\xd0\x57\x28\x15\x5a\x6c\xb9\x6b\xe1",
-    /* [draft-ietf-quic-tls-33] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (Retry Packet Integrity) */
     (unsigned char *)
         "\xbe\x0c\x69\x0b\x9f\x66\x57\x5a\x1d\x76\x6b\x54\xe3\x68\xc8\x4e",
-    /* [draft-draft-ietf-quic-v2] Section 3.3.3 */
+    /* [RFC 9369] Section 3.3.3 (QUIC Version 2) */
     (unsigned char *)
         "\x8f\xb4\xb0\x1b\x56\xac\x48\xe2\x60\xfb\xcb\xce\xad\x7c\xcc\x92",
 };
@@ -3472,13 +3472,13 @@ const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
 
 const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
 {
-    /* [draft-ietf-quic-tls-25] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (draft-25 for backward compatibility) */
     (unsigned char *) "\x4d\x16\x11\xd0\x55\x13\xa5\x52\xc5\x87\xd5\x75",
-    /* [draft-ietf-quic-tls-29] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (draft-29 for backward compatibility) */
     (unsigned char *) "\xe5\x49\x30\xf9\x7f\x21\x36\xf0\x53\x0a\x8c\x1c",
-    /* [draft-ietf-quic-tls-33] Section 5.8 */
+    /* [RFC 9001] Section 5.8 (Retry Packet Integrity) */
     (unsigned char *) "\x46\x15\x99\xd3\x5d\x63\x2b\xf2\x23\x98\x25\xbb",
-    /* [draft-draft-ietf-quic-v2] Section 3.3.3 */
+    /* [RFC 9369] Section 3.3.3 (QUIC Version 2) */
     (unsigned char *) "\xd8\x69\x69\xbc\x2d\x7c\x6d\x99\x90\xef\xb0\x4a",
 };
 

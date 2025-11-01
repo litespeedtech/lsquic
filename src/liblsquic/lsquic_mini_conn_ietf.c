@@ -529,7 +529,7 @@ is_first_packet_ok (const struct lsquic_packet_in *packet_in,
 {
     if (udp_payload_size < IQUIC_MIN_INIT_PACKET_SZ)
     {
-        /* [draft-ietf-quic-transport-24] Section 14 */
+        /* [RFC 9000] Section 14.1 (Initial Datagram Size) */
         LSQ_LOG1(LSQ_LOG_DEBUG, "incoming UDP payload too small: %zu bytes",
                                                             udp_payload_size);
         return 0;
@@ -923,8 +923,8 @@ ietf_mini_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
     {
         if (packet_out->po_flags & PO_SENT)
             continue;
-        /* [draft-ietf-quic-transport-32] Section 14.1:
-         " a server MUST expand the payload of all UDP datagrams carrying
+        /* [RFC 9000] Section 14.1 (Initial Datagram Size):
+         " A server MUST expand the payload of all UDP datagrams carrying
          " ack-eliciting Initial packets to at least the smallest allowed
          " maximum datagram size of 1200 bytes.
          */
@@ -1549,7 +1549,7 @@ imico_maybe_delay_processing (struct ietf_mini_conn *conn,
 }
 
 
-/* [draft-ietf-quic-transport-30] Section 8.1:
+/* [RFC 9000] Section 8.1 (Address Validation During Connection Establishment):
  " Additionally, a server MAY consider the client address validated if
  " the client uses a connection ID chosen by the server and the
  " connection ID contains at least 64 bits of entropy.
@@ -2211,7 +2211,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     }
 
 
-/* [draft-ietf-quic-transport-28] Section 10.3.1:
+/* [RFC 9000] Section 10.2.3 (Immediate Close during the Handshake):
  *
  " A client will always know whether the server has Handshake keys (see
  " Section 17.2.2.1), but it is possible that a server does not know
