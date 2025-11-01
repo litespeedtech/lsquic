@@ -38,6 +38,7 @@ struct lsquic_conn_ctx;
 struct echo_client_ctx {
     struct lsquic_conn_ctx  *conn_h;
     struct prog                 *prog;
+    int                      sink_mode;
 };
 
 struct lsquic_conn_ctx {
@@ -102,6 +103,8 @@ read_stdin (evutil_socket_t fd, short what, void *ctx)
         LSQ_DEBUG("read newline: wantwrite");
         lsquic_stream_wantwrite(st_h->stream, 1);
         lsquic_engine_process_conns(st_h->client_ctx->prog->prog_engine);
+        if (st_h->client_ctx->sink_mode)
+            event_add(st_h->read_stdin_ev, NULL);
     }
     else if (st_h->buf_off == sizeof(st_h->buf))
     {
@@ -198,6 +201,7 @@ usage (const char *prog)
 "Usage: %s [opts]\n"
 "\n"
 "Options:\n"
+"   -I      Sink mode: server does not echo anything back\n"
             , prog);
 }
 
@@ -223,13 +227,16 @@ main (int argc, char **argv)
     prog_init(&prog, 0, &sports, &client_echo_stream_if, &client_ctx);
     prog.prog_api.ea_alpn = "echo";
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "Ih")))
     {
         switch (opt) {
         case 'h':
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
             exit(0);
+        case 'I':
+            client_ctx.sink_mode = 1;
+            break;
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
                 exit(1);
