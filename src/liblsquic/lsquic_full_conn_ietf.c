@@ -3813,6 +3813,7 @@ init_http (struct ietf_full_conn *conn)
     return 0;
 }
 
+
 static void
 maybe_install_noprogress_timer (struct ietf_full_conn *conn)
 {

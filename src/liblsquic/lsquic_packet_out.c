@@ -457,7 +457,6 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
 
             // Got a corner case because of short write, df_size == 0 && df_fin == 0
             // It is OK to just turn on the fin bit.
-            assert(len >= 0 || frec->fe_len == 5);
             if (len < 0 && stream_frame.data_frame.df_size != 0)
                 return -1;
             last_offset = stream_frame.data_frame.df_offset

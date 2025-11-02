@@ -1,3 +1,30 @@
+2025-11-01
+    - 4.3.2
+    - [BUGFIX] Fix the no-progress timeout logic (issue #531, PR #574).
+      The idle timeout and the "user progress" timeout now use different
+      alarms for cleaner code.
+    - [BUGFIX] Fix MTU probe packets causing stream write stalls (issue #541,
+      PR #576).  MTU probes were incorrectly counted as delayed packets,
+      preventing streams from becoming writable and causing onwrite callbacks
+      to never fire.
+    - [BUGFIX] Fix Docker image builds: add missing header includes (PR #558).
+    - [BUGFIX] Fix Android NDK build: disable address sanitizer (PR #570).
+    - [BUGFIX] Fix shared library path lookup for TLS library (PR #566).
+    - [BUGFIX] Remove assert for gQUIC special case (0 data size).
+    - [IMPROVEMENT] Add LSQUIC_LIBSSL build option to specify which SSL
+      library to use, skipping auto-detection.  Use LIBSSL_LIB instead of
+      LIBSSL_DIR for searching library files.
+    - [IMPROVEMENT] Align usage of EVP_MD_CTX for OpenSSL/BoringSSL
+      compatibility (PR #559). Switch from BoringSSL-only EVP_MD_CTX_init/
+      cleanup to cross-compatible EVP_MD_CTX_new/free.
+    - [IMPROVEMENT] Condition CRYPTO_library_init to BoringSSL only (PR #560).
+    - [IMPROVEMENT] Fix Docker build: BoringSSL now requires cmake 3.22
+      (PR #575).
+    - [IMPROVEMENT] Fix CMakeLists.txt: add missing "D" before
+      LSQUIC_WEBTRANSPORT_SERVER_SUPPORT (PR #567).
+    - Make new SSL library detection code backward compatible with old
+      -DBORINGSSL_xxxx definitions.
+
 2025-08-13
     - 4.3.1
     - Fix a memory leak in packet processing.
