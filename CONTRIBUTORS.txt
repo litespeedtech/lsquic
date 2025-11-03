@@ -15,6 +15,30 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Suma Subbarao -- Use callback to supply client's SSL_CTX
     - Paul Sheer -- Callback on arrival of CONNECTION_CLOSE frame
     - Weiwei Wang -- Some fixes on Windows
+    - Paul Jakma -- Test case and fix for lsquic rechist list problem
+    - M-BELLAHCENE -- Build system improvements, remove getopt.h dependency
+    - Pluto -- Fix assertion failure if poison packet was acked
+    - wangfuyu -- Multiple bug fixes and memory leak fixes
+    - Simon Karan G. -- Bug fixes
+    - Kent Ross -- Fix: do not use private openssl function to copy cert chain
+    - Hadi Frohar -- HTTP/1.1 conversion fixes, frame handling fixes
+    - Saigut -- HTTP client improvements
+    - Sijie Yang -- Add congestion control algorithm option for tools
+    - Sydney -- Rename http_server response delay to not shadow log timestamp format
+    - Mickael Cerisier -- Fix spam of ping network frames
+    - plumplumli -- RFC 9000 compliance fixes, packet regen fixes
+    - Zasda Yusuf Mikail -- Build fixes
+    - Alex Pokotilo -- WebTransport server support, connection count API
+    - Takuya Wakazono -- Remove unused function parameter for C23 compatibility
+    - Bo Schuster -- Compile error fixes
+    - Chen Kai -- Fix maybe_grow_conn_heaps mh_elems memcpy null
+    - Neil Horman -- OpenSSL compatibility, Docker image fixes, TLS library support
+    - Pocs Norbert -- Shared library path, OpenSSL/BoringSSL compatibility
+    - 冉朋 -- Android NDK fixes, OpenSSL build fixes
+    - linsichen206 -- Memory leak fixes in GQUIC handshake and packet decryption
+    - Rylie Pavlik -- CMake improvements
+    - davidlei -- Build improvements
+    - Timo Voelker -- Testing and bug reports
 
 Thank you!
 
