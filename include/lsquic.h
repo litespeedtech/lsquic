@@ -1784,6 +1784,16 @@ lsquic_stream_has_unacked_data (lsquic_stream_t *s);
 struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
 
+/**
+ * Get the full certificate chain returned by the server/lient.
+ * This can be used for server/client certificate verification.
+ *
+ * The caller releases the stack using sk_X509_free().
+ */
+struct stack_st_X509 *
+lsquic_conn_get_full_cert_chain (lsquic_conn_t *);
+
+
 /** Returns ID of the stream */
 lsquic_stream_id_t
 lsquic_stream_id (const lsquic_stream_t *s);
