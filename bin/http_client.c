@@ -201,6 +201,7 @@ struct http_client_ctx {
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
     }                            hcc_flags;
+    const char                  *hcc_test_type;
     struct prog                 *prog;
     const char                  *qif_file;
     FILE                        *qif_fh;
@@ -425,6 +426,16 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
         {
             LSQ_INFO("no paths mode: close connection");
             lsquic_conn_close(conn_h->conn);
+        }
+        else if (client_ctx->hcc_test_type)
+        {
+            if (0 == strcasecmp(client_ctx->hcc_test_type, "goaway"))
+            {
+                LSQ_NOTICE("TEST: calling lsquic_conn_going_away() on client connection");
+                lsquic_conn_going_away(conn);
+            }
+            else
+                LSQ_WARN("unknown test type: %s", client_ctx->hcc_test_type);
         }
     }
     else
@@ -1040,6 +1051,8 @@ usage (const char *prog)
 "                 urgency and I is incremental.  Matched \\d+:\\d+:[0-7][01]\n"
 "   -7 DIR      Save fetched resources into this directory.\n"
 "   -Q ALPN     Use hq ALPN.  Specify, for example, \"h3-29\".\n"
+"   -J TEST     Run test. Available tests:\n"
+"                 goaway - call lsquic_conn_going_away() after handshake\n"
             , prog);
 }
 
@@ -1625,12 +1638,13 @@ main (int argc, char **argv)
     client_ctx.hcc_total_n_reqs = 1;
     client_ctx.hcc_reset_after_nbytes = 0;
     client_ctx.hcc_retire_cid_after_nbytes = 0;
+    client_ctx.hcc_test_type = NULL;
     client_ctx.prog = &prog;
 
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS
-                                    "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
+                                    "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:J:"
                             "3:"    /* 3 is 133+ for "e" ("e" for "early") */
                             "9:"    /* 9 sort of looks like P... */
                             "7:"    /* Download directory */
@@ -1658,6 +1672,9 @@ main (int argc, char **argv)
             break;
         case 'K':
             ++s_discard_response;
+            break;
+        case 'J':
+            client_ctx.hcc_test_type = optarg;
             break;
         case 'u':   /* Accept p<U>sh promise */
             promise_fd = open(optarg, O_WRONLY|O_CREAT|O_TRUNC, 0644);
