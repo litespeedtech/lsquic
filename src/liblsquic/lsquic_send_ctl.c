@@ -3178,7 +3178,7 @@ split_buffered_packet (lsquic_send_ctl_t *ctl,
                                                 packet_out->po_packno);
         return -1;
     }
-    if (!(count > 1 && one_ctx.fetched == 1 && one_ctx.discarded == 1))
+    if (!(count >= 1 && one_ctx.fetched == 1 && one_ctx.discarded == 1))
     {
         /* A bit of insurance, this being new code */
         LSQ_WARN("unexpected values resizing buffered packet: count: %u; "
