@@ -3302,29 +3302,52 @@ static void
 ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    lsquic_stream_id_t stream_id;
 
-    if (conn->ifc_flags & IFC_HTTP)
+    if (!(conn->ifc_flags & IFC_HTTP))
     {
-        if (!(conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY)))
-        {
-            LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
-                     conn->ifc_max_req_id);
-            conn->ifc_flags |= IFC_GOING_AWAY;
-            const lsquic_stream_id_t stream_id = conn->ifc_max_req_id + N_SITS;
-            if (valid_stream_id(stream_id))
-            {
-                if (0 == lsquic_hcso_write_goaway(&conn->ifc_hcso,
-                                                        conn->ifc_max_req_id))
-                    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
-                else
-                    /* We're already going away, don't abort because of this */
-                    LSQ_WARN("could not write GOAWAY frame");
-            }
-            maybe_close_conn(conn);
-        }
+        LSQ_NOTICE("going away has no effect in non-HTTP mode");
+        return;
+    }
+
+    if (conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY))
+    {
+        LSQ_DEBUG("Already closing or marked as going away");
+        return;
+    }
+
+    if (conn->ifc_flags & IFC_SERVER)
+    {
+        LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
+                 conn->ifc_max_req_id);
+        if (valid_stream_id(conn->ifc_max_req_id + N_SITS))
+            stream_id = conn->ifc_max_req_id;
+        else
+            goto end;
+    }
+    else if (CLIENT_PUSH_SUPPORT)
+    {
+        /* TODO: Track highest Push ID received and send that value */
+        LSQ_DEBUG("client connection marked as going away, but push "
+                            "support is enabled - not sending GOAWAY frame");
+        goto end;
     }
     else
-        LSQ_NOTICE("going away has no effect in non-HTTP mode");
+    {
+        LSQ_DEBUG("client connection marked as going away, sending "
+                                                    "GOAWAY with Push ID 0");
+        stream_id = 0;
+    }
+
+    if (0 == lsquic_hcso_write_goaway(&conn->ifc_hcso, stream_id))
+        lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
+    else
+        /* We're already going away, don't abort because of this */
+        LSQ_WARN("could not write GOAWAY frame");
+
+  end:
+    conn->ifc_flags |= IFC_GOING_AWAY;
+    maybe_close_conn(conn);
 }
 
 
