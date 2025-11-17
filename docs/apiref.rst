@@ -1970,6 +1970,13 @@ Miscellaneous Connection Functions
 
     The caller releases the stack using sk_X509_free().
 
+.. function:: struct stack_st_X509 * lsquic_conn_get_full_cert_chain (lsquic_conn_t *conn)
+
+    Get full certificate chain returned by the server/client.  This can be used for
+    server/client certificate verification.
+
+    The caller releases the stack using sk_X509_free().
+
 .. function:: lsquic_conn_ctx_t * lsquic_conn_get_ctx (const lsquic_conn_t *conn)
 
     Get user-supplied context associated with the connection.
