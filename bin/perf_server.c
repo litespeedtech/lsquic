@@ -32,11 +32,29 @@
 #include "../src/liblsquic/lsquic_byteswap.h"
 #include "../src/liblsquic/lsquic_logger.h"
 
+static uint64_t s_max_pacing_rate = 0;
 
 static lsquic_conn_ctx_t *
 perf_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 {
     LSQ_INFO("New connection!");
+
+    if (s_max_pacing_rate > 0)
+    {
+        if (0 == lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
+                                       &s_max_pacing_rate,
+                                       sizeof(s_max_pacing_rate)))
+        {
+            LSQ_INFO("max pacing rate set to %"PRIu64" bytes/sec (%.2f Mbps)",
+                     s_max_pacing_rate,
+                     (s_max_pacing_rate * 8.0) / 1000000.0);
+        }
+        else
+        {
+            LSQ_WARN("failed to set max pacing rate");
+        }
+    }
+
     return NULL;
 }
 
@@ -210,6 +228,9 @@ usage (const char *prog)
     printf(
 "Usage: %s [opts]\n"
 "\n"
+"Options:\n"
+"   -x RATE     Maximum pacing rate in bytes per second (throttle bandwidth)\n"
+"\n"
                 , prog);
 }
 
@@ -224,9 +245,12 @@ main (int argc, char **argv)
     TAILQ_INIT(&sports);
     prog_init(&prog, LSENG_SERVER, &sports, &perf_server_stream_if, NULL);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "x:h")))
     {
         switch (opt) {
+        case 'x':
+            s_max_pacing_rate = strtoull(optarg, NULL, 10);
+            break;
         case 'h':
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);

@@ -145,6 +145,7 @@ typedef struct lsquic_send_ctl {
     unsigned                        sc_square_count;/* Used to set square bit */
     unsigned                        sc_reord_thresh;
     signed char                     sc_cidlen;      /* For debug purposes */
+    uint64_t                        sc_max_pacing_rate; /* 0 = no override */
 } lsquic_send_ctl_t;
 
 void

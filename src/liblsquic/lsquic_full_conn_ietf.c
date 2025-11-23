@@ -9065,6 +9065,7 @@ ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     info->lci_pmtu = conn->ifc_paths[conn->ifc_cur_path_id].cop_path.np_pack_size;
     info->lci_bw_estimate = conn->ifc_send_ctl.sc_ci->cci_pacing_rate(
                                             conn->ifc_send_ctl.sc_cong_ctl, 1);
+    info->lci_max_pacing_rate = conn->ifc_send_ctl.sc_max_pacing_rate;
 
 #if LSQUIC_CONN_STATS
     info->lci_bytes_rcvd = conn->ifc_stats.in.bytes;
@@ -9075,6 +9076,51 @@ ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     info->lci_pkts_retx  = conn->ifc_stats.out.retx_packets;
 #endif
     return 0;
+}
+
+
+static int
+ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                             const void *value, size_t value_len)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    uint64_t rate;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        if (value_len != sizeof(uint64_t))
+            return -1;
+        memcpy(&rate, value, sizeof(rate));
+        conn->ifc_send_ctl.sc_max_pacing_rate = rate;
+        LSQ_INFO("max pacing rate set to %"PRIu64" bps", rate);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+
+static int
+ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                             void *value, size_t *value_len)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    uint64_t rate;
+
+    if (*value_len < sizeof(uint64_t))
+        return -1;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        rate = conn->ifc_send_ctl.sc_max_pacing_rate;
+        memcpy(value, &rate, sizeof(rate));
+        *value_len = sizeof(rate);
+        return 0;
+    default:
+        return -1;
+    }
 }
 
 
@@ -9176,6 +9222,8 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
     .ci_packet_too_large    =  ietf_full_conn_ci_packet_too_large,
     .ci_get_info            =  ietf_full_conn_ci_get_info,
+    .ci_set_param           =  ietf_full_conn_ci_set_param,
+    .ci_get_param           =  ietf_full_conn_ci_get_param,
 #if LSQUIC_CONN_STATS
     .ci_get_stats           =  ietf_full_conn_ci_get_stats,
     .ci_log_stats           =  ietf_full_conn_ci_log_stats,

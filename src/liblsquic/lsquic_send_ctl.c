@@ -554,9 +554,25 @@ send_ctl_transfer_time (void *ctx)
 
     in_recovery = send_ctl_in_recovery(ctl);
     pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), in_recovery);
+
+    if (ctl->sc_max_pacing_rate && pacing_rate > ctl->sc_max_pacing_rate)
+    {
+        LSQ_DEBUG("pacing rate limited: %"PRIu64" -> %"PRIu64" bps (user "
+                                "limit)", pacing_rate, ctl->sc_max_pacing_rate);
+        pacing_rate = ctl->sc_max_pacing_rate;
+    }
+    else if (ctl->sc_max_pacing_rate)
+        LSQ_DEBUG("pacing rate NOT limited: CC=%"PRIu64" bps, "
+                "user_max=%"PRIu64" bps", pacing_rate, ctl->sc_max_pacing_rate);
+
     if (!pacing_rate)
         pacing_rate = 1;
     tx_time = (uint64_t) SC_PACK_SIZE(ctl) * 1000000 / pacing_rate;
+
+    if (ctl->sc_max_pacing_rate)
+        LSQ_DEBUG("tx_time calculation: packet_size=%u, pacing_rate=%"PRIu64", "
+            "tx_time=%"PRIu64" usec", SC_PACK_SIZE(ctl), pacing_rate, tx_time);
+
     return tx_time;
 }
 
@@ -3949,6 +3965,8 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *ctl,
         if (n_out + path->np_pack_size >= cwnd)
             return 0;
         pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), 0);
+        if (ctl->sc_max_pacing_rate && pacing_rate > ctl->sc_max_pacing_rate)
+            pacing_rate = ctl->sc_max_pacing_rate;
         if (!pacing_rate)
             pacing_rate = 1;
         tx_time = (uint64_t) path->np_pack_size * 1000000 / pacing_rate;
