@@ -2118,6 +2118,26 @@ lsquic_conn_get_sni (lsquic_conn_t *);
 void
 lsquic_conn_abort (lsquic_conn_t *);
 
+/**
+ * Connection parameter identifiers for use with lsquic_conn_set_param()
+ * and lsquic_conn_get_param().
+ */
+enum lsquic_conn_param
+{
+    /**
+     * Maximum pacing rate in bytes per second.
+     * Type: uint64_t
+     * Default: 0 (no limit, controlled by congestion control)
+     *
+     * When set to non-zero, limits the connection's send rate regardless
+     * of what the congestion control algorithm calculates.
+     *
+     * Important: This parameter only works when packet pacing is enabled.
+     * Pacing must be turned on via es_pace_packets in lsquic_engine_settings.
+     */
+    LSQCP_MAX_PACING_RATE = 1,
+};
+
 struct lsquic_conn_info
 {
     uint32_t lci_cwnd;
@@ -2132,10 +2152,49 @@ struct lsquic_conn_info
     uint64_t lci_pkts_lost;
     uint64_t lci_pkts_retx;
     uint64_t lci_bw_estimate;
+    uint64_t lci_max_pacing_rate;
 };
 
 int
 lsquic_conn_get_info (lsquic_conn_t *conn, struct lsquic_conn_info *info);
+
+/**
+ * Set a connection parameter.
+ *
+ * @param conn      Connection object
+ * @param param     Parameter to set (from enum lsquic_conn_param)
+ * @param value     Pointer to parameter value
+ * @param value_len Size of value in bytes
+ * @return          0 on success, -1 on error
+ *
+ * Example:
+ *   uint64_t max_rate = 5000000; // 5 MB/sec
+ *   lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
+ *                         &max_rate, sizeof(max_rate));
+ */
+int
+lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param,
+                                      const void *value, size_t value_len);
+
+/**
+ * Get a connection parameter.
+ *
+ * @param conn       Connection object
+ * @param param      Parameter to get (from enum lsquic_conn_param)
+ * @param value      Pointer to buffer for value
+ * @param value_len  Pointer to size; on input, buffer size;
+ *                   on output, actual value size
+ * @return           0 on success, -1 on error
+ *
+ * Example:
+ *   uint64_t max_rate;
+ *   size_t len = sizeof(max_rate);
+ *   lsquic_conn_get_param(conn, LSQCP_MAX_PACING_RATE,
+ *                         &max_rate, &len);
+ */
+int
+lsquic_conn_get_param (lsquic_conn_t *conn, enum lsquic_conn_param param,
+                                          void *value, size_t *value_len);
 
 /**
  * Helper function: convert list of versions as specified in the argument

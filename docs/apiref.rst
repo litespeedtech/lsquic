@@ -526,6 +526,10 @@ settings structure:
 
        The default value is :func:`LSQUIC_DF_PACE_PACKETS`.
 
+       When pacing is enabled, you can also set per-connection maximum pacing
+       rates using :func:`lsquic_conn_set_param()` with
+       :member:`LSQCP_MAX_PACING_RATE`. See `Connection Parameters`_.
+
     .. member:: unsigned        es_clock_granularity
 
        Clock granularity information is used by the pacer.  The value
@@ -1989,6 +1993,100 @@ Miscellaneous Connection Functions
 .. function:: enum LSQUIC_CONN_STATUS lsquic_conn_status (lsquic_conn_t *conn, char *errbuf, size_t bufsz)
 
     Get connection status.
+
+Connection Parameters
+---------------------
+
+LSQUIC provides a mechanism to set and retrieve per-connection parameters at runtime.
+These parameters allow fine-grained control over connection behavior beyond what is
+available through engine settings.
+
+.. type:: enum lsquic_conn_param
+
+    Connection parameter identifiers for use with :func:`lsquic_conn_set_param()`
+    and :func:`lsquic_conn_get_param()`.
+
+    .. member:: LSQCP_MAX_PACING_RATE
+
+        Maximum pacing rate in bytes per second.
+
+        **Type:** ``uint64_t``
+
+        **Default:** 0 (no limit, controlled by congestion control)
+
+        When set to a non-zero value, limits the connection's send rate regardless
+        of what the congestion control algorithm calculates. This allows applications
+        to enforce bandwidth limits on individual connections.
+
+        **Important:** This parameter only takes effect when packet pacing is enabled
+        via :member:`lsquic_engine_settings.es_pace_packets`. If pacing is disabled,
+        setting this parameter has no effect.
+
+        Setting this value to 0 removes the limit, allowing the congestion control
+        algorithm to determine the send rate.
+
+.. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
+
+    Set a connection parameter.
+
+    :param conn: Connection object
+    :param param: Parameter to set (from :type:`lsquic_conn_param`)
+    :param value: Pointer to parameter value
+    :param value_len: Size of value in bytes
+    :return: 0 on success, -1 on error
+
+    This function allows runtime modification of connection-specific parameters.
+    The parameters that can be set are defined in :type:`lsquic_conn_param`.
+
+    **Example - Limiting connection to 5 MB/sec:**
+
+    ::
+
+        uint64_t max_rate = 5000000; // 5 MB/sec in bytes per second
+        if (lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
+                                  &max_rate, sizeof(max_rate)) == 0)
+        {
+            // Rate limit successfully applied
+        }
+
+    **Example - Removing rate limit:**
+
+    ::
+
+        uint64_t unlimited = 0;
+        lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
+                              &unlimited, sizeof(unlimited));
+
+    **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
+    via :member:`lsquic_engine_settings.es_pace_packets` for this parameter
+    to have any effect.
+
+.. function:: int lsquic_conn_get_param (lsquic_conn_t *conn, enum lsquic_conn_param param, void *value, size_t *value_len)
+
+    Get a connection parameter.
+
+    :param conn: Connection object
+    :param param: Parameter to get (from :type:`lsquic_conn_param`)
+    :param value: Pointer to buffer for value
+    :param value_len: Pointer to size; on input, buffer size; on output, actual value size
+    :return: 0 on success, -1 on error
+
+    This function retrieves the current value of a connection parameter.
+
+    **Example - Reading current pacing rate:**
+
+    ::
+
+        uint64_t max_rate;
+        size_t len = sizeof(max_rate);
+        if (lsquic_conn_get_param(conn, LSQCP_MAX_PACING_RATE,
+                                  &max_rate, &len) == 0)
+        {
+            if (max_rate == 0)
+                printf("No rate limit set\\n");
+            else
+                printf("Max rate: %lu bytes/sec\\n", max_rate);
+        }
 
 Miscellaneous Stream Functions
 ------------------------------
