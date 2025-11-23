@@ -138,6 +138,16 @@ lsquic_conn_get_server_cert_chain (struct lsquic_conn *lconn)
 }
 
 
+struct stack_st_X509 *
+lsquic_conn_get_full_cert_chain (struct lsquic_conn *lconn)
+{
+    if (lconn->cn_enc_session)
+        return lconn->cn_esf_c->esf_get_full_cert_chain(lconn->cn_enc_session);
+    else
+        return NULL;
+}
+
+
 void
 lsquic_conn_make_stream (struct lsquic_conn *lconn)
 {
