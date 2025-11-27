@@ -1667,7 +1667,7 @@ get_crypto_params (const struct enc_sess_iquic *enc_sess,
 }
 
 
-/* [RFC 9001] Section 7.4.1 (Accepting and Rejecting 0-RTT):
+/* [RFC 9000] Section 7.4.1 (Accepting and Rejecting 0-RTT):
  " If 0-RTT data is accepted by the server, the server MUST NOT reduce
  " any limits or alter any values that might be violated by the client
  " with its 0-RTT data.  In particular, a server that accepts 0-RTT data
