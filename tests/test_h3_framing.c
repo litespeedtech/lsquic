@@ -1027,6 +1027,16 @@ test_pwritev (enum lsquic_version version, int http, int sched_immed,
 }
 
 
+static const struct { unsigned iovecs, frames; } combos[] =
+{
+    { 32, 16, },
+    { 16, 16, },
+    { 16, 8, },
+    { 3, 7, },
+    { 7, 3, },
+    { 100, 100, },
+};
+
 static void
 main_test_pwritev_combo (int combo_start, int combo_end)
 {
@@ -1039,15 +1049,6 @@ main_test_pwritev_combo (int combo_start, int combo_end)
     unsigned i, j, k;
     enum lsquic_version version;
     int http, sched_immed;
-    const struct { unsigned iovecs, frames; } combos[] =
-    {
-        { 32, 16, },
-        { 16, 16, },
-        { 16, 8, },
-        { 3, 7, },
-        { 7, 3, },
-        { 100, 100, },
-    };
     int combo_idx;
 
     s_can_write_ack = 1;
@@ -1078,7 +1079,7 @@ static void
 main_test_pwritev (void)
 {
     /* Run all combos */
-    main_test_pwritev_combo(0, 6);
+    main_test_pwritev_combo(0, sizeof(combos) / sizeof(combos[0]));
 }
 
 
