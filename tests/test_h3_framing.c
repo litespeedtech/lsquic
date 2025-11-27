@@ -1054,7 +1054,7 @@ main_test_pwritev_combo (int combo_start, int combo_end)
 
     for (combo_idx = combo_start; combo_idx < combo_end; ++combo_idx)
     {
-        if (combo_idx >= 0 && combo_idx < (int)(sizeof(combos) / sizeof(combos[0])))
+        if (combo_idx < (int)(sizeof(combos) / sizeof(combos[0])))
         {
             lsquic_stream_set_pwritev_params(combos[combo_idx].iovecs, combos[combo_idx].frames);
 
