@@ -407,7 +407,6 @@ IF(LSQUIC_TESTS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     include(ProcessorCount)
     ProcessorCount(N)
     if(NOT N EQUAL 0)
-        set(CTEST_BUILD_FLAGS -j${N})
         message(STATUS "CTest will run tests in parallel with ${N} jobs by default")
 
         # Add a serial test target
