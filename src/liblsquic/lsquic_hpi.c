@@ -59,6 +59,8 @@ add_stream_to_hpi (struct http_prio_iter *iter,
         incr = !!(new_stream->sm_bflags & SMBF_INCREMENTAL);
     }
 
+    HPI_DEBUG("add stream %"PRIu64": incr: %u; prio: %u", new_stream->id,
+                                                                incr, prio);
     if (!(iter->hpi_set[incr] & (1u << prio)))
     {
         iter->hpi_set[incr] |= 1u << prio;
@@ -111,7 +113,6 @@ lsquic_hpi_init (void *iter_p, struct lsquic_stream *first,
     else
         while (1)
         {
-            HPI_DEBUG("add stream %"PRIu64, stream->id);
             add_stream_to_hpi(iter, stream);
             ++count;
             if (stream == last)

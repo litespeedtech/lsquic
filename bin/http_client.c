@@ -63,6 +63,9 @@
 /* This is used to exercise generating and sending of priority frames */
 static int randomly_reprioritize_streams;
 
+/* If set, send "priority: i" header */
+static int s_priority_incremental;
+
 static int s_display_cert_chain;
 
 /* If this file descriptor is open, the client will accept server push and
@@ -597,6 +600,8 @@ send_headers (lsquic_stream_ctx_t *st_h)
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":path"), V(st_h->path));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"), V(hostname));
+    if (s_priority_incremental)
+        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V("i"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V("user-agent"), V(st_h->client_ctx->prog->prog_settings.es_ua));
     //header_set_ptr(&headers_arr[h_idx++], &hbuf, V("expect"), V("100-continue"));
     if (randomly_reprioritize_streams)
@@ -1039,6 +1044,7 @@ usage (const char *prog)
 "                 SPEC takes the form stream_id:nread:UI, where U is\n"
 "                 urgency and I is incremental.  Matched \\d+:\\d+:[0-7][01]\n"
 "   -7 DIR      Save fetched resources into this directory.\n"
+"   -N          Send \"priority: i\" header (incremental).\n"
 "   -Q ALPN     Use hq ALPN.  Specify, for example, \"h3-29\".\n"
             , prog);
 }
@@ -1630,7 +1636,7 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_HTTP, &sports, &http_client_if, &client_ctx);
 
     while (-1 != (opt = getopt(argc, argv, PROG_OPTS
-                                    "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:"
+                                    "46Br:R:IKu:EP:M:n:w:H:p:0:q:e:hatT:b:d:N"
                             "3:"    /* 3 is 133+ for "e" ("e" for "early") */
                             "9:"    /* 9 sort of looks like P... */
                             "7:"    /* Download directory */
@@ -1673,6 +1679,9 @@ main (int argc, char **argv)
                      */
             srand((uintptr_t) argv);
             randomly_reprioritize_streams = 1;
+            break;
+        case 'N':
+            s_priority_incremental = 1;
             break;
         case 'n':
             client_ctx.hcc_concurrency = atoi(optarg);
