@@ -1028,7 +1028,7 @@ test_pwritev (enum lsquic_version version, int http, int sched_immed,
 
 
 static void
-main_test_pwritev (void)
+main_test_pwritev_combo (int combo_start, int combo_end)
 {
     const int limits[] = { INT_MAX, -1, -2, -3, -7, -10, -50, -100, -201, -211,
         -1000, -2003, -3000, -4000, -17803, -20000, 16 * 1024, 16 * 1024 - 1,
@@ -1047,31 +1047,38 @@ main_test_pwritev (void)
         { 3, 7, },
         { 7, 3, },
         { 100, 100, },
-    }, *combo = combos;
+    };
+    int combo_idx;
 
     s_can_write_ack = 1;
 
-  run_test:
-    for (version = 0; version < N_LSQVER; ++version)
-        if ((1 << version) & LSQUIC_SUPPORTED_VERSIONS)
-            for (http = 0; http < 2; ++http)
-                for (sched_immed = 0; sched_immed <= 1; ++sched_immed)
-                    for (i = 0; i < sizeof(limits) / sizeof(limits[i]); ++i)
-                        for (j = 0; j < sizeof(packet_sz) / sizeof(packet_sz[0]);
-                                                                                ++j)
-                            for (k = 0; k < sizeof(prologues) / sizeof(prologues[0]); ++k)
-                                for (n_packets = 1; n_packets < 21; ++n_packets)
-                                    test_pwritev(version, http, sched_immed,
-                                            limits[i], packet_sz[j], prologues[k], n_packets);
-
-    if (combo < combos + sizeof(combos) / sizeof(combos[0]))
+    for (combo_idx = combo_start; combo_idx < combo_end; ++combo_idx)
     {
-        lsquic_stream_set_pwritev_params(combo->iovecs, combo->frames);
-        ++combo;
-        goto run_test;
+        if (combo_idx >= 0 && combo_idx < (int)(sizeof(combos) / sizeof(combos[0])))
+        {
+            lsquic_stream_set_pwritev_params(combos[combo_idx].iovecs, combos[combo_idx].frames);
+
+            for (version = 0; version < N_LSQVER; ++version)
+                if ((1 << version) & LSQUIC_SUPPORTED_VERSIONS)
+                    for (http = 0; http < 2; ++http)
+                        for (sched_immed = 0; sched_immed <= 1; ++sched_immed)
+                            for (i = 0; i < sizeof(limits) / sizeof(limits[i]); ++i)
+                                for (j = 0; j < sizeof(packet_sz) / sizeof(packet_sz[0]); ++j)
+                                    for (k = 0; k < sizeof(prologues) / sizeof(prologues[0]); ++k)
+                                        for (n_packets = 1; n_packets < 21; ++n_packets)
+                                            test_pwritev(version, http, sched_immed,
+                                                    limits[i], packet_sz[j], prologues[k], n_packets);
+        }
     }
 
     s_can_write_ack = 0;
+}
+
+static void
+main_test_pwritev (void)
+{
+    /* Run all combos */
+    main_test_pwritev_combo(0, 6);
 }
 
 
@@ -1622,12 +1629,12 @@ main (int argc, char **argv)
 {
     const char *fuzz_hq_framing_input = NULL;
     const char *fuzz_pwritev_input = NULL;
-    int opt, add_one_more;
+    int opt, add_one_more, test_subset = -1;
     unsigned n_packets, extra_sz;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
 
-    while (-1 != (opt = getopt(argc, argv, "f:p:l:")))
+    while (-1 != (opt = getopt(argc, argv, "f:p:l:s:")))
     {
         switch (opt)
         {
@@ -1641,6 +1648,9 @@ main (int argc, char **argv)
             lsquic_log_to_fstream(stderr, LLTS_NONE);
             lsquic_logger_lopt(optarg);
             break;
+        case 's':
+            test_subset = atoi(optarg);
+            break;
         default:
             exit(1);
         }
@@ -1652,6 +1662,49 @@ main (int argc, char **argv)
         fuzz_guided_hq_framing_testing(fuzz_hq_framing_input);
     else if (fuzz_pwritev_input)
         fuzz_guided_pwritev_testing(fuzz_pwritev_input);
+    else if (test_subset >= 0)
+    {
+        /* Run a specific subset of tests for parallel execution */
+        switch (test_subset)
+        {
+        case 0:  /* pwritev combo 0 (32 iovecs, 16 frames) */
+            main_test_pwritev_combo(0, 1);
+            break;
+        case 1:  /* pwritev combo 1 (16 iovecs, 16 frames) */
+            main_test_pwritev_combo(1, 2);
+            break;
+        case 2:  /* pwritev combo 2 (16 iovecs, 8 frames) */
+            main_test_pwritev_combo(2, 3);
+            break;
+        case 3:  /* pwritev combo 3 (3 iovecs, 7 frames) */
+            main_test_pwritev_combo(3, 4);
+            break;
+        case 4:  /* pwritev combo 4 (7 iovecs, 3 frames) */
+            main_test_pwritev_combo(4, 5);
+            break;
+        case 5:  /* pwritev combo 5 (100 iovecs, 100 frames) */
+            main_test_pwritev_combo(5, 6);
+            break;
+        case 10:  /* hq_framing tests */
+            main_test_hq_framing();
+            break;
+        case 11:  /* frame header split tests */
+            for (n_packets = 1; n_packets <= 2; ++n_packets)
+                for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
+                    for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
+                        test_frame_header_split(n_packets, extra_sz, add_one_more);
+            break;
+        case 12:  /* zero size frame tests */
+            test_zero_size_frame();
+            test_reading_zero_size_data_frame();
+            test_reading_zero_size_data_frame_scenario2();
+            test_reading_zero_size_data_frame_scenario3();
+            break;
+        default:
+            fprintf(stderr, "Unknown test subset: %d\n", test_subset);
+            exit(1);
+        }
+    }
     else
     {
         main_test_pwritev();

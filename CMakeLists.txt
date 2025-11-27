@@ -402,6 +402,26 @@ IF(LSQUIC_TESTS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     # enabled.
     #
     enable_testing()
+
+    # Enable parallel test execution with CTest
+    include(ProcessorCount)
+    ProcessorCount(N)
+    if(NOT N EQUAL 0)
+        set(CTEST_BUILD_FLAGS -j${N})
+        message(STATUS "CTest will run tests in parallel with ${N} jobs by default")
+
+        # Add a serial test target
+        add_custom_target(test-serial
+            COMMAND ${CMAKE_CTEST_COMMAND} --force-new-ctest-process
+            COMMENT "Running tests serially"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+
+        # Set the default test arguments to use parallel execution
+        # This works by setting CTEST_TEST_ARGS which is used by the built-in test target
+        set(CMAKE_CTEST_ARGUMENTS "-j${N};--force-new-ctest-process")
+    endif()
+
     add_subdirectory(tests)
 ENDIF()
 
