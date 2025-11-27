@@ -346,3 +346,27 @@ lsquic_conn_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     return -1;
 }
 
+
+int
+lsquic_conn_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                                           const void *value, size_t value_len)
+{
+    if (!lconn || !value)
+        return -1;
+    if (lconn->cn_if && lconn->cn_if->ci_set_param)
+        return lconn->cn_if->ci_set_param(lconn, param, value, value_len);
+    return -1;
+}
+
+
+int
+lsquic_conn_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                                               void *value, size_t *value_len)
+{
+    if (!lconn || !value || !value_len)
+        return -1;
+    if (lconn->cn_if && lconn->cn_if->ci_get_param)
+        return lconn->cn_if->ci_get_param(lconn, param, value, value_len);
+    return -1;
+}
+

@@ -3302,29 +3302,52 @@ static void
 ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    lsquic_stream_id_t stream_id;
 
-    if (conn->ifc_flags & IFC_HTTP)
+    if (!(conn->ifc_flags & IFC_HTTP))
     {
-        if (!(conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY)))
-        {
-            LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
-                     conn->ifc_max_req_id);
-            conn->ifc_flags |= IFC_GOING_AWAY;
-            const lsquic_stream_id_t stream_id = conn->ifc_max_req_id + N_SITS;
-            if (valid_stream_id(stream_id))
-            {
-                if (0 == lsquic_hcso_write_goaway(&conn->ifc_hcso,
-                                                        conn->ifc_max_req_id))
-                    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
-                else
-                    /* We're already going away, don't abort because of this */
-                    LSQ_WARN("could not write GOAWAY frame");
-            }
-            maybe_close_conn(conn);
-        }
+        LSQ_NOTICE("going away has no effect in non-HTTP mode");
+        return;
+    }
+
+    if (conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY))
+    {
+        LSQ_DEBUG("Already closing or marked as going away");
+        return;
+    }
+
+    if (conn->ifc_flags & IFC_SERVER)
+    {
+        LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
+                 conn->ifc_max_req_id);
+        if (valid_stream_id(conn->ifc_max_req_id + N_SITS))
+            stream_id = conn->ifc_max_req_id;
+        else
+            goto end;
+    }
+    else if (CLIENT_PUSH_SUPPORT)
+    {
+        /* TODO: Track highest Push ID received and send that value */
+        LSQ_DEBUG("client connection marked as going away, but push "
+                            "support is enabled - not sending GOAWAY frame");
+        goto end;
     }
     else
-        LSQ_NOTICE("going away has no effect in non-HTTP mode");
+    {
+        LSQ_DEBUG("client connection marked as going away, sending "
+                                                    "GOAWAY with Push ID 0");
+        stream_id = 0;
+    }
+
+    if (0 == lsquic_hcso_write_goaway(&conn->ifc_hcso, stream_id))
+        lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
+    else
+        /* We're already going away, don't abort because of this */
+        LSQ_WARN("could not write GOAWAY frame");
+
+  end:
+    conn->ifc_flags |= IFC_GOING_AWAY;
+    maybe_close_conn(conn);
 }
 
 
@@ -9042,6 +9065,7 @@ ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     info->lci_pmtu = conn->ifc_paths[conn->ifc_cur_path_id].cop_path.np_pack_size;
     info->lci_bw_estimate = conn->ifc_send_ctl.sc_ci->cci_pacing_rate(
                                             conn->ifc_send_ctl.sc_cong_ctl, 1);
+    info->lci_max_pacing_rate = conn->ifc_send_ctl.sc_max_pacing_rate;
 
 #if LSQUIC_CONN_STATS
     info->lci_bytes_rcvd = conn->ifc_stats.in.bytes;
@@ -9052,6 +9076,51 @@ ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     info->lci_pkts_retx  = conn->ifc_stats.out.retx_packets;
 #endif
     return 0;
+}
+
+
+static int
+ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                             const void *value, size_t value_len)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    uint64_t rate;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        if (value_len != sizeof(uint64_t))
+            return -1;
+        memcpy(&rate, value, sizeof(rate));
+        conn->ifc_send_ctl.sc_max_pacing_rate = rate;
+        LSQ_INFO("max pacing rate set to %"PRIu64" bps", rate);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+
+static int
+ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                             void *value, size_t *value_len)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    uint64_t rate;
+
+    if (*value_len < sizeof(uint64_t))
+        return -1;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        rate = conn->ifc_send_ctl.sc_max_pacing_rate;
+        memcpy(value, &rate, sizeof(rate));
+        *value_len = sizeof(rate);
+        return 0;
+    default:
+        return -1;
+    }
 }
 
 
@@ -9153,6 +9222,8 @@ static const struct conn_iface ietf_full_conn_iface = {
     .ci_packet_sent         =  ietf_full_conn_ci_packet_sent,
     .ci_packet_too_large    =  ietf_full_conn_ci_packet_too_large,
     .ci_get_info            =  ietf_full_conn_ci_get_info,
+    .ci_set_param           =  ietf_full_conn_ci_set_param,
+    .ci_get_param           =  ietf_full_conn_ci_get_param,
 #if LSQUIC_CONN_STATS
     .ci_get_stats           =  ietf_full_conn_ci_get_stats,
     .ci_log_stats           =  ietf_full_conn_ci_log_stats,

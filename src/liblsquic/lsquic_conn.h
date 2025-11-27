@@ -297,6 +297,16 @@ struct conn_iface
     int
     (*ci_get_info) (lsquic_conn_t *conn, struct lsquic_conn_info *info);
 
+    /* Optional: set connection parameter */
+    int
+    (*ci_set_param) (lsquic_conn_t *conn, enum lsquic_conn_param param,
+                     const void *value, size_t value_len);
+
+    /* Optional: get connection parameter */
+    int
+    (*ci_get_param) (lsquic_conn_t *conn, enum lsquic_conn_param param,
+                     void *value, size_t *value_len);
+
     /* Used by the stream module to report that one of the user streams has
      * been read from or written to.  This is what underpins the "no progress
      * timeout" mechanism: see @ref es_noprogress_timeout.

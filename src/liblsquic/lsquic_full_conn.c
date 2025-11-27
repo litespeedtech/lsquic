@@ -4543,6 +4543,52 @@ static const struct headers_stream_callbacks headers_callbacks =
 
 static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_callbacks;
 
+
+static int
+full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                        const void *value, size_t value_len)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    uint64_t rate;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        if (value_len != sizeof(uint64_t))
+            return -1;
+        memcpy(&rate, value, sizeof(rate));
+        conn->fc_send_ctl.sc_max_pacing_rate = rate;
+        LSQ_INFO("max pacing rate set to %"PRIu64" bps", rate);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+
+static int
+full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
+                        void *value, size_t *value_len)
+{
+    struct full_conn *conn = (struct full_conn *) lconn;
+    uint64_t rate;
+
+    if (*value_len < sizeof(uint64_t))
+        return -1;
+
+    switch (param)
+    {
+    case LSQCP_MAX_PACING_RATE:
+        rate = conn->fc_send_ctl.sc_max_pacing_rate;
+        memcpy(value, &rate, sizeof(rate));
+        *value_len = sizeof(rate);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+
 static const struct conn_iface full_conn_iface = {
     .ci_abort                =  full_conn_ci_abort,
     .ci_abort_error          =  full_conn_ci_abort_error,
@@ -4586,6 +4632,8 @@ static const struct conn_iface full_conn_iface = {
     .ci_push_stream          =  full_conn_ci_push_stream,
     .ci_tls_alert            =  full_conn_ci_tls_alert,
     .ci_user_stream_progress =  full_conn_ci_user_stream_progress,
+    .ci_set_param            =  full_conn_ci_set_param,
+    .ci_get_param            =  full_conn_ci_get_param,
 };
 
 static const struct conn_iface *full_conn_iface_ptr = &full_conn_iface;

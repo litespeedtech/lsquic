@@ -306,6 +306,7 @@ struct server_ctx {
     unsigned                     n_conn;
     unsigned                     n_current_conns;
     unsigned                     delay_resp_sec;
+    uint64_t                     max_pacing_rate;
 };
 
 struct lsquic_conn_ctx {
@@ -325,6 +326,22 @@ http_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 
     sni = lsquic_conn_get_sni(conn);
     LSQ_DEBUG("new connection, SNI: %s", sni ? sni : "<not set>");
+
+    if (server_ctx->max_pacing_rate > 0)
+    {
+        if (0 == lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
+                                       &server_ctx->max_pacing_rate,
+                                       sizeof(server_ctx->max_pacing_rate)))
+        {
+            LSQ_INFO("max pacing rate set to %"PRIu64" bytes/sec (%.2f Mbps)",
+                     server_ctx->max_pacing_rate,
+                     (server_ctx->max_pacing_rate * 8.0) / 1000000.0);
+        }
+        else
+        {
+            LSQ_WARN("failed to set max pacing rate");
+        }
+    }
 
     lsquic_conn_ctx_t *conn_h = malloc(sizeof(*conn_h));
     conn_h->conn = conn;
@@ -1777,6 +1794,7 @@ usage (const char *prog)
 "                 write; negative means always use remaining file size.\n"
 "                 Incompatible with -w.\n"
 #endif
+"   -x RATE     Maximum pacing rate in bytes per second (throttle bandwidth)\n"
 "   -Y DELAY    Delay response for this many seconds -- use for debugging\n"
 "   -Q ALPN     Use hq mode; ALPN could be \"hq-29\", for example.\n"
             , prog);
@@ -1947,7 +1965,7 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:h"
 #if HAVE_OPEN_MEMSTREAM
                                                     "Q:"
 #endif
@@ -1989,6 +2007,9 @@ main (int argc, char **argv)
 #endif
         case 'Y':
             server_ctx.delay_resp_sec = atoi(optarg);
+            break;
+        case 'x':
+            server_ctx.max_pacing_rate = strtoull(optarg, NULL, 10);
             break;
         case 'h':
             usage(argv[0]);
