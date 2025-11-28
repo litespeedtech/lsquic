@@ -1,3 +1,4 @@
+/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Test for mini connection delayed packet data corruption bug */
 
 #undef LSQUIC_TEST
@@ -29,7 +30,7 @@ static enum dec_packin mock_decrypt_packet(enc_session_t *enc_sess,
                                            struct lsquic_engine_public *enpub,
                                            const struct lsquic_conn *lconn,
                                            struct lsquic_packet_in *packet_in) {
-  // Return DECPI_NOT_YET to trigger delay
+  /* Return DECPI_NOT_YET to trigger delay */
   return DECPI_NOT_YET;
 }
 
@@ -54,7 +55,7 @@ static void test_delayed_packet_corruption(void) {
   memset(&crand, 0, sizeof(crand));
   enpub.enp_crand = &crand;
 
-  // Setup initial packet
+  /* Setup initial packet */
   struct lsquic_packet_in *packet_in_init =
       lsquic_mm_get_packet_in(&enpub.enp_mm);
   packet_in_init->pi_data = packet_data;
@@ -64,18 +65,18 @@ static void test_delayed_packet_corruption(void) {
   packet_in_init->pi_dcid = dcid;
   packet_in_init->pi_received = 1234567890;
 
-  // Create mini connection
+  /* Create mini connection */
   struct lsquic_conn *conn = lsquic_mini_conn_ietf_new(
       &enpub, packet_in_init, LSQVER_I001, 0, &dcid, 1200);
   assert(conn);
   struct ietf_mini_conn *mini_conn = (struct ietf_mini_conn *)conn;
 
-  // Setup mock crypto interface to force delay
+  /* Setup mock crypto interface to force delay */
   memcpy(&mock_esf_c, conn->cn_esf_c, sizeof(mock_esf_c));
   mock_esf_c.esf_decrypt_packet = mock_decrypt_packet;
   conn->cn_esf_c = &mock_esf_c;
 
-  // Create APP packet to be delayed
+  /* Create APP packet to be delayed */
   memset(app_data, 0x42, sizeof(app_data));
   struct lsquic_packet_in *packet_in_app =
       lsquic_mm_get_packet_in(&enpub.enp_mm);
@@ -86,21 +87,22 @@ static void test_delayed_packet_corruption(void) {
   packet_in_app->pi_dcid = dcid;
   packet_in_app->pi_received = 1234567891;
 
-  // Send APP packet
-  conn->cn_if->ci_packet_in(conn, packet_in_app);
+  /* Send APP packet */
+ conn->cn_if->ci_packet_in(conn, packet_in_app);
 
-  // Verify it is delayed
+  /* Verify it is delayed */
   assert(!TAILQ_EMPTY(&mini_conn->imc_app_packets) && "Packet was NOT delayed");
   struct lsquic_packet_in *delayed = TAILQ_FIRST(&mini_conn->imc_app_packets);
   assert(delayed == packet_in_app &&
          "Delayed packet is different from one we sent");
 
-  // Modify buffer
+  /* Modify buffer */
   memset(app_data, 0xAC, sizeof(app_data));
 
-  // Check delayed packet data is not corrupted
+  /* Check delayed packet data is not corrupted */
   assert(delayed->pi_data[0] == 0x42 && "Delayed data is corrupted!");
 
+  conn->cn_if->ci_destroy(conn);
   lsquic_mm_cleanup(&enpub.enp_mm);
 }
 
