@@ -82,9 +82,8 @@ IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     SET(TESTS ${TESTS} ack_merge)
     # No open_memstream() on Windows
     SET(TESTS ${TESTS} hcsi_reader)
-    # Takes forever on Windows, for whatever reason.  Or maybe it's the
-    # MS C compilers.  Something to investigate... later.
-    LIST(APPEND TESTS h3_framing)
+    # h3_framing test is split into subsets for parallel execution
+    # The main test is not added to TESTS list, but handled separately below
 ENDIF()
 
 
@@ -119,6 +118,23 @@ ADD_TEST(stream test_stream)
 ADD_TEST(stream_hash test_stream -h)
 ADD_TEST(stream_A test_stream -A)
 ADD_TEST(stream_hash_A test_stream -A -h)
+
+# Split h3_framing test into subsets for parallel execution
+IF(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    ADD_EXECUTABLE(test_h3_framing test_h3_framing.c ${ADDL_SOURCES})
+    TARGET_LINK_LIBRARIES(test_h3_framing ${LIBS} ${LIB_FLAGS})
+    # Split pwritev test by combo index (6 combos, each ~207k iterations)
+    ADD_TEST(h3_framing_pwritev_combo0 test_h3_framing -s 0)
+    ADD_TEST(h3_framing_pwritev_combo1 test_h3_framing -s 1)
+    ADD_TEST(h3_framing_pwritev_combo2 test_h3_framing -s 2)
+    ADD_TEST(h3_framing_pwritev_combo3 test_h3_framing -s 3)
+    ADD_TEST(h3_framing_pwritev_combo4 test_h3_framing -s 4)
+    ADD_TEST(h3_framing_pwritev_combo5 test_h3_framing -s 5)
+    # Other h3_framing subtests
+    ADD_TEST(h3_framing_hq test_h3_framing -s 10)
+    ADD_TEST(h3_framing_header_split test_h3_framing -s 11)
+    ADD_TEST(h3_framing_zero_size test_h3_framing -s 12)
+ENDIF()
 
 IF(NOT MSVC)
 ADD_EXECUTABLE(graph_cubic graph_cubic.c ${ADDL_SOURCES})
