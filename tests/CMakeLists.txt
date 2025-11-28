@@ -46,6 +46,7 @@ SET(TESTS
     hkdf
     hpi
     lsquic_hash
+    mini_conn_delay
     packet_out
     packet_resize
     packno_len
