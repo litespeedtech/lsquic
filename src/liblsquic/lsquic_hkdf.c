@@ -8,7 +8,7 @@
 #include "lsquic_hkdf.h"
 
 
-/* [draft-ietf-quic-tls-17] Section 5 */
+/* [RFC 9001] Section 5.1 (Packet Protection Keys) */
 void
 lsquic_qhkdf_expand (const EVP_MD *md, const unsigned char *secret,
             unsigned secret_len, const char *label, uint8_t label_len,

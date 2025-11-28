@@ -487,7 +487,9 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     switch (rm)
     {
     case RETX_MODE_HANDSHAKE:
-    /* [draft-iyengar-quic-loss-recovery-01]:
+    /* Google QUIC handshake retransmission timeout (not used for IETF QUIC).
+     * Based on draft-iyengar-quic-loss-recovery-01 (pre-IETF).
+     * IETF QUIC uses PTO algorithm from RFC 9002 Section 6.2 instead.
      *
      *  if (handshake packets are outstanding):
      *      alarm_duration = max(1.5 * smoothed_rtt, 10ms) << handshake_count;

@@ -150,7 +150,7 @@ ietf_v1_packout_max_header_size (const struct lsquic_conn *lconn,
 }
 
 
-/* [draft-ietf-quic-transport-17] Section-17.2 */
+/* [RFC 9000] Section 17.2 (Long Header Packet Types) */
 static const unsigned char header_type_to_bin[] = {
     [HETY_INITIAL]      = 0x0,
     [HETY_0RTT]         = 0x1,
@@ -159,7 +159,7 @@ static const unsigned char header_type_to_bin[] = {
 };
 
 
-/* [draft-ietf-quic-v2] Section-3.2 */
+/* [RFC 9369] Section 3.2 (Long Header Packet Types) */
 static const unsigned char header_type_to_bin_v2[] = {
     [HETY_INITIAL]      = 0x1,
     [HETY_0RTT]         = 0x2,
@@ -1117,7 +1117,7 @@ ietf_v1_calc_stream_frame_header_sz (lsquic_stream_id_t stream_id,
 }
 
 
-/* [draft-ietf-quic-transport-24] Section 19.6 */
+/* [RFC 9000] Section 19.6 (CRYPTO Frame) */
 static size_t
 ietf_v1_calc_crypto_frame_header_sz (uint64_t offset, unsigned data_sz)
 {
@@ -1705,7 +1705,7 @@ ietf_v1_gen_new_connection_id_frame (unsigned char *buf, size_t buf_sz,
 }
 
 
-/* [draft-ietf-quic-transport-17] Section-17.2 */
+/* [RFC 9000] Section 17.2 (Long Header Packet Types) */
 static const enum header_type bits2ht[4] =
 {
     [0] = HETY_INITIAL,
@@ -1855,9 +1855,9 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
         if (p >= end)
             return -1;
         if (p
-            /* [draft-ietf-quic-transport-25] Section 17.2.5 says that "a
-             * client MUST discard a Retry packet with a zero-length Retry
-             * Token field."  We might as well do it here.
+            /* [RFC 9000] Section 17.2.5 (Retry Packet) says that "a client
+             * MUST discard a Retry packet with a zero-length Retry Token
+             * field."  We might as well do it here.
              */
             + 1
             /* Integrity tag length: */
@@ -2005,7 +2005,7 @@ lsquic_ietf_v1_parse_packet_in_short_begin (struct lsquic_packet_in *packet_in,
     /* By the time this function has been called, we know length is non-zero */
     byte = packet_in->pi_data[0];
 
-    /* [draft-ietf-quic-transport-17] Section 17.3 */
+    /* [RFC 9000] Section 17.3.1 (1-RTT Packet) */
     /* 01SRRKPP */
 
     if (cid_len)

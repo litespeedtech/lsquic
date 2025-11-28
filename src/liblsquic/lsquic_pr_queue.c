@@ -79,12 +79,12 @@ struct evanescent_conn
 };
 
 
-/* [draft-ietf-quic-transport-22], Section 17.2.1 */
+/* [RFC 9000], Section 17.2.1 (Version Negotiation Packet) */
 #define IQUIC_VERNEG_SIZE (1 /* Type */ + 4 /* Version (zero tag) */ \
                 + 1 /* DCIL */ + MAX_CID_LEN + 1 /* SCIL */ + MAX_CID_LEN + \
                 4 * N_LSQVER)
 
-/* [draft-ietf-quic-transport-22], Section 17.2.5 */
+/* [RFC 9000], Section 17.2.5 (Retry Packet) */
 #define IQUIC_RETRY_SIZE (1 /* Type */ + 4 /* Version */ + \
                 + 1 /* DCIL */ + MAX_CID_LEN + 1 /* SCIL */ + MAX_CID_LEN + \
                 + 1 /* ODCIL */ + MAX_CID_LEN + MAX_RETRY_TOKEN_LEN)

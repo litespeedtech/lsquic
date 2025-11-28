@@ -358,7 +358,7 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
     case SETTINGS_MAX_CONCURRENT_STREAMS:
     case SETTINGS_INITIAL_WINDOW_SIZE:
     case SETTINGS_MAX_FRAME_SIZE:
-        /* [draft-ietf-quic-http-00], Section 3 */
+        /* [RFC 9114], Section 3.2.1 (HTTP/3 vs HTTP/2 Settings) */
         LSQ_INFO("Specifying setting 0x%X is a QUIC error", setting_id);
         hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
         break;

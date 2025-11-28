@@ -11,7 +11,7 @@ iquic_packno_bits2len(uint64_t b)
     return (b) + 1;
 }
 
-/* [draft-ietf-quic-transport-22] Section 7.2:
+/* [RFC 9000] Section 7.2 (Negotiating Connection IDs):
  "
    When an Initial packet is sent by a client that has not previously
    received an Initial or Retry packet from the server, it populates the
@@ -24,7 +24,7 @@ iquic_packno_bits2len(uint64_t b)
  */
 #define MIN_INITIAL_DCID_LEN 8
 
-/* [draft-ietf-quic-transport-24] Section 8.1 */
+/* [RFC 9000] Section 14.1 (Initial Datagram Size) */
 #define IQUIC_MIN_INIT_PACKET_SZ 1200
 
 /* Our stream code makes an assumption that packet size is smaller than the

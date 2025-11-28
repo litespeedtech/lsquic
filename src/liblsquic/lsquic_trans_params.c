@@ -615,7 +615,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             break;
         case TPI_ORIGINAL_DEST_CID:
         case TPI_RETRY_SOURCE_CID:
-            /* [draft-ietf-quic-transport-28] Section 18.2:
+            /* [RFC 9000] Section 18.2 (Transport Parameter Definitions):
              " A client MUST NOT include any server-only transport parameter:
              " original_destination_connection_id, preferred_address,
              " retry_source_connection_id, or stateless_reset_token.

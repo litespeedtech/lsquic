@@ -8,7 +8,7 @@
 
 struct lsquic_ext_http_prio;
 
-/* [draft-ietf-quic-http-27] Section 11.2.1 */
+/* [RFC 9114] Section 7.2.1 (HTTP/3 Frame Types) */
 enum hq_frame_type
 {
     HQFT_DATA           = 0,
@@ -47,8 +47,8 @@ enum hq_setting_id
 #define HQ_DF_QPACK_BLOCKED_STREAMS 0
 
 
-/* [draft-ietf-quic-http-19] Section 10.6,
- * [draft-ietf-quic-qpack-07] Section 8.2
+/* [RFC 9114] Section 6.2 (Unidirectional Stream Types),
+ * [RFC 9204] Section 4.2 (QPACK Encoder and Decoder Streams)
  */
 enum hq_uni_stream_type
 {
@@ -59,8 +59,7 @@ enum hq_uni_stream_type
 };
 
 
-/* [draft-ietf-quic-http-23] Section 8.1 and
- * [draft-ietf-quic-qpack-08], Section 8.3
+/* [RFC 9114] Section 8.1 (HTTP/3 Error Codes)
  */
 enum http_error_code
 {

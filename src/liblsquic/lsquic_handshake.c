@@ -4000,7 +4000,7 @@ gquic2_esf_encrypt_packet (enc_session_t *enc_session_p,
 
     if (packet_out->po_data_sz < 3)
     {
-        /* [draft-ietf-quic-tls-20] Section 5.4.2 */
+        /* [RFC 9001] Section 5.4.2 (Packet Protection) */
         enum packno_bits bits = lsquic_packet_out_packno_bits(packet_out);
         /* XXX same packet rules as in IETF QUIC? */
         unsigned len = iquic_packno_bits2len(bits);

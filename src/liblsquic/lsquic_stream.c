@@ -4835,7 +4835,7 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
         filter->hqfi_flags |= HQFI_FLAG_DATA;
         break;
     case HQFT_PUSH_PROMISE:
-        /* [draft-ietf-quic-http-24], Section 7 */
+        /* [RFC 9114], Section 7.2.5 (PUSH_PROMISE) */
         if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT
                                     && !(stream->sm_bflags & SMBF_SERVER))
             return 0;
@@ -4845,13 +4845,13 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
     case HQFT_SETTINGS:
     case HQFT_GOAWAY:
     case HQFT_MAX_PUSH_ID:
-        /* [draft-ietf-quic-http-24], Section 7 */
+        /* [RFC 9114], Section 6.2 (Unidirectional Streams) */
         return -1;
     case 2: /* HTTP/2 PRIORITY */
     case 6: /* HTTP/2 PING */
     case 8: /* HTTP/2 WINDOW_UPDATE */
     case 9: /* HTTP/2 CONTINUATION */
-        /* [draft-ietf-quic-http-30], Section 7.2.8 */
+        /* [RFC 9114], Section 7.2.8 (HTTP/2 Frames) */
         return -1;
     case HQFT_PRIORITY_UPDATE_STREAM:
     case HQFT_PRIORITY_UPDATE_PUSH:
