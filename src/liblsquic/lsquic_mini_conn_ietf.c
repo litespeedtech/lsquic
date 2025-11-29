@@ -1537,6 +1537,14 @@ imico_maybe_delay_processing (struct ietf_mini_conn *conn,
 
     if (conn->imc_delayed_packets_count < max_delayed)
     {
+        int copy_success = (packet_in->pi_flags & PI_OWN_DATA) ||
+                            lsquic_conn_copy_and_release_pi_data(
+                                &conn->imc_conn, conn->imc_enpub, packet_in) == 0;
+        if (!copy_success) {
+            LSQ_DEBUG("drop packet, copy data failed");
+            return;
+        }
+
         ++conn->imc_delayed_packets_count;
         lsquic_packet_in_upref(packet_in);
         TAILQ_INSERT_TAIL(&conn->imc_app_packets, packet_in, pi_next);
