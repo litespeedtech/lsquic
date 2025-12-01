@@ -39,6 +39,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Rylie Pavlik -- CMake improvements
     - davidlei -- Build improvements
     - Timo Voelker -- Testing and bug reports
+    - Kirill Sabitov -- Bug fixes
 
 Thank you!
 

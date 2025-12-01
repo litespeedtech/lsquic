@@ -49,6 +49,8 @@ static struct {
     off_t       offset;     /* Reset it after writing this many bytes */
 } g_reset_stream;
 
+static size_t g_max_file_bytes;  /* If set, limit file read to this many bytes */
+
 struct file {
     LIST_ENTRY(file)        next_file;
     const char             *filename;
@@ -167,7 +169,10 @@ client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
             st_h->file->fd = -1;
             st_h->file->reader.lsqr_read = test_reader_read;
             st_h->file->reader.lsqr_size = test_reader_size;
-            st_h->file->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->file->filename);
+            if (g_max_file_bytes > 0)
+                st_h->file->reader.lsqr_ctx = create_lsquic_reader_ctx_max_bytes(st_h->file->filename, g_max_file_bytes);
+            else
+                st_h->file->reader.lsqr_ctx = create_lsquic_reader_ctx(st_h->file->filename);
             if (!st_h->file->reader.lsqr_ctx)
                 exit(1);
         }
@@ -440,6 +445,7 @@ usage (const char *prog)
 "Options:\n"
 "   -f FILE     File to send to the server -- must be specified at least\n"
 "                 once.\n"
+"   -n BYTES    Limit number of bytes to read from file(s).\n"
 "   -b          Use buffering API for sending files over rather than\n"
 "                 the efficient version.\n"
 "   -p PRIORITY Applicatble to previous file specified with -f\n"
@@ -466,9 +472,12 @@ main (int argc, char **argv)
     prog_init(&prog, 0, &sports, &client_file_stream_if, &client_ctx);
     prog.prog_api.ea_alpn = "md5";
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "bhr:f:p:")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "bhr:f:p:n:")))
     {
         switch (opt) {
+        case 'n':
+            g_max_file_bytes = atoll(optarg);
+            break;
         case 'p':
             if (file)
                 file->priority = atoi(optarg);

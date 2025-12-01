@@ -112,7 +112,7 @@ elif [ "$ROLE" = client ]; then
                 VERSIONS='-o version=h3 -Q hq-interop'
                 ECN='-o ecn=1'
                 ;;
-            resumption)
+            resumption|zerortt)
                 VERSIONS='-o version=h3 -Q hq-interop'
                 RESUME='-0 /logs/resume.file'
                 ;;
@@ -120,16 +120,16 @@ elif [ "$ROLE" = client ]; then
         esac
     fi
     echo CLIENT_PARAMS: $CLIENT_PARAMS
-    if [ "$TESTCASE" = resumption ]; then
+    if [ "$TESTCASE" = resumption ] || [ "$TESTCASE" = zerortt ]; then
         # Fetch first file:
         /usr/bin/http_client $VERSIONS -s $SERVER:$PORT $PATHS \
             -r 1 -R 1 $RESUME \
             -B -7 /downloads -G /logs \
             -L debug 2>/logs/$TESTCASE-req1.out || exit $?
         PATHS=`echo "$PATHS" | sed 's~-p /[^ ]* ~~'`
-        N_REQS=1
-        N_reqs=1
-        W=1
+        ((--N_REQS))
+        ((--N_reqs))
+        W=$N_reqs
         echo "first request successful, new args: $N_REQS; $N_reqs; $PATHS"
     fi
     /usr/bin/http_client $VERSIONS -s $SERVER:$PORT $PATHS \
