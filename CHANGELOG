@@ -1,3 +1,17 @@
+2025-12-01
+    - 4.4.0
+    - [API] Add per-connection send rate throttling.
+    - [BUGFIX] Fix data corruption in delayed mini-conn packets (#593).
+    - [BUGFIX] Allow split buffered packet to generate one packet. (This
+      can happen when DPLPMTUD increases a path's MTU.)  (#505).
+    - [BUGFIX] HTTP/3 client GOAWAY frame generation (#343).
+    - [TUNING] QUIC Interop: add zerortt support.
+    - Improve logs in the Extensible HTTP/3 Priority (HPI) module.
+    - Comment cleanup: update QUIC draft references to RFC references.
+    - Teach http_client to send "priority" header.
+    - Parallelize unit tests so that they finish faster.
+    - Include QUIC Interop Runner docker files in the distribution.
+
 2025-11-01
     - 4.3.2
     - [BUGFIX] Fix the no-progress timeout logic (issue #531, PR #574).

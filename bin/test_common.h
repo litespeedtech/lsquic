@@ -135,6 +135,9 @@ test_reader_read (void *void_ctx, void *buf, size_t count);
 struct reader_ctx *
 create_lsquic_reader_ctx (const char *filename);
 
+struct reader_ctx *
+create_lsquic_reader_ctx_max_bytes (const char *filename, size_t max_bytes);
+
 void
 destroy_lsquic_reader_ctx (struct reader_ctx *ctx);
 

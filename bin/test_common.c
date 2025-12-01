@@ -2435,6 +2435,13 @@ test_reader_read (void *void_ctx, void *buf, size_t count)
 struct reader_ctx *
 create_lsquic_reader_ctx (const char *filename)
 {
+    return create_lsquic_reader_ctx_max_bytes(filename, 0);
+}
+
+
+struct reader_ctx *
+create_lsquic_reader_ctx_max_bytes (const char *filename, size_t max_bytes)
+{
     int fd;
     struct stat st;
 
@@ -2457,6 +2464,8 @@ create_lsquic_reader_ctx (const char *filename)
     }
     struct reader_ctx *ctx = malloc(sizeof(*ctx));
     ctx->file_size = st.st_size;
+    if (max_bytes > 0 && max_bytes < ctx->file_size)
+        ctx->file_size = max_bytes;
     ctx->nread = 0;
     ctx->fd = fd;
     return ctx;

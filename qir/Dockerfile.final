@@ -1,0 +1,5 @@
+FROM martenseemann/quic-network-simulator-endpoint:latest
+COPY --from=build-lsquic /usr/bin/http_client /usr/bin/http_server /usr/bin/
+COPY qir/run_endpoint.sh .
+RUN chmod +x run_endpoint.sh
+ENTRYPOINT [ "./run_endpoint.sh" ]
