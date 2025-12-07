@@ -1,4 +1,9 @@
-2024-12-01
+2025-12-07
+    - 4.4.1
+    - [IMPROVEMENT] Improve BBR performance at high BDP by removing a
+      hardcoded limit inherited from the original BBR code in Chrome.
+
+2025-11-30
     - 4.4.0
     - [API] Add per-connection send rate throttling.
     - [BUGFIX] Fix data corruption in delayed mini-conn packets (#593).
