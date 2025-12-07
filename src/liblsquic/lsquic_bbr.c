@@ -73,6 +73,12 @@
 /* Taken from send_algorithm_interface.h */
 #define kDefaultMaxCongestionWindowPackets 2000
 
+/* Multiplier for maximum cwnd relative to BDP.  This allows BBR to probe
+ * bandwidth (1.25x during PROBE_BW) and handle ACK aggregation without
+ * hitting a hard limit at high RTT.
+ */
+#define kMaxCwndBdpMultiplier 3.0f
+
 // The time after which the current min_rtt value expires.
 #define kMinRttExpiry sec(10)
 
@@ -146,8 +152,9 @@ set_mode (struct lsquic_bbr *bbr, enum bbr_mode mode)
 {
     if (bbr->bbr_mode != mode)
     {
-        LSQ_DEBUG("mode change %s -> %s", mode2str[bbr->bbr_mode],
-                                                        mode2str[mode]);
+        LSQ_INFO("mode change %s -> %s (BW: %"PRIu64" bps, cwnd: %"PRIu64")",
+            mode2str[bbr->bbr_mode], mode2str[mode],
+            minmax_get(&bbr->bbr_max_bandwidth), bbr->bbr_cwnd);
         bbr->bbr_mode = mode;
     }
     else
@@ -941,6 +948,11 @@ calculate_cwnd (struct lsquic_bbr *bbr, uint64_t bytes_acked,
         LSQ_DEBUG("exceed max cwnd");
         bbr->bbr_cwnd = bbr->bbr_max_cwnd;
     }
+
+    /* Update max_cwnd based on current BDP to scale with network conditions. */
+    uint64_t bdp_based_max = get_target_cwnd(bbr, kMaxCwndBdpMultiplier);
+    uint64_t static_min = kDefaultMaxCongestionWindowPackets * kDefaultTCPMSS;
+    bbr->bbr_max_cwnd = MAX(bdp_based_max, static_min);
 }
 
 
