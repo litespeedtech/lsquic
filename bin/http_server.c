@@ -1466,6 +1466,7 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (st_h->interop_u.md5c.done)
             {
                 MD5_Final(md5sum, &st_h->interop_u.md5c.md5ctx);
+                /* Internal helper (not in lsquic.h); example-only formatting. */
                 lsquic_hexstr(md5sum, sizeof(md5sum), md5str, sizeof(md5str));
                 snprintf(st_h->interop_u.md5c.resp_buf, sizeof(st_h->interop_u.md5c.resp_buf),
                     "<html><head><title>MD5 Checksum Result</title></head>\n"

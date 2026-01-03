@@ -40,6 +40,14 @@ See bin/duck_{client,server}.c
 This pair of programs implement the siduck-00 protocol.  They provide an
 illustration of using the datagram API.
 
+Internal-only helpers used by examples
+--------------------------------------
+
+Some example tools under bin/ call internal helper functions that are not
+part of the public API in include/lsquic.h.  These calls exist only for
+internal testing, diagnostics, or convenience in the example framework, which
+is why the functions are not available in lsquic.h.
+
 Usage Examples
 --------------
 

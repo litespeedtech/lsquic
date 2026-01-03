@@ -89,6 +89,7 @@ prog_init (struct prog *prog, unsigned flags,
     /* Non prog-specific initialization: */
     lsquic_global_init(flags & LSENG_SERVER ? LSQUIC_GLOBAL_SERVER :
                                                     LSQUIC_GLOBAL_CLIENT);
+    /* Internal helper (not in lsquic.h); example-only logging setup. */
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSUS);
     lsquic_logger_lopt("=notice");
     return 0;
@@ -274,6 +275,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         if (prog->prog_engine_flags & LSENG_SERVER)
         {
             if (!prog->prog_certs)
+                /* Internal helper (not in lsquic.h); example-only cert map. */
                 prog->prog_certs = lsquic_hash_create();
             return load_cert(prog->prog_certs, arg);
         }
@@ -285,6 +287,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         prog->prog_hostname = arg;
         return 0;
     case 'y':
+        /* Internal helper (not in lsquic.h); example-only logging setup. */
         lsquic_log_to_fstream(stderr, atoi(arg));
         return 0;
     case 'L':
@@ -671,6 +674,7 @@ keylog_open_file (const SSL *ssl)
 
     conn = lsquic_ssl_to_conn(ssl);
     cid = lsquic_conn_id(conn);
+    /* Internal helper (not in lsquic.h); example-only CID formatting. */
     lsquic_hexstr(cid->idbuf, cid->len, id_str, sizeof(id_str));
     sz = snprintf(path, sizeof(path), "%s/%s.keys", s_keylog_dir, id_str);
     if ((size_t) sz >= sizeof(path))
@@ -718,9 +722,11 @@ prog_prep (struct prog *prog)
         struct lsquic_hash_elem *el;
         struct server_cert *cert;
 
+        /* Internal helpers (not in lsquic.h); example-only cert map. */
         for (el = lsquic_hash_first(prog->prog_certs); el;
                                 el = lsquic_hash_next(prog->prog_certs))
         {
+            /* Internal helper (not in lsquic.h); example-only cert map. */
             cert = lsquic_hashelem_getdata(el);
             SSL_CTX_set_keylog_callback(cert->ce_ssl_ctx, keylog_log_line);
         }

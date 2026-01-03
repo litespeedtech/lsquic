@@ -308,6 +308,7 @@ http_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
     ++conn_h->client_ctx->hcc_n_open_conns;
     if (!TAILQ_EMPTY(&client_ctx->hcc_path_elems))
         create_streams(client_ctx, conn_h);
+    /* Internal helper (not in lsquic.h); example-only timing. */
     conn_h->ch_created = lsquic_time_now();
     return conn_h;
 }
@@ -423,6 +424,7 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
     {
         conn_h = lsquic_conn_get_ctx(conn);
         ++s_stat_conns_ok;
+        /* Internal helper (not in lsquic.h); example-only timing. */
         update_sample_stats(&s_stat_to_conn,
                                     lsquic_time_now() - conn_h->ch_created);
         if (TAILQ_EMPTY(&client_ctx->hcc_path_elems))
@@ -529,6 +531,7 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     lsquic_stream_ctx_t *st_h = calloc(1, sizeof(*st_h));
     st_h->stream = stream;
     st_h->client_ctx = stream_if_ctx;
+    /* Internal helper (not in lsquic.h); example-only timing. */
     st_h->sh_created = lsquic_time_now();
     if (st_h->client_ctx->hcc_cur_pe)
     {
@@ -785,6 +788,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 LSQ_ERROR("could not get header set from stream");
                 exit(2);
             }
+            /* Internal helper (not in lsquic.h); example-only timing. */
             st_h->sh_ttfb = lsquic_time_now();
             update_sample_stats(&s_stat_ttfb, st_h->sh_ttfb - st_h->sh_created);
             if (s_discard_response)
@@ -809,6 +813,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (client_ctx->hcc_reset_after_nbytes &&
                 s_stat_downloaded_bytes > client_ctx->hcc_reset_after_nbytes)
             {
+                /* Internal helper (not in lsquic.h); example-only test hook. */
                 lsquic_stream_maybe_reset(stream, 0x1, 1);
                 break;
             }
@@ -816,6 +821,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (client_ctx->hcc_retire_cid_after_nbytes &&
                 s_stat_downloaded_bytes > client_ctx->hcc_retire_cid_after_nbytes)
             {
+                /* Internal helper (not in lsquic.h); example-only test hook. */
                 lsquic_conn_retire_cid(lsquic_stream_conn(stream));
                 client_ctx->hcc_retire_cid_after_nbytes = 0;
                 break;
@@ -824,6 +830,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (!g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
             {
                 /* First read is assumed to be the first byte */
+                /* Internal helper (not in lsquic.h); example-only timing. */
                 st_h->sh_ttfb = lsquic_time_now();
                 update_sample_stats(&s_stat_ttfb,
                                     st_h->sh_ttfb - st_h->sh_created);
@@ -874,6 +881,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
         }
         else if (0 == nread)
         {
+            /* Internal helper (not in lsquic.h); example-only timing. */
             update_sample_stats(&s_stat_req, lsquic_time_now() - st_h->sh_ttfb);
             client_ctx->hcc_flags |= HCC_SEEN_FIN;
             lsquic_stream_shutdown(stream, 0);
@@ -1862,6 +1870,7 @@ main (int argc, char **argv)
         exit(1);
     }
 
+    /* Internal helper (not in lsquic.h); example-only timing. */
     start_time = lsquic_time_now();
     was_empty = TAILQ_EMPTY(&sports);
     if (0 != prog_prep(&prog))
@@ -1895,6 +1904,7 @@ main (int argc, char **argv)
 
     if (stats_fh)
     {
+        /* Internal helper (not in lsquic.h); example-only timing. */
         elapsed = (long double) (lsquic_time_now() - start_time) / 1000000;
         fprintf(stats_fh, "overall statistics as calculated by %s:\n", argv[0]);
         display_stat(stats_fh, &s_stat_to_conn, "time for connect");
