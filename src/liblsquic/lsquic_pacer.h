@@ -55,6 +55,9 @@ lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
 void
 lsquic_pacer_loss_event (struct pacer *);
 
+void
+lsquic_pacer_disable_burst_tokens (struct pacer *);
+
 static inline int
 lsquic_pacer_delayed (const struct pacer *pacer)
 {
