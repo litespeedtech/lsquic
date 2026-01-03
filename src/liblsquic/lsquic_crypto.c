@@ -531,7 +531,6 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
         goto err;
     }
     
-    len = 0;
     if (!EVP_DigestSignFinal(sign_context, NULL, &len)) {
         goto err;
     }
