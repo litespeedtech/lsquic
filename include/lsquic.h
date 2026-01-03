@@ -1932,6 +1932,7 @@ int
 lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
 
 struct lsquic_logger_if {
+    /* Return value is the number of bytes consumed; currently ignored. */
     int     (*log_buf)(void *logger_ctx, const char *buf, size_t len);
 };
 
@@ -2302,4 +2303,3 @@ lsquic_ssl_sess_to_resume_info (struct ssl_st *, struct ssl_session_st *,
 #endif
 
 #endif //__LSQUIC_H__
-
