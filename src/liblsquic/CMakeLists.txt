@@ -144,14 +144,16 @@ install(TARGETS lsquic
 )
 
 include(CMakePackageConfigHelpers)
+set(LSQUIC_CONFIG_IN ${CMAKE_CURRENT_SOURCE_DIR}/lsquic-config.cmake.in)
+set(LSQUIC_CONFIG_OUT ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/lsquic-config.cmake)
 configure_package_config_file(
-    lsquic-config.cmake ${CMAKE_CURRENT_BINARY_DIR}/lsquic-config.cmake
+    ${LSQUIC_CONFIG_IN} ${LSQUIC_CONFIG_OUT}
     INSTALL_DESTINATION share/lsquic
     NO_CHECK_REQUIRED_COMPONENTS_MACRO
     PATH_VARS CMAKE_INSTALL_INCLUDEDIR)
 
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/lsquic-config.cmake
+    FILES ${LSQUIC_CONFIG_OUT}
     DESTINATION share/lsquic)
 
 install(
@@ -159,4 +161,3 @@ install(
     DESTINATION share/lsquic
     NAMESPACE lsquic::
     FILE lsquic-targets.cmake)
-
