@@ -1785,6 +1785,8 @@ usage (const char *prog)
 "\n"
 "Options:\n"
 "   -r ROOT     Document root\n"
+"   -n CONNS    Maximum number of connections.  Server will stop after\n"
+"                 accepting this many connections.  Defaults to unlimited.\n"
 "   -p FILE     Push request with this path\n"
 "   -w SIZE     Write immediately (LSWS mode).  Argument specifies maximum\n"
 "                 size of the immediate write.\n"
