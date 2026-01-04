@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * md5_client.c -- This client sends one or more files to MD5 QUIC server
  *                 for MD5 sum calculation.

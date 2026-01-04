@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * A duck quacks!  The server for the siduck protocol:
  *      https://tools.ietf.org/html/draft-pardue-quic-siduck-00

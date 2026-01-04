@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_PUSH_PROMISE_H
 #define LSQUIC_PUSH_PROMISE_H 1
 

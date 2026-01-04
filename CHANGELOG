@@ -1,3 +1,13 @@
+2026-01-04
+    - 4.4.2
+    - [BUGFIX] BBR: mark connections app-limited when pacing is capped and
+      avoid burst token replenishment under a max pacing rate (#605).
+    - Build: fix variable initialization warning in lsquic_gen_prof (#602).
+    - Documentation: add notes around internal helpers used in examples
+      (#604).
+    - Documentation: document -n option in http_server usage (#603).
+    - CMake: avoid overwriting lsquic config template during install (#601).
+
 2025-12-07
     - 4.4.1
     - [IMPROVEMENT] Improve BBR performance at high BDP by removing a

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_hq.h -- HTTP/3 (originally "HTTP over QUIC" or HQ) types
  */

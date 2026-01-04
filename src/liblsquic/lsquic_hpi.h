@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_hpi.h - HPI: (Extensible) HTTP Priority Iterator
  *

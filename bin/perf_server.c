@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * perf_server.c -- Implements the "perf" server, see
  *      https://tools.ietf.org/html/draft-banks-quic-performance-00

@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #ifndef LSQUIC_PACKET_COMMON_H
 #define LSQUIC_PACKET_COMMON_H 1
 

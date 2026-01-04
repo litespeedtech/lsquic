@@ -1,4 +1,4 @@
-/* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * echo_client.c -- This is really a "line client:" it connects to QUIC server
  * and sends it stuff, line by line.  It works in tandem with echo_server.
