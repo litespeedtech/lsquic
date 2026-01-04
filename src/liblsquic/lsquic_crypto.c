@@ -507,6 +507,7 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
     size_t chlo_hash_len = 32; /* SHA256 */
     EVP_MD_CTX *sign_context = NULL;
     EVP_PKEY_CTX* pkey_ctx = NULL;
+    size_t len = 0;
     int ret = -1;
 
     if (sha256(chlo_data, chlo_data_len, chlo_hash) != 0)
@@ -530,7 +531,6 @@ lsquic_gen_prof (const uint8_t *chlo_data, size_t chlo_data_len,
         goto err;
     }
     
-    size_t len = 0;
     if (!EVP_DigestSignFinal(sign_context, NULL, &len)) {
         goto err;
     }
