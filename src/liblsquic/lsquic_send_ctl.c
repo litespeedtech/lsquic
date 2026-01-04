@@ -1985,7 +1985,7 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
         if (ctl->sc_max_pacing_rate)
         {
             /* Avoid burst token replenishment when user caps pacing rate. */
-            ctl->sc_pacer.pa_burst_tokens = 0;
+            lsquic_pacer_disable_burst_tokens(&ctl->sc_pacer);
             if (n_out == 0)
                 n_out = 1;
         }
