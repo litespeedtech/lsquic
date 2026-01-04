@@ -165,6 +165,9 @@ Logging
 
     .. member:: int     (*log_buf)(void *logger_ctx, const char *buf, size_t len)
 
+        Return number of bytes written/consumed (similar to ``fwrite``);
+        the return value is currently ignored by the library.
+
 .. function:: void lsquic_logger_init (const struct lsquic_logger_if *logger_if, void *logger_ctx, enum lsquic_logger_timestamp_style)
 
     Call this if you want to do something with LSQUIC log messages, as they are thrown out by default.

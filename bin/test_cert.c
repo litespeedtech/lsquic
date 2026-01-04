@@ -136,6 +136,7 @@ load_cert (struct lsquic_hash *certs, const char *optarg)
     const int was = SSL_CTX_set_session_cache_mode(cert->ce_ssl_ctx, 1);
     LSQ_DEBUG("set SSL session cache mode to 1 (was: %d)", was);
 
+    /* Internal helper (not in lsquic.h); example-only cert map. */
     if (lsquic_hash_insert(certs, cert->ce_sni, strlen(cert->ce_sni), cert,
                                                             &cert->ce_hash_el))
         rv = 0;
@@ -166,15 +167,18 @@ lookup_cert (void *cert_lu_ctx, const struct sockaddr *sa_UNUSED,
         return NULL;
 
     if (sni)
+        /* Internal helper (not in lsquic.h); example-only cert map. */
         el = lsquic_hash_find(cert_lu_ctx, sni, strlen(sni));
     else
     {
         LSQ_INFO("SNI is not set");
+        /* Internal helper (not in lsquic.h); example-only cert map. */
         el = lsquic_hash_first(cert_lu_ctx);
     }
 
     if (el)
     {
+        /* Internal helper (not in lsquic.h); example-only cert map. */
         server_cert = lsquic_hashelem_getdata(el);
         if (server_cert)
             return server_cert->ce_ssl_ctx;
@@ -190,12 +194,15 @@ delete_certs (struct lsquic_hash *certs)
     struct lsquic_hash_elem *el;
     struct server_cert *cert;
 
+    /* Internal helpers (not in lsquic.h); example-only cert map. */
     for (el = lsquic_hash_first(certs); el; el = lsquic_hash_next(certs))
     {
+        /* Internal helper (not in lsquic.h); example-only cert map. */
         cert = lsquic_hashelem_getdata(el);
         SSL_CTX_free(cert->ce_ssl_ctx);
         free(cert->ce_sni);
         free(cert);
     }
+    /* Internal helper (not in lsquic.h); example-only cert map cleanup. */
     lsquic_hash_destroy(certs);
 }
