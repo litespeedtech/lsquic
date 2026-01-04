@@ -105,6 +105,14 @@ lsquic_pacer_loss_event (struct pacer *pacer)
 }
 
 
+void
+lsquic_pacer_disable_burst_tokens (struct pacer *pacer)
+{
+    pacer->pa_burst_tokens = 0;
+    LSQ_DEBUG("%s: tokens: %u", __func__, pacer->pa_burst_tokens);
+}
+
+
 int
 lsquic_pacer_can_schedule (struct pacer *pacer, unsigned n_in_flight)
 {

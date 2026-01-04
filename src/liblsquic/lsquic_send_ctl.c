@@ -1813,6 +1813,20 @@ send_ctl_could_send (const struct lsquic_send_ctl *ctl)
 }
 
 
+static int
+send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
+{
+    uint64_t pacing_rate;
+
+    if (!ctl->sc_max_pacing_rate)
+        return 0;
+
+    pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl),
+                                                send_ctl_in_recovery(ctl));
+    return pacing_rate > ctl->sc_max_pacing_rate;
+}
+
+
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
                                             const struct network_path *path)
@@ -1824,6 +1838,15 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
                                                 || send_ctl_could_send(ctl))
     {
         LSQ_DEBUG("app-limited");
+        ctl->sc_flags |= SC_APP_LIMITED;
+    }
+    else if ((ctl->sc_flags & SC_PACE)
+            && lsquic_pacer_delayed(&ctl->sc_pacer)
+            && send_ctl_all_bytes_out(ctl)
+                    < ctl->sc_ci->cci_get_cwnd(CGP(ctl))
+            && send_ctl_pacing_capped(ctl))
+    {
+        LSQ_DEBUG("app-limited (pacing capped)");
         ctl->sc_flags |= SC_APP_LIMITED;
     }
 }
@@ -1959,6 +1982,13 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
     if (ctl->sc_flags & SC_PACE)
     {
         unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
+        if (ctl->sc_max_pacing_rate)
+        {
+            /* Avoid burst token replenishment when user caps pacing rate. */
+            lsquic_pacer_disable_burst_tokens(&ctl->sc_pacer);
+            if (n_out == 0)
+                n_out = 1;
+        }
         lsquic_pacer_packet_scheduled(&ctl->sc_pacer, n_out,
             send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
     }
