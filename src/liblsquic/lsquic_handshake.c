@@ -76,7 +76,7 @@
  */
 static struct conn_cid_elem dummy_cce;
 static const struct lsquic_conn dummy_lsquic_conn = { .cn_cces = &dummy_cce, };
-static const struct lsquic_conn *const lconn = &dummy_lsquic_conn;
+static const struct lsquic_conn *const g_dummy_lconn = &dummy_lsquic_conn;
 
 static int s_ccrt_idx;
 

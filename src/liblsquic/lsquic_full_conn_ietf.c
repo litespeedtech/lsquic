@@ -7058,7 +7058,6 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
     struct conn_path *const path = &conn->ifc_paths[packet_in->pi_path_id];
     struct conn_cid_elem *cce;
     int dcid_changed;
-    char cidbuf_[MAX_CID_LEN * 2 + 1];
 
     /* An endpoint only changes the address that it sends packets to in
      * response to the highest-numbered non-probing packet.  This ensures
