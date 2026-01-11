@@ -26,6 +26,7 @@ SET(TESTS
     ackparse_gquic_be
     ackparse_ietf
     alarmset
+    alpn2ver
     alt_svc_ver
     arr
     attq

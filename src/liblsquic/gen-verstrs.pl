@@ -28,8 +28,16 @@ while (<HEADER>) {
         }
         if (/^\s*(LSQVER_I(\d{3}))\b/) {
             push @all_versions, $1;
-            if (not grep 'h3' eq $_, @all_alpns) {
-                push @all_alpns, "h3";
+            # Convert to integer to remove leading zeros
+            my $ver_num = int($2);
+            if ($ver_num == 1) {
+                # IETF QUIC v1 uses "h3"
+                if (not grep 'h3' eq $_, @all_alpns) {
+                    push @all_alpns, "h3";
+                }
+            } else {
+                # IETF QUIC v2+ uses "h3-v2", "h3-v3", etc.
+                push @all_alpns, "h3-v$ver_num";
             }
         }
     }
