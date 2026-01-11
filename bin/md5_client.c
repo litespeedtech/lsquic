@@ -123,6 +123,7 @@ struct lsquic_stream_ctx {
     struct client_ctx   *client_ctx;
     struct file         *file;
     struct event        *read_stdin_ev;
+    time_t               last_bw_log;
     struct {
         int         initialized;
         size_t      size,
@@ -353,6 +354,24 @@ client_file_on_write_efficient (lsquic_stream_t *stream,
 static void
 client_file_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    time_t now;
+    struct lsquic_conn_info info;
+
+    now = time(NULL);
+    if (now > st_h->last_bw_log)
+    {
+        if (0 == lsquic_conn_get_info(lsquic_stream_conn(stream), &info))
+        {
+            LSQ_INFO("pacing_rate: %"PRIu64" bps (%.2f Mbps)",
+                     info.lci_pacing_rate,
+                     info.lci_pacing_rate / 1000000.0);
+            LSQ_INFO("bandwidth: %"PRIu64" bps (%.2f Mbps)",
+                     info.lci_bw_estimate,
+                     info.lci_bw_estimate / 1000000.0);
+        }
+        st_h->last_bw_log = now;
+    }
+
     if (g_write_file)
         client_file_on_write_efficient(stream, st_h);
     else

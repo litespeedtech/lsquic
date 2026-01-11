@@ -189,6 +189,14 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
     sampler->bws_last_acked_sent_time = packet_out->po_sent;
     sampler->bws_last_acked_packet_time = ack_time;
 
+    /* Update bandwidth calculation window: reset every ~1 second */
+    if (sampler->bws_bw_calc_time == 0
+        || ack_time - sampler->bws_bw_calc_time >= 1000000)
+    {
+        sampler->bws_bw_calc_acked = sampler->bws_total_acked;
+        sampler->bws_bw_calc_time = ack_time;
+    }
+
     // Exit app-limited phase once a packet that was sent while the connection
     // is not app-limited is acknowledged.
     if ((sampler->bws_flags & BWS_APP_LIMITED)
@@ -274,4 +282,29 @@ lsquic_bw_sampler_entry_count (const struct bw_sampler *sampler)
         ++count;
 
     return count;
+}
+
+
+uint64_t
+lsquic_bw_sampler_get_bw (struct bw_sampler *sampler)
+{
+    lsquic_time_t time_delta, now;
+    uint64_t bytes_delta, bw;
+
+    if (sampler->bws_bw_calc_time == 0 || sampler->bws_last_acked_packet_time == 0)
+        return 0;
+
+    now = sampler->bws_last_acked_packet_time;
+    time_delta = now - sampler->bws_bw_calc_time;
+
+    /* Use at least 100ms window to avoid noise */
+    if (time_delta < 100000)
+        return sampler->bws_last_bw;
+
+    bytes_delta = sampler->bws_total_acked - sampler->bws_bw_calc_acked;
+    bw = bytes_delta * 8 * 1000000 / time_delta;
+
+    sampler->bws_last_bw = bw;
+
+    return bw;
 }

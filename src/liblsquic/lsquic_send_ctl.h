@@ -54,6 +54,8 @@ enum send_ctl_flags {
     SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
     SC_ROUGH_RTT    =  1 << 22,
+    SC_BW_SAMPLER_INIT = 1 << 23, /* bw_sampler is initialized */
+    SC_BW_SAMPLER_INFO = 1 << 24, /* bandwidth info was requested */
 #if LSQUIC_DEVEL
     SC_DYN_PTHRESH  =  1 << 31u,    /* dynamic packet threshold enabled */
 #endif
@@ -97,6 +99,7 @@ typedef struct lsquic_send_ctl {
     const struct ver_neg           *sc_ver_neg;
     struct lsquic_conn_public      *sc_conn_pub;
     struct pacer                    sc_pacer;
+    struct bw_sampler               sc_bw_sampler;
     lsquic_packno_t                 sc_cur_packno;
     lsquic_packno_t                 sc_largest_sent_at_cutback;
     lsquic_packno_t                 sc_max_rtt_packno;
@@ -519,5 +522,8 @@ lsquic_send_ctl_0rtt_to_1rtt (struct lsquic_send_ctl *);
 
 void
 lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *);
+
+uint64_t
+lsquic_send_ctl_get_bw (struct lsquic_send_ctl *);
 
 #endif

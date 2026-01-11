@@ -74,7 +74,7 @@ main (int argc, char **argv)
     enum cubic_flags flags;
     struct lsquic_packet_out packet_out;
 
-    cci->cci_init(&cubic, 0, 0);
+    cci->cci_init(&cubic, 0);
     max_cwnd = 0;
     i = 0;
     memset(&packet_out, 0, sizeof(packet_out));

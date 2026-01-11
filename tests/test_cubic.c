@@ -41,7 +41,7 @@ test_post_quiescence_explosion (void)
     int i;
     struct lsquic_packet_out packet_out; memset(&packet_out, 0, sizeof(packet_out));
 
-    cci->cci_init(&cubic, &conn_pub, 0);
+    cci->cci_init(&cubic, &conn_pub);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;
 
     for (i = 0; i < 10; ++i)
@@ -75,7 +75,7 @@ test_post_quiescence_explosion2 (void)
     int i;
     struct lsquic_packet_out packet_out; memset(&packet_out, 0, sizeof(packet_out));
 
-    cci->cci_init(&cubic, &conn_pub, 0);
+    cci->cci_init(&cubic, &conn_pub);
     cubic.cu_ssthresh = cubic.cu_cwnd = 32 * 1370;
 
     for (i = 0; i < 10; ++i)

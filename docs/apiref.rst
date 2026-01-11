@@ -1997,6 +1997,76 @@ Miscellaneous Connection Functions
 
     Get connection status.
 
+.. type:: struct lsquic_conn_info
+
+    Connection statistics snapshot returned by
+    :func:`lsquic_conn_get_info()`.
+
+    .. member:: uint32_t lci_cwnd
+
+        Current congestion window, in bytes.
+
+    .. member:: uint32_t lci_pmtu
+
+        Path MTU in bytes.
+
+    .. member:: uint32_t lci_rtt
+
+        Smoothed RTT in microseconds.
+
+    .. member:: uint32_t lci_rttvar
+
+        RTT variation in microseconds.
+
+    .. member:: uint32_t lci_rtt_min
+
+        Minimum RTT in microseconds.
+
+    .. member:: uint64_t lci_bytes_rcvd
+
+        Total bytes received.
+
+    .. member:: uint64_t lci_bytes_sent
+
+        Total bytes sent.
+
+    .. member:: uint64_t lci_pkts_rcvd
+
+        Total packets received.
+
+    .. member:: uint64_t lci_pkts_sent
+
+        Total packets sent.
+
+    .. member:: uint64_t lci_pkts_lost
+
+        Total packets lost.
+
+    .. member:: uint64_t lci_pkts_retx
+
+        Total packets retransmitted.
+
+    .. member:: uint64_t lci_pacing_rate
+
+        Current pacing rate (bytes per second) as computed by the
+        congestion controller.
+
+    .. member:: uint64_t lci_bw_estimate
+
+        Bandwidth estimate (bits per second) derived from recent samples.
+
+    .. member:: uint64_t lci_max_pacing_rate
+
+        Maximum pacing rate limit (bytes per second), or 0 if not set.
+
+.. function:: int lsquic_conn_get_info (lsquic_conn_t *conn, struct lsquic_conn_info *info)
+
+    Populate :type:`lsquic_conn_info` with a snapshot of connection stats.
+
+    :param conn: Connection object
+    :param info: Pointer to :type:`lsquic_conn_info` to fill in
+    :return: 0 on success, -1 on error
+
 Connection Parameters
 ---------------------
 

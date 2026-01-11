@@ -42,6 +42,10 @@ struct bw_sampler
      */
     lsquic_time_t       bws_last_acked_sent_time;
     lsquic_time_t       bws_last_acked_packet_time;
+    /* For bandwidth calculation: track acked bytes over a time window */
+    uint64_t            bws_bw_calc_acked;
+    lsquic_time_t       bws_bw_calc_time;
+    uint64_t            bws_last_bw;        /* Last calculated bandwidth */
     lsquic_packno_t     bws_last_sent_packno;
     lsquic_packno_t     bws_end_of_app_limited_phase;
     struct malo        *bws_malo;   /* For struct osp_state objects */
@@ -82,6 +86,9 @@ lsquic_bw_sampler_app_limited (struct bw_sampler *);
 
 void
 lsquic_bw_sampler_cleanup (struct bw_sampler *);
+
+uint64_t
+lsquic_bw_sampler_get_bw (struct bw_sampler *);
 
 unsigned
 lsquic_bw_sampler_entry_count (const struct bw_sampler *);

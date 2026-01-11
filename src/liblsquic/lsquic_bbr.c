@@ -204,17 +204,16 @@ init_bbr (struct lsquic_bbr *bbr)
     bbr->bbr_flags &= ~BBR_FLAG_LAST_SAMPLE_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_HAS_NON_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_FLEXIBLE_APP_LIMITED;
+    bbr->bbr_total_acked = 0;
     set_startup_values(bbr);
 }
 
 
 static void
-lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
-                                                enum quic_ft_bit retx_frames)
+lsquic_bbr_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
     bbr->bbr_conn_pub = conn_pub;
-    lsquic_bw_sampler_init(&bbr->bbr_bw_sampler, conn_pub->lconn, retx_frames);
     bbr->bbr_rtt_stats = &conn_pub->rtt_stats;
 
     init_bbr(bbr);
@@ -331,7 +330,6 @@ bbr_app_limited (struct lsquic_bbr *bbr, uint64_t bytes_in_flight)
         return;
 
     bbr->bbr_flags |= BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT;
-    lsquic_bw_sampler_app_limited(&bbr->bbr_bw_sampler);
     LSQ_DEBUG("becoming application-limited.  Last sent packet: %"PRIu64"; "
                             "CWND: %"PRIu64, bbr->bbr_last_sent_packno, cwnd);
 }
@@ -339,17 +337,12 @@ bbr_app_limited (struct lsquic_bbr *bbr, uint64_t bytes_in_flight)
 
 static void
 lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
-                  unsigned packet_sz, lsquic_time_t now_time, int app_limited)
+                  unsigned packet_sz, lsquic_time_t UNUSED_now_time,
+                  int UNUSED_app_limited)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
-    struct bw_sample *sample;
 
     assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
-
-    sample = lsquic_bw_sampler_packet_acked(&bbr->bbr_bw_sampler, packet_out,
-                                                bbr->bbr_ack_state.ack_time);
-    if (sample)
-        TAILQ_INSERT_TAIL(&bbr->bbr_ack_state.samples, sample, next);
 
     if (!is_valid_packno(bbr->bbr_ack_state.max_packno)
                 /* Packet ordering is checked for, and warned about, in
@@ -358,6 +351,15 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
             || packet_out->po_packno > bbr->bbr_ack_state.max_packno)
         bbr->bbr_ack_state.max_packno = packet_out->po_packno;
     bbr->bbr_ack_state.acked_bytes += packet_sz;
+    bbr->bbr_total_acked += packet_sz;
+}
+
+static void
+lsquic_bbr_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    TAILQ_INSERT_TAIL(&bbr->bbr_ack_state.samples, sample, next);
 }
 
 
@@ -366,10 +368,6 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
                                         uint64_t in_flight, int app_limited)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
-
-    if (!(packet_out->po_flags & PO_MINI))
-        lsquic_bw_sampler_packet_sent(&bbr->bbr_bw_sampler, packet_out,
-                                                                in_flight);
 
     /* Obviously we make an assumption that sent packet number are always
      * increasing.
@@ -382,12 +380,11 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
 
 static void
-lsquic_bbr_lost (void *cong_ctl, struct lsquic_packet_out *packet_out,
-                                                        unsigned packet_sz)
+lsquic_bbr_lost (void *cong_ctl,
+             struct lsquic_packet_out *UNUSED_packet_out, unsigned packet_sz)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
-    lsquic_bw_sampler_packet_lost(&bbr->bbr_bw_sampler, packet_out);
     bbr->bbr_ack_state.has_losses = 1;
     bbr->bbr_ack_state.lost_bytes += packet_sz;
 }
@@ -405,8 +402,6 @@ lsquic_bbr_begin_ack (void *cong_ctl, lsquic_time_t ack_time, uint64_t in_flight
     bbr->bbr_ack_state.ack_time = ack_time;
     bbr->bbr_ack_state.max_packno = UINT64_MAX;
     bbr->bbr_ack_state.in_flight = in_flight;
-    bbr->bbr_ack_state.total_bytes_acked_before
-                        = lsquic_bw_sampler_total_acked(&bbr->bbr_bw_sampler);
 }
 
 
@@ -805,7 +800,6 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
 
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
     {
-        lsquic_bw_sampler_app_limited(&bbr->bbr_bw_sampler);
         LSQ_DEBUG("%s: exit probe at: %"PRIu64"; now: %"PRIu64
             "; round start: %d; round passed: %d; rtt: %"PRIu64" usec",
             __func__, bbr->bbr_exit_probe_rtt_at, now, is_round_start,
@@ -934,8 +928,7 @@ calculate_cwnd (struct lsquic_bbr *bbr, uint64_t bytes_acked,
         bbr->bbr_cwnd = MIN(target_window, bbr->bbr_cwnd + bytes_acked);
     else if (add_bytes_acked &&
              (bbr->bbr_cwnd < target_window ||
-              lsquic_bw_sampler_total_acked(&bbr->bbr_bw_sampler)
-                                                        < bbr->bbr_init_cwnd))
+              bbr->bbr_total_acked < bbr->bbr_init_cwnd))
         // If the connection is not yet out of startup phase, do not decrease
         // the window.
         bbr->bbr_cwnd += bytes_acked;
@@ -1013,8 +1006,7 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
     LSQ_DEBUG("end_ack; mode: %s; in_flight: %"PRIu64, mode2str[bbr->bbr_mode],
                                                                     in_flight);
 
-    bytes_acked = lsquic_bw_sampler_total_acked(&bbr->bbr_bw_sampler)
-                            - bbr->bbr_ack_state.total_bytes_acked_before;
+    bytes_acked = bbr->bbr_ack_state.acked_bytes;
     if (bbr->bbr_ack_state.acked_bytes)
     {
         is_round_start = bbr->bbr_ack_state.max_packno
@@ -1057,8 +1049,6 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
     calculate_pacing_rate(bbr);
     calculate_cwnd(bbr, bytes_acked, excess_acked);
     calculate_recovery_window(bbr, bytes_acked, bytes_lost, in_flight);
-
-    /* We don't need to clean up BW sampler */
 }
 
 
@@ -1067,7 +1057,6 @@ lsquic_bbr_cleanup (void *cong_ctl)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
-    lsquic_bw_sampler_cleanup(&bbr->bbr_bw_sampler);
     LSQ_DEBUG("cleanup");
 }
 
@@ -1091,6 +1080,7 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_pacing_rate   = lsquic_bbr_pacing_rate,
     .cci_loss          = lsquic_bbr_loss,
     .cci_lost          = lsquic_bbr_lost,
+    .cci_process_bw_sample = lsquic_bbr_process_bw_sample,
     .cci_reinit        = lsquic_bbr_reinit,
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,

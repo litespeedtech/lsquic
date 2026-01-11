@@ -92,7 +92,7 @@ struct lsquic_bbr
     const struct lsquic_rtt_stats
                                *bbr_rtt_stats;
 
-    struct bw_sampler           bbr_bw_sampler;
+    uint64_t                    bbr_total_acked;
 
     /*
      " BBR.BtlBwFilter: The max filter used to estimate BBR.BtlBw.
@@ -199,7 +199,6 @@ struct lsquic_bbr
         lsquic_packno_t     max_packno;
         uint64_t            acked_bytes;
         uint64_t            lost_bytes;
-        uint64_t            total_bytes_acked_before;
         uint64_t            in_flight;
         int                 has_losses;
     }                           bbr_ack_state;
