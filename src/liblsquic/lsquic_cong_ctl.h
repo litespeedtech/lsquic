@@ -9,6 +9,7 @@
 
 struct lsquic_conn_public;
 struct lsquic_packet_out;
+struct bw_sample;
 enum quic_ft_bit;
 
 
@@ -20,8 +21,7 @@ enum quic_ft_bit;
 struct cong_ctl_if
 {
     void
-    (*cci_init) (void *cong_ctl, const struct lsquic_conn_public *,
-                                                            enum quic_ft_bit);
+    (*cci_init) (void *cong_ctl, const struct lsquic_conn_public *);
 
     void
     (*cci_reinit) (void *cong_ctl);
@@ -51,6 +51,10 @@ struct cong_ctl_if
     void
     (*cci_lost) (void *cong_ctl, struct lsquic_packet_out *,
                                                         unsigned packet_sz);
+
+    /* Optional method */
+    void
+    (*cci_process_bw_sample) (void *cong_ctl, struct bw_sample *);
 
     void
     (*cci_timeout) (void *cong_ctl);

@@ -9063,8 +9063,9 @@ ietf_full_conn_ci_get_info (lsquic_conn_t *lconn, struct lsquic_conn_info *info)
     info->lci_rttvar = lsquic_rtt_stats_get_rttvar(&conn->ifc_pub.rtt_stats);
     info->lci_rtt_min = lsquic_rtt_stats_get_min_rtt(&conn->ifc_pub.rtt_stats);
     info->lci_pmtu = conn->ifc_paths[conn->ifc_cur_path_id].cop_path.np_pack_size;
-    info->lci_bw_estimate = conn->ifc_send_ctl.sc_ci->cci_pacing_rate(
+    info->lci_pacing_rate = conn->ifc_send_ctl.sc_ci->cci_pacing_rate(
                                             conn->ifc_send_ctl.sc_cong_ctl, 1);
+    info->lci_bw_estimate = lsquic_send_ctl_get_bw(&conn->ifc_send_ctl);
     info->lci_max_pacing_rate = conn->ifc_send_ctl.sc_max_pacing_rate;
 
 #if LSQUIC_CONN_STATS

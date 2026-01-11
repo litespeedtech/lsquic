@@ -115,8 +115,7 @@ lsquic_cubic_set_flags (struct lsquic_cubic *cubic, enum cubic_flags flags)
 
 
 static void
-lsquic_cubic_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
-                                            enum quic_ft_bit UNUSED_retx_frames)
+lsquic_cubic_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub)
 {
     struct lsquic_cubic *const cubic = cong_ctl;
     cubic_reset(cubic);

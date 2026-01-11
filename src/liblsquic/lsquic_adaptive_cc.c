@@ -57,12 +57,11 @@
 
 
 static void
-adaptive_cc_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub,
-                                                enum quic_ft_bit retx_frames)
+adaptive_cc_init (void *cong_ctl, const struct lsquic_conn_public *conn_pub)
 {
     struct adaptive_cc *const acc = cong_ctl;
 
-    CALL_BOTH(cci_init, conn_pub, retx_frames);
+    CALL_BOTH(cci_init, conn_pub);
     LSQ_DEBUG("initialized");
 }
 
@@ -193,6 +192,14 @@ adaptive_cc_cleanup (void *cong_ctl)
     LSQ_DEBUG("cleanup");
 }
 
+static void
+adaptive_cc_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
+{
+    struct adaptive_cc *const acc = cong_ctl;
+
+    CALL_BOTH_MAYBE(cci_process_bw_sample, sample);
+}
+
 
 const struct cong_ctl_if lsquic_cong_adaptive_if =
 {
@@ -208,5 +215,6 @@ const struct cong_ctl_if lsquic_cong_adaptive_if =
     .cci_reinit        = adaptive_cc_reinit,
     .cci_timeout       = adaptive_cc_timeout,
     .cci_sent          = adaptive_cc_sent,
+    .cci_process_bw_sample = adaptive_cc_process_bw_sample,
     .cci_was_quiet     = adaptive_cc_was_quiet,
 };

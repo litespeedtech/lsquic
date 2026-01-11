@@ -115,6 +115,7 @@ perf_client_on_conn_closed (struct lsquic_conn *conn)
 struct lsquic_stream_ctx
 {
     const struct scenario  *scenario;
+    time_t                  last_bw_log;
     struct {
         uint64_t        header;     /* Big-endian */
         unsigned        n_h;        /* Number of header bytes written */
@@ -214,6 +215,23 @@ perf_client_on_write (struct lsquic_stream *stream,
 {
     struct lsquic_reader reader;
     ssize_t nw;
+    time_t now;
+    struct lsquic_conn_info info;
+
+    now = time(NULL);
+    if (now - stream_ctx->last_bw_log >= 1)
+    {
+        if (0 == lsquic_conn_get_info(lsquic_stream_conn(stream), &info))
+        {
+            LSQ_INFO("pacing_rate: %"PRIu64" bps (%.2f Mbps)",
+                     info.lci_pacing_rate,
+                     info.lci_pacing_rate / 1000000.0);
+            LSQ_INFO("bandwidth: %"PRIu64" bps (%.2f Mbps)",
+                     info.lci_bw_estimate,
+                     info.lci_bw_estimate / 1000000.0);
+        }
+        stream_ctx->last_bw_log = now;
+    }
 
     if (stream_ctx->write_state.n_h >= sizeof(uint64_t))
         reader = (struct lsquic_reader) {

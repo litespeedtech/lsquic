@@ -78,6 +78,29 @@
 #define packet_out_sent_sz(p) \
                 lsquic_packet_out_sent_sz(ctl->sc_conn_pub->lconn, p)
 
+static void
+send_ctl_init_bw_sampler (struct lsquic_send_ctl *ctl)
+{
+    if (!(ctl->sc_flags & SC_BW_SAMPLER_INIT))
+    {
+        lsquic_bw_sampler_init(&ctl->sc_bw_sampler, ctl->sc_conn_pub->lconn,
+                               ctl->sc_retx_frames);
+        ctl->sc_flags |= SC_BW_SAMPLER_INIT;
+    }
+}
+
+
+static void
+send_ctl_cleanup_bw_sampler (struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+    {
+        lsquic_bw_sampler_cleanup(&ctl->sc_bw_sampler);
+        ctl->sc_flags &= ~SC_BW_SAMPLER_INIT;
+    }
+}
+
+
 enum retx_mode {
     RETX_MODE_HANDSHAKE,
     RETX_MODE_LOSS,
@@ -408,7 +431,9 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
         break;
     }
-    ctl->sc_ci->cci_init(CGP(ctl), conn_pub, ctl->sc_retx_frames);
+    if (ctl->sc_ci != &lsquic_cong_cubic_if)
+        send_ctl_init_bw_sampler(ctl);
+    ctl->sc_ci->cci_init(CGP(ctl), conn_pub);
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_init(&ctl->sc_pacer, conn_pub->lconn,
         /* TODO: conn_pub has a pointer to enpub: drop third argument */
@@ -764,6 +789,15 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
         packet_out->po_packno, lsquic_frame_types_to_str(frames,
             sizeof(frames), packet_out->po_frame_types));
     lsquic_senhist_add(&ctl->sc_senhist, packet_out->po_packno);
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+    {
+        if (!(packet_out->po_flags & PO_MINI))
+            lsquic_bw_sampler_packet_sent(&ctl->sc_bw_sampler, packet_out,
+                                          ctl->sc_bytes_unacked_all);
+        if (ctl->sc_flags & SC_APP_LIMITED)
+            lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
+    }
+
     if (ctl->sc_ci->cci_sent)
         ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_bytes_unacked_all,
                                             ctl->sc_flags & SC_APP_LIMITED);
@@ -801,6 +835,10 @@ send_ctl_select_cc (struct lsquic_send_ctl *ctl)
             srtt, ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
         ctl->sc_ci = &lsquic_cong_cubic_if;
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
+        if (!(ctl->sc_flags & SC_BW_SAMPLER_INFO))
+        {
+            send_ctl_cleanup_bw_sampler(ctl);
+        }
         ctl->sc_flags |= SC_CLEANUP_BBR;
     }
     else
@@ -836,6 +874,27 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
             lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats));
         if (ctl->sc_ci == &lsquic_cong_adaptive_if)
             send_ctl_select_cc(ctl);
+    }
+}
+
+
+static void
+send_ctl_process_bw_sample (struct lsquic_send_ctl *ctl,
+            struct lsquic_packet_out *packet_out, lsquic_time_t ack_recv_time)
+{
+    struct bw_sample *sample;
+
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+    {
+        sample = lsquic_bw_sampler_packet_acked(&ctl->sc_bw_sampler,
+                                                packet_out, ack_recv_time);
+        if (sample)
+        {
+            if (ctl->sc_ci->cci_process_bw_sample)
+                ctl->sc_ci->cci_process_bw_sample(CGP(ctl), sample);
+            else
+                lsquic_malo_put(sample);
+        }
     }
 }
 
@@ -1048,6 +1107,9 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         ctl->sc_flags |= SC_LOST_ACK_INIT << lsquic_packet_out_pns(packet_out);
         LSQ_DEBUG("lost ACK in packet #%"PRIu64, packet_out->po_packno);
     }
+
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+        lsquic_bw_sampler_packet_lost(&ctl->sc_bw_sampler, packet_out);
 
     if (ctl->sc_ci->cci_lost)
         ctl->sc_ci->cci_lost(CGP(ctl), packet_out, packet_sz);
@@ -1399,6 +1461,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             ack2ed[!!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))]
                 = packet_out->po_ack2ed;
             do_rtt |= packet_out->po_packno == largest_acked(acki);
+            send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
             ctl->sc_ci->cci_ack(CGP(ctl), packet_out, packet_sz, now,
                                                              app_limited);
             send_ctl_acked_loss_chain(ctl, packet_out, &next,
@@ -1679,6 +1742,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         assert(ctl->sc_ci == &lsquic_cong_cubic_if);
         lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
     }
+    send_ctl_cleanup_bw_sampler(ctl);
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",
         ctl->sc_stats.n_total_sent, ctl->sc_stats.n_resent,
@@ -4272,4 +4336,15 @@ lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *ctl)
     }
 
     LSQ_DEBUG("stashed %u 0-RTT packet%.*s", count, count != 1, "s");
+}
+
+
+uint64_t
+lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
+{
+    ctl->sc_flags |= SC_BW_SAMPLER_INFO;
+
+    if (!(ctl->sc_flags & SC_BW_SAMPLER_INIT))
+        send_ctl_init_bw_sampler(ctl);
+    return lsquic_bw_sampler_get_bw(&ctl->sc_bw_sampler);
 }

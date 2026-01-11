@@ -1,3 +1,8 @@
+2026-01-11
+    - 4.5.0
+    - [API] Expose lci_pacing_rate in lsquic_conn_info
+    - [IMPROVEMENT] Bandwidth estimate provided in lsquic_conn_info.
+
 2026-01-04
     - 4.4.2
     - [BUGFIX] BBR: mark connections app-limited when pacing is capped and

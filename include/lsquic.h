@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 4
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 5
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -2154,6 +2154,7 @@ struct lsquic_conn_info
     uint64_t lci_pkts_retx;
     uint64_t lci_bw_estimate;
     uint64_t lci_max_pacing_rate;
+    uint64_t lci_pacing_rate;
 };
 
 int
