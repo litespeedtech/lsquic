@@ -1,0 +1,409 @@
+HTTP                                                      D. Tikhonov
+Internet-Draft                                                      USA
+Intended status: Experimental                          January 17, 2026
+Expires: July 20, 2026
+
+
+       HTTP Datagram Bat: A Simple Testing Protocol for HTTP Datagrams
+                      draft-tikhonov-httpbis-bat-00
+
+Abstract
+
+   This document describes a simple application protocol for testing
+   implementations of HTTP Datagrams (RFC 9297).  BAT (Bidirectional
+   Attestation Test) defines a basic echo service that uses HTTP
+   Datagrams over an HTTP CONNECT request, providing a straightforward
+   method for verifying interoperability of HTTP Datagram
+   implementations across different HTTP versions.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on July 20, 2026.
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents
+   (https://trustee.ietf.org/license-info) in effect on the date of
+   publication of this document.  Please review these documents
+   carefully, as they describe your rights and restrictions with respect
+   to this document.  Code Components extracted from this document must
+   include Revised BSD License text as described in Section 4.e of the
+   Trust Legal Provisions and are provided without warranty as described
+   in the Revised BSD License.
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 1]
+
+Internet-Draft                    BAT                        January 2026
+
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+     1.1.  Notational Conventions  . . . . . . . . . . . . . . . . .   3
+   2.  Protocol Overview . . . . . . . . . . . . . . . . . . . . . .   3
+   3.  Establishing a BAT Session  . . . . . . . . . . . . . . . . .   3
+     3.1.  Extended CONNECT Request  . . . . . . . . . . . . . . . .   4
+     3.2.  Response  . . . . . . . . . . . . . . . . . . . . . . . .   4
+   4.  Protocol Behavior . . . . . . . . . . . . . . . . . . . . . .   4
+     4.1.  Client Behavior . . . . . . . . . . . . . . . . . . . . .   4
+     4.2.  Server Behavior . . . . . . . . . . . . . . . . . . . . .   5
+   5.  Error Handling  . . . . . . . . . . . . . . . . . . . . . . .   5
+   6.  Security Considerations . . . . . . . . . . . . . . . . . . .   5
+   7.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .   6
+     7.1.  Registration of the BAT Protocol  . . . . . . . . . . . .   6
+   8.  References  . . . . . . . . . . . . . . . . . . . . . . . . .   6
+     8.1.  Normative References  . . . . . . . . . . . . . . . . . .   6
+     8.2.  Informative References  . . . . . . . . . . . . . . . . .   7
+   Appendix A.  Acknowledgements . . . . . . . . . . . . . . . . . .   7
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .   7
+
+1.  Introduction
+
+   HTTP Datagrams [RFC9297] provide a mechanism for conveying
+   multiplexed, potentially unreliable datagrams inside HTTP
+   connections.  HTTP Datagrams can use QUIC DATAGRAM frames [RFC9221]
+   for unreliable delivery in HTTP/3 [RFC9114], or the Capsule Protocol
+   for reliable delivery in HTTP/2 [RFC9113] and HTTP/1.1 [RFC9112].
+
+   While RFC 9297 defines the framework for HTTP Datagrams, testing
+   interoperability between implementations requires a simple
+   application protocol with well-defined semantics.  This document
+   defines BAT (Bidirectional Attestation Test), a minimal echo service
+   that operates over HTTP CONNECT requests and uses HTTP Datagrams for
+   bidirectional communication.
+
+   BAT provides implementers with:
+
+   o  A simple protocol to verify HTTP Datagram support across HTTP/1.1,
+      HTTP/2, and HTTP/3
+
+   o  A mechanism to test both QUIC DATAGRAM frames (in HTTP/3) and
+      Capsule Protocol delivery (in all HTTP versions)
+
+   o  A foundation for progressive testing of more complex HTTP Datagram
+      applications
+
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 2]
+
+Internet-Draft                    BAT                        January 2026
+
+
+   BAT is designed as a testing and development tool.  It is not
+   intended for production use or as a general-purpose echo service.
+
+1.1.  Notational Conventions
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+2.  Protocol Overview
+
+   BAT is built on top of HTTP CONNECT extended requests and HTTP
+   Datagrams.  The protocol operates as follows:
+
+   1.  Client sends an extended CONNECT request to establish a BAT
+       session
+
+   2.  Server accepts the request with a 2xx response
+
+   3.  Client sends HTTP Datagrams with arbitrary payload data
+
+   4.  Server echoes each received HTTP Datagram back to the client with
+       the same payload
+
+   5.  Either endpoint may close the connection at any time
+
+   The protocol supports concurrent datagrams and does not impose
+   ordering requirements on responses.
+
+3.  Establishing a BAT Session
+
+   A BAT session is established using an extended CONNECT request.
+   The protocol is identified using the ":protocol" pseudo-header field
+   with the value "bat".
+
+   Only implementations of the final, published RFC can identify
+   themselves as "bat".  Until such an RFC exists, implementations
+   MUST NOT identify themselves using this string.
+
+      *RFC Editor's Note:* Please remove the following prior to
+      publication of a final version of this document.
+
+   Implementations of draft versions of the protocol MUST add the string
+   "-" and the corresponding draft number to the identifier.  For
+   example, draft-tikhonov-httpbis-bat-00 is identified using the
+   string "bat-00".
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 3]
+
+Internet-Draft                    BAT                        January 2026
+
+
+3.1.  Extended CONNECT Request
+
+   To establish a BAT session, a client sends an extended CONNECT
+   request [RFC8441] [RFC9220] with the following properties:
+
+   o  The ":method" pseudo-header field is set to "CONNECT"
+
+   o  The ":protocol" pseudo-header field is set to "bat-00"
+
+   o  The ":scheme" and ":path" pseudo-header fields SHOULD be included
+      and set to appropriate values
+
+   o  The ":authority" pseudo-header field contains the server's
+      authority
+
+   Example request (HTTP/3 format):
+
+   :method = CONNECT
+   :protocol = bat-00
+   :scheme = https
+   :path = /bat
+   :authority = example.com
+
+3.2.  Response
+
+   If the server supports BAT and the request is acceptable, it
+   responds with a 2xx status code (typically 200).  The server MUST
+   negotiate HTTP Datagrams as specified in Section 2 of [RFC9297].
+
+   For HTTP/3, this requires the SETTINGS_H3_DATAGRAM setting.
+
+   For HTTP/2 and HTTP/1.1, this requires the "Capsule-Protocol" header
+   field set to "?1" (a boolean true value using structured field
+   syntax).
+
+   Example successful response:
+
+   :status = 200
+   capsule-protocol = ?1
+
+4.  Protocol Behavior
+
+   HTTP Datagrams in BAT are sent using one of two mechanisms depending
+   on the HTTP version and available transport features:
+
+   o  In HTTP/3, when QUIC DATAGRAM frames [RFC9221] are available (as
+      negotiated via the SETTINGS_H3_DATAGRAM setting), HTTP Datagrams
+      are sent using QUIC DATAGRAM frames as specified in Section 2.1
+      of [RFC9297].
+
+   o  When QUIC DATAGRAM frames are not available (HTTP/1.1, HTTP/2, or
+      HTTP/3 without DATAGRAM support), HTTP Datagrams are sent as
+      DATAGRAM Capsules (type 0x00) on the CONNECT request's data stream
+      using the Capsule Protocol as specified in Section 3 of [RFC9297].
+
+   Implementations MUST support the Capsule Protocol to ensure
+   interoperability across all HTTP versions.
+
+4.1.  Client Behavior
+
+   Once the BAT session is established, the client MAY send HTTP
+   Datagrams with arbitrary payload data.  The client SHOULD track which
+   datagrams have been sent to correlate with received echoes.
+
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 4]
+
+Internet-Draft                    BAT                        January 2026
+
+
+   The client SHOULD implement a timeout mechanism to detect lost
+   datagrams (particularly relevant when using QUIC DATAGRAM frames in
+   HTTP/3, which provide unreliable delivery).
+
+   When testing Capsule Protocol delivery, the client should verify that
+   all datagrams are reliably delivered and echoed back.
+
+4.2.  Server Behavior
+
+   The server MUST echo back each received HTTP Datagram with the exact
+   same payload to the client.  The server MUST NOT modify the payload
+   contents.
+
+   When using the Capsule Protocol, the server MUST send echoed HTTP
+   Datagrams as DATAGRAM Capsules on the CONNECT response's data stream.
+
+   When using QUIC DATAGRAM frames, the server MUST send echoed HTTP
+   Datagrams using QUIC DATAGRAM frames.
+
+   The server SHOULD process datagrams as quickly as possible to
+   minimize round-trip latency measurements.
+
+   If the server receives malformed HTTP Datagrams, it SHOULD terminate
+   the request stream as specified in Section 2 of [RFC9297].  For
+   HTTP/3, this means aborting the stream with error code
+   H3_DATAGRAM_ERROR (0x33).
+
+5.  Error Handling
+
+   Implementations MUST follow the error handling procedures defined in
+   [RFC9297].
+
+   Clients MUST NOT send any data on the CONNECT stream itself, only
+   HTTP Datagrams associated with the stream.
+
+   If the server receives stream data (as opposed to HTTP Datagrams)
+   after accepting the BAT connection, it MUST treat this as a
+   stream error.
+
+   Either endpoint may close the connection at any time.  When using
+   HTTP/3, graceful shutdown should use the GOAWAY frame mechanism.
+
+6.  Security Considerations
+
+   BAT is intended as a testing protocol and inherits the security
+   considerations of HTTP Datagrams [RFC9297] and HTTP CONNECT
+   [RFC9110].
+
+   Servers SHOULD implement rate limiting and maximum datagram size
+   restrictions to prevent resource exhaustion attacks.
+
+   Servers SHOULD implement authentication and authorization mechanisms
+   before accepting BAT connections, as the protocol could be
+   abused for reflection attacks or bandwidth amplification.
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 5]
+
+Internet-Draft                    BAT                        January 2026
+
+
+   The echo behavior means that any payload sent by a client will be
+   reflected back.  Applications should be aware that this could leak
+   information if not properly isolated in testing environments.
+
+   BAT does not provide confidentiality, integrity, or
+   authentication of the datagram payload itself beyond what is provided
+   by the underlying HTTP connection (typically TLS).
+
+7.  IANA Considerations
+
+7.1.  Registration of the BAT Protocol
+
+   This document registers the "bat" protocol in the "HTTP Upgrade
+   Tokens" registry established by [RFC9110].
+
+   The "bat" label identifies the BAT protocol defined in this
+   document:
+
+   Protocol:  BAT
+
+   Identification:  bat
+
+   Specification:  This document
+
+   Expected Usage:  LIMITED USE
+
+   Security Considerations:  See Section 6 of this document
+
+8.  References
+
+8.1.  Normative References
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+   [RFC8441]  McManus, P., "Bootstrapping WebSockets with HTTP/2",
+              RFC 8441, DOI 10.17487/RFC8441, September 2018,
+              <https://www.rfc-editor.org/info/rfc8441>.
+
+   [RFC9110]  Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke,
+              Ed., "HTTP Semantics", STD 97, RFC 9110,
+              DOI 10.17487/RFC9110, June 2022,
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 6]
+
+Internet-Draft                    BAT                        January 2026
+
+
+              <https://www.rfc-editor.org/info/rfc9110>.
+
+   [RFC9112]  Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke,
+              Ed., "HTTP/1.1", STD 99, RFC 9112, DOI 10.17487/RFC9112,
+              June 2022, <https://www.rfc-editor.org/info/rfc9112>.
+
+   [RFC9113]  Thomson, M., Ed. and C. Benfield, Ed., "HTTP/2", RFC 9113,
+              DOI 10.17487/RFC9113, June 2022,
+              <https://www.rfc-editor.org/info/rfc9113>.
+
+   [RFC9114]  Bishop, M., Ed., "HTTP/3", RFC 9114, DOI 10.17487/RFC9114,
+              June 2022, <https://www.rfc-editor.org/info/rfc9114>.
+
+   [RFC9220]  Hamilton, R., "Bootstrapping WebSockets with HTTP/3",
+              RFC 9220, DOI 10.17487/RFC9220, June 2022,
+              <https://www.rfc-editor.org/info/rfc9220>.
+
+   [RFC9221]  Pauly, T., Kinnear, E., and D. Schinazi, "An Unreliable
+              Datagram Extension to QUIC", RFC 9221,
+              DOI 10.17487/RFC9221, March 2022,
+              <https://www.rfc-editor.org/info/rfc9221>.
+
+   [RFC9297]  Schinazi, D. and L. Pardue, "HTTP Datagrams and the
+              Capsule Protocol", RFC 9297, DOI 10.17487/RFC9297, August
+              2022, <https://www.rfc-editor.org/info/rfc9297>.
+
+8.2.  Informative References
+
+   None.
+
+Appendix A.  Acknowledgements
+
+   This protocol design is inspired by SiDUCK [draft-pardue-quic-
+   siduck-00] by Lucas Pardue, which provides a similar testing protocol
+   for QUIC DATAGRAM frames.
+
+   Thanks to the authors of RFC 9297 for defining the HTTP Datagram
+   framework.
+
+Author's Address
+
+   Dmitri Tikhonov
+   USA
+
+   Email: dtikhonov@example.com
+
+
+
+
+
+Tikhonov                  Expires July 20, 2026                 [Page 7]
