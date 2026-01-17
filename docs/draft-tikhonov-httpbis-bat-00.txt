@@ -81,8 +81,8 @@ Table of Contents
    HTTP Datagrams [RFC9297] provide a mechanism for conveying
    multiplexed, potentially unreliable datagrams inside HTTP
    connections.  HTTP Datagrams can use QUIC DATAGRAM frames [RFC9221]
-   for unreliable delivery in HTTP/3 [RFC9114], or the Capsule Protocol
-   for reliable delivery in HTTP/2 [RFC9113] and HTTP/1.1 [RFC9112].
+   for unreliable delivery in HTTP/3 [RFC9114].  This document defines
+   BAT only for HTTP/3.
 
    While RFC 9297 defines the framework for HTTP Datagrams, testing
    interoperability between implementations requires a simple
@@ -93,11 +93,9 @@ Table of Contents
 
    BAT provides implementers with:
 
-   o  A simple protocol to verify HTTP Datagram support across HTTP/1.1,
-      HTTP/2, and HTTP/3
+   o  A simple protocol to verify HTTP Datagram support in HTTP/3
 
-   o  A mechanism to test both QUIC DATAGRAM frames (in HTTP/3) and
-      Capsule Protocol delivery (in all HTTP versions)
+   o  A mechanism to test QUIC DATAGRAM frames (in HTTP/3)
 
    o  A foundation for progressive testing of more complex HTTP Datagram
       applications
@@ -112,6 +110,7 @@ Internet-Draft                    BAT                        January 2026
 
    BAT is designed as a testing and development tool.  It is not
    intended for production use or as a general-purpose echo service.
+   This version of BAT is defined only for HTTP/3.
 
 1.1.  Notational Conventions
 
@@ -197,37 +196,24 @@ Internet-Draft                    BAT                        January 2026
 
    For HTTP/3, this requires the SETTINGS_H3_DATAGRAM setting.
 
-   For HTTP/2 and HTTP/1.1, this requires the "Capsule-Protocol" header
-   field set to "?1" (a boolean true value using structured field
-   syntax).
-
    Example successful response:
 
    :status = 200
-   capsule-protocol = ?1
 
 4.  Protocol Behavior
 
-   HTTP Datagrams in BAT are sent using one of two mechanisms depending
-   on the HTTP version and available transport features:
-
-   o  In HTTP/3, when QUIC DATAGRAM frames [RFC9221] are available (as
-      negotiated via the SETTINGS_H3_DATAGRAM setting), HTTP Datagrams
-      are sent using QUIC DATAGRAM frames as specified in Section 2.1
-      of [RFC9297].
-
-   o  When QUIC DATAGRAM frames are not available (HTTP/1.1, HTTP/2, or
-      HTTP/3 without DATAGRAM support), HTTP Datagrams are sent as
-      DATAGRAM Capsules (type 0x00) on the CONNECT request's data stream
-      using the Capsule Protocol as specified in Section 3 of [RFC9297].
-
-   Implementations MUST support the Capsule Protocol to ensure
-   interoperability across all HTTP versions.
+   HTTP Datagrams in BAT are sent using QUIC DATAGRAM frames [RFC9221]
+   as specified in Section 2.1 of [RFC9297].  QUIC DATAGRAM frames MUST
+   be negotiated via the SETTINGS_H3_DATAGRAM setting.  BAT does not use
+   the Capsule Protocol, and endpoints MUST NOT send any data on the
+   CONNECT stream after the headers.
 
 4.1.  Client Behavior
 
    Once the BAT session is established, the client MAY send HTTP
-   Datagrams with arbitrary payload data.  The client SHOULD track which
+   Datagrams with arbitrary payload data.  The client MUST send HTTP
+   Datagrams using QUIC DATAGRAM frames and MUST NOT send any data on
+   the CONNECT stream after the headers.  The client SHOULD track which
    datagrams have been sent to correlate with received echoes.
 
 
@@ -242,17 +228,11 @@ Internet-Draft                    BAT                        January 2026
    datagrams (particularly relevant when using QUIC DATAGRAM frames in
    HTTP/3, which provide unreliable delivery).
 
-   When testing Capsule Protocol delivery, the client should verify that
-   all datagrams are reliably delivered and echoed back.
-
 4.2.  Server Behavior
 
    The server MUST echo back each received HTTP Datagram with the exact
    same payload to the client.  The server MUST NOT modify the payload
    contents.
-
-   When using the Capsule Protocol, the server MUST send echoed HTTP
-   Datagrams as DATAGRAM Capsules on the CONNECT response's data stream.
 
    When using QUIC DATAGRAM frames, the server MUST send echoed HTTP
    Datagrams using QUIC DATAGRAM frames.
@@ -270,8 +250,7 @@ Internet-Draft                    BAT                        January 2026
    Implementations MUST follow the error handling procedures defined in
    [RFC9297].
 
-   Clients MUST NOT send any data on the CONNECT stream itself, only
-   HTTP Datagrams associated with the stream.
+   Clients MUST NOT send any data on the CONNECT stream itself.
 
    If the server receives stream data (as opposed to HTTP Datagrams)
    after accepting the BAT connection, it MUST treat this as a
@@ -357,14 +336,6 @@ Internet-Draft                    BAT                        January 2026
 
 
               <https://www.rfc-editor.org/info/rfc9110>.
-
-   [RFC9112]  Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke,
-              Ed., "HTTP/1.1", STD 99, RFC 9112, DOI 10.17487/RFC9112,
-              June 2022, <https://www.rfc-editor.org/info/rfc9112>.
-
-   [RFC9113]  Thomson, M., Ed. and C. Benfield, Ed., "HTTP/2", RFC 9113,
-              DOI 10.17487/RFC9113, June 2022,
-              <https://www.rfc-editor.org/info/rfc9113>.
 
    [RFC9114]  Bishop, M., Ed., "HTTP/3", RFC 9114, DOI 10.17487/RFC9114,
               June 2022, <https://www.rfc-editor.org/info/rfc9114>.
