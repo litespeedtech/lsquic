@@ -196,6 +196,13 @@ Internet-Draft                    BAT                        January 2026
 
    For HTTP/3, this requires the SETTINGS_H3_DATAGRAM setting.
 
+   If SETTINGS_H3_DATAGRAM is not negotiated with a value of 1, the
+   server MUST reject the request with a non-2xx response.  A server
+   that does not support BAT or HTTP Datagrams SHOULD respond with
+   status code 501 (Not Implemented).  A client MUST treat a 2xx
+   response without negotiated SETTINGS_H3_DATAGRAM as a protocol
+   error and close the connection.
+
    Example successful response:
 
    :status = 200
