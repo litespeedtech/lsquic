@@ -20,6 +20,7 @@
 #include "prog.h"
 
 #include "../src/liblsquic/lsquic_logger.h"
+#include "../src/lshpack/lsxpack_header.h"
 
 struct dest_info {
     char hostname[256];
@@ -32,6 +33,11 @@ struct dest_info {
 };
 
 TAILQ_HEAD(dest_head, dest_info);
+
+struct multi_dest_stream_ctx {
+    struct dest_info *dest;
+    int headers_received;
+};
 
 struct multi_client_ctx {
     struct prog *prog;
@@ -110,15 +116,41 @@ static lsquic_stream_ctx_t *
 multi_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
     struct dest_info *dest = (struct dest_info *) lsquic_conn_get_ctx(lsquic_stream_conn(stream));
-    LSQ_NOTICE("New stream created for %s", dest ? dest->hostname : "unknown");
-    lsquic_stream_wantwrite(stream, 1);
-    return (lsquic_stream_ctx_t *) dest;
+    struct multi_dest_stream_ctx *stream_ctx;
+    
+    /* Only handle bidirectional streams (client-initiated request streams) */
+    /* HTTP/3 creates unidirectional control streams which we should ignore */
+    if (!lsquic_stream_is_pushed(stream) && (lsquic_stream_id(stream) & 3) == 0)
+    {
+        stream_ctx = malloc(sizeof(*stream_ctx));
+        if (!stream_ctx)
+        {
+            LSQ_ERROR("Cannot allocate stream context");
+            lsquic_stream_close(stream);
+            return NULL;
+        }
+        
+        stream_ctx->dest = dest;
+        stream_ctx->headers_received = 0;
+        
+        LSQ_NOTICE("New bidirectional stream created for %s", dest ? dest->hostname : "unknown");
+        lsquic_stream_wantwrite(stream, 1);
+        return (lsquic_stream_ctx_t *) stream_ctx;
+    }
+    else
+    {
+        /* This is a control stream or server push, let the library handle it */
+        LSQ_INFO("Ignoring unidirectional/push stream %llu for %s", 
+                 (unsigned long long)lsquic_stream_id(stream), dest ? dest->hostname : "unknown");
+        return NULL;
+    }
 }
 
 static void
 multi_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    struct dest_info *dest = (struct dest_info *) st_h;
+    struct multi_dest_stream_ctx *stream_ctx = (struct multi_dest_stream_ctx *) st_h;
+    struct dest_info *dest = stream_ctx ? stream_ctx->dest : NULL;
     struct header_buf hbuf;
     struct lsxpack_header headers_arr[5];
     unsigned h_idx = 0;
@@ -146,7 +178,8 @@ multi_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     
     if (0 != lsquic_stream_send_headers(stream, &headers, 1))  /* 1 = end of stream */
     {
-        LSQ_ERROR("Cannot send headers to %s: %s", dest->hostname, strerror(errno));
+        LSQ_ERROR("Cannot send headers to %s: error=%d (%s)", 
+                  dest->hostname, errno, strerror(errno));
         lsquic_stream_close(stream);
         return;
     }
@@ -159,17 +192,32 @@ multi_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 static void
 multi_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    struct dest_info *dest = (struct dest_info *) st_h;
+    struct multi_dest_stream_ctx *stream_ctx = (struct multi_dest_stream_ctx *) st_h;
+    struct dest_info *dest = stream_ctx ? stream_ctx->dest : NULL;
     unsigned char buf[0x1000];
-    ssize_t nr = lsquic_stream_read(stream, buf, sizeof(buf) - 1);
+    ssize_t nr;
+    
+    /* Just read the data - header parsing requires custom hset interface */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf) - 1);
     if (nr > 0)
     {
         buf[nr] = '\0';
-        LSQ_NOTICE("Read %zd bytes from %s: %.100s%s", nr, 
-                   dest ? dest->hostname : "unknown",
-                   buf, nr > 100 ? "..." : "");
-        if (dest)
-            dest->got_response = 1;
+        
+        if (!stream_ctx->headers_received)
+        {
+            /* First read contains headers in HTTP/3 */
+            LSQ_NOTICE("=== Response from %s ===", dest ? dest->hostname : "unknown");
+            LSQ_NOTICE("Received %zd bytes (headers + body)", nr);
+            /* Print first 200 bytes which should include status */
+            LSQ_NOTICE("Data: %.200s%s", buf, nr > 200 ? "..." : "");
+            stream_ctx->headers_received = 1;
+            if (dest)
+                dest->got_response = 1;
+        }
+        else
+        {
+            LSQ_NOTICE("Read %zd more bytes from %s", nr, dest ? dest->hostname : "unknown");
+        }
     }
     else if (nr == 0)
     {
@@ -187,7 +235,14 @@ multi_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 static void
 multi_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    LSQ_NOTICE("Stream closed");
+    struct multi_dest_stream_ctx *stream_ctx = (struct multi_dest_stream_ctx *) st_h;
+    struct dest_info *dest = stream_ctx ? stream_ctx->dest : NULL;
+    
+    LSQ_NOTICE("Stream closed for %s", dest ? dest->hostname : "unknown");
+    
+    if (stream_ctx)
+        free(stream_ctx);
+        
     lsquic_conn_close(lsquic_stream_conn(stream));
 }
 
@@ -225,15 +280,15 @@ main (int argc, char **argv)
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
     lsquic_logger_lopt("event=notice");
     
-    /* Set up program structure with custom ALPN (not HTTP/3) */
-    if (0 != prog_init(&prog, 0, &sports,
+    /* Set up program structure with HTTP mode */
+    if (0 != prog_init(&prog, LSENG_HTTP, &sports,
                        &multi_client_stream_if, &client_ctx))
     {
         LSQ_ERROR("Cannot init prog");
         return 1;
     }
     
-    /* Set custom ALPN for HTTP/3 */
+    /* Use HTTP/3 (h3) */
     prog.prog_api.ea_alpn = "h3";
     
     /* Configure for IETF QUIC v1 ONLY to avoid ENG_CONNS_BY_ADDR */

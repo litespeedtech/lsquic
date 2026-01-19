@@ -9,7 +9,7 @@ make multi_dest_test 2>&1 | tail -2
 
 # Run the test
 echo "Running test..."
-./bin/multi_dest_test 2>&1 > /tmp/multi_dest_test.log &
+./bin/multi_dest_test > /tmp/multi_dest_test.log 2>&1 &
 PID=$!
 
 # Wait for test to complete
@@ -23,15 +23,15 @@ wait $PID 2>/dev/null
 echo "=== Test Results ==="
 echo ""
 echo "Summary:"
-grep -E "Successful responses|GOT RESPONSE|no response" /tmp/multi_dest_test.log
+grep -E "Test completed|Successful responses|GOT RESPONSE" /tmp/multi_dest_test.log | tail -10
 echo ""
-echo "Response data:"
-grep -E "Read.*bytes from" /tmp/multi_dest_test.log | head -10
-echo ""
-echo "Requests sent:"
+echo "Sent requests:"
 grep -E "Sent GET.*request" /tmp/multi_dest_test.log
 echo ""
-echo "Errors (if any):"
-grep -E "CONNECTION_CLOSE.*error" /tmp/multi_dest_test.log | tail -3
+echo "Got responses from:"
+grep -E "=== Response from" /tmp/multi_dest_test.log
+echo ""
+echo "Data received:"
+grep -E "Received.*bytes \(headers" /tmp/multi_dest_test.log
 echo ""
 echo "=== Full log saved to /tmp/multi_dest_test.log ==="
