@@ -52,12 +52,31 @@ multi_client_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
         LSQ_NOTICE("Connection established to %s", dest->hostname);
         dest->connected = 1;
         dest->conn = conn;
-        lsquic_conn_make_stream(conn);
+        /* Don't create stream yet - wait for handshake to complete */
         return (lsquic_conn_ctx_t *) dest;
     }
     
     LSQ_ERROR("Connection established but no context found");
     return NULL;
+}
+
+static void
+multi_client_on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status status)
+{
+    struct dest_info *dest = (struct dest_info *) lsquic_conn_get_ctx(conn);
+    
+    if (dest)
+    {
+        if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK)
+        {
+            LSQ_NOTICE("Handshake successful for %s, creating stream", dest->hostname);
+            lsquic_conn_make_stream(conn);
+        }
+        else
+        {
+            LSQ_ERROR("Handshake failed for %s: status=%d", dest->hostname, status);
+        }
+    }
 }
 
 static void
@@ -148,6 +167,7 @@ static struct lsquic_stream_if multi_client_stream_if = {
     .on_read            = multi_client_on_read,
     .on_write           = multi_client_on_write,
     .on_close           = multi_client_on_close,
+    .on_hsk_done        = multi_client_on_hsk_done,
 };
 
 int
@@ -172,15 +192,18 @@ main (int argc, char **argv)
     /* Initialize logging */
     lsquic_global_init(LSQUIC_GLOBAL_CLIENT);
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
-    lsquic_logger_lopt("event=notice,engine=info,conn=info,handshake=info");
+    lsquic_logger_lopt("event=notice,engine=debug,conn=debug,handshake=debug");
     
-    /* Set up program structure - use non-HTTP mode for simplicity */
-    if (0 != prog_init(&prog, 0, &sports,  /* 0 = not HTTP mode */
+    /* Set up program structure with custom ALPN (not HTTP/3) */
+    if (0 != prog_init(&prog, 0, &sports,
                        &multi_client_stream_if, &client_ctx))
     {
         LSQ_ERROR("Cannot init prog");
         return 1;
     }
+    
+    /* Set custom ALPN for HTTP/3 */
+    prog.prog_api.ea_alpn = "h3";
     
     /* Configure for IETF QUIC v1 ONLY to avoid ENG_CONNS_BY_ADDR */
     prog.prog_settings.es_versions = (1 << LSQVER_I001);  /* IETF QUIC v1 only */
