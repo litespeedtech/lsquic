@@ -8550,6 +8550,13 @@ http_dg_consume (lsquic_stream_t *stream, const void *buf, size_t sz,
 
     if (mode != LSQUIC_HTTP_DG_SEND_CAPSULE && sz <= ctx->max_quic_payload)
     {
+        if (sz > ctx->payload_buf_sz)
+        {
+            errno = EMSGSIZE;
+            return -1;
+        }
+        /* Assert invariant: payload buffer matches max QUIC payload. */
+        assert(ctx->payload_buf_sz == ctx->max_quic_payload);
         memcpy(ctx->payload_buf, buf, sz);
         ctx->payload_sz = sz;
         ctx->consumed = 1;
