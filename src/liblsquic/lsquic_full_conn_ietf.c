@@ -6971,7 +6971,9 @@ process_http_dg_frame (struct ietf_full_conn *conn,
     /* RFC 9297, Section 2.1: Quarter Stream ID maps to stream ID * 4. */
     stream_id = (lsquic_stream_id_t) (qsid * 4);
     LSQ_DEBUG("HTTP Datagram qsid=%"PRIu64" stream=%"PRIu64, qsid, stream_id);
-    /* HTTP/3 requests use client-initiated bidirectional streams. */
+    /* RFC 9297, Section 2.1: Quarter Stream ID refers to client-initiated
+     * bidirectional request streams (stream IDs divisible by 4).
+     */
     if ((stream_id & SIT_MASK) != SIT_BIDI_CLIENT)
     {
         ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
