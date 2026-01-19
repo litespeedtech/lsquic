@@ -7003,7 +7003,7 @@ process_http_dg_frame (struct ietf_full_conn *conn,
             stream_id, stream->stream_if->on_http_dg_read);
     if (stream->stream_if->on_http_dg_read)
     {
-        lsquic_stream_hist_append(stream, 'm');
+        lsquic_stream_hist_http_dg_recv(stream);
         EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
             "RX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
             stream_id, (size_t) (end - (p + nread)));
@@ -8554,7 +8554,7 @@ http_dg_consume (lsquic_stream_t *stream, const void *buf, size_t sz,
         memcpy(ctx->payload_buf, buf, sz);
         ctx->payload_sz = sz;
         ctx->consumed = 1;
-        lsquic_stream_hist_append(stream, 'M');
+        lsquic_stream_hist_http_dg_send(stream);
         EV_LOG_CONN_EVENT(lsquic_conn_log_cid(stream->conn_pub->lconn),
             "TX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
             stream->id, sz);

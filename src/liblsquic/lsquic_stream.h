@@ -432,9 +432,12 @@ struct lsquic_stream
 
 #if LSQUIC_KEEP_STREAM_HISTORY
 void
-lsquic_stream_hist_append (lsquic_stream_t *stream, unsigned char sh_event);
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream);
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream);
 #else
-#define lsquic_stream_hist_append(stream, sh_event) do { } while (0)
+#define lsquic_stream_hist_http_dg_recv(stream) do { } while (0)
+#define lsquic_stream_hist_http_dg_send(stream) do { } while (0)
 #endif
 
 int

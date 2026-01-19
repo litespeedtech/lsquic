@@ -251,13 +251,6 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
                                                         stream->sm_hist_buf);
 }
 
-void
-lsquic_stream_hist_append (lsquic_stream_t *stream, unsigned char sh_event)
-{
-    sm_history_append(stream, (enum stream_history_event) sh_event);
-}
-
-
 #   define SM_HISTORY_APPEND(stream, event) sm_history_append(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream) do {                           \
         if (stream->sm_hist_idx & SM_HIST_IDX_MASK)                         \
@@ -268,6 +261,20 @@ lsquic_stream_hist_append (lsquic_stream_t *stream, unsigned char sh_event)
 #else
 #   define SM_HISTORY_APPEND(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream)
+#endif
+
+#if LSQUIC_KEEP_STREAM_HISTORY
+void
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+}
+
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_SEND);
+}
 #endif
 
 
