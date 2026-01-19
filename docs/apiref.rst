@@ -2616,7 +2616,7 @@ LSQUIC supports both raw QUIC datagrams (:member:`lsquic_engine_settings.es_data
 and HTTP Datagrams (:member:`lsquic_engine_settings.es_http_datagrams`). These are
 distinct features:
 
-- **QUIC datagrams** are connection-level, unreliable datagrams without stream association
+- **QUIC DATAGRAM extension datagrams** are connection-level, unreliable datagrams without stream association
 - **HTTP Datagrams** are stream-associated and can use either QUIC DATAGRAM frames or
   the Capsule Protocol for transport
 

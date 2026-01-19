@@ -6971,6 +6971,7 @@ process_http_dg_frame (struct ietf_full_conn *conn,
     /* RFC 9297, Section 2.1: Quarter Stream ID maps to stream ID * 4. */
     stream_id = (lsquic_stream_id_t) (qsid * 4);
     LSQ_DEBUG("HTTP Datagram qsid=%"PRIu64" stream=%"PRIu64, qsid, stream_id);
+    /* HTTP/3 requests use client-initiated bidirectional streams. */
     if ((stream_id & SIT_MASK) != SIT_BIDI_CLIENT)
     {
         ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
@@ -8605,13 +8606,17 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
     bits = vint_val2bits(qsid);
     vlen = 1u << bits;
     if (vlen >= sz)
+    {
+        errno = EMSGSIZE;
         return -1;
+    }
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.payload_buf = (unsigned char *) buf + vlen;
     ctx.payload_buf_sz = sz - vlen;
     ctx.max_quic_payload = sz - vlen;
 
+    assert(!stream->sm_http_dg_consume_ctx);
     stream->sm_http_dg_consume_ctx = &ctx;
     rc = stream->stream_if->on_http_dg_write(stream, stream->st_ctx,
                                     ctx.max_quic_payload, http_dg_consume);
@@ -8640,7 +8645,10 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
     }
 
     if (ctx.payload_sz > ctx.payload_buf_sz)
+    {
+        errno = EMSGSIZE;
         return -1;
+    }
 
     vint_write(buf, qsid, bits, vlen);
     return (ssize_t) (vlen + ctx.payload_sz);

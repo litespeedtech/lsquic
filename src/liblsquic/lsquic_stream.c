@@ -2325,7 +2325,12 @@ lsquic_stream_get_max_http_dg_size (lsquic_stream_t *stream)
     if (0 == max_sz)
         return 0;
 
+    if (stream->id & 3)
+        return 0;
+
     qsid = stream->id / 4;
+    if (qsid > VINT_MAX_VALUE)
+        return 0;
     overhead = vint_size(qsid);
     if (max_sz <= overhead)
         return 0;
@@ -5986,7 +5991,10 @@ http_dg_capsule_try_write (struct lsquic_stream *stream)
     ssize_t nw;
 
     if (!stream->sm_http_dg)
+    {
+        errno = EINVAL;
         return -1;
+    }
 
     wr = &stream->sm_http_dg->write;
     header_len = wr->header_len;
@@ -6093,7 +6101,11 @@ lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
     wr->offset = 0;
     LSQ_DEBUG("HTTP DG capsule queued on stream %"PRIu64" size %zu",
         stream->id, sz);
-    (void) lsquic_stream_wantwrite(stream, 1);
+    if (lsquic_stream_wantwrite(stream, 1) != 0)
+    {
+        http_dg_capsule_clear_pending(stream);
+        return -1;
+    }
     return 0;
 }
 
