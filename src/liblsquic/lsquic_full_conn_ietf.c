@@ -8530,7 +8530,6 @@ struct http_dg_consume_ctx
     unsigned char          *payload_buf;
     size_t                  payload_buf_sz;
     size_t                  payload_sz;
-    size_t                  max_quic_payload;
     int                     consumed;
     int                     encapsulated;
 };
@@ -8548,15 +8547,13 @@ http_dg_consume (lsquic_stream_t *stream, const void *buf, size_t sz,
         return -1;
     }
 
-    if (mode != LSQUIC_HTTP_DG_SEND_CAPSULE && sz <= ctx->max_quic_payload)
+    if (mode != LSQUIC_HTTP_DG_SEND_CAPSULE && sz <= ctx->payload_buf_sz)
     {
         if (sz > ctx->payload_buf_sz)
         {
             errno = EMSGSIZE;
             return -1;
         }
-        /* Assert invariant: payload buffer matches max QUIC payload. */
-        assert(ctx->payload_buf_sz == ctx->max_quic_payload);
         memcpy(ctx->payload_buf, buf, sz);
         ctx->payload_sz = sz;
         ctx->consumed = 1;
@@ -8621,12 +8618,11 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
     memset(&ctx, 0, sizeof(ctx));
     ctx.payload_buf = (unsigned char *) buf + vlen;
     ctx.payload_buf_sz = sz - vlen;
-    ctx.max_quic_payload = sz - vlen;
 
     assert(!stream->sm_http_dg_consume_ctx);
     stream->sm_http_dg_consume_ctx = &ctx;
     rc = stream->stream_if->on_http_dg_write(stream, stream->st_ctx,
-                                    ctx.max_quic_payload, http_dg_consume);
+                                    ctx.payload_buf_sz, http_dg_consume);
     stream->sm_http_dg_consume_ctx = NULL;
 
     if (!ctx.consumed)
