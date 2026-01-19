@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -196,6 +197,147 @@ const struct lsquic_stream_if stream_if = {
     .on_reset               = on_reset,
 };
 
+struct http_dg_test_ctx {
+    lsquic_stream_t     *stream;
+    unsigned             read_calls;
+    size_t               read_len;
+    unsigned char        read_buf[64];
+};
+
+static lsquic_stream_ctx_t *
+http_dg_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
+{
+    struct http_dg_test_ctx *ctx = stream_if_ctx;
+    ctx->stream = stream;
+    return (lsquic_stream_ctx_t *) ctx;
+}
+
+static void
+http_dg_on_read (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+}
+
+static void
+http_dg_on_write (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+}
+
+static void
+http_dg_on_close (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+}
+
+static int
+http_dg_on_write_datagram (lsquic_stream_t *UNUSED_stream,
+    lsquic_stream_ctx_t *UNUSED_h, size_t UNUSED_max_quic_payload,
+    lsquic_http_dg_consume_f UNUSED_consume_datagram)
+{
+    return 0;
+}
+
+static void
+http_dg_on_read_datagram (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *h,
+                                                const void *buf, size_t bufsz)
+{
+    struct http_dg_test_ctx *ctx = (struct http_dg_test_ctx *) h;
+    size_t to_copy;
+
+    ++ctx->read_calls;
+    ctx->read_len = bufsz;
+    to_copy = bufsz;
+    if (to_copy > sizeof(ctx->read_buf))
+        to_copy = sizeof(ctx->read_buf);
+    memcpy(ctx->read_buf, buf, to_copy);
+}
+
+static const struct lsquic_stream_if http_dg_stream_if = {
+    .on_new_stream          = http_dg_on_new_stream,
+    .on_read                = http_dg_on_read,
+    .on_write               = http_dg_on_write,
+    .on_close               = http_dg_on_close,
+    .on_http_dg_write        = http_dg_on_write_datagram,
+    .on_http_dg_read         = http_dg_on_read_datagram,
+};
+
+static struct {
+    int         called;
+    unsigned    error_code;
+    char        reason[128];
+} s_abort_error;
+
+static size_t s_max_dgram_size;
+
+static void
+abort_error (struct lsquic_conn *UNUSED_lconn, int UNUSED_is_app,
+    unsigned error_code, const char *format, ...)
+{
+    va_list ap;
+
+    s_abort_error.called = 1;
+    s_abort_error.error_code = error_code;
+    va_start(ap, format);
+    vsnprintf(s_abort_error.reason, sizeof(s_abort_error.reason), format, ap);
+    va_end(ap);
+}
+
+static size_t
+get_max_datagram_size (struct lsquic_conn *UNUSED_lconn)
+{
+    return s_max_dgram_size;
+}
+
+#define H3_CAPSULE_DATAGRAM 0x00
+
+static size_t
+make_capsule (unsigned char *buf, size_t bufsz, uint64_t type,
+              const void *payload, size_t payload_sz)
+{
+    uint64_t bits;
+    size_t len, off = 0;
+
+    bits = vint_val2bits(type);
+    len = 1u << bits;
+    assert(off + len <= bufsz);
+    vint_write(buf + off, type, bits, len);
+    off += len;
+
+    bits = vint_val2bits(payload_sz);
+    len = 1u << bits;
+    assert(off + len + payload_sz <= bufsz);
+    vint_write(buf + off, payload_sz, bits, len);
+    off += len;
+
+    if (payload_sz)
+        memcpy(buf + off, payload, payload_sz);
+
+    return off + payload_sz;
+}
+
+static size_t
+make_hq_data_frame (unsigned char *buf, size_t bufsz,
+                    const void *payload, size_t payload_sz)
+{
+    uint64_t bits;
+    size_t len, off = 0;
+
+    bits = vint_val2bits(HQFT_DATA);
+    len = 1u << bits;
+    assert(off + len <= bufsz);
+    vint_write(buf + off, HQFT_DATA, bits, len);
+    off += len;
+
+    bits = vint_val2bits(payload_sz);
+    len = 1u << bits;
+    assert(off + len + payload_sz <= bufsz);
+    vint_write(buf + off, payload_sz, bits, len);
+    off += len;
+
+    if (payload_sz)
+        memcpy(buf + off, payload, payload_sz);
+
+    return off + payload_sz;
+}
+
 
 /* This does not do anything beyond just acking the packet: we do not attempt
  * to update the send controller to have the correct state.
@@ -350,6 +492,8 @@ user_stream_progress (struct lsquic_conn *lconn)
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = can_write_ack,
+    .ci_abort_error   = abort_error,
+    .ci_get_max_datagram_size = get_max_datagram_size,
     .ci_get_path      = get_network_path,
     .ci_write_ack     = write_ack,
     .ci_user_stream_progress = user_stream_progress,
@@ -377,6 +521,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     TAILQ_INIT(&tobjs->conn_pub.read_streams);
     TAILQ_INIT(&tobjs->conn_pub.write_streams);
     TAILQ_INIT(&tobjs->conn_pub.service_streams);
+    TAILQ_INIT(&tobjs->conn_pub.http_dg_streams);
     lsquic_cfcw_init(&tobjs->conn_pub.cfcw, &tobjs->conn_pub,
                                                     initial_conn_window);
     lsquic_conn_cap_init(&tobjs->conn_pub.conn_cap, initial_conn_window);
@@ -2366,6 +2511,7 @@ test_unexpected_http_close (void)
     lsquic_stream_t *stream;
     int s;
 
+    /* Test: http datagrams disabled in settings rejects capsules. */
     stream_ctor_flags |= SCF_HTTP;
     init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
@@ -3650,6 +3796,320 @@ test_bad_packbits_guess_1 (void)
     deinit_test_objs(&tobjs);
 }
 
+static void
+test_http_dg_capsules (void)
+{
+    struct test_objs tobjs;
+    struct http_dg_test_ctx dg_ctx;
+    struct lsquic_stream *stream;
+    enum stream_ctor_flags saved_flags = stream_ctor_flags;
+    const struct parse_funcs *saved_pf = g_pf;
+    const size_t saved_max_dgram = s_max_dgram_size;
+    unsigned char capsule[64];
+    unsigned char hq_frame[96];
+    const unsigned char payload_a[] = "DATA";
+    const unsigned char payload_b[] = "ABCDE";
+    size_t cap_len;
+    int s;
+
+    /* Use IETF QUIC for HTTP Datagram capsule handling. */
+    g_pf = select_pf_by_ver(LSQVER_I001);
+    stream_ctor_flags |= SCF_HTTP;
+    init_test_objs(&tobjs, 0x1000, 0x1000, g_pf);
+    tobjs.stream_if = &http_dg_stream_if;
+    tobjs.stream_if_ctx = &dg_ctx;
+    tobjs.conn_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+    tobjs.eng_pub.enp_settings.es_http_datagrams = 1;
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_read_size = 32;
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_write_size = 32;
+    tobjs.eng_pub.enp_settings.es_progress_check = 1;
+    /* Test: want_http_dg fails without negotiated support. */
+    s_max_dgram_size = 1200;
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    /* Test: basic capsule read delivers payload to callback. */
+    stream = new_stream(&tobjs, 4);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    stream->sm_bflags |= SMBF_RW_ONCE;
+    cap_len = make_capsule(capsule, sizeof(capsule), H3_CAPSULE_DATAGRAM,
+                           payload_a, sizeof(payload_a) - 1);
+    cap_len = make_hq_data_frame(hq_frame, sizeof(hq_frame), capsule, cap_len);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 0, cap_len, 0, hq_frame));
+    assert(s == 0);
+    lsquic_stream_dispatch_read_events(stream);
+    assert(dg_ctx.read_calls == 1);
+    assert(dg_ctx.read_len == sizeof(payload_a) - 1);
+    assert(0 == memcmp(dg_ctx.read_buf, payload_a, sizeof(payload_a) - 1));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    /* Test: split DATA frame (capsule) across two stream frames. */
+    stream = new_stream(&tobjs, 8);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    cap_len = make_capsule(capsule, sizeof(capsule), H3_CAPSULE_DATAGRAM,
+                           payload_b, sizeof(payload_b) - 1);
+    cap_len = make_hq_data_frame(hq_frame, sizeof(hq_frame), capsule, cap_len);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 0, 1, 0, hq_frame));
+    assert(s == 0);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 1, cap_len - 1, 0, hq_frame + 1));
+    assert(s == 0);
+    lsquic_stream_dispatch_read_events(stream);
+    assert(dg_ctx.read_calls == 1);
+    assert(dg_ctx.read_len == sizeof(payload_b) - 1);
+    assert(0 == memcmp(dg_ctx.read_buf, payload_b, sizeof(payload_b) - 1));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    /* Test: non-datagram capsule type is ignored by http dg callback. */
+    stream = new_stream(&tobjs, 12);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    cap_len = make_capsule(capsule, sizeof(capsule), 1, payload_a, 3);
+    cap_len = make_hq_data_frame(hq_frame, sizeof(hq_frame), capsule, cap_len);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 0, cap_len, 0, hq_frame));
+    assert(s == 0);
+    lsquic_stream_dispatch_read_events(stream);
+    assert(dg_ctx.read_calls == 0);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_read_size = 2;
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+    /* Test: oversized capsule triggers H3_DATAGRAM_ERROR. */
+    stream = new_stream(&tobjs, 16);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    cap_len = make_capsule(capsule, sizeof(capsule), H3_CAPSULE_DATAGRAM,
+                           payload_a, 3);
+    cap_len = make_hq_data_frame(hq_frame, sizeof(hq_frame), capsule, cap_len);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 0, cap_len, 0, hq_frame));
+    assert(s == 0);
+    lsquic_stream_dispatch_read_events(stream);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == HEC_DATAGRAM_ERROR);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_read_size = 32;
+
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+    /* Test: truncated capsule triggers H3_DATAGRAM_ERROR. */
+    /* Test: want_http_dg fails without datagram size. */
+    stream = new_stream(&tobjs, 20);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    cap_len = make_capsule(capsule, sizeof(capsule), H3_CAPSULE_DATAGRAM,
+                           payload_a, 4);
+    cap_len = make_hq_data_frame(hq_frame, sizeof(hq_frame),
+                                 capsule, cap_len - 1);
+    s = lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, 0, cap_len, 1, hq_frame));
+    assert(s == 0);
+    lsquic_stream_dispatch_read_events(stream);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == HEC_DATAGRAM_ERROR);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: disable capsules clears pending write state. */
+    stream = new_stream(&tobjs, 24);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s == 0);
+    assert(lsquic_stream_http_dg_capsule_pending(stream));
+    s = lsquic_stream_set_http_dg_capsules(stream, 0);
+    assert(s == 0);
+    assert(!lsquic_stream_http_dg_capsule_pending(stream));
+    assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: queued capsule is flushed by write event. */
+    stream = new_stream(&tobjs, 28);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HEADERS_SENT;
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s == 0);
+    assert(lsquic_stream_http_dg_capsule_pending(stream));
+    lsquic_stream_dispatch_write_events(stream);
+    assert(!lsquic_stream_http_dg_capsule_pending(stream));
+    assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: second queued capsule returns EAGAIN. */
+    stream = new_stream(&tobjs, 32);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s == 0);
+    errno = 0;
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s < 0);
+    assert(errno == EAGAIN);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_write_size = 0;
+    /* Test: write size limit returns EMSGSIZE. */
+    stream = new_stream(&tobjs, 36);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    errno = 0;
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s < 0);
+    assert(errno == EMSGSIZE);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_write_size = 32;
+
+    /* Test: max HTTP datagram size reflects overhead and zero cases. */
+    stream = new_stream(&tobjs, 40);
+    s_max_dgram_size = 5;
+    assert(lsquic_stream_get_max_http_dg_size(stream) == 4);
+    s_max_dgram_size = 1;
+    assert(lsquic_stream_get_max_http_dg_size(stream) == 0);
+    s_max_dgram_size = 0;
+    assert(lsquic_stream_get_max_http_dg_size(stream) == 0);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: want_http_dg toggles stream in queue. */
+    stream = new_stream(&tobjs, 44);
+    s_max_dgram_size = 1200;
+    s = lsquic_stream_want_http_dg_write(stream, 1);
+    assert(s == 0);
+    assert(stream->sm_qflags & SMQF_WANT_HTTP_DG);
+    assert(TAILQ_FIRST(&tobjs.conn_pub.http_dg_streams) == stream);
+    s = lsquic_stream_want_http_dg_write(stream, 0);
+    assert(s == 1);
+    assert(!(stream->sm_qflags & SMQF_WANT_HTTP_DG));
+    assert(TAILQ_EMPTY(&tobjs.conn_pub.http_dg_streams));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: queue allocates http_dg state on demand. */
+    stream = new_stream(&tobjs, 48);
+    stream->stream_flags |= STREAM_HEADERS_SENT;
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s == 0);
+    assert(lsquic_stream_http_dg_capsule_pending(stream));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: want_http_dg set without immediate clear. */
+    stream = new_stream(&tobjs, 52);
+    s_max_dgram_size = 1200;
+    s = lsquic_stream_want_http_dg_write(stream, 1);
+    assert(s == 0);
+    assert(stream->sm_qflags & SMQF_WANT_HTTP_DG);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags = saved_flags;
+    g_pf = saved_pf;
+    s_max_dgram_size = saved_max_dgram;
+}
+
+static void
+test_http_dg_capsules_errors (void)
+{
+    struct test_objs tobjs;
+    struct http_dg_test_ctx dg_ctx;
+    struct lsquic_stream *stream;
+    enum stream_ctor_flags saved_flags = stream_ctor_flags;
+    const struct parse_funcs *saved_pf = g_pf;
+    const size_t saved_max_dgram = s_max_dgram_size;
+    int s;
+
+    /* Use IETF QUIC for error-path coverage. */
+    g_pf = select_pf_by_ver(LSQVER_I001);
+    stream_ctor_flags &= ~SCF_HTTP;
+    init_test_objs(&tobjs, 0x1000, 0x1000, g_pf);
+    tobjs.stream_if = &http_dg_stream_if;
+    tobjs.stream_if_ctx = &dg_ctx;
+    tobjs.eng_pub.enp_settings.es_http_datagrams = 1;
+    tobjs.eng_pub.enp_settings.es_progress_check = 1;
+    /* Test: missing HTTP headers flag rejects capsules. */
+    stream = new_stream(&tobjs, 8);
+    errno = 0;
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s < 0);
+    assert(errno == ENOTSUP);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags |= SCF_HTTP;
+    init_test_objs(&tobjs, 0x1000, 0x1000, g_pf);
+    tobjs.stream_if = &http_dg_stream_if;
+    tobjs.stream_if_ctx = &dg_ctx;
+    tobjs.eng_pub.enp_settings.es_http_datagrams = 0;
+    stream = new_stream(&tobjs, 12);
+    errno = 0;
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s < 0);
+    assert(errno == ENOTSUP);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    s_max_dgram_size = 1200;
+    tobjs.eng_pub.enp_settings.es_http_datagrams = 1;
+    stream = new_stream(&tobjs, 16);
+    tobjs.conn_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
+    errno = 0;
+    s = lsquic_stream_want_http_dg_write(stream, 1);
+    assert(s < 0);
+    assert(errno == ENOTSUP);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    stream = new_stream(&tobjs, 20);
+    tobjs.conn_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+    s_max_dgram_size = 0;
+    errno = 0;
+    s = lsquic_stream_want_http_dg_write(stream, 1);
+    assert(s < 0);
+    assert(errno == ENOTSUP);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    /* Test: want_http_dg fails without on_http_dg_write callback. */
+    tobjs.stream_if = &stream_if;
+    tobjs.stream_if_ctx = &test_ctx;
+    stream = new_stream(&tobjs, 24);
+    s_max_dgram_size = 1200;
+    tobjs.conn_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+    errno = 0;
+    s = lsquic_stream_want_http_dg_write(stream, 1);
+    assert(s < 0);
+    assert(errno == EINVAL);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags = saved_flags;
+    g_pf = saved_pf;
+    s_max_dgram_size = saved_max_dgram;
+}
+
 
 static void
 main_test_packetization (void)
@@ -3723,6 +4183,8 @@ main (int argc, char **argv)
     test_overlaps();
     test_insert_edge_cases();
     test_unexpected_http_close();
+    test_http_dg_capsules();
+    test_http_dg_capsules_errors();
 
     {
         int idx[6];

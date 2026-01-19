@@ -663,7 +663,7 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         params.tp_numerics[TPI_TIMESTAMPS] = TS_GENERATE_THEM;
         params.tp_set |= 1 << TPI_TIMESTAMPS;
     }
-    if (settings->es_datagrams)
+    if (settings->es_datagrams || settings->es_http_datagrams)
     {
         if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
             params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]
@@ -3547,7 +3547,7 @@ lsquic_enc_sess_ietf_gen_quic_ctx (
         params.tp_numerics[TPI_TIMESTAMPS] = TS_GENERATE_THEM;
         params.tp_set |= 1 << TPI_TIMESTAMPS;
     }
-    if (settings->es_datagrams)
+    if (settings->es_datagrams || settings->es_http_datagrams)
     {
         if (params.tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
             params.tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE]

@@ -160,6 +160,25 @@ enum lsquic_hsk_status
  * process events.
  *
  */
+
+/**
+ * HTTP Datagram send mode controls transport selection.
+ * See apiref.rst for detailed explanation of each mode.
+ */
+enum lsquic_http_dg_send_mode
+{
+    /* Automatic: use QUIC DATAGRAM if available and fits, else Capsule */
+    LSQUIC_HTTP_DG_SEND_DEFAULT = 0,
+    /* Force QUIC DATAGRAM only (unreliable, unordered, low latency) */
+    LSQUIC_HTTP_DG_SEND_DATAGRAM,
+    /* Force Capsule Protocol only (reliable, ordered) */
+    LSQUIC_HTTP_DG_SEND_CAPSULE,
+};
+
+typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
+                                        size_t sz,
+                                        enum lsquic_http_dg_send_mode mode);
+
 struct lsquic_stream_if {
 
     /**
@@ -191,10 +210,28 @@ struct lsquic_stream_if {
     /* Called when datagram is ready to be written */
     ssize_t (*on_dg_write)(lsquic_conn_t *c, void *, size_t);
     /* Called when datagram is read from a packet.  This callback is required
-     * when es_datagrams is true.  Take care to process it quickly, as this
-     * is called during lsquic_engine_packet_in().
+     * when es_datagrams is true and HTTP Datagrams are not enabled.  Take care
+     * to process it quickly, as this is called during
+     * lsquic_engine_packet_in().
      */
     void (*on_datagram)(lsquic_conn_t *, const void *buf, size_t);
+    /**
+     * Called when HTTP Datagram (RFC 9297) is ready to be written.
+     * Must call consume_datagram exactly once to supply the payload.
+     * Return 0 on success, -1 on error.
+     * max_quic_payload is the maximum size that fits in a QUIC DATAGRAM frame.
+     * See apiref.rst "HTTP Datagrams" section for details and examples.
+     */
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+            size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram);
+    /**
+     * Called when an HTTP Datagram (RFC 9297) payload is received.
+     * For QUIC DATAGRAM frames, this can be invoked during packet processing.
+     * For capsule-carried datagrams, it is invoked during stream read events.
+     * Process payload quickly; buffer is only valid during callback.
+     */
+    void (*on_http_dg_read)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                                                const void *buf, size_t);
     /* This callback in only called in client mode */
     /**
      * When handshake is completed, this optional callback is called.
@@ -420,6 +457,15 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Turn off datagram extension by default */
 #define LSQUIC_DF_DATAGRAMS 0
+
+/** Turn off HTTP Datagrams by default */
+#define LSQUIC_DF_HTTP_DATAGRAMS 0
+
+/** Default maximum HTTP Datagram capsule read buffer size. */
+#define LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE (10 * 1024)
+
+/** Default maximum HTTP Datagram capsule write buffer size. */
+#define LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE (10 * 1024)
 
 /** Assume optimistic NAT by default. */
 #define LSQUIC_DF_OPTIMISTIC_NAT 1
@@ -1022,6 +1068,33 @@ struct lsquic_engine_settings {
     int             es_datagrams;
 
     /**
+     * Enable HTTP Datagram support (RFC 9297) for HTTP/3.
+     * HTTP Datagrams can be sent via QUIC DATAGRAM frames or Capsule Protocol.
+     * Different from es_datagrams (raw QUIC datagrams); see apiref.rst.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DATAGRAMS
+     */
+    int             es_http_datagrams;
+
+    /**
+     * Maximum buffer size for reading encapsulated HTTP Datagram payloads.
+     * Per-stream limit for Capsule Protocol payloads (not QUIC DATAGRAMs).
+     * Zero means capsule payloads are not accepted.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE
+     */
+    unsigned        es_http_dg_max_capsule_read_size;
+
+    /**
+     * Maximum buffer size for writing encapsulated HTTP Datagram payloads.
+     * Per-stream limit for Capsule Protocol payloads (not QUIC DATAGRAMs).
+     * Zero means capsule payloads are not allowed.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE
+     */
+    unsigned        es_http_dg_max_capsule_write_size;
+
+    /**
      * If set to true, changes in peer port are assumed to be due to a
      * benign NAT rebinding and path characteristics -- MTU, RTT, and
      * CC state -- are not reset.
@@ -1153,7 +1226,7 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
      */
     unsigned        es_max_webtransport_server_streams;
-#endif    
+#endif
 };
 
 /* Initialize `settings' to default values */
@@ -1930,6 +2003,37 @@ lsquic_conn_get_min_datagram_size (lsquic_conn_t *);
  */
 int
 lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
+
+/**
+ * Control whether stream is eligible to supply HTTP Datagram payloads.
+ * Call with is_want=1 to enable on_http_dg_write() callbacks.
+ * Returns previous value, or -1 on error.
+ * See apiref.rst "HTTP Datagrams" for usage examples.
+ */
+int
+lsquic_stream_want_http_dg_write (lsquic_stream_t *, int is_want);
+
+/**
+ * Enable HTTP Datagram capsule processing on this stream.
+ * Required to receive capsule-carried HTTP Datagrams.
+ * Library takes over on_read to parse capsule framing; delivers payloads
+ * via on_http_dg_read(). May suppress on_write while flushing capsules.
+ * Call after successful Extended CONNECT response with Capsule-Protocol: ?1.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_stream_set_http_dg_capsules (lsquic_stream_t *, int enable);
+
+/**
+ * Get maximum HTTP Datagram payload size for QUIC DATAGRAM frames.
+ * Returns 0 if HTTP Datagrams were not negotiated.
+ * Accounts for QUIC DATAGRAM overhead, context ID, and current PMTU.
+ * Value may change due to PMTU or stream ID growth; use SEND_DEFAULT for
+ * automatic fallback.
+ */
+size_t
+lsquic_stream_get_max_http_dg_size (lsquic_stream_t *);
+
 
 struct lsquic_logger_if {
     /* Return number of bytes written/consumed; return value is ignored. */

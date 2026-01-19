@@ -211,17 +211,22 @@ Internet-Draft                    BAT                        January 2026
 
    HTTP Datagrams in BAT are sent using QUIC DATAGRAM frames [RFC9221]
    as specified in Section 2.1 of [RFC9297].  QUIC DATAGRAM frames MUST
-   be negotiated via the SETTINGS_H3_DATAGRAM setting.  BAT does not use
-   the Capsule Protocol, and endpoints MUST NOT send any data on the
-   CONNECT stream after the headers.
+   be negotiated via the SETTINGS_H3_DATAGRAM setting.  When an HTTP
+   Datagram payload is larger than the maximum size allowed by QUIC
+   DATAGRAM frames, endpoints MAY send DATAGRAM capsules using the
+   Capsule Protocol [RFC9297] on the CONNECT stream.  Endpoints MUST NOT
+   send any other data on the CONNECT stream after the headers.
 
 4.1.  Client Behavior
 
    Once the BAT session is established, the client MAY send HTTP
    Datagrams with arbitrary payload data.  The client MUST send HTTP
-   Datagrams using QUIC DATAGRAM frames and MUST NOT send any data on
-   the CONNECT stream after the headers.  The client SHOULD track which
-   datagrams have been sent to correlate with received echoes.
+   Datagrams using QUIC DATAGRAM frames when the payload fits within the
+   maximum QUIC DATAGRAM size.  When the payload exceeds that limit, the
+   client MAY send a DATAGRAM capsule on the CONNECT stream.  The client
+   MUST NOT send any other data on the CONNECT stream after the headers.
+   The client SHOULD track which datagrams have been sent to correlate
+   with received echoes.
 
 
 
@@ -241,8 +246,9 @@ Internet-Draft                    BAT                        January 2026
    same payload to the client.  The server MUST NOT modify the payload
    contents.
 
-   When using QUIC DATAGRAM frames, the server MUST send echoed HTTP
-   Datagrams using QUIC DATAGRAM frames.
+   The server MUST send echoed HTTP Datagrams using QUIC DATAGRAM frames
+   when the payload fits within the maximum QUIC DATAGRAM size.  If the
+   payload does not fit, the server MUST send a DATAGRAM capsule instead.
 
    The server SHOULD process datagrams as quickly as possible to
    minimize round-trip latency measurements.
@@ -257,7 +263,8 @@ Internet-Draft                    BAT                        January 2026
    Implementations MUST follow the error handling procedures defined in
    [RFC9297].
 
-   Clients MUST NOT send any data on the CONNECT stream itself.
+   Clients MUST NOT send any data on the CONNECT stream itself other
+   than DATAGRAM capsules as described in Section 4.
 
    If the server receives stream data (as opposed to HTTP Datagrams)
    after accepting the BAT connection, it MUST treat this as a

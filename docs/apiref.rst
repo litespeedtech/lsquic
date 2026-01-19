@@ -304,6 +304,8 @@ optional members.
 
 .. _apiref-engine-settings:
 
+.. _engine-settings:
+
 Engine Settings
 ---------------
 
@@ -831,9 +833,54 @@ settings structure:
 
     .. member:: int             es_datagrams
 
-       Enable datagrams extension.  Allowed values are 0 and 1.
+       Enable QUIC datagram extension (RFC 9221).  Allowed values are 0 and 1.
+
+       When enabled, provides connection-level unreliable datagram support via
+       :member:`lsquic_stream_if.on_datagram` and :member:`lsquic_stream_if.on_dg_write`
+       callbacks. This is independent of HTTP Datagrams (see :member:`es_http_datagrams`).
 
        Default value is :macro:`LSQUIC_DF_DATAGRAMS`
+
+    .. member:: int             es_http_datagrams
+
+       Enable HTTP Datagram support (RFC 9297) for HTTP/3.  Allowed values are 0 and 1.
+
+       When enabled, HTTP Datagrams can be sent via QUIC DATAGRAM frames or
+       Capsule Protocol. Provides stream-associated datagram support via
+       :member:`lsquic_stream_if.on_http_dg_write` and :member:`lsquic_stream_if.on_http_dg_read`
+       callbacks.
+
+       This is independent of raw QUIC datagrams (:member:`es_datagrams`). You can
+       enable HTTP Datagrams without enabling raw QUIC datagrams; in that case, only
+       the Capsule Protocol will be used.
+
+       See :ref:`apiref-http-datagrams` for complete documentation.
+
+       Default value is :macro:`LSQUIC_DF_HTTP_DATAGRAMS`
+
+    .. member:: unsigned        es_http_dg_max_capsule_read_size
+
+       Maximum buffer size for reading HTTP Datagram payloads via Capsule Protocol.
+
+       This is a per-stream limit that applies only to capsule-based transport,
+       not QUIC DATAGRAM frames. A value of zero means capsule payloads will not
+       be accepted.
+
+       See :ref:`apiref-http-datagrams` for details.
+
+       Default value is :macro:`LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE` (10KB)
+
+    .. member:: unsigned        es_http_dg_max_capsule_write_size
+
+       Maximum buffer size for writing HTTP Datagram payloads via Capsule Protocol.
+
+       This is a per-stream limit that applies only to capsule-based transport,
+       not QUIC DATAGRAM frames. A value of zero means capsule payloads will not
+       be sent.
+
+       See :ref:`apiref-http-datagrams` for details.
+
+       Default value is :macro:`LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE` (10KB)
 
     .. member:: int             es_optimistic_nat
 
@@ -2537,3 +2584,342 @@ and
     Set minimum datagram size.  This is the minumum value of the buffer
     passed to the :member:`lsquic_stream_if.on_dg_write` callback.
     Returns 0 on success and -1 on error.
+
+.. _apiref-http-datagrams:
+
+HTTP Datagrams
+--------------
+
+lsquic supports `HTTP Datagrams (RFC 9297) <https://www.rfc-editor.org/rfc/rfc9297.html>`_
+for HTTP/3. HTTP Datagrams provide a mechanism for multiplexed, potentially unreliable
+application data over HTTP connections.
+
+Overview
+~~~~~~~~
+
+HTTP Datagrams can be transported via two mechanisms:
+
+1. **QUIC DATAGRAM frames** (RFC 9221) - unreliable, unordered, low-latency delivery
+2. **Capsule Protocol** (RFC 9297, Section 3) - reliable, ordered delivery over QUIC streams
+
+The library can automatically choose the appropriate transport based on negotiation
+and payload size, or the application can explicitly control which mechanism to use.
+
+HTTP Datagrams are typically used with Extended CONNECT requests (RFC 8441 for HTTP/2,
+RFC 9220 for HTTP/3) that establish a stream context. Each datagram is associated with
+a specific stream via a context ID.
+
+Key Differences from QUIC Datagrams
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+LSQUIC supports both raw QUIC datagrams (:member:`lsquic_engine_settings.es_datagrams`)
+and HTTP Datagrams (:member:`lsquic_engine_settings.es_http_datagrams`). These are
+distinct features:
+
+- **QUIC datagrams** are connection-level, unreliable datagrams without stream association
+- **HTTP Datagrams** are stream-associated and can use either QUIC DATAGRAM frames or
+  the Capsule Protocol for transport
+
+You can enable HTTP Datagrams without enabling raw QUIC datagrams. In this case, only
+the Capsule Protocol will be used for HTTP Datagram transport.
+
+Configuration
+~~~~~~~~~~~~~
+
+Enable HTTP Datagram support by setting :member:`lsquic_engine_settings.es_http_datagrams`
+to 1. You can also configure buffer sizes for capsule-based transport:
+
+- :member:`lsquic_engine_settings.es_http_dg_max_capsule_read_size`
+- :member:`lsquic_engine_settings.es_http_dg_max_capsule_write_size`
+
+See the :ref:`Engine Settings <engine-settings>` section for details on these
+parameters.
+
+Provide callbacks for sending and receiving HTTP Datagrams:
+
+- :member:`lsquic_stream_if.on_http_dg_write` - called when ready to send
+- :member:`lsquic_stream_if.on_http_dg_read` - called when datagram received
+
+Send Modes
+~~~~~~~~~~
+
+HTTP Datagrams can be sent using three modes (``enum lsquic_http_dg_send_mode``):
+
+**LSQUIC_HTTP_DG_SEND_DEFAULT** - Automatic mode (recommended)
+
+The library chooses the transport automatically:
+
+- Uses QUIC DATAGRAM frames if negotiated and payload fits within MTU
+- Falls back to Capsule Protocol for oversized payloads or if QUIC datagrams unavailable
+
+This mode provides the best balance of performance and reliability.
+
+**LSQUIC_HTTP_DG_SEND_DATAGRAM** - QUIC DATAGRAM only
+
+Forces use of QUIC DATAGRAM frames:
+
+- Fails if QUIC datagrams were not negotiated
+- Fails if payload exceeds ``max_quic_payload``
+- Provides UDP-like semantics: unreliable, unordered, low latency
+- No head-of-line blocking
+
+Use when you need unreliable delivery and can handle packet loss.
+
+**LSQUIC_HTTP_DG_SEND_CAPSULE** - Capsule Protocol only
+
+Forces use of capsule-based transport over QUIC streams:
+
+- Provides TCP-like semantics: reliable, ordered delivery
+- Subject to head-of-line blocking within the stream
+- Subject to stream flow control and :member:`es_http_dg_max_capsule_write_size`
+
+Use when reliability is required or for testing capsule implementations.
+
+Sending HTTP Datagrams
+~~~~~~~~~~~~~~~~~~~~~~~
+
+To send HTTP Datagrams:
+
+1. Call :func:`lsquic_stream_want_http_dg_write` with ``is_want=1`` to indicate
+   readiness to send
+2. Library invokes :member:`lsquic_stream_if.on_http_dg_write` callback
+3. In callback, call the ``consume_datagram`` function pointer once with your payload
+
+.. function:: int lsquic_stream_want_http_dg_write (lsquic_stream_t *stream, int is_want)
+
+    Control whether the stream is eligible to supply HTTP Datagram payloads.
+
+    :param stream: Stream from Extended CONNECT request
+    :param is_want: 1 to enable write readiness, 0 to disable
+    :return: Previous value of the flag, or -1 on error
+
+    When enabled, the library will invoke :member:`lsquic_stream_if.on_http_dg_write`
+    when ready to send a datagram. Disable after sending to avoid unnecessary callbacks.
+
+**Callback signature:**
+
+.. c:member:: int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h, size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram)
+
+    Called when HTTP Datagram is ready to be written.
+
+    :param s: Stream context (from Extended CONNECT)
+    :param h: User stream context (from :member:`on_new_stream`)
+    :param max_quic_payload: Maximum payload size for QUIC DATAGRAM frame.
+        Payloads larger than this will automatically use Capsule Protocol
+        when ``LSQUIC_HTTP_DG_SEND_DEFAULT`` is used. This value may change
+        due to PMTU changes or stream ID growth.
+    :param consume_datagram: Function to call with payload data. Must be
+        called exactly once per callback invocation.
+    :return: 0 on success, -1 on error
+
+    **Important:** Call ``consume_datagram`` exactly once with your payload data.
+    If you have no data to send, return -1 without calling ``consume_datagram``.
+
+    The ``consume_datagram`` function has this signature::
+
+        typedef int (*lsquic_http_dg_consume_f)(
+            lsquic_stream_t *stream,
+            const void *buf,        /* payload data */
+            size_t sz,              /* payload size */
+            enum lsquic_http_dg_send_mode mode);
+
+    It returns 0 on success, -1 on failure (e.g., buffer full, negotiation failed).
+
+**Example:**
+
+.. code-block:: c
+
+    static int
+    my_on_http_dg_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx,
+                        size_t max_quic_payload,
+                        lsquic_http_dg_consume_f consume)
+    {
+        unsigned char payload[] = "Hello via HTTP Datagram";
+
+        /* Use automatic mode - library chooses transport */
+        if (0 != consume(stream, payload, sizeof(payload) - 1,
+                         LSQUIC_HTTP_DG_SEND_DEFAULT))
+            return -1;  /* Send failed */
+
+        /* Disable further write callbacks until we have more data */
+        lsquic_stream_want_http_dg_write(stream, 0);
+        return 0;
+    }
+
+Receiving HTTP Datagrams
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To receive HTTP Datagrams:
+
+1. After successful Extended CONNECT response, call
+   :func:`lsquic_stream_set_http_dg_capsules` with ``enable=1``
+2. Library parses incoming capsule datagrams and invokes
+   :member:`lsquic_stream_if.on_http_dg_read` callback
+
+.. function:: int lsquic_stream_set_http_dg_capsules (lsquic_stream_t *stream, int enable)
+
+    Enable or disable HTTP Datagram capsule processing on this stream.
+
+    :param stream: Stream from Extended CONNECT request
+    :param enable: 1 to enable, 0 to disable
+    :return: 0 on success, -1 on error (sets errno)
+
+    When enabled, the library:
+
+    - Takes over the stream's :member:`on_read` callback to parse capsule framing
+    - Delivers capsule-carried HTTP Datagram payloads via :member:`on_http_dg_read`
+    - May suppress :member:`on_write` callbacks while flushing pending capsules
+
+    Call this function after receiving a successful Extended CONNECT response
+    that includes the ``Capsule-Protocol: ?1`` header.
+
+    **Note:** Calling this function is required to receive capsule-carried
+    HTTP Datagrams; QUIC DATAGRAM frame delivery does not depend on it.
+
+**Callback signature:**
+
+.. c:member:: void (*on_http_dg_read)(lsquic_stream_t *s, lsquic_stream_ctx_t *h, const void *buf, size_t sz)
+
+    Called when an HTTP Datagram payload is received.
+
+    :param s: Stream context
+    :param h: User stream context
+    :param buf: Pointer to datagram payload data
+    :param sz: Size of payload in bytes
+
+    For QUIC DATAGRAM frames, this callback can be invoked during
+    :func:`lsquic_engine_packet_in`. For capsule-carried datagrams, it is
+    invoked during stream read dispatch. The buffer is only valid during the
+    callback; copy the data if you need it after the callback returns.
+
+    This callback is optional. If not set, received HTTP Datagrams are silently
+    discarded.
+
+**Example:**
+
+.. code-block:: c
+
+    static void
+    my_on_http_dg_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx,
+                       const void *buf, size_t bufsz)
+    {
+        /* Process payload quickly - we're in packet processing */
+        printf("Received HTTP Datagram: %zu bytes\n", bufsz);
+
+        /* Copy data if needed after callback returns */
+        if (ctx->need_to_save) {
+            ctx->saved = malloc(bufsz);
+            if (ctx->saved)
+                memcpy(ctx->saved, buf, bufsz);
+        }
+    }
+
+Payload Size Limits
+~~~~~~~~~~~~~~~~~~~
+
+.. function:: size_t lsquic_stream_get_max_http_dg_size (lsquic_stream_t *stream)
+
+    Get maximum HTTP Datagram payload size for QUIC DATAGRAM frames.
+
+    :param stream: Stream with HTTP Datagram context
+    :return: Maximum payload size in bytes, or 0 if HTTP Datagrams not negotiated
+
+    This returns the maximum payload that can be sent via QUIC DATAGRAM frames
+    on this stream. The size accounts for:
+
+    - QUIC DATAGRAM frame overhead
+    - HTTP Datagram context ID overhead (Quarter Stream ID encoding)
+    - Current path MTU
+
+    **Returns 0 if:**
+
+    - HTTP Datagrams were not negotiated during handshake
+    - QUIC datagrams are not available
+
+    Use this to check if HTTP Datagrams are available, and to determine if
+    your payload will fit in a QUIC DATAGRAM frame.
+
+    **Note:** This value may change during the connection due to PMTU changes
+    or stream ID growth (which affects Quarter Stream ID encoding size).
+    Check before each send, or use ``LSQUIC_HTTP_DG_SEND_DEFAULT`` to let the
+    library handle size-based fallback automatically.
+
+    Payloads larger than this value must be sent via Capsule Protocol, which
+    is subject to stream flow control and :member:`es_http_dg_max_capsule_write_size`.
+
+Extended CONNECT Setup
+~~~~~~~~~~~~~~~~~~~~~~
+
+HTTP Datagrams require an Extended CONNECT request with specific headers:
+
+**Client side:**
+
+.. code-block:: c
+
+    struct lsxpack_header headers[] = {
+        {":method", "CONNECT"},
+        {":protocol", "your-protocol"},  /* e.g., "webtransport" or "bat-00" */
+        {":scheme", "https"},
+        {":path", "/your-path"},
+        {":authority", "example.com"},
+        {"capsule-protocol", "?1"},      /* Required for Capsule Protocol */
+    };
+
+    lsquic_stream_send_headers(stream, &headers, 0);  /* fin=0 */
+
+**Server side:**
+
+Validate the request headers and respond with 200:
+
+.. code-block:: c
+
+    /* Validate :method is CONNECT, :protocol matches, capsule-protocol is ?1 */
+
+    struct lsxpack_header response[] = {
+        {":status", "200"},
+    };
+
+    lsquic_stream_send_headers(stream, &response, 0);  /* fin=0 */
+
+    /* Enable capsule processing */
+    lsquic_stream_set_http_dg_capsules(stream, 1);
+
+The ``Capsule-Protocol: ?1`` header (RFC 9297) indicates support for the
+Capsule Protocol. Some protocols require it even when primarily using
+QUIC DATAGRAM frames; check your protocol specification.
+
+Complete Example
+~~~~~~~~~~~~~~~~
+
+See the BAT (Bidirectional Attestation Test) examples in ``bin/bat_client.c``
+and ``bin/bat_server.c`` for complete, working implementations. BAT is a simple
+echo protocol defined in ``docs/draft-tikhonov-httpbis-bat-00.txt`` specifically
+for testing HTTP Datagram implementations.
+
+Troubleshooting
+~~~~~~~~~~~~~~~
+
+**Datagrams not being sent:**
+
+- Check that :member:`es_http_datagrams` is enabled
+- Verify :func:`lsquic_stream_get_max_http_dg_size` returns non-zero
+- Ensure you called :func:`lsquic_stream_want_http_dg_write`
+- Check that Extended CONNECT succeeded with 200 response
+
+**Datagrams not being received:**
+
+- If using capsule fallback, verify :func:`lsquic_stream_set_http_dg_capsules` was called
+- Check that :member:`on_http_dg_read` callback is set
+- Ensure ``Capsule-Protocol: ?1`` header was included in CONNECT request
+
+**Payload size errors:**
+
+- Query :func:`lsquic_stream_get_max_http_dg_size` for current limit
+- Use ``LSQUIC_HTTP_DG_SEND_DEFAULT`` for automatic capsule fallback
+- Increase :member:`es_http_dg_max_capsule_write_size` if using large capsules
+
+**Performance issues:**
+
+- Use ``LSQUIC_HTTP_DG_SEND_DATAGRAM`` for latency-sensitive, loss-tolerant data
+- Use ``LSQUIC_HTTP_DG_SEND_CAPSULE`` for data that must be reliably delivered
+- Be aware capsules can cause head-of-line blocking on their stream

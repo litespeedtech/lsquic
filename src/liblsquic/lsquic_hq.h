@@ -39,6 +39,7 @@ enum hq_setting_id
     HQSID_QPACK_MAX_TABLE_CAPACITY  = 1,
     HQSID_MAX_HEADER_LIST_SIZE      = 6,
     HQSID_QPACK_BLOCKED_STREAMS     = 7,
+    HQSID_H3_DATAGRAM_ENABLED       = 0x33,
 };
 
 /* As of 12/18/2018: */
@@ -63,6 +64,7 @@ enum hq_uni_stream_type
  */
 enum http_error_code
 {
+    HEC_DATAGRAM_ERROR          =  0x33,
     HEC_NO_ERROR                =  0x100,
     HEC_GENERAL_PROTOCOL_ERROR  =  0x101,
     HEC_INTERNAL_ERROR          =  0x102,
