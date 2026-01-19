@@ -2511,7 +2511,6 @@ test_unexpected_http_close (void)
     lsquic_stream_t *stream;
     int s;
 
-    /* Test: http datagrams disabled in settings rejects capsules. */
     stream_ctor_flags |= SCF_HTTP;
     init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
 
@@ -3823,7 +3822,6 @@ test_http_dg_capsules (void)
     tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_read_size = 32;
     tobjs.eng_pub.enp_settings.es_http_dg_max_capsule_write_size = 32;
     tobjs.eng_pub.enp_settings.es_progress_check = 1;
-    /* Test: want_http_dg fails without negotiated support. */
     s_max_dgram_size = 1200;
     memset(&dg_ctx, 0, sizeof(dg_ctx));
     /* Test: basic capsule read delivers payload to callback. */
@@ -3911,7 +3909,6 @@ test_http_dg_capsules (void)
     memset(&dg_ctx, 0, sizeof(dg_ctx));
     memset(&s_abort_error, 0, sizeof(s_abort_error));
     /* Test: truncated capsule triggers H3_DATAGRAM_ERROR. */
-    /* Test: want_http_dg fails without datagram size. */
     stream = new_stream(&tobjs, 20);
     s = lsquic_stream_set_http_dg_capsules(stream, 1);
     assert(s == 0);
@@ -3995,8 +3992,16 @@ test_http_dg_capsules (void)
     stream->stream_flags |= STREAM_FIN_REACHED;
     lsquic_stream_destroy(stream);
 
+    /* Test: max size is zero for non-client-bidi stream IDs. */
+    stream = new_stream(&tobjs, 41);
+    s_max_dgram_size = 1200;
+    assert(lsquic_stream_get_max_http_dg_size(stream) == 0);
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
     /* Test: want_http_dg toggles stream in queue. */
     stream = new_stream(&tobjs, 44);
+    /* Test: want_http_dg fails without negotiated support. */
     s_max_dgram_size = 1200;
     s = lsquic_stream_want_http_dg_write(stream, 1);
     assert(s == 0);
@@ -4015,6 +4020,22 @@ test_http_dg_capsules (void)
     s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
     assert(s == 0);
     assert(lsquic_stream_http_dg_capsule_pending(stream));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    /* Test: wantwrite failure clears pending capsule state. */
+    stream = new_stream(&tobjs, 50);
+    stream->stream_flags |= STREAM_U_WRITE_DONE;
+    errno = 0;
+    s = lsquic_stream_http_dg_queue_capsule(stream, payload_a, 3);
+    assert(s < 0);
+    assert(errno == EBADF);
+    assert(!lsquic_stream_http_dg_capsule_pending(stream));
+    if (stream->sm_http_dg)
+    {
+        assert(stream->sm_http_dg->write.buf == NULL);
+        assert(stream->sm_http_dg->write.header_len == 0);
+    }
     stream->stream_flags |= STREAM_FIN_REACHED;
     lsquic_stream_destroy(stream);
 
@@ -4085,6 +4106,7 @@ test_http_dg_capsules_errors (void)
     lsquic_stream_destroy(stream);
     stream = new_stream(&tobjs, 20);
     tobjs.conn_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+    /* Test: want_http_dg fails without datagram size. */
     s_max_dgram_size = 0;
     errno = 0;
     s = lsquic_stream_want_http_dg_write(stream, 1);
