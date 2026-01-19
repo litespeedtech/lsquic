@@ -27,6 +27,7 @@ struct dest_info {
     lsquic_conn_t *conn;
     int connected;
     int closed;
+    int got_response;
     TAILQ_ENTRY(dest_info) next;
 };
 
@@ -108,41 +109,71 @@ timeout_callback(evutil_socket_t fd, short what, void *arg)
 static lsquic_stream_ctx_t *
 multi_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
 {
-    LSQ_NOTICE("New stream created");
+    struct dest_info *dest = (struct dest_info *) lsquic_conn_get_ctx(lsquic_stream_conn(stream));
+    LSQ_NOTICE("New stream created for %s", dest ? dest->hostname : "unknown");
     lsquic_stream_wantwrite(stream, 1);
-    return (lsquic_stream_ctx_t *) stream;
+    return (lsquic_stream_ctx_t *) dest;
 }
 
 static void
 multi_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
-    const char *msg = "GET / HTTP/1.1\r\nHost: test\r\n\r\n";
-    ssize_t nw = lsquic_stream_write(stream, msg, strlen(msg));
-    if (nw < 0)
+    struct dest_info *dest = (struct dest_info *) st_h;
+    struct header_buf hbuf;
+    struct lsxpack_header headers_arr[5];
+    unsigned h_idx = 0;
+    
+    if (!dest)
     {
-        LSQ_ERROR("Cannot write to stream: %s", strerror(errno));
+        LSQ_ERROR("No destination context for stream");
         lsquic_stream_close(stream);
         return;
     }
-    LSQ_NOTICE("Wrote %zd bytes to stream", nw);
-    lsquic_stream_flush(stream);
-    lsquic_stream_shutdown(stream, 1);
+    
+    /* Build HTTP/3 headers */
+    hbuf.off = 0;
+    #define V(v) (v), strlen(v)
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V("GET"));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":path"), V("/"));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"), V(dest->hostname));
+    header_set_ptr(&headers_arr[h_idx++], &hbuf, V("user-agent"), V("lsquic-multi-dest-test"));
+    
+    lsquic_http_headers_t headers = {
+        .count = h_idx,
+        .headers = headers_arr,
+    };
+    
+    if (0 != lsquic_stream_send_headers(stream, &headers, 1))  /* 1 = end of stream */
+    {
+        LSQ_ERROR("Cannot send headers to %s: %s", dest->hostname, strerror(errno));
+        lsquic_stream_close(stream);
+        return;
+    }
+    
+    LSQ_NOTICE("Sent GET / request to %s", dest->hostname);
     lsquic_stream_wantread(stream, 1);
+    lsquic_stream_shutdown(stream, 1);  /* Done writing */
 }
 
 static void
 multi_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    struct dest_info *dest = (struct dest_info *) st_h;
     unsigned char buf[0x1000];
     ssize_t nr = lsquic_stream_read(stream, buf, sizeof(buf) - 1);
     if (nr > 0)
     {
         buf[nr] = '\0';
-        LSQ_NOTICE("Read %zd bytes: %s", nr, buf);
+        LSQ_NOTICE("Read %zd bytes from %s: %.100s%s", nr, 
+                   dest ? dest->hostname : "unknown",
+                   buf, nr > 100 ? "..." : "");
+        if (dest)
+            dest->got_response = 1;
     }
     else if (nr == 0)
     {
-        LSQ_NOTICE("EOF on stream");
+        LSQ_NOTICE("EOF on stream from %s", dest ? dest->hostname : "unknown");
         lsquic_stream_shutdown(stream, 0);
         lsquic_stream_close(stream);
     }
@@ -192,7 +223,7 @@ main (int argc, char **argv)
     /* Initialize logging */
     lsquic_global_init(LSQUIC_GLOBAL_CLIENT);
     lsquic_log_to_fstream(stderr, LLTS_HHMMSSMS);
-    lsquic_logger_lopt("event=notice,engine=debug,conn=debug,handshake=debug");
+    lsquic_logger_lopt("event=notice");
     
     /* Set up program structure with custom ALPN (not HTTP/3) */
     if (0 != prog_init(&prog, 0, &sports,
@@ -358,8 +389,24 @@ main (int argc, char **argv)
     LSQ_NOTICE("Test completed.");
     LSQ_NOTICE("  Destinations: %d", client_ctx.n_dests);
     LSQ_NOTICE("  Connected: %d", client_ctx.n_connected);
+    
+    /* Count successful responses */
+    int n_responses = 0;
+    TAILQ_FOREACH(dest, &client_ctx.dests, next)
+    {
+        if (dest->got_response)
+        {
+            LSQ_NOTICE("  %s: GOT RESPONSE", dest->hostname);
+            n_responses++;
+        }
+        else
+        {
+            LSQ_NOTICE("  %s: no response", dest->hostname);
+        }
+    }
+    LSQ_NOTICE("  Successful responses: %d/%d", n_responses, client_ctx.n_dests);
     LSQ_NOTICE("  Socket used: %d (single socket for all!)", sport ? sport->fd : -1);
     LSQ_NOTICE("======================================");
     
-    return client_ctx.n_connected > 0 ? 0 : 1;
+    return n_responses == client_ctx.n_dests ? 0 : 1;
 }

@@ -23,15 +23,15 @@ wait $PID 2>/dev/null
 echo "=== Test Results ==="
 echo ""
 echo "Summary:"
-grep -E "sent.*packet.*received.*packet" /tmp/multi_dest_test.log | tail -5
+grep -E "Successful responses|GOT RESPONSE|no response" /tmp/multi_dest_test.log
 echo ""
-echo "Handshake status:"
-grep -E "(Handshake successful|Handshake failed)" /tmp/multi_dest_test.log | head -10
+echo "Response data:"
+grep -E "Read.*bytes from" /tmp/multi_dest_test.log | head -10
 echo ""
-echo "Data exchange:"
-grep -E "(Read.*bytes|Wrote.*bytes|Stream.*created)" /tmp/multi_dest_test.log | tail -10
+echo "Requests sent:"
+grep -E "Sent GET.*request" /tmp/multi_dest_test.log
 echo ""
-echo "Errors:"
-grep -E "CONNECTION_CLOSE" /tmp/multi_dest_test.log | tail -5
+echo "Errors (if any):"
+grep -E "CONNECTION_CLOSE.*error" /tmp/multi_dest_test.log | tail -3
 echo ""
 echo "=== Full log saved to /tmp/multi_dest_test.log ==="
