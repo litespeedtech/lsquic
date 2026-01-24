@@ -2041,6 +2041,12 @@ lsquic_conn_want_datagram_write (lsquic_conn_t *, int is_want);
 size_t
 lsquic_conn_get_min_datagram_size (lsquic_conn_t *);
 
+/* Get maximum QUIC DATAGRAM payload size.  Returns 0 if DATAGRAMs
+ * were not negotiated.
+ */
+size_t
+lsquic_conn_get_max_datagram_size (lsquic_conn_t *);
+
 /* Set minimum datagram size.  This is the minumum value of the buffer passed
  * to the on_dg_write() callback.
  */
