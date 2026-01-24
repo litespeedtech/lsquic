@@ -175,6 +175,28 @@ enum lsquic_http_dg_send_mode
     LSQUIC_HTTP_DG_SEND_CAPSULE,
 };
 
+/**
+ * Buffered DATAGRAM drop policy.
+ */
+enum lsquic_dg_drop_policy
+{
+    LSQUIC_DG_DROP_NEWEST,
+    LSQUIC_DG_DROP_OLDEST,
+};
+
+/**
+ * Buffered DATAGRAM completion event.
+ */
+enum lsquic_dg_event
+{
+    LSQUIC_DG_EVENT_SENT,
+    LSQUIC_DG_EVENT_DROPPED,
+};
+
+/* If ev is LSQUIC_DG_EVENT_DROPPED, err is set to the errno value. */
+typedef void (*lsquic_dg_event_f)(void *ctx,
+                                  enum lsquic_dg_event ev, int err);
+
 typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
                                         size_t sz,
                                         enum lsquic_http_dg_send_mode mode);
@@ -460,6 +482,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Turn off HTTP Datagrams by default */
 #define LSQUIC_DF_HTTP_DATAGRAMS 0
+
+/** Default maximum buffered datagram bytes per connection. */
+#define LSQUIC_DF_DG_MAX_BUF 0
+
+/** Default drop policy for buffered datagrams. */
+#define LSQUIC_DF_DG_DROP_POLICY LSQUIC_DG_DROP_NEWEST
 
 /** Default maximum HTTP Datagram capsule read buffer size. */
 #define LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE (10 * 1024)
@@ -1075,6 +1103,21 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_HTTP_DATAGRAMS
      */
     int             es_http_datagrams;
+
+    /**
+     * Maximum buffered QUIC/HTTP Datagram bytes per connection.
+     * Zero disables buffering.  Per-connection limits cannot exceed this.
+     *
+     * Default value is @ref LSQUIC_DF_DG_MAX_BUF
+     */
+    unsigned        es_dg_max_buf;
+
+    /**
+     * Default drop policy for buffered datagrams.
+     *
+     * Default value is @ref LSQUIC_DF_DG_DROP_POLICY
+     */
+    int             es_dg_drop_policy;
 
     /**
      * Maximum buffer size for reading encapsulated HTTP Datagram payloads.
@@ -2005,6 +2048,38 @@ int
 lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
 
 /**
+ * Configure buffered datagram size for this connection.
+ * size cannot exceed engine setting es_dg_max_buf.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_conn_set_dg_buffer_size (lsquic_conn_t *, size_t size);
+
+size_t
+lsquic_conn_get_dg_buffer_size (lsquic_conn_t *);
+
+/**
+ * Configure buffered datagram drop policy for this connection.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_conn_set_dg_drop_policy (lsquic_conn_t *,
+                                enum lsquic_dg_drop_policy);
+
+enum lsquic_dg_drop_policy
+lsquic_conn_get_dg_drop_policy (lsquic_conn_t *);
+
+/**
+ * Enqueue QUIC DATAGRAM for buffered send.
+ * on_event may be NULL.  If set, it is called exactly once with SENT or
+ * DROPPED (including on close).  For DROPPED, errno value is provided.
+ * Returns 0 on acceptance, -1 on error (sets errno).
+ */
+int
+lsquic_conn_queue_datagram (lsquic_conn_t *, const void *buf, size_t sz,
+                    void *ctx, lsquic_dg_event_f on_event);
+
+/**
  * Control whether stream is eligible to supply HTTP Datagram payloads.
  * Call with is_want=1 to enable on_http_dg_write() callbacks.
  * Returns previous value, or -1 on error.
@@ -2033,6 +2108,17 @@ lsquic_stream_set_http_dg_capsules (lsquic_stream_t *, int enable);
  */
 size_t
 lsquic_stream_get_max_http_dg_size (lsquic_stream_t *);
+
+/**
+ * Enqueue HTTP Datagram for buffered send.
+ * on_event may be NULL.  If set, it is called exactly once with SENT or
+ * DROPPED (including on close).  For DROPPED, errno value is provided.
+ * Returns 0 on acceptance, -1 on error (sets errno).
+ */
+int
+lsquic_stream_queue_http_datagram (lsquic_stream_t *,
+                const void *buf, size_t sz, enum lsquic_http_dg_send_mode mode,
+                void *ctx, lsquic_dg_event_f on_event);
 
 
 struct lsquic_logger_if {
