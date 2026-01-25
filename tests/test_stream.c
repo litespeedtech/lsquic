@@ -1352,6 +1352,116 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 }
 
 
+static void
+test_rst_stream_duplicate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == stream);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(s_onreset_called.how == 0);
+    else
+        assert(s_onreset_called.how == 2);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_smaller_than_seen (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    s = lsquic_sfcw_set_max_recv_off(&stream->fc, 200);
+    assert(s);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 100, 0);
+    assert(s < 0);
+    assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_flow_control_violation (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    uint64_t offset;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    offset = lsquic_sfcw_get_fc_recv_off(&stream->fc) + 1;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, offset, 0);
+    assert(s < 0);
+    assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_final_size_mismatch (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+    stream->stream_flags |= STREAM_FIN_RECVD;
+    stream->sm_fin_off = 100;
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 200, 0);
+    assert(s < 0);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_duplicate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);  /* STOP_SENDING is IETF-only */
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 1);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
 /* We send some data and RST, receive data and FIN
  */
 static void
@@ -1748,7 +1858,12 @@ test_termination (void)
         { 1, 0, test_rem_data_loc_close, },
         { 1, 1, test_loc_FIN_rem_RST, },
         { 1, 1, test_loc_data_rem_RST, },
+        { 1, 1, test_rst_stream_duplicate, },
+        { 1, 1, test_rst_stream_smaller_than_seen, },
+        { 1, 1, test_rst_stream_flow_control_violation, },
+        { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_loc_data_rem_SS, },
+        { 0, 1, test_stop_sending_duplicate, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG
         { 1, 1, test_gapless_elision_beginning, },
