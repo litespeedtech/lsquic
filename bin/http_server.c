@@ -1330,18 +1330,19 @@ static const char INDEX_HTML[] =
 
 
 static int
-handle_devious_baton (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
+baton_connect_handler (struct lsquic_stream *stream,
+                                    struct lsquic_stream_ctx *st_h)
 {
     struct lsquic_wt_connect_info info;
-    char err_buf[128];
     struct req *req;
+    char err_buf[128];
     int rv;
 
     if (!st_h->server_ctx->enable_devious_baton)
         return 0;
 
     req = st_h->req;
-    if (!req || req->method != CONNECT)
+    if (!req)
         return 0;
 
     if (!req->protocol
@@ -1371,6 +1372,44 @@ handle_devious_baton (struct lsquic_stream *stream, struct lsquic_stream_ctx *st
         lsquic_stream_wantwrite(stream, 0);
     }
 
+    return 1;
+}
+
+
+static int
+handle_connect_request (struct lsquic_stream *stream,
+                                    struct lsquic_stream_ctx *st_h)
+{
+    struct req *req;
+    char err_buf[128];
+
+    req = st_h->req;
+    if (!req)
+        return 0;
+
+    if (!req->protocol)
+    {
+        snprintf(err_buf, sizeof(err_buf), "Protocol is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (!req->path)
+    {
+        snprintf(err_buf, sizeof(err_buf), "Path is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (baton_connect_handler(stream, st_h))
+        return 1;
+
+    snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s %s",
+                                        req->protocol, req->path);
+    lsquic_wt_reject(stream, 404, err_buf, strlen(err_buf));
+    lsquic_stream_close(stream);
     return 1;
 }
 
@@ -1433,12 +1472,8 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             ERROR_RESP(501, "Method %s is not supported", st_h->req->method_str);
         else if (st_h->req->method == CONNECT)
         {
-            if (!st_h->req->protocol)
-                ERROR_RESP(400, "Protocol is not specified");
-            if (handle_devious_baton(stream, st_h))
-                return;
-            ERROR_RESP(404, "No WebTransport handler for %s %s",
-                st_h->req->protocol, st_h->req->path);
+            handle_connect_request(stream, st_h);
+            return;
         }
         else if (!(map = find_handler(st_h->req->method, st_h->req->path, matches)))
             ERROR_RESP(404, "No handler found for method: %s; path: %s",
