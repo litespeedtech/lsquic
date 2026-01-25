@@ -24,8 +24,13 @@
 #include "../src/liblsquic/lsquic_varint.h"
 
 
-#define DB_STREAM_CONTROL 1
-#define DB_STREAM_BATON   2
+enum devious_baton_stream_kind
+{
+    DB_STREAM_CONTROL = 1,
+    DB_STREAM_BATON   = 2,
+};
+
+
 
 struct devious_baton_session
 {
@@ -34,6 +39,7 @@ struct devious_baton_session
     struct devious_baton_app              cfg;
     unsigned                              active_batons;
 };
+
 
 struct devious_baton_conn
 {
@@ -45,9 +51,10 @@ struct devious_baton_conn
     int                                   response_ok;
 };
 
+
 struct devious_baton_stream
 {
-    int                                   kind;
+    enum devious_baton_stream_kind        kind;
     struct devious_baton_conn            *conn;
     struct devious_baton_session         *session;
     struct lsquic_stream                 *stream;
@@ -61,10 +68,12 @@ struct devious_baton_stream
     int                                   message_done;
 };
 
+
 TAILQ_HEAD(db_session_head, devious_baton_session);
 
 static struct db_session_head s_sessions =
                                 TAILQ_HEAD_INITIALIZER(s_sessions);
+
 
 
 struct hset_elem
@@ -73,6 +82,7 @@ struct hset_elem
     size_t                                nalloc;
     struct lsxpack_header                 xhdr;
 };
+
 
 STAILQ_HEAD(hset, hset_elem);
 
@@ -703,7 +713,7 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
 
 
 static lsquic_wt_session_ctx_t *
-_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
+db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
                                 const struct lsquic_wt_connect_info *info)
 {
     struct devious_baton_app *cfg;
@@ -738,7 +748,7 @@ _on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
 
 
 static void
-_on_wt_session_close (struct lsquic_wt_session *sess,
+db_on_wt_session_close (struct lsquic_wt_session *sess,
                                 struct lsquic_wt_session_ctx *sctx,
                                 uint64_t code, const char *reason,
                                 size_t reason_len)
@@ -756,7 +766,7 @@ _on_wt_session_close (struct lsquic_wt_session *sess,
 
 
 static lsquic_stream_ctx_t *
-_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
+db_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
                         enum lsquic_wt_stream_dir dir)
 {
     struct devious_baton_session *bsess;
@@ -781,21 +791,23 @@ _on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
 
 
 static lsquic_stream_ctx_t *
-_on_wt_uni_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream)
+db_on_wt_uni_stream (struct lsquic_wt_session *sess,
+                                            struct lsquic_stream *stream)
 {
-    return _on_wt_stream(sess, stream, LSQWT_UNI);
+    return db_on_wt_stream(sess, stream, LSQWT_UNI);
 }
 
 
 static lsquic_stream_ctx_t *
-_on_wt_bidi_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream)
+db_on_wt_bidi_stream (struct lsquic_wt_session *sess,
+                                            struct lsquic_stream *stream)
 {
-    return _on_wt_stream(sess, stream, LSQWT_BIDI);
+    return db_on_wt_stream(sess, stream, LSQWT_BIDI);
 }
 
 
 static void
-_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
+db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 {
     struct devious_baton_session *bsess;
     struct devious_baton_stream st;
@@ -817,7 +829,8 @@ _on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 
 
 static void
-_on_wt_stream_fin (struct lsquic_stream *stream, struct lsquic_stream_ctx *sctx)
+db_on_wt_stream_fin (struct lsquic_stream *stream,
+                                            struct lsquic_stream_ctx *sctx)
 {
     struct devious_baton_stream *st;
 
@@ -832,7 +845,8 @@ _on_wt_stream_fin (struct lsquic_stream *stream, struct lsquic_stream_ctx *sctx)
 
 
 static void
-_on_wt_stream_reset (struct lsquic_stream *stream, struct lsquic_stream_ctx *sctx,
+db_on_wt_stream_reset (struct lsquic_stream *stream,
+                                            struct lsquic_stream_ctx *sctx,
                                                     uint64_t error_code)
 {
     struct devious_baton_stream *st;
@@ -851,7 +865,8 @@ _on_wt_stream_reset (struct lsquic_stream *stream, struct lsquic_stream_ctx *sct
 
 
 static void
-_on_wt_stop_sending (struct lsquic_stream *stream, struct lsquic_stream_ctx *sctx,
+db_on_wt_stop_sending (struct lsquic_stream *stream,
+                                            struct lsquic_stream_ctx *sctx,
                                                     uint64_t error_code)
 {
     (void) stream;
@@ -862,14 +877,14 @@ _on_wt_stop_sending (struct lsquic_stream *stream, struct lsquic_stream_ctx *sct
 
 static const struct lsquic_webtransport_if wt_if =
 {
-    .on_wt_session_open  = _on_wt_session_open,
-    .on_wt_session_close = _on_wt_session_close,
-    .on_wt_uni_stream    = _on_wt_uni_stream,
-    .on_wt_bidi_stream   = _on_wt_bidi_stream,
-    .on_wt_datagram      = _on_wt_datagram,
-    .on_wt_stream_fin    = _on_wt_stream_fin,
-    .on_wt_stream_reset  = _on_wt_stream_reset,
-    .on_wt_stop_sending  = _on_wt_stop_sending,
+    .on_wt_session_open  = db_on_wt_session_open,
+    .on_wt_session_close = db_on_wt_session_close,
+    .on_wt_uni_stream    = db_on_wt_uni_stream,
+    .on_wt_bidi_stream   = db_on_wt_bidi_stream,
+    .on_wt_datagram      = db_on_wt_datagram,
+    .on_wt_stream_fin    = db_on_wt_stream_fin,
+    .on_wt_stream_reset  = db_on_wt_stream_reset,
+    .on_wt_stop_sending  = db_on_wt_stop_sending,
 };
 
 

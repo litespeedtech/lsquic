@@ -11,14 +11,23 @@ struct prog;
 #define DEVIOUS_BATON_PATH "/webtransport/devious-baton"
 #define DEVIOUS_BATON_PROTOCOL "webtransport"
 
-#define DEVIOUS_BATON_STREAM_ERR_IDC      0x01
-#define DEVIOUS_BATON_STREAM_ERR_WHATEVER 0x02
-#define DEVIOUS_BATON_STREAM_ERR_I_LIED   0x03
 
-#define DEVIOUS_BATON_SESS_ERR_DA_YAMN    0x01
-#define DEVIOUS_BATON_SESS_ERR_BRUH       0x02
-#define DEVIOUS_BATON_SESS_ERR_SUS        0x03
-#define DEVIOUS_BATON_SESS_ERR_BORED      0x04
+enum devious_baton_stream_error
+{
+    DEVIOUS_BATON_STREAM_ERR_IDC      = 0x01,
+    DEVIOUS_BATON_STREAM_ERR_WHATEVER = 0x02,
+    DEVIOUS_BATON_STREAM_ERR_I_LIED   = 0x03,
+};
+
+
+enum devious_baton_session_error
+{
+    DEVIOUS_BATON_SESS_ERR_DA_YAMN    = 0x01,
+    DEVIOUS_BATON_SESS_ERR_BRUH       = 0x02,
+    DEVIOUS_BATON_SESS_ERR_SUS        = 0x03,
+    DEVIOUS_BATON_SESS_ERR_BORED      = 0x04,
+};
+
 
 struct devious_baton_app
 {
@@ -32,6 +41,7 @@ struct devious_baton_app
     const char    *path;
     char           path_buf[256];
 };
+
 
 void
 devious_baton_app_init (struct devious_baton_app *, struct prog *, int);
