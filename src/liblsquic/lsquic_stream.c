@@ -76,15 +76,6 @@ drop_frames_in (lsquic_stream_t *stream);
 static void
 maybe_finish_reset_at (lsquic_stream_t *stream);
 
-static int
-stream_reset_in_gquic (lsquic_stream_t *stream, uint64_t offset,
-                       uint64_t error_code);
-
-static int
-stream_reset_in_ietf (lsquic_stream_t *stream, uint64_t final_size,
-                      uint64_t reliable_size, uint64_t error_code,
-                      enum quic_frame_type frame_type);
-
 static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
 
@@ -1382,18 +1373,6 @@ lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
 }
 
 
-int
-lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
-                                                      uint64_t error_code)
-{
-    if (stream->sm_bflags & SMBF_IETF)
-        return stream_reset_in_ietf(stream, offset, 0, error_code,
-                                    QUIC_FRAME_RST_STREAM);
-    else
-        return stream_reset_in_gquic(stream, offset, error_code);
-}
-
-
 static int
 stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
                                                        uint64_t error_code)
@@ -1463,6 +1442,18 @@ stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
     maybe_schedule_call_on_close(stream);
 
     return 0;
+}
+
+
+int
+lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
+                                                      uint64_t error_code)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        return stream_reset_in_ietf(stream, offset, 0, error_code,
+                                    QUIC_FRAME_RST_STREAM);
+    else
+        return stream_reset_in_gquic(stream, offset, error_code);
 }
 
 
