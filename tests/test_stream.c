@@ -1519,6 +1519,29 @@ test_rst_stream_gquic_no_stream_reset (struct test_objs *tobjs)
 
 
 static void
+test_shutdown_read_gquic_with_send_rst (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    lsquic_stream_maybe_reset(stream, 0x123, 0);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+
+    s = lsquic_stream_shutdown(stream, 0);
+    assert(0 == s);
+    assert(stream->stream_flags & STREAM_U_READ_DONE);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
 test_stop_sending_no_on_reset (struct test_objs *tobjs)
 {
     static const struct lsquic_stream_if stream_if_no_reset = {
@@ -2030,6 +2053,7 @@ test_termination (void)
         { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_reset_stream_at_updates_and_errors, },
         { 1, 0, test_rst_stream_gquic_no_stream_reset, },
+        { 1, 0, test_shutdown_read_gquic_with_send_rst, },
         { 0, 1, test_stop_sending_no_on_reset, },
         { 0, 1, test_loc_data_rem_SS, },
         { 0, 1, test_stop_sending_duplicate, },
