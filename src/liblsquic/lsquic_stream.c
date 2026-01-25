@@ -1429,22 +1429,11 @@ stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
     if (stream->stream_if->on_reset
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
-        if (stream->sm_bflags & SMBF_IETF)
-        {
-            if (!(stream->sm_dflags & SMDF_ONRESET0))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 0);
-                stream->sm_dflags |= SMDF_ONRESET0;
-            }
-        }
-        else
-        {
-            if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
+        if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
                                     != (SMDF_ONRESET0|SMDF_ONRESET1))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 2);
-                stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
-            }
+        {
+            stream->stream_if->on_reset(stream, stream->st_ctx, 2);
+            stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
         }
     }
 
@@ -1454,11 +1443,8 @@ stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
 
-    if (!(stream->sm_bflags & SMBF_IETF))
-    {
-        drop_buffered_data(stream);
-        maybe_elide_stream_frames(stream);
-    }
+    drop_buffered_data(stream);
+    maybe_elide_stream_frames(stream);
 
     if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
     {
@@ -1468,7 +1454,6 @@ stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
 
     if (!(stream->stream_flags &
                         (STREAM_RST_SENT|STREAM_SS_SENT|STREAM_FIN_SENT))
-                            && !(stream->sm_bflags & SMBF_IETF)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
         stream_reset(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
 
