@@ -248,6 +248,63 @@ free_connect_info (struct lsquic_wt_connect_info *info)
 
 
 static int
+parse_path (const char *path, struct devious_baton_app *cfg,
+                                        char *err_buf, size_t err_sz)
+{
+    size_t path_len = 0;
+    size_t path_base_len;
+    if (!path)
+    {
+        snprintf(err_buf, err_sz, "invalid path");
+        return -1;
+    }
+
+    path_len = strlen(path);
+    path_base_len = sizeof(DEVIOUS_BATON_PATH) - 1;
+    if (path_len < path_base_len
+        || 0 != memcmp(path, DEVIOUS_BATON_PATH, path_base_len))
+    {
+        snprintf(err_buf, err_sz, "invalid path");
+        return -1;
+    }
+
+    if (path_len > path_base_len && path[path_base_len] != '?')
+    {
+        snprintf(err_buf, err_sz, "invalid path");
+        return -1;
+    }
+
+    cfg->version = 0;
+    cfg->count = 1;
+    cfg->baton = 0;
+
+    if (path_len > path_base_len && path[path_base_len] == '?')
+    {
+        if (0 != parse_query(path + path_base_len + 1, cfg,
+                                                    err_buf, err_sz))
+            return -1;
+    }
+
+    if (cfg->version != 0)
+    {
+        snprintf(err_buf, err_sz, "unsupported version");
+        return -1;
+    }
+
+    if (cfg->count > cfg->max_count)
+    {
+        snprintf(err_buf, err_sz, "count too large");
+        return -1;
+    }
+
+    if (cfg->baton == 0)
+        cfg->baton = 1 + (rand() % 255);
+
+    return 0;
+}
+
+
+static int
 parse_request (struct hset *hset, struct devious_baton_app *cfg,
                                 struct lsquic_wt_connect_info *info,
                                         char *err_buf, size_t err_sz)
@@ -256,8 +313,6 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     const char *name;
     const char *value;
     char *path = NULL;
-    size_t path_len = 0;
-    size_t path_base_len;
     char *authority = NULL;
     char *origin = NULL;
     char *protocol = NULL;
@@ -301,8 +356,7 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
                 && 0 == memcmp(name, ":path", sizeof(":path") - 1))
         {
             free(path);
-            path_len = el->xhdr.val_len;
-            if (0 != dup_header_value(value, path_len, &path))
+            if (0 != dup_header_value(value, el->xhdr.val_len, &path))
             {
                 snprintf(err_buf, err_sz, "cannot copy path");
                 goto end;
@@ -340,51 +394,8 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         goto end;
     }
 
-    if (!path)
-    {
-        snprintf(err_buf, err_sz, "invalid path");
+    if (0 != parse_path(path, cfg, err_buf, err_sz))
         goto end;
-    }
-
-    path_base_len = sizeof(DEVIOUS_BATON_PATH) - 1;
-    if (path_len < path_base_len
-        || 0 != memcmp(path, DEVIOUS_BATON_PATH, path_base_len))
-    {
-        snprintf(err_buf, err_sz, "invalid path");
-        goto end;
-    }
-
-    if (path_len > path_base_len && path[path_base_len] != '?')
-    {
-        snprintf(err_buf, err_sz, "invalid path");
-        goto end;
-    }
-
-    cfg->version = 0;
-    cfg->count = 1;
-    cfg->baton = 0;
-
-    if (path_len > path_base_len && path[path_base_len] == '?')
-    {
-        if (0 != parse_query(path + path_base_len + 1, cfg,
-                                                    err_buf, err_sz))
-            goto end;
-    }
-
-    if (cfg->version != 0)
-    {
-        snprintf(err_buf, err_sz, "unsupported version");
-        goto end;
-    }
-
-    if (cfg->count > cfg->max_count)
-    {
-        snprintf(err_buf, err_sz, "count too large");
-        goto end;
-    }
-
-    if (cfg->baton == 0)
-        cfg->baton = 1 + (rand() % 255);
 
     if (info)
     {
@@ -1381,6 +1392,63 @@ int
 devious_baton_build_path (struct devious_baton_app *app)
 {
     return build_path(app);
+}
+
+
+int
+devious_baton_accept (struct lsquic_stream *stream,
+        const struct lsquic_wt_connect_info *info,
+        const struct devious_baton_app *app,
+        char *err_buf, size_t err_sz)
+{
+    struct devious_baton_app cfg;
+    struct lsquic_wt_accept_params params;
+
+    if (!stream || !info || !app)
+    {
+        if (err_buf && err_sz)
+            snprintf(err_buf, err_sz, "invalid arguments");
+        return -1;
+    }
+
+    if (!info->protocol
+        || 0 != strcmp(info->protocol, DEVIOUS_BATON_PROTOCOL))
+    {
+        if (err_buf && err_sz)
+            snprintf(err_buf, err_sz, "invalid protocol");
+        lsquic_wt_reject(stream, 400, err_buf ? err_buf : NULL,
+                                            err_buf ? strlen(err_buf) : 0);
+        lsquic_stream_close(stream);
+        return -1;
+    }
+
+    cfg = *app;
+    if (0 != parse_path(info->path, &cfg, err_buf, err_sz))
+    {
+        lsquic_wt_reject(stream, 400, err_buf ? err_buf : NULL,
+                                            err_buf ? strlen(err_buf) : 0);
+        lsquic_stream_close(stream);
+        return -1;
+    }
+
+    memset(&params, 0, sizeof(params));
+    params.status = 200;
+    params.wt_if = &wt_if;
+    params.wt_if_ctx = &cfg;
+    params.connect_info = info;
+    if (!lsquic_wt_accept(stream, &params))
+    {
+        if (err_buf && err_sz)
+            snprintf(err_buf, err_sz, "cannot accept WebTransport");
+        lsquic_wt_reject(stream, 500, err_buf ? err_buf : NULL,
+                                            err_buf ? strlen(err_buf) : 0);
+        lsquic_stream_close(stream);
+        return -1;
+    }
+
+    if (0 != lsquic_stream_flush(stream))
+        LSQ_ERROR("cannot flush response: %s", strerror(errno));
+    return 0;
 }
 
 

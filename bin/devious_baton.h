@@ -4,6 +4,8 @@
 
 struct lsquic_hset_if;
 struct lsquic_stream_if;
+struct lsquic_stream;
+struct lsquic_wt_connect_info;
 struct prog;
 
 #define DEVIOUS_BATON_PATH "/webtransport/devious-baton"
@@ -52,5 +54,11 @@ devious_baton_stream_if (void);
 
 const struct lsquic_hset_if *
 devious_baton_hset_if (void);
+
+int
+devious_baton_accept (struct lsquic_stream *,
+        const struct lsquic_wt_connect_info *,
+        const struct devious_baton_app *,
+        char *err_buf, size_t err_sz);
 
 #endif
