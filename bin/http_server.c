@@ -1329,6 +1329,28 @@ static const char INDEX_HTML[] =
 ;
 
 
+struct wt_connect_handler
+{
+    const char *protocol;
+    const char *path_prefix;
+    int (*handler)(struct lsquic_stream *, struct lsquic_stream_ctx *);
+};
+
+
+static int
+path_prefix_matches (const char *path, const char *prefix)
+{
+    size_t len;
+
+    if (!path || !prefix)
+        return 0;
+
+    len = strlen(prefix);
+    return 0 == strncmp(path, prefix, len)
+        && (path[len] == '\0' || path[len] == '?');
+}
+
+
 static int
 baton_connect_handler (struct lsquic_stream *stream,
                                     struct lsquic_stream_ctx *st_h)
@@ -1338,21 +1360,9 @@ baton_connect_handler (struct lsquic_stream *stream,
     char err_buf[128];
     int rv;
 
-    if (!st_h->server_ctx->enable_devious_baton)
-        return 0;
-
     req = st_h->req;
     if (!req)
-        return 0;
-
-    if (!req->protocol
-        || 0 != strcmp(req->protocol, DEVIOUS_BATON_PROTOCOL))
-        return 0;
-
-    if (!req->path
-        || 0 != strncmp(req->path, DEVIOUS_BATON_PATH,
-                                            sizeof(DEVIOUS_BATON_PATH) - 1))
-        return 0;
+        return 1;
 
     memset(&info, 0, sizeof(info));
     info.authority = req->authority_str;
@@ -1376,10 +1386,21 @@ baton_connect_handler (struct lsquic_stream *stream,
 }
 
 
+static const struct wt_connect_handler wt_connect_handlers[] =
+{
+    {
+        .protocol = DEVIOUS_BATON_PROTOCOL,
+        .path_prefix = DEVIOUS_BATON_PATH,
+        .handler = baton_connect_handler,
+    },
+};
+
+
 static int
 handle_connect_request (struct lsquic_stream *stream,
                                     struct lsquic_stream_ctx *st_h)
 {
+    const struct wt_connect_handler *handler;
     struct req *req;
     char err_buf[128];
 
@@ -1403,8 +1424,14 @@ handle_connect_request (struct lsquic_stream *stream,
         return 1;
     }
 
-    if (baton_connect_handler(stream, st_h))
-        return 1;
+    if (st_h->server_ctx->enable_devious_baton)
+        for (handler = wt_connect_handlers;
+             handler < wt_connect_handlers
+                        + sizeof(wt_connect_handlers)
+                            / sizeof(wt_connect_handlers[0]); ++handler)
+            if (0 == strcmp(req->protocol, handler->protocol)
+                && path_prefix_matches(req->path, handler->path_prefix))
+                return handler->handler(stream, st_h);
 
     snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s %s",
                                         req->protocol, req->path);
