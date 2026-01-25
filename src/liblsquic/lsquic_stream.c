@@ -1320,8 +1320,7 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
         return 0;
     }
 
-    if ((stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags & STREAM_FIN_RECVD)
+    if ((stream->stream_flags & STREAM_FIN_RECVD)
             && stream->sm_fin_off != final_size)
     {
         lconn = stream->conn_pub->lconn;
