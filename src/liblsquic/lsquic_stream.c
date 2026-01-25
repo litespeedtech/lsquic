@@ -1379,8 +1379,7 @@ lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
                                     uint64_t *reliable_size)
 {
     if (!(stream->stream_flags & STREAM_RESET_AT_SEND)
-            || stream->sm_wt_header_sz == 0
-            || stream->tosend_off < stream->sm_wt_header_sz)
+            || stream->sm_wt_header_sz == 0)
     {
         if (reliable_size)
             *reliable_size = 0;
@@ -4772,6 +4771,8 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
     if (!(s->sm_bflags & SMBF_IETF))
         return -1;
     if (!s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return -1;
+    if (s->tosend_off < sz)
         return -1;
     if (!s->conn_pub->lconn->cn_esf.i
             || !s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params)

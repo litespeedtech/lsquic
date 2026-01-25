@@ -1531,13 +1531,11 @@ test_reset_stream_at_send_gate (struct test_objs *tobjs)
     frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     assert(frame_type == QUIC_FRAME_RST_STREAM);
 
-    assert(0 == lsquic_stream_set_reliable_size(stream, 7));
     stream->tosend_off = 6;
-    reliable_size = 0;
-    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
-    assert(frame_type == QUIC_FRAME_RST_STREAM);
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
 
     stream->tosend_off = 7;
+    assert(0 == lsquic_stream_set_reliable_size(stream, 7));
     reliable_size = 0;
     frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     assert(frame_type == QUIC_FRAME_RESET_STREAM_AT);
