@@ -430,28 +430,6 @@ send_headers (struct devious_baton_conn *conn)
 
 
 static int
-send_response (struct lsquic_stream *stream, const char *status, int fin)
-{
-    struct header_buf hbuf;
-    struct lsxpack_header headers_arr[1];
-
-    hbuf.off = 0;
-    header_set_ptr(&headers_arr[0], &hbuf, ":status", 7,
-                                        status, strlen(status));
-    lsquic_http_headers_t headers = {
-        .count = 1,
-        .headers = headers_arr,
-    };
-    if (0 != lsquic_stream_send_headers(stream, &headers, fin))
-    {
-        LSQ_ERROR("cannot send headers: %s", strerror(errno));
-        return -1;
-    }
-    return 0;
-}
-
-
-static int
 parse_status (struct hset *hset)
 {
     const struct hset_elem *el;
@@ -1038,20 +1016,15 @@ process_control_server (struct devious_baton_stream *st)
     if (0 != parse_request(hset, &cfg, err_buf, sizeof(err_buf)))
     {
         hset_destroy(hset);
-        send_response(st->stream, "400", 1);
+        lsquic_wt_reject(st->stream, 400, err_buf, strlen(err_buf));
         lsquic_stream_close(st->stream);
         return;
     }
 
     hset_destroy(hset);
 
-    if (0 != send_response(st->stream, "200", 0))
-    {
-        lsquic_stream_close(st->stream);
-        return;
-    }
-
     memset(&params, 0, sizeof(params));
+    params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
     if (!lsquic_wt_accept(st->stream, &params))

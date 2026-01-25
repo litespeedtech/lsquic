@@ -4,6 +4,7 @@
  */
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,6 +12,7 @@
 #include "lsquic_wt.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_stream.h"
+#include "lsxpack_header.h"
 
 
 struct lsquic_wt_session
@@ -27,6 +29,14 @@ struct lsquic_wt_session
 };
 
 
+
+struct wt_header_buf
+{
+    char    buf[128];
+    size_t  off;
+};
+
+
 static struct lsquic_wt_session *
 wt_session_find (struct lsquic_conn_public *conn_pub,
                                                 lsquic_stream_id_t stream_id)
@@ -40,6 +50,97 @@ wt_session_find (struct lsquic_conn_public *conn_pub,
     return NULL;
 }
 
+
+
+static int
+wt_set_header (struct lsxpack_header *hdr, struct wt_header_buf *hbuf,
+               const char *name, size_t name_len,
+               const char *value, size_t value_len)
+{
+    size_t name_off;
+    size_t value_off;
+
+    if (hbuf->off + name_len + value_len > sizeof(hbuf->buf))
+    {
+        errno = ENOBUFS;
+        return -1;
+    }
+
+    name_off = hbuf->off;
+    memcpy(hbuf->buf + hbuf->off, name, name_len);
+    hbuf->off += name_len;
+
+    value_off = hbuf->off;
+    memcpy(hbuf->buf + hbuf->off, value, value_len);
+    hbuf->off += value_len;
+
+    lsxpack_header_set_offset2(hdr, hbuf->buf, name_off, name_len,
+                                                        value_off, value_len);
+    return 0;
+}
+
+
+static int
+wt_send_response (struct lsquic_stream *stream, unsigned status,
+                                const struct lsquic_http_headers *extra,
+                                int fin)
+{
+    struct lsxpack_header *headers_arr;
+    struct wt_header_buf hbuf;
+    char status_val[4];
+    int extra_count;
+    int n;
+    int i;
+
+    if (status < 100 || status > 999)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    n = snprintf(status_val, sizeof(status_val), "%u", status);
+    if (n <= 0 || n >= (int) sizeof(status_val))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    extra_count = extra ? extra->count : 0;
+    if (extra_count < 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    headers_arr = malloc(sizeof(*headers_arr) * (1 + extra_count));
+    if (!headers_arr)
+        return -1;
+
+    hbuf.off = 0;
+    if (0 != wt_set_header(&headers_arr[0], &hbuf, ":status", 7,
+                                                status_val, (size_t) n))
+    {
+        free(headers_arr);
+        return -1;
+    }
+
+    for (i = 0; i < extra_count; ++i)
+        headers_arr[1 + i] = extra->headers[i];
+
+    if (0 != lsquic_stream_send_headers(stream,
+            &(struct lsquic_http_headers) {
+                .count = 1 + extra_count,
+                .headers = headers_arr,
+            }, fin))
+    {
+        free(headers_arr);
+        return -1;
+    }
+
+    free(headers_arr);
+
+    return 0;
+}
 
 
 static void
@@ -70,6 +171,8 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 {
     struct lsquic_wt_session *sess;
     const struct lsquic_wt_connect_info *info;
+    unsigned status;
+    int send_headers;
 
     if (!connect_stream || !params)
     {
@@ -81,6 +184,16 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     {
         errno = EALREADY;
         return NULL;
+    }
+
+    send_headers = (connect_stream->sm_bflags & SMBF_SERVER)
+                    && connect_stream->sm_send_headers_state == SSHS_BEGIN;
+    if (send_headers)
+    {
+        status = params->status ? params->status : 200;
+        if (0 != wt_send_response(connect_stream, status,
+                                        params->extra_resp_headers, 0))
+            return NULL;
     }
 
     sess = calloc(1, sizeof(*sess));
@@ -108,9 +221,6 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
                         sess->wts_if_ctx, (lsquic_wt_session_t *) sess,
                         &sess->wts_info);
 
-    (void) params->extra_resp_headers;
-    (void) params->status;
-
     return (lsquic_wt_session_t *) sess;
 }
 
@@ -121,12 +231,33 @@ lsquic_wt_reject (struct lsquic_stream *connect_stream,
                                 unsigned status, const char *reason,
                                                             size_t reason_len)
 {
-    (void) connect_stream;
-    (void) status;
+    if (!connect_stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!(connect_stream->sm_bflags & SMBF_SERVER))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (connect_stream->sm_send_headers_state != SSHS_BEGIN)
+    {
+        errno = EALREADY;
+        return -1;
+    }
+
+    if (0 == status)
+        status = 400;
+
+    if (0 != wt_send_response(connect_stream, status, NULL, 1))
+        return -1;
+
     (void) reason;
     (void) reason_len;
-    errno = ENOSYS;
-    return -1;
+    return 0;
 }
 
 
@@ -135,11 +266,17 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
+    struct lsquic_stream *control_stream;
+
     if (!sess)
     {
         errno = EINVAL;
         return -1;
     }
+
+    control_stream = sess->wts_control_stream;
+    if (control_stream)
+        lsquic_stream_shutdown(control_stream, 1);
 
     wt_session_destroy(sess, code, reason, reason_len);
     return 0;
