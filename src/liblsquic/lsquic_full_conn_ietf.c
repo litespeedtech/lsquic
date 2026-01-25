@@ -2647,10 +2647,9 @@ generate_reset_stream_at_frame (struct ietf_full_conn *conn,
 }
 
 
-/* Return true if generated, false otherwise */
 static int
-generate_rst_stream_frame_inner (struct ietf_full_conn *conn,
-                                 struct lsquic_stream *stream)
+generate_rst_stream_frame (struct ietf_full_conn *conn,
+                                             struct lsquic_stream *stream)
 {
     lsquic_packet_out_t *packet_out;
     unsigned need;
@@ -2693,8 +2692,9 @@ generate_rst_stream_frame_inner (struct ietf_full_conn *conn,
 }
 
 
+/* Return true if generated, false otherwise */
 static int
-generate_rst_stream_frame (struct ietf_full_conn *conn,
+generate_stream_reset_frame (struct ietf_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
     uint64_t reliable_size;
@@ -2704,7 +2704,7 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
     if (frame_type == QUIC_FRAME_RESET_STREAM_AT)
         return generate_reset_stream_at_frame(conn, stream, reliable_size);
     else
-        return generate_rst_stream_frame_inner(conn, stream);
+        return generate_rst_stream_frame(conn, stream);
 }
 
 
@@ -2988,7 +2988,7 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
                                                          stream);
     }
     if (stream->sm_qflags & SMQF_SEND_RST)
-        r &= generate_rst_stream_frame(conn, stream);
+        r &= generate_stream_reset_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)
         r &= generate_stop_sending_frame(conn, stream);
     return r;
