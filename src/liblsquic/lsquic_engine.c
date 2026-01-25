@@ -323,10 +323,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = 0;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
         settings->es_webtransport_server = LSQUIC_DF_WEBTRANSPORT_SERVER;
         settings->es_max_webtransport_server_streams = LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS;
-#endif
     }
     else
     {
@@ -509,7 +507,6 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
         return -1;
     }
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     if(settings->es_webtransport_server)
     {
         if(!(flags & ENG_SERVER))
@@ -528,7 +525,6 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             return -1;
         }
     }
-#endif
     return 0;
 }
 

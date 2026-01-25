@@ -127,12 +127,9 @@ int
 lsquic_hcso_write_settings (struct hcso_writer *writer,
                         unsigned max_header_list_size,
                         unsigned dyn_table_size, unsigned max_risked_streams,
-                        int is_server
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-                        , int webtransport_server,
-                        unsigned max_webtransport_server_streams
-#endif
-                        )
+                        int is_server,
+                        int webtransport_server,
+                        unsigned max_webtransport_server_streams)
 {
     unsigned char *p;
     unsigned bits;
@@ -194,7 +191,6 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     if (is_server && webtransport_server && max_webtransport_server_streams)
     {
         /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
@@ -226,7 +222,6 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE, bits, 1 << bits);
         p += 1 << bits;
     }
-#endif
 
     if (writer->how_stream
             && writer->how_stream->conn_pub

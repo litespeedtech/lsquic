@@ -3836,11 +3836,9 @@ init_http (struct ietf_full_conn *conn)
     if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
                 max_risked_streams, conn->ifc_flags & IFC_SERVER
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
                 ,
                 conn->ifc_settings->es_webtransport_server,
                 conn->ifc_settings->es_max_webtransport_server_streams
-#endif
                 ))
     {
         ABORT_WARN("cannot write SETTINGS");

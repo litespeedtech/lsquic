@@ -512,13 +512,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 /** Turn off webtransport extension for server by default */
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
 
 /** Default allowed server webtransport streams count */
 #define LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS 10
-#endif
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -1212,7 +1210,6 @@ struct lsquic_engine_settings {
      */
     uint8_t         es_preferred_address[24];
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**
      * Enable datagram extension for http3 server.  Allowed values are 0 and 1.
      *
@@ -1226,7 +1223,6 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
      */
     unsigned        es_max_webtransport_server_streams;
-#endif
 };
 
 /* Initialize `settings' to default values */
@@ -1964,7 +1960,6 @@ lsquic_stream_set_http_prio (lsquic_stream_t *,
  */
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 void
 lsquic_stream_set_webtransport_session(lsquic_stream_t *s);
 
@@ -1976,7 +1971,6 @@ lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s);
 
 int
 lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s);
-#endif
 
 /** Get connection ID */
 const lsquic_cid_t *

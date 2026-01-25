@@ -10,12 +10,15 @@
 #ifndef LSQUIC_CONN_PUBLIC_H
 #define LSQUIC_CONN_PUBLIC_H 1
 
+#include <sys/queue.h>
+
 struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_mm;
 struct lsquic_hash;
 struct headers_stream;
 struct lsquic_send_ctl;
+struct lsquic_wt_session;
 #if LSQUIC_CONN_STATS
 struct conn_stats;
 #endif
@@ -57,6 +60,7 @@ struct lsquic_conn_public {
     struct conn_stats              *conn_stats;
 #endif
     const struct network_path      *path;
+    TAILQ_HEAD(, lsquic_wt_session) wt_sessions;
 #if LSQUIC_EXTRA_CHECKS
     unsigned long                   stream_frame_bytes;
     unsigned                        wtp_level;  /* wtp: Write To Packets */

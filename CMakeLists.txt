@@ -12,7 +12,6 @@ OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
 OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
 OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
 OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
-OPTION(LSQUIC_WEBTRANSPORT "Enable WebTransport support" OFF)
 
 INCLUDE(GNUInstallDirs)
 INCLUDE(CheckSymbolExists)
@@ -82,9 +81,6 @@ IF (LSQUIC_DEVEL)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_DEVEL=1")
 ENDIF()
 
-IF (LSQUIC_WEBTRANSPORT)
-    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_WEBTRANSPORT_SERVER_SUPPORT=1")
-ENDIF()
 
 IF(LSQUIC_PROFILE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -g -pg")

@@ -44,6 +44,10 @@ struct lsquic_wt_accept_params
 {
     const struct lsquic_http_headers *extra_resp_headers; /* optional */
     unsigned status;      /* default 200 */
+    const struct lsquic_webtransport_if *wt_if; /* per-session callbacks */
+    void *wt_if_ctx;      /* passed to on_wt_session_open */
+    const struct lsquic_wt_connect_info *connect_info; /* optional */
+    lsquic_wt_session_ctx_t *sess_ctx; /* optional if on_wt_session_open used */
 };
 
 struct lsquic_webtransport_if
@@ -81,8 +85,7 @@ struct lsquic_webtransport_if
 /** Accept WebTransport CONNECT. */
 lsquic_wt_session_t *
 lsquic_wt_accept (lsquic_stream_t *connect_stream,
-                 const struct lsquic_wt_accept_params *params,
-                 lsquic_wt_session_ctx_t *sess_ctx);
+                 const struct lsquic_wt_accept_params *params);
 
 /** Reject WebTransport CONNECT with non-2xx status. */
 int

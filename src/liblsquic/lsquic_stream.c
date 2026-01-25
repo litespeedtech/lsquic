@@ -63,6 +63,14 @@
 #include "lsquic_push_promise.h"
 #include "lsquic_hcso_writer.h"
 
+void
+lsquic_wt_on_stream_destroy (struct lsquic_stream *stream);
+
+
+void
+lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
+                                            lsquic_stream_id_t session_id);
+
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID stream->id
@@ -723,6 +731,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     }
     free(stream->sm_buf);
     free(stream->sm_header_block);
+    lsquic_wt_on_stream_destroy(stream);
     LSQ_DEBUG("destroyed stream");
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);
@@ -4575,27 +4584,34 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
 }
 
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+
 void
-lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
+lsquic_stream_set_webtransport_session (struct lsquic_stream *s)
+{
     s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
 }
 
 
+
 int
-lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
+lsquic_stream_is_webtransport_session (const struct lsquic_stream *s)
+{
     return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
 }
 
 
+
 int
-lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
+lsquic_stream_is_webtransport_client_bidi_stream (const struct lsquic_stream *s)
+{
     return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
 }
 
 
+
 int
-lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
+lsquic_stream_get_webtransport_session_stream_id (const struct lsquic_stream *s)
+{
     if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
     {
         return s->webtransport_session_stream_id;
@@ -4605,7 +4621,6 @@ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
 }
 
 
-#endif
 
 int
 lsquic_stream_close (lsquic_stream_t *stream)
@@ -5134,7 +5149,6 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
             if(stream->conn_pub->enpub->enp_settings.es_webtransport_server) {
                 // 4.2.  Bidirectional Streams, https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/05/
 #define WEBTRANSPORT_BIDI_STREAM_TYPE (0x41)
@@ -5143,6 +5157,8 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     // flag for webtransport_session_stream_id stream in app code
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+                    lsquic_wt_on_client_bidi_stream(stream,
+                                    stream->webtransport_session_stream_id);
                     // disable header processing as we will not have any headers for this stream anymore
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
                     filter->hqfi_type = HQFT_DATA;
@@ -5150,7 +5166,6 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     goto end;
                 }
             }
-#endif
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);

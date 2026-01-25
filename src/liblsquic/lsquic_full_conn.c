@@ -677,6 +677,7 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     TAILQ_INIT(&conn->fc_pub.write_streams);
     TAILQ_INIT(&conn->fc_pub.service_streams);
     TAILQ_INIT(&conn->fc_pub.http_dg_streams);
+    TAILQ_INIT(&conn->fc_pub.wt_sessions);
     STAILQ_INIT(&conn->fc_stream_ids_to_reset);
     lsquic_conn_cap_init(&conn->fc_pub.conn_cap, LSQUIC_MIN_FCW);
     lsquic_alarmset_init(&conn->fc_alset, &conn->fc_conn);

@@ -1,0 +1,329 @@
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
+/*
+ * lsquic_wt.c -- WebTransport scaffolding
+ */
+
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lsquic.h"
+#include "lsquic_wt.h"
+#include "lsquic_conn_public.h"
+#include "lsquic_stream.h"
+
+
+struct lsquic_wt_session
+{
+    TAILQ_ENTRY(lsquic_wt_session)     wts_next;
+    struct lsquic_stream              *wts_control_stream;
+    struct lsquic_conn_public         *wts_conn_pub;
+    const struct lsquic_webtransport_if
+                                      *wts_if;
+    void                              *wts_if_ctx;
+    lsquic_wt_session_ctx_t           *wts_sess_ctx;
+    struct lsquic_wt_connect_info      wts_info;
+    lsquic_stream_id_t                 wts_stream_id;
+};
+
+
+static struct lsquic_wt_session *
+wt_session_find (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id)
+{
+    struct lsquic_wt_session *sess;
+
+    TAILQ_FOREACH(sess, &conn_pub->wt_sessions, wts_next)
+        if (sess->wts_stream_id == stream_id)
+            return sess;
+
+    return NULL;
+}
+
+
+
+static void
+wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
+                                        const char *reason, size_t reason_len)
+{
+    if (!sess)
+        return;
+
+    if (sess->wts_control_stream)
+        sess->wts_control_stream->sm_wt_session = NULL;
+
+    if (sess->wts_conn_pub)
+        TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
+
+    if (sess->wts_if && sess->wts_if->on_wt_session_close)
+        sess->wts_if->on_wt_session_close((lsquic_wt_session_t *) sess,
+                sess->wts_sess_ctx, code, reason, reason_len);
+
+    free(sess);
+}
+
+
+
+lsquic_wt_session_t *
+lsquic_wt_accept (struct lsquic_stream *connect_stream,
+                                const struct lsquic_wt_accept_params *params)
+{
+    struct lsquic_wt_session *sess;
+    const struct lsquic_wt_connect_info *info;
+
+    if (!connect_stream || !params)
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if (connect_stream->sm_wt_session)
+    {
+        errno = EALREADY;
+        return NULL;
+    }
+
+    sess = calloc(1, sizeof(*sess));
+    if (!sess)
+        return NULL;
+
+    sess->wts_control_stream = connect_stream;
+    sess->wts_conn_pub = connect_stream->conn_pub;
+    sess->wts_if = params->wt_if;
+    sess->wts_if_ctx = params->wt_if_ctx;
+    sess->wts_sess_ctx = params->sess_ctx;
+    sess->wts_stream_id = connect_stream->id;
+    connect_stream->sm_wt_session = sess;
+    lsquic_stream_set_webtransport_session(connect_stream);
+    TAILQ_INSERT_TAIL(&connect_stream->conn_pub->wt_sessions, sess, wts_next);
+
+    info = params->connect_info;
+    if (info)
+        memcpy(&sess->wts_info, info, sizeof(sess->wts_info));
+    else
+        memset(&sess->wts_info, 0, sizeof(sess->wts_info));
+
+    if (sess->wts_if && sess->wts_if->on_wt_session_open)
+        sess->wts_sess_ctx = sess->wts_if->on_wt_session_open(
+                        sess->wts_if_ctx, (lsquic_wt_session_t *) sess,
+                        &sess->wts_info);
+
+    (void) params->extra_resp_headers;
+    (void) params->status;
+
+    return (lsquic_wt_session_t *) sess;
+}
+
+
+
+int
+lsquic_wt_reject (struct lsquic_stream *connect_stream,
+                                unsigned status, const char *reason,
+                                                            size_t reason_len)
+{
+    (void) connect_stream;
+    (void) status;
+    (void) reason;
+    (void) reason_len;
+    errno = ENOSYS;
+    return -1;
+}
+
+
+
+int
+lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
+                                        const char *reason, size_t reason_len)
+{
+    if (!sess)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    wt_session_destroy(sess, code, reason, reason_len);
+    return 0;
+}
+
+
+
+struct lsquic_conn *
+lsquic_wt_session_conn (struct lsquic_wt_session *sess)
+{
+    if (!sess || !sess->wts_conn_pub)
+        return NULL;
+
+    return sess->wts_conn_pub->lconn;
+}
+
+
+
+lsquic_stream_id_t
+lsquic_wt_session_id (struct lsquic_wt_session *sess)
+{
+    if (!sess)
+    {
+        errno = EINVAL;
+        return 0;
+    }
+
+    return sess->wts_stream_id;
+}
+
+
+
+struct lsquic_stream *
+lsquic_wt_open_uni (struct lsquic_wt_session *sess)
+{
+    (void) sess;
+    errno = ENOSYS;
+    return NULL;
+}
+
+
+
+struct lsquic_stream *
+lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
+{
+    (void) sess;
+    errno = ENOSYS;
+    return NULL;
+}
+
+
+
+struct lsquic_wt_session *
+lsquic_wt_session_from_stream (struct lsquic_stream *stream)
+{
+    if (!stream)
+        return NULL;
+
+    return stream->sm_wt_session;
+}
+
+
+
+enum lsquic_wt_stream_dir
+lsquic_wt_stream_dir (const struct lsquic_stream *stream)
+{
+    enum stream_id_type type;
+
+    if (!stream)
+        return LSQWT_BIDI;
+
+    type = stream->id & SIT_MASK;
+
+    if (type == SIT_UNI_CLIENT || type == SIT_UNI_SERVER)
+        return LSQWT_UNI;
+    else
+        return LSQWT_BIDI;
+}
+
+
+
+enum lsquic_wt_stream_initiator
+lsquic_wt_stream_initiator (const struct lsquic_stream *stream)
+{
+    enum stream_id_type type;
+
+    if (!stream)
+        return LSQWT_CLIENT;
+
+    type = stream->id & SIT_MASK;
+
+    if (type == SIT_BIDI_SERVER || type == SIT_UNI_SERVER)
+        return LSQWT_SERVER;
+    else
+        return LSQWT_CLIENT;
+}
+
+
+
+ssize_t
+lsquic_wt_send_datagram (struct lsquic_wt_session *sess,
+                                        const void *buf, size_t len)
+{
+    (void) sess;
+    (void) buf;
+    (void) len;
+    errno = ENOSYS;
+    return -1;
+}
+
+
+
+size_t
+lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
+{
+    (void) sess;
+    return 0;
+}
+
+
+
+int
+lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
+{
+    (void) stream;
+    (void) error_code;
+    errno = ENOSYS;
+    return -1;
+}
+
+
+
+int
+lsquic_wt_stream_stop_sending (struct lsquic_stream *stream, uint64_t error_code)
+{
+    (void) stream;
+    (void) error_code;
+    errno = ENOSYS;
+    return -1;
+}
+
+
+
+void
+lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
+{
+    struct lsquic_wt_session *sess;
+
+    if (!stream)
+        return;
+
+    sess = stream->sm_wt_session;
+    if (!sess)
+        return;
+
+    if (sess->wts_control_stream == stream)
+        wt_session_destroy(sess, 0, NULL, 0);
+    else
+        stream->sm_wt_session = NULL;
+}
+
+
+
+void
+lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
+                                                lsquic_stream_id_t session_id)
+{
+    struct lsquic_wt_session *sess;
+    lsquic_stream_ctx_t *sctx;
+
+    if (!stream)
+        return;
+
+    sess = wt_session_find(stream->conn_pub, session_id);
+    if (!sess)
+        return;
+
+    stream->sm_wt_session = sess;
+
+    if (sess->wts_if && sess->wts_if->on_wt_bidi_stream)
+    {
+        sctx = sess->wts_if->on_wt_bidi_stream(
+                        (lsquic_wt_session_t *) sess, stream);
+        if (sctx)
+            lsquic_stream_set_ctx(stream, sctx);
+    }
+}
