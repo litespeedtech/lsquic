@@ -278,6 +278,7 @@ enum stream_flags {
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
+    STREAM_RESET_AT_SEND= 1 << 30,  /* Use RESET_STREAM_AT when resetting */
 };
 
 
@@ -424,6 +425,7 @@ struct lsquic_stream
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     lsquic_stream_id_t              webtransport_session_stream_id;
 #endif
+    uint8_t                         sm_wt_header_sz;
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
@@ -527,12 +529,21 @@ void
 lsquic_stream_push_req (lsquic_stream_t *,
                         struct uncompressed_headers *push_req);
 
+void
+lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
 
 int
 lsquic_stream_reset_stream_at_in (lsquic_stream_t *, uint64_t final_size,
                                   uint64_t reliable_size, uint64_t error_code);
+
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                    int reset_stream_at_enabled,
+                                    int peer_supports,
+                                    uint64_t *reliable_size);
 
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);

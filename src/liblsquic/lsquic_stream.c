@@ -1372,6 +1372,34 @@ lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
 }
 
 
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                    int reset_stream_at_enabled,
+                                    int peer_supports,
+                                    uint64_t *reliable_size)
+{
+    if (!reset_stream_at_enabled || !peer_supports
+            || !(stream->stream_flags & STREAM_RESET_AT_SEND)
+            || stream->sm_wt_header_sz == 0
+            || stream->tosend_off < stream->sm_wt_header_sz)
+    {
+        if (reliable_size)
+            *reliable_size = 0;
+        return QUIC_FRAME_RST_STREAM;
+    }
+    else
+    {
+        /* I would not worry about other users: STREAM_RESET_AT is used by
+         * WebTransport only. If other protocols evolve that use STREAM_RESET_AT
+         * and that don't want to retract and we want to implement them, we will
+         * worry about this later.
+         */
+        *reliable_size = stream->sm_wt_header_sz;
+        return QUIC_FRAME_RESET_STREAM_AT;
+    }
+}
+
+
 static int
 stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
                                                        uint64_t error_code)
@@ -4735,6 +4763,16 @@ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
 
 #endif
 
+void
+lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
+{
+    if (sz > UINT8_MAX)
+        s->sm_wt_header_sz = UINT8_MAX;
+    else
+        s->sm_wt_header_sz = (uint8_t) sz;
+    s->stream_flags |= STREAM_RESET_AT_SEND;
+}
+
 int
 lsquic_stream_close (lsquic_stream_t *stream)
 {
@@ -4769,10 +4807,12 @@ lsquic_stream_acked (struct lsquic_stream *stream,
     {
         --stream->n_unacked;
         LSQ_DEBUG("ACKed; n_unacked: %u", stream->n_unacked);
-        if (frame_type == QUIC_FRAME_RST_STREAM)
+        if (frame_type == QUIC_FRAME_RST_STREAM
+                        || frame_type == QUIC_FRAME_RESET_STREAM_AT)
         {
             SM_HISTORY_APPEND(stream, SHE_RST_ACKED);
-            LSQ_DEBUG("RESET that we sent has been acked by peer");
+            LSQ_DEBUG("%s that we sent has been acked by peer",
+                      frame_type_2_str[frame_type]);
             stream->stream_flags |= STREAM_RST_ACKED;
         }
     }
@@ -5270,6 +5310,10 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
                     // flag for webtransport_session_stream_id stream in app code
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
+                    stream->sm_wt_header_sz = (uint8_t) (
+                        vint_size(WEBTRANSPORT_BIDI_STREAM_TYPE)
+                      + vint_size(stream->webtransport_session_stream_id));
+                    stream->stream_flags |= STREAM_RESET_AT_SEND;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     // disable header processing as we will not have any headers for this stream anymore
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;

@@ -164,6 +164,7 @@ enum more_flags
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
     MF_WANT_CONN_DG_WRITE   = 1 << 9,   /* Connection-level datagrams */
     MF_RESET_STREAM_AT  = 1 << 10,  /* RESET_STREAM_AT support is enabled */
+    MF_PEER_RESET_STREAM_AT = 1 << 11,  /* Peer supports RESET_STREAM_AT */
 };
 
 
@@ -2601,6 +2602,51 @@ generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 }
 
 
+static int
+generate_reset_stream_at_frame (struct ietf_full_conn *conn,
+                struct lsquic_stream *stream, uint64_t reliable_size)
+{
+    lsquic_packet_out_t *packet_out;
+    unsigned need;
+    int sz;
+
+    need = conn->ifc_conn.cn_pf->pf_reset_stream_at_frame_size(stream->id,
+                    stream->tosend_off, reliable_size, stream->error_code);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+    {
+        LSQ_DEBUG("cannot get writeable packet for RESET_STREAM_AT frame");
+        return 0;
+    }
+    sz = conn->ifc_conn.cn_pf->pf_gen_reset_stream_at_frame(
+                    packet_out->po_data + packet_out->po_data_sz,
+                    lsquic_packet_out_avail(packet_out), stream->id,
+                    stream->tosend_off, reliable_size, stream->error_code);
+    if (sz < 0)
+    {
+        ABORT_ERROR("gen_reset_stream_at_frame failed");
+        return 0;
+    }
+    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
+                    QUIC_FRAME_RESET_STREAM_AT, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return 0;
+    }
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_RESET_STREAM_AT;
+    lsquic_stream_rst_frame_sent(stream);
+    LSQ_DEBUG("wrote RESET_STREAM_AT: stream %"PRIu64"; final %"PRIu64"; "
+              "reliable %"PRIu64"; error code %"PRIu64, stream->id,
+              stream->tosend_off, reliable_size, stream->error_code);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RESET_STREAM_AT: stream "
+        "%"PRIu64"; final %"PRIu64"; reliable %"PRIu64"; error code %"PRIu64,
+        stream->id, stream->tosend_off, reliable_size, stream->error_code);
+
+    return 1;
+}
+
+
 /* Return true if generated, false otherwise */
 static int
 generate_rst_stream_frame (struct ietf_full_conn *conn,
@@ -2609,40 +2655,52 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
     lsquic_packet_out_t *packet_out;
     unsigned need;
     int sz;
+    uint64_t reliable_size;
+    enum quic_frame_type frame_type;
 
-    need = conn->ifc_conn.cn_pf->pf_rst_frame_size(stream->id,
-                                    stream->tosend_off, stream->error_code);
-    packet_out = get_writeable_packet(conn, need);
-    if (!packet_out)
+    frame_type = lsquic_stream_get_reset_frame_type(stream,
+                    conn->ifc_mflags & MF_RESET_STREAM_AT,
+                    conn->ifc_mflags & MF_PEER_RESET_STREAM_AT,
+                    &reliable_size);
+    if (frame_type == QUIC_FRAME_RESET_STREAM_AT)
+        return generate_reset_stream_at_frame(conn, stream, reliable_size);
+    else
     {
-        LSQ_DEBUG("cannot get writeable packet for RESET_STREAM frame");
-        return 0;
-    }
-    sz = conn->ifc_conn.cn_pf->pf_gen_rst_frame(
-                            packet_out->po_data + packet_out->po_data_sz,
-                            lsquic_packet_out_avail(packet_out), stream->id,
-                            stream->tosend_off, stream->error_code);
-    if (sz < 0)
-    {
-        ABORT_ERROR("gen_rst_frame failed");
-        return 0;
-    }
-    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
-                            QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz))
-    {
-        ABORT_ERROR("adding frame to packet failed: %d", errno);
-        return 0;
-    }
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
-    lsquic_stream_rst_frame_sent(stream);
-    LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset %"PRIu64"; error code "
-              "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
-    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RESET_STREAM: stream "
-        "%"PRIu64"; offset %"PRIu64"; error code %"PRIu64, stream->id,
-        stream->tosend_off, stream->error_code);
+        need = conn->ifc_conn.cn_pf->pf_rst_frame_size(stream->id,
+                                        stream->tosend_off, stream->error_code);
+        packet_out = get_writeable_packet(conn, need);
+        if (!packet_out)
+        {
+            LSQ_DEBUG("cannot get writeable packet for RESET_STREAM frame");
+            return 0;
+        }
+        sz = conn->ifc_conn.cn_pf->pf_gen_rst_frame(
+                                packet_out->po_data + packet_out->po_data_sz,
+                                lsquic_packet_out_avail(packet_out), stream->id,
+                                stream->tosend_off, stream->error_code);
+        if (sz < 0)
+        {
+            ABORT_ERROR("gen_rst_frame failed");
+            return 0;
+        }
+        if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm,
+                        stream, QUIC_FRAME_RST_STREAM,
+                        packet_out->po_data_sz, sz))
+        {
+            ABORT_ERROR("adding frame to packet failed: %d", errno);
+            return 0;
+        }
+        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+        packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
+        lsquic_stream_rst_frame_sent(stream);
+        LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset %"PRIu64"; error code "
+                  "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RESET_STREAM: stream "
+            "%"PRIu64"; offset %"PRIu64"; error code %"PRIu64, stream->id,
+            stream->tosend_off, stream->error_code);
 
-    return 1;
+        return 1;
+    }
 }
 
 
@@ -3619,6 +3677,9 @@ apply_trans_params (struct ietf_full_conn *conn,
         LSQ_DEBUG("turn on QL loss bits");
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
     }
+
+    if (params->tp_set & (1 << TPI_RESET_STREAM_AT))
+        conn->ifc_mflags |= MF_PEER_RESET_STREAM_AT;
 
     if (params->tp_init_max_streams_bidi > (1ull << 60)
                             || params->tp_init_max_streams_uni > (1ull << 60))

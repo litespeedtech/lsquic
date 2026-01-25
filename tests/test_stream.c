@@ -1496,6 +1496,60 @@ test_reset_stream_at_updates_and_errors (struct test_objs *tobjs)
     lsquic_stream_destroy(stream);
 }
 
+static void
+test_reset_stream_at_send_gate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    uint64_t reliable_size;
+    enum quic_frame_type frame_type;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, 0, 0,
+                                                    &reliable_size);
+    assert(frame_type == QUIC_FRAME_RST_STREAM);
+
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
+                                                    &reliable_size);
+    assert(frame_type == QUIC_FRAME_RST_STREAM);
+
+    lsquic_stream_set_reliable_size(stream, 7);
+    stream->tosend_off = 6;
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
+                                                    &reliable_size);
+    assert(frame_type == QUIC_FRAME_RST_STREAM);
+
+    stream->tosend_off = 7;
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
+                                                    &reliable_size);
+    assert(frame_type == QUIC_FRAME_RESET_STREAM_AT);
+    assert(7 == reliable_size);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_reset_stream_at_ack (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    stream->n_unacked = 1;
+
+    lsquic_stream_acked(stream, QUIC_FRAME_RESET_STREAM_AT);
+
+    assert(0 == stream->n_unacked);
+    assert(stream->stream_flags & STREAM_RST_ACKED);
+
+    lsquic_stream_destroy(stream);
+}
+
 
 static void
 test_rst_stream_gquic_no_stream_reset (struct test_objs *tobjs)
@@ -2052,6 +2106,8 @@ test_termination (void)
         { 1, 1, test_rst_stream_flow_control_violation, },
         { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_reset_stream_at_updates_and_errors, },
+        { 0, 1, test_reset_stream_at_send_gate, },
+        { 0, 1, test_reset_stream_at_ack, },
         { 1, 0, test_rst_stream_gquic_no_stream_reset, },
         { 1, 0, test_shutdown_read_gquic_with_send_rst, },
         { 0, 1, test_stop_sending_no_on_reset, },
