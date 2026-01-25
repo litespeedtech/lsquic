@@ -50,6 +50,8 @@
 #include "lsqpack.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_qenc_hdl.h"
+#include "lsquic_http1x_if.h"
+#include "lsquic_qdec_hdl.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
@@ -1463,6 +1465,49 @@ test_stop_sending_duplicate (struct test_objs *tobjs)
 }
 
 
+static void
+test_stream_maybe_reset_do_close (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    stream->stream_flags |= STREAM_RST_SENT | STREAM_RST_RECVD;
+
+    lsquic_stream_maybe_reset(stream, 12345, 1);
+    assert(stream->stream_flags & STREAM_U_READ_DONE);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stream_reset_qpack_and_sending_flags (struct test_objs *tobjs)
+{
+    struct qpack_dec_hdl qdh;
+    lsquic_stream_t *stream;
+
+    memset(&qdh, 0, sizeof(qdh));
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    tobjs->conn_pub.u.ietf.qdh = &qdh;
+
+    stream->sm_qflags |= SMQF_QPACK_DEC;
+    stream->sm_qflags |= SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+
+    lsquic_stream_maybe_reset(stream, 123, 0);
+
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(!(stream->sm_qflags & SMQF_QPACK_DEC));
+
+    lsquic_stream_destroy(stream);
+    tobjs->conn_pub.u.ietf.qdh = NULL;
+}
+
+
+
 /* We send some data and RST, receive data and FIN
  */
 static void
@@ -1865,6 +1910,8 @@ test_termination (void)
         { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_loc_data_rem_SS, },
         { 0, 1, test_stop_sending_duplicate, },
+        { 1, 1, test_stream_maybe_reset_do_close, },
+        { 0, 1, test_stream_reset_qpack_and_sending_flags, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG
         { 1, 1, test_gapless_elision_beginning, },
