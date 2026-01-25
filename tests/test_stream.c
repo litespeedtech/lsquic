@@ -1466,6 +1466,30 @@ test_stop_sending_duplicate (struct test_objs *tobjs)
 
 
 static void
+test_stop_sending_clears_sending_flags (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);  /* STOP_SENDING is IETF-only */
+
+    stream->stream_flags |= STREAM_RST_SENT;
+    stream->sm_qflags |= SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+
+    lsquic_stream_stop_sending_in(stream, 12345);
+
+    assert(!(stream->sm_qflags & SMQF_SEND_WUF));
+    assert(!(stream->sm_qflags & SMQF_SEND_BLOCKED));
+    assert(!(stream->sm_qflags & SMQF_SEND_STOP_SENDING));
+    assert(!(stream->sm_qflags & SMQF_SENDING_FLAGS));
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
 test_stream_maybe_reset_do_close (struct test_objs *tobjs)
 {
     lsquic_stream_t *stream;
@@ -1910,6 +1934,7 @@ test_termination (void)
         { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_loc_data_rem_SS, },
         { 0, 1, test_stop_sending_duplicate, },
+        { 0, 1, test_stop_sending_clears_sending_flags, },
         { 1, 1, test_stream_maybe_reset_do_close, },
         { 0, 1, test_stream_reset_qpack_and_sending_flags, },
         { 1, 0, test_loc_RST_rem_FIN, },
