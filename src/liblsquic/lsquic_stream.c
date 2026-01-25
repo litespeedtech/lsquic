@@ -62,6 +62,8 @@
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_hcso_writer.h"
+#include "lsquic_sizes.h"
+#include "lsquic_trans_params.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
@@ -1374,12 +1376,9 @@ lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
 
 enum quic_frame_type
 lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
-                                    int reset_stream_at_enabled,
-                                    int peer_supports,
                                     uint64_t *reliable_size)
 {
-    if (!reset_stream_at_enabled || !peer_supports
-            || !(stream->stream_flags & STREAM_RESET_AT_SEND)
+    if (!(stream->stream_flags & STREAM_RESET_AT_SEND)
             || stream->sm_wt_header_sz == 0
             || stream->tosend_off < stream->sm_wt_header_sz)
     {
@@ -4763,14 +4762,29 @@ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
 
 #endif
 
-void
+int
 lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
 {
+    const struct transport_params *params;
+
     if (sz > UINT8_MAX)
-        s->sm_wt_header_sz = UINT8_MAX;
-    else
-        s->sm_wt_header_sz = (uint8_t) sz;
+        return -1;
+    if (!(s->sm_bflags & SMBF_IETF))
+        return -1;
+    if (!s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return -1;
+    if (!s->conn_pub->lconn->cn_esf.i
+            || !s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params)
+        return -1;
+
+    params = s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                s->conn_pub->lconn->cn_enc_session);
+    if (!params || !(params->tp_set & (1 << TPI_RESET_STREAM_AT)))
+        return -1;
+
+    s->sm_wt_header_sz = (uint8_t) sz;
     s->stream_flags |= STREAM_RESET_AT_SEND;
+    return 0;
 }
 
 int

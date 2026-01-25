@@ -1988,8 +1988,8 @@ int
 lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s);
 #endif
 
-/* Record reliable size for RESET_STREAM_AT. */
-void
+/* Record reliable size for RESET_STREAM_AT.  Returns 0 on success. */
+int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
 
 /** Get connection ID */

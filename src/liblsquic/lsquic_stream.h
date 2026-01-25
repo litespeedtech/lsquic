@@ -529,7 +529,7 @@ void
 lsquic_stream_push_req (lsquic_stream_t *,
                         struct uncompressed_headers *push_req);
 
-void
+int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
 
 int
@@ -541,8 +541,6 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *, uint64_t final_size,
 
 enum quic_frame_type
 lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
-                                    int reset_stream_at_enabled,
-                                    int peer_supports,
                                     uint64_t *reliable_size);
 
 void

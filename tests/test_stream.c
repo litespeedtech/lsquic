@@ -35,7 +35,10 @@
 #include "lsquic_logger.h"
 #include "lsquic_parse.h"
 #include "lsquic_conn.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_engine_public.h"
+#include "lsquic_sizes.h"
+#include "lsquic_trans_params.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
 #include "lsquic_senhist.h"
@@ -185,6 +188,20 @@ static struct reset_call_ctx {
     struct lsquic_stream    *stream;
     int                      how;
 } s_onreset_called = { NULL, -1, };
+
+static struct transport_params s_reset_stream_at_params = {
+    .tp_set = (1 << TPI_RESET_STREAM_AT),
+};
+
+static struct transport_params *
+test_get_peer_transport_params (enc_session_t *UNUSED_session)
+{
+    return &s_reset_stream_at_params;
+}
+
+static const struct enc_session_funcs_iquic test_reset_stream_at_esfi = {
+    .esfi_get_peer_transport_params = test_get_peer_transport_params,
+};
 
 
 static void
@@ -1506,27 +1523,23 @@ test_reset_stream_at_send_gate (struct test_objs *tobjs)
     stream = new_stream(tobjs, 345);
     assert(stream->sm_bflags & SMBF_IETF);
 
-    reliable_size = 0;
-    frame_type = lsquic_stream_get_reset_frame_type(stream, 0, 0,
-                                                    &reliable_size);
-    assert(frame_type == QUIC_FRAME_RST_STREAM);
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 1;
+    tobjs->lconn.cn_esf.i = &test_reset_stream_at_esfi;
+    tobjs->lconn.cn_enc_session = (enc_session_t *) 1;
 
     reliable_size = 0;
-    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
-                                                    &reliable_size);
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     assert(frame_type == QUIC_FRAME_RST_STREAM);
 
-    lsquic_stream_set_reliable_size(stream, 7);
+    assert(0 == lsquic_stream_set_reliable_size(stream, 7));
     stream->tosend_off = 6;
     reliable_size = 0;
-    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
-                                                    &reliable_size);
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     assert(frame_type == QUIC_FRAME_RST_STREAM);
 
     stream->tosend_off = 7;
     reliable_size = 0;
-    frame_type = lsquic_stream_get_reset_frame_type(stream, 1, 1,
-                                                    &reliable_size);
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     assert(frame_type == QUIC_FRAME_RESET_STREAM_AT);
     assert(7 == reliable_size);
 
