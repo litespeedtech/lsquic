@@ -438,6 +438,7 @@ ENDIF()
 
 INSTALL(FILES
     include/lsquic.h
+    include/lsquic_wt.h
     include/lsquic_types.h
     include/lsxpack_header.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic
