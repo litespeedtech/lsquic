@@ -21,6 +21,7 @@
 #include "lsquic_alarmset.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_ietf.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
