@@ -1394,7 +1394,10 @@ test_rst_stream_smaller_than_seen (struct test_objs *tobjs)
     s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
     s = lsquic_stream_rst_in(stream, 100, 0);
     assert(s < 0);
-    assert(stream->stream_flags & STREAM_RST_RECVD);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    else
+        assert(stream->stream_flags & STREAM_RST_RECVD);
     assert(s_onreset_called.stream == NULL);
 
     lsquic_stream_destroy(stream);
@@ -1414,7 +1417,10 @@ test_rst_stream_flow_control_violation (struct test_objs *tobjs)
     s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
     s = lsquic_stream_rst_in(stream, offset, 0);
     assert(s < 0);
-    assert(stream->stream_flags & STREAM_RST_RECVD);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    else
+        assert(stream->stream_flags & STREAM_RST_RECVD);
     assert(s_onreset_called.stream == NULL);
 
     lsquic_stream_destroy(stream);
@@ -1437,7 +1443,97 @@ test_rst_stream_final_size_mismatch (struct test_objs *tobjs)
     s = lsquic_stream_rst_in(stream, 200, 0);
     assert(s < 0);
     assert(s_abort_error.called);
-    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
+    assert(s_abort_error.error_code == TEC_STREAM_STATE_ERROR);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_reset_stream_at_updates_and_errors (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
+    stream->read_offset = 100;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 7);
+    assert(0 == s);
+    assert(!(stream->sm_qflags & SMQF_WAIT_FIN_OFF));
+    assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 0);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 50);
+    assert(s_onreset_called.stream == NULL);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 60, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 50);
+    assert(s_onreset_called.stream == NULL);
+
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 40, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 40);
+
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+    s = lsquic_stream_reset_stream_at_in(stream, 101, 40, 7);
+    assert(s < 0);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == TEC_STREAM_STATE_ERROR);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_gquic_no_stream_reset (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    stream->stream_flags |= STREAM_RST_SENT;
+    stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
+
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(!(stream->sm_qflags & SMQF_WAIT_FIN_OFF));
+    assert(!(stream->sm_qflags & SMQF_SEND_RST));
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_no_on_reset (struct test_objs *tobjs)
+{
+    static const struct lsquic_stream_if stream_if_no_reset = {
+        .on_new_stream          = on_new_stream,
+        .on_close               = on_close,
+        .on_reset               = NULL,
+    };
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+    stream->stream_if = &stream_if_no_reset;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
     assert(s_onreset_called.stream == NULL);
 
     lsquic_stream_destroy(stream);
@@ -1932,6 +2028,9 @@ test_termination (void)
         { 1, 1, test_rst_stream_smaller_than_seen, },
         { 1, 1, test_rst_stream_flow_control_violation, },
         { 0, 1, test_rst_stream_final_size_mismatch, },
+        { 0, 1, test_reset_stream_at_updates_and_errors, },
+        { 1, 0, test_rst_stream_gquic_no_stream_reset, },
+        { 0, 1, test_stop_sending_no_on_reset, },
         { 0, 1, test_loc_data_rem_SS, },
         { 0, 1, test_stop_sending_duplicate, },
         { 0, 1, test_stop_sending_clears_sending_flags, },
