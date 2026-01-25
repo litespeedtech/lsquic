@@ -1288,8 +1288,7 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
     if (stream->stream_flags & STREAM_RESET_AT_RECVD)
     {
         if (stream->sm_reset_at_final != final_size
-                                        || stream->sm_reset_at_error
-                                                                != error_code)
+                                || stream->sm_reset_at_error != error_code)
         {
             lconn = stream->conn_pub->lconn;
             lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
@@ -1321,7 +1320,7 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
     }
 
     if ((stream->stream_flags & STREAM_FIN_RECVD)
-            && stream->sm_fin_off != final_size)
+                                        && stream->sm_fin_off != final_size)
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
@@ -1367,6 +1366,7 @@ int
 lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
             uint64_t final_size, uint64_t reliable_size, uint64_t error_code)
 {
+    assert(stream->sm_bflags & SMBF_IETF);
     return stream_reset_in_ietf(stream, final_size, reliable_size,
                                 error_code, QUIC_FRAME_RESET_STREAM_AT);
 }
