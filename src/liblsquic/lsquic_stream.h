@@ -274,7 +274,7 @@ enum stream_flags {
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
-    STREAM_RST_AT_RECVD = 1 << 26,  /* Received RESET_STREAM_AT frame */
+    STREAM_RESET_AT_RECVD = 1 << 26,  /* Received RESET_STREAM_AT frame */
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
@@ -360,7 +360,7 @@ struct lsquic_stream
 
     /* Valid if STREAM_FIN_RECVD is set: */
     uint64_t                        sm_fin_off;
-    /* Valid if STREAM_RST_AT_RECVD is set: */
+    /* Valid if STREAM_RESET_AT_RECVD is set: */
     uint64_t                        sm_reset_at;
     uint64_t                        sm_reset_at_final;
     uint64_t                        sm_reset_at_error;

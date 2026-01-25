@@ -76,6 +76,15 @@ drop_frames_in (lsquic_stream_t *stream);
 static void
 maybe_finish_reset_at (lsquic_stream_t *stream);
 
+static int
+stream_reset_in_gquic (lsquic_stream_t *stream, uint64_t offset,
+                       uint64_t error_code);
+
+static int
+stream_reset_in_ietf (lsquic_stream_t *stream, uint64_t final_size,
+                      uint64_t reliable_size, uint64_t error_code,
+                      enum quic_frame_type frame_type);
+
 static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
 
@@ -1138,7 +1147,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
 
     if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags & STREAM_RST_AT_RECVD)
+            && (stream->stream_flags & STREAM_RESET_AT_RECVD)
             && stream->sm_reset_at_final != DF_END(frame))
     {
         lconn = stream->conn_pub->lconn;
@@ -1249,7 +1258,7 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
 static void
 maybe_finish_reset_at (lsquic_stream_t *stream)
 {
-    if (!(stream->stream_flags & STREAM_RST_AT_RECVD)
+    if (!(stream->stream_flags & STREAM_RESET_AT_RECVD)
                                     || (stream->stream_flags & STREAM_RST_RECVD)
                                     || stream->read_offset < stream->sm_reset_at)
         return;
@@ -1275,13 +1284,17 @@ maybe_finish_reset_at (lsquic_stream_t *stream)
 }
 
 
-int
-lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
-                                  uint64_t reliable_size, uint64_t error_code)
+static int
+stream_reset_in_ietf (lsquic_stream_t *stream, uint64_t final_size,
+                      uint64_t reliable_size, uint64_t error_code,
+                      enum quic_frame_type frame_type)
 {
     struct lsquic_conn *lconn;
+    const char *frame_name;
 
-    if (stream->stream_flags & STREAM_RST_AT_RECVD)
+    frame_name = frame_type_2_str[frame_type];
+
+    if (stream->stream_flags & STREAM_RESET_AT_RECVD)
     {
         if (stream->sm_reset_at_final != final_size
                                         || stream->sm_reset_at_error
@@ -1289,9 +1302,9 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
         {
             lconn = stream->conn_pub->lconn;
             lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
-                "RESET_STREAM_AT frame changes final size or error code for "
-                "stream %"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
-                "%"PRIu64" vs %"PRIu64")", stream->id,
+                "%s frame changes final size or error code for stream "
+                "%"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
+                "%"PRIu64" vs %"PRIu64")", frame_name, stream->id,
                 stream->sm_reset_at_final, final_size,
                 stream->sm_reset_at_error, error_code);
             return -1;
@@ -1299,15 +1312,16 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
 
         if (reliable_size > stream->sm_reset_at)
         {
-            LSQ_DEBUG("ignore RESET_STREAM_AT increasing reliable size "
-                      "on stream %"PRIu64" (old %"PRIu64", new %"PRIu64")",
-                      stream->id, stream->sm_reset_at, reliable_size);
+            LSQ_DEBUG("ignore %s increasing reliable size on stream %"PRIu64
+                      " (old %"PRIu64", new %"PRIu64")",
+                      frame_name, stream->id, stream->sm_reset_at,
+                      reliable_size);
             return 0;
         }
         if (reliable_size < stream->sm_reset_at)
         {
-            LSQ_DEBUG("update RESET_STREAM_AT reliable size on stream "
-                      "%"PRIu64" from %"PRIu64" to %"PRIu64, stream->id,
+            LSQ_DEBUG("update %s reliable size on stream %"PRIu64
+                      " from %"PRIu64" to %"PRIu64, frame_name, stream->id,
                       stream->sm_reset_at, reliable_size);
             stream->sm_reset_at = reliable_size;
             maybe_finish_reset_at(stream);
@@ -1321,14 +1335,14 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
-            "final size %"PRIu64" from RESET_STREAM_AT frame (id: %"PRIu64") "
-            "does not match previous final size %"PRIu64, final_size,
+            "final size %"PRIu64" from %s frame (id: %"PRIu64") does not "
+            "match previous final size %"PRIu64, final_size, frame_name,
             stream->id, stream->sm_fin_off);
         return -1;
     }
 
     SM_HISTORY_APPEND(stream, SHE_RST_IN);
-    stream->stream_flags |= STREAM_RST_AT_RECVD;
+    stream->stream_flags |= STREAM_RESET_AT_RECVD;
     stream->sm_reset_at = reliable_size;
     stream->sm_reset_at_final = final_size;
     stream->sm_reset_at_error = error_code;
@@ -1340,22 +1354,30 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
 
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > final_size)
     {
-        LSQ_INFO("RESET_STREAM_AT invalid: its final size %"PRIu64" is "
+        LSQ_INFO("%s invalid: its final size %"PRIu64" is "
             "smaller than that of byte following the last byte we have seen: "
-            "%"PRIu64, final_size,
+            "%"PRIu64, frame_name, final_size,
             lsquic_sfcw_get_max_recv_off(&stream->fc));
         return -1;
     }
 
     if (!lsquic_sfcw_set_max_recv_off(&stream->fc, final_size))
     {
-        LSQ_INFO("RESET_STREAM_AT invalid: its final size %"PRIu64
-            " violates flow control", final_size);
+        LSQ_INFO("%s invalid: its final size %"PRIu64
+            " violates flow control", frame_name, final_size);
         return -1;
     }
 
     maybe_finish_reset_at(stream);
     return 0;
+}
+
+int
+lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
+                                  uint64_t reliable_size, uint64_t error_code)
+{
+    return stream_reset_in_ietf(stream, final_size, reliable_size,
+                                error_code, QUIC_FRAME_RESET_STREAM_AT);
 }
 
 
@@ -1364,8 +1386,17 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
                       uint64_t error_code)
 {
     if (stream->sm_bflags & SMBF_IETF)
-        return lsquic_stream_reset_stream_at_in(stream, offset, 0, error_code);
+        return stream_reset_in_ietf(stream, offset, 0, error_code,
+                                    QUIC_FRAME_RST_STREAM);
 
+    return stream_reset_in_gquic(stream, offset, error_code);
+}
+
+
+static int
+stream_reset_in_gquic (lsquic_stream_t *stream, uint64_t offset,
+                       uint64_t error_code)
+{
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
         LSQ_DEBUG("ignore duplicate RST_STREAM frame");
