@@ -274,7 +274,7 @@ enum stream_flags {
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
-    STREAM_UNUSED26     = 1 << 26,  /* Unused */
+    STREAM_RST_AT_RECVD = 1 << 26,  /* Received RESET_STREAM_AT frame */
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
@@ -360,6 +360,10 @@ struct lsquic_stream
 
     /* Valid if STREAM_FIN_RECVD is set: */
     uint64_t                        sm_fin_off;
+    /* Valid if STREAM_RST_AT_RECVD is set: */
+    uint64_t                        sm_reset_at;
+    uint64_t                        sm_reset_at_final;
+    uint64_t                        sm_reset_at_error;
 
     /* A stream may be generating STREAM or CRYPTO frames */
     size_t                        (*sm_frame_header_sz)(
@@ -525,6 +529,10 @@ lsquic_stream_push_req (lsquic_stream_t *,
 
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
+
+int
+lsquic_stream_reset_stream_at_in (lsquic_stream_t *, uint64_t final_size,
+                                  uint64_t reliable_size, uint64_t error_code);
 
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);

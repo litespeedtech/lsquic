@@ -74,6 +74,9 @@ static void
 drop_frames_in (lsquic_stream_t *stream);
 
 static void
+maybe_finish_reset_at (lsquic_stream_t *stream);
+
+static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
 
 static int
@@ -905,6 +908,7 @@ stream_readable_discard (struct lsquic_stream *stream)
     }
 
     (void) maybe_switch_data_in(stream);
+    maybe_finish_reset_at(stream);
 
     return 0;   /* Never readable */
 }
@@ -1134,6 +1138,18 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
 
     if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_RST_AT_RECVD)
+            && stream->sm_reset_at_final != DF_END(frame))
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+            "final size %"PRIu64" from STREAM frame (id: %"PRIu64") does not "
+            "match RESET_STREAM_AT final size %"PRIu64, DF_END(frame),
+            stream->id, stream->sm_reset_at_final);
+        goto release_packet_frame;
+    }
+
+    if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
             && (stream->stream_flags & STREAM_FIN_RECVD)
             && stream->sm_fin_off != DF_END(frame))
     {
@@ -1230,23 +1246,125 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
 }
 
 
+static void
+maybe_finish_reset_at (lsquic_stream_t *stream)
+{
+    if (!(stream->stream_flags & STREAM_RST_AT_RECVD)
+                                    || (stream->stream_flags & STREAM_RST_RECVD)
+                                    || stream->read_offset < stream->sm_reset_at)
+        return;
+
+    stream->stream_flags |= STREAM_RST_RECVD;
+
+    if (stream->stream_if->on_reset
+                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
+                            && !(stream->sm_dflags & SMDF_ONRESET0))
+    {
+        stream->stream_if->on_reset(stream, stream->st_ctx, 0);
+        stream->sm_dflags |= SMDF_ONRESET0;
+    }
+
+    /* Let user collect error: */
+    maybe_conn_to_tickable_if_readable(stream);
+
+    lsquic_sfcw_consume_rem(&stream->fc);
+    drop_frames_in(stream);
+
+    maybe_finish_stream(stream);
+    maybe_schedule_call_on_close(stream);
+}
+
+
+int
+lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
+                                  uint64_t reliable_size, uint64_t error_code)
+{
+    struct lsquic_conn *lconn;
+
+    if (stream->stream_flags & STREAM_RST_AT_RECVD)
+    {
+        if (stream->sm_reset_at_final != final_size
+                                        || stream->sm_reset_at_error
+                                                                != error_code)
+        {
+            lconn = stream->conn_pub->lconn;
+            lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+                "RESET_STREAM_AT frame changes final size or error code for "
+                "stream %"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
+                "%"PRIu64" vs %"PRIu64")", stream->id,
+                stream->sm_reset_at_final, final_size,
+                stream->sm_reset_at_error, error_code);
+            return -1;
+        }
+
+        if (reliable_size > stream->sm_reset_at)
+        {
+            LSQ_DEBUG("ignore RESET_STREAM_AT increasing reliable size "
+                      "on stream %"PRIu64" (old %"PRIu64", new %"PRIu64")",
+                      stream->id, stream->sm_reset_at, reliable_size);
+            return 0;
+        }
+        if (reliable_size < stream->sm_reset_at)
+        {
+            LSQ_DEBUG("update RESET_STREAM_AT reliable size on stream "
+                      "%"PRIu64" from %"PRIu64" to %"PRIu64, stream->id,
+                      stream->sm_reset_at, reliable_size);
+            stream->sm_reset_at = reliable_size;
+            maybe_finish_reset_at(stream);
+        }
+        return 0;
+    }
+
+    if ((stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_FIN_RECVD)
+            && stream->sm_fin_off != final_size)
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+            "final size %"PRIu64" from RESET_STREAM_AT frame (id: %"PRIu64") "
+            "does not match previous final size %"PRIu64, final_size,
+            stream->id, stream->sm_fin_off);
+        return -1;
+    }
+
+    SM_HISTORY_APPEND(stream, SHE_RST_IN);
+    stream->stream_flags |= STREAM_RST_AT_RECVD;
+    stream->sm_reset_at = reliable_size;
+    stream->sm_reset_at_final = final_size;
+    stream->sm_reset_at_error = error_code;
+    if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
+    {
+        stream->sm_qflags &= ~SMQF_WAIT_FIN_OFF;
+        LSQ_DEBUG("final offset is now known: %"PRIu64, final_size);
+    }
+
+    if (lsquic_sfcw_get_max_recv_off(&stream->fc) > final_size)
+    {
+        LSQ_INFO("RESET_STREAM_AT invalid: its final size %"PRIu64" is "
+            "smaller than that of byte following the last byte we have seen: "
+            "%"PRIu64, final_size,
+            lsquic_sfcw_get_max_recv_off(&stream->fc));
+        return -1;
+    }
+
+    if (!lsquic_sfcw_set_max_recv_off(&stream->fc, final_size))
+    {
+        LSQ_INFO("RESET_STREAM_AT invalid: its final size %"PRIu64
+            " violates flow control", final_size);
+        return -1;
+    }
+
+    maybe_finish_reset_at(stream);
+    return 0;
+}
+
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
                       uint64_t error_code)
 {
-    struct lsquic_conn *lconn;
-
-    if ((stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags & STREAM_FIN_RECVD)
-            && stream->sm_fin_off != offset)
-    {
-        lconn = stream->conn_pub->lconn;
-        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
-            "final size %"PRIu64" from RESET_STREAM frame (id: %"PRIu64") "
-            "does not match previous final size %"PRIu64, offset,
-            stream->id, stream->sm_fin_off);
-        return -1;
-    }
+    if (stream->sm_bflags & SMBF_IETF)
+        return lsquic_stream_reset_stream_at_in(stream, offset, 0, error_code);
 
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
@@ -1736,7 +1854,10 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     nread = stream_readf(stream, readf, ctx);
     if (nread >= 0)
+    {
         maybe_update_last_progress(stream);
+        maybe_finish_reset_at(stream);
+    }
 
     return nread;
 }

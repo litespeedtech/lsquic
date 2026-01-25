@@ -2252,6 +2252,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_PADDING]              =  process_padding_frame,
     [QUIC_FRAME_PING]                 =  process_ping_frame,
     [QUIC_FRAME_RST_STREAM]           =  process_rst_stream_frame,
+    [QUIC_FRAME_RESET_STREAM_AT]      =  process_invalid_frame,
     [QUIC_FRAME_STOP_WAITING]         =  process_stop_waiting_frame,
     [QUIC_FRAME_STREAM]               =  process_stream_frame,
     [QUIC_FRAME_WINDOW_UPDATE]        =  process_window_update_frame,

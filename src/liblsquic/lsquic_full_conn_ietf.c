@@ -163,6 +163,7 @@ enum more_flags
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
     MF_WANT_CONN_DG_WRITE   = 1 << 9,   /* Connection-level datagrams */
+    MF_RESET_STREAM_AT  = 1 << 10,  /* RESET_STREAM_AT support is enabled */
 };
 
 
@@ -1345,6 +1346,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         conn->ifc_pii = &ext_prio_iter_if;
     else
         conn->ifc_pii = &orig_prio_iter_if;
+    conn->ifc_mflags |= MF_RESET_STREAM_AT;
     return 0;
 }
 
@@ -5672,6 +5674,81 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
 
 
 static unsigned
+process_reset_stream_at_frame (struct ietf_full_conn *conn,
+        struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    lsquic_stream_id_t stream_id;
+    uint64_t final_size, reliable_size, error_code;
+    lsquic_stream_t *stream;
+    int call_on_new;
+    int parsed_len;
+
+    if (!(conn->ifc_mflags & MF_RESET_STREAM_AT))
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Received unexpected RESET_STREAM_AT frame (not negotiated)");
+        return 0;
+    }
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_reset_stream_at_frame(p, len,
+                                &stream_id, &error_code, &final_size,
+                                &reliable_size);
+    if (parsed_len < 0)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+                                                "cannot parse RESET_STREAM_AT");
+        return 0;
+    }
+
+    LSQ_DEBUG("Got RESET_STREAM_AT; stream: %"PRIu64"; final: %"PRIu64"; "
+              "reliable: %"PRIu64, stream_id, final_size, reliable_size);
+
+    if (conn_is_send_only_stream(conn, stream_id))
+    {
+        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
+            "received RESET_STREAM_AT on send-only stream %"PRIu64, stream_id);
+        return 0;
+    }
+
+    call_on_new = 0;
+    stream = find_stream_by_id(conn, stream_id);
+    if (!stream)
+    {
+        if (conn_is_stream_closed(conn, stream_id))
+        {
+            LSQ_DEBUG("got reset_stream_at frame for closed stream %"PRIu64,
+                                                                stream_id);
+            return parsed_len;
+        }
+        if (!is_peer_initiated(conn, stream_id))
+        {
+            ABORT_ERROR("received reset for never-initiated stream %"PRIu64,
+                                                                    stream_id);
+            return 0;
+        }
+
+        stream = new_stream(conn, stream_id, 0);
+        if (!stream)
+        {
+            ABORT_ERROR("cannot create new stream: %s", strerror(errno));
+            return 0;
+        }
+        ++call_on_new;
+    }
+
+    if (0 != lsquic_stream_reset_stream_at_in(stream, final_size,
+                                                reliable_size, error_code))
+    {
+        ABORT_ERROR("received invalid RESET_STREAM_AT");
+        return 0;
+    }
+    if (call_on_new)
+        lsquic_stream_call_on_new(stream);
+    return parsed_len;
+}
+
+
+static unsigned
 process_stop_sending_frame (struct ietf_full_conn *conn,
         struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
 {
@@ -7063,6 +7140,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
 {
     [QUIC_FRAME_PADDING]            =  process_padding_frame,
     [QUIC_FRAME_RST_STREAM]         =  process_rst_stream_frame,
+    [QUIC_FRAME_RESET_STREAM_AT]    =  process_reset_stream_at_frame,
     [QUIC_FRAME_CONNECTION_CLOSE]   =  process_connection_close_frame,
     [QUIC_FRAME_MAX_DATA]           =  process_max_data_frame,
     [QUIC_FRAME_MAX_STREAM_DATA]    =  process_max_stream_data_frame,

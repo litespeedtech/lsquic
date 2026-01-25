@@ -190,6 +190,7 @@ extern const char *const lsquic_pns2str[];
     |  QUIC_FTBIT_ACK                \
     |  QUIC_FTBIT_PADDING            \
     |  QUIC_FTBIT_RST_STREAM         \
+    |  QUIC_FTBIT_RESET_STREAM_AT    \
     |  QUIC_FTBIT_CONNECTION_CLOSE   \
     |  QUIC_FTBIT_BLOCKED            \
     |  QUIC_FTBIT_PING               \
