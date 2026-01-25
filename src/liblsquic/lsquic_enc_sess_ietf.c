@@ -646,7 +646,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     }
     if (!settings->es_allow_migration)
         params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
-    params.tp_set |= 1 << TPI_RESET_STREAM_AT;
+    if (settings->es_reset_stream_at)
+        params.tp_set |= 1 << TPI_RESET_STREAM_AT;
     if (settings->es_ql_bits)
     {
         params.tp_loss_bits = settings->es_ql_bits - 1;
@@ -3531,7 +3532,8 @@ lsquic_enc_sess_ietf_gen_quic_ctx (
     }
     if (!settings->es_allow_migration)
         params.tp_set |= 1 << TPI_DISABLE_ACTIVE_MIGRATION;
-    params.tp_set |= 1 << TPI_RESET_STREAM_AT;
+    if (settings->es_reset_stream_at)
+        params.tp_set |= 1 << TPI_RESET_STREAM_AT;
     if (settings->es_ql_bits)
     {
         params.tp_loss_bits = settings->es_ql_bits - 1;

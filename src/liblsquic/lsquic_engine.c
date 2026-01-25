@@ -386,6 +386,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_spin            = LSQUIC_DF_SPIN;
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
     settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
+    settings->es_reset_stream_at = LSQUIC_DF_RESET_STREAM_AT;
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;

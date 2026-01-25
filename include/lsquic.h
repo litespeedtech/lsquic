@@ -446,6 +446,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn on timestamp extension by default */
 #define LSQUIC_DF_TIMESTAMPS 1
 
+/** Turn off RESET_STREAM_AT extension by default */
+#define LSQUIC_DF_RESET_STREAM_AT 0
+
 /** default anti-amplification factor is 3 */
 #define LSQUIC_DF_AMP_FACTOR 3
 
@@ -996,6 +999,13 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_TIMESTAMPS
      */
     int             es_timestamps;
+
+    /**
+     * Enable RESET_STREAM_AT extension.  Allowed values are 0 and 1.
+     *
+     * Default value is @ref LSQUIC_DF_RESET_STREAM_AT
+     */
+    int             es_reset_stream_at;
 
     /**
      * Maximum packet size we are willing to receive.  This is sent to

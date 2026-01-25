@@ -1346,7 +1346,8 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         conn->ifc_pii = &ext_prio_iter_if;
     else
         conn->ifc_pii = &orig_prio_iter_if;
-    conn->ifc_mflags |= MF_RESET_STREAM_AT;
+    if (conn->ifc_settings->es_reset_stream_at)
+        conn->ifc_mflags |= MF_RESET_STREAM_AT;
     return 0;
 }
 
