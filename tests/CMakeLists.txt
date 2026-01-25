@@ -56,6 +56,7 @@ SET(TESTS
     quic_be_floats
     reg_pkt_headergen
     rst_stream_gquic_be
+    reset_stream_at_ietf
     rtt
     send_headers
     senhist
