@@ -1256,7 +1256,7 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
 
 
 static void
-maybe_finish_reset_at (lsquic_stream_t *stream)
+maybe_finish_reset_at (struct lsquic_stream *stream)
 {
     if (!(stream->stream_flags & STREAM_RESET_AT_RECVD)
                                     || (stream->stream_flags & STREAM_RST_RECVD)
@@ -1285,7 +1285,7 @@ maybe_finish_reset_at (lsquic_stream_t *stream)
 
 
 static int
-stream_reset_in_ietf (lsquic_stream_t *stream, uint64_t final_size,
+stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
                       uint64_t reliable_size, uint64_t error_code,
                       enum quic_frame_type frame_type)
 {
@@ -1372,9 +1372,10 @@ stream_reset_in_ietf (lsquic_stream_t *stream, uint64_t final_size,
     return 0;
 }
 
+
 int
-lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
-                                  uint64_t reliable_size, uint64_t error_code)
+lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
+            uint64_t final_size, uint64_t reliable_size, uint64_t error_code)
 {
     return stream_reset_in_ietf(stream, final_size, reliable_size,
                                 error_code, QUIC_FRAME_RESET_STREAM_AT);
@@ -1382,20 +1383,20 @@ lsquic_stream_reset_stream_at_in (lsquic_stream_t *stream, uint64_t final_size,
 
 
 int
-lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
-                      uint64_t error_code)
+lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
+                                                      uint64_t error_code)
 {
     if (stream->sm_bflags & SMBF_IETF)
         return stream_reset_in_ietf(stream, offset, 0, error_code,
                                     QUIC_FRAME_RST_STREAM);
-
-    return stream_reset_in_gquic(stream, offset, error_code);
+    else
+        return stream_reset_in_gquic(stream, offset, error_code);
 }
 
 
 static int
-stream_reset_in_gquic (lsquic_stream_t *stream, uint64_t offset,
-                       uint64_t error_code)
+stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
+                                                       uint64_t error_code)
 {
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
