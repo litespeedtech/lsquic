@@ -4767,7 +4767,7 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
 {
     const struct transport_params *params;
 
-    if (sz > UINT8_MAX)
+    if (sz > ((1ULL << (sizeof(s->sm_wt_header_sz) * 8)) - 1))
         return -1;
     if (!(s->sm_bflags & SMBF_IETF))
         return -1;
@@ -4782,7 +4782,7 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
     if (!params || !(params->tp_set & (1 << TPI_RESET_STREAM_AT)))
         return -1;
 
-    s->sm_wt_header_sz = (uint8_t) sz;
+    s->sm_wt_header_sz = sz;
     s->stream_flags |= STREAM_RESET_AT_SEND;
     return 0;
 }
