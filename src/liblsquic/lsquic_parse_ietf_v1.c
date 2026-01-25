@@ -804,6 +804,103 @@ ietf_v1_parse_rst_frame (const unsigned char *buf, size_t buf_len,
 }
 
 
+static unsigned
+ietf_v1_reset_stream_at_frame_size (lsquic_stream_id_t stream_id,
+    uint64_t error_code, uint64_t final_size, uint64_t reliable_size)
+{
+    return 1                           /* Type */
+         + vint_size(stream_id)        /* Stream ID (i) */
+         + vint_size(error_code)       /* Application Error Code (i) */
+         + vint_size(final_size)       /* Final Size (i) */
+         + vint_size(reliable_size);   /* Reliable Size (i) */
+}
+
+
+static int
+ietf_v1_gen_reset_stream_at_frame (unsigned char *buf, size_t buf_len,
+    lsquic_stream_id_t stream_id, uint64_t error_code, uint64_t final_size,
+    uint64_t reliable_size)
+{
+    unsigned vbits;
+    unsigned char *p;
+
+    if (buf_len < ietf_v1_reset_stream_at_frame_size(stream_id, error_code,
+                                    final_size, reliable_size))
+        return -1;
+
+    p = buf;
+
+    *p++ = 0x24;
+    /* Stream ID (i) */
+    vbits = vint_val2bits(stream_id);
+    vint_write(p, stream_id, vbits, 1 << vbits);
+    p += 1 << vbits;
+
+    /* Application Error Code (i) */
+    vbits = vint_val2bits(error_code);
+    vint_write(p, error_code, vbits, 1 << vbits);
+    p += 1 << vbits;
+
+    /* Final Size (i) */
+    vbits = vint_val2bits(final_size);
+    vint_write(p, final_size, vbits, 1 << vbits);
+    p += 1 << vbits;
+
+    /* Reliable Size (i) */
+    vbits = vint_val2bits(reliable_size);
+    vint_write(p, reliable_size, vbits, 1 << vbits);
+    p += 1 << vbits;
+
+    return p - buf;
+}
+
+
+static int
+ietf_v1_parse_reset_stream_at_frame (const unsigned char *buf, size_t buf_len,
+    lsquic_stream_id_t *stream_id_p, uint64_t *error_code_p,
+    uint64_t *final_size_p, uint64_t *reliable_size_p)
+{
+    const unsigned char *p = buf + 1;
+    const unsigned char *const end = buf + buf_len;
+    uint64_t stream_id, error_code, final_size, reliable_size;
+    int r;
+
+    /* Stream ID (i) */
+    r = vint_read(p, end, &stream_id);
+    if (r < 0)
+        return r;
+    p += r;
+
+    /* Application Error Code (i) */
+    r = vint_read(p, end, &error_code);
+    if (r < 0)
+        return r;
+    p += r;
+
+    /* Final Size (i) */
+    r = vint_read(p, end, &final_size);
+    if (r < 0)
+        return r;
+    p += r;
+
+    /* Reliable Size (i) */
+    r = vint_read(p, end, &reliable_size);
+    if (r < 0)
+        return r;
+    p += r;
+
+    if (reliable_size > final_size)
+        return -1;
+
+    *stream_id_p = stream_id;
+    *error_code_p = error_code;
+    *final_size_p = final_size;
+    *reliable_size_p = reliable_size;
+
+    return p - buf;
+}
+
+
 static int
 ietf_v1_parse_stop_sending_frame (const unsigned char *buf, size_t buf_len,
                         lsquic_stream_id_t *stream_id, uint64_t *error_code)
@@ -2288,6 +2385,9 @@ const struct parse_funcs lsquic_parse_funcs_ietf_v1 =
     .pf_rst_frame_size                =  ietf_v1_rst_frame_size,
     .pf_gen_rst_frame                 =  ietf_v1_gen_rst_frame,
     .pf_parse_rst_frame               =  ietf_v1_parse_rst_frame,
+    .pf_reset_stream_at_frame_size      =  ietf_v1_reset_stream_at_frame_size,
+    .pf_gen_reset_stream_at_frame       =  ietf_v1_gen_reset_stream_at_frame,
+    .pf_parse_reset_stream_at_frame     =  ietf_v1_parse_reset_stream_at_frame,
     .pf_connect_close_frame_size      =  ietf_v1_connect_close_frame_size,
     .pf_gen_connect_close_frame       =  ietf_v1_gen_connect_close_frame,
     .pf_parse_connect_close_frame     =  ietf_v1_parse_connect_close_frame,

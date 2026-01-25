@@ -49,6 +49,7 @@ enum transport_param_id
      * Empty transport parameters:
      */
     TPI_GREASE_QUIC_BIT,
+    TPI_RESET_STREAM_AT,
     TPI_DISABLE_ACTIVE_MIGRATION,           MAX_EMPTY_TPI = TPI_DISABLE_ACTIVE_MIGRATION,
 
     /*
@@ -224,6 +225,8 @@ lsquic_tp_get_quantum_sz (void);
     | (1 << TPI_MIN_ACK_DELAY_02)                                       \
     /* [draft-huitema-quic-ts-08] does not specify, store:           */ \
     | (1 << TPI_TIMESTAMPS)                                             \
+    /* [draft-ietf-quic-reliable-stream-reset-07] Section 3:         */ \
+    | (1 << TPI_RESET_STREAM_AT)                                       \
 )
 
 /* We always send the minimum ACK delay as 10ms; it is not configurable.
