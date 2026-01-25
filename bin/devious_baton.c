@@ -214,7 +214,42 @@ parse_query (const char *query, struct devious_baton_app *cfg,
 
 
 static int
+dup_header_value (const char *value, size_t value_len, char **out)
+{
+    char *buf;
+
+    buf = malloc(value_len + 1);
+    if (!buf)
+        return -1;
+
+    memcpy(buf, value, value_len);
+    buf[value_len] = '\0';
+    *out = buf;
+    return 0;
+}
+
+
+static void
+free_connect_info (struct lsquic_wt_connect_info *info)
+{
+    if (!info)
+        return;
+
+    free((char *) info->authority);
+    free((char *) info->path);
+    free((char *) info->origin);
+    free((char *) info->protocol);
+
+    info->authority = NULL;
+    info->path = NULL;
+    info->origin = NULL;
+    info->protocol = NULL;
+}
+
+
+static int
 parse_request (struct hset *hset, struct devious_baton_app *cfg,
+                                struct lsquic_wt_connect_info *info,
                                         char *err_buf, size_t err_sz)
 {
     const struct hset_elem *el;
@@ -223,6 +258,9 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     char *path = NULL;
     size_t path_len = 0;
     size_t path_base_len;
+    char *authority = NULL;
+    char *origin = NULL;
+    char *protocol = NULL;
     int have_method = 0;
     int have_protocol = 0;
     int method_ok = 0;
@@ -249,20 +287,47 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
             protocol_ok = (el->xhdr.val_len == sizeof(DEVIOUS_BATON_PROTOCOL) - 1
                 && 0 == memcmp(value, DEVIOUS_BATON_PROTOCOL,
                                             sizeof(DEVIOUS_BATON_PROTOCOL) - 1));
+            if (protocol_ok)
+            {
+                free(protocol);
+                if (0 != dup_header_value(value, el->xhdr.val_len, &protocol))
+                {
+                    snprintf(err_buf, err_sz, "cannot copy protocol");
+                    goto end;
+                }
+            }
         }
         else if (el->xhdr.name_len == sizeof(":path") - 1
                 && 0 == memcmp(name, ":path", sizeof(":path") - 1))
         {
             free(path);
             path_len = el->xhdr.val_len;
-            path = malloc(path_len + 1);
-            if (!path)
+            if (0 != dup_header_value(value, path_len, &path))
             {
-                snprintf(err_buf, err_sz, "cannot allocate path");
+                snprintf(err_buf, err_sz, "cannot copy path");
                 goto end;
             }
-            memcpy(path, value, path_len);
-            path[path_len] = '\0';
+        }
+        else if (el->xhdr.name_len == sizeof(":authority") - 1
+                && 0 == memcmp(name, ":authority",
+                                        sizeof(":authority") - 1))
+        {
+            free(authority);
+            if (0 != dup_header_value(value, el->xhdr.val_len, &authority))
+            {
+                snprintf(err_buf, err_sz, "cannot copy authority");
+                goto end;
+            }
+        }
+        else if (el->xhdr.name_len == sizeof("origin") - 1
+                && 0 == memcmp(name, "origin", sizeof("origin") - 1))
+        {
+            free(origin);
+            if (0 != dup_header_value(value, el->xhdr.val_len, &origin))
+            {
+                snprintf(err_buf, err_sz, "cannot copy origin");
+                goto end;
+            }
         }
     }
 
@@ -321,10 +386,27 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     if (cfg->baton == 0)
         cfg->baton = 1 + (rand() % 255);
 
+    if (info)
+    {
+        memset(info, 0, sizeof(*info));
+        info->authority = authority;
+        info->path = path;
+        info->origin = origin;
+        info->protocol = protocol;
+        info->draft = 0;
+        authority = NULL;
+        path = NULL;
+        origin = NULL;
+        protocol = NULL;
+    }
+
     rv = 0;
 
   end:
+    free(authority);
     free(path);
+    free(origin);
+    free(protocol);
     return rv;
 }
 
@@ -600,7 +682,7 @@ open_stream_and_queue (struct devious_baton_session *sess,
     st->dir = dir;
     st->initiator = sess->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
 
-    lsquic_stream_set_ctx(stream, st);
+    lsquic_stream_set_ctx(stream, (lsquic_stream_ctx_t *) st);
     lsquic_stream_wantread(stream, 1);
     queue_baton(sess, st, baton);
     return 0;
@@ -692,7 +774,7 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
 
 static lsquic_wt_session_ctx_t *
 db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
-                                const struct lsquic_wt_connect_info *info)
+                            const struct lsquic_wt_connect_info *UNUSED_info)
 {
     struct devious_baton_app *cfg;
     struct devious_baton_session *bsess;
@@ -706,8 +788,6 @@ db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
     bsess->cfg = *cfg;
     bsess->active_batons = cfg->count;
     TAILQ_INSERT_TAIL(&s_sessions, bsess, next_session);
-
-    (void) info;
 
     if (bsess->cfg.is_server)
     {
@@ -728,14 +808,11 @@ db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
 static void
 db_on_wt_session_close (struct lsquic_wt_session *sess,
                                 struct lsquic_wt_session_ctx *sctx,
-                                uint64_t code, const char *reason,
-                                size_t reason_len)
+                                uint64_t UNUSED_code,
+                                const char *UNUSED_reason,
+                                size_t UNUSED_reason_len)
 {
     struct devious_baton_session *bsess;
-
-    (void) code;
-    (void) reason;
-    (void) reason_len;
 
     bsess = sctx ? (struct devious_baton_session *) sctx
                  : find_session(sess);
@@ -807,12 +884,10 @@ db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 
 
 static void
-db_on_wt_stream_fin (struct lsquic_stream *stream,
+db_on_wt_stream_fin (struct lsquic_stream *UNUSED_stream,
                                             struct lsquic_stream_ctx *sctx)
 {
     struct devious_baton_stream *st;
-
-    (void) stream;
 
     st = (struct devious_baton_stream *) sctx;
     if (!st || st->kind != DB_STREAM_BATON)
@@ -823,14 +898,11 @@ db_on_wt_stream_fin (struct lsquic_stream *stream,
 
 
 static void
-db_on_wt_stream_reset (struct lsquic_stream *stream,
+db_on_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
                                             struct lsquic_stream_ctx *sctx,
-                                                    uint64_t error_code)
+                                            uint64_t UNUSED_error_code)
 {
     struct devious_baton_stream *st;
-
-    (void) stream;
-    (void) error_code;
 
     st = (struct devious_baton_stream *) sctx;
     if (!st || st->kind != DB_STREAM_BATON)
@@ -843,13 +915,10 @@ db_on_wt_stream_reset (struct lsquic_stream *stream,
 
 
 static void
-db_on_wt_stop_sending (struct lsquic_stream *stream,
-                                            struct lsquic_stream_ctx *sctx,
-                                                    uint64_t error_code)
+db_on_wt_stop_sending (struct lsquic_stream *UNUSED_stream,
+                                            struct lsquic_stream_ctx *UNUSED_sctx,
+                                            uint64_t UNUSED_error_code)
 {
-    (void) stream;
-    (void) sctx;
-    (void) error_code;
 }
 
 
@@ -1000,7 +1069,9 @@ process_control_server (struct devious_baton_stream *st)
     struct devious_baton_app cfg;
     struct devious_baton_conn *conn;
     struct lsquic_wt_accept_params params;
+    struct lsquic_wt_connect_info info;
     char err_buf[128];
+    int ok;
 
     conn = st->conn;
 
@@ -1013,7 +1084,8 @@ process_control_server (struct devious_baton_stream *st)
     }
 
     cfg = *conn->app;
-    if (0 != parse_request(hset, &cfg, err_buf, sizeof(err_buf)))
+    ok = parse_request(hset, &cfg, &info, err_buf, sizeof(err_buf));
+    if (0 != ok)
     {
         hset_destroy(hset);
         lsquic_wt_reject(st->stream, 400, err_buf, strlen(err_buf));
@@ -1021,17 +1093,21 @@ process_control_server (struct devious_baton_stream *st)
         return;
     }
 
-    hset_destroy(hset);
-
     memset(&params, 0, sizeof(params));
     params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
+    params.connect_info = &info;
     if (!lsquic_wt_accept(st->stream, &params))
     {
+        free_connect_info(&info);
+        hset_destroy(hset);
         lsquic_stream_close(st->stream);
         return;
     }
+
+    free_connect_info(&info);
+    hset_destroy(hset);
 
     if (0 != lsquic_stream_flush(st->stream))
         LSQ_ERROR("cannot flush response: %s", strerror(errno));
@@ -1086,7 +1162,8 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
     ssize_t nread;
 
     st = (struct devious_baton_stream *) st_h;
-    conn = stream ? lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
+    conn = stream ? (struct devious_baton_conn *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
 
     if (!st)
     {
@@ -1151,7 +1228,8 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
     ssize_t nwritten;
 
     st = (struct devious_baton_stream *) st_h;
-    conn = stream ? lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
+    conn = stream ? (struct devious_baton_conn *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
 
     if (!st)
         return;
@@ -1189,11 +1267,10 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
 
 
 static void
-on_close (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
+on_close (struct lsquic_stream *UNUSED_stream,
+                                        struct lsquic_stream_ctx *st_h)
 {
     struct devious_baton_stream *st;
-
-    (void) stream;
 
     st = (struct devious_baton_stream *) st_h;
     if (!st)
@@ -1209,8 +1286,6 @@ on_new_conn (void *stream_if_ctx, struct lsquic_conn *conn)
 {
     struct devious_baton_app *app;
     struct devious_baton_conn *ctx;
-
-    (void) conn;
 
     app = stream_if_ctx;
     ctx = calloc(1, sizeof(*ctx));
@@ -1232,7 +1307,7 @@ on_conn_closed (struct lsquic_conn *conn)
 {
     struct devious_baton_conn *ctx;
 
-    ctx = lsquic_conn_get_ctx(conn);
+    ctx = (struct devious_baton_conn *) lsquic_conn_get_ctx(conn);
     if (ctx && ctx->prog)
         prog_stop(ctx->prog);
 
@@ -1249,7 +1324,8 @@ on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
     struct devious_baton_stream *st;
 
     app = stream_if_ctx;
-    conn = lsquic_conn_get_ctx(lsquic_stream_conn(stream));
+    conn = (struct devious_baton_conn *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(stream));
 
     if (!conn || app->is_server)
         return NULL;

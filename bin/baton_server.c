@@ -21,6 +21,7 @@
 #include "lsquic.h"
 #include "devious_baton.h"
 #include "test_common.h"
+#include "../src/liblsquic/lsquic_hash.h"
 #include "test_cert.h"
 #include "prog.h"
 

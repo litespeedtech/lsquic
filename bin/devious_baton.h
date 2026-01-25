@@ -2,8 +2,6 @@
 #ifndef DEVIOUS_BATON_H
 #define DEVIOUS_BATON_H
 
-#include <stddef.h>
-
 struct lsquic_hset_if;
 struct lsquic_stream_if;
 struct prog;

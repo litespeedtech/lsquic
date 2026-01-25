@@ -7,11 +7,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_wt.h"
-#include "lsquic_conn_public.h"
+#include "lsquic_int_types.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
+#include "lsquic_varint.h"
+#include "lsquic_hq.h"
+#include "lsquic_hash.h"
+#include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
+#include "lsquic_conn_public.h"
 #include "lsxpack_header.h"
 
 
@@ -26,6 +34,10 @@ struct lsquic_wt_session
     lsquic_wt_session_ctx_t           *wts_sess_ctx;
     struct lsquic_wt_connect_info      wts_info;
     lsquic_stream_id_t                 wts_stream_id;
+    char                              *wts_authority;
+    char                              *wts_path;
+    char                              *wts_origin;
+    char                              *wts_protocol;
 };
 
 
@@ -50,6 +62,74 @@ wt_session_find (struct lsquic_conn_public *conn_pub,
     return NULL;
 }
 
+
+
+static void
+wt_free_connect_info (struct lsquic_wt_session *sess)
+{
+    if (!sess)
+        return;
+
+    free(sess->wts_authority);
+    free(sess->wts_path);
+    free(sess->wts_origin);
+    free(sess->wts_protocol);
+
+    sess->wts_authority = NULL;
+    sess->wts_path = NULL;
+    sess->wts_origin = NULL;
+    sess->wts_protocol = NULL;
+
+    memset(&sess->wts_info, 0, sizeof(sess->wts_info));
+}
+
+
+static int
+wt_copy_string (char **dst, const char *src)
+{
+    if (!src)
+    {
+        *dst = NULL;
+        return 0;
+    }
+
+    *dst = strdup(src);
+    return *dst ? 0 : -1;
+}
+
+
+static int
+wt_copy_connect_info (struct lsquic_wt_session *sess,
+                                    const struct lsquic_wt_connect_info *info)
+{
+    if (!info)
+    {
+        memset(&sess->wts_info, 0, sizeof(sess->wts_info));
+        return 0;
+    }
+
+    memset(&sess->wts_info, 0, sizeof(sess->wts_info));
+    sess->wts_info.draft = info->draft;
+
+    if (0 != wt_copy_string(&sess->wts_authority, info->authority))
+        goto err;
+    if (0 != wt_copy_string(&sess->wts_path, info->path))
+        goto err;
+    if (0 != wt_copy_string(&sess->wts_origin, info->origin))
+        goto err;
+    if (0 != wt_copy_string(&sess->wts_protocol, info->protocol))
+        goto err;
+
+    sess->wts_info.authority = sess->wts_authority;
+    sess->wts_info.path = sess->wts_path;
+    sess->wts_info.origin = sess->wts_origin;
+    sess->wts_info.protocol = sess->wts_protocol;
+    return 0;
+
+  err:
+    wt_free_connect_info(sess);
+    return -1;
+}
 
 
 static int
@@ -160,6 +240,7 @@ wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
         sess->wts_if->on_wt_session_close((lsquic_wt_session_t *) sess,
                 sess->wts_sess_ctx, code, reason, reason_len);
 
+    wt_free_connect_info(sess);
     free(sess);
 }
 
@@ -196,6 +277,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
             return NULL;
     }
 
+    info = params->connect_info;
     sess = calloc(1, sizeof(*sess));
     if (!sess)
         return NULL;
@@ -206,15 +288,16 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_if_ctx = params->wt_if_ctx;
     sess->wts_sess_ctx = params->sess_ctx;
     sess->wts_stream_id = connect_stream->id;
+
+    if (0 != wt_copy_connect_info(sess, info))
+    {
+        free(sess);
+        return NULL;
+    }
+
     connect_stream->sm_wt_session = sess;
     lsquic_stream_set_webtransport_session(connect_stream);
     TAILQ_INSERT_TAIL(&connect_stream->conn_pub->wt_sessions, sess, wts_next);
-
-    info = params->connect_info;
-    if (info)
-        memcpy(&sess->wts_info, info, sizeof(sess->wts_info));
-    else
-        memset(&sess->wts_info, 0, sizeof(sess->wts_info));
 
     if (sess->wts_if && sess->wts_if->on_wt_session_open)
         sess->wts_sess_ctx = sess->wts_if->on_wt_session_open(
@@ -228,8 +311,8 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
 int
 lsquic_wt_reject (struct lsquic_stream *connect_stream,
-                                unsigned status, const char *reason,
-                                                            size_t reason_len)
+                                unsigned status, const char *UNUSED_reason,
+                                            size_t UNUSED_reason_len)
 {
     if (!connect_stream)
     {
@@ -255,8 +338,6 @@ lsquic_wt_reject (struct lsquic_stream *connect_stream,
     if (0 != wt_send_response(connect_stream, status, NULL, 1))
         return -1;
 
-    (void) reason;
-    (void) reason_len;
     return 0;
 }
 
@@ -310,9 +391,8 @@ lsquic_wt_session_id (struct lsquic_wt_session *sess)
 
 
 struct lsquic_stream *
-lsquic_wt_open_uni (struct lsquic_wt_session *sess)
+lsquic_wt_open_uni (struct lsquic_wt_session *UNUSED_sess)
 {
-    (void) sess;
     errno = ENOSYS;
     return NULL;
 }
@@ -320,9 +400,8 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 
 
 struct lsquic_stream *
-lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
+lsquic_wt_open_bidi (struct lsquic_wt_session *UNUSED_sess)
 {
-    (void) sess;
     errno = ENOSYS;
     return NULL;
 }
@@ -377,12 +456,10 @@ lsquic_wt_stream_initiator (const struct lsquic_stream *stream)
 
 
 ssize_t
-lsquic_wt_send_datagram (struct lsquic_wt_session *sess,
-                                        const void *buf, size_t len)
+lsquic_wt_send_datagram (struct lsquic_wt_session *UNUSED_sess,
+                                        const void *UNUSED_buf,
+                                        size_t UNUSED_len)
 {
-    (void) sess;
-    (void) buf;
-    (void) len;
     errno = ENOSYS;
     return -1;
 }
@@ -390,19 +467,17 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *sess,
 
 
 size_t
-lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
+lsquic_wt_max_datagram_size (const struct lsquic_wt_session *UNUSED_sess)
 {
-    (void) sess;
     return 0;
 }
 
 
 
 int
-lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
+lsquic_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
+                                                    uint64_t UNUSED_error_code)
 {
-    (void) stream;
-    (void) error_code;
     errno = ENOSYS;
     return -1;
 }
@@ -410,10 +485,9 @@ lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
 
 
 int
-lsquic_wt_stream_stop_sending (struct lsquic_stream *stream, uint64_t error_code)
+lsquic_wt_stream_stop_sending (struct lsquic_stream *UNUSED_stream,
+                                                    uint64_t UNUSED_error_code)
 {
-    (void) stream;
-    (void) error_code;
     errno = ENOSYS;
     return -1;
 }
