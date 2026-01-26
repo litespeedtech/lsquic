@@ -1376,7 +1376,7 @@ lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
 
 enum quic_frame_type
 lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
-                                    uint64_t *reliable_size)
+                                                    uint64_t *reliable_size)
 {
     if (stream->sm_wt_header_sz == 0)
     {
@@ -1475,7 +1475,7 @@ lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
 {
     if (stream->sm_bflags & SMBF_IETF)
         return stream_reset_in_ietf(stream, offset, 0, error_code,
-                                    QUIC_FRAME_RST_STREAM);
+                                                    QUIC_FRAME_RST_STREAM);
     else
         return stream_reset_in_gquic(stream, offset, error_code);
 }

@@ -2649,7 +2649,7 @@ generate_reset_stream_at_frame (struct ietf_full_conn *conn,
 
 static int
 generate_rst_stream_frame (struct ietf_full_conn *conn,
-                                             struct lsquic_stream *stream)
+                                                struct lsquic_stream *stream)
 {
     lsquic_packet_out_t *packet_out;
     unsigned need;
@@ -2672,9 +2672,8 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("gen_rst_frame failed");
         return 0;
     }
-    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm,
-                    stream, QUIC_FRAME_RST_STREAM,
-                    packet_out->po_data_sz, sz))
+    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
+                            QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz))
     {
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return 0;

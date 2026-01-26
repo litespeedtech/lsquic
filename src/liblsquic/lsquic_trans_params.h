@@ -226,7 +226,7 @@ lsquic_tp_get_quantum_sz (void);
     /* [draft-huitema-quic-ts-08] does not specify, store:           */ \
     | (1 << TPI_TIMESTAMPS)                                             \
     /* [draft-ietf-quic-reliable-stream-reset-07] Section 3:         */ \
-    | (1 << TPI_RESET_STREAM_AT)                                       \
+    | (1 << TPI_RESET_STREAM_AT)                                        \
 )
 
 /* We always send the minimum ACK delay as 10ms; it is not configurable.
