@@ -1004,6 +1004,7 @@ static const struct crypto_stream_if crypto_stream_if =
 
 
 static const struct lsquic_stream_if *unicla_if_ptr;
+const struct lsquic_stream_if *lsquic_wt_uni_stream_if (void);
 
 
 static lsquic_stream_id_t
@@ -1038,6 +1039,9 @@ avail_streams_count (const struct ietf_full_conn *conn, int server,
         return 0;
     }
 }
+
+static void
+queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd);
 
 
 /* If `priority' is negative, this means that the stream is critical */
@@ -1128,6 +1132,81 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     }
     lsquic_stream_call_on_new(stream);
     return 0;
+}
+
+static struct lsquic_stream *
+create_bidi_stream_out_with_if (struct ietf_full_conn *conn,
+    const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct lsquic_stream *stream;
+    lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
+
+    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_BIDI))
+    {
+        queue_streams_blocked_frame(conn, SD_BIDI);
+        errno = ENOSPC;
+        return NULL;
+    }
+
+    flags = SCF_IETF|SCF_DI_AUTOSWITCH;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
+
+    stream_id = generate_stream_id(conn, SD_BIDI);
+    stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                stream_if, stream_if_ctx,
+                conn->ifc_settings->es_init_max_stream_data_bidi_local,
+                conn->ifc_cfg.max_stream_send, flags);
+    if (!stream)
+        return NULL;
+    if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+                            sizeof(stream->id), stream, &stream->sm_hash_el))
+    {
+        lsquic_stream_destroy(stream);
+        return NULL;
+    }
+    lsquic_stream_call_on_new(stream);
+    return stream;
+}
+
+static struct lsquic_stream *
+create_uni_stream_out_with_if (struct ietf_full_conn *conn,
+    const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct lsquic_stream *stream;
+    lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
+
+    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
+    {
+        queue_streams_blocked_frame(conn, SD_UNI);
+        errno = ENOSPC;
+        return NULL;
+    }
+
+    flags = SCF_IETF;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
+
+    stream_id = generate_stream_id(conn, SD_UNI);
+    stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                stream_if, stream_if_ctx, 0, conn->ifc_max_stream_data_uni,
+                flags);
+    if (!stream)
+        return NULL;
+    if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+                            sizeof(stream->id), stream, &stream->sm_hash_el))
+    {
+        lsquic_stream_destroy(stream);
+        return NULL;
+    }
+    lsquic_stream_call_on_new(stream);
+    return stream;
 }
 
 
@@ -9147,6 +9226,36 @@ ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
     }
 }
 
+static struct lsquic_stream *
+ietf_full_conn_ci_make_bidi_stream_with_if (struct lsquic_conn *lconn,
+        const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+
+    if (!handshake_done_or_doing_sess_resume(conn))
+    {
+        errno = EAGAIN;
+        return NULL;
+    }
+
+    return create_bidi_stream_out_with_if(conn, stream_if, stream_if_ctx);
+}
+
+static struct lsquic_stream *
+ietf_full_conn_ci_make_uni_stream_with_if (struct lsquic_conn *lconn,
+        const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+
+    if (!handshake_done_or_doing_sess_resume(conn))
+    {
+        errno = EAGAIN;
+        return NULL;
+    }
+
+    return create_uni_stream_out_with_if(conn, stream_if, stream_if_ctx);
+}
+
 
 static void
 ietf_full_conn_ci_internal_error (struct lsquic_conn *lconn,
@@ -9476,6 +9585,8 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
     .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
     .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
+    .ci_make_bidi_stream_with_if = ietf_full_conn_ci_make_bidi_stream_with_if, \
+    .ci_make_uni_stream_with_if =  ietf_full_conn_ci_make_uni_stream_with_if, \
     .ci_mtu_probe_acked      =  ietf_full_conn_ci_mtu_probe_acked, \
     .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
     .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
@@ -10246,6 +10357,10 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
                 conn->ifc_qeh.qeh_dec_sm_in->id, stream->id);
             lsquic_stream_close(stream);
         }
+        break;
+    case HQUST_WEBTRANSPORT:
+        LSQ_DEBUG("Incoming WebTransport stream ID: %"PRIu64, stream->id);
+        lsquic_stream_set_stream_if(stream, lsquic_wt_uni_stream_if(), conn);
         break;
     case HQUST_PUSH:
         if (conn->ifc_flags & IFC_SERVER)

@@ -17,10 +17,38 @@
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_hash.h"
+#include "lsquic_mm.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_stream.h"
+#include "lsquic_engine_public.h"
+#include "lsquic_conn.h"
 #include "lsquic_conn_public.h"
 #include "lsxpack_header.h"
+
+
+struct wt_onnew_ctx
+{
+    struct lsquic_wt_session  *sess;
+    unsigned char              prefix[16];
+    size_t                     prefix_len;
+    int                        is_dynamic;
+};
+
+struct wt_stream_ctx
+{
+    struct lsquic_wt_session  *sess;
+    lsquic_stream_ctx_t       *app_ctx;
+    unsigned char              prefix[16];
+    size_t                     prefix_len;
+    size_t                     prefix_off;
+};
+
+struct wt_uni_read_ctx
+{
+    struct varint_read_state   state;
+    lsquic_stream_id_t         sess_id;
+    int                        done;
+};
 
 
 struct lsquic_wt_session
@@ -31,6 +59,7 @@ struct lsquic_wt_session
     const struct lsquic_webtransport_if
                                       *wts_if;
     void                              *wts_if_ctx;
+    const struct lsquic_wt_stream_if  *wts_stream_if;
     lsquic_wt_session_ctx_t           *wts_sess_ctx;
     struct lsquic_wt_connect_info      wts_info;
     lsquic_stream_id_t                 wts_stream_id;
@@ -38,6 +67,8 @@ struct lsquic_wt_session
     char                              *wts_path;
     char                              *wts_origin;
     char                              *wts_protocol;
+    struct lsquic_stream_if            wts_data_if;
+    struct wt_onnew_ctx                wts_onnew_ctx;
 };
 
 
@@ -47,6 +78,218 @@ struct wt_header_buf
     char    buf[128];
     size_t  off;
 };
+
+static struct lsquic_wt_session *
+wt_session_find (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id);
+
+static void
+wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
+                                                    lsquic_stream_id_t sess_id)
+{
+    uint64_t bits;
+    size_t off;
+
+    bits = vint_val2bits(first);
+    off = 1u << bits;
+    vint_write(buf, first, bits, off);
+
+    bits = vint_val2bits(sess_id);
+    vint_write(buf + off, sess_id, bits, 1u << bits);
+    off += 1u << bits;
+
+    *len = off;
+}
+
+static lsquic_stream_ctx_t *
+wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
+{
+    struct wt_onnew_ctx *const onnew = ctx;
+    struct lsquic_wt_session *sess;
+    struct wt_stream_ctx *wctx;
+    lsquic_stream_ctx_t *app_ctx;
+
+    sess = onnew ? onnew->sess : NULL;
+    if (!sess)
+        return NULL;
+
+    wctx = calloc(1, sizeof(*wctx));
+    if (!wctx)
+        return NULL;
+
+    wctx->sess = sess;
+    if (onnew->prefix_len)
+    {
+        memcpy(wctx->prefix, onnew->prefix, onnew->prefix_len);
+        wctx->prefix_len = onnew->prefix_len;
+    }
+
+    app_ctx = NULL;
+    if (sess->wts_if)
+    {
+        if (lsquic_wt_stream_dir(stream) == LSQWT_UNI)
+        {
+            if (sess->wts_if->on_wt_uni_stream)
+                app_ctx = sess->wts_if->on_wt_uni_stream(
+                                    (lsquic_wt_session_t *) sess, stream);
+        }
+        else if (sess->wts_if->on_wt_bidi_stream)
+            app_ctx = sess->wts_if->on_wt_bidi_stream(
+                                    (lsquic_wt_session_t *) sess, stream);
+    }
+
+    wctx->app_ctx = app_ctx;
+    stream->sm_wt_session = sess;
+
+    if (onnew->is_dynamic)
+        free(onnew);
+
+    return (lsquic_stream_ctx_t *) wctx;
+}
+
+static void
+wt_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
+
+    if (!wctx || !wctx->sess || !wctx->sess->wts_stream_if
+        || !wctx->sess->wts_stream_if->on_read)
+        return;
+
+    wctx->sess->wts_stream_if->on_read(stream, wctx->app_ctx);
+}
+
+static void
+wt_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
+    ssize_t nw;
+
+    if (!wctx || !wctx->sess || !wctx->sess->wts_stream_if)
+        return;
+
+    while (wctx->prefix_off < wctx->prefix_len)
+    {
+        nw = lsquic_stream_write(stream, wctx->prefix + wctx->prefix_off,
+                                    wctx->prefix_len - wctx->prefix_off);
+        if (nw <= 0)
+            return;
+        wctx->prefix_off += (size_t) nw;
+    }
+
+    if (wctx->sess->wts_stream_if->on_write)
+        wctx->sess->wts_stream_if->on_write(stream, wctx->app_ctx);
+}
+
+static void
+wt_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
+
+    if (wctx && wctx->sess && wctx->sess->wts_stream_if
+        && wctx->sess->wts_stream_if->on_close)
+        wctx->sess->wts_stream_if->on_close(stream, wctx->app_ctx);
+
+    free(wctx);
+}
+
+static void
+wt_on_reset (struct lsquic_stream *UNUSED_stream,
+                                        lsquic_stream_ctx_t *UNUSED_sctx,
+                                        int UNUSED_how)
+{
+    /* XXX implement when RESET_STREAM_AT is integrated */
+}
+
+static lsquic_stream_ctx_t *
+wt_uni_on_new (void *UNUSED_ctx, struct lsquic_stream *stream)
+{
+    struct wt_uni_read_ctx *uctx;
+
+    uctx = calloc(1, sizeof(*uctx));
+    if (!uctx)
+        return NULL;
+
+    lsquic_stream_wantread(stream, 1);
+    return (lsquic_stream_ctx_t *) uctx;
+}
+
+static size_t
+wt_uni_readf (void *ctx, const unsigned char *buf, size_t sz, int fin)
+{
+    struct wt_uni_read_ctx *uctx = ctx;
+    const unsigned char *p = buf;
+    const unsigned char *const end = buf + sz;
+    int s;
+
+    if (uctx->done)
+        return 0;
+
+    s = lsquic_varint_read_nb(&p, end, &uctx->state);
+    if (s == 0)
+    {
+        uctx->sess_id = uctx->state.val;
+        uctx->done = 1;
+        return (size_t) (p - buf);
+    }
+    else if (fin)
+    {
+        uctx->done = 1;
+        return (size_t) (p - buf);
+    }
+    else
+        return (size_t) (p - buf);
+}
+
+static void
+wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct wt_uni_read_ctx *uctx = (struct wt_uni_read_ctx *) sctx;
+    struct lsquic_wt_session *sess;
+    ssize_t nread;
+
+    if (!uctx || uctx->done)
+        return;
+
+    nread = lsquic_stream_readf(stream, wt_uni_readf, uctx);
+    if (nread < 0)
+        return;
+
+    if (!uctx->done)
+        return;
+
+    sess = wt_session_find(stream->conn_pub, uctx->sess_id);
+    if (!sess)
+    {
+        lsquic_stream_close(stream);
+        free(uctx);
+        return;
+    }
+
+    free(uctx);
+    lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
+                                                &sess->wts_onnew_ctx);
+}
+
+static void
+wt_uni_on_close (struct lsquic_stream *UNUSED_stream,
+                                        lsquic_stream_ctx_t *sctx)
+{
+    free(sctx);
+}
+
+static const struct lsquic_stream_if wt_uni_stream_if =
+{
+    .on_new_stream  = wt_uni_on_new,
+    .on_read        = wt_uni_on_read,
+    .on_close       = wt_uni_on_close,
+};
+
+const struct lsquic_stream_if *
+lsquic_wt_uni_stream_if (void)
+{
+    return &wt_uni_stream_if;
+}
 
 
 static struct lsquic_wt_session *
@@ -261,6 +504,12 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
+    if (!params->stream_if)
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
     if (connect_stream->sm_wt_session)
     {
         errno = EALREADY;
@@ -286,6 +535,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_conn_pub = connect_stream->conn_pub;
     sess->wts_if = params->wt_if;
     sess->wts_if_ctx = params->wt_if_ctx;
+    sess->wts_stream_if = params->stream_if;
     sess->wts_sess_ctx = params->sess_ctx;
     sess->wts_stream_id = connect_stream->id;
 
@@ -294,6 +544,17 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         free(sess);
         return NULL;
     }
+
+    sess->wts_data_if = *sess->wts_conn_pub->enpub->enp_stream_if;
+    sess->wts_data_if.on_new_stream = wt_on_new_stream;
+    sess->wts_data_if.on_read = wt_on_read;
+    sess->wts_data_if.on_write = wt_on_write;
+    sess->wts_data_if.on_close = wt_on_close;
+    sess->wts_data_if.on_reset = wt_on_reset;
+
+    sess->wts_onnew_ctx.sess = sess;
+    sess->wts_onnew_ctx.prefix_len = 0;
+    sess->wts_onnew_ctx.is_dynamic = 0;
 
     connect_stream->sm_wt_session = sess;
     lsquic_stream_set_webtransport_session(connect_stream);
@@ -391,19 +652,85 @@ lsquic_wt_session_id (struct lsquic_wt_session *sess)
 
 
 struct lsquic_stream *
-lsquic_wt_open_uni (struct lsquic_wt_session *UNUSED_sess)
+lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 {
-    errno = ENOSYS;
-    return NULL;
+    struct wt_onnew_ctx *onnew;
+    struct lsquic_conn *lconn;
+    struct lsquic_stream *stream;
+
+    if (!sess || !sess->wts_conn_pub)
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    lconn = sess->wts_conn_pub->lconn;
+    if (!lconn || !lconn->cn_if || !lconn->cn_if->ci_make_uni_stream_with_if)
+    {
+        errno = ENOSYS;
+        return NULL;
+    }
+
+    onnew = calloc(1, sizeof(*onnew));
+    if (!onnew)
+        return NULL;
+
+    onnew->sess = sess;
+    onnew->is_dynamic = 1;
+    wt_build_prefix(onnew->prefix, &onnew->prefix_len, 0x54,
+                                                    sess->wts_stream_id);
+
+    stream = lconn->cn_if->ci_make_uni_stream_with_if(lconn,
+                                            &sess->wts_data_if, onnew);
+    if (!stream)
+    {
+        free(onnew);
+        return NULL;
+    }
+
+    return stream;
 }
 
 
 
 struct lsquic_stream *
-lsquic_wt_open_bidi (struct lsquic_wt_session *UNUSED_sess)
+lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
 {
-    errno = ENOSYS;
-    return NULL;
+    struct wt_onnew_ctx *onnew;
+    struct lsquic_conn *lconn;
+    struct lsquic_stream *stream;
+
+    if (!sess || !sess->wts_conn_pub)
+    {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    lconn = sess->wts_conn_pub->lconn;
+    if (!lconn || !lconn->cn_if || !lconn->cn_if->ci_make_bidi_stream_with_if)
+    {
+        errno = ENOSYS;
+        return NULL;
+    }
+
+    onnew = calloc(1, sizeof(*onnew));
+    if (!onnew)
+        return NULL;
+
+    onnew->sess = sess;
+    onnew->is_dynamic = 1;
+    wt_build_prefix(onnew->prefix, &onnew->prefix_len, 0x41,
+                                                    sess->wts_stream_id);
+
+    stream = lconn->cn_if->ci_make_bidi_stream_with_if(lconn,
+                                            &sess->wts_data_if, onnew);
+    if (!stream)
+    {
+        free(onnew);
+        return NULL;
+    }
+
+    return stream;
 }
 
 
@@ -415,6 +742,26 @@ lsquic_wt_session_from_stream (struct lsquic_stream *stream)
         return NULL;
 
     return stream->sm_wt_session;
+}
+
+lsquic_stream_ctx_t *
+lsquic_wt_stream_get_ctx (struct lsquic_stream *stream)
+{
+    struct wt_stream_ctx *wctx;
+    struct lsquic_wt_session *sess;
+
+    if (!stream || !stream->sm_wt_session)
+        return NULL;
+
+    sess = stream->sm_wt_session;
+    if (stream->stream_if != &sess->wts_data_if)
+        return NULL;
+
+    wctx = (struct wt_stream_ctx *) stream->st_ctx;
+    if (!wctx)
+        return NULL;
+
+    return wctx->app_ctx;
 }
 
 
@@ -460,6 +807,7 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *UNUSED_sess,
                                         const void *UNUSED_buf,
                                         size_t UNUSED_len)
 {
+    /* XXX implement HTTP Datagram handling for WebTransport sessions */
     errno = ENOSYS;
     return -1;
 }
@@ -469,6 +817,7 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *UNUSED_sess,
 size_t
 lsquic_wt_max_datagram_size (const struct lsquic_wt_session *UNUSED_sess)
 {
+    /* XXX implement HTTP Datagram handling for WebTransport sessions */
     return 0;
 }
 
@@ -519,7 +868,6 @@ lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id)
 {
     struct lsquic_wt_session *sess;
-    lsquic_stream_ctx_t *sctx;
 
     if (!stream)
         return;
@@ -528,13 +876,6 @@ lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
     if (!sess)
         return;
 
-    stream->sm_wt_session = sess;
-
-    if (sess->wts_if && sess->wts_if->on_wt_bidi_stream)
-    {
-        sctx = sess->wts_if->on_wt_bidi_stream(
-                        (lsquic_wt_session_t *) sess, stream);
-        if (sctx)
-            lsquic_stream_set_ctx(stream, sctx);
-    }
+    lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
+                                                &sess->wts_onnew_ctx);
 }

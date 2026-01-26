@@ -1451,6 +1451,24 @@ full_conn_ci_make_stream (struct lsquic_conn *lconn)
     }
 }
 
+static struct lsquic_stream *
+full_conn_ci_make_bidi_stream_with_if (struct lsquic_conn *UNUSED_lconn,
+        const struct lsquic_stream_if *UNUSED_stream_if,
+        void *UNUSED_stream_if_ctx)
+{
+    errno = ENOSYS;
+    return NULL;
+}
+
+static struct lsquic_stream *
+full_conn_ci_make_uni_stream_with_if (struct lsquic_conn *UNUSED_lconn,
+        const struct lsquic_stream_if *UNUSED_stream_if,
+        void *UNUSED_stream_if_ctx)
+{
+    errno = ENOSYS;
+    return NULL;
+}
+
 
 static lsquic_stream_t *
 find_stream_by_id (struct full_conn *conn, lsquic_stream_id_t stream_id)
@@ -4615,6 +4633,8 @@ static const struct conn_iface full_conn_iface = {
     .ci_is_push_enabled      =  full_conn_ci_is_push_enabled,
     .ci_is_tickable          =  full_conn_ci_is_tickable,
     .ci_make_stream          =  full_conn_ci_make_stream,
+    .ci_make_bidi_stream_with_if = full_conn_ci_make_bidi_stream_with_if,
+    .ci_make_uni_stream_with_if  = full_conn_ci_make_uni_stream_with_if,
     .ci_n_avail_streams      =  full_conn_ci_n_avail_streams,
     .ci_n_pending_streams    =  full_conn_ci_n_pending_streams,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,

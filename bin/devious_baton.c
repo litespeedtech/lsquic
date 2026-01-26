@@ -683,18 +683,10 @@ open_stream_and_queue (struct devious_baton_session *sess,
     if (!stream)
         return -1;
 
-    st = calloc(1, sizeof(*st));
+    st = (struct devious_baton_stream *) lsquic_wt_stream_get_ctx(stream);
     if (!st)
         return -1;
 
-    st->kind = DB_STREAM_BATON;
-    st->session = sess;
-    st->stream = stream;
-    st->dir = dir;
-    st->initiator = sess->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
-
-    lsquic_stream_set_ctx(stream, (lsquic_stream_ctx_t *) st);
-    lsquic_stream_wantread(stream, 1);
     queue_baton(sess, st, baton);
     return 0;
 }
@@ -1108,6 +1100,7 @@ process_control_server (struct devious_baton_stream *st)
     params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
+    params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = &info;
     if (!lsquic_wt_accept(st->stream, &params))
     {
@@ -1156,6 +1149,7 @@ process_control_client (struct devious_baton_stream *st)
     memset(&params, 0, sizeof(params));
     params.wt_if = &wt_if;
     params.wt_if_ctx = st->conn->app;
+    params.stream_if = devious_baton_wt_stream_if();
     if (!lsquic_wt_accept(st->stream, &params))
     {
         lsquic_conn_abort(lsquic_stream_conn(st->stream));
@@ -1368,6 +1362,13 @@ static const struct lsquic_stream_if devious_baton_stream_if_impl =
     .on_close               = on_close,
 };
 
+static const struct lsquic_wt_stream_if devious_baton_wt_stream_if_impl =
+{
+    .on_read                = on_read,
+    .on_write               = on_write,
+    .on_close               = on_close,
+};
+
 
 void
 devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
@@ -1435,6 +1436,7 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
+    params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = info;
     if (!lsquic_wt_accept(stream, &params))
     {
@@ -1456,6 +1458,12 @@ const struct lsquic_stream_if *
 devious_baton_stream_if (void)
 {
     return &devious_baton_stream_if_impl;
+}
+
+const struct lsquic_wt_stream_if *
+devious_baton_wt_stream_if (void)
+{
+    return &devious_baton_wt_stream_if_impl;
 }
 
 

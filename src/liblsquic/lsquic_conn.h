@@ -191,6 +191,16 @@ struct conn_iface
     void
     (*ci_make_stream) (struct lsquic_conn *);
 
+    struct lsquic_stream *
+    (*ci_make_bidi_stream_with_if) (struct lsquic_conn *,
+                                    const struct lsquic_stream_if *,
+                                    void *stream_if_ctx);
+
+    struct lsquic_stream *
+    (*ci_make_uni_stream_with_if) (struct lsquic_conn *,
+                                   const struct lsquic_stream_if *,
+                                   void *stream_if_ctx);
+
     void
     (*ci_abort) (struct lsquic_conn *);
 

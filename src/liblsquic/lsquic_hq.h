@@ -57,6 +57,7 @@ enum hq_uni_stream_type
     HQUST_PUSH      = 1,
     HQUST_QPACK_ENC = 2,
     HQUST_QPACK_DEC = 3,
+    HQUST_WEBTRANSPORT = 0x54,
 };
 
 

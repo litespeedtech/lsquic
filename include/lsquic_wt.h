@@ -40,12 +40,20 @@ struct lsquic_wt_connect_info
     unsigned    draft;      /* non-zero if Sec-WebTransport-Http3-Draft used */
 };
 
+struct lsquic_wt_stream_if
+{
+    void  (*on_read)  (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
+    void  (*on_write) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
+    void  (*on_close) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
+};
+
 struct lsquic_wt_accept_params
 {
     const struct lsquic_http_headers *extra_resp_headers; /* optional */
     unsigned status;      /* default 200 */
     const struct lsquic_webtransport_if *wt_if; /* per-session callbacks */
     void *wt_if_ctx;      /* passed to on_wt_session_open */
+    const struct lsquic_wt_stream_if *stream_if; /* stream callbacks */
     const struct lsquic_wt_connect_info *connect_info; /* optional */
     lsquic_wt_session_ctx_t *sess_ctx; /* optional if on_wt_session_open used */
 };
@@ -116,6 +124,10 @@ lsquic_wt_open_bidi (lsquic_wt_session_t *sess);
 /** Map a WT stream back to its session. */
 lsquic_wt_session_t *
 lsquic_wt_session_from_stream (lsquic_stream_t *stream);
+
+/** Return WT stream context (set by WT callbacks). */
+lsquic_stream_ctx_t *
+lsquic_wt_stream_get_ctx (lsquic_stream_t *stream);
 
 /** Query WT stream direction. */
 enum lsquic_wt_stream_dir
