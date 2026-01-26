@@ -278,7 +278,6 @@ enum stream_flags {
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
-    STREAM_RESET_AT_SEND= 1 << 30,  /* Use RESET_STREAM_AT when resetting */
 };
 
 
@@ -425,6 +424,7 @@ struct lsquic_stream
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     lsquic_stream_id_t              webtransport_session_stream_id;
 #endif
+    /* When non-zero, send RESET_STREAM_AT with this reliable size. */
     uint8_t                         sm_wt_header_sz;
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;

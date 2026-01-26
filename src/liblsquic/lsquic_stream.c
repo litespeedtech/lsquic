@@ -1378,8 +1378,7 @@ enum quic_frame_type
 lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
                                     uint64_t *reliable_size)
 {
-    if (!(stream->stream_flags & STREAM_RESET_AT_SEND)
-            || stream->sm_wt_header_sz == 0)
+    if (stream->sm_wt_header_sz == 0)
     {
         if (reliable_size)
             *reliable_size = 0;
@@ -4784,7 +4783,6 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
         return -1;
 
     s->sm_wt_header_sz = sz;
-    s->stream_flags |= STREAM_RESET_AT_SEND;
     return 0;
 }
 
@@ -5328,7 +5326,6 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     stream->sm_wt_header_sz = (uint8_t) (
                         vint_size(WEBTRANSPORT_BIDI_STREAM_TYPE)
                       + vint_size(stream->webtransport_session_stream_id));
-                    stream->stream_flags |= STREAM_RESET_AT_SEND;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     // disable header processing as we will not have any headers for this stream anymore
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
