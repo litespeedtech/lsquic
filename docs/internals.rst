@@ -961,6 +961,15 @@ ERROR should never happen -- this indicates a bug or maybe failure to
 allocate memory -- and so the connection is aborted in that case. If
 everything is OK, the while loop goes on.
 
+When RESET_STREAM_AT reliable delivery is enabled for a stream (see
+``lsquic_stream_set_reliable_size``), we must ensure that the reliable
+prefix bytes are never placed into buffered packets. While buffered
+packets are convenient, they can be elided wholesale when a stream is
+reset. To avoid dropping the reliable prefix, the stream write path
+asks the send controller for a scheduled packet while the stream send
+offset is below the reliable size. After the reliable prefix is
+packetized, normal buffering resumes.
+
 The ``seen_ok`` check is used to place the connection on the tickable list
 on the first successfully packetized STREAM frame. This is so that if
 the packet is buffered (meaning that the writing is occurring outside of
