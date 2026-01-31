@@ -391,7 +391,7 @@ stream_is_hsk (const struct lsquic_stream *stream)
 static struct lsquic_packet_out *
 stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
                 unsigned need_at_least, const struct network_path *path,
-                const struct lsquic_stream *stream)
+                const struct lsquic_stream *stream, int buffered_packet_ok)
 {
     struct lsquic_packet_out *packet_out;
 
@@ -404,12 +404,12 @@ stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
         ((struct lsquic_stream *) stream)->sm_get_packet_for_stream
                                 = lsquic_send_ctl_get_packet_for_stream;
         return lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
     }
     else
     {
         packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
         if (packet_out)
             packet_out->po_header_type = HETY_0RTT;
         return packet_out;
@@ -3616,8 +3616,12 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     else
         need_at_least += size > 0;
   get_packet:
+    const int buffered_packet_ok =
+        !(stream->sm_wt_header_sz != 0
+            && stream->tosend_off < stream->sm_wt_header_sz);
     packet_out = stream->sm_get_packet_for_stream(send_ctl,
-                                need_at_least, stream->conn_pub->path, stream);
+                    need_at_least, stream->conn_pub->path, stream,
+                    buffered_packet_ok);
     if (packet_out)
     {
         len = write_stream_frame(fg_ctx, size, packet_out);

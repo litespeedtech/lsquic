@@ -376,7 +376,8 @@ struct lsquic_stream
     struct lsquic_packet_out *    (*sm_get_packet_for_stream)(
                                         struct lsquic_send_ctl *,
                                         unsigned, const struct network_path *,
-                                        const struct lsquic_stream *);
+                                        const struct lsquic_stream *,
+                                        int buffered_packet_ok);
 
     /* This element is optional */
     const struct stream_filter_if  *sm_sfi;
