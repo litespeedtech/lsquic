@@ -1144,7 +1144,7 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
             && stream->sm_reset_at_final != DF_END(frame))
     {
         lconn = stream->conn_pub->lconn;
-        lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
             "final size %"PRIu64" from STREAM frame (id: %"PRIu64") does not "
             "match RESET_STREAM_AT final size %"PRIu64, DF_END(frame),
             stream->id, stream->sm_reset_at_final);
@@ -1293,7 +1293,10 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
                                 || stream->sm_reset_at_error != error_code)
         {
             lconn = stream->conn_pub->lconn;
-            lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+            lconn->cn_if->ci_abort_error(lconn, 0,
+                stream->sm_reset_at_final != final_size
+                                    ? TEC_FINAL_SIZE_ERROR
+                                    : TEC_STREAM_STATE_ERROR,
                 "%s frame changes final size or error code for stream "
                 "%"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
                 "%"PRIu64" vs %"PRIu64")", frame_name, stream->id,
@@ -1325,7 +1328,7 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
                                         && stream->sm_fin_off != final_size)
     {
         lconn = stream->conn_pub->lconn;
-        lconn->cn_if->ci_abort_error(lconn, 0, TEC_STREAM_STATE_ERROR,
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
             "final size %"PRIu64" from %s frame (id: %"PRIu64") does not "
             "match previous final size %"PRIu64, final_size, frame_name,
             stream->id, stream->sm_fin_off);

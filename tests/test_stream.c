@@ -1468,7 +1468,7 @@ test_rst_stream_final_size_mismatch (struct test_objs *tobjs)
     s = lsquic_stream_rst_in(stream, 200, 0);
     assert(s < 0);
     assert(s_abort_error.called);
-    assert(s_abort_error.error_code == TEC_STREAM_STATE_ERROR);
+    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
     assert(s_onreset_called.stream == NULL);
 
     lsquic_stream_destroy(stream);
@@ -1516,7 +1516,7 @@ test_reset_stream_at_updates_and_errors (struct test_objs *tobjs)
     s = lsquic_stream_reset_stream_at_in(stream, 101, 40, 7);
     assert(s < 0);
     assert(s_abort_error.called);
-    assert(s_abort_error.error_code == TEC_STREAM_STATE_ERROR);
+    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
 
     lsquic_stream_destroy(stream);
 }
