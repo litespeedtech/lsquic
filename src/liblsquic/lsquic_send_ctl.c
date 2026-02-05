@@ -2664,6 +2664,17 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
     if (dropped)
         lsquic_send_ctl_reset_packnos(ctl);
 
+    lsquic_send_ctl_elide_stream_frames_from_buffered(ctl, stream_id);
+}
+
+
+void
+lsquic_send_ctl_elide_stream_frames_from_buffered (lsquic_send_ctl_t *ctl,
+                                                lsquic_stream_id_t stream_id)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned n;
+
     for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++n)
     {

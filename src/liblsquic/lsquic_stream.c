@@ -1241,8 +1241,14 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
     if (!(stream->stream_flags & STREAM_FRAMES_ELIDED))
     {
         if (stream->n_unacked)
-            lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
-                                                stream->id);
+        {
+            if (stream->sm_wt_header_sz == 0)
+                lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
+                                                    stream->id);
+            else
+                lsquic_send_ctl_elide_stream_frames_from_buffered(
+                                        stream->conn_pub->send_ctl, stream->id);
+        }
         stream->stream_flags |= STREAM_FRAMES_ELIDED;
     }
 }
@@ -4796,6 +4802,7 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
         return -1;
 
     s->sm_wt_header_sz = sz;
+    s->sm_bflags |= SMBF_DELAY_ONCLOSE;
     return 0;
 }
 
@@ -5339,6 +5346,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     stream->sm_wt_header_sz = (uint8_t) (
                         vint_size(WEBTRANSPORT_BIDI_STREAM_TYPE)
                       + vint_size(stream->webtransport_session_stream_id));
+                    stream->sm_bflags |= SMBF_DELAY_ONCLOSE;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     // disable header processing as we will not have any headers for this stream anymore
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;

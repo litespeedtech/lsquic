@@ -284,6 +284,10 @@ lsquic_send_ctl_turn_nstp_on (lsquic_send_ctl_t *ctl)
 void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, lsquic_stream_id_t);
 
+void
+lsquic_send_ctl_elide_stream_frames_from_buffered (lsquic_send_ctl_t *,
+                                                   lsquic_stream_id_t);
+
 int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);
 
