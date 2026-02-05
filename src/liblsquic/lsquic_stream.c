@@ -4695,6 +4695,12 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
     LSQ_INFO("reset, error code %"PRIu64, error_code);
     stream->error_code = error_code;
 
+    if (stream->tosend_off < stream->sm_wt_header_sz
+        && !(stream->stream_flags & STREAM_U_WRITE_DONE))
+    {
+        (void) stream_flush_nocheck(stream);
+    }
+
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                         next_send_stream);
