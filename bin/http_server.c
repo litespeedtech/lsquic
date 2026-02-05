@@ -1086,6 +1086,28 @@ http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 }
 
 
+
+static int
+http_server_on_http_dg_write (lsquic_stream_t *stream,
+                                lsquic_stream_ctx_t *st_h,
+                                size_t max_quic_payload,
+                                lsquic_http_dg_consume_f consume_datagram)
+{
+    return lsquic_wt_on_http_dg_write(stream, st_h, max_quic_payload,
+                                                            consume_datagram);
+}
+
+
+
+static void
+http_server_on_http_dg_read (lsquic_stream_t *stream,
+                                lsquic_stream_ctx_t *st_h,
+                                const void *buf, size_t len)
+{
+    lsquic_wt_on_http_dg_read(stream, st_h, buf, len);
+}
+
+
 const struct lsquic_stream_if http_server_if = {
     .on_new_conn            = http_server_on_new_conn,
     .on_conn_closed         = http_server_on_conn_closed,
@@ -1093,6 +1115,8 @@ const struct lsquic_stream_if http_server_if = {
     .on_read                = http_server_on_read,
     .on_write               = http_server_on_write,
     .on_close               = http_server_on_close,
+    .on_http_dg_write       = http_server_on_http_dg_write,
+    .on_http_dg_read        = http_server_on_http_dg_read,
     .on_goaway_received     = http_server_on_goaway,
 };
 
@@ -1210,6 +1234,8 @@ const struct lsquic_stream_if hq_server_if = {
     .on_read                = hq_server_on_read,
     .on_write               = hq_server_on_write,
     .on_close               = http_server_on_close,
+    .on_http_dg_write       = http_server_on_http_dg_write,
+    .on_http_dg_read        = http_server_on_http_dg_read,
 };
 #endif
 
@@ -1902,6 +1928,8 @@ const struct lsquic_stream_if interop_http_server_if = {
     .on_read                = http_server_interop_on_read,
     .on_write               = http_server_interop_on_write,
     .on_close               = http_server_on_close,
+    .on_http_dg_write       = http_server_on_http_dg_write,
+    .on_http_dg_read        = http_server_on_http_dg_read,
 };
 #endif /* HAVE_REGEX */
 

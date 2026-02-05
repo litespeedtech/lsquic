@@ -146,6 +146,25 @@ lsquic_wt_send_datagram (lsquic_wt_session_t *sess,
 size_t
 lsquic_wt_max_datagram_size (const lsquic_wt_session_t *sess);
 
+/**
+ * Helper for stream_if on_http_dg_write.  This supplies pending WT datagrams
+ * for the CONNECT control stream when HTTP Datagrams are negotiated.
+ */
+int
+lsquic_wt_on_http_dg_write (lsquic_stream_t *stream,
+                            lsquic_stream_ctx_t *sctx,
+                            size_t max_quic_payload,
+                            lsquic_http_dg_consume_f consume_datagram);
+
+/**
+ * Helper for stream_if on_http_dg_read.  Delivers incoming HTTP Datagrams
+ * to the WT session datagram callback.
+ */
+void
+lsquic_wt_on_http_dg_read (lsquic_stream_t *stream,
+                           lsquic_stream_ctx_t *sctx,
+                           const void *buf, size_t len);
+
 /** Reset a WT stream with an application error code. */
 int
 lsquic_wt_stream_reset (lsquic_stream_t *stream, uint64_t error_code);

@@ -69,6 +69,8 @@ struct lsquic_wt_session
     char                              *wts_protocol;
     struct lsquic_stream_if            wts_data_if;
     struct wt_onnew_ctx                wts_onnew_ctx;
+    unsigned char                     *wts_dg_buf;
+    size_t                             wts_dg_len;
 };
 
 
@@ -483,6 +485,10 @@ wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
         sess->wts_if->on_wt_session_close((lsquic_wt_session_t *) sess,
                 sess->wts_sess_ctx, code, reason, reason_len);
 
+    free(sess->wts_dg_buf);
+    sess->wts_dg_buf = NULL;
+    sess->wts_dg_len = 0;
+
     wt_free_connect_info(sess);
     free(sess);
 }
@@ -803,22 +809,150 @@ lsquic_wt_stream_initiator (const struct lsquic_stream *stream)
 
 
 ssize_t
-lsquic_wt_send_datagram (struct lsquic_wt_session *UNUSED_sess,
-                                        const void *UNUSED_buf,
-                                        size_t UNUSED_len)
+lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
+                                                                    size_t len)
 {
-    /* XXX implement HTTP Datagram handling for WebTransport sessions */
-    errno = ENOSYS;
-    return -1;
+    struct lsquic_stream *control_stream;
+    unsigned char *copy;
+    size_t max_sz;
+    int rc;
+
+    if (!sess || !buf || len == 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    control_stream = sess->wts_control_stream;
+    if (!control_stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (sess->wts_dg_buf)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    max_sz = lsquic_stream_get_max_http_dg_size(control_stream);
+    if (max_sz == 0)
+    {
+        errno = ENOSYS;
+        return -1;
+    }
+
+    if (len > max_sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    copy = malloc(len);
+    if (!copy)
+        return -1;
+
+    memcpy(copy, buf, len);
+    sess->wts_dg_buf = copy;
+    sess->wts_dg_len = len;
+
+    rc = lsquic_stream_want_http_dg_write(control_stream, 1);
+    if (rc < 0)
+    {
+        free(sess->wts_dg_buf);
+        sess->wts_dg_buf = NULL;
+        sess->wts_dg_len = 0;
+        return -1;
+    }
+
+    return (ssize_t) len;
 }
 
 
 
 size_t
-lsquic_wt_max_datagram_size (const struct lsquic_wt_session *UNUSED_sess)
+lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
 {
-    /* XXX implement HTTP Datagram handling for WebTransport sessions */
+    if (!sess || !sess->wts_control_stream)
+        return 0;
+
+    return lsquic_stream_get_max_http_dg_size(sess->wts_control_stream);
+}
+
+
+
+int
+lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
+                            lsquic_stream_ctx_t *UNUSED_sctx,
+                            size_t max_quic_payload,
+                            lsquic_http_dg_consume_f consume_datagram)
+{
+    struct lsquic_wt_session *sess;
+    unsigned char *buf;
+    size_t len;
+    int rc;
+
+    if (!stream || !consume_datagram)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    sess = stream->sm_wt_session;
+    if (!sess || sess->wts_control_stream != stream)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    if (!sess->wts_dg_buf)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    buf = sess->wts_dg_buf;
+    len = sess->wts_dg_len;
+
+    if (len > max_quic_payload)
+    {
+        free(sess->wts_dg_buf);
+        sess->wts_dg_buf = NULL;
+        sess->wts_dg_len = 0;
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    rc = consume_datagram(stream, buf, len, LSQUIC_HTTP_DG_SEND_DATAGRAM);
+    if (rc != 0)
+        return -1;
+
+    free(sess->wts_dg_buf);
+    sess->wts_dg_buf = NULL;
+    sess->wts_dg_len = 0;
+
+    (void) lsquic_stream_want_http_dg_write(stream, 0);
     return 0;
+}
+
+
+void
+lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
+                           lsquic_stream_ctx_t *UNUSED_sctx,
+                           const void *buf, size_t len)
+{
+    struct lsquic_wt_session *sess;
+
+    if (!stream || !buf || len == 0)
+        return;
+
+    sess = stream->sm_wt_session;
+    if (!sess || sess->wts_control_stream != stream)
+        return;
+
+    if (sess->wts_if && sess->wts_if->on_wt_datagram)
+        sess->wts_if->on_wt_datagram((lsquic_wt_session_t *) sess, buf, len);
 }
 
 
