@@ -2700,10 +2700,16 @@ generate_stream_reset_frame (struct ietf_full_conn *conn,
     enum quic_frame_type frame_type;
 
     frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
-    if (frame_type == QUIC_FRAME_RESET_STREAM_AT)
+    if (frame_type == QUIC_FRAME_RST_STREAM)
+        return generate_rst_stream_frame(conn, stream);
+    else if (conn->ifc_mflags & MF_PEER_RESET_STREAM_AT)
         return generate_reset_stream_at_frame(conn, stream, reliable_size);
     else
+    {
+        LSQ_WARN("peer does not support RESET_STREAM_AT, "
+            "sending RST_STREAM");
         return generate_rst_stream_frame(conn, stream);
+    }
 }
 
 
