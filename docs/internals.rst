@@ -970,6 +970,11 @@ asks the send controller for a scheduled packet while the stream send
 offset is below the reliable size. After the reliable prefix is
 packetized, normal buffering resumes.
 
+Note that the reliable size is currently stored as a uint8_t and a
+value of zero means RESET_STREAM_AT is not used. This keeps the feature
+scoped to small WebTransport headers and does not support a reliable
+size of zero as described by the draft.
+
 The ``seen_ok`` check is used to place the connection on the tickable list
 on the first successfully packetized STREAM frame. This is so that if
 the packet is buffered (meaning that the writing is occurring outside of
