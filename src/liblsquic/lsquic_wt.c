@@ -141,7 +141,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     }
 
     wctx->app_ctx = app_ctx;
-    stream->sm_wt_session = sess;
+    lsquic_stream_set_wt_session(stream, sess);
 
     if (onnew->is_dynamic)
         free(onnew);
@@ -260,7 +260,8 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
     if (!uctx->done)
         return;
 
-    sess = wt_session_find(stream->conn_pub, uctx->sess_id);
+    sess = wt_session_find(lsquic_stream_get_conn_public(stream),
+                                                        uctx->sess_id);
     if (!sess)
     {
         lsquic_stream_close(stream);
@@ -476,7 +477,7 @@ wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
         return;
 
     if (sess->wts_control_stream)
-        sess->wts_control_stream->sm_wt_session = NULL;
+        lsquic_stream_set_wt_session(sess->wts_control_stream, NULL);
 
     if (sess->wts_conn_pub)
         TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
@@ -516,14 +517,14 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
-    if (connect_stream->sm_wt_session)
+    if (lsquic_stream_get_wt_session(connect_stream))
     {
         errno = EALREADY;
         return NULL;
     }
 
-    send_headers = (connect_stream->sm_bflags & SMBF_SERVER)
-                    && connect_stream->sm_send_headers_state == SSHS_BEGIN;
+    send_headers = lsquic_stream_is_server(connect_stream)
+                && lsquic_stream_headers_state_is_begin(connect_stream);
     if (send_headers)
     {
         status = params->status ? params->status : 200;
@@ -538,12 +539,12 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
 
     sess->wts_control_stream = connect_stream;
-    sess->wts_conn_pub = connect_stream->conn_pub;
+    sess->wts_conn_pub = lsquic_stream_get_conn_public(connect_stream);
     sess->wts_if = params->wt_if;
     sess->wts_if_ctx = params->wt_if_ctx;
     sess->wts_stream_if = params->stream_if;
     sess->wts_sess_ctx = params->sess_ctx;
-    sess->wts_stream_id = connect_stream->id;
+    sess->wts_stream_id = lsquic_stream_id(connect_stream);
 
     if (0 != wt_copy_connect_info(sess, info))
     {
@@ -562,9 +563,9 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_onnew_ctx.prefix_len = 0;
     sess->wts_onnew_ctx.is_dynamic = 0;
 
-    connect_stream->sm_wt_session = sess;
+    lsquic_stream_set_wt_session(connect_stream, sess);
     lsquic_stream_set_webtransport_session(connect_stream);
-    TAILQ_INSERT_TAIL(&connect_stream->conn_pub->wt_sessions, sess, wts_next);
+    TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
 
     if (sess->wts_if && sess->wts_if->on_wt_session_open)
         sess->wts_sess_ctx = sess->wts_if->on_wt_session_open(
@@ -587,13 +588,13 @@ lsquic_wt_reject (struct lsquic_stream *connect_stream,
         return -1;
     }
 
-    if (!(connect_stream->sm_bflags & SMBF_SERVER))
+    if (!lsquic_stream_is_server(connect_stream))
     {
         errno = EINVAL;
         return -1;
     }
 
-    if (connect_stream->sm_send_headers_state != SSHS_BEGIN)
+    if (!lsquic_stream_headers_state_is_begin(connect_stream))
     {
         errno = EALREADY;
         return -1;
@@ -747,7 +748,7 @@ lsquic_wt_session_from_stream (struct lsquic_stream *stream)
     if (!stream)
         return NULL;
 
-    return stream->sm_wt_session;
+    return lsquic_stream_get_wt_session(stream);
 }
 
 lsquic_stream_ctx_t *
@@ -756,14 +757,14 @@ lsquic_wt_stream_get_ctx (struct lsquic_stream *stream)
     struct wt_stream_ctx *wctx;
     struct lsquic_wt_session *sess;
 
-    if (!stream || !stream->sm_wt_session)
+    if (!stream || !lsquic_stream_get_wt_session(stream))
         return NULL;
 
-    sess = stream->sm_wt_session;
-    if (stream->stream_if != &sess->wts_data_if)
+    sess = lsquic_stream_get_wt_session(stream);
+    if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
         return NULL;
 
-    wctx = (struct wt_stream_ctx *) stream->st_ctx;
+    wctx = (struct wt_stream_ctx *) lsquic_stream_get_ctx(stream);
     if (!wctx)
         return NULL;
 
@@ -780,7 +781,7 @@ lsquic_wt_stream_dir (const struct lsquic_stream *stream)
     if (!stream)
         return LSQWT_BIDI;
 
-    type = stream->id & SIT_MASK;
+    type = lsquic_stream_id(stream) & SIT_MASK;
 
     if (type == SIT_UNI_CLIENT || type == SIT_UNI_SERVER)
         return LSQWT_UNI;
@@ -798,7 +799,7 @@ lsquic_wt_stream_initiator (const struct lsquic_stream *stream)
     if (!stream)
         return LSQWT_CLIENT;
 
-    type = stream->id & SIT_MASK;
+    type = lsquic_stream_id(stream) & SIT_MASK;
 
     if (type == SIT_BIDI_SERVER || type == SIT_UNI_SERVER)
         return LSQWT_SERVER;
@@ -899,7 +900,7 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
         return -1;
     }
 
-    sess = stream->sm_wt_session;
+    sess = lsquic_stream_get_wt_session(stream);
     if (!sess || sess->wts_control_stream != stream)
     {
         errno = EAGAIN;
@@ -947,7 +948,7 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
     if (!stream || !buf || len == 0)
         return;
 
-    sess = stream->sm_wt_session;
+    sess = lsquic_stream_get_wt_session(stream);
     if (!sess || sess->wts_control_stream != stream)
         return;
 
@@ -985,14 +986,14 @@ lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
     if (!stream)
         return;
 
-    sess = stream->sm_wt_session;
+    sess = lsquic_stream_get_wt_session(stream);
     if (!sess)
         return;
 
     if (sess->wts_control_stream == stream)
         wt_session_destroy(sess, 0, NULL, 0);
     else
-        stream->sm_wt_session = NULL;
+        lsquic_stream_set_wt_session(stream, NULL);
 }
 
 
@@ -1006,7 +1007,8 @@ lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
     if (!stream)
         return;
 
-    sess = wt_session_find(stream->conn_pub, session_id);
+    sess = wt_session_find(lsquic_stream_get_conn_public(stream),
+                                                            session_id);
     if (!sess)
         return;
 

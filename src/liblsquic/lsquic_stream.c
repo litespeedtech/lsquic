@@ -6148,3 +6148,46 @@ http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h
     (void) lsquic_stream_wantwrite(stream, 0);
     (void) lsquic_stream_flush(stream);
 }
+
+
+struct lsquic_conn_public *
+lsquic_stream_get_conn_public (const struct lsquic_stream *stream)
+{
+    return stream->conn_pub;
+}
+
+
+struct lsquic_wt_session *
+lsquic_stream_get_wt_session (const struct lsquic_stream *stream)
+{
+    return stream->sm_wt_session;
+}
+
+
+void
+lsquic_stream_set_wt_session (struct lsquic_stream *stream,
+                                            struct lsquic_wt_session *sess)
+{
+    stream->sm_wt_session = sess;
+}
+
+
+int
+lsquic_stream_is_server (const struct lsquic_stream *stream)
+{
+    return (stream->sm_bflags & SMBF_SERVER) != 0;
+}
+
+
+int
+lsquic_stream_headers_state_is_begin (const struct lsquic_stream *stream)
+{
+    return stream->sm_send_headers_state == SSHS_BEGIN;
+}
+
+
+const struct lsquic_stream_if *
+lsquic_stream_get_stream_if (const struct lsquic_stream *stream)
+{
+    return stream->stream_if;
+}

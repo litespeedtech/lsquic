@@ -721,4 +721,23 @@ lsquic_stream_set_pwritev_params (unsigned iovecs, unsigned frames);
 void
 lsquic_stream_drop_hset_ref (struct lsquic_stream *);
 
+struct lsquic_conn_public *
+lsquic_stream_get_conn_public (const struct lsquic_stream *);
+
+struct lsquic_wt_session *
+lsquic_stream_get_wt_session (const struct lsquic_stream *);
+
+void
+lsquic_stream_set_wt_session (struct lsquic_stream *,
+                                                struct lsquic_wt_session *);
+
+int
+lsquic_stream_is_server (const struct lsquic_stream *);
+
+int
+lsquic_stream_headers_state_is_begin (const struct lsquic_stream *);
+
+const struct lsquic_stream_if *
+lsquic_stream_get_stream_if (const struct lsquic_stream *);
+
 #endif
