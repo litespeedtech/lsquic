@@ -24,12 +24,14 @@
 #endif
 
 struct lsquic_conn;
+struct lsquic_conn_public;
 struct lsquic_engine_public;
 struct lsquic_packet_out;
 struct lsquic_packet_in;
 struct sockaddr;
 struct parse_funcs;
 struct attq_elem;
+struct lsquic_http_dg_if;
 #if LSQUIC_CONN_STATS
 struct conn_stats;
 #endif
@@ -335,6 +337,18 @@ struct conn_iface
 
 void
 lsquic_conn_http_dg_streams_updated (lsquic_conn_t *lconn);
+
+const struct lsquic_http_dg_if *
+lsquic_conn_http_dg_get_if (struct lsquic_conn_public *,
+                                                lsquic_stream_id_t stream_id);
+
+int
+lsquic_conn_http_dg_set_if (struct lsquic_conn_public *,
+                lsquic_stream_id_t stream_id,
+                const struct lsquic_http_dg_if *);
+
+void
+lsquic_conn_http_dg_cleanup (struct lsquic_conn_public *);
 
 #define LSCONN_CCE_BITS 3
 #define LSCONN_MAX_CCES (1 << LSCONN_CCE_BITS)

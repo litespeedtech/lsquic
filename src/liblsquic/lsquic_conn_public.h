@@ -33,6 +33,7 @@ struct lsquic_conn_public {
                                     service_streams,
                                     http_dg_streams;    /* Send HTTP Datagrams */
     struct lsquic_hash             *all_streams;
+    struct lsquic_hash             *http_dg_handlers;
     struct lsquic_cfcw              cfcw;
     struct lsquic_conn_cap          conn_cap;
     struct lsquic_rtt_stats         rtt_stats;

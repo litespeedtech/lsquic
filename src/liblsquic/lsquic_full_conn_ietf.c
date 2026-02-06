@@ -3295,6 +3295,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
         lsquic_hash_erase(conn->ifc_pub.all_streams, el);
         lsquic_stream_destroy(stream);
     }
+    lsquic_conn_http_dg_cleanup(&conn->ifc_pub);
     if (conn->ifc_flags & IFC_HTTP)
     {
         lsquic_qdh_cleanup(&conn->ifc_qdh);
@@ -7020,6 +7021,7 @@ process_http_dg_frame (struct ietf_full_conn *conn,
     lsquic_stream_id_t stream_id;
     struct lsquic_stream *stream;
     struct lsquic_hash_elem *el;
+    const struct lsquic_http_dg_if *dg_if;
 
     if (!(conn->ifc_mflags & MF_HTTP_DATAGRAMS)
             || !conn->ifc_settings->es_http_datagrams)
@@ -7070,15 +7072,18 @@ process_http_dg_frame (struct ietf_full_conn *conn,
     stream = lsquic_hashelem_getdata(el);
     LSQ_DEBUG("HTTP Datagram stream %"PRIu64" ptr=%p",
                                                 stream_id, (void *) stream);
-    if (!stream->stream_if)
+    dg_if = lsquic_conn_http_dg_get_if(&conn->ifc_pub, stream_id);
+    if (dg_if && dg_if->on_http_dg_read)
     {
-        LSQ_DEBUG("HTTP Datagram stream %"PRIu64" has no interface",
-                                                            stream_id);
-        return parsed_len;
+        lsquic_stream_hist_http_dg_recv(stream);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "RX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream_id, (size_t) (end - (p + nread)));
+        LSQ_DEBUG("HTTP Datagram deliver to stream %"PRIu64, stream_id);
+        dg_if->on_http_dg_read(stream, stream->st_ctx,
+                                        p + nread, end - (p + nread));
     }
-    LSQ_DEBUG("HTTP Datagram stream %"PRIu64" cb=%p",
-            stream_id, stream->stream_if->on_http_dg_read);
-    if (stream->stream_if->on_http_dg_read)
+    else if (stream->stream_if && stream->stream_if->on_http_dg_read)
     {
         lsquic_stream_hist_http_dg_recv(stream);
         EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
@@ -7118,11 +7123,10 @@ process_datagram_frame (struct ietf_full_conn *conn,
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "%zd-byte DATAGRAM", data_sz);
     LSQ_DEBUG("%zd-byte DATAGRAM", data_sz);
-    LSQ_DEBUG("process DATAGRAM: ifc_flags=0x%X http_cb=%p",
-                conn->ifc_flags, conn->ifc_enpub->enp_stream_if->on_http_dg_read);
+    LSQ_DEBUG("process DATAGRAM: ifc_flags=0x%X", conn->ifc_flags);
 
     if ((conn->ifc_flags & IFC_HTTP)
-            && conn->ifc_enpub->enp_stream_if->on_http_dg_read)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
         return process_http_dg_frame(conn, data, data_sz, parsed_len);
     else
         conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
@@ -8662,6 +8666,10 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     struct lsquic_stream *stream;
     struct http_dg_consume_ctx ctx;
+    const struct lsquic_http_dg_if *dg_if;
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                size_t max_quic_payload,
+                lsquic_http_dg_consume_f consume_datagram);
     uint64_t qsid;
     uint64_t bits;
     size_t vlen;
@@ -8671,7 +8679,14 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
         return -1;
 
     stream = TAILQ_FIRST(&conn->ifc_pub.http_dg_streams);
-    if (!stream || !stream->stream_if->on_http_dg_write)
+    if (!stream)
+        return -1;
+    dg_if = lsquic_conn_http_dg_get_if(&conn->ifc_pub, stream->id);
+    if (dg_if && dg_if->on_http_dg_write)
+        on_http_dg_write = dg_if->on_http_dg_write;
+    else if (stream->stream_if && stream->stream_if->on_http_dg_write)
+        on_http_dg_write = stream->stream_if->on_http_dg_write;
+    else
         return -1;
     if (lsquic_stream_http_dg_capsule_pending(stream))
     {
@@ -8695,7 +8710,7 @@ http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
 
     assert(!stream->sm_http_dg_consume_ctx);
     stream->sm_http_dg_consume_ctx = &ctx;
-    rc = stream->stream_if->on_http_dg_write(stream, stream->st_ctx,
+    rc = on_http_dg_write(stream, stream->st_ctx,
                                     ctx.payload_buf_sz, http_dg_consume);
     stream->sm_http_dg_consume_ctx = NULL;
 
@@ -8745,8 +8760,7 @@ write_datagram (struct ietf_full_conn *conn)
         return 0;
 
     if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
-            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
-            && conn->ifc_enpub->enp_stream_if->on_http_dg_write)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
         w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
                 packet_out->po_data + packet_out->po_data_sz,
                 lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
@@ -8765,8 +8779,7 @@ write_datagram (struct ietf_full_conn *conn)
         return 0;
     }
     if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
-            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
-            && conn->ifc_enpub->enp_stream_if->on_http_dg_write)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
         EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
             "TX HTTP DATAGRAM: size=%d", w);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,

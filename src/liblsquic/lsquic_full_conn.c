@@ -1133,6 +1133,7 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
         lsquic_hash_erase(conn->fc_pub.all_streams, el);
         lsquic_stream_destroy(stream);
     }
+    lsquic_conn_http_dg_cleanup(&conn->fc_pub);
     lsquic_hash_destroy(conn->fc_pub.all_streams);
     if (conn->fc_flags & FC_CREATED_OK)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if

@@ -918,26 +918,6 @@ db_on_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
 
 
 
-static int
-db_on_http_dg_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx,
-                            size_t max_quic_payload,
-                            lsquic_http_dg_consume_f consume_datagram)
-{
-    return lsquic_wt_on_http_dg_write(stream, sctx, max_quic_payload,
-                                                            consume_datagram);
-}
-
-
-
-static void
-db_on_http_dg_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx,
-                                        const void *buf, size_t len)
-{
-    lsquic_wt_on_http_dg_read(stream, sctx, buf, len);
-}
-
-
-
 static void
 db_on_wt_stop_sending (struct lsquic_stream *UNUSED_stream,
                                             struct lsquic_stream_ctx *UNUSED_sctx,
@@ -1381,8 +1361,6 @@ static const struct lsquic_stream_if devious_baton_stream_if_impl =
     .on_read                = on_read,
     .on_write               = on_write,
     .on_close               = on_close,
-    .on_http_dg_write       = db_on_http_dg_write,
-    .on_http_dg_read        = db_on_http_dg_read,
 };
 
 static const struct lsquic_wt_stream_if devious_baton_wt_stream_if_impl =

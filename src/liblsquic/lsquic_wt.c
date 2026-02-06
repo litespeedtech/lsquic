@@ -81,6 +81,23 @@ struct wt_header_buf
     size_t  off;
 };
 
+int
+lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
+                            lsquic_stream_ctx_t *UNUSED_sctx,
+                            size_t max_quic_payload,
+                            lsquic_http_dg_consume_f consume_datagram);
+
+void
+lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
+                           lsquic_stream_ctx_t *UNUSED_sctx,
+                           const void *buf, size_t len);
+
+static const struct lsquic_http_dg_if wt_http_dg_if =
+{
+    .on_http_dg_write   = lsquic_wt_on_http_dg_write,
+    .on_http_dg_read    = lsquic_wt_on_http_dg_read,
+};
+
 static struct lsquic_wt_session *
 wt_session_find (struct lsquic_conn_public *conn_pub,
                                                 lsquic_stream_id_t stream_id);
@@ -477,7 +494,10 @@ wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
         return;
 
     if (sess->wts_control_stream)
+    {
+        lsquic_stream_set_http_dg_if(sess->wts_control_stream, NULL);
         lsquic_stream_set_wt_session(sess->wts_control_stream, NULL);
+    }
 
     if (sess->wts_conn_pub)
         TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
@@ -562,6 +582,13 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_onnew_ctx.sess = sess;
     sess->wts_onnew_ctx.prefix_len = 0;
     sess->wts_onnew_ctx.is_dynamic = 0;
+
+    if (0 != lsquic_stream_set_http_dg_if(connect_stream, &wt_http_dg_if))
+    {
+        wt_free_connect_info(sess);
+        free(sess);
+        return NULL;
+    }
 
     lsquic_stream_set_wt_session(connect_stream, sess);
     lsquic_stream_set_webtransport_session(connect_stream);

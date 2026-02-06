@@ -275,6 +275,16 @@ struct lsquic_stream_if {
                                        const char *reason, int reason_len);
 };
 
+
+struct lsquic_http_dg_if
+{
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+            size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram);
+    void (*on_http_dg_read)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                                                const void *buf, size_t);
+};
+
+
 struct ssl_ctx_st;
 struct ssl_st;
 struct ssl_session_st;
@@ -1997,6 +2007,15 @@ lsquic_conn_get_min_datagram_size (lsquic_conn_t *);
  */
 int
 lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
+
+/**
+ * Register per-stream HTTP Datagram callbacks.  These take precedence over
+ * engine-wide on_http_dg_* callbacks.  Pass NULL to clear.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_stream_set_http_dg_if (lsquic_stream_t *,
+                                const struct lsquic_http_dg_if *);
 
 /**
  * Control whether stream is eligible to supply HTTP Datagram payloads.
