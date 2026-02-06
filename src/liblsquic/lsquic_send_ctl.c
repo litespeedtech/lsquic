@@ -2631,7 +2631,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
                                                 lsquic_stream_id_t stream_id)
 {
     struct lsquic_packet_out *packet_out, *next;
-    unsigned n, adj;
+    unsigned adj;
     int dropped;
 
     dropped = 0;
@@ -3103,11 +3103,10 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
 {
     enum buf_packet_type packet_type;
 
-    if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl)
-                                                || !buffered_packet_ok)
+    if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
         return lsquic_send_ctl_get_writeable_packet(ctl, PNS_APP,
                                                 need_at_least, path, 0, NULL);
-    else
+    else if (buffered_packet_ok)
     {
         if (!lsquic_send_ctl_has_buffered(ctl))
             send_ctl_maybe_flush_decoder(ctl, stream);
@@ -3115,6 +3114,8 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
         return send_ctl_get_buffered_packet(ctl, packet_type, need_at_least,
                                             path, stream);
     }
+    else
+        return NULL;
 }
 
 

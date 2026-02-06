@@ -3236,6 +3236,53 @@ test_writing_to_stream_outside_callback (void)
     deinit_test_objs(&tobjs);
 }
 
+static void
+test_reliable_prefix_bypasses_buffered (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    int s;
+    const struct buf_packet_q *const bpq =
+            &tobjs.send_ctl.sc_buffered_packets[BPT_OTHER_PRIO];
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+    stream = new_stream(&tobjs, 123);
+    stream->sm_wt_header_sz = 5;
+
+    nw = lsquic_stream_write(stream, "ABCDE", 5);
+    assert(("5 bytes written correctly", nw == 5));
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("reliable prefix not scheduled",
+                0 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("no buffered packets", 0 == bpq->bpq_count));
+    assert(("prefix remains buffered", stream->sm_n_buffered > 0));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("reliable prefix scheduled",
+                1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("no buffered packets", 0 == bpq->bpq_count));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    nw = lsquic_stream_write(stream, "XYZ", 3);
+    assert(("3 bytes written correctly", nw == 3));
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("still 1 scheduled packet",
+                1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("buffered packet created", 1 == bpq->bpq_count));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
 
 static void
 verify_ack (struct lsquic_packet_out *packet_out)
@@ -4770,6 +4817,7 @@ main (int argc, char **argv)
 
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
+    test_reliable_prefix_bypasses_buffered();
     test_stealing_ack();
     test_changing_pack_size();
     test_reducing_pack_size();
