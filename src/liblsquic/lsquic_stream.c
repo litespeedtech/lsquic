@@ -1246,6 +1246,9 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
                 lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
                                                     stream->id);
             else
+                /* Don't elide STREAM frames from scheduled packets because we
+                 * want to ensure that the reliable bytes get delivered.
+                 */
                 lsquic_send_ctl_elide_stream_frames_from_buffered(
                                         stream->conn_pub->send_ctl, stream->id);
         }
