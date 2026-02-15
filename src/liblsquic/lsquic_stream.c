@@ -2261,156 +2261,6 @@ lsquic_stream_want_http_dg_write (lsquic_stream_t *stream, int is_want)
     return stream_want_http_dg(stream, 1);
 }
 
-
-struct http_dg_handler
-{
-    struct lsquic_hash_elem     hde;
-    lsquic_stream_id_t          stream_id;
-    const struct lsquic_http_dg_if
-                               *dg_if;
-};
-
-
-static struct http_dg_handler *
-http_dg_handler_find (struct lsquic_hash *hash, lsquic_stream_id_t stream_id)
-{
-    struct lsquic_hash_elem *el;
-
-    if (!hash)
-        return NULL;
-
-    el = lsquic_hash_find(hash, &stream_id, sizeof(stream_id));
-    if (!el)
-        return NULL;
-
-    return lsquic_hashelem_getdata(el);
-}
-
-
-const struct lsquic_http_dg_if *
-lsquic_conn_http_dg_get_if (struct lsquic_conn_public *conn_pub,
-                                                lsquic_stream_id_t stream_id)
-{
-    struct http_dg_handler *handler;
-
-    if (!conn_pub)
-        return NULL;
-
-    handler = http_dg_handler_find(conn_pub->http_dg_handlers, stream_id);
-    if (!handler)
-        return NULL;
-
-    return handler->dg_if;
-}
-
-
-static int
-http_dg_handler_insert (struct lsquic_conn_public *conn_pub,
-                        lsquic_stream_id_t stream_id,
-                        const struct lsquic_http_dg_if *dg_if)
-{
-    struct http_dg_handler *handler;
-    struct lsquic_hash_elem *el;
-
-    if (!conn_pub->http_dg_handlers)
-    {
-        conn_pub->http_dg_handlers = lsquic_hash_create();
-        if (!conn_pub->http_dg_handlers)
-        {
-            errno = ENOMEM;
-            return -1;
-        }
-    }
-
-    handler = http_dg_handler_find(conn_pub->http_dg_handlers, stream_id);
-    if (handler)
-    {
-        handler->dg_if = dg_if;
-        return 0;
-    }
-
-    handler = calloc(1, sizeof(*handler));
-    if (!handler)
-    {
-        errno = ENOMEM;
-        return -1;
-    }
-
-    handler->stream_id = stream_id;
-    handler->dg_if = dg_if;
-
-    el = lsquic_hash_insert(conn_pub->http_dg_handlers, &handler->stream_id,
-                            sizeof(handler->stream_id), handler, &handler->hde);
-    if (!el)
-    {
-        free(handler);
-        errno = ENOMEM;
-        return -1;
-    }
-
-    return 0;
-}
-
-
-static void
-http_dg_handler_remove (struct lsquic_conn_public *conn_pub,
-                                                lsquic_stream_id_t stream_id)
-{
-    struct lsquic_hash_elem *el;
-    struct http_dg_handler *handler;
-
-    if (!conn_pub || !conn_pub->http_dg_handlers)
-        return;
-
-    el = lsquic_hash_find(conn_pub->http_dg_handlers, &stream_id,
-                                                            sizeof(stream_id));
-    if (!el)
-        return;
-
-    handler = lsquic_hashelem_getdata(el);
-    lsquic_hash_erase(conn_pub->http_dg_handlers, el);
-    free(handler);
-}
-
-
-int
-lsquic_conn_http_dg_set_if (struct lsquic_conn_public *conn_pub,
-                lsquic_stream_id_t stream_id,
-                const struct lsquic_http_dg_if *dg_if)
-{
-    if (!conn_pub)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
-    if (!dg_if)
-    {
-        http_dg_handler_remove(conn_pub, stream_id);
-        return 0;
-    }
-
-    return http_dg_handler_insert(conn_pub, stream_id, dg_if);
-}
-
-
-void
-lsquic_conn_http_dg_cleanup (struct lsquic_conn_public *conn_pub)
-{
-    struct lsquic_hash_elem *el;
-
-    if (!conn_pub || !conn_pub->http_dg_handlers)
-        return;
-
-    for (el = lsquic_hash_first(conn_pub->http_dg_handlers); el;
-                            el = lsquic_hash_next(conn_pub->http_dg_handlers))
-        free(lsquic_hashelem_getdata(el));
-
-    lsquic_hash_destroy(conn_pub->http_dg_handlers);
-    conn_pub->http_dg_handlers = NULL;
-}
-
-
 int
 lsquic_stream_set_http_dg_if (lsquic_stream_t *stream,
                                 const struct lsquic_http_dg_if *dg_if)
@@ -6050,6 +5900,24 @@ stream_abort_http_dg_capsule (struct lsquic_stream *stream, const char *reason)
         "%s on stream %"PRIu64, reason, stream->id);
 }
 
+
+static void
+(*select_on_dg_read (struct lsquic_stream *stream))
+    (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, const void *buf,
+                                                                size_t buf_sz)
+{
+    const struct lsquic_http_dg_if *dg_if;
+
+    dg_if = lsquic_conn_http_dg_get_if(stream->conn_pub, stream->id);
+    if (dg_if && dg_if->on_http_dg_read)
+        return dg_if->on_http_dg_read;
+    else if (stream->stream_if && stream->stream_if->on_http_dg_read)
+        return stream->stream_if->on_http_dg_read;
+    else
+        return NULL;
+}
+
+
 static size_t
 http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
 {
@@ -6059,6 +5927,8 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
     const unsigned char *end = buf + len;
     struct varint_read_state *vrs;
     size_t avail, to_copy;
+    void (*on_dg_read)(lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+                        const void *buf, size_t buf_sz);
     int s;
 
     if (!stream->sm_http_dg)
@@ -6131,35 +6001,21 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
             p += to_copy;
             if (rd->offset == rd->length)
             {
-                if (rd->type == H3_CAPSULE_DATAGRAM)
+                if (rd->type == H3_CAPSULE_DATAGRAM
+                        && (on_dg_read = select_on_dg_read(stream)))
                 {
-                    const struct lsquic_http_dg_if *dg_if;
-                    int delivered;
-
-                    delivered = 0;
-                    dg_if = lsquic_conn_http_dg_get_if(stream->conn_pub,
-                                                                stream->id);
-                    if (dg_if && dg_if->on_http_dg_read)
-                    {
-                        dg_if->on_http_dg_read(stream, stream->st_ctx,
-                                                rd->buf, rd->buf_sz);
-                        delivered = 1;
-                    }
-                    else if (stream->stream_if
-                            && stream->stream_if->on_http_dg_read)
-                    {
-                        stream->stream_if->on_http_dg_read(stream,
-                                                stream->st_ctx,
-                                                rd->buf, rd->buf_sz);
-                        delivered = 1;
-                    }
-
-                    if (delivered)
-                    {
-                        SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
-                        LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
-                            " size %zu", stream->id, rd->buf_sz);
-                    }
+                    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+                    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
+                        " size %zu", stream->id, rd->buf_sz);
+                    on_dg_read(stream, stream->st_ctx, rd->buf, rd->buf_sz);
+                }
+                else if (rd->type == H3_CAPSULE_DATAGRAM)
+                {
+                    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+                    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
+                        " size %zu", stream->id, rd->buf_sz);
+                    LSQ_DEBUG("no callback for HTTP datagram on stream "
+                        "%"PRIu64"; drop on floor", stream->id);
                 }
                 free(rd->buf);
                 rd->buf = NULL;

@@ -1,6 +1,8 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
 
@@ -9,7 +11,14 @@
 #include "lsquic.h"
 #include "lsquic_int_types.h"
 #include "lsquic_hash.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
+#include "lsquic_hq.h"
+#include "lsquic_varint.h"
+#include "lsquic_sfcw.h"
+#include "lsquic_stream.h"
 #include "lsquic_conn.h"
+#include "lsquic_conn_public.h"
 #include "lsquic_packet_common.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_packet_in.h"
@@ -376,4 +385,152 @@ lsquic_conn_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     if (lconn->cn_if && lconn->cn_if->ci_get_param)
         return lconn->cn_if->ci_get_param(lconn, param, value, value_len);
     return -1;
+}
+
+
+struct http_dg_handler
+{
+    struct lsquic_hash_elem     hgh_hash_el;
+    lsquic_stream_id_t          hgh_stream_id;
+    const struct lsquic_http_dg_if
+                               *hgh_if;
+};
+
+
+static struct http_dg_handler *
+hgh_find (struct lsquic_hash *hash, lsquic_stream_id_t stream_id)
+{
+    struct lsquic_hash_elem *el;
+
+    if (!hash)
+        return NULL;
+
+    el = lsquic_hash_find(hash, &stream_id, sizeof(stream_id));
+    if (!el)
+        return NULL;
+
+    return lsquic_hashelem_getdata(el);
+}
+
+
+const struct lsquic_http_dg_if *
+lsquic_conn_http_dg_get_if (struct lsquic_conn_public *conn_pub,
+                                                lsquic_stream_id_t stream_id)
+{
+    struct http_dg_handler *handler;
+
+    if (!conn_pub)
+        return NULL;
+
+    handler = hgh_find(conn_pub->http_dg_handlers, stream_id);
+    if (!handler)
+        return NULL;
+
+    return handler->hgh_if;
+}
+
+
+static int
+hgh_insert (struct lsquic_conn_public *conn_pub,
+            lsquic_stream_id_t stream_id,
+            const struct lsquic_http_dg_if *dg_if)
+{
+    struct http_dg_handler *handler;
+    struct lsquic_hash_elem *el;
+
+    if (!conn_pub->http_dg_handlers)
+    {
+        conn_pub->http_dg_handlers = lsquic_hash_create();
+        if (!conn_pub->http_dg_handlers)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    handler = hgh_find(conn_pub->http_dg_handlers, stream_id);
+    if (handler)
+    {
+        handler->hgh_if = dg_if;
+        return 0;
+    }
+
+    handler = calloc(1, sizeof(*handler));
+    if (!handler)
+    {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    handler->hgh_stream_id = stream_id;
+    handler->hgh_if = dg_if;
+
+    el = lsquic_hash_insert(conn_pub->http_dg_handlers, &handler->hgh_stream_id,
+                sizeof(handler->hgh_stream_id), handler, &handler->hgh_hash_el);
+    if (!el)
+    {
+        free(handler);
+        errno = ENOMEM;
+        return -1;
+    }
+
+    return 0;
+}
+
+
+static void
+hgh_remove (struct lsquic_conn_public *conn_pub, lsquic_stream_id_t stream_id)
+{
+    struct lsquic_hash_elem *el;
+    struct http_dg_handler *handler;
+
+    if (!conn_pub || !conn_pub->http_dg_handlers)
+        return;
+
+    el = lsquic_hash_find(conn_pub->http_dg_handlers, &stream_id,
+                                                            sizeof(stream_id));
+    if (!el)
+        return;
+
+    handler = lsquic_hashelem_getdata(el);
+    lsquic_hash_erase(conn_pub->http_dg_handlers, el);
+    free(handler);
+}
+
+
+int
+lsquic_conn_http_dg_set_if (struct lsquic_conn_public *conn_pub,
+                lsquic_stream_id_t stream_id,
+                const struct lsquic_http_dg_if *dg_if)
+{
+    if (!conn_pub)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!dg_if)
+    {
+        hgh_remove(conn_pub, stream_id);
+        return 0;
+    }
+
+    return hgh_insert(conn_pub, stream_id, dg_if);
+}
+
+
+void
+lsquic_conn_http_dg_cleanup (struct lsquic_conn_public *conn_pub)
+{
+    struct lsquic_hash_elem *el;
+
+    if (!conn_pub || !conn_pub->http_dg_handlers)
+        return;
+
+    for (el = lsquic_hash_first(conn_pub->http_dg_handlers); el;
+                            el = lsquic_hash_next(conn_pub->http_dg_handlers))
+        free(lsquic_hashelem_getdata(el));
+
+    lsquic_hash_destroy(conn_pub->http_dg_handlers);
+    conn_pub->http_dg_handlers = NULL;
 }
