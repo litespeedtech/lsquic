@@ -90,6 +90,7 @@ enum lsquic_logger_module {
     LSQLM_BW_SAMPLER,
     LSQLM_PACKET_RESIZE,
     LSQLM_CONN_STATS,
+    LSQLM_WT,
     N_LSQUIC_LOGGER_MODULES
 };
 
