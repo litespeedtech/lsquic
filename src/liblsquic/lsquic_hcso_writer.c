@@ -128,8 +128,8 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
                         unsigned max_header_list_size,
                         unsigned dyn_table_size, unsigned max_risked_streams,
                         int is_server,
-                        int webtransport_server,
-                        unsigned max_webtransport_server_streams)
+                        int wt_enabled,
+                        unsigned max_wt_sessions)
 {
     unsigned char *p;
     unsigned bits;
@@ -183,7 +183,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 
-    if (webtransport_server && max_webtransport_server_streams)
+    if (wt_enabled && max_wt_sessions)
     {
         /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
         bits = hcso_setting_type2bits(writer, HQSID_ENABLE_WEBTRANSPORT);
@@ -197,8 +197,8 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         bits = hcso_setting_type2bits(writer, HQSID_WEBTRANSPORT_MAX_SESSIONS);
         vint_write(p, HQSID_WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(max_webtransport_server_streams);
-        vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
+        bits = vint_val2bits(max_wt_sessions);
+        vint_write(p, max_wt_sessions, bits, 1 << bits);
         p += 1 << bits;
 
         if (is_server)

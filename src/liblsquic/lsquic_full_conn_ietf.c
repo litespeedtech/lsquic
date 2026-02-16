@@ -3932,8 +3932,8 @@ init_http (struct ietf_full_conn *conn)
                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
                 max_risked_streams, conn->ifc_flags & IFC_SERVER
                 ,
-                conn->ifc_settings->es_webtransport_server,
-                conn->ifc_settings->es_max_webtransport_server_streams
+                conn->ifc_settings->es_webtransport,
+                conn->ifc_settings->es_max_webtransport_sessions
                 ))
     {
         ABORT_WARN("cannot write SETTINGS");
@@ -9801,7 +9801,7 @@ on_max_push_id (void *ctx, uint64_t push_id)
 static int
 local_webtransport_enabled (const struct ietf_full_conn *conn)
 {
-    return conn->ifc_settings->es_webtransport_server != 0;
+    return conn->ifc_settings->es_webtransport != 0;
 }
 
 

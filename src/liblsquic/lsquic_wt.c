@@ -498,7 +498,7 @@ wt_can_accept_session (struct lsquic_stream *connect_stream)
     n_sessions = wt_count_sessions(conn_pub);
     if (lsquic_stream_is_server(connect_stream))
     {
-        if (!conn_pub->enpub->enp_settings.es_webtransport_server)
+        if (!conn_pub->enpub->enp_settings.es_webtransport)
         {
             errno = EPROTO;
             LSQ_WARN("cannot accept WT stream %"PRIu64": local WT disabled",
@@ -507,7 +507,7 @@ wt_can_accept_session (struct lsquic_stream *connect_stream)
         }
 
         local_limit = conn_pub->enpub->enp_settings
-                                    .es_max_webtransport_server_streams;
+                                    .es_max_webtransport_sessions;
         if (local_limit > 0 && n_sessions >= local_limit)
         {
             errno = ENOSPC;

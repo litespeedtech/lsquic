@@ -526,7 +526,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
 
 /** Default allowed WebTransport sessions count per connection. */
-#define LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS 10
+#define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 10
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -1225,14 +1225,14 @@ struct lsquic_engine_settings {
      *
      * Default value is @ref LSQUIC_DF_WEBTRANSPORT_SERVER.
      */
-    int             es_webtransport_server;
+    int             es_webtransport;
 
     /**
      * Maximum number of WebTransport sessions allowed for a connection.
      *
-     * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
+     * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS.
      */
-    unsigned        es_max_webtransport_server_streams;
+    unsigned        es_max_webtransport_sessions;
 };
 
 /* Initialize `settings' to default values */

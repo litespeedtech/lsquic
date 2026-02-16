@@ -323,8 +323,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = 0;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
-        settings->es_webtransport_server = LSQUIC_DF_WEBTRANSPORT_SERVER;
-        settings->es_max_webtransport_server_streams = LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS;
+        settings->es_webtransport = LSQUIC_DF_WEBTRANSPORT_SERVER;
+        settings->es_max_webtransport_sessions = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
     }
     else
     {
@@ -507,7 +507,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
         return -1;
     }
-    if(settings->es_webtransport_server)
+    if(settings->es_webtransport)
     {
         if (!settings->es_http_datagrams)
         {
@@ -517,7 +517,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             return -1;
         }
 
-        if(settings->es_max_webtransport_server_streams == 0)
+        if(settings->es_max_webtransport_sessions == 0)
         {
             if (err_buf)
                 snprintf(err_buf, err_buf_sz, "webtransport support enabled, but "
