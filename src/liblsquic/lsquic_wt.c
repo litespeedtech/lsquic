@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -449,6 +450,98 @@ wt_count_pending_streams (struct lsquic_conn_public *conn_pub)
 }
 
 
+static unsigned
+wt_count_sessions (const struct lsquic_conn_public *conn_pub)
+{
+    struct lsquic_wt_session *sess;
+    unsigned count;
+
+    count = 0;
+    TAILQ_FOREACH(sess, &conn_pub->wt_sessions, wts_next)
+        ++count;
+
+    return count;
+}
+
+
+static int
+wt_can_accept_session (struct lsquic_stream *connect_stream)
+{
+    struct lsquic_conn_public *conn_pub;
+    unsigned n_sessions, local_limit;
+
+    conn_pub = lsquic_stream_get_conn_public(connect_stream);
+    if (!conn_pub)
+    {
+        errno = EINVAL;
+        LSQ_WARN("cannot accept WT stream %"PRIu64": no connection context",
+                                        lsquic_stream_id(connect_stream));
+        return -1;
+    }
+
+    if (!(conn_pub->cp_flags & CP_H3_PEER_SETTINGS))
+    {
+        errno = EAGAIN;
+        LSQ_WARN("cannot accept WT stream %"PRIu64": peer SETTINGS not received",
+                                        lsquic_stream_id(connect_stream));
+        return -1;
+    }
+
+    if (!(conn_pub->cp_flags & CP_WEBTRANSPORT))
+    {
+        errno = EPROTO;
+        LSQ_WARN("cannot accept WT stream %"PRIu64": peer WT support is off",
+                                        lsquic_stream_id(connect_stream));
+        return -1;
+    }
+
+    n_sessions = wt_count_sessions(conn_pub);
+    if (lsquic_stream_is_server(connect_stream))
+    {
+        if (!conn_pub->enpub->enp_settings.es_webtransport_server)
+        {
+            errno = EPROTO;
+            LSQ_WARN("cannot accept WT stream %"PRIu64": local WT disabled",
+                                        lsquic_stream_id(connect_stream));
+            return -1;
+        }
+
+        local_limit = conn_pub->enpub->enp_settings
+                                    .es_max_webtransport_server_streams;
+        if (local_limit > 0 && n_sessions >= local_limit)
+        {
+            errno = ENOSPC;
+            LSQ_WARN("cannot accept WT stream %"PRIu64": local session "
+                     "limit reached (%u)", lsquic_stream_id(connect_stream),
+                     local_limit);
+            return -1;
+        }
+    }
+    else
+    {
+        if (!(conn_pub->cp_flags & CP_CONNECT_PROTOCOL))
+        {
+            errno = EPROTO;
+            LSQ_WARN("cannot accept WT stream %"PRIu64": peer did not enable "
+                     "CONNECT protocol", lsquic_stream_id(connect_stream));
+            return -1;
+        }
+
+        if (conn_pub->cp_wt_peer_max_sessions > 0
+            && n_sessions >= conn_pub->cp_wt_peer_max_sessions)
+        {
+            errno = ENOSPC;
+            LSQ_WARN("cannot accept WT stream %"PRIu64": peer session limit "
+                     "reached (%"PRIu64")", lsquic_stream_id(connect_stream),
+                     conn_pub->cp_wt_peer_max_sessions);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
 static int
 wt_buffer_or_reject_stream (struct lsquic_stream *stream,
     lsquic_stream_id_t session_id, const char *stream_kind)
@@ -784,6 +877,9 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
+    if (0 != wt_can_accept_session(connect_stream))
+        return NULL;
+
     LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
         lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
         params->status);
@@ -955,6 +1051,75 @@ lsquic_wt_session_id (struct lsquic_wt_session *sess)
     return sess->wts_stream_id;
 }
 
+
+
+static int
+wt_get_conn_u64_param (lsquic_conn_t *conn, enum lsquic_conn_param param,
+                                                            uint64_t *value)
+{
+    size_t value_len;
+
+    if (!conn || !value)
+        return -1;
+
+    value_len = sizeof(*value);
+    if (0 != lsquic_conn_get_param(conn, param, value, &value_len))
+        return -1;
+
+    return value_len == sizeof(*value) ? 0 : -1;
+}
+
+
+int
+lsquic_wt_peer_settings_received (lsquic_conn_t *conn)
+{
+    uint64_t value;
+
+    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_SETTINGS_RECEIVED,
+                                                                &value))
+        return 0;
+
+    return value != 0;
+}
+
+
+int
+lsquic_wt_peer_supports (lsquic_conn_t *conn)
+{
+    uint64_t value;
+
+    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_SUPPORTS, &value))
+        return 0;
+
+    return value != 0;
+}
+
+
+unsigned
+lsquic_wt_peer_max_sessions (lsquic_conn_t *conn)
+{
+    uint64_t value;
+
+    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_MAX_SESSIONS, &value))
+        return 0;
+
+    if (value > UINT_MAX)
+        return UINT_MAX;
+    return (unsigned) value;
+}
+
+
+int
+lsquic_wt_peer_connect_protocol (lsquic_conn_t *conn)
+{
+    uint64_t value;
+
+    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_CONNECT_PROTOCOL,
+                                                                &value))
+        return 0;
+
+    return value != 0;
+}
 
 
 struct lsquic_stream *

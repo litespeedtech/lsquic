@@ -1597,9 +1597,31 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.connect_info = info;
     if (!lsquic_wt_accept(stream, &params))
     {
-        if (err_buf && err_sz)
+        unsigned status;
+
+        status = 500;
+        if (errno == EAGAIN)
+        {
+            status = 503;
+            if (err_buf && err_sz)
+                snprintf(err_buf, err_sz, "peer SETTINGS not received yet");
+        }
+        else if (errno == EPROTO)
+        {
+            status = 400;
+            if (err_buf && err_sz)
+                snprintf(err_buf, err_sz, "peer does not support WebTransport");
+        }
+        else if (errno == ENOSPC)
+        {
+            status = 429;
+            if (err_buf && err_sz)
+                snprintf(err_buf, err_sz, "WebTransport session limit reached");
+        }
+        else if (err_buf && err_sz)
             snprintf(err_buf, err_sz, "cannot accept WebTransport");
-        lsquic_wt_reject(stream, 500, err_buf ? err_buf : NULL,
+
+        lsquic_wt_reject(stream, status, err_buf ? err_buf : NULL,
                                             err_buf ? strlen(err_buf) : 0);
         lsquic_stream_close(stream);
         return -1;

@@ -113,6 +113,22 @@ lsquic_wt_session_conn (lsquic_wt_session_t *sess);
 lsquic_stream_id_t
 lsquic_wt_session_id (lsquic_wt_session_t *sess);
 
+/** Return whether peer HTTP/3 SETTINGS have been received. */
+int
+lsquic_wt_peer_settings_received (lsquic_conn_t *conn);
+
+/** Return whether peer currently supports WebTransport on this connection. */
+int
+lsquic_wt_peer_supports (lsquic_conn_t *conn);
+
+/** Return peer-advertised WebTransport max sessions for this connection. */
+unsigned
+lsquic_wt_peer_max_sessions (lsquic_conn_t *conn);
+
+/** Return whether peer enabled CONNECT protocol via HTTP/3 SETTINGS. */
+int
+lsquic_wt_peer_connect_protocol (lsquic_conn_t *conn);
+
 /** Open a WebTransport unidirectional stream. */
 lsquic_stream_t *
 lsquic_wt_open_uni (lsquic_wt_session_t *sess);

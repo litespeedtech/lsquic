@@ -468,7 +468,13 @@ struct ietf_full_conn
     struct qpack_dec_hdl        ifc_qdh;
     struct {
         uint64_t    header_table_size,
-                    qpack_blocked_streams;
+                    qpack_blocked_streams,
+                    wt_max_sessions;
+        signed char wt_enable_webtransport;
+        signed char wt_enable_webtransport_seen;
+        signed char wt_max_sessions_seen;
+        signed char enable_connect_protocol;
+        signed char enable_connect_protocol_seen;
     }                           ifc_peer_hq_settings;
     struct dcid_elem           *ifc_dces[MAX_IETF_CONN_DCIDS];
     TAILQ_HEAD(, dcid_elem)     ifc_to_retire;
@@ -1406,6 +1412,13 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
+    conn->ifc_peer_hq_settings.wt_max_sessions = 0;
+    conn->ifc_peer_hq_settings.wt_enable_webtransport = 0;
+    conn->ifc_peer_hq_settings.wt_enable_webtransport_seen = 0;
+    conn->ifc_peer_hq_settings.wt_max_sessions_seen = 0;
+    conn->ifc_peer_hq_settings.enable_connect_protocol = 0;
+    conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 0;
+    conn->ifc_pub.cp_wt_peer_max_sessions = 0;
 
     conn->ifc_flags = flags | IFC_FIRST_TICK;
     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
@@ -9515,7 +9528,7 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                              void *value, size_t *value_len)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    uint64_t rate;
+    uint64_t u64;
 
     if (*value_len < sizeof(uint64_t))
         return -1;
@@ -9523,9 +9536,29 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     switch (param)
     {
     case LSQCP_MAX_PACING_RATE:
-        rate = conn->ifc_send_ctl.sc_max_pacing_rate;
-        memcpy(value, &rate, sizeof(rate));
-        *value_len = sizeof(rate);
+        u64 = conn->ifc_send_ctl.sc_max_pacing_rate;
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_SETTINGS_RECEIVED:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_H3_PEER_SETTINGS);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_SUPPORTS:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_MAX_SESSIONS:
+        u64 = conn->ifc_pub.cp_wt_peer_max_sessions;
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_CONNECT_PROTOCOL:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_CONNECT_PROTOCOL);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
         return 0;
     default:
         return -1;
@@ -9765,6 +9798,68 @@ on_max_push_id (void *ctx, uint64_t push_id)
 }
 
 
+static int
+local_webtransport_enabled (const struct ietf_full_conn *conn)
+{
+    return conn->ifc_settings->es_webtransport_server != 0;
+}
+
+
+static void
+update_peer_wt_support (struct ietf_full_conn *conn)
+{
+    int supports;
+    int peer_settings_received;
+    int peer_connect_protocol;
+
+    peer_settings_received = !!(conn->ifc_flags & IFC_HAVE_PEER_SET);
+    if (peer_settings_received)
+        conn->ifc_pub.cp_flags |= CP_H3_PEER_SETTINGS;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_H3_PEER_SETTINGS;
+
+    peer_connect_protocol =
+            conn->ifc_peer_hq_settings.enable_connect_protocol_seen
+            && conn->ifc_peer_hq_settings.enable_connect_protocol;
+    if (peer_connect_protocol)
+        conn->ifc_pub.cp_flags |= CP_CONNECT_PROTOCOL;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_CONNECT_PROTOCOL;
+
+    conn->ifc_pub.cp_wt_peer_max_sessions =
+            conn->ifc_peer_hq_settings.wt_max_sessions_seen
+            ? conn->ifc_peer_hq_settings.wt_max_sessions
+            : 0;
+
+    supports = peer_settings_received
+            && local_webtransport_enabled(conn)
+            && conn->ifc_peer_hq_settings.wt_enable_webtransport_seen
+            && conn->ifc_peer_hq_settings.wt_enable_webtransport
+            && conn->ifc_peer_hq_settings.wt_max_sessions_seen
+            && conn->ifc_peer_hq_settings.wt_max_sessions > 0
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS);
+    if (!(conn->ifc_flags & IFC_SERVER))
+        supports = supports && peer_connect_protocol;
+
+    if (supports)
+        conn->ifc_pub.cp_flags |= CP_WEBTRANSPORT;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
+
+    LSQ_DEBUG("peer WT: settings=%d, local=%d, enabled=%d/%d, max=%"PRIu64
+              ", connect=%d/%d, h3_dgram=%d => support=%d",
+        peer_settings_received,
+        local_webtransport_enabled(conn),
+        conn->ifc_peer_hq_settings.wt_enable_webtransport_seen,
+        conn->ifc_peer_hq_settings.wt_enable_webtransport,
+        conn->ifc_pub.cp_wt_peer_max_sessions,
+        conn->ifc_peer_hq_settings.enable_connect_protocol_seen,
+        peer_connect_protocol,
+        !!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS),
+        !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT));
+}
+
+
 static void
 on_settings_frame (void *ctx)
 {
@@ -9810,6 +9905,7 @@ on_settings_frame (void *ctx)
         queue_streams_blocked_frame(conn, SD_UNI);
         LSQ_DEBUG("cannot create QPACK encoder stream due to unidir limit");
     }
+    update_peer_wt_support(conn);
     maybe_create_delayed_streams(conn);
 }
 
@@ -9851,6 +9947,7 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         else
             conn->ifc_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
         update_datagram_want(conn);
+        update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
         break;
     case HQSID_ENABLE_CONNECT_PROTOCOL:
@@ -9861,6 +9958,9 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
                 value);
             return;
         }
+        conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 1;
+        conn->ifc_peer_hq_settings.enable_connect_protocol = value == 1;
+        update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
         break;
     case HQSID_ENABLE_WEBTRANSPORT:
@@ -9870,10 +9970,17 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
                 "invalid SETTINGS_ENABLE_WEBTRANSPORT value %"PRIu64, value);
             return;
         }
-        conn->ifc_pub.cp_flags |= CP_WEBTRANSPORT;
+        conn->ifc_peer_hq_settings.wt_enable_webtransport_seen = 1;
+        conn->ifc_peer_hq_settings.wt_enable_webtransport = 1;
+        if (!local_webtransport_enabled(conn))
+            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
+        update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_ENABLE_WEBTRANSPORT=%"PRIu64, value);
         break;
     case HQSID_WEBTRANSPORT_MAX_SESSIONS:
+        conn->ifc_peer_hq_settings.wt_max_sessions_seen = 1;
+        conn->ifc_peer_hq_settings.wt_max_sessions = value;
+        update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_WEBTRANSPORT_MAX_SESSIONS=%"PRIu64, value);
         break;
     default:

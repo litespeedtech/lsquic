@@ -56,7 +56,10 @@ struct lsquic_conn_public {
         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
         CP_HTTP_DATAGRAMS       = 1 << 1,   /* HTTP Datagram support negotiated */
         CP_WEBTRANSPORT         = 1 << 2,   /* WebTransport support negotiated */
+        CP_H3_PEER_SETTINGS     = 1 << 3,   /* Peer SETTINGS frame received */
+        CP_CONNECT_PROTOCOL     = 1 << 4,   /* Peer enabled CONNECT protocol */
     }                               cp_flags;
+    uint64_t                        cp_wt_peer_max_sessions;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;

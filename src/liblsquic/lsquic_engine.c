@@ -509,18 +509,18 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
     }
     if(settings->es_webtransport_server)
     {
-        if(!(flags & ENG_SERVER))
+        if (!settings->es_http_datagrams)
         {
             if (err_buf)
-                snprintf(err_buf, err_buf_sz, "server webtransport support enabled, but "
-                                              "ENG_SERVER flag is not set");
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but HTTP datagrams are disabled");
             return -1;
         }
 
         if(settings->es_max_webtransport_server_streams == 0)
         {
             if (err_buf)
-                snprintf(err_buf, err_buf_sz, "server webtransport support enabled, but "
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, but "
                                               "webtransport sessions count is 0");
             return -1;
         }

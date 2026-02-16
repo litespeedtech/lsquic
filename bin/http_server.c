@@ -1432,7 +1432,28 @@ handle_connect_request (struct lsquic_stream *stream,
                             / sizeof(wt_connect_handlers[0]); ++handler)
             if (0 == strcmp(req->protocol, handler->protocol)
                 && path_prefix_matches(req->path, handler->path_prefix))
+            {
+                if (!lsquic_wt_peer_settings_received(
+                                            lsquic_stream_conn(stream)))
+                {
+                    snprintf(err_buf, sizeof(err_buf),
+                                    "Peer SETTINGS not received yet");
+                    lsquic_wt_reject(stream, 503, err_buf, strlen(err_buf));
+                    lsquic_stream_close(stream);
+                    return 1;
+                }
+
+                if (!lsquic_wt_peer_supports(lsquic_stream_conn(stream)))
+                {
+                    snprintf(err_buf, sizeof(err_buf),
+                                "Peer does not support WebTransport");
+                    lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+                    lsquic_stream_close(stream);
+                    return 1;
+                }
+
                 return handler->handler(stream, st_h);
+            }
 
     snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s %s",
                                         req->protocol, req->path);

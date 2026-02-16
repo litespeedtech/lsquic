@@ -56,6 +56,8 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_HTTP, &sports,
                         devious_baton_stream_if(), &app);
     prog.prog_settings.es_http_datagrams = 1;
+    prog.prog_settings.es_webtransport_server = 1;
+    prog.prog_settings.es_max_webtransport_server_streams = 64;
     prog.prog_settings.es_init_max_streams_uni = 64;
     prog.prog_api.ea_hsi_if = devious_baton_hset_if();
     prog.prog_api.ea_hsi_ctx = NULL;

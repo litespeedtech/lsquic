@@ -183,7 +183,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 
-    if (is_server && webtransport_server && max_webtransport_server_streams)
+    if (webtransport_server && max_webtransport_server_streams)
     {
         /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
         bits = hcso_setting_type2bits(writer, HQSID_ENABLE_WEBTRANSPORT);
@@ -201,13 +201,17 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
         p += 1 << bits;
 
-        /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
-        bits = hcso_setting_type2bits(writer, HQSID_ENABLE_CONNECT_PROTOCOL);
-        vint_write(p, HQSID_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
-        p += 1 << bits;
-        bits = vint_val2bits(1);
-        vint_write(p, 1, bits, 1 << bits);
-        p += 1 << bits;
+        if (is_server)
+        {
+            /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
+            bits = hcso_setting_type2bits(writer,
+                                                HQSID_ENABLE_CONNECT_PROTOCOL);
+            vint_write(p, HQSID_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
+            p += 1 << bits;
+            bits = vint_val2bits(1);
+            vint_write(p, 1, bits, 1 << bits);
+            p += 1 << bits;
+        }
     }
 
     if (writer->how_stream

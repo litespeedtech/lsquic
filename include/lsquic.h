@@ -522,10 +522,10 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
 
-/** Turn off webtransport extension for server by default */
+/** Turn off WebTransport extension by default. */
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
 
-/** Default allowed server webtransport streams count */
+/** Default allowed WebTransport sessions count per connection. */
 #define LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS 10
 struct lsquic_engine_settings {
     /**
@@ -1221,14 +1221,14 @@ struct lsquic_engine_settings {
     uint8_t         es_preferred_address[24];
 
     /**
-     * Enable datagram extension for http3 server.  Allowed values are 0 and 1.
+     * Enable WebTransport support for this endpoint.  Allowed values are 0 and 1.
      *
-     * Default value is @ref LSQUIC_DF_WEBTRANSPORT_SERVER
+     * Default value is @ref LSQUIC_DF_WEBTRANSPORT_SERVER.
      */
     int             es_webtransport_server;
 
     /**
-     * Maximum number of webtransport streams allowed by server for a connection.
+     * Maximum number of WebTransport sessions allowed for a connection.
      *
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
      */
@@ -2258,6 +2258,30 @@ enum lsquic_conn_param
      * Pacing must be turned on via es_pace_packets in lsquic_engine_settings.
      */
     LSQCP_MAX_PACING_RATE = 1,
+
+    /**
+     * Whether peer HTTP/3 SETTINGS frame has been received.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_SETTINGS_RECEIVED,
+
+    /**
+     * Whether peer currently satisfies WebTransport requirements.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_SUPPORTS,
+
+    /**
+     * Peer's advertised WebTransport max sessions.
+     * Type: uint64_t
+     */
+    LSQCP_WT_PEER_MAX_SESSIONS,
+
+    /**
+     * Whether peer advertised SETTINGS_ENABLE_CONNECT_PROTOCOL=1.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_CONNECT_PROTOCOL,
 };
 
 struct lsquic_conn_info
