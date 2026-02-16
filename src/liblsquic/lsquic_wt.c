@@ -81,13 +81,13 @@ struct wt_header_buf
     size_t  off;
 };
 
-int
+static int
 lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
                             lsquic_stream_ctx_t *UNUSED_sctx,
                             size_t max_quic_payload,
                             lsquic_http_dg_consume_f consume_datagram);
 
-void
+static void
 lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
                            lsquic_stream_ctx_t *UNUSED_sctx,
                            const void *buf, size_t len);
@@ -910,7 +910,7 @@ lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
 
 
 
-int
+static int
 lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
                             lsquic_stream_ctx_t *UNUSED_sctx,
                             size_t max_quic_payload,
@@ -965,7 +965,7 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
 }
 
 
-void
+static void
 lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
                            lsquic_stream_ctx_t *UNUSED_sctx,
                            const void *buf, size_t len)
