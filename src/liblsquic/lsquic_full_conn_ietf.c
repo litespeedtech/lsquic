@@ -6007,6 +6007,16 @@ process_crypto_frame (struct ietf_full_conn *conn,
 }
 
 
+static int
+http3_server_bidi_stream_forbidden (const struct ietf_full_conn *conn,
+                                                    lsquic_stream_id_t stream_id)
+{
+    return (conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
+        && SIT_BIDI_SERVER == (stream_id & SIT_MASK)
+        && !(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
+}
+
+
 static unsigned
 process_stream_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
@@ -6041,8 +6051,7 @@ process_stream_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
-                    && SIT_BIDI_SERVER == (stream_frame->stream_id & SIT_MASK))
+    if (http3_server_bidi_stream_forbidden(conn, stream_frame->stream_id))
     {
         ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
             "is not allowed to initiate bidirectional streams (got "
@@ -6368,8 +6377,7 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
     {
         if (is_peer_initiated(conn, stream_id))
         {
-            if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
-                && SIT_BIDI_SERVER == (stream_id & SIT_MASK))
+            if (http3_server_bidi_stream_forbidden(conn, stream_id))
             {
                 ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
                                                             "is not allowed to initiate bidirectional streams (got "
@@ -9844,6 +9852,29 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
             conn->ifc_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
         update_datagram_want(conn);
         LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
+        break;
+    case HQSID_ENABLE_CONNECT_PROTOCOL:
+        if (value > 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_ENABLE_CONNECT_PROTOCOL value %"PRIu64,
+                value);
+            return;
+        }
+        LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
+        break;
+    case HQSID_ENABLE_WEBTRANSPORT:
+        if (value != 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_ENABLE_WEBTRANSPORT value %"PRIu64, value);
+            return;
+        }
+        conn->ifc_pub.cp_flags |= CP_WEBTRANSPORT;
+        LSQ_DEBUG("Peer's SETTINGS_ENABLE_WEBTRANSPORT=%"PRIu64, value);
+        break;
+    case HQSID_WEBTRANSPORT_MAX_SESSIONS:
+        LSQ_DEBUG("Peer's SETTINGS_WEBTRANSPORT_MAX_SESSIONS=%"PRIu64, value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64

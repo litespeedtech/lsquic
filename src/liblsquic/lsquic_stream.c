@@ -5209,7 +5209,8 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
-            if (stream->conn_pub->enpub->enp_settings.es_webtransport_server)
+            if (stream->conn_pub->enpub->enp_settings.es_webtransport_server
+                || (stream->conn_pub->cp_flags & CP_WEBTRANSPORT))
             {
                 if (filter->hqfi_type == HQFT_WT_STREAM)
                 {

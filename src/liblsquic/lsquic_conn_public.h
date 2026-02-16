@@ -55,6 +55,7 @@ struct lsquic_conn_public {
     enum {
         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
         CP_HTTP_DATAGRAMS       = 1 << 1,   /* HTTP Datagram support negotiated */
+        CP_WEBTRANSPORT         = 1 << 2,   /* WebTransport support negotiated */
     }                               cp_flags;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
