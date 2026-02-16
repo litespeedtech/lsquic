@@ -487,7 +487,7 @@ build_path (struct devious_baton_app *cfg)
 }
 
 
-static void
+static int
 send_headers (struct devious_baton_conn *conn)
 {
     struct header_buf hbuf;
@@ -518,7 +518,12 @@ send_headers (struct devious_baton_conn *conn)
     };
 
     if (0 != lsquic_stream_send_headers(conn->control_stream, &headers, 0))
+    {
         LSQ_ERROR("cannot send CONNECT headers: %s", strerror(errno));
+        return -1;
+    }
+
+    return 0;
 }
 
 
@@ -1242,13 +1247,26 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
 
     if (st->kind == DB_STREAM_CONTROL)
     {
-        if (conn && !conn->app->is_server && !conn->headers_sent)
+        if (conn && !conn->app->is_server)
         {
-            conn->headers_sent = 1;
-            conn->control_stream = stream;
-            send_headers(conn);
-            if (0 != lsquic_stream_flush(stream))
-                LSQ_ERROR("cannot flush CONNECT headers: %s", strerror(errno));
+            if (!conn->headers_sent)
+            {
+                conn->control_stream = stream;
+                if (0 != send_headers(conn))
+                {
+                    lsquic_conn_abort(lsquic_stream_conn(stream));
+                    return;
+                }
+                conn->headers_sent = 1;
+                if (0 != lsquic_stream_flush(stream))
+                {
+                    LSQ_ERROR("cannot flush CONNECT headers: %s",
+                                                        strerror(errno));
+                    lsquic_conn_abort(lsquic_stream_conn(stream));
+                    return;
+                }
+            }
+            lsquic_stream_wantwrite(stream, 0);
         }
         return;
     }
