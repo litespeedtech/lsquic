@@ -5183,20 +5183,19 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
-            if(stream->conn_pub->enpub->enp_settings.es_webtransport_server) {
-                // 4.2.  Bidirectional Streams, https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/05/
-#define WEBTRANSPORT_BIDI_STREAM_TYPE (0x41)
-                if(filter->hqfi_type == WEBTRANSPORT_BIDI_STREAM_TYPE) {
-                    // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
-                    // flag for webtransport_session_stream_id stream in app code
+            if (stream->conn_pub->enpub->enp_settings.es_webtransport_server)
+            {
+                if (filter->hqfi_type == HQFT_WT_STREAM)
+                {
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     lsquic_wt_on_client_bidi_stream(stream,
                                     stream->webtransport_session_stream_id);
-                    // disable header processing as we will not have any headers for this stream anymore
+                    /* Disable HTTP/3 header processing for WT bidi stream. */
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
                     filter->hqfi_type = HQFT_DATA;
-                    filter->hqfi_left = UINT64_MAX; // set data size infinite to keep processing till stream reset
+                    /* Keep consuming payload until stream end/reset. */
+                    filter->hqfi_left = UINT64_MAX;
                     goto end;
                 }
             }

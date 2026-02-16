@@ -18,6 +18,10 @@ enum hq_frame_type
     HQFT_PUSH_PROMISE   = 5,
     HQFT_GOAWAY         = 7,
     HQFT_MAX_PUSH_ID    = 0xD,
+    /* WebTransport signal value carried where frame type is otherwise parsed.
+     * Per draft-ietf-webtrans-http3, this is not a regular HTTP/3 frame.
+     */
+    HQFT_WT_STREAM      = 0x41,
     /* These made me expand shf_frame_type to 4 bytes from 1.  If at some
      * point we have to support a frame that is wider than 4 byte, it will
      * be time to bite the bullet and use our own enum for these types

@@ -823,7 +823,7 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 
     onnew->sess = sess;
     onnew->is_dynamic = 1;
-    wt_build_prefix(onnew->prefix, &onnew->prefix_len, 0x54,
+    wt_build_prefix(onnew->prefix, &onnew->prefix_len, HQUST_WEBTRANSPORT,
                                                     sess->wts_stream_id);
 
     stream = lconn->cn_if->ci_make_uni_stream_with_if(lconn,
@@ -876,7 +876,7 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
 
     onnew->sess = sess;
     onnew->is_dynamic = 1;
-    wt_build_prefix(onnew->prefix, &onnew->prefix_len, 0x41,
+    wt_build_prefix(onnew->prefix, &onnew->prefix_len, HQFT_WT_STREAM,
                                                     sess->wts_stream_id);
 
     stream = lconn->cn_if->ci_make_bidi_stream_with_if(lconn,
