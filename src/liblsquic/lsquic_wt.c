@@ -329,7 +329,6 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
         LSQ_WARN("cannot map WT uni stream %"PRIu64" to session %"PRIu64,
                             lsquic_stream_id(stream), (uint64_t) uctx->sess_id);
         lsquic_stream_close(stream);
-        free(uctx);
         return;
     }
 
