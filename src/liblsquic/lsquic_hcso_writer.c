@@ -194,32 +194,27 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     if (is_server && webtransport_server && max_webtransport_server_streams)
     {
         /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
-#define SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742)
-#define SETTINGS_ENABLE_WEBTRANSPORT_VALUE (1)
-        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_WEBTRANSPORT);
-        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT, bits, 1 << bits);
+        bits = hcso_setting_type2bits(writer, HQSID_ENABLE_WEBTRANSPORT);
+        vint_write(p, HQSID_ENABLE_WEBTRANSPORT, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(SETTINGS_ENABLE_WEBTRANSPORT_VALUE);
-        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT_VALUE, bits, 1 << bits);
+        bits = vint_val2bits(1);
+        vint_write(p, 1, bits, 1 << bits);
         p += 1 << bits;
 
-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
-#define WEBTRANSPORT_MAX_SESSIONS (0x2b603743)
-        bits = hcso_setting_type2bits(writer, WEBTRANSPORT_MAX_SESSIONS);
-        vint_write(p, WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
+        /* Write out SETTINGS_WEBTRANSPORT_MAX_SESSIONS */
+        bits = hcso_setting_type2bits(writer, HQSID_WEBTRANSPORT_MAX_SESSIONS);
+        vint_write(p, HQSID_WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
         p += 1 << bits;
         bits = vint_val2bits(max_webtransport_server_streams);
         vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
         p += 1 << bits;
 
         /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
-#define SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8)
-#define SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE (1)
-        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_CONNECT_PROTOCOL);
-        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
+        bits = hcso_setting_type2bits(writer, HQSID_ENABLE_CONNECT_PROTOCOL);
+        vint_write(p, HQSID_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE);
-        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE, bits, 1 << bits);
+        bits = vint_val2bits(1);
+        vint_write(p, 1, bits, 1 << bits);
         p += 1 << bits;
     }
 
