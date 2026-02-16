@@ -1366,6 +1366,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     TAILQ_INIT(&conn->ifc_pub.write_streams);
     TAILQ_INIT(&conn->ifc_pub.service_streams);
     TAILQ_INIT(&conn->ifc_pub.http_dg_streams);
+    TAILQ_INIT(&conn->ifc_pub.wt_sessions);
     STAILQ_INIT(&conn->ifc_stream_ids_to_ss);
     TAILQ_INIT(&conn->ifc_to_retire);
     conn->ifc_n_to_retire = 0;
