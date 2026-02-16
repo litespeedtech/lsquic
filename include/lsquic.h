@@ -1664,9 +1664,13 @@ lsquic_conn_close (lsquic_conn_t *);
 /**
  * Set whether you want to read from stream.  If @param is_want is true,
  * @ref on_read() will be called when there is readable data in the
- * stream.  If @param is false, @ref on_read() will not be called.
+ * stream.  If @param is_want is false, @ref on_read() will not be called.
  *
- * Returns previous value of this flag.
+ * Returns previous value of this flag.  On error, returns -1 and sets errno:
+ *
+ *  EBADF           The read side is shut down.
+ *  EINVAL          Reading from this stream is not allowed (for example,
+ *                  locally-initiated unidirectional IETF stream).
  */
 int
 lsquic_stream_wantread (lsquic_stream_t *s, int is_want);

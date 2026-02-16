@@ -1892,6 +1892,24 @@ stream_is_incoming_unidir (const struct lsquic_stream *stream)
 }
 
 
+static int
+stream_is_locally_initiated_unidir (const struct lsquic_stream *stream)
+{
+    enum stream_id_type sit;
+
+    if (stream->sm_bflags & SMBF_IETF)
+    {
+        sit = stream->id & SIT_MASK;
+        if (stream->sm_bflags & SMBF_SERVER)
+            return sit == SIT_UNI_SERVER;
+        else
+            return sit == SIT_UNI_CLIENT;
+    }
+    else
+        return 0;
+}
+
+
 static void
 stream_shutdown_write (lsquic_stream_t *stream)
 {
@@ -2175,17 +2193,22 @@ int
 lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
 {
     SM_HISTORY_APPEND(stream, SHE_WANTREAD_NO + !!is_want);
-    if (!(stream->stream_flags & STREAM_U_READ_DONE))
-    {
-        if (is_want)
-            maybe_conn_to_tickable_if_readable(stream);
-        return stream_wantread(stream, is_want);
-    }
-    else
+
+    if (stream->stream_flags & STREAM_U_READ_DONE)
     {
         errno = EBADF;
         return -1;
     }
+
+    if (is_want && stream_is_locally_initiated_unidir(stream))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (is_want)
+        maybe_conn_to_tickable_if_readable(stream);
+    return stream_wantread(stream, is_want);
 }
 
 

@@ -662,13 +662,28 @@ send_datagram_if_needed (struct devious_baton_session *sess,
 
 
 static int
+stream_is_readable_by_us (const struct devious_baton_session *sess,
+                          const struct devious_baton_stream *st)
+{
+    enum lsquic_wt_stream_initiator self_init;
+
+    if (st->dir == LSQWT_BIDI)
+        return 1;
+
+    self_init = sess->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
+    return st->initiator != self_init;
+}
+
+
+static int
 queue_baton (struct devious_baton_session *sess, struct devious_baton_stream *st,
                                                         unsigned char baton)
 {
     st->baton_to_send = baton;
     st->have_baton = 1;
     lsquic_stream_wantwrite(st->stream, 1);
-    lsquic_stream_wantread(st->stream, 1);
+    if (stream_is_readable_by_us(sess, st))
+        lsquic_stream_wantread(st->stream, 1);
     return 0;
 }
 
@@ -848,7 +863,8 @@ db_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
     st->stream = stream;
     st->dir = dir;
     st->initiator = lsquic_wt_stream_initiator(stream);
-    lsquic_stream_wantread(stream, 1);
+    if (stream_is_readable_by_us(bsess, st))
+        lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) st;
 }
 
