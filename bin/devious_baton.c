@@ -1137,6 +1137,8 @@ process_control_server (struct devious_baton_stream *st)
 
     if (0 != lsquic_stream_flush(st->stream))
         LSQ_ERROR("cannot flush response: %s", strerror(errno));
+
+    lsquic_stream_wantread(st->stream, 0);
 }
 
 
@@ -1147,7 +1149,10 @@ process_control_client (struct devious_baton_stream *st)
     struct lsquic_wt_accept_params params;
 
     if (st->conn->response_seen)
+    {
+        lsquic_stream_wantread(st->stream, 0);
         return;
+    }
 
     hset = lsquic_stream_get_hset(st->stream);
     if (!hset)
@@ -1177,6 +1182,8 @@ process_control_client (struct devious_baton_stream *st)
         lsquic_conn_abort(lsquic_stream_conn(st->stream));
         return;
     }
+
+    lsquic_stream_wantread(st->stream, 0);
 }
 
 
@@ -1218,6 +1225,12 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         return;
     }
 
+    if (st->message_done)
+    {
+        lsquic_stream_wantread(stream, 0);
+        return;
+    }
+
     while (1)
     {
         nread = lsquic_stream_read(stream, buf, sizeof(buf));
@@ -1233,6 +1246,7 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         else if (nread == 0)
         {
             consume_baton_data(st, 1);
+            lsquic_stream_wantread(stream, 0);
             break;
         }
         else if (errno == EWOULDBLOCK)

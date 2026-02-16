@@ -170,6 +170,11 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
         wctx->prefix_len = onnew->prefix_len;
     }
 
+    /* Mark stream as belonging to the session before calling app hooks:
+     * app on_new may enable reads and trigger nested readability checks.
+     */
+    lsquic_stream_set_wt_session(stream, sess);
+
     app_ctx = NULL;
     if (sess->wts_if)
     {
@@ -185,7 +190,6 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     }
 
     wctx->app_ctx = app_ctx;
-    lsquic_stream_set_wt_session(stream, sess);
     LSQ_DEBUG("initialized WT stream %"PRIu64" in session %"PRIu64
             " (dir=%s, initiator=%s, prefix_len=%zu)",
             lsquic_stream_id(stream), sess->wts_stream_id,
@@ -1374,10 +1378,21 @@ void
 lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id)
 {
+    struct lsquic_wt_session *existing;
     struct lsquic_wt_session *sess;
 
     if (!stream)
         return;
+
+    existing = lsquic_stream_get_wt_session(stream);
+    if (existing)
+    {
+        if (existing->wts_stream_id != session_id)
+            LSQ_WARN("WT stream %"PRIu64" is already bound to session %"PRIu64
+                ", cannot rebind to %"PRIu64, lsquic_stream_id(stream),
+                existing->wts_stream_id, (uint64_t) session_id);
+        return;
+    }
 
     LSQ_DEBUG("associate client-initiated bidi stream %"PRIu64
             " with WT session %"PRIu64, lsquic_stream_id(stream),
