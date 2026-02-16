@@ -1496,11 +1496,12 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
     if (flags & IFC_HTTP)
     {
+        unsigned max_uni_streams = 3;
         if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
-            conn->ifc_max_streams_in[SD_UNI]
-                            = MAX(3, enpub->enp_settings.es_max_streams_in);
-        else
-            conn->ifc_max_streams_in[SD_UNI] = 3;
+            max_uni_streams = MAX(max_uni_streams, enpub->enp_settings.es_max_streams_in);
+        if (enpub->enp_settings.es_init_max_streams_uni)
+            max_uni_streams = MAX(max_uni_streams, enpub->enp_settings.es_init_max_streams_uni);
+        conn->ifc_max_streams_in[SD_UNI] = max_uni_streams;
     }
     else
         conn->ifc_max_streams_in[SD_UNI] = enpub->enp_settings.es_max_streams_in;
