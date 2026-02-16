@@ -134,29 +134,21 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     unsigned char *p;
     unsigned bits;
     int was_empty;
-#ifdef NDEBUG
-#   define frame_size_len 1
-#else
-    /* Need to use two bytes for frame length, as randomization may require
-     * more than 63 bytes.
+    enum {
+        HCSO_SETTINGS_FRAME_SIZE_LEN = 2,
+        HCSO_MAX_SETTINGS = 7,
+        HCSO_MAX_VARINT_LEN = VINT_MAX_SIZE,
+    };
+    /* Use fixed worst-case sizing: WT setting IDs are larger than 1-byte
+     * varints, and fuzzing can randomize setting IDs to full varint width.
      */
-#   define frame_size_len 2
-#endif
-    unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
-        /* There are maximum seven settings that need to be written out and
-         * each value can be encoded in maximum 8 bytes:
-         */
-        + 7 * (
-#ifdef NDEBUG
-            1   /* Each setting needs 1-byte varint number, */
-#else
-            8   /* but it can be up to 8 bytes when randomized */
-#endif
-              + 8) ];
+    unsigned char buf[1 /* frame type */
+        + HCSO_SETTINGS_FRAME_SIZE_LEN
+        + HCSO_MAX_SETTINGS * (HCSO_MAX_VARINT_LEN + HCSO_MAX_VARINT_LEN)];
 
     p = buf;
     *p++ = HQFT_SETTINGS;
-    p += frame_size_len;
+    p += HCSO_SETTINGS_FRAME_SIZE_LEN;
 
     if (max_header_list_size != HQ_DF_MAX_HEADER_LIST_SIZE)
     {
@@ -232,11 +224,8 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 
-#ifdef NDEBUG
-    buf[1] = p - buf - 2;
-#else
-    vint_write(buf + 1, p - buf - 3, 1, 2);
-#endif
+    vint_write(buf + 1, p - buf - 1 - HCSO_SETTINGS_FRAME_SIZE_LEN, 1,
+                                                HCSO_SETTINGS_FRAME_SIZE_LEN);
 
     was_empty = lsquic_frab_list_empty(&writer->how_fral);
 
