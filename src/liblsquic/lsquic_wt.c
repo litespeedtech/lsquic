@@ -85,6 +85,8 @@ struct wt_header_buf
     size_t  off;
 };
 
+#define WT_MAX_PENDING_STREAMS 64
+
 static int
 lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
                             lsquic_stream_ctx_t *UNUSED_sctx,
@@ -105,6 +107,19 @@ static const struct lsquic_http_dg_if wt_http_dg_if =
 static struct lsquic_wt_session *
 wt_session_find (struct lsquic_conn_public *conn_pub,
                                                 lsquic_stream_id_t stream_id);
+
+static unsigned
+wt_count_pending_streams (struct lsquic_conn_public *conn_pub);
+
+static int
+wt_buffer_or_reject_stream (struct lsquic_stream *stream,
+    lsquic_stream_id_t session_id, const char *stream_kind);
+
+static void
+wt_replay_pending_streams (struct lsquic_wt_session *sess);
+
+static void
+wt_drive_connect_stream (struct lsquic_stream *stream);
 
 static void
 wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
@@ -326,9 +341,11 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
                                                         uctx->sess_id);
     if (!sess)
     {
-        LSQ_WARN("cannot map WT uni stream %"PRIu64" to session %"PRIu64,
+        if (0 != wt_buffer_or_reject_stream(stream, uctx->sess_id, "uni"))
+            return;
+
+        LSQ_INFO("buffered WT uni stream %"PRIu64" for session %"PRIu64,
                             lsquic_stream_id(stream), (uint64_t) uctx->sess_id);
-        lsquic_stream_close(stream);
         return;
     }
 
@@ -358,6 +375,140 @@ const struct lsquic_stream_if *
 lsquic_wt_uni_stream_if (void)
 {
     return &wt_uni_stream_if;
+}
+
+
+static int
+wt_is_pending_uni_stream (const struct lsquic_stream *stream,
+                                                lsquic_stream_id_t *session_id)
+{
+    const struct wt_uni_read_ctx *uctx;
+
+    if (lsquic_stream_get_stream_if(stream) != &wt_uni_stream_if)
+        return 0;
+
+    if (lsquic_stream_get_wt_session(stream))
+        return 0;
+
+    uctx = (const struct wt_uni_read_ctx *) lsquic_stream_get_ctx(stream);
+    if (!uctx || !uctx->done)
+        return 0;
+
+    if (session_id)
+        *session_id = uctx->sess_id;
+
+    return 1;
+}
+
+
+static int
+wt_is_pending_bidi_stream (const struct lsquic_stream *stream,
+                                                lsquic_stream_id_t *session_id)
+{
+    int sid;
+
+    if (!lsquic_stream_is_webtransport_client_bidi_stream(stream))
+        return 0;
+
+    if (lsquic_stream_get_wt_session(stream))
+        return 0;
+
+    sid = lsquic_stream_get_webtransport_session_stream_id(stream);
+    if (sid < 0)
+        return 0;
+
+    if (session_id)
+        *session_id = (lsquic_stream_id_t) sid;
+
+    return 1;
+}
+
+
+static unsigned
+wt_count_pending_streams (struct lsquic_conn_public *conn_pub)
+{
+    struct lsquic_hash_elem *el;
+    struct lsquic_stream *stream;
+    unsigned n_pending;
+
+    n_pending = 0;
+    for (el = lsquic_hash_first(conn_pub->all_streams); el;
+                                    el = lsquic_hash_next(conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (wt_is_pending_uni_stream(stream, NULL)
+                                    || wt_is_pending_bidi_stream(stream, NULL))
+            ++n_pending;
+    }
+
+    return n_pending;
+}
+
+
+static int
+wt_buffer_or_reject_stream (struct lsquic_stream *stream,
+    lsquic_stream_id_t session_id, const char *stream_kind)
+{
+    struct lsquic_conn_public *conn_pub;
+    unsigned n_pending;
+
+    conn_pub = lsquic_stream_get_conn_public(stream);
+    n_pending = wt_count_pending_streams(conn_pub);
+    if (n_pending >= WT_MAX_PENDING_STREAMS)
+    {
+        LSQ_WARN("pending WT stream limit reached (%u): reject %s stream "
+            "%"PRIu64" for session %"PRIu64, WT_MAX_PENDING_STREAMS,
+            stream_kind, lsquic_stream_id(stream), (uint64_t) session_id);
+        /* XXX reset with WT_BUFFERED_STREAM_REJECTED when RESET support lands */
+        lsquic_stream_close(stream);
+        return -1;
+    }
+
+    lsquic_stream_wantread(stream, 0);
+    return 0;
+}
+
+
+static void
+wt_replay_pending_streams (struct lsquic_wt_session *sess)
+{
+    struct lsquic_hash_elem *el;
+    struct lsquic_stream *stream;
+    struct wt_uni_read_ctx *uctx;
+    lsquic_stream_id_t session_id;
+    unsigned n_replayed;
+
+    n_replayed = 0;
+    for (el = lsquic_hash_first(sess->wts_conn_pub->all_streams); el;
+                            el = lsquic_hash_next(sess->wts_conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (wt_is_pending_uni_stream(stream, &session_id)
+                                            && session_id == sess->wts_stream_id)
+        {
+            uctx = (struct wt_uni_read_ctx *) lsquic_stream_get_ctx(stream);
+            free(uctx);
+            LSQ_INFO("replay buffered WT uni stream %"PRIu64" for session %"PRIu64,
+                        lsquic_stream_id(stream), sess->wts_stream_id);
+            lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
+                                                &sess->wts_onnew_ctx);
+            ++n_replayed;
+        }
+        else if (wt_is_pending_bidi_stream(stream, &session_id)
+                                            && session_id == sess->wts_stream_id)
+        {
+            LSQ_INFO("replay buffered WT bidi stream %"PRIu64
+                " for session %"PRIu64, lsquic_stream_id(stream),
+                                                        sess->wts_stream_id);
+            lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
+                                                &sess->wts_onnew_ctx);
+            ++n_replayed;
+        }
+    }
+
+    if (n_replayed)
+        LSQ_INFO("replayed %u buffered WT stream%s for session %"PRIu64,
+            n_replayed, n_replayed == 1 ? "" : "s", sess->wts_stream_id);
 }
 
 
@@ -443,6 +594,17 @@ wt_copy_connect_info (struct lsquic_wt_session *sess,
                                                     sess->wts_stream_id);
     wt_free_connect_info(sess);
     return -1;
+}
+
+
+static void
+wt_drive_connect_stream (struct lsquic_stream *stream)
+{
+    lsquic_stream_dispatch_write_events(stream);
+    if (lsquic_stream_has_data_to_flush(stream)
+                                    && 0 != lsquic_stream_flush(stream))
+        LSQ_DEBUG("cannot flush WT CONNECT stream %"PRIu64": %s",
+            lsquic_stream_id(stream), strerror(errno));
 }
 
 
@@ -633,6 +795,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
                                         lsquic_stream_id(connect_stream));
             return NULL;
         }
+        wt_drive_connect_stream(connect_stream);
     }
 
     info = params->connect_info;
@@ -686,6 +849,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         sess->wts_sess_ctx = sess->wts_if->on_wt_session_open(
                         sess->wts_if_ctx, (lsquic_wt_session_t *) sess,
                         &sess->wts_info);
+    wt_replay_pending_streams(sess);
 
     LSQ_INFO("accepted WT session %"PRIu64" on stream %"PRIu64,
                                 sess->wts_stream_id, lsquic_stream_id(connect_stream));
@@ -1222,8 +1386,10 @@ lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                             session_id);
     if (!sess)
     {
-        LSQ_DEBUG("no WT session %"PRIu64" found for stream %"PRIu64,
-                            (uint64_t) session_id, lsquic_stream_id(stream));
+        if (0 != wt_buffer_or_reject_stream(stream, session_id, "bidi"))
+            return;
+        LSQ_INFO("buffered WT bidi stream %"PRIu64" for session %"PRIu64,
+                            lsquic_stream_id(stream), (uint64_t) session_id);
         return;
     }
 

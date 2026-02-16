@@ -2498,6 +2498,9 @@ on_write_header_wrapper (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
             stream->sm_hblock_sz = 0;
             stream_hblock_sent(stream);
             LSQ_DEBUG("header block written out successfully");
+            if (0 != lsquic_stream_flush(stream))
+                LSQ_DEBUG("cannot flush completed header block: %s",
+                                                        strerror(errno));
             /* TODO: if there was eos, do something else */
             if (stream->sm_qflags & SMQF_WANT_WRITE)
                 stream->stream_if->on_write(stream, h);
