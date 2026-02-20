@@ -391,6 +391,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
     settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
+    settings->es_enable_bw_sampler = LSQUIC_DF_ENABLE_BW_SAMPLER;
     settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
     settings->es_ext_http_prio   = LSQUIC_DF_EXT_HTTP_PRIO;
     settings->es_ptpc_periodicity= LSQUIC_DF_PTPC_PERIODICITY;

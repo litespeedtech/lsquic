@@ -731,6 +731,23 @@ settings structure:
 
        The default value is :macro:`LSQUIC_DF_CC_RTT_THRESH`
 
+    .. member:: int             es_enable_bw_sampler
+
+       If you plan to call :func:`lsquic_conn_get_info()`, set this to true.
+
+       This causes bandwidth sampler to be initialized even when selected
+       congestion controller does not need it.  This way, bandwidth estimate
+       is available on the first call to :func:`lsquic_conn_get_info()`.
+
+       If false, first :func:`lsquic_conn_get_info()` call may initialize
+       sampler and bandwidth estimate may only be available on subsequent
+       call.
+
+       This can be overridden per connection using
+       :member:`LSQCP_ENABLE_BW_SAMPLER`.
+
+       The default value is :macro:`LSQUIC_DF_ENABLE_BW_SAMPLER`
+
     .. member:: int             es_ql_bits
 
        Use QL loss bits.  Allowed values are:
@@ -2098,6 +2115,25 @@ available through engine settings.
         Setting this value to 0 removes the limit, allowing the congestion control
         algorithm to determine the send rate.
 
+    .. member:: LSQCP_ENABLE_BW_SAMPLER
+
+        If you plan to call :func:`lsquic_conn_get_info()`, set this value
+        to true.
+
+        **Type:** ``int``
+
+        **Default:** inherited from :member:`lsquic_engine_settings.es_enable_bw_sampler`
+
+        This causes bandwidth sampler to be initialized even when selected
+        congestion controller does not need it.  This way, bandwidth estimate
+        is available on the first call to :func:`lsquic_conn_get_info()`.
+
+        If false, first :func:`lsquic_conn_get_info()` call may initialize
+        sampler and bandwidth estimate may only be available on subsequent
+        call.
+
+        **Note:** :func:`lsquic_conn_get_info()` enables the sampler if needed.
+
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
     Set a connection parameter.
@@ -2129,6 +2165,14 @@ available through engine settings.
         uint64_t unlimited = 0;
         lsquic_conn_set_param(conn, LSQCP_MAX_PACING_RATE,
                               &unlimited, sizeof(unlimited));
+
+    **Example - Enabling bandwidth sampler for this connection:**
+
+    ::
+
+        int on = 1;
+        lsquic_conn_set_param(conn, LSQCP_ENABLE_BW_SAMPLER,
+                              &on, sizeof(on));
 
     **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
     via :member:`lsquic_engine_settings.es_pace_packets` for this parameter

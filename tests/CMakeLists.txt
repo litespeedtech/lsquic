@@ -58,6 +58,7 @@ SET(TESTS
     rst_stream_gquic_be
     rtt
     send_headers
+    send_ctl_bw_lifecycle
     senhist
     set
     sfcw

@@ -79,6 +79,45 @@
                 lsquic_packet_out_sent_sz(ctl->sc_conn_pub->lconn, p)
 
 static void
+send_ctl_clear_bw_sampler_state (struct lsquic_packet_out *packet_out)
+{
+    if (packet_out->po_bwp_state)
+    {
+        lsquic_malo_put(packet_out->po_bwp_state);
+        packet_out->po_bwp_state = NULL;
+    }
+}
+
+
+static void
+send_ctl_purge_bw_sampler_state (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out;
+    enum packnum_space pns;
+    unsigned n;
+
+    for (pns = 0; pns < N_PNS; ++pns)
+        TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[pns], po_next)
+            send_ctl_clear_bw_sampler_state(packet_out);
+
+    TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+        send_ctl_clear_bw_sampler_state(packet_out);
+
+    TAILQ_FOREACH(packet_out, &ctl->sc_lost_packets, po_next)
+        send_ctl_clear_bw_sampler_state(packet_out);
+
+    TAILQ_FOREACH(packet_out, &ctl->sc_0rtt_stash, po_next)
+        send_ctl_clear_bw_sampler_state(packet_out);
+
+    for (n = 0; n < sizeof(ctl->sc_buffered_packets)
+                    / sizeof(ctl->sc_buffered_packets[0]); ++n)
+        TAILQ_FOREACH(packet_out, &ctl->sc_buffered_packets[n].bpq_packets,
+                                                                    po_next)
+            send_ctl_clear_bw_sampler_state(packet_out);
+}
+
+
+static void
 send_ctl_init_bw_sampler (struct lsquic_send_ctl *ctl)
 {
     if (!(ctl->sc_flags & SC_BW_SAMPLER_INIT))
@@ -95,9 +134,47 @@ send_ctl_cleanup_bw_sampler (struct lsquic_send_ctl *ctl)
 {
     if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
     {
+        send_ctl_purge_bw_sampler_state(ctl);
         lsquic_bw_sampler_cleanup(&ctl->sc_bw_sampler);
         ctl->sc_flags &= ~SC_BW_SAMPLER_INIT;
     }
+}
+
+
+static int
+send_ctl_need_bw_sampler (const struct lsquic_send_ctl *ctl)
+{
+    return (ctl->sc_flags & SC_KEEP_BW_SAMPLER)
+                                || ctl->sc_ci != &lsquic_cong_cubic_if;
+}
+
+
+static void
+send_ctl_apply_bw_sampler_policy (struct lsquic_send_ctl *ctl)
+{
+    if (send_ctl_need_bw_sampler(ctl))
+        send_ctl_init_bw_sampler(ctl);
+    else
+        send_ctl_cleanup_bw_sampler(ctl);
+}
+
+
+void
+lsquic_send_ctl_set_bw_sampler (struct lsquic_send_ctl *ctl, int enable)
+{
+    if (enable)
+        ctl->sc_flags |= SC_KEEP_BW_SAMPLER;
+    else
+        ctl->sc_flags &= ~SC_KEEP_BW_SAMPLER;
+
+    send_ctl_apply_bw_sampler_policy(ctl);
+}
+
+
+int
+lsquic_send_ctl_bw_sampler_enabled (const struct lsquic_send_ctl *ctl)
+{
+    return !!(ctl->sc_flags & SC_KEEP_BW_SAMPLER);
 }
 
 
@@ -431,8 +508,9 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
         break;
     }
-    if (ctl->sc_ci != &lsquic_cong_cubic_if)
-        send_ctl_init_bw_sampler(ctl);
+    if (enpub->enp_settings.es_enable_bw_sampler)
+        ctl->sc_flags |= SC_KEEP_BW_SAMPLER;
+    send_ctl_apply_bw_sampler_policy(ctl);
     ctl->sc_ci->cci_init(CGP(ctl), conn_pub);
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_init(&ctl->sc_pacer, conn_pub->lconn,
@@ -835,10 +913,7 @@ send_ctl_select_cc (struct lsquic_send_ctl *ctl)
             srtt, ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
         ctl->sc_ci = &lsquic_cong_cubic_if;
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
-        if (!(ctl->sc_flags & SC_BW_SAMPLER_INFO))
-        {
-            send_ctl_cleanup_bw_sampler(ctl);
-        }
+        send_ctl_apply_bw_sampler_policy(ctl);
         ctl->sc_flags |= SC_CLEANUP_BBR;
     }
     else
@@ -848,6 +923,7 @@ send_ctl_select_cc (struct lsquic_send_ctl *ctl)
             ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
         ctl->sc_ci = &lsquic_cong_bbr_if;
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
+        send_ctl_apply_bw_sampler_policy(ctl);
     }
 }
 
@@ -4342,9 +4418,6 @@ lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *ctl)
 uint64_t
 lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
 {
-    ctl->sc_flags |= SC_BW_SAMPLER_INFO;
-
-    if (!(ctl->sc_flags & SC_BW_SAMPLER_INIT))
-        send_ctl_init_bw_sampler(ctl);
+    lsquic_send_ctl_set_bw_sampler(ctl, 1);
     return lsquic_bw_sampler_get_bw(&ctl->sc_bw_sampler);
 }

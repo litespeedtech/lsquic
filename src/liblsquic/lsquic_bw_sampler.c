@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <sys/queue.h>
 
 #include "lsquic_int_types.h"
@@ -63,6 +64,7 @@ lsquic_bw_sampler_cleanup (struct bw_sampler *sampler)
         lsquic_malo_destroy(sampler->bws_malo);
         sampler->bws_malo = NULL;
     }
+    memset(sampler, 0, sizeof(*sampler));
 }
 
 

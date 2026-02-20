@@ -4550,6 +4550,7 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
+    int enable_bw_sampler;
 
     switch (param)
     {
@@ -4559,6 +4560,14 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         memcpy(&rate, value, sizeof(rate));
         conn->fc_send_ctl.sc_max_pacing_rate = rate;
         LSQ_INFO("max pacing rate set to %"PRIu64" bps", rate);
+        return 0;
+    case LSQCP_ENABLE_BW_SAMPLER:
+        if (value_len != sizeof(int))
+            return -1;
+        memcpy(&enable_bw_sampler, value, sizeof(enable_bw_sampler));
+        lsquic_send_ctl_set_bw_sampler(&conn->fc_send_ctl, enable_bw_sampler);
+        LSQ_INFO("bw sampler %s",
+                 enable_bw_sampler ? "enabled" : "disabled");
         return 0;
     default:
         return -1;
@@ -4572,16 +4581,24 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
-
-    if (*value_len < sizeof(uint64_t))
-        return -1;
+    int enable_bw_sampler;
 
     switch (param)
     {
     case LSQCP_MAX_PACING_RATE:
+        if (*value_len < sizeof(uint64_t))
+            return -1;
         rate = conn->fc_send_ctl.sc_max_pacing_rate;
         memcpy(value, &rate, sizeof(rate));
         *value_len = sizeof(rate);
+        return 0;
+    case LSQCP_ENABLE_BW_SAMPLER:
+        if (*value_len < sizeof(int))
+            return -1;
+        enable_bw_sampler =
+                lsquic_send_ctl_bw_sampler_enabled(&conn->fc_send_ctl);
+        memcpy(value, &enable_bw_sampler, sizeof(enable_bw_sampler));
+        *value_len = sizeof(enable_bw_sampler);
         return 0;
     default:
         return -1;
