@@ -55,7 +55,7 @@ enum send_ctl_flags {
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
     SC_ROUGH_RTT    =  1 << 22,
     SC_BW_SAMPLER_INIT = 1 << 23, /* bw_sampler is initialized */
-    SC_BW_SAMPLER_INFO = 1 << 24, /* bandwidth info was requested */
+    SC_KEEP_BW_SAMPLER = 1 << 24, /* keep bw sampler for conn lifetime */
 #if LSQUIC_DEVEL
     SC_DYN_PTHRESH  =  1 << 31u,    /* dynamic packet threshold enabled */
 #endif
@@ -522,6 +522,12 @@ lsquic_send_ctl_0rtt_to_1rtt (struct lsquic_send_ctl *);
 
 void
 lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_set_bw_sampler (struct lsquic_send_ctl *, int enable);
+
+int
+lsquic_send_ctl_bw_sampler_enabled (const struct lsquic_send_ctl *);
 
 uint64_t
 lsquic_send_ctl_get_bw (struct lsquic_send_ctl *);

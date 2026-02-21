@@ -1519,7 +1519,7 @@ iquic_ssl_sess_to_resume_info (struct enc_sess_iquic *enc_sess, SSL *ssl,
     size_t trapa_sz, buf_sz;
 
     SSL_get_peer_quic_transport_params(ssl, &trapa_buf, &trapa_sz);
-    if (!(trapa_buf + trapa_sz))
+    if (!trapa_buf || !trapa_sz)
     {
         LSQ_WARN("no transport parameters: cannot generate session "
                                                     "resumption info");
@@ -1735,7 +1735,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     int have_0rtt_tp;
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
-    if (!params_buf)
+    if (!params_buf || !bufsz)
     {
         LSQ_DEBUG("no peer transport parameters");
         return -1;

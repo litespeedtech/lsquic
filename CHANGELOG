@@ -1,3 +1,9 @@
+2026-02-20
+    - 4.6.0
+    - [API] Allow to optimize BW sampler use.
+    - [FIX] Crash in the new bandwidth estimate code.
+    - [IMPROVEMENT] Transport param checks warnings (gcc 14).
+
 2026-01-11
     - 4.5.0
     - [API] Expose lci_pacing_rate in lsquic_conn_info
