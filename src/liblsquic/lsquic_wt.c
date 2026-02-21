@@ -3,6 +3,7 @@
  * lsquic_wt.c -- WebTransport scaffolding
  */
 
+#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -76,6 +77,14 @@ struct lsquic_wt_session
     struct wt_onnew_ctx                wts_onnew_ctx;
     unsigned char                     *wts_dg_buf;
     size_t                             wts_dg_len;
+    unsigned                           wts_n_streams;
+    unsigned                           wts_flags;
+};
+
+enum wt_session_flags
+{
+    WTSF_CLOSING         = 1 << 0,
+    WTSF_ON_CLOSE_CALLED = 1 << 1,
 };
 
 
@@ -123,6 +132,17 @@ static void
 wt_drive_connect_stream (struct lsquic_stream *stream);
 
 static void
+wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
+                                        const char *reason, size_t reason_len);
+
+static void
+wt_stream_bind_session (struct lsquic_wt_session *sess,
+                                                struct lsquic_stream *stream);
+
+static void
+wt_stream_unbind_session (struct lsquic_stream *stream);
+
+static void
 wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
                                                     lsquic_stream_id_t sess_id)
 {
@@ -139,6 +159,41 @@ wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
 
     *len = off;
 }
+
+
+static void
+wt_stream_bind_session (struct lsquic_wt_session *sess,
+                                                struct lsquic_stream *stream)
+{
+    if (!sess || !stream)
+        return;
+
+    if (lsquic_stream_get_wt_session(stream) == sess)
+        return;
+
+    assert(!lsquic_stream_get_wt_session(stream));
+    lsquic_stream_set_wt_session(stream, sess);
+    ++sess->wts_n_streams;
+}
+
+
+static void
+wt_stream_unbind_session (struct lsquic_stream *stream)
+{
+    struct lsquic_wt_session *sess;
+
+    if (!stream)
+        return;
+
+    sess = lsquic_stream_get_wt_session(stream);
+    if (!sess)
+        return;
+
+    lsquic_stream_set_wt_session(stream, NULL);
+    if (sess->wts_n_streams > 0)
+        --sess->wts_n_streams;
+}
+
 
 static lsquic_stream_ctx_t *
 wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
@@ -174,7 +229,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     /* Mark stream as belonging to the session before calling app hooks:
      * app on_new may enable reads and trigger nested readability checks.
      */
-    lsquic_stream_set_wt_session(stream, sess);
+    wt_stream_bind_session(sess, stream);
 
     app_ctx = NULL;
     if (sess->wts_if)
@@ -808,32 +863,63 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
 
 
 static void
-wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
+wt_close_data_streams (struct lsquic_wt_session *sess)
+{
+    struct lsquic_stream **streams, *stream;
+    struct lsquic_hash_elem *el;
+    size_t n_streams, i;
+
+    if (!sess || !sess->wts_conn_pub || !sess->wts_conn_pub->all_streams)
+        return;
+
+    n_streams = 0;
+    for (el = lsquic_hash_first(sess->wts_conn_pub->all_streams); el;
+                            el = lsquic_hash_next(sess->wts_conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (lsquic_stream_get_wt_session(stream) == sess
+                                        && stream != sess->wts_control_stream)
+            ++n_streams;
+    }
+
+    if (n_streams == 0)
+        return;
+
+    streams = malloc(n_streams * sizeof(*streams));
+    if (!streams)
+    {
+        LSQ_WARN("cannot allocate WT stream-close list for session %"PRIu64,
+                                                        sess->wts_stream_id);
+        return;
+    }
+
+    i = 0;
+    for (el = lsquic_hash_first(sess->wts_conn_pub->all_streams); el;
+                            el = lsquic_hash_next(sess->wts_conn_pub->all_streams))
+    {
+        stream = lsquic_hashelem_getdata(el);
+        if (lsquic_stream_get_wt_session(stream) == sess
+                                        && stream != sess->wts_control_stream)
+            streams[i++] = stream;
+    }
+
+    for (i = 0; i < n_streams; ++i)
+        lsquic_stream_close(streams[i]);
+
+    free(streams);
+}
+
+
+static void
+wt_session_finalize (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
     if (!sess)
         return;
+    (void) reason;
 
     LSQ_INFO("destroy WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
                                     sess->wts_stream_id, code, reason_len);
-    if (sess->wts_control_stream)
-    {
-        lsquic_stream_set_http_dg_if(sess->wts_control_stream, NULL);
-        lsquic_stream_set_wt_session(sess->wts_control_stream, NULL);
-        LSQ_DEBUG("detached WT control stream %"PRIu64,
-                                lsquic_stream_id(sess->wts_control_stream));
-    }
-
-    if (sess->wts_conn_pub)
-    {
-        TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
-        LSQ_DEBUG("removed WT session %"PRIu64" from connection list",
-                                                    sess->wts_stream_id);
-    }
-
-    if (sess->wts_if && sess->wts_if->on_wt_session_close)
-        sess->wts_if->on_wt_session_close((lsquic_wt_session_t *) sess,
-                sess->wts_sess_ctx, code, reason, reason_len);
 
     free(sess->wts_dg_buf);
     sess->wts_dg_buf = NULL;
@@ -841,6 +927,57 @@ wt_session_destroy (struct lsquic_wt_session *sess, uint64_t code,
 
     wt_free_connect_info(sess);
     free(sess);
+}
+
+
+static void
+wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
+                                        const char *reason, size_t reason_len)
+{
+    const struct lsquic_webtransport_if *wt_if;
+    lsquic_wt_session_ctx_t *sess_ctx;
+
+    if (!sess)
+        return;
+
+    if (!(sess->wts_flags & WTSF_CLOSING))
+    {
+        LSQ_INFO("closing WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
+                            sess->wts_stream_id, code, reason_len);
+        sess->wts_flags |= WTSF_CLOSING;
+
+        if (sess->wts_conn_pub)
+        {
+            TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
+            LSQ_DEBUG("removed WT session %"PRIu64" from connection list",
+                                                        sess->wts_stream_id);
+        }
+
+        if (sess->wts_control_stream)
+            lsquic_stream_set_http_dg_if(sess->wts_control_stream, NULL);
+
+        wt_if = sess->wts_if;
+        sess_ctx = sess->wts_sess_ctx;
+        sess->wts_if = NULL;
+        sess->wts_sess_ctx = NULL;
+        sess->wts_stream_if = NULL;
+        if (!(sess->wts_flags & WTSF_ON_CLOSE_CALLED) && wt_if
+                                                && wt_if->on_wt_session_close)
+            wt_if->on_wt_session_close((lsquic_wt_session_t *) sess,
+                                sess_ctx, code, reason, reason_len);
+        sess->wts_flags |= WTSF_ON_CLOSE_CALLED;
+
+        wt_close_data_streams(sess);
+        if (sess->wts_control_stream)
+            lsquic_stream_shutdown(sess->wts_control_stream, 1);
+    }
+
+    if (sess->wts_n_streams == 0)
+        wt_session_finalize(sess, code, reason, reason_len);
+    else
+        LSQ_DEBUG("defer WT session %"PRIu64" free: %u stream%s still attached",
+            sess->wts_stream_id, sess->wts_n_streams,
+            sess->wts_n_streams == 1 ? "" : "s");
 }
 
 
@@ -941,7 +1078,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
-    lsquic_stream_set_wt_session(connect_stream, sess);
+    wt_stream_bind_session(sess, connect_stream);
     lsquic_stream_set_webtransport_session(connect_stream);
     TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
 
@@ -1007,8 +1144,6 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
-    struct lsquic_stream *control_stream;
-
     if (!sess)
     {
         errno = EINVAL;
@@ -1016,13 +1151,7 @@ lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
         return -1;
     }
 
-    LSQ_INFO("closing WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
-                                    sess->wts_stream_id, code, reason_len);
-    control_stream = sess->wts_control_stream;
-    if (control_stream)
-        lsquic_stream_shutdown(control_stream, 1);
-
-    wt_session_destroy(sess, code, reason, reason_len);
+    wt_session_close(sess, code, reason, reason_len);
     return 0;
 }
 
@@ -1520,6 +1649,7 @@ void
 lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
 {
     struct lsquic_wt_session *sess;
+    int is_control_stream;
 
     if (!stream)
         return;
@@ -1531,10 +1661,15 @@ lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
     LSQ_DEBUG("WT stream destroy: stream=%"PRIu64", session=%"PRIu64
         ", is_control=%d", lsquic_stream_id(stream), sess->wts_stream_id,
         sess->wts_control_stream == stream);
-    if (sess->wts_control_stream == stream)
-        wt_session_destroy(sess, 0, NULL, 0);
-    else
-        lsquic_stream_set_wt_session(stream, NULL);
+    is_control_stream = sess->wts_control_stream == stream;
+    if (is_control_stream)
+        sess->wts_control_stream = NULL;
+    wt_stream_unbind_session(stream);
+
+    if (is_control_stream)
+        wt_session_close(sess, 0, NULL, 0);
+    else if (sess->wts_flags & WTSF_CLOSING)
+        wt_session_close(sess, 0, NULL, 0);
 }
 
 
