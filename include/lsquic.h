@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 5
+#define LSQUIC_MINOR_VERSION 6
 #define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
@@ -465,6 +465,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /* Default value of the CC RTT threshold is 1.5 ms */
 #define LSQUIC_DF_CC_RTT_THRESH 1500
 
+/* By default, bandwidth sampler is not kept alive unless requested. */
+#define LSQUIC_DF_ENABLE_BW_SAMPLER 0
+
 /** Turn off datagram extension by default */
 #define LSQUIC_DF_DATAGRAMS 0
 
@@ -793,6 +796,23 @@ struct lsquic_engine_settings {
      * The default value is @ref LSQUIC_DF_CC_RTT_THRESH.
      */
     unsigned        es_cc_rtt_thresh;
+
+    /**
+     * If you plan to call lsquic_conn_get_info(), set this to true.
+     *
+     * This causes bandwidth sampler to be initialized even when selected
+     * congestion controller does not need it.  This way, bandwidth estimate
+     * is available on the first call to lsquic_conn_get_info().
+     *
+     * If false, first lsquic_conn_get_info() call may initialize sampler and
+     * bandwidth estimate may only be available on subsequent call.
+     *
+     * This can be overridden per connection at runtime using
+     * lsquic_conn_set_param(..., LSQCP_ENABLE_BW_SAMPLER, ...).
+     *
+     * The default value is @ref LSQUIC_DF_ENABLE_BW_SAMPLER.
+     */
+    int             es_enable_bw_sampler;
 
     /**
      * No progress timeout.
@@ -2258,6 +2278,23 @@ enum lsquic_conn_param
      * Pacing must be turned on via es_pace_packets in lsquic_engine_settings.
      */
     LSQCP_MAX_PACING_RATE = 1,
+
+    /**
+     * If you plan to call lsquic_conn_get_info(), set this value to true.
+     *
+     * Type: int
+     * Default: inherited from es_enable_bw_sampler.
+     *
+     * This causes bandwidth sampler to be initialized even when selected
+     * congestion controller does not need it.  This way, bandwidth estimate
+     * is available on the first call to lsquic_conn_get_info().
+     *
+     * If false, first lsquic_conn_get_info() call may initialize sampler and
+     * bandwidth estimate may only be available on subsequent call.
+     *
+     * lsquic_conn_get_info() enables sampling if needed for functionality.
+     */
+    LSQCP_ENABLE_BW_SAMPLER = 2,
 
     /**
      * Whether peer HTTP/3 SETTINGS frame has been received.
