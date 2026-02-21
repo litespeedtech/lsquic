@@ -69,6 +69,7 @@ struct devious_baton_stream
     enum lsquic_wt_stream_dir             dir;
     enum lsquic_wt_stream_initiator       initiator;
     int                                   message_done;
+    signed char                           peer_fin;
 };
 
 
@@ -883,6 +884,52 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
 }
 
 
+static void
+maybe_close_baton_stream (struct devious_baton_stream *st)
+{
+    if (!st || st->kind != DB_STREAM_BATON || !st->stream)
+        return;
+
+    if (st->message_done && st->peer_fin && !st->have_baton)
+        lsquic_stream_close(st->stream);
+}
+
+
+static void
+drain_baton_stream_after_message (struct devious_baton_stream *st)
+{
+    unsigned char buf[256];
+    ssize_t nread;
+
+    for (;;)
+    {
+        nread = lsquic_stream_read(st->stream, buf, sizeof(buf));
+        if (nread > 0)
+        {
+            LSQ_WARN("%s got trailing bytes in baton stream; closing session",
+                                                    db_role(st->session));
+            lsquic_wt_close(st->session->wt_sess,
+                        DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+            return;
+        }
+
+        if (nread == 0)
+        {
+            st->peer_fin = 1;
+            lsquic_stream_wantread(st->stream, 0);
+            maybe_close_baton_stream(st);
+            return;
+        }
+
+        if (errno == EWOULDBLOCK)
+            return;
+
+        lsquic_stream_close(st->stream);
+        return;
+    }
+}
+
+
 static lsquic_wt_session_ctx_t *
 db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
                             const struct lsquic_wt_connect_info *UNUSED_info)
@@ -1034,7 +1081,9 @@ db_on_wt_stream_fin (struct lsquic_stream *stream,
 
     LSQ_INFO("%s got FIN on %s stream %"PRIu64, db_role(st->session),
             db_dir(st->dir), (uint64_t) lsquic_stream_id(stream));
+    st->peer_fin = 1;
     consume_baton_data(st, 1);
+    maybe_close_baton_stream(st);
 }
 
 
@@ -1402,7 +1451,7 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
 
     if (st->message_done)
     {
-        lsquic_stream_wantread(stream, 0);
+        drain_baton_stream_after_message(st);
         return;
     }
 
@@ -1420,8 +1469,10 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         }
         else if (nread == 0)
         {
+            st->peer_fin = 1;
             consume_baton_data(st, 1);
             lsquic_stream_wantread(stream, 0);
+            maybe_close_baton_stream(st);
             return;
         }
         else if (errno == EWOULDBLOCK)
@@ -1498,6 +1549,7 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         st->have_baton = 0;
         lsquic_stream_shutdown(stream, 1);
         lsquic_stream_wantwrite(stream, 0);
+        maybe_close_baton_stream(st);
     }
 }
 
