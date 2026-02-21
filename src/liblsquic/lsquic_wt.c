@@ -57,6 +57,13 @@ struct wt_uni_read_ctx
 };
 
 
+enum wt_session_flags
+{
+    WTSF_CLOSING         = 1 << 0,
+    WTSF_ON_CLOSE_CALLED = 1 << 1,
+};
+
+
 struct lsquic_wt_session
 {
     TAILQ_ENTRY(lsquic_wt_session)     wts_next;
@@ -78,13 +85,7 @@ struct lsquic_wt_session
     unsigned char                     *wts_dg_buf;
     size_t                             wts_dg_len;
     unsigned                           wts_n_streams;
-    unsigned                           wts_flags;
-};
-
-enum wt_session_flags
-{
-    WTSF_CLOSING         = 1 << 0,
-    WTSF_ON_CLOSE_CALLED = 1 << 1,
+    enum wt_session_flags              wts_flags;
 };
 
 
@@ -1144,15 +1145,17 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
-    if (!sess)
+    if (sess)
+    {
+        wt_session_close(sess, code, reason, reason_len);
+        return 0;
+    }
+    else
     {
         errno = EINVAL;
         LSQ_WARN("WT close called with NULL session");
         return -1;
     }
-
-    wt_session_close(sess, code, reason, reason_len);
-    return 0;
 }
 
 
@@ -1649,7 +1652,7 @@ void
 lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
 {
     struct lsquic_wt_session *sess;
-    int is_control_stream;
+    int is_control_stream, should_close;
 
     if (!stream)
         return;
@@ -1658,17 +1661,15 @@ lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
     if (!sess)
         return;
 
-    LSQ_DEBUG("WT stream destroy: stream=%"PRIu64", session=%"PRIu64
-        ", is_control=%d", lsquic_stream_id(stream), sess->wts_stream_id,
-        sess->wts_control_stream == stream);
     is_control_stream = sess->wts_control_stream == stream;
+    should_close = is_control_stream || (sess->wts_flags & WTSF_CLOSING);
     if (is_control_stream)
         sess->wts_control_stream = NULL;
+    LSQ_DEBUG("WT stream destroy: stream=%"PRIu64", session=%"PRIu64
+        ", is_control=%d, should_close: %d", lsquic_stream_id(stream),
+        sess->wts_stream_id, is_control_stream, should_close);
     wt_stream_unbind_session(stream);
-
-    if (is_control_stream)
-        wt_session_close(sess, 0, NULL, 0);
-    else if (sess->wts_flags & WTSF_CLOSING)
+    if (should_close)
         wt_session_close(sess, 0, NULL, 0);
 }
 
