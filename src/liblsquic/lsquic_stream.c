@@ -1570,10 +1570,17 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 {
     struct data_frame *data_frame;
     size_t nread, toread, total_nread;
+    ssize_t rv;
     int short_read, processed_frames;
+
+#ifndef NDEBUG
+    assert(!(stream->stream_flags & STREAM_READING_DATA_FRAMES));
+    stream->stream_flags |= STREAM_READING_DATA_FRAMES;
+#endif
 
     processed_frames = 0;
     total_nread = 0;
+    rv = 0;
 
     while ((data_frame = stream->data_in->di_if->di_get_frame(
                                         stream->data_in, stream->read_offset)))
@@ -1608,7 +1615,10 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
                 data_frame = NULL;
                 if (0 != maybe_switch_data_in(stream))
-                    return -1;
+                {
+                    rv = -1;
+                    goto end;
+                }
                 if (fin)
                 {
                     stream->stream_flags |= STREAM_FIN_REACHED;
@@ -1627,7 +1637,13 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
     if (processed_frames)
         stream_consumed_bytes(stream);
 
-    return total_nread;
+    rv = total_nread;
+
+  end:
+#ifndef NDEBUG
+    stream->stream_flags &= ~STREAM_READING_DATA_FRAMES;
+#endif
+    return rv;
 }
 
 

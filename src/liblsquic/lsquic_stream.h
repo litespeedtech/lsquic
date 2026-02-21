@@ -269,7 +269,8 @@ enum stream_flags {
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
-    STREAM_UNUSED26     = 1 << 26,  /* Unused */
+    STREAM_READING_DATA_FRAMES
+                        = 1 << 26,  /* Internal: detect nested read_data_frames() */
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
