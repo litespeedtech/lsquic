@@ -39,6 +39,8 @@ struct devious_baton_session
     struct lsquic_wt_session             *wt_sess;
     struct devious_baton_app              cfg;
     unsigned                              active_batons;
+    unsigned                              active_streams;
+    signed char                           closed;
 };
 
 
@@ -145,6 +147,14 @@ remove_session (struct devious_baton_session *sess)
         TAILQ_REMOVE(&s_sessions, sess, next_session);
 
     free(sess);
+}
+
+
+static void
+maybe_remove_closed_session (struct devious_baton_session *sess)
+{
+    if (sess && sess->closed && 0 == sess->active_streams)
+        remove_session(sess);
 }
 
 
@@ -629,7 +639,7 @@ parse_baton_message (struct devious_baton_stream *st, unsigned char *baton,
 
     r = lsquic_varint_read(p, end, &padding_len);
     if (r < 0)
-        return -1;
+        return 0;
 
     if (padding_len > SIZE_MAX - (size_t) r - 1)
         return -1;
@@ -833,6 +843,12 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
     {
         if (fin)
         {
+            if (0 == st->buf_len)
+            {
+                st->message_done = 1;
+                return;
+            }
+
             LSQ_WARN("%s got FIN before full baton message; closing session",
                                                     db_role(st->session));
             lsquic_wt_close(st->session->wt_sess,
@@ -916,14 +932,24 @@ db_on_wt_session_close (struct lsquic_wt_session *sess,
                                 size_t UNUSED_reason_len)
 {
     struct devious_baton_session *bsess;
+    struct lsquic_conn *conn;
 
     bsess = sctx ? (struct devious_baton_session *) sctx
                  : find_session(sess);
     if (bsess)
+    {
         LSQ_INFO("%s closed devious baton session %"PRIu64
             " (active batons left: %u)", db_role(bsess),
             (uint64_t) lsquic_wt_session_id(sess), bsess->active_batons);
-    remove_session(bsess);
+        bsess->closed = 1;
+        if (!bsess->cfg.is_server)
+        {
+            conn = lsquic_wt_session_conn(sess);
+            if (conn)
+                lsquic_conn_close(conn);
+        }
+    }
+    maybe_remove_closed_session(bsess);
 }
 
 
@@ -947,6 +973,7 @@ db_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
     st->stream = stream;
     st->dir = dir;
     st->initiator = lsquic_wt_stream_initiator(stream);
+    ++bsess->active_streams;
     LSQ_INFO("%s accepted %s stream %"PRIu64" (%s-initiated)",
             db_role(bsess), db_dir(st->dir),
             (uint64_t) lsquic_stream_id(stream), db_initiator(st->initiator));
@@ -1036,10 +1063,20 @@ db_on_wt_stream_reset (struct lsquic_stream *stream,
 
 
 static void
-db_on_wt_stop_sending (struct lsquic_stream *UNUSED_stream,
-                                            struct lsquic_stream_ctx *UNUSED_sctx,
-                                            uint64_t UNUSED_error_code)
+db_on_wt_stop_sending (struct lsquic_stream *stream,
+                                            struct lsquic_stream_ctx *sctx,
+                                            uint64_t error_code)
 {
+    struct devious_baton_stream *st;
+
+    st = (struct devious_baton_stream *) sctx;
+    if (!st || st->kind != DB_STREAM_BATON)
+        return;
+
+    LSQ_INFO("%s got STOP_SENDING on %s stream %"PRIu64
+            " with code %"PRIu64,
+            db_role(st->session), db_dir(st->dir),
+            (uint64_t) lsquic_stream_id(stream), error_code);
 }
 
 
@@ -1245,7 +1282,8 @@ process_control_server (struct devious_baton_stream *st)
     if (0 != lsquic_stream_flush(st->stream))
         LSQ_ERROR("cannot flush response: %s", strerror(errno));
 
-    lsquic_stream_wantread(st->stream, 0);
+    st->message_done = 1;
+
 }
 
 
@@ -1256,10 +1294,7 @@ process_control_client (struct devious_baton_stream *st)
     struct lsquic_wt_accept_params params;
 
     if (st->conn->response_seen)
-    {
-        lsquic_stream_wantread(st->stream, 0);
         return;
-    }
 
     hset = lsquic_stream_get_hset(st->stream);
     if (!hset)
@@ -1292,7 +1327,32 @@ process_control_client (struct devious_baton_stream *st)
         return;
     }
 
-    lsquic_stream_wantread(st->stream, 0);
+    st->message_done = 1;
+
+}
+
+
+static void
+drain_control_stream (struct devious_baton_stream *st)
+{
+    unsigned char buf[256];
+    ssize_t nread;
+
+    for (;;)
+    {
+        nread = lsquic_stream_read(st->stream, buf, sizeof(buf));
+        if (nread > 0)
+            continue;
+        if (nread == 0)
+        {
+            lsquic_stream_close(st->stream);
+            return;
+        }
+        if (errno == EWOULDBLOCK)
+            return;
+        lsquic_stream_close(st->stream);
+        return;
+    }
 }
 
 
@@ -1327,6 +1387,12 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
 
     if (st->kind == DB_STREAM_CONTROL)
     {
+        if (st->message_done)
+        {
+            drain_control_stream(st);
+            return;
+        }
+
         if (conn->app->is_server)
             process_control_server(st);
         else
@@ -1356,7 +1422,7 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         {
             consume_baton_data(st, 1);
             lsquic_stream_wantread(stream, 0);
-            break;
+            return;
         }
         else if (errno == EWOULDBLOCK)
             break;
@@ -1441,10 +1507,18 @@ on_close (struct lsquic_stream *UNUSED_stream,
                                         struct lsquic_stream_ctx *st_h)
 {
     struct devious_baton_stream *st;
+    struct devious_baton_session *bsess;
 
     st = (struct devious_baton_stream *) st_h;
     if (!st)
         return;
+
+    bsess = st->session;
+    if (st->kind == DB_STREAM_BATON && bsess && bsess->active_streams > 0)
+    {
+        --bsess->active_streams;
+        maybe_remove_closed_session(bsess);
+    }
 
     free(st->buf);
     free(st);

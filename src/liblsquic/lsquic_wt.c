@@ -107,6 +107,9 @@ struct wt_header_buf
 };
 
 #define WT_MAX_PENDING_STREAMS 64
+#define WT_APP_ERROR_MAX 0xFFFFFFFFULL
+#define WT_APP_ERROR_MIN_H3 0x52E4A40FA8DBULL
+#define WT_APP_ERROR_MAX_H3 0x52E5AC983162ULL
 
 static int
 lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
@@ -152,6 +155,42 @@ wt_stream_bind_session (struct lsquic_wt_session *sess,
 
 static void
 wt_stream_unbind_session (struct lsquic_stream *stream);
+
+static int
+wt_is_reserved_h3_error_code (uint64_t h3_error_code)
+{
+    return h3_error_code >= WT_APP_ERROR_MIN_H3
+        && h3_error_code <= WT_APP_ERROR_MAX_H3
+        && ((h3_error_code - 0x21ULL) % 0x1FULL) == 0;
+}
+
+
+static int
+wt_app_error_to_h3_error (uint64_t wt_error_code, uint64_t *h3_error_code)
+{
+    if (!h3_error_code || wt_error_code > WT_APP_ERROR_MAX)
+        return -1;
+
+    *h3_error_code = WT_APP_ERROR_MIN_H3 + wt_error_code + wt_error_code / 0x1EULL;
+    return 0;
+}
+
+
+static int
+wt_h3_error_to_app_error (uint64_t h3_error_code, uint64_t *wt_error_code)
+{
+    uint64_t shifted;
+
+    if (!wt_error_code
+        || h3_error_code < WT_APP_ERROR_MIN_H3
+        || h3_error_code > WT_APP_ERROR_MAX_H3
+        || wt_is_reserved_h3_error_code(h3_error_code))
+        return -1;
+
+    shifted = h3_error_code - WT_APP_ERROR_MIN_H3;
+    *wt_error_code = shifted - shifted / 0x1FULL;
+    return 0;
+}
 
 static void
 wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
@@ -343,13 +382,43 @@ wt_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 }
 
 static void
-wt_on_reset (struct lsquic_stream *UNUSED_stream,
-                                        lsquic_stream_ctx_t *UNUSED_sctx,
-                                        int UNUSED_how)
+wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
 {
-    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
-    LSQ_DEBUG("WT stream reset callback invoked (not implemented)");
-    /* XXX implement when RESET_STREAM_AT is integrated */
+    WT_SET_CONN_FROM_STREAM(stream);
+    struct wt_stream_ctx *wctx;
+    uint64_t h3_error_code, wt_error_code;
+
+    if (!stream || !sctx)
+        return;
+
+    wctx = (struct wt_stream_ctx *) sctx;
+    if (!wctx->sess || !wctx->sess->wts_if)
+        return;
+
+    switch (how)
+    {
+    case 0:
+        if (!wctx->sess->wts_if->on_wt_stream_reset)
+            return;
+        h3_error_code = stream->sm_rst_in_code;
+        if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
+            h3_error_code = wt_error_code;
+        wctx->sess->wts_if->on_wt_stream_reset(stream, wctx->app_ctx,
+                                                            h3_error_code);
+        return;
+    case 1:
+        if (!wctx->sess->wts_if->on_wt_stop_sending)
+            return;
+        h3_error_code = stream->sm_ss_in_code;
+        if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
+            h3_error_code = wt_error_code;
+        wctx->sess->wts_if->on_wt_stop_sending(stream, wctx->app_ctx,
+                                                            h3_error_code);
+        return;
+    default:
+        LSQ_DEBUG("WT stream reset callback got unsupported reset kind %d", how);
+        return;
+    }
 }
 
 static lsquic_stream_ctx_t *
@@ -1431,6 +1500,7 @@ lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
 {
     struct wt_stream_ctx *wctx;
     struct lsquic_wt_session *sess;
+    uint64_t wt_error_code;
 
     if (!stream || !ss_code)
         return -1;
@@ -1449,8 +1519,9 @@ lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
     if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
         return -1;
 
-    *ss_code = wctx->ss_code((struct lsquic_stream *) stream, wctx->app_ctx);
-    return 0;
+    wt_error_code = wctx->ss_code((struct lsquic_stream *) stream,
+                                                            wctx->app_ctx);
+    return wt_app_error_to_h3_error(wt_error_code, ss_code);
 }
 
 
@@ -1694,21 +1765,10 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
 
 
 int
-lsquic_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
-                                                    uint64_t UNUSED_error_code)
+lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
 {
-    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
-    LSQ_WARN("WT stream reset is not implemented yet");
-    errno = ENOSYS;
-    return -1;
-}
+    uint64_t h3_error_code;
 
-
-
-int
-lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
-                                                    uint64_t error_code)
-{
     if (!stream)
     {
         errno = EINVAL;
@@ -1721,7 +1781,43 @@ lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
         return -1;
     }
 
-    stream->sm_ss_code = error_code;
+    if (0 != wt_app_error_to_h3_error(error_code, &h3_error_code))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    lsquic_stream_maybe_reset(stream, h3_error_code, 1);
+    return 0;
+}
+
+
+
+int
+lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
+                                                    uint64_t error_code)
+{
+    uint64_t h3_error_code;
+
+    if (!stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!lsquic_stream_get_wt_session(stream))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (0 != wt_app_error_to_h3_error(error_code, &h3_error_code))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    stream->sm_ss_code = h3_error_code;
     return lsquic_stream_shutdown(stream, 0);
 }
 

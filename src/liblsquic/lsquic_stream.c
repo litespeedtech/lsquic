@@ -94,6 +94,9 @@ stream_wantread (lsquic_stream_t *stream, int is_want);
 static int
 stream_wantwrite (lsquic_stream_t *stream, int is_want);
 
+static int
+stream_is_locally_initiated_unidir (const struct lsquic_stream *stream);
+
 enum stream_write_options
 {
     SWO_BUFFER  = 1 << 0,       /* Allow buffering in sm_buf */
@@ -1273,6 +1276,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     /* This flag must always be set, even if we are "ignoring" it: it is
      * used by elision code.
      */
+    stream->sm_rst_in_code = error_code;
     stream->stream_flags |= STREAM_RST_RECVD;
 
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > offset)
@@ -1357,6 +1361,7 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     }
 
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
+    stream->sm_ss_in_code = error_code;
     stream->stream_flags |= STREAM_SS_RECVD;
 
     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
@@ -1846,6 +1851,13 @@ static void
 handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
 {
     uint64_t ss_code;
+
+    if (stream_is_locally_initiated_unidir(stream))
+    {
+        LSQ_DEBUG("skip STOP_SENDING for locally initiated unidirectional "
+                                            "stream %"PRIu64, stream->id);
+        return;
+    }
 
     if (stream->sm_ss_code == HEC_NO_ERROR)
     {
