@@ -5120,6 +5120,39 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
 }
 
 
+static void
+stream_dispatch_pending_onreset (struct lsquic_stream *stream)
+{
+    if (!stream->stream_if->on_reset
+                            || (stream->stream_flags & STREAM_ONCLOSE_DONE))
+        return;
+
+    if (stream->sm_bflags & SMBF_IETF)
+    {
+        if ((stream->stream_flags & STREAM_RST_RECVD)
+                                        && !(stream->sm_dflags & SMDF_ONRESET0))
+        {
+            stream->stream_if->on_reset(stream, stream->st_ctx, 0);
+            stream->sm_dflags |= SMDF_ONRESET0;
+        }
+
+        if ((stream->stream_flags & STREAM_SS_RECVD)
+                                        && !(stream->sm_dflags & SMDF_ONRESET1))
+        {
+            stream->stream_if->on_reset(stream, stream->st_ctx, 1);
+            stream->sm_dflags |= SMDF_ONRESET1;
+        }
+    }
+    else if ((stream->stream_flags & (STREAM_RST_RECVD|STREAM_SS_RECVD))
+                    && (stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
+                                    != (SMDF_ONRESET0|SMDF_ONRESET1))
+    {
+        stream->stream_if->on_reset(stream, stream->st_ctx, 2);
+        stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
+    }
+}
+
+
 void
 lsquic_stream_set_stream_if (struct lsquic_stream *stream,
            const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
@@ -5131,6 +5164,7 @@ lsquic_stream_set_stream_if (struct lsquic_stream *stream,
     assert(stream->stream_flags & STREAM_ONNEW_DONE);
     stream->st_ctx = stream->stream_if->on_new_stream(stream->sm_onnew_arg,
                                                       stream);
+    stream_dispatch_pending_onreset(stream);
 }
 
 
