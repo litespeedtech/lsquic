@@ -284,7 +284,7 @@ struct stream_id_to_ss
 {
     STAILQ_ENTRY(stream_id_to_ss)   sits_next;
     lsquic_stream_id_t              sits_stream_id;
-    enum http_error_code            sits_error_code;
+    uint64_t                        sits_error_code;
 };
 
 struct http_ctl_stream_in
@@ -2612,7 +2612,7 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
 
 static int
 generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
-                lsquic_stream_id_t stream_id, enum http_error_code error_code)
+                        lsquic_stream_id_t stream_id, uint64_t error_code)
 {
     struct lsquic_packet_out *packet_out;
     size_t need;
@@ -2634,7 +2634,7 @@ generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
         return -1;
     }
     LSQ_DEBUG("generated %d-byte STOP_SENDING frame (stream id: %"PRIu64", "
-        "error code: %u)", w, stream_id, error_code);
+        "error code: %"PRIu64")", w, stream_id, error_code);
     EV_LOG_GENERATED_STOP_SENDING_FRAME(LSQUIC_LOG_CONN_ID, stream_id,
                                                                 error_code);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
@@ -2655,7 +2655,9 @@ static int
 generate_stop_sending_frame (struct ietf_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
-    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
+    const uint64_t error_code = stream->sm_ss_code;
+
+    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, error_code))
     {
         lsquic_stream_ss_frame_sent(stream);
         return 1;
@@ -5556,7 +5558,7 @@ find_stream_by_id (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id)
 
 static void
 maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
-                lsquic_stream_id_t stream_id, enum http_error_code error_code)
+                        lsquic_stream_id_t stream_id, uint64_t error_code)
 {
     struct stream_id_to_ss *sits;
 

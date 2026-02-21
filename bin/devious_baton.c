@@ -1043,6 +1043,14 @@ db_on_wt_stop_sending (struct lsquic_stream *UNUSED_stream,
 }
 
 
+static uint64_t
+db_ss_code (struct lsquic_stream *UNUSED_stream,
+                                            struct lsquic_stream_ctx *UNUSED_sctx)
+{
+    return DEVIOUS_BATON_STREAM_ERR_IDC;
+}
+
+
 static const struct lsquic_webtransport_if wt_if =
 {
     .on_wt_session_open  = db_on_wt_session_open,
@@ -1524,6 +1532,7 @@ static const struct lsquic_wt_stream_if devious_baton_wt_stream_if_impl =
     .on_read                = on_read,
     .on_write               = on_write,
     .on_close               = on_close,
+    .ss_code                = db_ss_code,
 };
 
 

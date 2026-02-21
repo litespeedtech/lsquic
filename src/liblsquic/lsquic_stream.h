@@ -306,6 +306,7 @@ struct lsquic_stream
     uint64_t                        max_send_off;
     uint64_t                        sm_last_recv_off;
     uint64_t                        error_code;
+    uint64_t                        sm_ss_code;
 
     /* From the network, we get frames, which we keep on a list ordered
      * by offset.

@@ -71,6 +71,10 @@ void
 lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                             lsquic_stream_id_t session_id);
 
+int
+lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
+                                                           uint64_t *ss_code);
+
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID stream->id
@@ -446,6 +450,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->conn_pub  = conn_pub;
     stream->sm_onnew_arg = stream_if_ctx;
     stream->sm_write_avail = stream_write_avail_no_frames;
+    stream->sm_ss_code = HEC_NO_ERROR;
 
     STAILQ_INIT(&stream->sm_hq_frames);
 
@@ -1840,6 +1845,15 @@ lsquic_stream_ss_frame_sent (struct lsquic_stream *stream)
 static void
 handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
 {
+    uint64_t ss_code;
+
+    if (stream->sm_ss_code == HEC_NO_ERROR)
+    {
+        ss_code = stream->sm_ss_code;
+        if (0 == lsquic_wt_stream_ss_code(stream, &ss_code))
+            stream->sm_ss_code = ss_code;
+    }
+
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                     next_send_stream);

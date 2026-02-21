@@ -51,6 +51,8 @@ struct wt_stream_ctx
 {
     struct lsquic_wt_session  *sess;
     lsquic_stream_ctx_t       *app_ctx;
+    uint64_t                (*ss_code) (struct lsquic_stream *,
+                                                    lsquic_stream_ctx_t *);
     unsigned char              prefix[16];
     size_t                     prefix_len;
     size_t                     prefix_off;
@@ -256,6 +258,8 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     }
 
     wctx->app_ctx = app_ctx;
+    if (sess->wts_stream_if)
+        wctx->ss_code = sess->wts_stream_if->ss_code;
     LSQ_DEBUG("initialized WT stream %"PRIu64" in session %"PRIu64
             " (dir=%s, initiator=%s, prefix_len=%zu)",
             lsquic_stream_id(stream), sess->wts_stream_id,
@@ -1421,6 +1425,34 @@ lsquic_wt_stream_get_ctx (struct lsquic_stream *stream)
 }
 
 
+int
+lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
+                                                           uint64_t *ss_code)
+{
+    struct wt_stream_ctx *wctx;
+    struct lsquic_wt_session *sess;
+
+    if (!stream || !ss_code)
+        return -1;
+
+    if (stream->stream_flags & STREAM_ONCLOSE_DONE)
+        return -1;
+
+    wctx = (struct wt_stream_ctx *) lsquic_stream_get_ctx(stream);
+    if (!wctx || !wctx->ss_code)
+        return -1;
+
+    sess = wctx->sess;
+    if (!sess || lsquic_stream_get_wt_session(stream) != sess)
+        return -1;
+
+    if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
+        return -1;
+
+    *ss_code = wctx->ss_code((struct lsquic_stream *) stream, wctx->app_ctx);
+    return 0;
+}
+
 
 enum lsquic_wt_stream_dir
 lsquic_wt_stream_dir (const struct lsquic_stream *stream)
@@ -1674,13 +1706,23 @@ lsquic_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
 
 
 int
-lsquic_wt_stream_stop_sending (struct lsquic_stream *UNUSED_stream,
-                                                    uint64_t UNUSED_error_code)
+lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
+                                                    uint64_t error_code)
 {
-    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
-    LSQ_WARN("WT stream stop_sending is not implemented yet");
-    errno = ENOSYS;
-    return -1;
+    if (!stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!lsquic_stream_get_wt_session(stream))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    stream->sm_ss_code = error_code;
+    return lsquic_stream_shutdown(stream, 0);
 }
 
 

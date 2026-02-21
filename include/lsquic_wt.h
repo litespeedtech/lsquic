@@ -45,6 +45,7 @@ struct lsquic_wt_stream_if
     void  (*on_read)  (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
     void  (*on_write) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
     void  (*on_close) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
+    uint64_t (*ss_code) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
 };
 
 struct lsquic_wt_accept_params

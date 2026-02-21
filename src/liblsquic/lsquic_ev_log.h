@@ -260,7 +260,7 @@ lsquic_ev_log_generated_stop_waiting_frame (const lsquic_cid_t *,
 
 void
 lsquic_ev_log_generated_stop_sending_frame (const lsquic_cid_t *,
-                                                lsquic_stream_id_t, uint16_t);
+                                                lsquic_stream_id_t, uint64_t);
 
 #define EV_LOG_GENERATED_STOP_SENDING_FRAME(...) do {                       \
     if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
