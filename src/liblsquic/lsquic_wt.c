@@ -29,7 +29,14 @@
 #include "lsxpack_header.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_WT
+#define LSQUIC_LOG_CONN_ID (conn ? lsquic_conn_id(conn) : NULL)
 #include "lsquic_logger.h"
+
+#define WT_SET_CONN_FROM_STREAM(stream_) \
+    lsquic_conn_t *const conn = (stream_) ? lsquic_stream_conn(stream_) : NULL
+
+#define WT_SET_CONN_FROM_SESSION(sess_) \
+    lsquic_conn_t *const conn = (sess_) ? (sess_)->wts_conn : NULL
 
 
 struct wt_onnew_ctx
@@ -68,6 +75,7 @@ struct lsquic_wt_session
 {
     TAILQ_ENTRY(lsquic_wt_session)     wts_next;
     struct lsquic_stream              *wts_control_stream;
+    struct lsquic_conn                *wts_conn;
     struct lsquic_conn_public         *wts_conn_pub;
     const struct lsquic_webtransport_if
                                       *wts_if;
@@ -199,6 +207,7 @@ wt_stream_unbind_session (struct lsquic_stream *stream)
 static lsquic_stream_ctx_t *
 wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_onnew_ctx *const onnew = ctx;
     struct lsquic_wt_session *sess;
     struct wt_stream_ctx *wctx;
@@ -264,6 +273,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
 static void
 wt_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
 
     if (!wctx || !wctx->sess || !wctx->sess->wts_stream_if
@@ -282,6 +292,7 @@ wt_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 static void
 wt_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
     ssize_t nw;
 
@@ -316,6 +327,7 @@ wt_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 static void
 wt_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
 
     LSQ_DEBUG("WT stream %"PRIu64" closed", lsquic_stream_id(stream));
@@ -331,6 +343,7 @@ wt_on_reset (struct lsquic_stream *UNUSED_stream,
                                         lsquic_stream_ctx_t *UNUSED_sctx,
                                         int UNUSED_how)
 {
+    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
     LSQ_DEBUG("WT stream reset callback invoked (not implemented)");
     /* XXX implement when RESET_STREAM_AT is integrated */
 }
@@ -338,6 +351,7 @@ wt_on_reset (struct lsquic_stream *UNUSED_stream,
 static lsquic_stream_ctx_t *
 wt_uni_on_new (void *UNUSED_ctx, struct lsquic_stream *stream)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_uni_read_ctx *uctx;
 
     uctx = calloc(1, sizeof(*uctx));
@@ -384,6 +398,7 @@ wt_uni_readf (void *ctx, const unsigned char *buf, size_t sz, int fin)
 static void
 wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct wt_uni_read_ctx *uctx = (struct wt_uni_read_ctx *) sctx;
     struct lsquic_wt_session *sess;
     ssize_t nread;
@@ -421,6 +436,7 @@ static void
 wt_uni_on_close (struct lsquic_stream *UNUSED_stream,
                                         lsquic_stream_ctx_t *sctx)
 {
+    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
     LSQ_DEBUG("WT uni stream reader closed");
     free(sctx);
 }
@@ -523,6 +539,7 @@ wt_count_sessions (const struct lsquic_conn_public *conn_pub)
 static int
 wt_can_accept_session (struct lsquic_stream *connect_stream)
 {
+    WT_SET_CONN_FROM_STREAM(connect_stream);
     struct lsquic_conn_public *conn_pub;
     unsigned n_sessions, local_limit;
 
@@ -602,6 +619,7 @@ static int
 wt_buffer_or_reject_stream (struct lsquic_stream *stream,
     lsquic_stream_id_t session_id, const char *stream_kind)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_conn_public *conn_pub;
     unsigned n_pending;
 
@@ -625,6 +643,7 @@ wt_buffer_or_reject_stream (struct lsquic_stream *stream,
 static void
 wt_replay_pending_streams (struct lsquic_wt_session *sess)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_hash_elem *el;
     struct lsquic_stream *stream;
     struct wt_uni_read_ctx *uctx;
@@ -718,6 +737,7 @@ static int
 wt_copy_connect_info (struct lsquic_wt_session *sess,
                                     const struct lsquic_wt_connect_info *info)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     if (!info)
     {
         memset(&sess->wts_info, 0, sizeof(sess->wts_info));
@@ -753,6 +773,7 @@ wt_copy_connect_info (struct lsquic_wt_session *sess,
 static void
 wt_drive_connect_stream (struct lsquic_stream *stream)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     lsquic_stream_dispatch_write_events(stream);
     if (lsquic_stream_has_data_to_flush(stream)
                                     && 0 != lsquic_stream_flush(stream))
@@ -794,6 +815,7 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
                                 const struct lsquic_http_headers *extra,
                                 int fin)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsxpack_header *headers_arr;
     struct wt_header_buf hbuf;
     char status_val[4];
@@ -866,6 +888,7 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
 static void
 wt_close_data_streams (struct lsquic_wt_session *sess)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream **streams, *stream;
     struct lsquic_hash_elem *el;
     size_t n_streams, i;
@@ -915,6 +938,7 @@ static void
 wt_session_finalize (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     if (!sess)
         return;
     (void) reason;
@@ -935,6 +959,7 @@ static void
 wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     const struct lsquic_webtransport_if *wt_if;
     lsquic_wt_session_ctx_t *sess_ctx;
 
@@ -987,6 +1012,7 @@ lsquic_wt_session_t *
 lsquic_wt_accept (struct lsquic_stream *connect_stream,
                                 const struct lsquic_wt_accept_params *params)
 {
+    WT_SET_CONN_FROM_STREAM(connect_stream);
     struct lsquic_wt_session *sess;
     const struct lsquic_wt_connect_info *info;
     unsigned status;
@@ -1047,6 +1073,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
     sess->wts_control_stream = connect_stream;
     sess->wts_conn_pub = lsquic_stream_get_conn_public(connect_stream);
+    sess->wts_conn = lsquic_stream_conn(connect_stream);
     sess->wts_if = params->wt_if;
     sess->wts_if_ctx = params->wt_if_ctx;
     sess->wts_stream_if = params->stream_if;
@@ -1101,6 +1128,7 @@ lsquic_wt_reject (struct lsquic_stream *connect_stream,
                                 unsigned status, const char *UNUSED_reason,
                                             size_t UNUSED_reason_len)
 {
+    WT_SET_CONN_FROM_STREAM(connect_stream);
     if (!connect_stream)
     {
         errno = EINVAL;
@@ -1145,6 +1173,7 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     if (sess)
     {
         wt_session_close(sess, code, reason, reason_len);
@@ -1257,6 +1286,7 @@ lsquic_wt_peer_connect_protocol (lsquic_conn_t *conn)
 struct lsquic_stream *
 lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     struct wt_onnew_ctx *onnew;
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
@@ -1310,6 +1340,7 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 struct lsquic_stream *
 lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     struct wt_onnew_ctx *onnew;
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
@@ -1431,6 +1462,7 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
     unsigned char *copy;
     size_t max_sz;
@@ -1512,6 +1544,7 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
 size_t
 lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
 {
+    WT_SET_CONN_FROM_SESSION(sess);
     if (!sess || !sess->wts_control_stream)
     {
         LSQ_DEBUG("WT max_datagram_size unavailable: no session/control stream");
@@ -1529,6 +1562,7 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
                             size_t max_quic_payload,
                             lsquic_http_dg_consume_f consume_datagram)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
     unsigned char *buf;
     size_t len;
@@ -1601,6 +1635,7 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
                            lsquic_stream_ctx_t *UNUSED_sctx,
                            const void *buf, size_t len)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
 
     if (!stream || !buf || len == 0)
@@ -1630,6 +1665,7 @@ int
 lsquic_wt_stream_reset (struct lsquic_stream *UNUSED_stream,
                                                     uint64_t UNUSED_error_code)
 {
+    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
     LSQ_WARN("WT stream reset is not implemented yet");
     errno = ENOSYS;
     return -1;
@@ -1641,6 +1677,7 @@ int
 lsquic_wt_stream_stop_sending (struct lsquic_stream *UNUSED_stream,
                                                     uint64_t UNUSED_error_code)
 {
+    WT_SET_CONN_FROM_STREAM(UNUSED_stream);
     LSQ_WARN("WT stream stop_sending is not implemented yet");
     errno = ENOSYS;
     return -1;
@@ -1651,6 +1688,7 @@ lsquic_wt_stream_stop_sending (struct lsquic_stream *UNUSED_stream,
 void
 lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
     int is_control_stream, should_close;
 
@@ -1679,6 +1717,7 @@ void
 lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *existing;
     struct lsquic_wt_session *sess;
 
