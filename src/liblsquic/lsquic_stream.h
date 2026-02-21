@@ -274,6 +274,8 @@ enum stream_flags {
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
+    STREAM_WT_SWITCH_PENDING
+                        = 1 << 30,  /* Defer WT stream-if switch out of parser */
 };
 
 

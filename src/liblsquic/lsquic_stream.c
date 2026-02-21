@@ -5232,8 +5232,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 {
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
                     stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
-                    lsquic_wt_on_client_bidi_stream(stream,
-                                    stream->webtransport_session_stream_id);
+                    stream->stream_flags |= STREAM_WT_SWITCH_PENDING;
                     /* Disable HTTP/3 header processing for WT bidi stream. */
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
                     filter->hqfi_type = HQFT_DATA;
@@ -5432,6 +5431,13 @@ hq_filter_readable (struct lsquic_stream *stream)
             }
             return 0;
         }
+    }
+
+    if (stream->stream_flags & STREAM_WT_SWITCH_PENDING)
+    {
+        stream->stream_flags &= ~STREAM_WT_SWITCH_PENDING;
+        lsquic_wt_on_client_bidi_stream(stream,
+                                    stream->webtransport_session_stream_id);
     }
 
     return hq_filter_readable_now(stream);
