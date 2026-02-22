@@ -1549,6 +1549,8 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         st->have_baton = 0;
         lsquic_stream_shutdown(stream, 1);
         lsquic_stream_wantwrite(stream, 0);
+        if (st->dir == LSQWT_UNI && !stream_is_readable_by_us(st->session, st))
+            lsquic_stream_close(stream);
         maybe_close_baton_stream(st);
     }
 }
