@@ -4,22 +4,9 @@
  */
 
 #include <assert.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/queue.h>
-#include <time.h>
 
-#ifdef WIN32
-#include <vc_compat.h>
-#else
-#include <sys/time.h>
-#include <unistd.h>
-#endif
-
-#if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
-#include <mach/mach_time.h>
-#endif
+#include <openssl/rand.h>
 
 #include "lsquic_hash.h"
 #include "lsquic_rapidhash.h"
@@ -44,31 +31,15 @@ struct lsquic_hash
 
 static uint64_t get_seed()
 {
-    static uint64_t seed = 0;
-    if (seed == 0)
+    static int init = 0;
+    static uint64_t seed;
+
+    if (!init)
     {
-#if defined(WIN32)
-        LARGE_INTEGER counter;
-        QueryPerformanceCounter(&counter);
-        seed = counter.QuadPart;
-#elif defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0
-        struct timespec ts;
-        (void) clock_gettime(CLOCK_MONOTONIC, &ts);
-        seed = ts.tv_sec * 1000000000 + ts.tv_nsec;
-#elif defined(__APPLE__)
-        seed = mach_absolute_time();
-#else
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        seed = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
-#endif
-        srand(seed);
-        for(unsigned i = 0; i < (seed & 0xf) + 1; ++i)
-        {
-            seed = (seed << 8) | (seed >> 56);
-            seed ^= rand();
-        }
+        ++init;
+        RAND_bytes((void *) &seed, sizeof(seed));
     }
+
     return seed;
 }
 
@@ -103,8 +74,7 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
-    hash->qh_hash_seed = get_seed() ^ (uint64_t)hash
-                        ^ ((uint64_t)buckets << 32) ^ rand();
+    hash->qh_hash_seed = get_seed();
     return hash;
 }
 
