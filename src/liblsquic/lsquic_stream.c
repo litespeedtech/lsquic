@@ -97,6 +97,9 @@ stream_wantwrite (lsquic_stream_t *stream, int is_want);
 static int
 stream_is_locally_initiated_unidir (const struct lsquic_stream *stream);
 
+static int
+stream_is_incoming_unidir (const struct lsquic_stream *stream);
+
 enum stream_write_options
 {
     SWO_BUFFER  = 1 << 0,       /* Allow buffering in sm_buf */
@@ -766,7 +769,9 @@ stream_is_finished (struct lsquic_stream *stream)
            /* Can't finish stream until all "self" flags are unset: */
                     | SMQF_SELF_FLAGS))
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
-          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT)));
+          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
+          || (stream_is_incoming_unidir(stream)
+                            && (stream->stream_flags & STREAM_U_READ_DONE)));
 }
 
 

@@ -1001,7 +1001,8 @@ wt_close_data_streams (struct lsquic_wt_session *sess)
     }
 
     for (i = 0; i < n_streams; ++i)
-        lsquic_stream_close(streams[i]);
+        if (!lsquic_stream_is_closed(streams[i]))
+            lsquic_stream_close(streams[i]);
 
     free(streams);
 }
