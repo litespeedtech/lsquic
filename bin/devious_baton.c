@@ -885,6 +885,34 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
 
 
 static void
+consume_baton_datagram (struct devious_baton_session *sess, const void *buf,
+                                                                size_t len)
+{
+    struct devious_baton_stream st;
+    unsigned char baton;
+    size_t consumed;
+    int r;
+
+    memset(&st, 0, sizeof(st));
+    st.session = sess;
+    st.buf = (unsigned char *) buf;
+    st.buf_len = len;
+
+    r = parse_baton_message(&st, &baton, &consumed);
+    if (r <= 0 || consumed != len)
+    {
+        LSQ_WARN("%s got malformed/incomplete datagram baton; closing session",
+                                                                db_role(sess));
+        lsquic_wt_close(sess->wt_sess, DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+        return;
+    }
+
+    /* Per spec, datagram batons are observational: log only, do not reply. */
+    db_log_receive(&st, baton);
+}
+
+
+static void
 maybe_close_baton_stream (struct devious_baton_stream *st)
 {
     if (!st || st->kind != DB_STREAM_BATON || !st->stream)
@@ -1050,7 +1078,6 @@ static void
 db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 {
     struct devious_baton_session *bsess;
-    struct devious_baton_stream st;
 
     if (!sess || !buf || len == 0)
         return;
@@ -1060,12 +1087,7 @@ db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
         return;
 
     LSQ_INFO("%s received datagram (%zu bytes)", db_role(bsess), len);
-    memset(&st, 0, sizeof(st));
-    st.session = bsess;
-    st.buf = (unsigned char *) buf;
-    st.buf_len = len;
-
-    consume_baton_data(&st, 1);
+    consume_baton_datagram(bsess, buf, len);
 }
 
 
