@@ -9,8 +9,21 @@
 
 #include <openssl/rand.h>
 
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#include <threads.h>
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && \
+                                    !defined(__STDC_NO_THREADS__)
+#   if defined(__has_include)
+#       if __has_include(<threads.h>)
+#           include <threads.h>
+#           define LSQUIC_HAVE_C11_ONCE 1
+#       else
+#           define LSQUIC_HAVE_C11_ONCE 0
+#       endif
+#   else
+#       include <threads.h>
+#       define LSQUIC_HAVE_C11_ONCE 1
+#   endif
+#else
+#   define LSQUIC_HAVE_C11_ONCE 0
 #endif
 
 #include "lsquic_hash.h"
@@ -34,7 +47,7 @@ struct lsquic_hash
 };
 
 
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#if LSQUIC_HAVE_C11_ONCE
 static once_flag seed_once = ONCE_FLAG_INIT;
 static uint64_t seed;
 
@@ -52,7 +65,13 @@ get_seed (void)
     return seed;
 }
 #else
-#warning "Pre-C11 compiler: get_seed() one-time init is not thread-safe"
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
+#   if defined(_MSC_VER)
+#       pragma message("warning: Pre-C11 compiler: get_seed() one-time init is not thread-safe")
+#   elif defined(__clang__) || defined(__GNUC__)
+#       warning "Pre-C11 compiler: get_seed() one-time init is not thread-safe"
+#   endif
+#endif
 
 static uint64_t
 get_seed (void)
