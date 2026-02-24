@@ -12,20 +12,11 @@
 #include <openssl/rand.h>
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && \
-                                    !defined(__STDC_NO_THREADS__)
-#   if defined(__has_include)
-#       if __has_include(<threads.h>)
-#           include <threads.h>
-#           define LSQUIC_HAVE_C11_ONCE 1
-#       else
-#           define LSQUIC_HAVE_C11_ONCE 0
-#       endif
-#   else
-#       include <threads.h>
-#       define LSQUIC_HAVE_C11_ONCE 1
-#   endif
+                                        !defined(__STDC_NO_ATOMICS__)
+#include <stdatomic.h>
+#define LSQUIC_HAVE_C11_ONCE 1
 #else
-#   define LSQUIC_HAVE_C11_ONCE 0
+#define LSQUIC_HAVE_C11_ONCE 0
 #endif
 
 #include "lsquic_hash.h"
@@ -50,20 +41,41 @@ struct lsquic_hash
 
 
 #if LSQUIC_HAVE_C11_ONCE
-static once_flag seed_once = ONCE_FLAG_INIT;
-static uint64_t seed;
-
-static void
-init_seed (void)
+enum seed_init_state
 {
-    (void) /* BoringSSL's RAND_bytes does not fail */
-    RAND_bytes((void *) &seed, sizeof(seed));
-}
+    SEED_INIT_NONE = 0,
+    SEED_INIT_BUSY = 1,
+    SEED_INIT_DONE = 2,
+};
+
+static atomic_uint seed_state = ATOMIC_VAR_INIT(SEED_INIT_NONE);
+static uint64_t seed;
 
 static uint64_t
 get_seed (void)
 {
-    call_once(&seed_once, init_seed);
+    unsigned state;
+
+    state = atomic_load_explicit(&seed_state, memory_order_acquire);
+    if (state == SEED_INIT_DONE)
+        return seed;
+
+    state = SEED_INIT_NONE;
+    if (atomic_compare_exchange_strong_explicit(&seed_state, &state,
+                                                SEED_INIT_BUSY,
+                                                memory_order_acq_rel,
+                                                memory_order_acquire))
+    {
+        (void) /* BoringSSL's RAND_bytes does not fail */
+        RAND_bytes((void *) &seed, sizeof(seed));
+        atomic_store_explicit(&seed_state, SEED_INIT_DONE,
+                              memory_order_release);
+    }
+    else
+        while (atomic_load_explicit(&seed_state, memory_order_acquire) !=
+                                                            SEED_INIT_DONE)
+            ;
+
     return seed;
 }
 #else
