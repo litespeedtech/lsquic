@@ -4,9 +4,14 @@
  */
 
 #include <assert.h>
+#include <stdlib.h>
 #include <sys/queue.h>
 
 #include <openssl/rand.h>
+
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#include <threads.h>
+#endif
 
 #include "lsquic_hash.h"
 #include "lsquic_rapidhash.h"
@@ -29,7 +34,28 @@ struct lsquic_hash
 };
 
 
-static uint64_t get_seed()
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+static once_flag seed_once = ONCE_FLAG_INIT;
+static uint64_t seed;
+
+static void
+init_seed (void)
+{
+    (void) /* BoringSSL's RAND_bytes does not fail */
+    RAND_bytes((void *) &seed, sizeof(seed));
+}
+
+static uint64_t
+get_seed (void)
+{
+    call_once(&seed_once, init_seed);
+    return seed;
+}
+#else
+#warning "Pre-C11 compiler: get_seed() one-time init is not thread-safe"
+
+static uint64_t
+get_seed (void)
 {
     static int init = 0;
     static uint64_t seed;
@@ -42,6 +68,7 @@ static uint64_t get_seed()
 
     return seed;
 }
+#endif
 
 
 struct lsquic_hash *
@@ -74,7 +101,8 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
-    hash->qh_hash_seed = get_seed();
+    hash->qh_hash_seed = get_seed() ^ (uint64_t) hash
+                                    ^ ((uint64_t) buckets << 32);
     return hash;
 }
 
