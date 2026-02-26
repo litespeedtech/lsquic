@@ -389,6 +389,12 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
+    settings->es_datagrams       = LSQUIC_DF_DATAGRAMS;
+    settings->es_http_datagrams  = LSQUIC_DF_HTTP_DATAGRAMS;
+    settings->es_http_dg_max_capsule_read_size =
+                                        LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE;
+    settings->es_http_dg_max_capsule_write_size =
+                                        LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE;
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
     settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
     settings->es_enable_bw_sampler = LSQUIC_DF_ENABLE_BW_SAMPLER;
@@ -3623,5 +3629,3 @@ lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
     conn->cn_cces_mask &= ~(1u << cce_idx);
     LSQ_DEBUGC("retire CID %"CID_FMT, CID_BITS(&cce->cce_cid));
 }
-
-

@@ -27,7 +27,8 @@ struct lsquic_conn_public {
     struct lsquic_streams_tailq     sending_streams,    /* Send RST_STREAM, BLOCKED, and WUF frames */
                                     read_streams,
                                     write_streams,      /* Send STREAM frames */
-                                    service_streams;
+                                    service_streams,
+                                    http_dg_streams;    /* Send HTTP Datagrams */
     struct lsquic_hash             *all_streams;
     struct lsquic_cfcw              cfcw;
     struct lsquic_conn_cap          conn_cap;
@@ -49,6 +50,7 @@ struct lsquic_conn_public {
     }                               u;
     enum {
         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
+        CP_HTTP_DATAGRAMS       = 1 << 1,   /* HTTP Datagram support negotiated */
     }                               cp_flags;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS

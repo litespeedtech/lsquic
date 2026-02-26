@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +94,12 @@ stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t,
 
 static ssize_t
 save_to_buffer (lsquic_stream_t *, struct lsquic_reader *, size_t len);
+
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
 
 static int
 stream_flush (lsquic_stream_t *stream);
@@ -206,6 +213,10 @@ enum stream_history_event
     SHE_FLUSH              =  'u',
     SHE_STOP_SENDIG_OUT    =  'U',
     SHE_USER_WRITE_DATA    =  'w',
+    SHE_HTTP_DG_RECV       =  'm',
+    SHE_HTTP_DG_SEND       =  'M',
+    SHE_HTTP_DG_CAPSULE_ON =  'k',
+    SHE_HTTP_DG_CAPSULE_OFF=  'K',
     SHE_SHUTDOWN_WRITE     =  'W',
     SHE_CLOSE              =  'X',
     SHE_DELAY_SW           =  'y',
@@ -240,7 +251,6 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
                                                         stream->sm_hist_buf);
 }
 
-
 #   define SM_HISTORY_APPEND(stream, event) sm_history_append(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream) do {                           \
         if (stream->sm_hist_idx & SM_HIST_IDX_MASK)                         \
@@ -251,6 +261,20 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
 #else
 #   define SM_HISTORY_APPEND(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream)
+#endif
+
+#if LSQUIC_KEEP_STREAM_HISTORY
+void
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+}
+
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_SEND);
+}
 #endif
 
 
@@ -653,6 +677,8 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         TAILQ_REMOVE(&stream->conn_pub->write_streams, stream, next_write_stream);
     if (stream->sm_qflags & SMQF_SERVICE_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->service_streams, stream, next_service_stream);
+    if (stream->sm_qflags & SMQF_WANT_HTTP_DG)
+        TAILQ_REMOVE(&stream->conn_pub->http_dg_streams, stream, next_http_dg_stream);
     if (stream->sm_qflags & SMQF_QPACK_DEC)
         lsquic_qdh_cancel_stream(stream->conn_pub->u.ietf.qdh, stream);
     else if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
@@ -687,6 +713,13 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         uh = stream->uh;
         stream->uh = uh->uh_next;
         destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
+    }
+    if (stream->sm_http_dg)
+    {
+        free(stream->sm_http_dg->read.buf);
+        free(stream->sm_http_dg->write.buf);
+        free(stream->sm_http_dg);
+        stream->sm_http_dg = NULL;
     }
     free(stream->sm_buf);
     free(stream->sm_header_block);
@@ -2101,6 +2134,32 @@ stream_wantwrite (struct lsquic_stream *stream, int new_val)
     return old_val;
 }
 
+static int
+stream_want_http_dg (struct lsquic_stream *stream, int is_want)
+{
+    const int old_val = !!(stream->sm_qflags & SMQF_WANT_HTTP_DG);
+    const int new_val = !!is_want;
+
+    if (old_val != new_val)
+    {
+        if (new_val)
+        {
+            TAILQ_INSERT_TAIL(&stream->conn_pub->http_dg_streams, stream,
+                                                    next_http_dg_stream);
+            stream->sm_qflags |= SMQF_WANT_HTTP_DG;
+        }
+        else
+        {
+            stream->sm_qflags &= ~SMQF_WANT_HTTP_DG;
+            TAILQ_REMOVE(&stream->conn_pub->http_dg_streams, stream,
+                                                    next_http_dg_stream);
+        }
+        lsquic_conn_http_dg_streams_updated(stream->conn_pub->lconn);
+    }
+
+    return old_val;
+}
+
 
 int
 lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
@@ -2150,6 +2209,143 @@ lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 }
 
 
+int
+lsquic_stream_want_http_dg_write (lsquic_stream_t *stream, int is_want)
+{
+    size_t max_sz;
+
+    if (!stream->stream_if || !stream->stream_if->on_http_dg_write)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!stream->conn_pub->enpub->enp_settings.es_http_datagrams
+            || !(stream->conn_pub->cp_flags & CP_HTTP_DATAGRAMS))
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (stream->conn_pub->lconn->cn_if
+            && stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size)
+        max_sz = stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size(
+                                                stream->conn_pub->lconn);
+    else
+        max_sz = 0;
+
+    if (0 == max_sz)
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    return stream_want_http_dg(stream, is_want);
+}
+
+
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream,
+                                            lsquic_stream_ctx_t *UNUSED_h);
+
+int
+lsquic_stream_set_http_dg_capsules (lsquic_stream_t *stream, int enable)
+{
+    if (!(stream->sm_bflags & SMBF_IETF)
+            || !(stream->sm_bflags & SMBF_USE_HEADERS))
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (!stream->conn_pub->enpub->enp_settings.es_http_datagrams)
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (enable)
+    {
+        if (!stream->sm_http_dg)
+        {
+            stream->sm_http_dg = calloc(1, sizeof(*stream->sm_http_dg));
+            if (!stream->sm_http_dg)
+            {
+                errno = ENOMEM;
+                return -1;
+            }
+        }
+        stream->sm_bflags |= SMBF_HTTP_DG_CAPSULES;
+        SM_HISTORY_APPEND(stream, SHE_HTTP_DG_CAPSULE_ON);
+        LSQ_DEBUG("HTTP DG capsule mode enabled on stream %"PRIu64, stream->id);
+        (void) lsquic_stream_wantread(stream, 1);
+        free(stream->sm_http_dg->read.buf);
+        stream->sm_http_dg->read.buf = NULL;
+        stream->sm_http_dg->read.state = HDC_READ_TYPE;
+        stream->sm_http_dg->read.type_state.pos = 0;
+        stream->sm_http_dg->read.len_state.pos = 0;
+    }
+    else
+    {
+        stream->sm_bflags &= ~SMBF_HTTP_DG_CAPSULES;
+        SM_HISTORY_APPEND(stream, SHE_HTTP_DG_CAPSULE_OFF);
+        LSQ_DEBUG("HTTP DG capsule mode disabled on stream %"PRIu64, stream->id);
+        (void) lsquic_stream_wantread(stream, 0);
+        (void) lsquic_stream_wantwrite(stream, 0);
+        if (stream->sm_http_dg)
+        {
+            free(stream->sm_http_dg->read.buf);
+            stream->sm_http_dg->read.buf = NULL;
+            stream->sm_http_dg->read.buf_sz = 0;
+            stream->sm_http_dg->read.state = HDC_READ_TYPE;
+            free(stream->sm_http_dg->write.buf);
+            stream->sm_http_dg->write.buf = NULL;
+            stream->sm_http_dg->write.buf_sz = 0;
+            stream->sm_http_dg->write.offset = 0;
+            stream->sm_http_dg->write.header_len = 0;
+        }
+    }
+
+    return 0;
+}
+
+
+size_t
+lsquic_stream_get_max_http_dg_size (lsquic_stream_t *stream)
+{
+    size_t max_sz;
+    uint64_t qsid;
+    size_t overhead;
+
+    if (!(stream->conn_pub->cp_flags & CP_HTTP_DATAGRAMS))
+        return 0;
+
+    if (stream->conn_pub->lconn->cn_if
+            && stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size)
+        max_sz = stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size(
+                                                stream->conn_pub->lconn);
+    else
+        max_sz = 0;
+
+    if (0 == max_sz)
+        return 0;
+
+    if (stream->id & 3)
+        return 0;
+
+    qsid = stream->id / 4;
+    if (qsid > VINT_MAX_VALUE)
+        return 0;
+    overhead = vint_size(qsid);
+    if (max_sz <= overhead)
+        return 0;
+    return max_sz - overhead;
+}
+
+
+
 struct progress
 {
     enum stream_flags   s_flags;
@@ -2175,7 +2371,6 @@ progress_eq (struct progress a, struct progress b)
     return a.s_flags == b.s_flags && a.q_flags == b.q_flags;
 }
 
-
 static void
 stream_dispatch_read_events_loop (lsquic_stream_t *stream)
 {
@@ -2192,7 +2387,10 @@ stream_dispatch_read_events_loop (lsquic_stream_t *stream)
         progress = stream_progress(stream);
         size  = stream->read_offset;
 
-        stream->stream_if->on_read(stream, stream->st_ctx);
+        if (stream->sm_bflags & SMBF_HTTP_DG_CAPSULES)
+            http_dg_capsule_on_read(stream, stream->st_ctx);
+        else
+            stream->stream_if->on_read(stream, stream->st_ctx);
 
         if (no_progress_limit && size == stream->read_offset &&
                                 progress_eq(progress, stream_progress(stream)))
@@ -2278,6 +2476,9 @@ static void
 (*select_on_write (struct lsquic_stream *stream))(struct lsquic_stream *,
                                                         lsquic_stream_ctx_t *)
 {
+    if (stream->sm_http_dg
+            && stream->sm_http_dg->write.header_len)
+        return http_dg_capsule_on_write;
     if (0 == (stream->stream_flags & STREAM_PUSHING)
                     && SSHS_HBLOCK_SENDING != stream->sm_send_headers_state)
         /* Common case */
@@ -2293,7 +2494,6 @@ static void
             return stream->stream_if->on_write;
     }
 }
-
 
 static void
 stream_dispatch_write_events_loop (lsquic_stream_t *stream)
@@ -2339,7 +2539,10 @@ stream_dispatch_read_events_once (lsquic_stream_t *stream)
 {
     if ((stream->sm_qflags & SMQF_WANT_READ) && lsquic_stream_readable(stream))
     {
-        stream->stream_if->on_read(stream, stream->st_ctx);
+        if (stream->sm_bflags & SMBF_HTTP_DG_CAPSULES)
+            http_dg_capsule_on_read(stream, stream->st_ctx);
+        else
+            stream->stream_if->on_read(stream, stream->st_ctx);
     }
 }
 
@@ -5608,4 +5811,325 @@ int
 lsquic_stream_has_unacked_data (struct lsquic_stream *stream)
 {
     return stream->n_unacked > 0 || stream->sm_n_buffered > 0;
+}
+
+/* RFC 9297, Section 3.2: Datagram Capsule type is 0x00. */
+#define H3_CAPSULE_DATAGRAM 0x00
+
+static void
+stream_reset_http_dg_capsule (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_read_state *rd;
+
+    if (!stream->sm_http_dg)
+        return;
+
+    rd = &stream->sm_http_dg->read;
+    rd->state = HDC_READ_TYPE;
+    rd->type_state.pos = 0;
+    rd->len_state.pos = 0;
+    rd->type = 0;
+    rd->length = 0;
+    rd->offset = 0;
+    rd->buf = NULL;
+    rd->buf_sz = 0;
+}
+
+static void
+stream_abort_http_dg_capsule (struct lsquic_stream *stream, const char *reason)
+{
+    struct http_dg_capsule_read_state *rd;
+    struct lsquic_conn *lconn = stream->conn_pub->lconn;
+
+    if (stream->sm_http_dg)
+    {
+        rd = &stream->sm_http_dg->read;
+        free(rd->buf);
+        rd->buf = NULL;
+    }
+    lconn->cn_if->ci_abort_error(lconn, 1, HEC_DATAGRAM_ERROR,
+        "%s on stream %"PRIu64, reason, stream->id);
+}
+
+static size_t
+http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
+{
+    struct lsquic_stream *stream = ctx;
+    struct http_dg_capsule_read_state *rd;
+    const unsigned char *p = buf;
+    const unsigned char *end = buf + len;
+    struct varint_read_state *vrs;
+    size_t avail, to_copy;
+    int s;
+
+    if (!stream->sm_http_dg)
+        return 0;
+
+    rd = &stream->sm_http_dg->read;
+    while (p < end)
+    {
+        switch (rd->state)
+        {
+        case HDC_READ_TYPE:
+            /* RFC 9297, Section 3: Capsule fields are varint-encoded. */
+            vrs = &rd->type_state;
+            s = lsquic_varint_read_nb(&p, end, vrs);
+            if (s < 0)
+                goto end;
+            rd->type = vrs->val;
+            rd->state = HDC_READ_LENGTH;
+            rd->len_state.pos = 0;
+            break;
+        case HDC_READ_LENGTH:
+            /* RFC 9297, Section 3: Capsule length is varint-encoded. */
+            vrs = &rd->len_state;
+            s = lsquic_varint_read_nb(&p, end, vrs);
+            if (s < 0)
+                goto end;
+            rd->length = vrs->val;
+            rd->offset = 0;
+            if (rd->length > SIZE_MAX)
+            {
+                stream_abort_http_dg_capsule(stream,
+                        "capsule length too large");
+                goto end;
+            }
+            /* RFC 9297, Section 3.2: Datagram Capsule payload. */
+            if (rd->type == H3_CAPSULE_DATAGRAM)
+            {
+                unsigned max_sz;
+
+                max_sz = stream->conn_pub->enpub->enp_settings
+                                        .es_http_dg_max_capsule_read_size;
+                if (rd->length > max_sz)
+                {
+                    stream_abort_http_dg_capsule(stream,
+                        "capsule length exceeds configured maximum");
+                    goto end;
+                }
+                rd->buf_sz = (size_t) rd->length;
+                if (rd->buf_sz)
+                {
+                    rd->buf = malloc(rd->buf_sz);
+                    if (!rd->buf)
+                    {
+                        stream_abort_http_dg_capsule(stream,
+                                "cannot allocate capsule buffer");
+                        goto end;
+                    }
+                }
+            }
+            rd->state = HDC_READ_PAYLOAD;
+            break;
+        case HDC_READ_PAYLOAD:
+            avail = (size_t) (end - p);
+            to_copy = rd->length - rd->offset;
+            if (to_copy > avail)
+                to_copy = avail;
+            if (rd->type == H3_CAPSULE_DATAGRAM && rd->buf_sz)
+                memcpy(rd->buf + rd->offset, p, to_copy);
+            rd->offset += to_copy;
+            p += to_copy;
+            if (rd->offset == rd->length)
+            {
+                if (rd->type == H3_CAPSULE_DATAGRAM
+                        && stream->stream_if->on_http_dg_read)
+                {
+                    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+                    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
+                        " size %zu", stream->id, rd->buf_sz);
+                    stream->stream_if->on_http_dg_read(stream, stream->st_ctx,
+                        rd->buf, rd->buf_sz);
+                }
+                free(rd->buf);
+                rd->buf = NULL;
+                stream_reset_http_dg_capsule(stream);
+            }
+            break;
+        }
+    }
+
+  end:
+    if (fin && rd->state != HDC_READ_TYPE)
+        stream_abort_http_dg_capsule(stream, "truncated capsule");
+    return len;
+}
+
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+    ssize_t nread;
+
+    nread = lsquic_stream_readf(stream, http_dg_capsule_readf, stream);
+    if (nread == 0 || (nread < 0 && errno != EWOULDBLOCK))
+        (void) lsquic_stream_wantread(stream, 0);
+}
+
+int
+lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream)
+{
+    return stream->sm_http_dg
+        && stream->sm_http_dg->write.header_len != 0;
+}
+
+static void
+http_dg_capsule_clear_pending (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_write_state *wr;
+
+    if (!stream->sm_http_dg)
+        return;
+
+    wr = &stream->sm_http_dg->write;
+    free(wr->buf);
+    wr->buf = NULL;
+    wr->buf_sz = 0;
+    wr->offset = 0;
+    wr->header_len = 0;
+}
+
+static int
+http_dg_capsule_try_write (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_write_state *wr;
+    struct iovec iov[2];
+    size_t total, off, header_len, payload_off;
+    int iovcnt;
+    ssize_t nw;
+
+    if (!stream->sm_http_dg)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    wr = &stream->sm_http_dg->write;
+    header_len = wr->header_len;
+    if (header_len == 0)
+        return 1;
+
+    total = header_len + wr->buf_sz;
+    off = wr->offset;
+    if (off >= total)
+        return 1;
+
+    if (off < header_len)
+    {
+        iov[0].iov_base = wr->header + off;
+        iov[0].iov_len = header_len - off;
+        iov[1].iov_base = wr->buf;
+        iov[1].iov_len = wr->buf_sz;
+        iovcnt = 2;
+    }
+    else
+    {
+        payload_off = off - header_len;
+        iov[0].iov_base = wr->buf + payload_off;
+        iov[0].iov_len = wr->buf_sz - payload_off;
+        iovcnt = 1;
+    }
+
+    nw = lsquic_stream_writev(stream, iov, iovcnt);
+    if (nw < 0)
+        return -1;
+    if (nw == 0)
+        return 0;
+
+    wr->offset += (size_t) nw;
+    if (wr->offset >= total)
+        return 1;
+
+    return 0;
+}
+
+int
+lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
+                                                    const void *buf, size_t sz)
+{
+    struct http_dg_capsule_write_state *wr;
+    unsigned char header[16];
+    unsigned max_sz;
+    uint64_t bits;
+    size_t header_len;
+    if (!stream->sm_http_dg)
+    {
+        stream->sm_http_dg = calloc(1, sizeof(*stream->sm_http_dg));
+        if (!stream->sm_http_dg)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    if (lsquic_stream_http_dg_capsule_pending(stream))
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    max_sz = stream->conn_pub->enpub->enp_settings
+                                    .es_http_dg_max_capsule_write_size;
+    if (max_sz == 0 || sz > max_sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    if (sz > VINT_MAX_VALUE)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* RFC 9297, Section 3.2: Capsule type and length are varint-encoded. */
+    bits = vint_val2bits(H3_CAPSULE_DATAGRAM);
+    header_len = 1u << bits;
+    vint_write(header, H3_CAPSULE_DATAGRAM, bits, header_len);
+    bits = vint_val2bits(sz);
+    vint_write(header + header_len, sz, bits, 1u << bits);
+    header_len += 1u << bits;
+
+    wr = &stream->sm_http_dg->write;
+    wr->buf = NULL;
+    if (sz)
+    {
+        /* Copy payload; possible optimization via SMBF_RW_ONCE remains. */
+        wr->buf = malloc(sz);
+        if (!wr->buf)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy(wr->buf, buf, sz);
+    }
+    wr->buf_sz = sz;
+    memcpy(wr->header, header, header_len);
+    wr->header_len = header_len;
+    wr->offset = 0;
+    LSQ_DEBUG("HTTP DG capsule queued on stream %"PRIu64" size %zu",
+        stream->id, sz);
+    if (lsquic_stream_wantwrite(stream, 1) != 0)
+    {
+        http_dg_capsule_clear_pending(stream);
+        return -1;
+    }
+    return 0;
+}
+
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+    int rc;
+
+    rc = http_dg_capsule_try_write(stream);
+    if (rc < 0)
+        return;
+    if (rc == 0)
+        return;
+
+    http_dg_capsule_clear_pending(stream);
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_SEND);
+    LSQ_DEBUG("HTTP DG capsule flushed on stream %"PRIu64, stream->id);
+    (void) lsquic_stream_wantwrite(stream, 0);
+    (void) lsquic_stream_flush(stream);
 }

@@ -16,11 +16,17 @@
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_hash.h"
+#include "lsquic_malo.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
 #include "lsquic_stream.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_byteswap.h"
+#include "lsquic_mm.h"
 #include "lsquic_hcso_writer.h"
 #include "lsquic_conn.h"
+#include "lsquic_conn_public.h"
+#include "lsquic_engine_public.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HCSO_WRITER
 #define LSQUIC_LOG_CONN_ID \
@@ -210,16 +216,6 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
         p += 1 << bits;
 
-        /* Write out H3_DATAGRAM_ENABLED */
-#define H3_DATAGRAM_ENABLED (0x33)
-#define H3_DATAGRAM_ENABLED_VALUE (1)
-        bits = hcso_setting_type2bits(writer, H3_DATAGRAM_ENABLED);
-        vint_write(p, H3_DATAGRAM_ENABLED, bits, 1 << bits);
-        p += 1 << bits;
-        bits = vint_val2bits(H3_DATAGRAM_ENABLED_VALUE);
-        vint_write(p, H3_DATAGRAM_ENABLED_VALUE, bits, 1 << bits);
-        p += 1 << bits;
-
         /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
 #define SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8)
 #define SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE (1)
@@ -231,6 +227,20 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 #endif
+
+    if (writer->how_stream
+            && writer->how_stream->conn_pub
+            && writer->how_stream->conn_pub->enpub
+            && writer->how_stream->conn_pub->enpub->enp_settings.es_http_datagrams)
+    {
+        /* Write out H3_DATAGRAM_ENABLED */
+        bits = hcso_setting_type2bits(writer, HQSID_H3_DATAGRAM_ENABLED);
+        vint_write(p, HQSID_H3_DATAGRAM_ENABLED, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(1);
+        vint_write(p, 1, bits, 1 << bits);
+        p += 1 << bits;
+    }
 
 #ifdef NDEBUG
     buf[1] = p - buf - 2;
