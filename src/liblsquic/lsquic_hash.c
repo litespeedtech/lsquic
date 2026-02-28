@@ -79,8 +79,8 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
-    hash->qh_hash_seed = get_seed() ^ (uint64_t) hash
-                                    ^ ((uint64_t) buckets << 32);
+    hash->qh_hash_seed = get_seed() ^ (uint64_t)hash
+                        ^ ((uint64_t)buckets << 32) ^ rand();
     return hash;
 }
 
