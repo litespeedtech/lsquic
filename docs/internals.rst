@@ -1247,8 +1247,8 @@ it possible to store a list of frame types as a bitmask.  Examples include
 
 Some frame types, such as ACK and STREAM, are common to both Google and IETF
 QUIC.  Others, such as STOP_WAITING and RETIRE_CONNECTION_ID, are only used
-in one of the protocols.  The third type is frames that are used by IETF
-QUIC extensions, such as TIMESTAMP and ACK_FREQUENCY.
+in one of the protocols.  The third type is frames that are used by legacy
+extension code paths, such as TIMESTAMP and ACK_FREQUENCY.
 
 Parsing IETF QUIC Frame Types
 -----------------------------
@@ -2141,7 +2141,7 @@ ifc_created
 -----------
 
 Time when the connection was created.  This is used for the Timestamp
-and Delayed ACKs extensions.
+extension and legacy delayed-ACK code paths.
 
 ifc_saved_ack_received
 ----------------------
@@ -2192,8 +2192,8 @@ ifc_max_retx_since_last_ack
 This number is the maximum number of ack-eliciting packets to receive
 before an ACK must be sent.
 
-The default value is 2.  When the Delayed ACKs extension is used, this
-value gets modified by peer's ACK_FREQUENCY frames.
+The default value is 2.  In the legacy delayed-ACK code path, this
+value can be modified by peer's ACK_FREQUENCY frames.
 
 ifc_max_ack_delay
 -----------------
@@ -2201,8 +2201,8 @@ ifc_max_ack_delay
 Maximum amount of allowed after before an ACK is sent if the threshold
 defined by ifc_max_retx_since_last_ack_ has not yet been reached.
 
-The default value is 25 ms.  When the Delayed ACKs extension is used, this
-value gets modified by peer's ACK_FREQUENCY frames.
+The default value is 25 ms.  In the legacy delayed-ACK code path, this
+value can be modified by peer's ACK_FREQUENCY frames.
 
 ifc_ecn_counts_in
 -----------------
@@ -2448,7 +2448,7 @@ ifc_pts
 
 PTS stands for "Packet Tolerance Stats".  Information collected here
 is used to calculate updates to the packet tolerance advertised to the
-peer via ACK_FREQUENCY frames.  Part of the Delayed ACKs extension.
+peer via ACK_FREQUENCY frames in the legacy delayed-ACK code path.
 
 ifc_stats
 ---------
@@ -2647,7 +2647,8 @@ Creating Streams on the Server
 Calculating Packet Tolerance
 ============================
 
-When the Delayed ACKs extension is used, we advertise our ``Packet Tolerance``
+When the legacy delayed-ACK code path is active, we advertise our
+``Packet Tolerance``
 to peer.  This is the number of packets the peer can receive before having to
 send an acknowledgement.  By default -- without the extension -- the packet
 tolerance is 2.

@@ -764,15 +764,10 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_SPIN`
 
-    .. member:: int             es_delayed_acks
-
-       Enable delayed ACKs extension.  Allowed values are 0 and 1.
-
-       Default value is :macro:`LSQUIC_DF_DELAYED_ACKS`
-
     .. member:: int             es_timestamps
 
-       Enable timestamps extension.  Allowed values are 0 and 1.
+       Enable the legacy experimental timestamp extension.  Allowed values are
+       0 and 1.
 
        Default value is @ref LSQUIC_DF_TIMESTAMPS
 
@@ -1082,10 +1077,6 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     Default value of the CC RTT threshold is 1500 microseconds
 
-.. macro:: LSQUIC_DF_DELAYED_ACKS
-
-    The Delayed ACKs extension is on by default.
-
 .. macro:: LSQUIC_DF_MAX_UDP_PAYLOAD_SIZE_RX
 
     By default, incoming packet size is not limited.
@@ -1121,7 +1112,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_TIMESTAMPS
 
-    Timestamps are on by default.
+    The legacy experimental timestamp extension is off by default.
 
 .. macro:: LSQUIC_DF_DATAGRAMS
 
