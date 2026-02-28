@@ -406,8 +406,8 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_PTPC_ERR_THRESH 0.05
 #define LSQUIC_DF_PTPC_ERR_DIVISOR 0.05
 
-/** Keep the legacy experimental timestamp extension enabled by default */
-#define LSQUIC_DF_TIMESTAMPS 1
+/** Keep the legacy experimental timestamp extension disabled by default */
+#define LSQUIC_DF_TIMESTAMPS 0
 
 /** default anti-amplification factor is 3 */
 #define LSQUIC_DF_AMP_FACTOR 3

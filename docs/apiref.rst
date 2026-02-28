@@ -1112,7 +1112,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_TIMESTAMPS
 
-    The legacy experimental timestamp extension is on by default.
+    The legacy experimental timestamp extension is off by default.
 
 .. macro:: LSQUIC_DF_DATAGRAMS
 
