@@ -40,7 +40,6 @@ LSQUIC supports nearly all QUIC and HTTP/3 features, including
  - :ref:`apiref-datagrams`
  - Loss bits extension (allowing network observer to locate source of packet loss)
  - Timestamps extension (allowing for one-way delay calculation, improving performance of some congestion controllers)
- - Delayed ACKs (this reduces number of ACK frames sent and processed, improving throughput)
  - QUIC grease bit to reduce ossification opportunities
 
 Architecture

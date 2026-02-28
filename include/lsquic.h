@@ -390,12 +390,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn spin bit on by default */
 #define LSQUIC_DF_SPIN 1
 
-/** Turn on delayed ACKs extension by default */
-#define LSQUIC_DF_DELAYED_ACKS 1
+/** Keep the legacy delayed-ACKs experiment disabled by default */
+#define LSQUIC_DF_DELAYED_ACKS 0
 
 /**
  * Defaults for the Packet Tolerance PID Controller (PTPC) used by the
- * Delayed ACKs extension:
+ * legacy packet-tolerance logic:
  */
 #define LSQUIC_DF_PTPC_PERIODICITY 3
 #define LSQUIC_DF_PTPC_MAX_PACKTOL 150
@@ -958,7 +958,7 @@ struct lsquic_engine_settings {
     int             es_spin;
 
     /**
-     * Enable delayed ACKs extension.  Allowed values are 0 and 1.
+     * Toggle the legacy delayed-ACKs experiment.  Allowed values are 0 and 1.
      *
      * Default value is @ref LSQUIC_DF_DELAYED_ACKS
      */
@@ -1075,7 +1075,7 @@ struct lsquic_engine_settings {
 
     /**
      * Settings for the Packet Tolerance PID Controller (PTPC) used for
-     * the Delayed ACKs logic.  Periodicity is how often the number of
+     * the legacy packet-tolerance logic.  Periodicity is how often the number of
      * incoming ACKs is sampled.  Periodicity's units is the number of
      * RTTs. Target is the average number of incoming ACKs per RTT we
      * want to achieve.  Error threshold defines the range of error values

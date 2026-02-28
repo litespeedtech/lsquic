@@ -38,7 +38,6 @@ The following QUIC protocol extensions are implemented:
 - [RFC 9218](https://www.rfc-editor.org/rfc/rfc9218) Extensible Prioritization Scheme for HTTP
 - [RFC 9221](https://www.rfc-editor.org/rfc/rfc9221) An Unreliable Datagram Extension to QUIC
 - [RFC 9287](https://www.rfc-editor.org/rfc/rfc9287) Greasing the QUIC Bit
-- [ACK Frequency](https://datatracker.ietf.org/doc/draft-ietf-quic-ack-frequency/)
 - [WebTransport](https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/)
   
 Documentation
