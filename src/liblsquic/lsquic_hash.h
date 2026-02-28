@@ -35,6 +35,9 @@ struct lsquic_hash *
 lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
                     uint64_t (*hash)(const void *, size_t, uint64_t seed));
 
+void
+lsquic_hash_set_global_seed (uint64_t seed);
+
 int
 lsquic_hash_set_seed (struct lsquic_hash *, uint64_t seed);
 

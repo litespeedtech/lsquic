@@ -9,16 +9,6 @@
 #include <string.h>
 #include <sys/queue.h>
 
-#include <openssl/rand.h>
-
-#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && \
-                                        !defined(__STDC_NO_ATOMICS__)
-#include <stdatomic.h>
-#define LSQUIC_HAVE_C11_ONCE 1
-#else
-#define LSQUIC_HAVE_C11_ONCE 0
-#endif
-
 #include "lsquic_hash.h"
 #include "lsquic_rapidhash.h"
 
@@ -40,68 +30,23 @@ struct lsquic_hash
 };
 
 
-#if LSQUIC_HAVE_C11_ONCE
-enum seed_init_state
-{
-    SEED_INIT_NONE = 0,
-    SEED_INIT_BUSY = 1,
-    SEED_INIT_DONE = 2,
-};
+static uint64_t global_seed;
+static int global_seed_set;
 
-static atomic_uint seed_state = ATOMIC_VAR_INIT(SEED_INIT_NONE);
-static uint64_t seed;
+void
+lsquic_hash_set_global_seed (uint64_t seed)
+{
+    global_seed = seed;
+    global_seed_set = 1;
+}
+
 
 static uint64_t
 get_seed (void)
 {
-    unsigned state;
-
-    state = atomic_load_explicit(&seed_state, memory_order_acquire);
-    if (state == SEED_INIT_DONE)
-        return seed;
-
-    state = SEED_INIT_NONE;
-    if (atomic_compare_exchange_strong_explicit(&seed_state, &state,
-                                                SEED_INIT_BUSY,
-                                                memory_order_acq_rel,
-                                                memory_order_acquire))
-    {
-        (void) /* BoringSSL's RAND_bytes does not fail */
-        RAND_bytes((void *) &seed, sizeof(seed));
-        atomic_store_explicit(&seed_state, SEED_INIT_DONE,
-                              memory_order_release);
-    }
-    else
-        while (atomic_load_explicit(&seed_state, memory_order_acquire) !=
-                                                            SEED_INIT_DONE)
-            ;
-
-    return seed;
+    assert(global_seed_set);
+    return global_seed;
 }
-#else
-#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
-#   if defined(_MSC_VER)
-#       pragma message("warning: Pre-C11 compiler: get_seed() one-time init is not thread-safe")
-#   elif defined(__clang__) || defined(__GNUC__)
-#       warning "Pre-C11 compiler: get_seed() one-time init is not thread-safe"
-#   endif
-#endif
-
-static uint64_t
-get_seed (void)
-{
-    static int init = 0;
-    static uint64_t seed;
-
-    if (!init)
-    {
-        ++init;
-        RAND_bytes((void *) &seed, sizeof(seed));
-    }
-
-    return seed;
-}
-#endif
 
 
 struct lsquic_hash *
