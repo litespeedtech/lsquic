@@ -551,6 +551,9 @@ lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);
 
+void
+lsquic_stream_set_ss_code (lsquic_stream_t *, uint64_t error_code);
+
 uint64_t
 lsquic_stream_read_offset (const lsquic_stream_t *stream);
 

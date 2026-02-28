@@ -2295,6 +2295,13 @@ lsquic_stream_received_goaway (lsquic_stream_t *stream)
 }
 
 
+void
+lsquic_stream_set_ss_code (lsquic_stream_t *stream, uint64_t error_code)
+{
+    stream->sm_ss_code = error_code;
+}
+
+
 uint64_t
 lsquic_stream_read_offset (const lsquic_stream_t *stream)
 {

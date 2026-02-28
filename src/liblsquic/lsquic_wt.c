@@ -137,7 +137,7 @@ wt_count_pending_streams (struct lsquic_conn_public *conn_pub);
 
 static int
 wt_buffer_or_reject_stream (struct lsquic_stream *stream,
-    lsquic_stream_id_t session_id, const char *stream_kind);
+    lsquic_stream_id_t session_id, enum lsquic_wt_stream_dir dir);
 
 static void
 wt_replay_pending_streams (struct lsquic_wt_session *sess);
@@ -491,7 +491,7 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
                                                         uctx->sess_id);
     if (!sess)
     {
-        if (0 != wt_buffer_or_reject_stream(stream, uctx->sess_id, "uni"))
+        if (0 != wt_buffer_or_reject_stream(stream, uctx->sess_id, LSQWT_UNI))
             return;
 
         LSQ_INFO("buffered WT uni stream %"PRIu64" for session %"PRIu64,
@@ -691,12 +691,14 @@ wt_can_accept_session (struct lsquic_stream *connect_stream)
 
 static int
 wt_buffer_or_reject_stream (struct lsquic_stream *stream,
-    lsquic_stream_id_t session_id, const char *stream_kind)
+    lsquic_stream_id_t session_id, enum lsquic_wt_stream_dir dir)
 {
     WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_conn_public *conn_pub;
+    const char *stream_kind;
     unsigned n_pending;
 
+    stream_kind = dir == LSQWT_UNI ? "uni" : "bidi";
     conn_pub = lsquic_stream_get_conn_public(stream);
     n_pending = wt_count_pending_streams(conn_pub);
     if (n_pending >= WT_MAX_PENDING_STREAMS)
@@ -704,8 +706,12 @@ wt_buffer_or_reject_stream (struct lsquic_stream *stream,
         LSQ_WARN("pending WT stream limit reached (%u): reject %s stream "
             "%"PRIu64" for session %"PRIu64, WT_MAX_PENDING_STREAMS,
             stream_kind, lsquic_stream_id(stream), (uint64_t) session_id);
-        /* XXX reset with WT_BUFFERED_STREAM_REJECTED when RESET support lands */
-        lsquic_stream_close(stream);
+        lsquic_stream_set_ss_code(stream, HEC_WT_BUFFERED_STREAM_REJECTED);
+        if (dir == LSQWT_UNI)
+            lsquic_stream_close(stream);
+        else
+            lsquic_stream_maybe_reset(stream, HEC_WT_BUFFERED_STREAM_REJECTED,
+                                                                            1);
         return -1;
     }
 
@@ -1881,7 +1887,7 @@ lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                             session_id);
     if (!sess)
     {
-        if (0 != wt_buffer_or_reject_stream(stream, session_id, "bidi"))
+        if (0 != wt_buffer_or_reject_stream(stream, session_id, LSQWT_BIDI))
             return;
         LSQ_INFO("buffered WT bidi stream %"PRIu64" for session %"PRIu64,
                             lsquic_stream_id(stream), (uint64_t) session_id);
