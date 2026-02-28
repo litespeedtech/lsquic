@@ -9,6 +9,8 @@
 #include <string.h>
 #include <sys/queue.h>
 
+#include <openssl/rand.h>
+
 #include "lsquic_hash.h"
 #include "lsquic_rapidhash.h"
 
@@ -30,22 +32,11 @@ struct lsquic_hash
 };
 
 
-static uint64_t global_seed;
-static int global_seed_set;
-
-void
-lsquic_hash_set_global_seed (uint64_t seed)
+static void
+init_hash_seed (struct lsquic_hash *hash)
 {
-    global_seed = seed;
-    global_seed_set = 1;
-}
-
-
-static uint64_t
-get_seed (void)
-{
-    assert(global_seed_set);
-    return global_seed;
+    /* BoringSSL's RAND_bytes does not fail */
+    (void) RAND_bytes((void *) &hash->qh_hash_seed, sizeof(hash->qh_hash_seed));
 }
 
 
@@ -79,8 +70,7 @@ lsquic_hash_create_ext (int (*cmp)(const void *, const void *, size_t),
     hash->qh_nbits     = nbits;
     hash->qh_iter_next = NULL;
     hash->qh_count     = 0;
-    hash->qh_hash_seed = get_seed() ^ (uint64_t)hash
-                        ^ ((uint64_t)buckets << 32) ^ rand();
+    init_hash_seed(hash);
     return hash;
 }
 
