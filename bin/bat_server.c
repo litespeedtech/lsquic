@@ -41,7 +41,8 @@
 #include "test_cert.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "bat_server"
+#include "tool_log.h"
 #include "lsxpack_header.h"
 
 #define BAT_PROTOCOL "bat-00"

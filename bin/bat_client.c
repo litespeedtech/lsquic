@@ -40,7 +40,8 @@
 #include "test_common.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "bat_client"
+#include "tool_log.h"
 #include "lsxpack_header.h"
 
 #define BAT_PROTOCOL "bat-00"

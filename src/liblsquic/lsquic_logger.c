@@ -386,6 +386,17 @@ end:
 void
 lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
 {
+    va_list ap;
+
+    va_start(ap, fmt);
+    lsquic_logger_log0v(log_level, fmt, ap);
+    va_end(ap);
+}
+
+
+void
+lsquic_logger_log0v (enum lsq_log_level log_level, const char *fmt, va_list ap)
+{
     const int saved_errno = errno;
     size_t len = 0;
     int lb;
@@ -404,10 +415,7 @@ lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
-    va_list ap;
-    va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
-    va_end(ap);
     if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
     {
         len = max - TRUNC_SZ;

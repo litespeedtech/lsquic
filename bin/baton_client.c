@@ -23,7 +23,8 @@
 #include "test_common.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "baton_client"
+#include "tool_log.h"
 
 
 static void

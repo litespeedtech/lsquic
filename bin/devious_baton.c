@@ -21,7 +21,8 @@
 #include "prog.h"
 #include "lsxpack_header.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "devious_baton"
+#include "tool_log.h"
 #include "../src/liblsquic/lsquic_varint.h"
 
 
