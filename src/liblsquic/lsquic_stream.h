@@ -239,6 +239,8 @@ enum stream_d_flags
 {
     SMDF_ONRESET0       =   1 << 0, /* Called on_reset(0) */
     SMDF_ONRESET1       =   1 << 1, /* Called on_reset(1) */
+    SMDF_READING_DATA_FRAMES
+                        =   1 << 2, /* Internal: detect nested read_data_frames() */
 };
 
 
@@ -269,8 +271,7 @@ enum stream_flags {
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
-    STREAM_READING_DATA_FRAMES
-                        = 1 << 26,  /* Internal: detect nested read_data_frames() */
+    STREAM_RESET_AT_RECVD = 1 << 26,  /* Received RESET_STREAM_AT frame */
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
@@ -361,6 +362,10 @@ struct lsquic_stream
 
     /* Valid if STREAM_FIN_RECVD is set: */
     uint64_t                        sm_fin_off;
+    /* Valid if STREAM_RESET_AT_RECVD is set: */
+    uint64_t                        sm_reset_at;
+    uint64_t                        sm_reset_at_final;
+    uint64_t                        sm_reset_at_error;
 
     /* A stream may be generating STREAM or CRYPTO frames */
     size_t                        (*sm_frame_header_sz)(
@@ -373,7 +378,8 @@ struct lsquic_stream
     struct lsquic_packet_out *    (*sm_get_packet_for_stream)(
                                         struct lsquic_send_ctl *,
                                         unsigned, const struct network_path *,
-                                        const struct lsquic_stream *);
+                                        const struct lsquic_stream *,
+                                        int buffered_packet_ok);
 
     /* This element is optional */
     const struct stream_filter_if  *sm_sfi;
@@ -420,6 +426,8 @@ struct lsquic_stream
     signed char                     sm_has_frame;
     lsquic_stream_id_t              webtransport_session_stream_id;
     struct lsquic_wt_session       *sm_wt_session;
+    /* When non-zero, send RESET_STREAM_AT with this reliable size. */
+    uint8_t                         sm_wt_header_sz;
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
@@ -523,8 +531,22 @@ void
 lsquic_stream_push_req (lsquic_stream_t *,
                         struct uncompressed_headers *push_req);
 
+void
+lsquic_stream_set_wt_header_size (lsquic_stream_t *s, uint8_t sz);
+
+int
+lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
+
+int
+lsquic_stream_reset_stream_at_in (lsquic_stream_t *, uint64_t final_size,
+                                  uint64_t reliable_size, uint64_t error_code);
+
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                    uint64_t *reliable_size);
 
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);

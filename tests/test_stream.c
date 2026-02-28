@@ -21,6 +21,7 @@
 #include "lsquic_alarmset.h"
 #include "lsquic_packet_in.h"
 #include "lsquic_conn_flow.h"
+#include "lsquic_ietf.h"
 #include "lsquic_rtt.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -34,7 +35,10 @@
 #include "lsquic_logger.h"
 #include "lsquic_parse.h"
 #include "lsquic_conn.h"
+#include "lsquic_enc_sess.h"
 #include "lsquic_engine_public.h"
+#include "lsquic_sizes.h"
+#include "lsquic_trans_params.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
 #include "lsquic_senhist.h"
@@ -49,6 +53,8 @@
 #include "lsqpack.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_qenc_hdl.h"
+#include "lsquic_http1x_if.h"
+#include "lsquic_qdec_hdl.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
@@ -183,6 +189,22 @@ static struct reset_call_ctx {
     int                      how;
 } s_onreset_called = { NULL, -1, };
 
+static struct transport_params s_reset_stream_at_params = {
+    .tp_set = (1 << TPI_RESET_STREAM_AT),
+};
+static struct transport_params s_no_reset_stream_at_params;
+static struct transport_params *s_peer_tp = &s_reset_stream_at_params;
+
+static struct transport_params *
+test_get_peer_transport_params (enc_session_t *UNUSED_session)
+{
+    return s_peer_tp;
+}
+
+static const struct enc_session_funcs_iquic test_reset_stream_at_esfi = {
+    .esfi_get_peer_transport_params = test_get_peer_transport_params,
+};
+
 
 static void
 on_reset (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how)
@@ -195,6 +217,12 @@ const struct lsquic_stream_if stream_if = {
     .on_new_stream          = on_new_stream,
     .on_close               = on_close,
     .on_reset               = on_reset,
+};
+
+static const struct lsquic_stream_if stream_if_no_reset = {
+    .on_new_stream          = on_new_stream,
+    .on_close               = on_close,
+    .on_reset               = NULL,
 };
 
 struct http_dg_test_ctx {
@@ -1352,6 +1380,530 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 }
 
 
+static void
+test_rst_stream_duplicate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == stream);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(s_onreset_called.how == 0);
+    else
+        assert(s_onreset_called.how == 2);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_smaller_than_seen (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    s = lsquic_sfcw_set_max_recv_off(&stream->fc, 200);
+    assert(s);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 100, 0);
+    assert(s < 0);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    else
+        assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_flow_control_violation (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    uint64_t offset;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    offset = lsquic_sfcw_get_fc_recv_off(&stream->fc) + 1;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, offset, 0);
+    assert(s < 0);
+    if (stream->sm_bflags & SMBF_IETF)
+        assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    else
+        assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_final_size_mismatch (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+    stream->stream_flags |= STREAM_FIN_RECVD;
+    stream->sm_fin_off = 100;
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 200, 0);
+    assert(s < 0);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_reset_stream_at_updates_and_errors (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
+    stream->read_offset = 100;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 7);
+    assert(0 == s);
+    assert(!(stream->sm_qflags & SMQF_WAIT_FIN_OFF));
+    assert(stream->stream_flags & STREAM_RESET_AT_RECVD);
+    assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 0);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 50);
+    assert(s_onreset_called.stream == NULL);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 60, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 50);
+    assert(s_onreset_called.stream == NULL);
+
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 40, 7);
+    assert(0 == s);
+    assert(stream->sm_reset_at == 40);
+
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+    s = lsquic_stream_reset_stream_at_in(stream, 101, 40, 7);
+    assert(s < 0);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == TEC_FINAL_SIZE_ERROR);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_reset_stream_at_error_code_mismatch (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    stream->read_offset = 100;
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 7);
+    assert(0 == s);
+
+    memset(&s_abort_error, 0, sizeof(s_abort_error));
+    s = lsquic_stream_reset_stream_at_in(stream, 100, 50, 8);
+    assert(s < 0);
+    assert(s_abort_error.called);
+    assert(s_abort_error.error_code == TEC_STREAM_STATE_ERROR);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_reset_stream_at_send_gate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    uint64_t reliable_size;
+    enum quic_frame_type frame_type;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 1;
+    tobjs->lconn.cn_esf.i = &test_reset_stream_at_esfi;
+    tobjs->lconn.cn_enc_session = (enc_session_t *) 1;
+
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
+    assert(frame_type == QUIC_FRAME_RST_STREAM);
+
+    stream->tosend_off = 6;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    stream->tosend_off = 7;
+    assert(0 == lsquic_stream_set_reliable_size(stream, 7));
+    reliable_size = 0;
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
+    assert(frame_type == QUIC_FRAME_RESET_STREAM_AT);
+    assert(7 == reliable_size);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_reset_stream_at_reliable_size_errors (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    size_t too_big;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    too_big = (size_t) (1ULL << (sizeof(stream->sm_wt_header_sz) * 8));
+    assert(-1 == lsquic_stream_set_reliable_size(stream, too_big));
+
+    stream->tosend_off = 8;
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 0;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 1;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    tobjs->lconn.cn_esf.i = &test_reset_stream_at_esfi;
+    tobjs->lconn.cn_enc_session = (enc_session_t *) 1;
+    s_peer_tp = &s_no_reset_stream_at_params;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    s_peer_tp = NULL;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    s_peer_tp = &s_reset_stream_at_params;
+    assert(0 == lsquic_stream_set_reliable_size(stream, 7));
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_reset_stream_at_reliable_size_not_ietf (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    stream->tosend_off = 8;
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 1;
+    tobjs->lconn.cn_esf.i = &test_reset_stream_at_esfi;
+    tobjs->lconn.cn_enc_session = (enc_session_t *) 1;
+    s_peer_tp = &s_reset_stream_at_params;
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 7));
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_reset_stream_at_ack (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    stream->n_unacked = 1;
+
+    lsquic_stream_acked(stream, QUIC_FRAME_RESET_STREAM_AT);
+
+    assert(0 == stream->n_unacked);
+    assert(stream->stream_flags & STREAM_RST_ACKED);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_rst_stream_gquic_no_stream_reset (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    stream->stream_flags |= STREAM_RST_SENT;
+    stream->sm_qflags |= SMQF_WAIT_FIN_OFF;
+
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(!(stream->sm_qflags & SMQF_WAIT_FIN_OFF));
+    assert(!(stream->sm_qflags & SMQF_SEND_RST));
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_shutdown_read_gquic_with_send_rst (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    lsquic_stream_maybe_reset(stream, 0x123, 0);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+
+    s = lsquic_stream_shutdown(stream, 0);
+    assert(0 == s);
+    assert(stream->stream_flags & STREAM_U_READ_DONE);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_rst_stream_gquic_no_on_reset (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+    stream->stream_if = &stream_if_no_reset;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_rst_stream_gquic_on_reset_already_called (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+    int s;
+
+    stream = new_stream(tobjs, 345);
+    assert(!(stream->sm_bflags & SMBF_IETF));
+
+    stream->sm_dflags |= SMDF_ONRESET0 | SMDF_ONRESET1;
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    s = lsquic_stream_rst_in(stream, 0, 0);
+    assert(0 == s);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_no_on_reset (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+    stream->stream_if = &stream_if_no_reset;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_onclose_done (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+    stream->stream_flags |= STREAM_ONCLOSE_DONE;
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_stop_sending_with_send_rst (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    stream->sm_qflags |= SMQF_SEND_RST;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_duplicate (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);  /* STOP_SENDING is IETF-only */
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 1);
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(s_onreset_called.stream == NULL);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stop_sending_clears_sending_flags (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);  /* STOP_SENDING is IETF-only */
+
+    stream->stream_flags |= STREAM_RST_SENT;
+    stream->sm_qflags |= SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+
+    lsquic_stream_stop_sending_in(stream, 12345);
+
+    assert(!(stream->sm_qflags & SMQF_SEND_WUF));
+    assert(!(stream->sm_qflags & SMQF_SEND_BLOCKED));
+    assert(!(stream->sm_qflags & SMQF_SEND_STOP_SENDING));
+    assert(!(stream->sm_qflags & SMQF_SENDING_FLAGS));
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stream_maybe_reset_do_close (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    stream->stream_flags |= STREAM_RST_SENT | STREAM_RST_RECVD;
+
+    lsquic_stream_maybe_reset(stream, 12345, 1);
+    assert(stream->stream_flags & STREAM_U_READ_DONE);
+
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_stream_reset_qpack_and_sending_flags (struct test_objs *tobjs)
+{
+    struct qpack_dec_hdl qdh;
+    lsquic_stream_t *stream;
+
+    memset(&qdh, 0, sizeof(qdh));
+
+    stream = new_stream(tobjs, 345);
+    assert(stream->sm_bflags & SMBF_IETF);
+
+    tobjs->conn_pub.u.ietf.qdh = &qdh;
+
+    stream->sm_qflags |= SMQF_QPACK_DEC;
+    stream->sm_qflags |= SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+
+    lsquic_stream_maybe_reset(stream, 123, 0);
+
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(!(stream->sm_qflags & SMQF_QPACK_DEC));
+
+    lsquic_stream_destroy(stream);
+    tobjs->conn_pub.u.ietf.qdh = NULL;
+}
+
+static void
+test_rst_frame_sent_keeps_sending_stream (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream;
+
+    stream = new_stream(tobjs, 345);
+    stream->sm_qflags |= SMQF_SEND_RST | SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+
+    lsquic_stream_rst_frame_sent(stream);
+
+    assert(stream->sm_qflags & SMQF_SEND_WUF);
+    assert(!(stream->sm_qflags & SMQF_SEND_RST));
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+
+    TAILQ_REMOVE(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+    stream->sm_qflags &= ~SMQF_SEND_WUF;
+    lsquic_stream_destroy(stream);
+}
+
+static void
+test_rst_frame_sent_remove_with_next (struct test_objs *tobjs)
+{
+    lsquic_stream_t *stream1;
+    lsquic_stream_t *stream2;
+
+    stream1 = new_stream(tobjs, 345);
+    stream2 = new_stream(tobjs, 347);
+    stream1->sm_qflags |= SMQF_SEND_RST;
+    stream2->sm_qflags |= SMQF_SEND_WUF;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream1, next_send_stream);
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream2, next_send_stream);
+
+    lsquic_stream_rst_frame_sent(stream1);
+
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream2);
+    assert(TAILQ_NEXT(stream2, next_send_stream) == NULL);
+
+    lsquic_stream_destroy(stream1);
+    lsquic_stream_destroy(stream2);
+}
+
+
+
 /* We send some data and RST, receive data and FIN
  */
 static void
@@ -1748,7 +2300,30 @@ test_termination (void)
         { 1, 0, test_rem_data_loc_close, },
         { 1, 1, test_loc_FIN_rem_RST, },
         { 1, 1, test_loc_data_rem_RST, },
+        { 1, 1, test_rst_stream_duplicate, },
+        { 1, 1, test_rst_stream_smaller_than_seen, },
+        { 1, 1, test_rst_stream_flow_control_violation, },
+        { 0, 1, test_rst_stream_final_size_mismatch, },
+        { 0, 1, test_reset_stream_at_updates_and_errors, },
+        { 0, 1, test_reset_stream_at_error_code_mismatch, },
+        { 0, 1, test_reset_stream_at_send_gate, },
+        { 0, 1, test_reset_stream_at_ack, },
+        { 0, 1, test_reset_stream_at_reliable_size_errors, },
+        { 1, 0, test_reset_stream_at_reliable_size_not_ietf, },
+        { 1, 0, test_rst_stream_gquic_no_stream_reset, },
+        { 1, 0, test_shutdown_read_gquic_with_send_rst, },
+        { 1, 0, test_rst_stream_gquic_no_on_reset, },
+        { 1, 0, test_rst_stream_gquic_on_reset_already_called, },
+        { 0, 1, test_stop_sending_no_on_reset, },
+        { 0, 1, test_stop_sending_onclose_done, },
+        { 0, 1, test_stop_sending_with_send_rst, },
         { 0, 1, test_loc_data_rem_SS, },
+        { 0, 1, test_stop_sending_duplicate, },
+        { 0, 1, test_stop_sending_clears_sending_flags, },
+        { 1, 1, test_stream_maybe_reset_do_close, },
+        { 0, 1, test_stream_reset_qpack_and_sending_flags, },
+        { 1, 1, test_rst_frame_sent_keeps_sending_stream, },
+        { 1, 1, test_rst_frame_sent_remove_with_next, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG
         { 1, 1, test_gapless_elision_beginning, },
@@ -2658,6 +3233,53 @@ test_writing_to_stream_outside_callback (void)
                              0 == lsquic_stream_set_max_send_off(stream, 23000)));
     lsquic_stream_destroy(stream);
     assert(("on_close called", 1 == n_closed));
+    deinit_test_objs(&tobjs);
+}
+
+static void
+test_reliable_prefix_bypasses_buffered (void)
+{
+    ssize_t nw;
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    int s;
+    const struct buf_packet_q *const bpq =
+            &tobjs.send_ctl.sc_buffered_packets[BPT_OTHER_PRIO];
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    g_ctl_settings.tcs_bp_type = BPT_OTHER_PRIO;
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+    stream = new_stream(&tobjs, 123);
+    stream->sm_wt_header_sz = 5;
+
+    nw = lsquic_stream_write(stream, "ABCDE", 5);
+    assert(("5 bytes written correctly", nw == 5));
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("reliable prefix not scheduled",
+                0 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("no buffered packets", 0 == bpq->bpq_count));
+    assert(("prefix remains buffered", stream->sm_n_buffered > 0));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("reliable prefix scheduled",
+                1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("no buffered packets", 0 == bpq->bpq_count));
+
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    nw = lsquic_stream_write(stream, "XYZ", 3);
+    assert(("3 bytes written correctly", nw == 3));
+    s = lsquic_stream_flush(stream);
+    assert(0 == s);
+    assert(("still 1 scheduled packet",
+                1 == lsquic_send_ctl_n_scheduled(&tobjs.send_ctl)));
+    assert(("buffered packet created", 1 == bpq->bpq_count));
+
+    lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
 }
 
@@ -4170,6 +4792,7 @@ main (int argc, char **argv)
     int opt;
 
     lsquic_global_init(LSQUIC_GLOBAL_SERVER);
+    lsq_log_levels[LSQLM_STREAM] = LSQ_LOG_DEBUG;
 
     while (-1 != (opt = getopt(argc, argv, "Ahl:")))
     {
@@ -4194,6 +4817,7 @@ main (int argc, char **argv)
 
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
+    test_reliable_prefix_bypasses_buffered();
     test_stealing_ack();
     test_changing_pack_size();
     test_reducing_pack_size();

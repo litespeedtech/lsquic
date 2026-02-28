@@ -62,6 +62,8 @@
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_hcso_writer.h"
+#include "lsquic_sizes.h"
+#include "lsquic_trans_params.h"
 
 void
 lsquic_wt_on_stream_destroy (struct lsquic_stream *stream);
@@ -84,6 +86,9 @@ lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
 
 static void
 drop_frames_in (lsquic_stream_t *stream);
+
+static void
+maybe_finish_reset_at (lsquic_stream_t *stream);
 
 static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
@@ -404,7 +409,7 @@ stream_is_hsk (const struct lsquic_stream *stream)
 static struct lsquic_packet_out *
 stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
                 unsigned need_at_least, const struct network_path *path,
-                const struct lsquic_stream *stream)
+                const struct lsquic_stream *stream, int buffered_packet_ok)
 {
     struct lsquic_packet_out *packet_out;
 
@@ -417,12 +422,12 @@ stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
         ((struct lsquic_stream *) stream)->sm_get_packet_for_stream
                                 = lsquic_send_ctl_get_packet_for_stream;
         return lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
     }
     else
     {
         packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
         if (packet_out)
             packet_out->po_header_type = HETY_0RTT;
         return packet_out;
@@ -928,6 +933,7 @@ stream_readable_discard (struct lsquic_stream *stream)
     }
 
     (void) maybe_switch_data_in(stream);
+    maybe_finish_reset_at(stream);
 
     return 0;   /* Never readable */
 }
@@ -1157,6 +1163,18 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
 
     if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_RESET_AT_RECVD)
+            && stream->sm_reset_at_final != DF_END(frame))
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
+            "final size %"PRIu64" from STREAM frame (id: %"PRIu64") does not "
+            "match RESET_STREAM_AT final size %"PRIu64, DF_END(frame),
+            stream->id, stream->sm_reset_at_final);
+        goto release_packet_frame;
+    }
+
+    if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
             && (stream->stream_flags & STREAM_FIN_RECVD)
             && stream->sm_fin_off != DF_END(frame))
     {
@@ -1246,31 +1264,178 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
     if (!(stream->stream_flags & STREAM_FRAMES_ELIDED))
     {
         if (stream->n_unacked)
-            lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
-                                                stream->id);
+        {
+            if (stream->sm_wt_header_sz == 0)
+                lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
+                                                    stream->id);
+            else
+                /* Don't elide STREAM frames from scheduled packets because we
+                 * want to ensure that the reliable bytes get delivered.
+                 */
+                lsquic_send_ctl_elide_stream_frames_from_buffered(
+                                        stream->conn_pub->send_ctl, stream->id);
+        }
         stream->stream_flags |= STREAM_FRAMES_ELIDED;
     }
 }
 
 
-int
-lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
-                      uint64_t error_code)
+static void
+maybe_finish_reset_at (struct lsquic_stream *stream)
+{
+    if (!(stream->stream_flags & STREAM_RESET_AT_RECVD)
+                                    || (stream->stream_flags & STREAM_RST_RECVD)
+                                    || stream->read_offset < stream->sm_reset_at)
+        return;
+
+    stream->stream_flags |= STREAM_RST_RECVD;
+
+    if (stream->stream_if->on_reset
+                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
+                            && !(stream->sm_dflags & SMDF_ONRESET0))
+    {
+        stream->stream_if->on_reset(stream, stream->st_ctx, 0);
+        stream->sm_dflags |= SMDF_ONRESET0;
+    }
+
+    /* Let user collect error: */
+    maybe_conn_to_tickable_if_readable(stream);
+
+    lsquic_sfcw_consume_rem(&stream->fc);
+    drop_frames_in(stream);
+
+    maybe_finish_stream(stream);
+    maybe_schedule_call_on_close(stream);
+}
+
+
+static int
+stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
+                      uint64_t reliable_size, uint64_t error_code,
+                      enum quic_frame_type frame_type)
 {
     struct lsquic_conn *lconn;
+    const char *frame_name;
 
-    if ((stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags & STREAM_FIN_RECVD)
-            && stream->sm_fin_off != offset)
+    frame_name = frame_type_2_str[frame_type];
+
+    if (stream->stream_flags & STREAM_RESET_AT_RECVD)
+    {
+        if (stream->sm_reset_at_final != final_size
+                                || stream->sm_reset_at_error != error_code)
+        {
+            lconn = stream->conn_pub->lconn;
+            lconn->cn_if->ci_abort_error(lconn, 0,
+                stream->sm_reset_at_final != final_size
+                                    ? TEC_FINAL_SIZE_ERROR
+                                    : TEC_STREAM_STATE_ERROR,
+                "%s frame changes final size or error code for stream "
+                "%"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
+                "%"PRIu64" vs %"PRIu64")", frame_name, stream->id,
+                stream->sm_reset_at_final, final_size,
+                stream->sm_reset_at_error, error_code);
+            return -1;
+        }
+
+        if (reliable_size > stream->sm_reset_at)
+        {
+            LSQ_DEBUG("ignore %s increasing reliable size on stream %"PRIu64
+                      " (old %"PRIu64", new %"PRIu64")",
+                      frame_name, stream->id, stream->sm_reset_at,
+                      reliable_size);
+            return 0;
+        }
+        if (reliable_size < stream->sm_reset_at)
+        {
+            LSQ_DEBUG("update %s reliable size on stream %"PRIu64
+                      " from %"PRIu64" to %"PRIu64, frame_name, stream->id,
+                      stream->sm_reset_at, reliable_size);
+            stream->sm_reset_at = reliable_size;
+            maybe_finish_reset_at(stream);
+        }
+        return 0;
+    }
+
+    if ((stream->stream_flags & STREAM_FIN_RECVD)
+                                        && stream->sm_fin_off != final_size)
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
-            "final size %"PRIu64" from RESET_STREAM frame (id: %"PRIu64") "
-            "does not match previous final size %"PRIu64, offset,
+            "final size %"PRIu64" from %s frame (id: %"PRIu64") does not "
+            "match previous final size %"PRIu64, final_size, frame_name,
             stream->id, stream->sm_fin_off);
         return -1;
     }
 
+    SM_HISTORY_APPEND(stream, SHE_RST_IN);
+    stream->stream_flags |= STREAM_RESET_AT_RECVD;
+    stream->sm_reset_at = reliable_size;
+    stream->sm_reset_at_final = final_size;
+    stream->sm_reset_at_error = error_code;
+    if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
+    {
+        stream->sm_qflags &= ~SMQF_WAIT_FIN_OFF;
+        LSQ_DEBUG("final offset is now known: %"PRIu64, final_size);
+    }
+
+    if (lsquic_sfcw_get_max_recv_off(&stream->fc) > final_size)
+    {
+        LSQ_INFO("%s invalid: its final size %"PRIu64" is "
+            "smaller than that of byte following the last byte we have seen: "
+            "%"PRIu64, frame_name, final_size,
+            lsquic_sfcw_get_max_recv_off(&stream->fc));
+        return -1;
+    }
+
+    if (!lsquic_sfcw_set_max_recv_off(&stream->fc, final_size))
+    {
+        LSQ_INFO("%s invalid: its final size %"PRIu64
+            " violates flow control", frame_name, final_size);
+        return -1;
+    }
+
+    maybe_finish_reset_at(stream);
+    return 0;
+}
+
+
+int
+lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
+            uint64_t final_size, uint64_t reliable_size, uint64_t error_code)
+{
+    assert(stream->sm_bflags & SMBF_IETF);
+    return stream_reset_in_ietf(stream, final_size, reliable_size,
+                                error_code, QUIC_FRAME_RESET_STREAM_AT);
+}
+
+
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                                    uint64_t *reliable_size)
+{
+    if (stream->sm_wt_header_sz == 0)
+    {
+        if (reliable_size)
+            *reliable_size = 0;
+        return QUIC_FRAME_RST_STREAM;
+    }
+    else
+    {
+        /* I would not worry about other users: STREAM_RESET_AT is used by
+         * WebTransport only. If other protocols evolve that use STREAM_RESET_AT
+         * and that don't want to retract and we want to implement them, we will
+         * worry about this later.
+         */
+        *reliable_size = stream->sm_wt_header_sz;
+        return QUIC_FRAME_RESET_STREAM_AT;
+    }
+}
+
+
+static int
+stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
+                                                       uint64_t error_code)
+{
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
         LSQ_DEBUG("ignore duplicate RST_STREAM frame");
@@ -1303,22 +1468,11 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     if (stream->stream_if->on_reset
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
-        if (stream->sm_bflags & SMBF_IETF)
-        {
-            if (!(stream->sm_dflags & SMDF_ONRESET0))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 0);
-                stream->sm_dflags |= SMDF_ONRESET0;
-            }
-        }
-        else
-        {
-            if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
+        if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
                                     != (SMDF_ONRESET0|SMDF_ONRESET1))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 2);
-                stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
-            }
+        {
+            stream->stream_if->on_reset(stream, stream->st_ctx, 2);
+            stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
         }
     }
 
@@ -1328,11 +1482,8 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
 
-    if (!(stream->sm_bflags & SMBF_IETF))
-    {
-        drop_buffered_data(stream);
-        maybe_elide_stream_frames(stream);
-    }
+    drop_buffered_data(stream);
+    maybe_elide_stream_frames(stream);
 
     if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
     {
@@ -1342,7 +1493,6 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     if (!(stream->stream_flags &
                         (STREAM_RST_SENT|STREAM_SS_SENT|STREAM_FIN_SENT))
-                            && !(stream->sm_bflags & SMBF_IETF)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
         stream_reset(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
 
@@ -1352,6 +1502,18 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     maybe_schedule_call_on_close(stream);
 
     return 0;
+}
+
+
+int
+lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
+                                                      uint64_t error_code)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        return stream_reset_in_ietf(stream, offset, 0, error_code,
+                                                    QUIC_FRAME_RST_STREAM);
+    else
+        return stream_reset_in_gquic(stream, offset, error_code);
 }
 
 
@@ -1589,8 +1751,8 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
     int short_read, processed_frames;
 
 #ifndef NDEBUG
-    assert(!(stream->stream_flags & STREAM_READING_DATA_FRAMES));
-    stream->stream_flags |= STREAM_READING_DATA_FRAMES;
+    assert(!(stream->sm_dflags & SMDF_READING_DATA_FRAMES));
+    stream->sm_dflags |= SMDF_READING_DATA_FRAMES;
 #endif
 
     processed_frames = 0;
@@ -1656,7 +1818,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 
   end:
 #ifndef NDEBUG
-    stream->stream_flags &= ~STREAM_READING_DATA_FRAMES;
+    stream->sm_dflags &= ~SMDF_READING_DATA_FRAMES;
 #endif
     return rv;
 }
@@ -1777,7 +1939,10 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     nread = stream_readf(stream, readf, ctx);
     if (nread >= 0)
+    {
         maybe_update_last_progress(stream);
+        maybe_finish_reset_at(stream);
+    }
 
     return nread;
 }
@@ -3539,7 +3704,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     unsigned stream_header_sz, need_at_least;
     struct lsquic_packet_out *packet_out;
     struct lsquic_stream *headers_stream;
-    int len;
+    int buffered_packet_ok, len;
 
     if ((stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
                                                         == STREAM_HEADERS_SENT)
@@ -3576,8 +3741,11 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     else
         need_at_least += size > 0;
   get_packet:
+    buffered_packet_ok = !(stream->sm_wt_header_sz != 0
+                                        && stream->tosend_off < stream->sm_wt_header_sz);
     packet_out = stream->sm_get_packet_for_stream(send_ctl,
-                                need_at_least, stream->conn_pub->path, stream);
+                    need_at_least, stream->conn_pub->path, stream,
+                    buffered_packet_ok);
     if (packet_out)
     {
         len = write_stream_frame(fg_ctx, size, packet_out);
@@ -4651,6 +4819,12 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
     LSQ_INFO("reset, error code %"PRIu64, error_code);
     stream->error_code = error_code;
 
+    if (stream->tosend_off < stream->sm_wt_header_sz
+        && !(stream->stream_flags & STREAM_U_WRITE_DONE))
+    {
+        (void) stream_flush_nocheck(stream);
+    }
+
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                         next_send_stream);
@@ -4695,7 +4869,7 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
 void
 lsquic_stream_set_webtransport_session (struct lsquic_stream *s)
 {
-    s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+    s->sm_bflags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
 }
 
 
@@ -4703,7 +4877,7 @@ lsquic_stream_set_webtransport_session (struct lsquic_stream *s)
 int
 lsquic_stream_is_webtransport_session (const struct lsquic_stream *s)
 {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
+    return (s->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM);
 }
 
 
@@ -4711,7 +4885,7 @@ lsquic_stream_is_webtransport_session (const struct lsquic_stream *s)
 int
 lsquic_stream_is_webtransport_client_bidi_stream (const struct lsquic_stream *s)
 {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
+    return (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
 }
 
 
@@ -4719,7 +4893,7 @@ lsquic_stream_is_webtransport_client_bidi_stream (const struct lsquic_stream *s)
 int
 lsquic_stream_get_webtransport_session_stream_id (const struct lsquic_stream *s)
 {
-    if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
+    if (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
     {
         return s->webtransport_session_stream_id;
     }
@@ -4728,6 +4902,44 @@ lsquic_stream_get_webtransport_session_stream_id (const struct lsquic_stream *s)
 }
 
 
+
+void
+lsquic_stream_set_wt_header_size (struct lsquic_stream *s, uint8_t sz)
+{
+    if (!s || !sz || !(s->sm_bflags & SMBF_IETF)
+        || !s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return;
+
+    s->sm_wt_header_sz = sz;
+    s->sm_bflags |= SMBF_DELAY_ONCLOSE;
+}
+
+
+int
+lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
+{
+    const struct transport_params *params;
+
+    if (sz > ((1ULL << (sizeof(s->sm_wt_header_sz) * 8)) - 1))
+        return -1;
+    if (!(s->sm_bflags & SMBF_IETF))
+        return -1;
+    if (!s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return -1;
+    if (s->tosend_off < sz)
+        return -1;
+    if (!s->conn_pub->lconn->cn_esf.i
+            || !s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params)
+        return -1;
+
+    params = s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                s->conn_pub->lconn->cn_enc_session);
+    if (!params || !(params->tp_set & (1 << TPI_RESET_STREAM_AT)))
+        return -1;
+
+    lsquic_stream_set_wt_header_size(s, (uint8_t) sz);
+    return 0;
+}
 
 int
 lsquic_stream_close (lsquic_stream_t *stream)
@@ -4763,10 +4975,12 @@ lsquic_stream_acked (struct lsquic_stream *stream,
     {
         --stream->n_unacked;
         LSQ_DEBUG("ACKed; n_unacked: %u", stream->n_unacked);
-        if (frame_type == QUIC_FRAME_RST_STREAM)
+        if (frame_type == QUIC_FRAME_RST_STREAM
+                        || frame_type == QUIC_FRAME_RESET_STREAM_AT)
         {
             SM_HISTORY_APPEND(stream, SHE_RST_ACKED);
-            LSQ_DEBUG("RESET that we sent has been acked by peer");
+            LSQ_DEBUG("%s that we sent has been acked by peer",
+                      frame_type_2_str[frame_type]);
             stream->stream_flags |= STREAM_RST_ACKED;
         }
     }
@@ -5262,7 +5476,10 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 if (filter->hqfi_type == HQFT_WT_STREAM)
                 {
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
-                    stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+                    lsquic_stream_set_wt_header_size(stream, (uint8_t) (
+                        vint_size(HQFT_WT_STREAM)
+                      + vint_size(stream->webtransport_session_stream_id)));
+                    stream->sm_bflags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     stream->stream_flags |= STREAM_WT_SWITCH_PENDING;
                     /* Disable HTTP/3 header processing for WT bidi stream. */
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;

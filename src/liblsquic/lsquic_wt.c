@@ -275,6 +275,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     {
         memcpy(wctx->prefix, onnew->prefix, onnew->prefix_len);
         wctx->prefix_len = onnew->prefix_len;
+        lsquic_stream_set_wt_header_size(stream, (uint8_t) onnew->prefix_len);
     }
 
     /* Mark stream as belonging to the session before calling app hooks:
