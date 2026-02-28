@@ -1247,9 +1247,8 @@ it possible to store a list of frame types as a bitmask.  Examples include
 
 Some frame types, such as ACK and STREAM, are common to both Google and IETF
 QUIC.  Others, such as STOP_WAITING and RETIRE_CONNECTION_ID, are only used
-in one of the protocols.  The third type is frames that are used by IETF
-QUIC extensions and legacy extension code paths, such as TIMESTAMP and
-ACK_FREQUENCY.
+in one of the protocols.  The third type is frames that are used by legacy
+extension code paths, such as TIMESTAMP and ACK_FREQUENCY.
 
 Parsing IETF QUIC Frame Types
 -----------------------------

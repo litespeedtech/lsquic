@@ -766,7 +766,8 @@ settings structure:
 
     .. member:: int             es_timestamps
 
-       Enable timestamps extension.  Allowed values are 0 and 1.
+       Enable the legacy experimental timestamp extension.  Allowed values are
+       0 and 1.
 
        Default value is @ref LSQUIC_DF_TIMESTAMPS
 
@@ -1111,7 +1112,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_TIMESTAMPS
 
-    Timestamps are on by default.
+    The legacy experimental timestamp extension is on by default.
 
 .. macro:: LSQUIC_DF_DATAGRAMS
 

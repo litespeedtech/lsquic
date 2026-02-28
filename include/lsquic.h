@@ -406,7 +406,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_PTPC_ERR_THRESH 0.05
 #define LSQUIC_DF_PTPC_ERR_DIVISOR 0.05
 
-/** Turn on timestamp extension by default */
+/** Keep the legacy experimental timestamp extension enabled by default */
 #define LSQUIC_DF_TIMESTAMPS 1
 
 /** default anti-amplification factor is 3 */
@@ -965,7 +965,8 @@ struct lsquic_engine_settings {
     int             es_delayed_acks;
 
     /**
-     * Enable timestamps extension.  Allowed values are 0 and 1.
+     * Enable the legacy experimental timestamp extension.  Allowed values are
+     * 0 and 1.
      *
      * Default value is @ref LSQUIC_DF_TIMESTAMPS
      */
