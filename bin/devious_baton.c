@@ -668,11 +668,15 @@ send_headers (struct devious_baton_conn *conn)
 
 
 static int
-parse_status (struct hset *hset)
+parse_status (struct hset *hset, unsigned *status_code)
 {
     const struct hset_elem *el;
     const char *name;
     const char *value;
+    unsigned code;
+
+    if (status_code)
+        *status_code = 0;
 
     STAILQ_FOREACH(el, hset, next)
     {
@@ -681,11 +685,38 @@ parse_status (struct hset *hset)
                 && 0 == memcmp(name, ":status", sizeof(":status") - 1))
         {
             value = lsxpack_header_get_value(&el->xhdr);
-            return el->xhdr.val_len > 0 && value[0] == '2';
+            if (el->xhdr.val_len != 3
+                || value[0] < '0' || value[0] > '9'
+                || value[1] < '0' || value[1] > '9'
+                || value[2] < '0' || value[2] > '9')
+                return 0;
+            code = (unsigned) (value[0] - '0') * 100
+                 + (unsigned) (value[1] - '0') * 10
+                 + (unsigned) (value[2] - '0');
+            if (status_code)
+                *status_code = code;
+            return value[0] == '2';
         }
     }
 
     return 0;
+}
+
+
+static void
+log_hset_debug (const char *prefix, const struct hset *hset)
+{
+    const struct hset_elem *el;
+    const char *name;
+    const char *value;
+
+    STAILQ_FOREACH(el, hset, next)
+    {
+        name = lsxpack_header_get_name(&el->xhdr);
+        value = lsxpack_header_get_value(&el->xhdr);
+        LSQ_DEBUG("%s header `%.*s': `%.*s'", prefix,
+                (int) el->xhdr.name_len, name, (int) el->xhdr.val_len, value);
+    }
 }
 
 
@@ -1460,9 +1491,14 @@ process_control_client (struct devious_baton_stream *st)
 {
     struct hset *hset;
     struct lsquic_wt_accept_params params;
+    unsigned status_code;
 
     if (st->dbs_conn->response_seen)
+    {
+        if (!st->dbs_conn->response_ok)
+            lsquic_stream_wantread(st->dbs_stream, 0);
         return;
+    }
 
     hset = lsquic_stream_get_hset(st->dbs_stream);
     if (!hset)
@@ -1473,17 +1509,23 @@ process_control_client (struct devious_baton_stream *st)
     }
 
     st->dbs_conn->response_seen = 1;
-    st->dbs_conn->response_ok = parse_status(hset);
+    st->dbs_conn->response_ok = parse_status(hset, &status_code);
+    log_hset_debug("CONNECT response", hset);
     hset_destroy(hset);
 
     if (!st->dbs_conn->response_ok)
     {
-        LSQ_ERROR("CONNECT failed");
+        if (status_code)
+            LSQ_ERROR("CONNECT failed with status %u", status_code);
+        else
+            LSQ_ERROR("CONNECT failed: missing or invalid :status");
+        lsquic_stream_wantread(st->dbs_stream, 0);
         lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
     }
 
-    LSQ_INFO("client received successful CONNECT response");
+    LSQ_INFO("client received successful CONNECT response with status %u",
+                                                                status_code);
 
     memset(&params, 0, sizeof(params));
     params.wt_if = &wt_if;
