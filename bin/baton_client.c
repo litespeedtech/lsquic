@@ -60,6 +60,7 @@ main (int argc, char **argv)
     prog.prog_settings.es_webtransport = 1;
     prog.prog_settings.es_max_webtransport_sessions = 1;
     prog.prog_settings.es_init_max_streams_uni = 64;
+    prog.prog_settings.es_init_max_stream_data_bidi_remote = 100000;
     prog.prog_api.ea_hsi_if = devious_baton_hset_if();
     prog.prog_api.ea_hsi_ctx = NULL;
 
