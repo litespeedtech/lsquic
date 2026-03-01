@@ -113,7 +113,10 @@ int
 main (void)
 {
     unsigned i;
+
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_CLIENT));
     for (i = 0; i < sizeof(orderings) / sizeof(orderings[0]); ++i)
         test_shi(&orderings[i]);
+    lsquic_global_cleanup();
     return 0;
 }

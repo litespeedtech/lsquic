@@ -421,7 +421,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
             case TPI_MIN_ACK_DELAY_02:
             case TPI_TIMESTAMPS:
             case TPI_MAX_DATAGRAM_FRAME_SIZE:
-                vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
+                vint_write(p, UINT64_C(1) << bits[tpi][2], bits[tpi][1],
                                                             1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
                 vint_write(p, params->tp_numerics[tpi], bits[tpi][2],
@@ -1004,7 +1004,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
             case TPI_MIN_ACK_DELAY_02:
             case TPI_TIMESTAMPS:
             case TPI_MAX_DATAGRAM_FRAME_SIZE:
-                vint_write(p, 1 << bits[tpi][2], bits[tpi][1],
+                vint_write(p, UINT64_C(1) << bits[tpi][2], bits[tpi][1],
                                                             1 << bits[tpi][1]);
                 p += 1 << bits[tpi][1];
                 vint_write(p, params->tp_numerics[tpi], bits[tpi][2],
