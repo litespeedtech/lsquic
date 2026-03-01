@@ -33,6 +33,17 @@ enum devious_baton_stream_kind
 };
 
 
+enum devious_baton_stream_flags
+{
+    DBSF_HAVE_BATON          = 1 << 0,
+    DBSF_MESSAGE_DONE        = 1 << 1,
+    DBSF_RESET_SENT          = 1 << 2,
+    DBSF_CLOSED              = 1 << 3,
+    DBSF_PEER_RESET_SEEN     = 1 << 4,
+    DBSF_PEER_STOP_SEND_SEEN = 1 << 5,
+    DBSF_FINISHED            = 1 << 6,
+    DBSF_PEER_FIN            = 1 << 7,
+};
 
 struct devious_baton_session
 {
@@ -58,24 +69,17 @@ struct devious_baton_conn
 
 struct devious_baton_stream
 {
-    enum devious_baton_stream_kind        kind;
-    struct devious_baton_conn            *conn;
-    struct devious_baton_session         *session;
-    struct lsquic_stream                 *stream;
-    unsigned char                        *buf;
-    size_t                                buf_len;
-    size_t                                buf_cap;
-    unsigned char                         baton_to_send;
-    int                                   have_baton;
-    enum lsquic_wt_stream_dir             dir;
-    enum lsquic_wt_stream_initiator       initiator;
-    int                                   message_done;
-    signed char                           reset_sent;
-    signed char                           closed;
-    signed char                           peer_reset_seen;
-    signed char                           peer_stop_sending_seen;
-    signed char                           finished;
-    signed char                           peer_fin;
+    enum devious_baton_stream_kind        dbs_kind;
+    struct devious_baton_conn            *dbs_conn;
+    struct devious_baton_session         *dbs_session;
+    struct lsquic_stream                 *dbs_stream;
+    unsigned char                        *dbs_buf;
+    size_t                                dbs_buf_len;
+    size_t                                dbs_buf_cap;
+    unsigned char                         dbs_baton_to_send;
+    enum devious_baton_stream_flags       dbs_flags;
+    enum lsquic_wt_stream_dir             dbs_dir;
+    enum lsquic_wt_stream_initiator       dbs_initiator;
 };
 
 
@@ -108,13 +112,13 @@ db_initiator (enum lsquic_wt_stream_initiator initiator)
 static void
 db_log_receive (const struct devious_baton_stream *st, unsigned char baton)
 {
-    if (st->stream)
+    if (st->dbs_stream)
         LSQ_INFO("%s received baton %u on %s stream %"PRIu64
-            " (%s-initiated)", db_role(st->session), baton, db_dir(st->dir),
-            (uint64_t) lsquic_stream_id(st->stream),
-            db_initiator(st->initiator));
+            " (%s-initiated)", db_role(st->dbs_session), baton,
+            db_dir(st->dbs_dir), (uint64_t) lsquic_stream_id(st->dbs_stream),
+            db_initiator(st->dbs_initiator));
     else
-        LSQ_INFO("%s received baton %u in datagram", db_role(st->session),
+        LSQ_INFO("%s received baton %u in datagram", db_role(st->dbs_session),
                                                                 baton);
 }
 
@@ -190,11 +194,12 @@ db_finish_stream (struct devious_baton_stream *st, int dec_active_batons,
 {
     struct devious_baton_session *sess;
 
-    if (!st || st->kind != DB_STREAM_BATON || st->finished)
+    if (!st || st->dbs_kind != DB_STREAM_BATON
+                                || (st->dbs_flags & DBSF_FINISHED))
         return;
 
-    st->finished = 1;
-    sess = st->session;
+    st->dbs_flags |= DBSF_FINISHED;
+    sess = st->dbs_session;
     if (!sess)
         return;
 
@@ -202,8 +207,9 @@ db_finish_stream (struct devious_baton_stream *st, int dec_active_batons,
     {
         --sess->active_batons;
         LSQ_INFO("%s %s on %s stream %"PRIu64"; active batons now %u",
-                db_role(sess), reason, db_dir(st->dir),
-                (uint64_t) lsquic_stream_id(st->stream), sess->active_batons);
+                db_role(sess), reason, db_dir(st->dbs_dir),
+                (uint64_t) lsquic_stream_id(st->dbs_stream),
+                sess->active_batons);
         maybe_close_session(sess);
     }
 }
@@ -212,11 +218,12 @@ db_finish_stream (struct devious_baton_stream *st, int dec_active_batons,
 static void
 db_close_baton_stream (struct devious_baton_stream *st)
 {
-    if (!st || st->kind != DB_STREAM_BATON || !st->stream || st->closed)
+    if (!st || st->dbs_kind != DB_STREAM_BATON || !st->dbs_stream
+                                        || (st->dbs_flags & DBSF_CLOSED))
         return;
 
-    st->closed = 1;
-    lsquic_stream_close(st->stream);
+    st->dbs_flags |= DBSF_CLOSED;
+    lsquic_stream_close(st->dbs_stream);
 }
 
 
@@ -224,39 +231,42 @@ static int
 db_maybe_reset_stream (struct devious_baton_stream *st, uint64_t error_code,
                                 const char *error_name, const char *reason)
 {
-    if (!st || st->kind != DB_STREAM_BATON || !st->stream)
+    if (!st || st->dbs_kind != DB_STREAM_BATON || !st->dbs_stream)
         return -1;
 
-    if (st->closed)
+    if (st->dbs_flags & DBSF_CLOSED)
     {
         LSQ_INFO("%s not sending RESET_STREAM(%s) on %s stream %"PRIu64
-                ": already closed", db_role(st->session), error_name,
-                db_dir(st->dir), (uint64_t) lsquic_stream_id(st->stream));
+                ": already closed", db_role(st->dbs_session), error_name,
+                db_dir(st->dbs_dir),
+                (uint64_t) lsquic_stream_id(st->dbs_stream));
         return 0;
     }
 
-    if (st->reset_sent)
+    if (st->dbs_flags & DBSF_RESET_SENT)
     {
         LSQ_INFO("%s not sending duplicate RESET_STREAM(%s) on %s stream "
-                "%"PRIu64, db_role(st->session), error_name, db_dir(st->dir),
-                (uint64_t) lsquic_stream_id(st->stream));
+                "%"PRIu64, db_role(st->dbs_session), error_name,
+                db_dir(st->dbs_dir),
+                (uint64_t) lsquic_stream_id(st->dbs_stream));
         return 0;
     }
 
     LSQ_INFO("%s sending RESET_STREAM(%s) on %s stream %"PRIu64" (%s)",
-            db_role(st->session), error_name, db_dir(st->dir),
-            (uint64_t) lsquic_stream_id(st->stream), reason);
-    if (0 != lsquic_wt_stream_reset(st->stream, error_code))
+            db_role(st->dbs_session), error_name, db_dir(st->dbs_dir),
+            (uint64_t) lsquic_stream_id(st->dbs_stream), reason);
+    if (0 != lsquic_wt_stream_reset(st->dbs_stream, error_code))
     {
         LSQ_WARN("%s cannot send RESET_STREAM(%s) on %s stream %"PRIu64
-                ": %s", db_role(st->session), error_name, db_dir(st->dir),
-                (uint64_t) lsquic_stream_id(st->stream), strerror(errno));
+                ": %s", db_role(st->dbs_session), error_name,
+                db_dir(st->dbs_dir),
+                (uint64_t) lsquic_stream_id(st->dbs_stream), strerror(errno));
         return -1;
     }
 
-    st->reset_sent = 1;
-    st->have_baton = 0;
-    lsquic_stream_wantwrite(st->stream, 0);
+    st->dbs_flags |= DBSF_RESET_SENT;
+    st->dbs_flags &= ~DBSF_HAVE_BATON;
+    lsquic_stream_wantwrite(st->dbs_stream, 0);
     return 0;
 }
 
@@ -686,25 +696,25 @@ buf_append (struct devious_baton_stream *st, const unsigned char *buf,
     size_t new_cap;
     unsigned char *new_buf;
 
-    if (st->buf_len + len <= st->buf_cap)
+    if (st->dbs_buf_len + len <= st->dbs_buf_cap)
     {
-        memcpy(st->buf + st->buf_len, buf, len);
-        st->buf_len += len;
+        memcpy(st->dbs_buf + st->dbs_buf_len, buf, len);
+        st->dbs_buf_len += len;
         return 0;
     }
 
-    new_cap = st->buf_cap ? st->buf_cap : 64;
-    while (new_cap < st->buf_len + len)
+    new_cap = st->dbs_buf_cap ? st->dbs_buf_cap : 64;
+    while (new_cap < st->dbs_buf_len + len)
         new_cap *= 2;
 
-    new_buf = realloc(st->buf, new_cap);
+    new_buf = realloc(st->dbs_buf, new_cap);
     if (!new_buf)
         return -1;
 
-    st->buf = new_buf;
-    st->buf_cap = new_cap;
-    memcpy(st->buf + st->buf_len, buf, len);
-    st->buf_len += len;
+    st->dbs_buf = new_buf;
+    st->dbs_buf_cap = new_cap;
+    memcpy(st->dbs_buf + st->dbs_buf_len, buf, len);
+    st->dbs_buf_len += len;
     return 0;
 }
 
@@ -718,8 +728,8 @@ parse_baton_message (struct devious_baton_stream *st, unsigned char *baton,
     const unsigned char *end;
     int r;
 
-    p = st->buf;
-    end = st->buf + st->buf_len;
+    p = st->dbs_buf;
+    end = st->dbs_buf + st->dbs_buf_len;
 
     r = lsquic_varint_read(p, end, &padding_len);
     if (r < 0)
@@ -728,10 +738,10 @@ parse_baton_message (struct devious_baton_stream *st, unsigned char *baton,
     if (padding_len > SIZE_MAX - (size_t) r - 1)
         return -1;
 
-    if (st->buf_len < (size_t) r + (size_t) padding_len + 1)
+    if (st->dbs_buf_len < (size_t) r + (size_t) padding_len + 1)
         return 0;
 
-    *baton = st->buf[r + padding_len];
+    *baton = st->dbs_buf[r + padding_len];
     *consumed = (size_t) r + (size_t) padding_len + 1;
     return 1;
 }
@@ -800,11 +810,11 @@ stream_is_readable_by_us (const struct devious_baton_session *sess,
 {
     enum lsquic_wt_stream_initiator self_init;
 
-    if (st->dir == LSQWT_BIDI)
+    if (st->dbs_dir == LSQWT_BIDI)
         return 1;
 
     self_init = sess->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
-    return st->initiator != self_init;
+    return st->dbs_initiator != self_init;
 }
 
 
@@ -813,14 +823,14 @@ queue_baton (struct devious_baton_session *sess, struct devious_baton_stream *st
                                                         unsigned char baton)
 {
     LSQ_INFO("%s queue baton %u on %s stream %"PRIu64" (%s-initiated)",
-            db_role(sess), baton, db_dir(st->dir),
-            (uint64_t) lsquic_stream_id(st->stream),
-            db_initiator(st->initiator));
-    st->baton_to_send = baton;
-    st->have_baton = 1;
-    lsquic_stream_wantwrite(st->stream, 1);
+            db_role(sess), baton, db_dir(st->dbs_dir),
+            (uint64_t) lsquic_stream_id(st->dbs_stream),
+            db_initiator(st->dbs_initiator));
+    st->dbs_baton_to_send = baton;
+    st->dbs_flags |= DBSF_HAVE_BATON;
+    lsquic_stream_wantwrite(st->dbs_stream, 1);
     if (stream_is_readable_by_us(sess, st))
-        lsquic_stream_wantread(st->stream, 1);
+        lsquic_stream_wantread(st->dbs_stream, 1);
     return 0;
 }
 
@@ -864,7 +874,7 @@ handle_baton (struct devious_baton_stream *st, unsigned char baton)
     enum lsquic_wt_stream_initiator self_init;
     unsigned char next_baton;
 
-    sess = st->session;
+    sess = st->dbs_session;
     db_log_receive(st, baton);
 
     send_datagram_if_needed(sess, baton);
@@ -880,7 +890,7 @@ handle_baton (struct devious_baton_stream *st, unsigned char baton)
     LSQ_INFO("%s increment baton %u -> %u", db_role(sess), baton, next_baton);
     self_init = sess->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
 
-    if (st->dir == LSQWT_UNI)
+    if (st->dbs_dir == LSQWT_UNI)
     {
         LSQ_INFO("%s responds to uni baton on new bidi stream", db_role(sess));
         out_dir = LSQWT_BIDI;
@@ -888,10 +898,10 @@ handle_baton (struct devious_baton_stream *st, unsigned char baton)
             return -1;
         db_finish_stream(st, 0, "handed off baton to new bidi stream");
     }
-    else if (st->initiator != self_init)
+    else if (st->dbs_initiator != self_init)
     {
         LSQ_INFO("%s responds on same peer-initiated bidi stream %"PRIu64,
-                db_role(sess), (uint64_t) lsquic_stream_id(st->stream));
+                db_role(sess), (uint64_t) lsquic_stream_id(st->dbs_stream));
         queue_baton(sess, st, next_baton);
     }
     else
@@ -915,7 +925,7 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
     size_t consumed;
     int r;
 
-    if (st->message_done)
+    if (st->dbs_flags & DBSF_MESSAGE_DONE)
         return;
 
     r = parse_baton_message(st, &baton, &consumed);
@@ -923,15 +933,15 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
     {
         if (fin)
         {
-            if (0 == st->buf_len)
+            if (0 == st->dbs_buf_len)
             {
-                st->message_done = 1;
+                st->dbs_flags |= DBSF_MESSAGE_DONE;
                 return;
             }
 
             LSQ_WARN("%s got FIN before full baton message; closing session",
-                                                    db_role(st->session));
-            lsquic_wt_close(st->session->wt_sess,
+                                                db_role(st->dbs_session));
+            lsquic_wt_close(st->dbs_session->wt_sess,
                             DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
         }
         return;
@@ -940,25 +950,25 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
     if (r < 0)
     {
         LSQ_WARN("%s got malformed baton message; closing session",
-                                                    db_role(st->session));
-        lsquic_wt_close(st->session->wt_sess,
+                                                db_role(st->dbs_session));
+        lsquic_wt_close(st->dbs_session->wt_sess,
                         DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
         return;
     }
 
-    if (st->buf_len != consumed)
+    if (st->dbs_buf_len != consumed)
     {
         LSQ_WARN("%s got trailing bytes in baton message; closing session",
-                                                    db_role(st->session));
-        lsquic_wt_close(st->session->wt_sess,
+                                                db_role(st->dbs_session));
+        lsquic_wt_close(st->dbs_session->wt_sess,
                         DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
         return;
     }
 
-    st->message_done = 1;
-    st->buf_len = 0;
+    st->dbs_flags |= DBSF_MESSAGE_DONE;
+    st->dbs_buf_len = 0;
     if (0 != handle_baton(st, baton))
-        lsquic_wt_close(st->session->wt_sess,
+        lsquic_wt_close(st->dbs_session->wt_sess,
                         DEVIOUS_BATON_SESS_ERR_DA_YAMN, NULL, 0);
 }
 
@@ -973,9 +983,9 @@ consume_baton_datagram (struct devious_baton_session *sess, const void *buf,
     int r;
 
     memset(&st, 0, sizeof(st));
-    st.session = sess;
-    st.buf = (unsigned char *) buf;
-    st.buf_len = len;
+    st.dbs_session = sess;
+    st.dbs_buf = (unsigned char *) buf;
+    st.dbs_buf_len = len;
 
     r = parse_baton_message(&st, &baton, &consumed);
     if (r <= 0 || consumed != len)
@@ -994,10 +1004,12 @@ consume_baton_datagram (struct devious_baton_session *sess, const void *buf,
 static void
 maybe_close_baton_stream (struct devious_baton_stream *st)
 {
-    if (!st || st->kind != DB_STREAM_BATON || !st->stream)
+    if (!st || st->dbs_kind != DB_STREAM_BATON || !st->dbs_stream)
         return;
 
-    if (st->message_done && st->peer_fin && !st->have_baton)
+    if ((st->dbs_flags & DBSF_MESSAGE_DONE)
+        && (st->dbs_flags & DBSF_PEER_FIN)
+        && !(st->dbs_flags & DBSF_HAVE_BATON))
         db_close_baton_stream(st);
 }
 
@@ -1010,20 +1022,20 @@ drain_baton_stream_after_message (struct devious_baton_stream *st)
 
     for (;;)
     {
-        nread = lsquic_stream_read(st->stream, buf, sizeof(buf));
+        nread = lsquic_stream_read(st->dbs_stream, buf, sizeof(buf));
         if (nread > 0)
         {
             LSQ_WARN("%s got trailing bytes in baton stream; closing session",
-                                                    db_role(st->session));
-            lsquic_wt_close(st->session->wt_sess,
+                                                db_role(st->dbs_session));
+            lsquic_wt_close(st->dbs_session->wt_sess,
                         DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
             return;
         }
 
         if (nread == 0)
         {
-            st->peer_fin = 1;
-            lsquic_stream_wantread(st->stream, 0);
+            st->dbs_flags |= DBSF_PEER_FIN;
+            lsquic_stream_wantread(st->dbs_stream, 0);
             maybe_close_baton_stream(st);
             return;
         }
@@ -1122,15 +1134,16 @@ db_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
     if (!st)
         return NULL;
 
-    st->kind = DB_STREAM_BATON;
-    st->session = bsess;
-    st->stream = stream;
-    st->dir = dir;
-    st->initiator = lsquic_wt_stream_initiator(stream);
+    st->dbs_kind = DB_STREAM_BATON;
+    st->dbs_session = bsess;
+    st->dbs_stream = stream;
+    st->dbs_dir = dir;
+    st->dbs_initiator = lsquic_wt_stream_initiator(stream);
     ++bsess->active_streams;
     LSQ_INFO("%s accepted %s stream %"PRIu64" (%s-initiated)",
-            db_role(bsess), db_dir(st->dir),
-            (uint64_t) lsquic_stream_id(stream), db_initiator(st->initiator));
+            db_role(bsess), db_dir(st->dbs_dir),
+            (uint64_t) lsquic_stream_id(stream),
+            db_initiator(st->dbs_initiator));
     if (stream_is_readable_by_us(bsess, st))
         lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) st;
@@ -1177,12 +1190,12 @@ db_on_wt_stream_fin (struct lsquic_stream *stream,
     struct devious_baton_stream *st;
 
     st = (struct devious_baton_stream *) sctx;
-    if (!st || st->kind != DB_STREAM_BATON)
+    if (!st || st->dbs_kind != DB_STREAM_BATON)
         return;
 
-    LSQ_INFO("%s got FIN on %s stream %"PRIu64, db_role(st->session),
-            db_dir(st->dir), (uint64_t) lsquic_stream_id(stream));
-    st->peer_fin = 1;
+    LSQ_INFO("%s got FIN on %s stream %"PRIu64, db_role(st->dbs_session),
+            db_dir(st->dbs_dir), (uint64_t) lsquic_stream_id(stream));
+    st->dbs_flags |= DBSF_PEER_FIN;
     consume_baton_data(st, 1);
     maybe_close_baton_stream(st);
 }
@@ -1196,17 +1209,17 @@ db_on_wt_stream_reset (struct lsquic_stream *stream,
     struct devious_baton_stream *st;
 
     st = (struct devious_baton_stream *) sctx;
-    if (!st || st->kind != DB_STREAM_BATON)
+    if (!st || st->dbs_kind != DB_STREAM_BATON)
         return;
 
-    st->peer_reset_seen = 1;
+    st->dbs_flags |= DBSF_PEER_RESET_SEEN;
     LSQ_INFO("%s got RESET_STREAM on %s stream %"PRIu64" with code %"PRIu64,
-            db_role(st->session), db_dir(st->dir),
+            db_role(st->dbs_session), db_dir(st->dbs_dir),
             (uint64_t) lsquic_stream_id(stream), error_code);
-    if (st->dir == LSQWT_BIDI)
+    if (st->dbs_dir == LSQWT_BIDI)
         db_maybe_reset_stream(st, DEVIOUS_BATON_STREAM_ERR_WHATEVER,
                 "WHATEVER", "received RESET_STREAM on bidirectional stream");
-    if (stream_is_readable_by_us(st->session, st))
+    if (stream_is_readable_by_us(st->dbs_session, st))
         lsquic_stream_wantread(stream, 0);
     lsquic_stream_wantwrite(stream, 0);
     db_finish_stream(st, 1, "got reset");
@@ -1222,13 +1235,13 @@ db_on_wt_stop_sending (struct lsquic_stream *stream,
     struct devious_baton_stream *st;
 
     st = (struct devious_baton_stream *) sctx;
-    if (!st || st->kind != DB_STREAM_BATON)
+    if (!st || st->dbs_kind != DB_STREAM_BATON)
         return;
 
-    st->peer_stop_sending_seen = 1;
+    st->dbs_flags |= DBSF_PEER_STOP_SEND_SEEN;
     LSQ_INFO("%s got STOP_SENDING on %s stream %"PRIu64
             " with code %"PRIu64,
-            db_role(st->session), db_dir(st->dir),
+            db_role(st->dbs_session), db_dir(st->dbs_dir),
             (uint64_t) lsquic_stream_id(stream), error_code);
     db_maybe_reset_stream(st, DEVIOUS_BATON_STREAM_ERR_WHATEVER,
                                 "WHATEVER", "received STOP_SENDING");
@@ -1376,9 +1389,9 @@ alloc_control_ctx (struct devious_baton_conn *conn, struct lsquic_stream *stream
     if (!st)
         return NULL;
 
-    st->kind = DB_STREAM_CONTROL;
-    st->conn = conn;
-    st->stream = stream;
+    st->dbs_kind = DB_STREAM_CONTROL;
+    st->dbs_conn = conn;
+    st->dbs_stream = stream;
     return st;
 }
 
@@ -1394,13 +1407,13 @@ process_control_server (struct devious_baton_stream *st)
     char err_buf[128];
     int ok;
 
-    conn = st->conn;
+    conn = st->dbs_conn;
 
-    hset = lsquic_stream_get_hset(st->stream);
+    hset = lsquic_stream_get_hset(st->dbs_stream);
     if (!hset)
     {
         LSQ_ERROR("could not get header set from stream");
-        lsquic_stream_close(st->stream);
+        lsquic_stream_close(st->dbs_stream);
         return;
     }
 
@@ -1409,8 +1422,8 @@ process_control_server (struct devious_baton_stream *st)
     if (0 != ok)
     {
         hset_destroy(hset);
-        lsquic_wt_reject(st->stream, 400, err_buf, strlen(err_buf));
-        lsquic_stream_close(st->stream);
+        lsquic_wt_reject(st->dbs_stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(st->dbs_stream);
         return;
     }
 
@@ -1423,21 +1436,21 @@ process_control_server (struct devious_baton_stream *st)
     params.wt_if_ctx = &cfg;
     params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = &info;
-    if (!lsquic_wt_accept(st->stream, &params))
+    if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free_connect_info(&info);
         hset_destroy(hset);
-        lsquic_stream_close(st->stream);
+        lsquic_stream_close(st->dbs_stream);
         return;
     }
 
     free_connect_info(&info);
     hset_destroy(hset);
 
-    if (0 != lsquic_stream_flush(st->stream))
+    if (0 != lsquic_stream_flush(st->dbs_stream))
         LSQ_ERROR("cannot flush response: %s", strerror(errno));
 
-    st->message_done = 1;
+    st->dbs_flags |= DBSF_MESSAGE_DONE;
 
 }
 
@@ -1448,25 +1461,25 @@ process_control_client (struct devious_baton_stream *st)
     struct hset *hset;
     struct lsquic_wt_accept_params params;
 
-    if (st->conn->response_seen)
+    if (st->dbs_conn->response_seen)
         return;
 
-    hset = lsquic_stream_get_hset(st->stream);
+    hset = lsquic_stream_get_hset(st->dbs_stream);
     if (!hset)
     {
         LSQ_ERROR("could not get header set from stream");
-        lsquic_conn_abort(lsquic_stream_conn(st->stream));
+        lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
     }
 
-    st->conn->response_seen = 1;
-    st->conn->response_ok = parse_status(hset);
+    st->dbs_conn->response_seen = 1;
+    st->dbs_conn->response_ok = parse_status(hset);
     hset_destroy(hset);
 
-    if (!st->conn->response_ok)
+    if (!st->dbs_conn->response_ok)
     {
         LSQ_ERROR("CONNECT failed");
-        lsquic_conn_abort(lsquic_stream_conn(st->stream));
+        lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
     }
 
@@ -1474,15 +1487,15 @@ process_control_client (struct devious_baton_stream *st)
 
     memset(&params, 0, sizeof(params));
     params.wt_if = &wt_if;
-    params.wt_if_ctx = st->conn->app;
+    params.wt_if_ctx = st->dbs_conn->app;
     params.stream_if = devious_baton_wt_stream_if();
-    if (!lsquic_wt_accept(st->stream, &params))
+    if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
-        lsquic_conn_abort(lsquic_stream_conn(st->stream));
+        lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
     }
 
-    st->message_done = 1;
+    st->dbs_flags |= DBSF_MESSAGE_DONE;
 
 }
 
@@ -1495,17 +1508,17 @@ drain_control_stream (struct devious_baton_stream *st)
 
     for (;;)
     {
-        nread = lsquic_stream_read(st->stream, buf, sizeof(buf));
+        nread = lsquic_stream_read(st->dbs_stream, buf, sizeof(buf));
         if (nread > 0)
             continue;
         if (nread == 0)
         {
-            lsquic_stream_close(st->stream);
+            lsquic_stream_close(st->dbs_stream);
             return;
         }
         if (errno == EWOULDBLOCK)
             return;
-        lsquic_stream_close(st->stream);
+        lsquic_stream_close(st->dbs_stream);
         return;
     }
 }
@@ -1540,9 +1553,9 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
             return;
     }
 
-    if (st->kind == DB_STREAM_CONTROL)
+    if (st->dbs_kind == DB_STREAM_CONTROL)
     {
-        if (st->message_done)
+        if (st->dbs_flags & DBSF_MESSAGE_DONE)
         {
             drain_control_stream(st);
             return;
@@ -1555,10 +1568,10 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         return;
     }
 
-    if (st->closed)
+    if (st->dbs_flags & DBSF_CLOSED)
         return;
 
-    if (st->message_done)
+    if (st->dbs_flags & DBSF_MESSAGE_DONE)
     {
         drain_baton_stream_after_message(st);
         return;
@@ -1571,14 +1584,14 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         {
             if (0 != buf_append(st, buf, (size_t) nread))
             {
-                lsquic_wt_close(st->session->wt_sess,
+                lsquic_wt_close(st->dbs_session->wt_sess,
                         DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
                 return;
             }
         }
         else if (nread == 0)
         {
-            st->peer_fin = 1;
+            st->dbs_flags |= DBSF_PEER_FIN;
             consume_baton_data(st, 1);
             lsquic_stream_wantread(stream, 0);
             maybe_close_baton_stream(st);
@@ -1611,7 +1624,7 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
     if (!st)
         return;
 
-    if (st->kind == DB_STREAM_CONTROL)
+    if (st->dbs_kind == DB_STREAM_CONTROL)
     {
         if (conn && !conn->app->is_server)
         {
@@ -1638,34 +1651,38 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
         return;
     }
 
-    if (st->closed)
+    if (st->dbs_flags & DBSF_CLOSED)
         return;
 
-    if (!st->have_baton)
+    if (!(st->dbs_flags & DBSF_HAVE_BATON))
         return;
 
-    if (0 != write_baton_message(st->session, st->baton_to_send,
+    if (0 != write_baton_message(st->dbs_session, st->dbs_baton_to_send,
                                                             &msg, &msg_len))
         return;
 
-    LSQ_INFO("%s sending baton %u on %s stream %"PRIu64, db_role(st->session),
-            st->baton_to_send, db_dir(st->dir),
+    LSQ_INFO("%s sending baton %u on %s stream %"PRIu64,
+            db_role(st->dbs_session), st->dbs_baton_to_send,
+            db_dir(st->dbs_dir),
             (uint64_t) lsquic_stream_id(stream));
     nwritten = lsquic_stream_write(stream, msg, msg_len);
     free(msg);
 
     if (nwritten == (ssize_t) msg_len)
     {
-        LSQ_INFO("%s sent baton %u on %s stream %"PRIu64, db_role(st->session),
-                st->baton_to_send, db_dir(st->dir),
+        LSQ_INFO("%s sent baton %u on %s stream %"PRIu64,
+                db_role(st->dbs_session), st->dbs_baton_to_send,
+                db_dir(st->dbs_dir),
                 (uint64_t) lsquic_stream_id(stream));
-        st->have_baton = 0;
+        st->dbs_flags &= ~DBSF_HAVE_BATON;
         lsquic_stream_shutdown(stream, 1);
         lsquic_stream_wantwrite(stream, 0);
-        self_init = st->session->cfg.is_server ? LSQWT_SERVER : LSQWT_CLIENT;
-        if (st->dir == LSQWT_UNI || st->initiator != self_init)
+        self_init = st->dbs_session->cfg.is_server
+                                            ? LSQWT_SERVER : LSQWT_CLIENT;
+        if (st->dbs_dir == LSQWT_UNI || st->dbs_initiator != self_init)
             db_finish_stream(st, 0, "completed baton write");
-        if (st->dir == LSQWT_UNI && !stream_is_readable_by_us(st->session, st))
+        if (st->dbs_dir == LSQWT_UNI
+                            && !stream_is_readable_by_us(st->dbs_session, st))
             db_close_baton_stream(st);
         maybe_close_baton_stream(st);
     }
@@ -1683,14 +1700,14 @@ on_close (struct lsquic_stream *UNUSED_stream,
     if (!st)
         return;
 
-    bsess = st->session;
-    if (st->kind == DB_STREAM_BATON && bsess && bsess->active_streams > 0)
+    bsess = st->dbs_session;
+    if (st->dbs_kind == DB_STREAM_BATON && bsess && bsess->active_streams > 0)
     {
         --bsess->active_streams;
         maybe_remove_closed_session(bsess);
     }
 
-    free(st->buf);
+    free(st->dbs_buf);
     free(st);
 }
 
