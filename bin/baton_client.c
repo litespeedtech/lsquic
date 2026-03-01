@@ -58,7 +58,7 @@ main (int argc, char **argv)
                         devious_baton_stream_if(), &app);
     prog.prog_settings.es_http_datagrams = 1;
     prog.prog_settings.es_webtransport = 1;
-    prog.prog_settings.es_max_webtransport_sessions = 64;
+    prog.prog_settings.es_max_webtransport_sessions = 1;
     prog.prog_settings.es_init_max_streams_uni = 64;
     prog.prog_api.ea_hsi_if = devious_baton_hset_if();
     prog.prog_api.ea_hsi_ctx = NULL;

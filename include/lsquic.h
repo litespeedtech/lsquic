@@ -532,7 +532,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
 
 /** Default allowed WebTransport sessions count per connection. */
-#define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 10
+#define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 1
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in

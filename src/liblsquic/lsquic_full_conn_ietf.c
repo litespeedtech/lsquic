@@ -472,8 +472,6 @@ struct ietf_full_conn
         uint64_t    header_table_size,
                     qpack_blocked_streams,
                     wt_max_sessions;
-        signed char wt_enable_webtransport;
-        signed char wt_enable_webtransport_seen;
         signed char wt_max_sessions_seen;
         signed char enable_connect_protocol;
         signed char enable_connect_protocol_seen;
@@ -1413,8 +1411,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
     conn->ifc_peer_hq_settings.wt_max_sessions = 0;
-    conn->ifc_peer_hq_settings.wt_enable_webtransport = 0;
-    conn->ifc_peer_hq_settings.wt_enable_webtransport_seen = 0;
     conn->ifc_peer_hq_settings.wt_max_sessions_seen = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 0;
@@ -10000,8 +9996,6 @@ update_peer_wt_support (struct ietf_full_conn *conn)
 
     supports = peer_settings_received
             && local_webtransport_enabled(conn)
-            && conn->ifc_peer_hq_settings.wt_enable_webtransport_seen
-            && conn->ifc_peer_hq_settings.wt_enable_webtransport
             && conn->ifc_peer_hq_settings.wt_max_sessions_seen
             && conn->ifc_peer_hq_settings.wt_max_sessions > 0
             && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS);
@@ -10013,13 +10007,12 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     else
         conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
 
-    LSQ_DEBUG("peer WT: settings=%d, local=%d, enabled=%d/%d, max=%"PRIu64
-              ", connect=%d/%d, h3_dgram=%d => support=%d",
+    LSQ_DEBUG("peer WT: settings=%d, local=%d, max=%"PRIu64
+              "/%d, connect=%d/%d, h3_dgram=%d => support=%d",
         peer_settings_received,
         local_webtransport_enabled(conn),
-        conn->ifc_peer_hq_settings.wt_enable_webtransport_seen,
-        conn->ifc_peer_hq_settings.wt_enable_webtransport,
         conn->ifc_pub.cp_wt_peer_max_sessions,
+        conn->ifc_peer_hq_settings.wt_max_sessions_seen,
         conn->ifc_peer_hq_settings.enable_connect_protocol_seen,
         peer_connect_protocol,
         !!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS),
@@ -10130,25 +10123,25 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
         break;
-    case HQSID_ENABLE_WEBTRANSPORT:
-        if (value != 1)
-        {
-            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
-                "invalid SETTINGS_ENABLE_WEBTRANSPORT value %"PRIu64, value);
-            return;
-        }
-        conn->ifc_peer_hq_settings.wt_enable_webtransport_seen = 1;
-        conn->ifc_peer_hq_settings.wt_enable_webtransport = 1;
-        if (!local_webtransport_enabled(conn))
-            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
-        update_peer_wt_support(conn);
-        LSQ_DEBUG("Peer's SETTINGS_ENABLE_WEBTRANSPORT=%"PRIu64, value);
+    case HQSID_WT_INITIAL_MAX_DATA:
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_DATA=%"PRIu64
+            "; ignore it for now", value);
         break;
-    case HQSID_WEBTRANSPORT_MAX_SESSIONS:
+    case HQSID_WT_INITIAL_MAX_STREAMS_UNI:
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_UNI=%"PRIu64
+            "; ignore it for now", value);
+        break;
+    case HQSID_WT_INITIAL_MAX_STREAMS_BIDI:
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64
+            "; ignore it for now", value);
+        break;
+    case HQSID_WT_MAX_SESSIONS:
         conn->ifc_peer_hq_settings.wt_max_sessions_seen = 1;
         conn->ifc_peer_hq_settings.wt_max_sessions = value;
+        if (!local_webtransport_enabled(conn) && value > 0)
+            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
         update_peer_wt_support(conn);
-        LSQ_DEBUG("Peer's SETTINGS_WEBTRANSPORT_MAX_SESSIONS=%"PRIu64, value);
+        LSQ_DEBUG("Peer's SETTINGS_WT_MAX_SESSIONS=%"PRIu64, value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64

@@ -185,17 +185,9 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
 
     if (wt_enabled && max_wt_sessions)
     {
-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
-        bits = hcso_setting_type2bits(writer, HQSID_ENABLE_WEBTRANSPORT);
-        vint_write(p, HQSID_ENABLE_WEBTRANSPORT, bits, 1 << bits);
-        p += 1 << bits;
-        bits = vint_val2bits(1);
-        vint_write(p, 1, bits, 1 << bits);
-        p += 1 << bits;
-
-        /* Write out SETTINGS_WEBTRANSPORT_MAX_SESSIONS */
-        bits = hcso_setting_type2bits(writer, HQSID_WEBTRANSPORT_MAX_SESSIONS);
-        vint_write(p, HQSID_WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
+        /* Write out SETTINGS_WT_MAX_SESSIONS */
+        bits = hcso_setting_type2bits(writer, HQSID_WT_MAX_SESSIONS);
+        vint_write(p, HQSID_WT_MAX_SESSIONS, bits, 1 << bits);
         p += 1 << bits;
         bits = vint_val2bits(max_wt_sessions);
         vint_write(p, max_wt_sessions, bits, 1 << bits);
