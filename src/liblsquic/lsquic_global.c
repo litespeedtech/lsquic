@@ -3,6 +3,7 @@
  * Global state
  */
 
+#include <stdlib.h>
 #include <sys/queue.h>
 
 #include <openssl/rand.h>
@@ -25,6 +26,7 @@ lsquic_global_init (int flags)
     (void) /* BoringSSL's RAND_bytes does not fail */
     RAND_bytes((void *) &seed, sizeof(seed));
     lsquic_hash_set_global_seed(seed);
+    srand(seed);
     if (0 != lsquic_enc_session_common_gquic_1.esf_global_init(flags))
         return -1;
     if (0 != lsquic_enc_session_common_ietf_v1.esf_global_init(flags))
