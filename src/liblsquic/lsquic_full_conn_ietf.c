@@ -450,7 +450,9 @@ struct ietf_full_conn
     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
     lsquic_packno_t             ifc_max_non_probing;
     struct {
-        uint64_t    max_stream_send;
+        uint64_t    max_stream_send_bidi_local;
+        uint64_t    max_stream_send_bidi_remote;
+        uint64_t    max_stream_send_uni;
         uint8_t     ack_exp;
     }                           ifc_cfg;
     int                       (*ifc_process_incoming_packet)(
@@ -1048,6 +1050,33 @@ static void
 queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd);
 
 
+static int
+is_our_stream_id (const struct ietf_full_conn *conn, lsquic_stream_id_t stream_id)
+{
+    const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
+    return (1u & stream_id) == is_server;
+}
+
+
+static uint64_t
+max_send_off_for_stream (const struct ietf_full_conn *conn,
+                                                lsquic_stream_id_t stream_id)
+{
+    const enum stream_dir sd = (stream_id >> SD_SHIFT) & 1;
+    if (sd == SD_UNI)
+    {
+        if (is_our_stream_id(conn, stream_id))
+            return conn->ifc_cfg.max_stream_send_uni;
+        else
+            return 0;
+    }
+    else if (is_our_stream_id(conn, stream_id))
+        return conn->ifc_cfg.max_stream_send_bidi_remote;
+    else
+        return conn->ifc_cfg.max_stream_send_bidi_local;
+}
+
+
 /* If `priority' is negative, this means that the stream is critical */
 static int
 create_uni_stream_out (struct ietf_full_conn *conn, int priority,
@@ -1107,6 +1136,7 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
     enum stream_ctor_flags flags;
+    uint64_t max_send_off;
 
     flags = SCF_IETF|SCF_DI_AUTOSWITCH;
     if (conn->ifc_enpub->enp_settings.es_rw_once)
@@ -1121,11 +1151,15 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     }
 
     stream_id = generate_stream_id(conn, SD_BIDI);
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create outgoing bidi stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64, stream_id,
+        conn->ifc_settings->es_init_max_stream_data_bidi_local, max_send_off);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
+                max_send_off, flags);
     if (!stream)
         return -1;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -1145,6 +1179,7 @@ create_bidi_stream_out_with_if (struct ietf_full_conn *conn,
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
     enum stream_ctor_flags flags;
+    uint64_t max_send_off;
 
     if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_BIDI))
     {
@@ -1160,10 +1195,14 @@ create_bidi_stream_out_with_if (struct ietf_full_conn *conn,
         flags |= SCF_DELAY_ONCLOSE;
 
     stream_id = generate_stream_id(conn, SD_BIDI);
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create outgoing bidi stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64, stream_id,
+        conn->ifc_settings->es_init_max_stream_data_bidi_local, max_send_off);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 stream_if, stream_if_ctx,
                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
+                max_send_off, flags);
     if (!stream)
         return NULL;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -1230,11 +1269,13 @@ create_push_stream (struct ietf_full_conn *conn)
         flags |= SCF_DELAY_ONCLOSE;
 
     stream_id = generate_stream_id(conn, SD_UNI);
+    LSQ_DEBUG("create outgoing push stream %"PRIu64
+        ": recv_window=0, send_limit=%"PRIu64, stream_id,
+        conn->ifc_max_stream_data_uni);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
-                conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
+                0, conn->ifc_max_stream_data_uni, flags);
     if (!stream)
         return NULL;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -2807,8 +2848,7 @@ static int
 is_our_stream (const struct ietf_full_conn *conn,
                                         const struct lsquic_stream *stream)
 {
-    const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
-    return (1 & stream->id) == is_server;
+    return is_our_stream_id(conn, stream->id);
 }
 
 
@@ -3817,7 +3857,15 @@ apply_trans_params (struct ietf_full_conn *conn,
                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (is_our_stream(conn, stream))
+        const enum stream_dir sd = (stream->id >> SD_SHIFT) & 1;
+        if (sd == SD_UNI)
+        {
+            if (is_our_stream(conn, stream))
+                limit = params->tp_init_max_stream_data_uni;
+            else
+                limit = 0;
+        }
+        else if (is_our_stream(conn, stream))
             limit = params->tp_init_max_stream_data_bidi_remote;
         else
             limit = params->tp_init_max_stream_data_bidi_local;
@@ -3829,12 +3877,12 @@ apply_trans_params (struct ietf_full_conn *conn,
         }
     }
 
-    if (conn->ifc_flags & IFC_SERVER)
-        conn->ifc_cfg.max_stream_send
+    conn->ifc_cfg.max_stream_send_bidi_local
                                 = params->tp_init_max_stream_data_bidi_local;
-    else
-        conn->ifc_cfg.max_stream_send
+    conn->ifc_cfg.max_stream_send_bidi_remote
                                 = params->tp_init_max_stream_data_bidi_remote;
+    conn->ifc_cfg.max_stream_send_uni
+                                = params->tp_init_max_stream_data_uni;
     conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
 
     switch ((!!conn->ifc_settings->es_idle_timeout << 1)
@@ -5666,12 +5714,14 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
     void *stream_ctx;
     struct lsquic_stream *stream;
     unsigned initial_window;
+    uint64_t max_send_off;
     const int call_on_new = flags & SCF_CALL_ON_NEW;
+    const enum stream_dir sd = (stream_id >> SD_SHIFT) & 1;
 
     flags &= ~SCF_CALL_ON_NEW;
     flags |= SCF_DI_AUTOSWITCH|SCF_IETF;
 
-    if ((conn->ifc_flags & IFC_HTTP) && ((stream_id >> SD_SHIFT) & 1) == SD_UNI)
+    if ((conn->ifc_flags & IFC_HTTP) && sd == SD_UNI)
     {
         iface = unicla_if_ptr;
         stream_ctx = conn;
@@ -5702,16 +5752,22 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
         }
     }
 
-    if (((stream_id >> SD_SHIFT) & 1) == SD_UNI)
+    if (sd == SD_UNI)
         initial_window = conn->ifc_enpub->enp_settings
                                         .es_init_max_stream_data_uni;
     else
         initial_window = conn->ifc_enpub->enp_settings
                                         .es_init_max_stream_data_bidi_remote;
 
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create incoming %sdirectional stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64,
+        sd == SD_BIDI ? "bi" : "uni", stream_id, initial_window,
+        max_send_off);
+
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                                iface, stream_ctx, initial_window,
-                               conn->ifc_cfg.max_stream_send, flags);
+                               max_send_off, flags);
     if (stream)
     {
         if (conn->ifc_bpus)
