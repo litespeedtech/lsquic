@@ -14,6 +14,7 @@
 struct test_read_varint
 {
     /* Input: */
+    __attribute__((nonstring))
     unsigned char       input[MAX_INPUT_SZ];
     size_t              in_sz;
     /* Output: */
