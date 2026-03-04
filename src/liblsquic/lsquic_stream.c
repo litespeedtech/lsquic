@@ -127,6 +127,9 @@ http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h
 static int
 stream_flush (lsquic_stream_t *stream);
 
+static void
+maybe_mark_as_blocked (lsquic_stream_t *stream);
+
 static int
 stream_flush_nocheck (lsquic_stream_t *stream);
 
@@ -1643,6 +1646,17 @@ lsquic_stream_peer_blocked_gquic (struct lsquic_stream *stream)
 }
 
 
+int
+lsquic_stream_is_blocked (const lsquic_stream_t *stream)
+{
+    return (stream->blocked_off
+                && stream->blocked_off == stream->max_send_off)
+        || (0 == stream->blocked_off
+                && 0 == stream->max_send_off
+                && (stream->stream_flags & STREAM_BLOCKED_SENT));
+}
+
+
 void
 lsquic_stream_blocked_frame_sent (lsquic_stream_t *stream)
 {
@@ -2374,7 +2388,13 @@ stream_wantwrite (struct lsquic_stream *stream, int new_val)
     if (old_val != new_val)
     {
         if (new_val)
+        {
             maybe_put_onto_write_q(stream, SMQF_WANT_WRITE);
+            if (!(stream->stream_flags & STREAM_ONCLOSE_DONE)
+                && !lsquic_stream_is_write_reset(stream)
+                && 0 == lsquic_stream_write_avail(stream))
+                maybe_mark_as_blocked(stream);
+        }
         else
             maybe_remove_from_write_q(stream, SMQF_WANT_WRITE);
     }
@@ -2854,7 +2874,10 @@ maybe_mark_as_blocked (lsquic_stream_t *stream)
     used = lsquic_stream_combined_send_off(stream);
     if (stream->max_send_off == used)
     {
-        if (stream->blocked_off < stream->max_send_off)
+        if (stream->blocked_off < stream->max_send_off
+            || (0 == used
+                && !(stream->sm_qflags & SMQF_SEND_BLOCKED)
+                && !(stream->stream_flags & STREAM_BLOCKED_SENT)))
         {
             stream->blocked_off = used;
             if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
