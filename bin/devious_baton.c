@@ -566,13 +566,15 @@ static int
 build_path (struct devious_baton_app *cfg)
 {
     size_t off;
+    size_t path_base_len;
     int n;
 
     off = 0;
-    n = snprintf(cfg->path_buf, sizeof(cfg->path_buf), "%s", DEVIOUS_BATON_PATH);
+    n = snprintf(cfg->path_buf, sizeof(cfg->path_buf), "%s", cfg->path_base);
     if (n < 0 || (size_t) n >= sizeof(cfg->path_buf))
         return -1;
     off += (size_t) n;
+    path_base_len = off;
 
     if (cfg->version || cfg->count != 1 || cfg->baton != 0)
     {
@@ -593,7 +595,7 @@ build_path (struct devious_baton_app *cfg)
 
     if (cfg->count != 1)
     {
-        if (off > strlen(DEVIOUS_BATON_PATH) + 1)
+        if (off > path_base_len + 1)
         {
             n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off, "&");
             if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
@@ -609,7 +611,7 @@ build_path (struct devious_baton_app *cfg)
 
     if (cfg->baton != 0)
     {
-        if (off > strlen(DEVIOUS_BATON_PATH) + 1)
+        if (off > path_base_len + 1)
         {
             n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off, "&");
             if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
@@ -1851,6 +1853,7 @@ devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
     app->baton = 0;
     app->padding_len = 0;
     app->max_count = 100;
+    app->path_base = DEVIOUS_BATON_PATH;
     app->path = DEVIOUS_BATON_PATH;
 
     if (!is_server)

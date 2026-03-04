@@ -39,6 +39,7 @@ usage (const char *prog)
 "Options:\n"
 "   -b value   Initial baton value (1-255)\n"
 "   -c count   Number of parallel batons\n"
+"   -P path    CONNECT path base (default: " DEVIOUS_BATON_PATH ")\n"
 "   -p bytes   Padding length for baton messages\n"
             , prog);
 }
@@ -69,7 +70,7 @@ main (int argc, char **argv)
 
     devious_baton_app_init(&app, &prog, 0);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:P:p:h")))
     {
         switch (opt) {
         case 'b':
@@ -77,6 +78,9 @@ main (int argc, char **argv)
             break;
         case 'c':
             app.count = (unsigned) atoi(optarg);
+            break;
+        case 'P':
+            app.path_base = optarg;
             break;
         case 'p':
             app.padding_len = (unsigned) atoi(optarg);

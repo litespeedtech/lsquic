@@ -39,6 +39,7 @@ struct devious_baton_app
     unsigned       baton;
     unsigned       padding_len;
     unsigned       max_count;
+    const char    *path_base;
     const char    *path;
     char           path_buf[256];
 };
