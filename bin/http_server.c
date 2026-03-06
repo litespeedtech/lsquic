@@ -2266,6 +2266,7 @@ main (int argc, char **argv)
             devious_baton_app_init(&server_ctx.baton_app, &prog, 1);
             prog.prog_settings.es_http_datagrams = 1;
             prog.prog_settings.es_webtransport = 1;
+            prog.prog_settings.es_reset_stream_at = 1;
             prog.prog_settings.es_init_max_streams_uni = 64;
             if (0 == prog.prog_settings.es_max_webtransport_sessions)
                 prog.prog_settings.es_max_webtransport_sessions =

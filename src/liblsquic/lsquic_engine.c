@@ -526,6 +526,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                                               "webtransport sessions count is 0");
             return -1;
         }
+
+        if (!settings->es_reset_stream_at)
+        {
+            if (err_buf)
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but reset_stream_at is disabled");
+            return -1;
+        }
     }
     return 0;
 }
