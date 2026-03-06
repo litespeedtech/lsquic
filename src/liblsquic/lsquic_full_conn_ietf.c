@@ -105,6 +105,9 @@
  */
 #define CLIENT_PUSH_SUPPORT 0
 
+struct ietf_full_conn;
+static void update_peer_wt_support (struct ietf_full_conn *conn);
+
 
 
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER
@@ -472,9 +475,10 @@ struct ietf_full_conn
     struct qpack_dec_hdl        ifc_qdh;
     struct {
         uint64_t    header_table_size,
-                    qpack_blocked_streams,
-                    wt_max_sessions;
-        signed char wt_max_sessions_seen;
+                    qpack_blocked_streams;
+        unsigned    wt_draft;
+        signed char wt_enabled;
+        signed char wt_enabled_seen;
         signed char enable_connect_protocol;
         signed char enable_connect_protocol_seen;
     }                           ifc_peer_hq_settings;
@@ -1451,11 +1455,12 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
-    conn->ifc_peer_hq_settings.wt_max_sessions = 0;
-    conn->ifc_peer_hq_settings.wt_max_sessions_seen = 0;
+    conn->ifc_peer_hq_settings.wt_draft = 0;
+    conn->ifc_peer_hq_settings.wt_enabled = 0;
+    conn->ifc_peer_hq_settings.wt_enabled_seen = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 0;
-    conn->ifc_pub.cp_wt_peer_max_sessions = 0;
+    conn->ifc_pub.cp_wt_peer_draft = 0;
 
     conn->ifc_flags = flags | IFC_FIRST_TICK;
     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
@@ -3952,6 +3957,8 @@ apply_trans_params (struct ietf_full_conn *conn,
             ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
     }
 
+    update_peer_wt_support(conn);
+
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
     if ((params->tp_set & (1 << TPI_MAX_UDP_PAYLOAD_SIZE))
@@ -4049,9 +4056,7 @@ init_http (struct ietf_full_conn *conn)
                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
                 max_risked_streams, conn->ifc_flags & IFC_SERVER
                 ,
-                conn->ifc_settings->es_webtransport,
-                conn->ifc_settings->es_max_webtransport_sessions
-                ))
+                conn->ifc_settings->es_webtransport))
     {
         ABORT_WARN("cannot write SETTINGS");
         return -1;
@@ -9761,8 +9766,8 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
-    case LSQCP_WT_PEER_MAX_SESSIONS:
-        u64 = conn->ifc_pub.cp_wt_peer_max_sessions;
+    case LSQCP_WT_PEER_DRAFT:
+        u64 = conn->ifc_pub.cp_wt_peer_draft;
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
@@ -10030,6 +10035,8 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     int supports;
     int peer_settings_received;
     int peer_connect_protocol;
+    int peer_quic_datagrams;
+    int peer_reset_stream_at;
 
     peer_settings_received = !!(conn->ifc_flags & IFC_HAVE_PEER_SET);
     if (peer_settings_received)
@@ -10045,16 +10052,17 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     else
         conn->ifc_pub.cp_flags &= ~CP_CONNECT_PROTOCOL;
 
-    conn->ifc_pub.cp_wt_peer_max_sessions =
-            conn->ifc_peer_hq_settings.wt_max_sessions_seen
-            ? conn->ifc_peer_hq_settings.wt_max_sessions
-            : 0;
+    conn->ifc_pub.cp_wt_peer_draft = conn->ifc_peer_hq_settings.wt_draft;
+    peer_quic_datagrams = !!(conn->ifc_flags & IFC_DATAGRAMS);
+    peer_reset_stream_at = !!(conn->ifc_mflags & MF_PEER_RESET_STREAM_AT);
 
     supports = peer_settings_received
             && local_webtransport_enabled(conn)
-            && conn->ifc_peer_hq_settings.wt_max_sessions_seen
-            && conn->ifc_peer_hq_settings.wt_max_sessions > 0
-            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS);
+            && conn->ifc_peer_hq_settings.wt_enabled_seen
+            && conn->ifc_peer_hq_settings.wt_enabled
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && peer_quic_datagrams
+            && peer_reset_stream_at;
     if (!(conn->ifc_flags & IFC_SERVER))
         supports = supports && peer_connect_protocol;
 
@@ -10063,15 +10071,20 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     else
         conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
 
-    LSQ_DEBUG("peer WT: settings=%d, local=%d, max=%"PRIu64
-              "/%d, connect=%d/%d, h3_dgram=%d => support=%d",
+    LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_enabled_seen=%d, "
+              "wt_enabled=%d, draft=%u, connect_seen=%d, connect=%d, "
+              "h3_dgram=%d, quic_dgram=%d, reset_at=%d "
+              "=> support=%d",
         peer_settings_received,
         local_webtransport_enabled(conn),
-        conn->ifc_pub.cp_wt_peer_max_sessions,
-        conn->ifc_peer_hq_settings.wt_max_sessions_seen,
+        conn->ifc_peer_hq_settings.wt_enabled_seen,
+        conn->ifc_peer_hq_settings.wt_enabled,
+        conn->ifc_peer_hq_settings.wt_draft,
         conn->ifc_peer_hq_settings.enable_connect_protocol_seen,
         peer_connect_protocol,
         !!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS),
+        peer_quic_datagrams,
+        peer_reset_stream_at,
         !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT));
 }
 
@@ -10191,13 +10204,14 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64
             "; ignore it for now", value);
         break;
-    case HQSID_WT_MAX_SESSIONS:
-        conn->ifc_peer_hq_settings.wt_max_sessions_seen = 1;
-        conn->ifc_peer_hq_settings.wt_max_sessions = value;
+    case HQSID_WT_ENABLED:
+        conn->ifc_peer_hq_settings.wt_enabled_seen = 1;
+        conn->ifc_peer_hq_settings.wt_enabled = value > 0;
+        conn->ifc_peer_hq_settings.wt_draft = 15;
         if (!local_webtransport_enabled(conn) && value > 0)
             LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
         update_peer_wt_support(conn);
-        LSQ_DEBUG("Peer's SETTINGS_WT_MAX_SESSIONS=%"PRIu64, value);
+        LSQ_DEBUG("Peer's SETTINGS_WT_ENABLED=%"PRIu64, value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64

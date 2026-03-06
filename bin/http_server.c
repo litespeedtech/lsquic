@@ -450,6 +450,7 @@ struct req
     char        *path;
     char        *method_str;
     char        *authority_str;
+    char        *connect_protocol;
     char        *protocol;
     char        *origin;
     char        *qif_str;
@@ -1333,7 +1334,6 @@ static const char INDEX_HTML[] =
 
 struct wt_connect_handler
 {
-    const char *protocol;
     const char *path_prefix;
     int (*handler)(struct lsquic_stream *, struct lsquic_stream_ctx *);
 };
@@ -1371,7 +1371,7 @@ baton_connect_handler (struct lsquic_stream *stream,
     info.path = req->path;
     info.origin = req->origin;
     info.protocol = req->protocol;
-    info.draft = 0;
+    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(stream));
 
     rv = devious_baton_accept(stream, &info, &st_h->server_ctx->baton_app,
                                                     err_buf, sizeof(err_buf));
@@ -1391,7 +1391,6 @@ baton_connect_handler (struct lsquic_stream *stream,
 static const struct wt_connect_handler wt_connect_handlers[] =
 {
     {
-        .protocol = DEVIOUS_BATON_PROTOCOL,
         .path_prefix = DEVIOUS_BATON_PATH,
         .handler = baton_connect_handler,
     },
@@ -1410,9 +1409,17 @@ handle_connect_request (struct lsquic_stream *stream,
     if (!req)
         return 0;
 
-    if (!req->protocol)
+    if (!req->connect_protocol)
     {
         snprintf(err_buf, sizeof(err_buf), "Protocol is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (0 != strcmp(req->connect_protocol, WEBTRANSPORT_H3_CONNECT_PROTOCOL))
+    {
+        snprintf(err_buf, sizeof(err_buf), "Unsupported CONNECT protocol");
         lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
         lsquic_stream_close(stream);
         return 1;
@@ -1431,8 +1438,7 @@ handle_connect_request (struct lsquic_stream *stream,
              handler < wt_connect_handlers
                         + sizeof(wt_connect_handlers)
                             / sizeof(wt_connect_handlers[0]); ++handler)
-            if (0 == strcmp(req->protocol, handler->protocol)
-                && path_prefix_matches(req->path, handler->path_prefix))
+            if (path_prefix_matches(req->path, handler->path_prefix))
             {
                 if (!lsquic_wt_peer_settings_received(
                                             lsquic_stream_conn(stream)))
@@ -1456,8 +1462,8 @@ handle_connect_request (struct lsquic_stream *stream,
                 return handler->handler(stream, st_h);
             }
 
-    snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s %s",
-                                        req->protocol, req->path);
+    snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s",
+                                        req->path);
     lsquic_wt_reject(stream, 404, err_buf, strlen(err_buf));
     lsquic_stream_close(stream);
     return 1;
@@ -1961,6 +1967,48 @@ usage (const char *prog)
 }
 
 
+static int
+dup_first_sf_string (const char *value, size_t value_len, char **out)
+{
+    char *buf;
+    size_t in_off, out_off;
+
+    for (in_off = 0; in_off < value_len; ++in_off)
+        if (value[in_off] == '"')
+            break;
+    if (in_off >= value_len)
+        return -1;
+
+    ++in_off;
+    buf = malloc(value_len - in_off + 1);
+    if (!buf)
+        return -1;
+
+    out_off = 0;
+    while (in_off < value_len)
+    {
+        if (value[in_off] == '"')
+        {
+            buf[out_off] = '\0';
+            *out = buf;
+            return 0;
+        }
+
+        if (value[in_off] == '\\')
+        {
+            ++in_off;
+            if (in_off >= value_len)
+                break;
+        }
+
+        buf[out_off++] = value[in_off++];
+    }
+
+    free(buf);
+    return -1;
+}
+
+
 static void *
 interop_server_hset_create (void *hsi_ctx, lsquic_stream_t *stream,
                             int is_push_promise)
@@ -2075,10 +2123,10 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
 
     if (9 == name_len && 0 == strncmp(name, ":protocol", 9))
     {
-        if (req->protocol)
+        if (req->connect_protocol)
             return 1;
-        req->protocol = strndup(value, value_len);
-        if (!req->protocol)
+        req->connect_protocol = strndup(value, value_len);
+        if (!req->connect_protocol)
             return -1;
         req->pseudo_headers |= PH_PROTOCOL;
         return 0;
@@ -2103,6 +2151,20 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
         return 0;
     }
 
+    if (name_len == sizeof("wt-available-protocols") - 1
+        && 0 == strncmp(name, "wt-available-protocols",
+                                    sizeof("wt-available-protocols") - 1))
+    {
+        if (req->protocol)
+        {
+            free(req->protocol);
+            req->protocol = NULL;
+        }
+        if (0 != dup_first_sf_string(value, value_len, &req->protocol))
+            LSQ_DEBUG("ignore malformed WT-Available-Protocols");
+        return 0;
+    }
+
     return 0;
 }
 
@@ -2115,6 +2177,7 @@ interop_server_hset_destroy (void *hset_p)
     free(req->path);
     free(req->method_str);
     free(req->authority_str);
+    free(req->connect_protocol);
     free(req->protocol);
     free(req->origin);
     free(req);

@@ -59,7 +59,7 @@ struct lsquic_conn_public {
         CP_H3_PEER_SETTINGS     = 1 << 3,   /* Peer SETTINGS frame received */
         CP_CONNECT_PROTOCOL     = 1 << 4,   /* Peer enabled CONNECT protocol */
     }                               cp_flags;
-    uint64_t                        cp_wt_peer_max_sessions;
+    uint64_t                        cp_wt_peer_draft;
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;

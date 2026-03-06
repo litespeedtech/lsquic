@@ -2323,10 +2323,10 @@ enum lsquic_conn_param
     LSQCP_WT_PEER_SUPPORTS,
 
     /**
-     * Peer's advertised WebTransport max sessions.
+     * Draft version implied by peer's WebTransport SETTINGS codepoint.
      * Type: uint64_t
      */
-    LSQCP_WT_PEER_MAX_SESSIONS,
+    LSQCP_WT_PEER_DRAFT,
 
     /**
      * Whether peer advertised SETTINGS_ENABLE_CONNECT_PROTOCOL=1.

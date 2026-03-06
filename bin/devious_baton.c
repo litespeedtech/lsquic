@@ -369,6 +369,48 @@ dup_header_value (const char *value, size_t value_len, char **out)
 }
 
 
+static int
+dup_first_sf_string (const char *value, size_t value_len, char **out)
+{
+    char *buf;
+    size_t in_off, out_off;
+
+    for (in_off = 0; in_off < value_len; ++in_off)
+        if (value[in_off] == '"')
+            break;
+    if (in_off >= value_len)
+        return -1;
+
+    ++in_off;
+    buf = malloc(value_len - in_off + 1);
+    if (!buf)
+        return -1;
+
+    out_off = 0;
+    while (in_off < value_len)
+    {
+        if (value[in_off] == '"')
+        {
+            buf[out_off] = '\0';
+            *out = buf;
+            return 0;
+        }
+
+        if (value[in_off] == '\\')
+        {
+            ++in_off;
+            if (in_off >= value_len)
+                break;
+        }
+
+        buf[out_off++] = value[in_off++];
+    }
+
+    free(buf);
+    return -1;
+}
+
+
 static void
 free_connect_info (struct lsquic_wt_connect_info *info)
 {
@@ -457,9 +499,9 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     char *origin = NULL;
     char *protocol = NULL;
     int have_method = 0;
-    int have_protocol = 0;
+    int have_connect_protocol = 0;
     int method_ok = 0;
-    int protocol_ok = 0;
+    int connect_protocol_ok = 0;
     int ok = 0;
     int rv = -1;
 
@@ -478,18 +520,24 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         else if (el->xhdr.name_len == sizeof(":protocol") - 1
                 && 0 == memcmp(name, ":protocol", sizeof(":protocol") - 1))
         {
-            have_protocol = 1;
-            protocol_ok = (el->xhdr.val_len == sizeof(DEVIOUS_BATON_PROTOCOL) - 1
-                && 0 == memcmp(value, DEVIOUS_BATON_PROTOCOL,
-                                            sizeof(DEVIOUS_BATON_PROTOCOL) - 1));
-            if (protocol_ok)
+            have_connect_protocol = 1;
+            connect_protocol_ok =
+                    el->xhdr.val_len
+                        == sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1
+                && 0 == memcmp(value, WEBTRANSPORT_H3_CONNECT_PROTOCOL,
+                    sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1);
+        }
+        else if (el->xhdr.name_len == sizeof("wt-available-protocols") - 1
+                && 0 == memcmp(name, "wt-available-protocols",
+                                    sizeof("wt-available-protocols") - 1))
+        {
+            free(protocol);
+            protocol = NULL;
+            if (0 == dup_first_sf_string(value, el->xhdr.val_len, &protocol))
+                LSQ_DEBUG("client offered WT protocol \"%s\"", protocol);
+            else
             {
-                free(protocol);
-                if (0 != dup_header_value(value, el->xhdr.val_len, &protocol))
-                {
-                    snprintf(err_buf, err_sz, "cannot copy protocol");
-                    goto end;
-                }
+                LSQ_DEBUG("ignore malformed WT-Available-Protocols");
             }
         }
         else if (el->xhdr.name_len == sizeof(":path") - 1
@@ -525,8 +573,8 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         }
     }
 
-    if (have_method && have_protocol)
-        ok = method_ok && protocol_ok;
+    if (have_method && have_connect_protocol)
+        ok = method_ok && connect_protocol_ok;
 
     if (!ok)
     {
@@ -645,7 +693,7 @@ send_headers (struct devious_baton_conn *conn)
     hbuf.off = 0;
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V("CONNECT"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":protocol"),
-                                        V(DEVIOUS_BATON_PROTOCOL));
+                                        V(WEBTRANSPORT_H3_CONNECT_PROTOCOL));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"),
                                         hostname, strlen(hostname));
@@ -719,6 +767,29 @@ log_hset_debug (const char *prefix, const struct hset *hset)
         LSQ_DEBUG("%s header `%.*s': `%.*s'", prefix,
                 (int) el->xhdr.name_len, name, (int) el->xhdr.val_len, value);
     }
+}
+
+
+static int
+dup_wt_protocol (const struct hset *hset, char **out)
+{
+    const struct hset_elem *el;
+    const char *name;
+    const char *value;
+
+    *out = NULL;
+    STAILQ_FOREACH(el, hset, next)
+    {
+        name = lsxpack_header_get_name(&el->xhdr);
+        if (el->xhdr.name_len == sizeof("wt-protocol") - 1
+            && 0 == memcmp(name, "wt-protocol", sizeof("wt-protocol") - 1))
+        {
+            value = lsxpack_header_get_value(&el->xhdr);
+            return dup_first_sf_string(value, el->xhdr.val_len, out);
+        }
+    }
+
+    return 1;
 }
 
 
@@ -1462,6 +1533,7 @@ process_control_server (struct devious_baton_stream *st)
 
     LSQ_INFO("server accepted CONNECT for %s (count=%u, baton=%u, version=%u)",
             cfg.path ? cfg.path : "<none>", cfg.count, cfg.baton, cfg.version);
+    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
 
     memset(&params, 0, sizeof(params));
     params.status = 200;
@@ -1492,7 +1564,11 @@ static void
 process_control_client (struct devious_baton_stream *st)
 {
     struct hset *hset;
+    struct lsquic_wt_connect_info info;
     struct lsquic_wt_accept_params params;
+    const char *hostname;
+    char *protocol;
+    int rv;
     unsigned status_code;
 
     if (st->dbs_conn->response_seen)
@@ -1510,9 +1586,15 @@ process_control_client (struct devious_baton_stream *st)
         return;
     }
 
+    protocol = NULL;
     st->dbs_conn->response_seen = 1;
     st->dbs_conn->response_ok = parse_status(hset, &status_code);
     log_hset_debug("CONNECT response", hset);
+    rv = dup_wt_protocol(hset, &protocol);
+    if (0 == rv)
+        LSQ_INFO("server selected WT protocol \"%s\"", protocol);
+    else if (rv < 0)
+        LSQ_DEBUG("ignore malformed WT-Protocol");
     hset_destroy(hset);
 
     if (!st->dbs_conn->response_ok)
@@ -1521,6 +1603,7 @@ process_control_client (struct devious_baton_stream *st)
             LSQ_ERROR("CONNECT failed with status %u", status_code);
         else
             LSQ_ERROR("CONNECT failed: missing or invalid :status");
+        free(protocol);
         lsquic_stream_wantread(st->dbs_stream, 0);
         lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
@@ -1529,16 +1612,28 @@ process_control_client (struct devious_baton_stream *st)
     LSQ_INFO("client received successful CONNECT response with status %u",
                                                                 status_code);
 
+    hostname = st->dbs_conn->prog->prog_hostname
+                                ? st->dbs_conn->prog->prog_hostname
+                                : "localhost";
+    memset(&info, 0, sizeof(info));
+    info.authority = hostname;
+    info.path = st->dbs_conn->app->path;
+    info.protocol = protocol;
+    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
+
     memset(&params, 0, sizeof(params));
     params.wt_if = &wt_if;
     params.wt_if_ctx = st->dbs_conn->app;
     params.stream_if = devious_baton_wt_stream_if();
+    params.connect_info = &info;
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
+        free(protocol);
         lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
         return;
     }
 
+    free(protocol);
     st->dbs_flags |= DBSF_MESSAGE_DONE;
 
 }
@@ -1881,17 +1976,6 @@ devious_baton_accept (struct lsquic_stream *stream,
     {
         if (err_buf && err_sz)
             snprintf(err_buf, err_sz, "invalid arguments");
-        return -1;
-    }
-
-    if (!info->protocol
-        || 0 != strcmp(info->protocol, DEVIOUS_BATON_PROTOCOL))
-    {
-        if (err_buf && err_sz)
-            snprintf(err_buf, err_sz, "invalid protocol");
-        lsquic_wt_reject(stream, 400, err_buf ? err_buf : NULL,
-                                            err_buf ? strlen(err_buf) : 0);
-        lsquic_stream_close(stream);
         return -1;
     }
 

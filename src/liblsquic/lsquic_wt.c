@@ -610,6 +610,19 @@ wt_count_sessions (const struct lsquic_conn_public *conn_pub)
 }
 
 
+static unsigned
+wt_get_session_limit (const struct lsquic_conn_public *conn_pub,
+                                                    int is_server_stream)
+{
+    if (is_server_stream
+        && 0 == conn_pub->enpub->enp_settings.es_max_webtransport_sessions)
+        return 0;
+
+    /* Until WT flow control lands, draft-15 only allows one session. */
+    return 1;
+}
+
+
 static int
 wt_can_accept_session (struct lsquic_stream *connect_stream)
 {
@@ -653,8 +666,7 @@ wt_can_accept_session (struct lsquic_stream *connect_stream)
             return -1;
         }
 
-        local_limit = conn_pub->enpub->enp_settings
-                                    .es_max_webtransport_sessions;
+        local_limit = wt_get_session_limit(conn_pub, 1);
         if (local_limit > 0 && n_sessions >= local_limit)
         {
             errno = ENOSPC;
@@ -674,13 +686,13 @@ wt_can_accept_session (struct lsquic_stream *connect_stream)
             return -1;
         }
 
-        if (conn_pub->cp_wt_peer_max_sessions > 0
-            && n_sessions >= conn_pub->cp_wt_peer_max_sessions)
+        local_limit = wt_get_session_limit(conn_pub, 0);
+        if (local_limit > 0 && n_sessions >= local_limit)
         {
             errno = ENOSPC;
-            LSQ_WARN("cannot accept WT stream %"PRIu64": peer session limit "
-                     "reached (%"PRIu64")", lsquic_stream_id(connect_stream),
-                     conn_pub->cp_wt_peer_max_sessions);
+            LSQ_WARN("cannot accept WT stream %"PRIu64": no-flow-control "
+                     "session limit reached (%u)",
+                     lsquic_stream_id(connect_stream), local_limit);
             return -1;
         }
     }
@@ -1338,11 +1350,11 @@ lsquic_wt_peer_supports (lsquic_conn_t *conn)
 
 
 unsigned
-lsquic_wt_peer_max_sessions (lsquic_conn_t *conn)
+lsquic_wt_peer_draft (lsquic_conn_t *conn)
 {
     uint64_t value;
 
-    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_MAX_SESSIONS, &value))
+    if (0 != wt_get_conn_u64_param(conn, LSQCP_WT_PEER_DRAFT, &value))
         return 0;
 
     if (value > UINT_MAX)

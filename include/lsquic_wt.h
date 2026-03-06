@@ -37,7 +37,7 @@ struct lsquic_wt_connect_info
     const char *path;
     const char *origin;     /* optional */
     const char *protocol;   /* application protocol, if present */
-    unsigned    draft;      /* non-zero if Sec-WebTransport-Http3-Draft used */
+    unsigned    draft;      /* negotiated WebTransport draft version, if known */
 };
 
 struct lsquic_wt_stream_if
@@ -122,9 +122,9 @@ lsquic_wt_peer_settings_received (lsquic_conn_t *conn);
 int
 lsquic_wt_peer_supports (lsquic_conn_t *conn);
 
-/** Return peer-advertised WebTransport max sessions for this connection. */
+/** Return peer WebTransport draft version for this connection, if known. */
 unsigned
-lsquic_wt_peer_max_sessions (lsquic_conn_t *conn);
+lsquic_wt_peer_draft (lsquic_conn_t *conn);
 
 /** Return whether peer enabled CONNECT protocol via HTTP/3 SETTINGS. */
 int

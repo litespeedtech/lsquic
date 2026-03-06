@@ -9,8 +9,8 @@ struct lsquic_wt_connect_info;
 struct lsquic_wt_stream_if;
 struct prog;
 
+#define WEBTRANSPORT_H3_CONNECT_PROTOCOL "webtransport-h3"
 #define DEVIOUS_BATON_PATH "/webtransport/devious-baton"
-#define DEVIOUS_BATON_PROTOCOL "webtransport"
 
 
 enum devious_baton_stream_error
