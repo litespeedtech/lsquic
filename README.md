@@ -73,7 +73,7 @@ You may need to install pre-requisites like zlib and libevent.
 2. Use specific BoringSSL version
 
 ```
-git checkout 9fc1c33e9c21439ce5f87855a6591a9324e569fd
+git checkout 0.20250807.0
 ```
 Or, just try the latest master branch.
 
