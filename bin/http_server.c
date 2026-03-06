@@ -2268,6 +2268,8 @@ main (int argc, char **argv)
             prog.prog_settings.es_webtransport = 1;
             prog.prog_settings.es_reset_stream_at = 1;
             prog.prog_settings.es_init_max_streams_uni = 64;
+            if (0 == prog.prog_settings.es_init_max_stream_data_bidi_local)
+                prog.prog_settings.es_init_max_stream_data_bidi_local = 100000;
             if (0 == prog.prog_settings.es_max_webtransport_sessions)
                 prog.prog_settings.es_max_webtransport_sessions =
                                 LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;

@@ -5513,6 +5513,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     stream->stream_flags |= STREAM_WT_SWITCH_PENDING;
                     /* Disable HTTP/3 header processing for WT bidi stream. */
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
+                    stream->sm_write_avail = stream_write_avail_no_frames;
                     filter->hqfi_type = HQFT_DATA;
                     /* Keep consuming payload until stream end/reset. */
                     filter->hqfi_left = UINT64_MAX;
