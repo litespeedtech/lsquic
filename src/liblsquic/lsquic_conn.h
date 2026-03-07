@@ -291,6 +291,14 @@ struct conn_iface
     (*ci_get_min_datagram_size) (struct lsquic_conn *);
 
     /* Optional method */
+    size_t
+    (*ci_get_max_datagram_size) (struct lsquic_conn *);
+
+    /* Optional method: called when HTTP datagram streams queue changes */
+    void
+    (*ci_http_dg_streams_updated) (struct lsquic_conn *);
+
+    /* Optional method */
     void
     (*ci_early_data_failed) (struct lsquic_conn *);
 
@@ -314,6 +322,9 @@ struct conn_iface
     void
     (*ci_user_stream_progress) (struct lsquic_conn *);
 };
+
+void
+lsquic_conn_http_dg_streams_updated (lsquic_conn_t *lconn);
 
 #define LSCONN_CCE_BITS 3
 #define LSCONN_MAX_CCES (1 << LSCONN_CCE_BITS)

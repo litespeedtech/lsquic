@@ -307,6 +307,14 @@ lsquic_conn_get_min_datagram_size (struct lsquic_conn *lconn)
 }
 
 
+void
+lsquic_conn_http_dg_streams_updated (lsquic_conn_t *lconn)
+{
+    if (lconn->cn_if && lconn->cn_if->ci_http_dg_streams_updated)
+        lconn->cn_if->ci_http_dg_streams_updated(lconn);
+}
+
+
 #if LSQUIC_CONN_STATS
 void
 lsquic_conn_stats_diff (const struct conn_stats *cumulative_stats,
@@ -369,4 +377,3 @@ lsquic_conn_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         return lconn->cn_if->ci_get_param(lconn, param, value, value_len);
     return -1;
 }
-

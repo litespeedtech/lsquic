@@ -81,6 +81,7 @@
 #include "ls-sfparser.h"
 #include "lsquic_qpack_exp.h"
 
+
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
@@ -153,14 +154,15 @@ enum ifull_conn_flags
 enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
-    /* HOLE */                      /* <- Hole!  Reuse me! */
+    MF_HTTP_DATAGRAMS   = 1 << 1,
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
     MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
-    MF_WANT_DATAGRAM_WRITE  = 1 << 6,
+    MF_WANT_DATAGRAM_WRITE  = 1 << 6,   /* Effective: conn or HTTP datagrams */
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_WANT_CONN_DG_WRITE   = 1 << 9,   /* Connection-level datagrams */
 };
 
 
@@ -1282,6 +1284,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     TAILQ_INIT(&conn->ifc_pub.read_streams);
     TAILQ_INIT(&conn->ifc_pub.write_streams);
     TAILQ_INIT(&conn->ifc_pub.service_streams);
+    TAILQ_INIT(&conn->ifc_pub.http_dg_streams);
     STAILQ_INIT(&conn->ifc_stream_ids_to_ss);
     TAILQ_INIT(&conn->ifc_to_retire);
     conn->ifc_n_to_retire = 0;
@@ -2955,6 +2958,29 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
     generate_ack_frame_for_pns(conn, packet_out, PNS_APP, lsquic_time_now());
 }
 
+static void
+update_datagram_want (struct ietf_full_conn *conn)
+{
+    int want;
+
+    want = (conn->ifc_mflags & MF_WANT_CONN_DG_WRITE)
+        || ((conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && !TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams));
+
+    if (want)
+    {
+        if (!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE))
+        {
+            conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
+            if (lsquic_send_ctl_can_send(&conn->ifc_send_ctl))
+                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
+                                                             &conn->ifc_conn);
+        }
+    }
+    else
+        conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+}
+
 
 static int
 ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
@@ -2964,16 +2990,12 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
 
     if (conn->ifc_flags & IFC_DATAGRAMS)
     {
-        old = !!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE);
+        old = !!(conn->ifc_mflags & MF_WANT_CONN_DG_WRITE);
         if (is_want)
-        {
-            conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
-            if (lsquic_send_ctl_can_send (&conn->ifc_send_ctl))
-                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
-                                                             &conn->ifc_conn);
-        }
+            conn->ifc_mflags |= MF_WANT_CONN_DG_WRITE;
         else
-            conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+            conn->ifc_mflags &= ~MF_WANT_CONN_DG_WRITE;
+        update_datagram_want(conn);
         LSQ_DEBUG("turn %s \"want datagram write\" flag",
                                                     is_want ? "on" : "off");
         return old;
@@ -2982,6 +3004,26 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
         return -1;
 }
 
+
+static void
+ietf_full_conn_ci_http_dg_streams_updated (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    update_datagram_want(conn);
+}
+
+
+static size_t
+ietf_full_conn_ci_get_max_datagram_size (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    if (conn->ifc_flags & IFC_DATAGRAMS)
+        return conn->ifc_max_dg_sz;
+    else
+        return 0;
+}
 
 static void
 ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
@@ -3685,7 +3727,8 @@ apply_trans_params (struct ietf_full_conn *conn,
         LSQ_DEBUG("timestamps enabled: will send TIMESTAMP frames");
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
-    if (conn->ifc_settings->es_datagrams
+    if ((conn->ifc_settings->es_datagrams
+            || conn->ifc_settings->es_http_datagrams)
             && (params->tp_set & (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)))
     {
         LSQ_DEBUG("datagrams enabled");
@@ -6886,6 +6929,93 @@ process_timestamp_frame (struct ietf_full_conn *conn,
     return 0;
 }
 
+static unsigned
+process_http_dg_frame (struct ietf_full_conn *conn,
+                                    const unsigned char *data, size_t data_sz,
+                                    unsigned parsed_len)
+{
+    const unsigned char *p = data;
+    const unsigned char *end = p + data_sz;
+    uint64_t qsid;
+    int nread;
+    lsquic_stream_id_t stream_id;
+    struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+
+    if (!(conn->ifc_mflags & MF_HTTP_DATAGRAMS)
+            || !conn->ifc_settings->es_http_datagrams)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram received without SETTINGS_H3_DATAGRAM");
+        return 0;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID is a varint. */
+    nread = vint_read(p, end, &qsid);
+    if (nread <= 0)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "invalid HTTP Datagram Quarter Stream ID");
+        return 0;
+    }
+
+    if (qsid > VINT_MAX_VALUE / 4)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram Quarter Stream ID too large");
+        return 0;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID maps to stream ID * 4. */
+    stream_id = (lsquic_stream_id_t) (qsid * 4);
+    LSQ_DEBUG("HTTP Datagram qsid=%"PRIu64" stream=%"PRIu64, qsid, stream_id);
+    /* RFC 9297, Section 2.1: Quarter Stream ID refers to client-initiated
+     * bidirectional request streams (stream IDs divisible by 4).
+     */
+    if ((stream_id & SIT_MASK) != SIT_BIDI_CLIENT)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram stream ID %"PRIu64" is invalid", stream_id);
+        return 0;
+    }
+
+    el = lsquic_hash_find(conn->ifc_pub.all_streams, &stream_id,
+                                                    sizeof(stream_id));
+    if (!el)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram for stream %"PRIu64" not found", stream_id);
+        return 0;
+    }
+
+    stream = lsquic_hashelem_getdata(el);
+    LSQ_DEBUG("HTTP Datagram stream %"PRIu64" ptr=%p",
+                                                stream_id, (void *) stream);
+    if (!stream->stream_if)
+    {
+        LSQ_DEBUG("HTTP Datagram stream %"PRIu64" has no interface",
+                                                            stream_id);
+        return parsed_len;
+    }
+    LSQ_DEBUG("HTTP Datagram stream %"PRIu64" cb=%p",
+            stream_id, stream->stream_if->on_http_dg_read);
+    if (stream->stream_if->on_http_dg_read)
+    {
+        lsquic_stream_hist_http_dg_recv(stream);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "RX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream_id, (size_t) (end - (p + nread)));
+        LSQ_DEBUG("HTTP Datagram deliver to stream %"PRIu64, stream_id);
+        stream->stream_if->on_http_dg_read(stream, stream->st_ctx,
+                                        p + nread, end - (p + nread));
+    }
+    else
+        LSQ_DEBUG("HTTP Datagram stream %"PRIu64" has no callback",
+                                                            stream_id);
+
+    return parsed_len;
+}
+
 
 static unsigned
 process_datagram_frame (struct ietf_full_conn *conn,
@@ -6909,8 +7039,14 @@ process_datagram_frame (struct ietf_full_conn *conn,
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "%zd-byte DATAGRAM", data_sz);
     LSQ_DEBUG("%zd-byte DATAGRAM", data_sz);
+    LSQ_DEBUG("process DATAGRAM: ifc_flags=0x%X http_cb=%p",
+                conn->ifc_flags, conn->ifc_enpub->enp_stream_if->on_http_dg_read);
 
-    conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
+    if ((conn->ifc_flags & IFC_HTTP)
+            && conn->ifc_enpub->enp_stream_if->on_http_dg_read)
+        return process_http_dg_frame(conn, data, data_sz, parsed_len);
+    else
+        conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
 
     return parsed_len;
 }
@@ -8389,7 +8525,134 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 }
 
 
+struct http_dg_consume_ctx
+{
+    unsigned char          *payload_buf;
+    size_t                  payload_buf_sz;
+    size_t                  payload_sz;
+    int                     consumed;
+    int                     encapsulated;
+};
+
+static int
+http_dg_consume (lsquic_stream_t *stream, const void *buf, size_t sz,
+                                        enum lsquic_http_dg_send_mode mode)
+{
+    struct http_dg_consume_ctx *ctx;
+
+    ctx = stream->sm_http_dg_consume_ctx;
+    if (!ctx || ctx->consumed)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (mode != LSQUIC_HTTP_DG_SEND_CAPSULE && sz <= ctx->payload_buf_sz)
+    {
+        memcpy(ctx->payload_buf, buf, sz);
+        ctx->payload_sz = sz;
+        ctx->consumed = 1;
+        lsquic_stream_hist_http_dg_send(stream);
+        EV_LOG_CONN_EVENT(lsquic_conn_log_cid(stream->conn_pub->lconn),
+            "TX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream->id, sz);
+        return 0;
+    }
+
+    if (mode == LSQUIC_HTTP_DG_SEND_DATAGRAM)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    if (0 != lsquic_stream_http_dg_queue_capsule(stream, buf, sz))
+        return -1;
+
+    ctx->consumed = 1;
+    ctx->encapsulated = 1;
+    EV_LOG_CONN_EVENT(lsquic_conn_log_cid(stream->conn_pub->lconn),
+        "TX HTTP DG capsule: stream=%"PRIu64" size=%zu",
+        stream->id, sz);
+    return 0;
+}
+
 /* Return true if datagram was written, false otherwise */
+static ssize_t
+http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct lsquic_stream *stream;
+    struct http_dg_consume_ctx ctx;
+    uint64_t qsid;
+    uint64_t bits;
+    size_t vlen;
+    int rc;
+
+    if (!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
+        return -1;
+
+    stream = TAILQ_FIRST(&conn->ifc_pub.http_dg_streams);
+    if (!stream || !stream->stream_if->on_http_dg_write)
+        return -1;
+    if (lsquic_stream_http_dg_capsule_pending(stream))
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID is stream ID / 4. */
+    qsid = stream->id / 4;
+    bits = vint_val2bits(qsid);
+    vlen = 1u << bits;
+    if (vlen >= sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.payload_buf = (unsigned char *) buf + vlen;
+    ctx.payload_buf_sz = sz - vlen;
+
+    assert(!stream->sm_http_dg_consume_ctx);
+    stream->sm_http_dg_consume_ctx = &ctx;
+    rc = stream->stream_if->on_http_dg_write(stream, stream->st_ctx,
+                                    ctx.payload_buf_sz, http_dg_consume);
+    stream->sm_http_dg_consume_ctx = NULL;
+
+    if (!ctx.consumed)
+    {
+        if (rc != 0)
+            return -1;
+        errno = EAGAIN;
+        return -1;
+    }
+
+    if (stream->sm_qflags & SMQF_WANT_HTTP_DG)
+    {
+        TAILQ_REMOVE(&conn->ifc_pub.http_dg_streams, stream,
+                                                    next_http_dg_stream);
+        TAILQ_INSERT_TAIL(&conn->ifc_pub.http_dg_streams, stream,
+                                                    next_http_dg_stream);
+    }
+
+    if (ctx.encapsulated)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    if (ctx.payload_sz > ctx.payload_buf_sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    vint_write(buf, qsid, bits, vlen);
+    return (ssize_t) (vlen + ctx.payload_sz);
+}
+
+
 static int
 write_datagram (struct ietf_full_conn *conn)
 {
@@ -8402,16 +8665,31 @@ write_datagram (struct ietf_full_conn *conn)
     if (!packet_out)
         return 0;
 
-    w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
-            packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
-            conn->ifc_max_dg_sz,
-            conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
+    if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && conn->ifc_enpub->enp_stream_if->on_http_dg_write)
+        w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+                conn->ifc_max_dg_sz,
+                http_dg_write_cb, &conn->ifc_conn);
+    else
+        w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+                conn->ifc_max_dg_sz,
+                conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
     if (w < 0)
     {
-        LSQ_DEBUG("could not generate DATAGRAM frame");
+        if (errno != EAGAIN)
+            LSQ_DEBUG("could not generate DATAGRAM frame");
         return 0;
     }
+    if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && conn->ifc_enpub->enp_stream_if->on_http_dg_write)
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "TX HTTP DATAGRAM: size=%d", w);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                         QUIC_FRAME_DATAGRAM, packet_out->po_data_sz, w))
     {
@@ -9206,6 +9484,8 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_early_data_failed    =  ietf_full_conn_ci_early_data_failed, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
+    .ci_get_max_datagram_size=  ietf_full_conn_ci_get_max_datagram_size, \
+    .ci_get_stream_by_id     =  NULL, \
     .ci_get_path             =  ietf_full_conn_ci_get_path, \
     .ci_going_away           =  ietf_full_conn_ci_going_away, \
     .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
@@ -9227,6 +9507,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
     .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_http_dg_streams_updated = ietf_full_conn_ci_http_dg_streams_updated, \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_user_stream_progress =  ietf_full_conn_ci_user_stream_progress, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
@@ -9420,6 +9701,7 @@ static void
 on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 {
     struct ietf_full_conn *const conn = ctx;
+    int enable;
 
     switch (setting_id)
     {
@@ -9434,6 +9716,25 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
     case HQSID_MAX_HEADER_LIST_SIZE:
         LSQ_DEBUG("Peer's SETTINGS_MAX_HEADER_LIST_SIZE=%"PRIu64"; "
                                                         "we ignore it", value);
+        break;
+    case HQSID_H3_DATAGRAM_ENABLED:
+        if (value > 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_H3_DATAGRAM value %"PRIu64, value);
+            return;
+        }
+        enable = value == 1;
+        if (enable)
+            conn->ifc_mflags |= MF_HTTP_DATAGRAMS;
+        else
+            conn->ifc_mflags &= ~MF_HTTP_DATAGRAMS;
+        if (conn->ifc_settings->es_http_datagrams && enable)
+            conn->ifc_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+        else
+            conn->ifc_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
+        update_datagram_want(conn);
+        LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64
@@ -10098,4 +10399,3 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
-

@@ -125,6 +125,37 @@ struct hq_filter
     }                           hqfi_state:8;
 };
 
+struct http_dg_capsule_read_state
+{
+    enum {
+        HDC_READ_TYPE = 0,
+        HDC_READ_LENGTH,
+        HDC_READ_PAYLOAD,
+    }                           state;
+    struct varint_read_state    type_state;
+    struct varint_read_state    len_state;
+    uint64_t                    type;
+    uint64_t                    length;
+    uint64_t                    offset;
+    unsigned char              *buf;
+    size_t                      buf_sz;
+};
+
+struct http_dg_capsule_write_state
+{
+    unsigned char              *buf;
+    size_t                      buf_sz;
+    size_t                      offset;
+    unsigned char               header[16];
+    size_t                      header_len;
+};
+
+struct http_dg_stream_state
+{
+    struct http_dg_capsule_read_state    read;
+    struct http_dg_capsule_write_state   write;
+};
+
 
 struct stream_filter_if
 {
@@ -175,6 +206,7 @@ enum stream_q_flags
     /* The stream can reference itself, preventing its own destruction: */
 #define SMQF_SELF_FLAGS SMQF_WAIT_FIN_OFF
     SMQF_WAIT_FIN_OFF = 1 << 11,    /* Waiting for final offset: FIN or RST */
+    SMQF_WANT_HTTP_DG = 1 << 12,    /* Want to send HTTP Datagrams */
 };
 
 
@@ -195,12 +227,13 @@ enum stream_b_flags
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
     SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
     SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
+    SMBF_HTTP_DG_CAPSULES                = 1 <<14,  /* HTTP Datagram capsules are enabled */
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-    SMBF_WEBTRANSPORT_SESSION_STREAM     = 1 <<14,  /* WEBTRANSPORT session stream */
-    SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM = 1 <<15,  /* WEBTRANSPORT client initiated bidi stream */
-#define N_SMBF_FLAGS 16
+    SMBF_WEBTRANSPORT_SESSION_STREAM     = 1 <<15,  /* WEBTRANSPORT session stream */
+    SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM = 1 <<16,  /* WEBTRANSPORT client initiated bidi stream */
+#define N_SMBF_FLAGS 17
 #else
-#define N_SMBF_FLAGS 14
+#define N_SMBF_FLAGS 15
 #endif
 };
 
@@ -268,7 +301,7 @@ struct lsquic_stream
     struct lsquic_conn_public      *conn_pub;
     TAILQ_ENTRY(lsquic_stream)      next_send_stream, next_read_stream,
                                         next_write_stream, next_service_stream,
-                                        next_prio_stream;
+                                        next_prio_stream, next_http_dg_stream;
 
     uint64_t                        tosend_off;
     uint64_t                        sm_payload;     /* Not counting HQ frames */
@@ -298,6 +331,9 @@ struct lsquic_stream
 
     /* We can safely use sm_hq_filter */
 #define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
+
+    struct http_dg_stream_state   *sm_http_dg;
+    void                           *sm_http_dg_consume_ctx;
 
     /** If @ref SMQF_WANT_FLUSH is set, flush until this offset. */
     uint64_t                        sm_flush_to;
@@ -393,6 +429,23 @@ struct lsquic_stream
     unsigned char                   sm_hist_buf[ 1 << SM_HIST_BITS ];
 #endif
 };
+
+#if LSQUIC_KEEP_STREAM_HISTORY
+void
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream);
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream);
+#else
+#define lsquic_stream_hist_http_dg_recv(stream) do { } while (0)
+#define lsquic_stream_hist_http_dg_send(stream) do { } while (0)
+#endif
+
+int
+lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream);
+
+int
+lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
+                                                    const void *buf, size_t sz);
 
 
 enum stream_ctor_flags
