@@ -192,6 +192,23 @@ wt_h3_error_to_app_error (uint64_t h3_error_code, uint64_t *wt_error_code)
     return 0;
 }
 
+#if LSQUIC_TEST
+int
+lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
+                                      uint64_t *h3_error_code)
+{
+    return wt_app_error_to_h3_error(wt_error_code, h3_error_code);
+}
+
+
+int
+lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
+                                      uint64_t *wt_error_code)
+{
+    return wt_h3_error_to_app_error(h3_error_code, wt_error_code);
+}
+#endif
+
 static void
 wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
                                                     lsquic_stream_id_t sess_id)

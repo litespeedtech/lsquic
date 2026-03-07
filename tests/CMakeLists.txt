@@ -4,6 +4,7 @@ INCLUDE_DIRECTORIES(../src/liblsquic)
 ENABLE_TESTING()
 
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLSQUIC_TEST=1")
+target_compile_definitions(lsquic PRIVATE LSQUIC_TEST=1)
 
 IF (MSVC)
     SET(LIB_FLAGS "-FORCE:MULTIPLE")
@@ -72,6 +73,7 @@ SET(TESTS
     trapa
     varint
     ver_nego
+    wt
     wuf_gquic_be
 )
 
