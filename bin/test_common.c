@@ -1575,8 +1575,8 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
         }
     }
 
-    s = sendmmsg(fd, mmsgs, count, 0);
-    if (s < (int) count)
+    s = sendmmsg(fd, mmsgs, i, 0);
+    if (s < (int) i)
     {
         saved_errno = errno;
         prog_sport_cant_send(sport->sp_prog, sport->fd);
