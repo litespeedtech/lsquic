@@ -1124,32 +1124,26 @@ drain_baton_stream_after_message (struct devious_baton_stream *st)
     unsigned char buf[256];
     ssize_t nread;
 
-    for (;;)
+    nread = lsquic_stream_read(st->dbs_stream, buf, sizeof(buf));
+    if (nread > 0)
     {
-        nread = lsquic_stream_read(st->dbs_stream, buf, sizeof(buf));
-        if (nread > 0)
-        {
-            LSQ_WARN("%s got trailing bytes in baton stream; closing session",
-                                                db_role(st->dbs_session));
-            lsquic_wt_close(st->dbs_session->wt_sess,
-                        DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
-            return;
-        }
-
-        if (nread == 0)
-        {
-            st->dbs_flags |= DBSF_PEER_FIN;
-            lsquic_stream_wantread(st->dbs_stream, 0);
-            maybe_close_baton_stream(st);
-            return;
-        }
-
-        if (errno == EWOULDBLOCK)
-            return;
-
-        db_close_baton_stream(st);
+        LSQ_WARN("%s got trailing bytes in baton stream; closing session",
+                                            db_role(st->dbs_session));
+        lsquic_wt_close(st->dbs_session->wt_sess,
+                    DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
         return;
     }
+
+    if (nread == 0)
+    {
+        st->dbs_flags |= DBSF_PEER_FIN;
+        lsquic_stream_wantread(st->dbs_stream, 0);
+        maybe_close_baton_stream(st);
+        return;
+    }
+
+    if (errno != EWOULDBLOCK)
+        db_close_baton_stream(st);
 }
 
 
