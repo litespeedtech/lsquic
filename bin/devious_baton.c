@@ -1672,8 +1672,8 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
     ssize_t nread;
 
     st = (struct devious_baton_stream *) st_h;
-    conn = stream ? (struct devious_baton_conn *)
-        lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
+    conn = (struct devious_baton_conn *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(stream));
 
     if (!st)
     {
@@ -1757,8 +1757,8 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
     ssize_t nwritten;
 
     st = (struct devious_baton_stream *) st_h;
-    conn = stream ? (struct devious_baton_conn *)
-        lsquic_conn_get_ctx(lsquic_stream_conn(stream)) : NULL;
+    conn = (struct devious_baton_conn *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(stream));
 
     if (!st)
         return;
