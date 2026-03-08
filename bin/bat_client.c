@@ -399,10 +399,15 @@ bat_client_on_http_dg_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
 
             if (ctx->capsule_payload_sz > 0)
                 want_sz = ctx->capsule_payload_sz;
-            else if (max_quic_payload > SIZE_MAX - 1)
-                want_sz = max_quic_payload;
             else
+            {
+                if (max_quic_payload == SIZE_MAX)
+                {
+                    LSQ_ERROR("max QUIC datagram payload too large");
+                    return -1;
+                }
                 want_sz = max_quic_payload + 1;
+            }
 
             if (want_sz <= max_quic_payload && max_quic_payload < SIZE_MAX)
                 want_sz = max_quic_payload + 1;
