@@ -4207,6 +4207,11 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
     ssize_t nw;
 
     len = reader->lsqr_size(reader->lsqr_ctx);
+#ifdef SSIZE_MAX
+    len = MIN(len, (size_t) SSIZE_MAX);
+#else
+    len = MIN(len, (size_t) PTRDIFF_MAX);
+#endif
     if (len == 0)
         return 0;
 
@@ -4244,7 +4249,7 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
     {
         lsquic_sendctl_gen_stream_blocked_frame(stream->conn_pub->send_ctl, stream);
     }
-    return nwritten;
+    return (ssize_t) nwritten;
 }
 
 
