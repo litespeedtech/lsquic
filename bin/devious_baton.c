@@ -543,33 +543,43 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         else if (el->xhdr.name_len == sizeof(":path") - 1
                 && 0 == memcmp(name, ":path", sizeof(":path") - 1))
         {
-            free(path);
-            if (0 != dup_header_value(value, el->xhdr.val_len, &path))
+            char *new_path;
+
+            if (0 != dup_header_value(value, el->xhdr.val_len, &new_path))
             {
                 snprintf(err_buf, err_sz, "cannot copy path");
                 goto end;
             }
+            free(path);
+            path = new_path;
         }
         else if (el->xhdr.name_len == sizeof(":authority") - 1
                 && 0 == memcmp(name, ":authority",
                                         sizeof(":authority") - 1))
         {
-            free(authority);
-            if (0 != dup_header_value(value, el->xhdr.val_len, &authority))
+            char *new_authority;
+
+            if (0 != dup_header_value(value, el->xhdr.val_len,
+                                                        &new_authority))
             {
                 snprintf(err_buf, err_sz, "cannot copy authority");
                 goto end;
             }
+            free(authority);
+            authority = new_authority;
         }
         else if (el->xhdr.name_len == sizeof("origin") - 1
                 && 0 == memcmp(name, "origin", sizeof("origin") - 1))
         {
-            free(origin);
-            if (0 != dup_header_value(value, el->xhdr.val_len, &origin))
+            char *new_origin;
+
+            if (0 != dup_header_value(value, el->xhdr.val_len, &new_origin))
             {
                 snprintf(err_buf, err_sz, "cannot copy origin");
                 goto end;
             }
+            free(origin);
+            origin = new_origin;
         }
     }
 
