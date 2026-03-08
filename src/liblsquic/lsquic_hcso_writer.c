@@ -130,6 +130,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
                         int is_server,
                         int wt_enabled)
 {
+    const struct lsquic_engine_public *enpub;
     unsigned char *p;
     unsigned bits;
     int was_empty;
@@ -144,6 +145,12 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     unsigned char buf[1 /* frame type */
         + HCSO_SETTINGS_FRAME_SIZE_LEN
         + HCSO_MAX_SETTINGS * (HCSO_MAX_VARINT_LEN + HCSO_MAX_VARINT_LEN)];
+
+    assert(writer);
+    assert(writer->how_stream);
+    assert(writer->how_stream->conn_pub);
+    assert(writer->how_stream->conn_pub->enpub);
+    enpub = writer->how_stream->conn_pub->enpub;
 
     p = buf;
     *p++ = HQFT_SETTINGS;
@@ -205,10 +212,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         }
     }
 
-    if (writer->how_stream
-            && writer->how_stream->conn_pub
-            && writer->how_stream->conn_pub->enpub
-            && writer->how_stream->conn_pub->enpub->enp_settings.es_http_datagrams)
+    if (enpub->enp_settings.es_http_datagrams)
     {
         /* Write out H3_DATAGRAM_ENABLED */
         bits = hcso_setting_type2bits(writer, HQSID_H3_DATAGRAM_ENABLED);
