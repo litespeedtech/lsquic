@@ -623,64 +623,14 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
 static int
 build_path (struct devious_baton_app *cfg)
 {
-    size_t off;
-    size_t path_base_len;
     int n;
 
-    off = 0;
-    n = snprintf(cfg->path_buf, sizeof(cfg->path_buf), "%s", cfg->path_base);
+    n = snprintf(cfg->path_buf, sizeof(cfg->path_buf),
+        "%s?version=%u&count=%u&baton=%u",
+        cfg->path_base ? cfg->path_base : DEVIOUS_BATON_PATH,
+        cfg->version, cfg->count, cfg->baton);
     if (n < 0 || (size_t) n >= sizeof(cfg->path_buf))
         return -1;
-    off += (size_t) n;
-    path_base_len = off;
-
-    if (cfg->version || cfg->count != 1 || cfg->baton != 0)
-    {
-        n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off, "?");
-        if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-            return -1;
-        off += (size_t) n;
-    }
-
-    if (cfg->version)
-    {
-        n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off,
-                                        "version=%u", cfg->version);
-        if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-            return -1;
-        off += (size_t) n;
-    }
-
-    if (cfg->count != 1)
-    {
-        if (off > path_base_len + 1)
-        {
-            n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off, "&");
-            if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-                return -1;
-            off += (size_t) n;
-        }
-        n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off,
-                                        "count=%u", cfg->count);
-        if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-            return -1;
-        off += (size_t) n;
-    }
-
-    if (cfg->baton != 0)
-    {
-        if (off > path_base_len + 1)
-        {
-            n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off, "&");
-            if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-                return -1;
-            off += (size_t) n;
-        }
-        n = snprintf(cfg->path_buf + off, sizeof(cfg->path_buf) - off,
-                                        "baton=%u", cfg->baton);
-        if (n < 0 || (size_t) n >= sizeof(cfg->path_buf) - off)
-            return -1;
-    }
 
     cfg->path = cfg->path_buf;
     return 0;
