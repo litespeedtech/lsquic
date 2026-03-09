@@ -65,11 +65,21 @@ struct wt_uni_read_ctx
     int                        done;
 };
 
+struct wt_dgq_elem
+{
+    TAILQ_ENTRY(wt_dgq_elem)   next;
+    unsigned char             *buf;
+    size_t                     len;
+};
+
+TAILQ_HEAD(wt_dgq_head, wt_dgq_elem);
+
 
 enum wt_session_flags
 {
     WTSF_CLOSING         = 1 << 0,
     WTSF_ON_CLOSE_CALLED = 1 << 1,
+    WTSF_WANT_DG_WRITE   = 1 << 2,
 };
 
 
@@ -92,8 +102,9 @@ struct lsquic_wt_session
     char                              *wts_protocol;
     struct lsquic_stream_if            wts_data_if;
     struct wt_onnew_ctx                wts_onnew_ctx;
-    unsigned char                     *wts_dg_buf;
-    size_t                             wts_dg_len;
+    struct wt_dgq_head                 wts_dgq;
+    size_t                             wts_dgq_bytes;
+    unsigned                           wts_dgq_count;
     unsigned                           wts_n_streams;
     enum wt_session_flags              wts_flags;
 };
@@ -107,6 +118,8 @@ struct wt_header_buf
 };
 
 #define WT_MAX_PENDING_STREAMS 64
+#define WT_DGQ_MAX_COUNT 64
+#define WT_DGQ_MAX_BYTES (256 * 1024)
 #define WT_APP_ERROR_MAX 0xFFFFFFFFULL
 #define WT_APP_ERROR_MIN_H3 0x52E4A40FA8DBULL
 #define WT_APP_ERROR_MAX_H3 0x52E5AC983162ULL
@@ -225,6 +238,156 @@ wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
     off += 1u << bits;
 
     *len = off;
+}
+
+
+static int
+wt_dgq_has_room (const struct lsquic_wt_session *sess, size_t len)
+{
+    return sess->wts_dgq_count < WT_DGQ_MAX_COUNT
+        && len <= WT_DGQ_MAX_BYTES
+        && sess->wts_dgq_bytes <= WT_DGQ_MAX_BYTES - len;
+}
+
+
+static void
+wt_dgq_drop_head (struct lsquic_wt_session *sess, const char *reason)
+{
+    WT_SET_CONN_FROM_SESSION(sess);
+    struct wt_dgq_elem *elem;
+
+    elem = TAILQ_FIRST(&sess->wts_dgq);
+    if (!elem)
+        return;
+
+    TAILQ_REMOVE(&sess->wts_dgq, elem, next);
+    if (sess->wts_dgq_count > 0)
+        --sess->wts_dgq_count;
+    if (sess->wts_dgq_bytes >= elem->len)
+        sess->wts_dgq_bytes -= elem->len;
+    else
+        sess->wts_dgq_bytes = 0;
+
+    LSQ_INFO("drop queued WT datagram for session %"PRIu64
+        " (%s, len=%zu, queued=%u/%zu)", sess->wts_stream_id,
+        reason ? reason : "unknown", elem->len, sess->wts_dgq_count,
+        sess->wts_dgq_bytes);
+
+    free(elem->buf);
+    free(elem);
+}
+
+
+static void
+wt_dgq_drop_all (struct lsquic_wt_session *sess)
+{
+    while (!TAILQ_EMPTY(&sess->wts_dgq))
+        wt_dgq_drop_head(sess, "session closed");
+}
+
+
+static int
+wt_dgq_arm_write (struct lsquic_wt_session *sess)
+{
+    WT_SET_CONN_FROM_SESSION(sess);
+    int rc;
+
+    rc = lsquic_stream_want_http_dg_write(sess->wts_control_stream, 1);
+    if (rc < 0)
+        LSQ_WARN("cannot arm WT datagram write on stream %"PRIu64": %s",
+                lsquic_stream_id(sess->wts_control_stream), strerror(errno));
+    return rc;
+}
+
+
+static int
+wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
+                                        enum lsquic_wt_dg_drop_policy policy)
+{
+    WT_SET_CONN_FROM_SESSION(sess);
+    struct wt_dgq_elem *elem;
+
+    if (policy == LSQWT_DG_DROP_OLDEST)
+        while (!wt_dgq_has_room(sess, len) && !TAILQ_EMPTY(&sess->wts_dgq))
+            wt_dgq_drop_head(sess, "policy=drop-oldest");
+
+    if (!wt_dgq_has_room(sess, len))
+    {
+        if (policy == LSQWT_DG_DROP_NEWEST)
+            LSQ_INFO("drop newest WT datagram in session %"PRIu64
+                " (len=%zu, queued=%u/%zu)", sess->wts_stream_id, len,
+                sess->wts_dgq_count, sess->wts_dgq_bytes);
+        else
+            LSQ_DEBUG("WT datagram queue full in session %"PRIu64
+                " (len=%zu, queued=%u/%zu)", sess->wts_stream_id, len,
+                sess->wts_dgq_count, sess->wts_dgq_bytes);
+        errno = EAGAIN;
+        return -1;
+    }
+
+    elem = malloc(sizeof(*elem));
+    if (!elem)
+        return -1;
+
+    elem->buf = malloc(len);
+    if (!elem->buf)
+    {
+        free(elem);
+        return -1;
+    }
+
+    memcpy(elem->buf, buf, len);
+    elem->len = len;
+    TAILQ_INSERT_TAIL(&sess->wts_dgq, elem, next);
+    ++sess->wts_dgq_count;
+    sess->wts_dgq_bytes += len;
+
+    LSQ_DEBUG("queued WT datagram in session %"PRIu64
+        " (len=%zu, queued=%u/%zu)", sess->wts_stream_id, len,
+        sess->wts_dgq_count, sess->wts_dgq_bytes);
+    return 0;
+}
+
+
+static int
+wt_dgq_send_one (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
+                            size_t max_quic_payload,
+                            lsquic_http_dg_consume_f consume_datagram)
+{
+    WT_SET_CONN_FROM_SESSION(sess);
+    struct wt_dgq_elem *elem;
+    int rc;
+
+    for (;;)
+    {
+        elem = TAILQ_FIRST(&sess->wts_dgq);
+        if (!elem)
+            return 0;
+        if (elem->len <= max_quic_payload)
+            break;
+        wt_dgq_drop_head(sess, "too large for max QUIC datagram payload");
+    }
+
+    rc = consume_datagram(stream, elem->buf, elem->len,
+                                            LSQUIC_HTTP_DG_SEND_DATAGRAM);
+    if (rc != 0)
+    {
+        LSQ_WARN("WT datagram consume failed on stream %"PRIu64
+                            ": %s", lsquic_stream_id(stream), strerror(errno));
+        return -1;
+    }
+
+    TAILQ_REMOVE(&sess->wts_dgq, elem, next);
+    if (sess->wts_dgq_count > 0)
+        --sess->wts_dgq_count;
+    if (sess->wts_dgq_bytes >= elem->len)
+        sess->wts_dgq_bytes -= elem->len;
+    else
+        sess->wts_dgq_bytes = 0;
+    free(elem->buf);
+    free(elem);
+
+    return 1;
 }
 
 
@@ -1056,9 +1219,7 @@ wt_session_finalize (struct lsquic_wt_session *sess, uint64_t code,
     LSQ_INFO("destroy WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
                                     sess->wts_stream_id, code, reason_len);
 
-    free(sess->wts_dg_buf);
-    sess->wts_dg_buf = NULL;
-    sess->wts_dg_len = 0;
+    wt_dgq_drop_all(sess);
 
     wt_free_connect_info(sess);
     free(sess);
@@ -1189,6 +1350,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_stream_if = params->stream_if;
     sess->wts_sess_ctx = params->sess_ctx;
     sess->wts_stream_id = lsquic_stream_id(connect_stream);
+    TAILQ_INIT(&sess->wts_dgq);
 
     if (0 != wt_copy_connect_info(sess, info))
     {
@@ -1602,13 +1764,20 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
+    return lsquic_wt_send_datagram_ex(sess, buf, len, LSQWT_DG_FAIL_EAGAIN);
+}
+
+
+ssize_t
+lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
+        size_t len, enum lsquic_wt_dg_drop_policy policy)
+{
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
-    unsigned char *copy;
     size_t max_sz;
     int rc;
 
-    if (!sess || !buf || len == 0)
+    if (!sess || !buf || len == 0 || policy > LSQWT_DG_DROP_NEWEST)
     {
         errno = EINVAL;
         LSQ_WARN("invalid WT datagram send arguments");
@@ -1623,14 +1792,6 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
         errno = EINVAL;
         LSQ_WARN("cannot send WT datagram in session %"PRIu64
                                     ": no control stream", sess->wts_stream_id);
-        return -1;
-    }
-
-    if (sess->wts_dg_buf)
-    {
-        errno = EAGAIN;
-        LSQ_DEBUG("WT datagram already queued in session %"PRIu64,
-                                                    sess->wts_stream_id);
         return -1;
     }
 
@@ -1651,34 +1812,53 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
         return -1;
     }
 
-    copy = malloc(len);
-    if (!copy)
-    {
-        LSQ_WARN("cannot allocate WT datagram buffer: len=%zu", len);
-        return -1;
-    }
-
-    memcpy(copy, buf, len);
-    sess->wts_dg_buf = copy;
-    sess->wts_dg_len = len;
-
-    rc = lsquic_stream_want_http_dg_write(control_stream, 1);
+    rc = wt_dgq_arm_write(sess);
     if (rc < 0)
-    {
-        LSQ_WARN("cannot enable WT HTTP datagram write on stream %"PRIu64
-                                        ": %s", lsquic_stream_id(control_stream),
-                                                        strerror(errno));
-        free(sess->wts_dg_buf);
-        sess->wts_dg_buf = NULL;
-        sess->wts_dg_len = 0;
         return -1;
-    }
 
-    LSQ_DEBUG("queued WT datagram for session %"PRIu64" on stream %"PRIu64,
+    if (0 != wt_dgq_enqueue(sess, buf, len, policy))
+        return -1;
+
+    LSQ_DEBUG("enqueued WT datagram for session %"PRIu64" on stream %"PRIu64,
         sess->wts_stream_id, lsquic_stream_id(control_stream));
     return (ssize_t) len;
 }
 
+
+int
+lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
+{
+    WT_SET_CONN_FROM_SESSION(sess);
+    struct lsquic_stream *control_stream;
+
+    if (!sess)
+    {
+        errno = EINVAL;
+        LSQ_WARN("WT datagram write interest called with NULL session");
+        return -1;
+    }
+
+    control_stream = sess->wts_control_stream;
+    if (!control_stream)
+    {
+        errno = EINVAL;
+        LSQ_WARN("WT datagram write interest called without control stream");
+        return -1;
+    }
+
+    if (is_want)
+    {
+        sess->wts_flags |= WTSF_WANT_DG_WRITE;
+        return wt_dgq_arm_write(sess);
+    }
+    else
+    {
+        sess->wts_flags &= ~WTSF_WANT_DG_WRITE;
+        if (sess->wts_dgq_count == 0)
+            return lsquic_stream_want_http_dg_write(control_stream, 0);
+        return 0;
+    }
+}
 
 
 size_t
@@ -1704,8 +1884,7 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
 {
     WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
-    unsigned char *buf;
-    size_t len;
+    unsigned had_queued;
     int rc;
 
     if (!stream || !consume_datagram)
@@ -1726,46 +1905,48 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
         return -1;
     }
 
-    if (!sess->wts_dg_buf)
+    had_queued = sess->wts_dgq_count;
+    if (had_queued)
     {
-        errno = EAGAIN;
-        LSQ_DEBUG("WT HTTP datagram write has no pending payload"
-                    " in session %"PRIu64, sess->wts_stream_id);
-        return -1;
+        rc = wt_dgq_send_one(sess, stream, max_quic_payload, consume_datagram);
+        if (rc < 0)
+            return -1;
+        if (rc > 0)
+            goto end;
     }
 
-    buf = sess->wts_dg_buf;
-    len = sess->wts_dg_len;
-
-    if (len > max_quic_payload)
+    if ((sess->wts_flags & WTSF_WANT_DG_WRITE)
+                        && sess->wts_if && sess->wts_if->on_wt_datagram_write)
     {
-        LSQ_WARN("WT datagram payload exceeds max on stream %"PRIu64
-            ": len=%zu, max=%zu", lsquic_stream_id(stream),
-            len, max_quic_payload);
-        free(sess->wts_dg_buf);
-        sess->wts_dg_buf = NULL;
-        sess->wts_dg_len = 0;
-        errno = EMSGSIZE;
-        return -1;
+        rc = sess->wts_if->on_wt_datagram_write((lsquic_wt_session_t *) sess,
+                                                        max_quic_payload);
+        if (rc < 0)
+        {
+            LSQ_WARN("WT datagram write callback failed in session %"PRIu64
+                        ": %s", sess->wts_stream_id, strerror(errno));
+            return -1;
+        }
     }
 
-    rc = consume_datagram(stream, buf, len, LSQUIC_HTTP_DG_SEND_DATAGRAM);
-    if (rc != 0)
+    if (sess->wts_dgq_count)
     {
-        LSQ_WARN("WT HTTP datagram consume failed on stream %"PRIu64
-                                    ": %s", lsquic_stream_id(stream),
-                                                    strerror(errno));
-        return -1;
+        rc = wt_dgq_send_one(sess, stream, max_quic_payload, consume_datagram);
+        if (rc < 0)
+            return -1;
+        if (rc > 0)
+            goto end;
     }
-
-    free(sess->wts_dg_buf);
-    sess->wts_dg_buf = NULL;
-    sess->wts_dg_len = 0;
 
     (void) lsquic_stream_want_http_dg_write(stream, 0);
+    errno = EAGAIN;
+    return -1;
+
+  end:
+    if (sess->wts_dgq_count == 0 && !(sess->wts_flags & WTSF_WANT_DG_WRITE))
+        (void) lsquic_stream_want_http_dg_write(stream, 0);
     LSQ_DEBUG("sent WT datagram on stream %"PRIu64" in session %"PRIu64
-                            " (len=%zu)", lsquic_stream_id(stream),
-                            sess->wts_stream_id, len);
+        " (queued_before=%u, queued_now=%u)", lsquic_stream_id(stream),
+        sess->wts_stream_id, had_queued, sess->wts_dgq_count);
     return 0;
 }
 

@@ -31,6 +31,13 @@ enum lsquic_wt_stream_initiator
     LSQWT_SERVER,
 };
 
+enum lsquic_wt_dg_drop_policy
+{
+    LSQWT_DG_FAIL_EAGAIN,
+    LSQWT_DG_DROP_OLDEST,
+    LSQWT_DG_DROP_NEWEST,
+};
+
 struct lsquic_wt_connect_info
 {
     const char *authority;
@@ -78,6 +85,9 @@ struct lsquic_webtransport_if
 
     void  (*on_wt_datagram) (lsquic_wt_session_t *sess,
                            const void *buf, size_t len);
+
+    int   (*on_wt_datagram_write) (lsquic_wt_session_t *sess,
+                                 size_t max_datagram_size);
 
     void  (*on_wt_stream_fin) (lsquic_stream_t *stream,
                              lsquic_stream_ctx_t *sctx);
@@ -158,6 +168,15 @@ lsquic_wt_stream_initiator (const lsquic_stream_t *stream);
 ssize_t
 lsquic_wt_send_datagram (lsquic_wt_session_t *sess,
                         const void *buf, size_t len);
+
+/** Send a WT datagram with explicit queue-full policy. */
+ssize_t
+lsquic_wt_send_datagram_ex (lsquic_wt_session_t *sess,
+    const void *buf, size_t len, enum lsquic_wt_dg_drop_policy policy);
+
+/** Control WT datagram write callback interest. */
+int
+lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want);
 
 /** Maximum datagram size for this session. */
 size_t
