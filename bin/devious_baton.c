@@ -52,6 +52,9 @@ struct devious_baton_session
     struct devious_baton_app              cfg;
     unsigned                              active_batons;
     unsigned                              active_streams;
+    unsigned                              dg_burst_pending;
+    unsigned                              dg_burst_sent;
+    unsigned                              dg_burst_failed;
     signed char                           closed;
 };
 
@@ -858,13 +861,69 @@ send_datagram_if_needed (struct devious_baton_session *sess,
     if (0 != write_baton_message(sess, baton, &buf, &len))
         return;
 
-    if (0 > lsquic_wt_send_datagram(sess->wt_sess, buf, len))
+    if (0 > lsquic_wt_send_datagram_ex(sess->wt_sess, buf, len,
+            (enum lsquic_wt_dg_drop_policy) sess->cfg.dg_drop_policy))
         LSQ_DEBUG("cannot send datagram: %s", strerror(errno));
     else
         LSQ_INFO("%s sent datagram carrying baton %u (%zu bytes)",
                                                 db_role(sess), baton, len);
 
     free(buf);
+}
+
+
+static const char *
+db_dg_policy (unsigned policy)
+{
+    switch ((enum lsquic_wt_dg_drop_policy) policy)
+    {
+    case LSQWT_DG_FAIL_EAGAIN:
+        return "fail";
+    case LSQWT_DG_DROP_OLDEST:
+        return "drop-oldest";
+    case LSQWT_DG_DROP_NEWEST:
+        return "drop-newest";
+    default:
+        return "unknown";
+    }
+}
+
+
+static void
+db_send_burst_datagram (struct devious_baton_session *bsess)
+{
+    unsigned char baton;
+    unsigned char *buf;
+    size_t len;
+    ssize_t nw;
+
+    while (bsess->dg_burst_pending > 0)
+    {
+        baton = (unsigned char) (bsess->cfg.baton + bsess->dg_burst_sent);
+        if (0 == baton)
+            baton = 1;
+        if (0 != write_baton_message(bsess, baton, &buf, &len))
+        {
+            LSQ_WARN("%s cannot allocate burst datagram payload",
+                                                        db_role(bsess));
+            break;
+        }
+        nw = lsquic_wt_send_datagram_ex(bsess->wt_sess, buf, len,
+            (enum lsquic_wt_dg_drop_policy) bsess->cfg.dg_drop_policy);
+        free(buf);
+
+        if (nw < 0)
+        {
+            ++bsess->dg_burst_failed;
+            if (errno == EAGAIN
+                && bsess->cfg.dg_drop_policy == LSQWT_DG_FAIL_EAGAIN)
+                break;
+        }
+        else
+            ++bsess->dg_burst_sent;
+
+        --bsess->dg_burst_pending;
+    }
 }
 
 
@@ -1127,6 +1186,14 @@ db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
         " (count=%u, initial baton=%u, padding=%u)", db_role(bsess),
         (uint64_t) lsquic_wt_session_id(sess), bsess->cfg.count,
         bsess->cfg.baton, bsess->cfg.padding_len);
+    bsess->dg_burst_pending = bsess->cfg.dg_burst_count;
+    if (bsess->dg_burst_pending > 0)
+    {
+        LSQ_INFO("%s enabling WT datagram write callback with burst=%u"
+            " policy=%s", db_role(bsess), bsess->dg_burst_pending,
+            db_dg_policy(bsess->cfg.dg_drop_policy));
+        (void) lsquic_wt_want_datagram_write(sess, 1);
+    }
 
     if (bsess->cfg.is_server)
     {
@@ -1241,6 +1308,35 @@ db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 }
 
 
+static int
+db_on_wt_datagram_write (struct lsquic_wt_session *sess,
+                                                size_t UNUSED_max_dg_size)
+{
+    struct devious_baton_session *bsess;
+
+    bsess = find_session(sess);
+    if (!bsess)
+        return 0;
+
+    if (bsess->dg_burst_pending == 0)
+    {
+        (void) lsquic_wt_want_datagram_write(sess, 0);
+        return 0;
+    }
+
+    db_send_burst_datagram(bsess);
+    if (bsess->dg_burst_pending == 0)
+    {
+        (void) lsquic_wt_want_datagram_write(sess, 0);
+        LSQ_INFO("%s burst datagram send complete: sent=%u failed=%u"
+            " policy=%s", db_role(bsess), bsess->dg_burst_sent,
+            bsess->dg_burst_failed, db_dg_policy(bsess->cfg.dg_drop_policy));
+    }
+
+    return 0;
+}
+
+
 static void
 db_on_wt_stream_fin (struct lsquic_stream *stream,
                                             struct lsquic_stream_ctx *sctx)
@@ -1321,6 +1417,7 @@ static const struct lsquic_webtransport_if wt_if =
     .on_wt_uni_stream    = db_on_wt_uni_stream,
     .on_wt_bidi_stream   = db_on_wt_bidi_stream,
     .on_wt_datagram      = db_on_wt_datagram,
+    .on_wt_datagram_write = db_on_wt_datagram_write,
     .on_wt_stream_fin    = db_on_wt_stream_fin,
     .on_wt_stream_reset  = db_on_wt_stream_reset,
     .on_wt_stop_sending  = db_on_wt_stop_sending,
@@ -1901,6 +1998,8 @@ devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
     app->count = 1;
     app->baton = 0;
     app->padding_len = 0;
+    app->dg_burst_count = 0;
+    app->dg_drop_policy = LSQWT_DG_FAIL_EAGAIN;
     app->max_count = 100;
     app->path_base = DEVIOUS_BATON_PATH;
     app->path = DEVIOUS_BATON_PATH;

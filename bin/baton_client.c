@@ -19,6 +19,7 @@
 #include <event2/event.h>
 
 #include "lsquic.h"
+#include "lsquic_wt.h"
 #include "devious_baton.h"
 #include "test_common.h"
 #include "prog.h"
@@ -39,6 +40,8 @@ usage (const char *prog)
 "Options:\n"
 "   -b value   Initial baton value (1-255)\n"
 "   -c count   Number of parallel batons\n"
+"   -U count   Burst WT datagrams to queue via write callback\n"
+"   -M policy  WT datagram queue-full policy: fail|oldest|newest\n"
 "   -P path    CONNECT path base (default: " DEVIOUS_BATON_PATH ")\n"
 "   -p bytes   Padding length for baton messages\n"
             , prog);
@@ -71,7 +74,7 @@ main (int argc, char **argv)
 
     devious_baton_app_init(&app, &prog, 0);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:P:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:U:M:P:p:h")))
     {
         switch (opt) {
         case 'b':
@@ -79,6 +82,22 @@ main (int argc, char **argv)
             break;
         case 'c':
             app.count = (unsigned) atoi(optarg);
+            break;
+        case 'U':
+            app.dg_burst_count = (unsigned) atoi(optarg);
+            break;
+        case 'M':
+            if (0 == strcmp(optarg, "fail"))
+                app.dg_drop_policy = LSQWT_DG_FAIL_EAGAIN;
+            else if (0 == strcmp(optarg, "oldest"))
+                app.dg_drop_policy = LSQWT_DG_DROP_OLDEST;
+            else if (0 == strcmp(optarg, "newest"))
+                app.dg_drop_policy = LSQWT_DG_DROP_NEWEST;
+            else
+            {
+                LSQ_ERROR("unknown datagram policy `%s'", optarg);
+                exit(1);
+            }
             break;
         case 'P':
             app.path_base = optarg;
