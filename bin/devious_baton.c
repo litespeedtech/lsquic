@@ -1996,7 +1996,7 @@ devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
     app->is_server = is_server;
     app->version = 0;
     app->count = 1;
-    app->baton = 0;
+    app->baton = 1;
     app->padding_len = 0;
     app->dg_burst_count = 0;
     app->dg_drop_policy = LSQWT_DG_FAIL_EAGAIN;

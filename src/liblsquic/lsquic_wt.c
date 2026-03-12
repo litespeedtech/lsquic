@@ -164,6 +164,13 @@ static void
 wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len);
 
+static int
+wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
+                enum lsquic_wt_dg_drop_policy policy);
+
+static void
+wt_dgq_drop_all (struct lsquic_wt_session *sess);
+
 static void
 wt_stream_bind_session (struct lsquic_wt_session *sess,
                                                 struct lsquic_stream *stream);
@@ -221,6 +228,94 @@ lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                       uint64_t *wt_error_code)
 {
     return wt_h3_error_to_app_error(h3_error_code, wt_error_code);
+}
+
+
+lsquic_wt_session_t *
+lsquic_wt_test_dgq_session_new (unsigned max_count, size_t max_bytes)
+{
+    struct lsquic_wt_session *sess;
+
+    sess = calloc(1, sizeof(*sess));
+    if (!sess)
+        return NULL;
+
+    TAILQ_INIT(&sess->wts_dgq);
+    sess->wts_dgq_max_count = max_count ? max_count : WT_DGQ_DF_MAX_COUNT;
+    sess->wts_dgq_max_bytes = max_bytes ? max_bytes : WT_DGQ_DF_MAX_BYTES;
+    return (lsquic_wt_session_t *) sess;
+}
+
+
+void
+lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess)
+{
+    if (sess)
+    {
+        wt_dgq_drop_all((struct lsquic_wt_session *) sess);
+        free(sess);
+    }
+}
+
+
+int
+lsquic_wt_test_dgq_enqueue (lsquic_wt_session_t *sess, const void *buf,
+                            size_t len,
+                            enum lsquic_wt_dg_drop_policy policy)
+{
+    return wt_dgq_enqueue((struct lsquic_wt_session *) sess, buf, len, policy);
+}
+
+
+unsigned
+lsquic_wt_test_dgq_count (const lsquic_wt_session_t *sess)
+{
+    const struct lsquic_wt_session *const s = (const struct lsquic_wt_session *) sess;
+    return s ? s->wts_dgq_count : 0;
+}
+
+
+size_t
+lsquic_wt_test_dgq_bytes (const lsquic_wt_session_t *sess)
+{
+    const struct lsquic_wt_session *const s = (const struct lsquic_wt_session *) sess;
+    return s ? s->wts_dgq_bytes : 0;
+}
+
+
+int
+lsquic_wt_test_dgq_front (const lsquic_wt_session_t *sess, unsigned char *val)
+{
+    const struct lsquic_wt_session *const s = (const struct lsquic_wt_session *) sess;
+    const struct wt_dgq_elem *elem;
+
+    if (!s || !val)
+        return -1;
+
+    elem = TAILQ_FIRST(&s->wts_dgq);
+    if (!elem)
+        return -1;
+
+    *val = elem->buf[0];
+    return 0;
+}
+
+
+int
+lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess, unsigned char *val)
+{
+    const struct lsquic_wt_session *const s = (const struct lsquic_wt_session *) sess;
+    const struct wt_dgq_elem *elem;
+
+    if (!s || !val)
+        return -1;
+
+    elem = TAILQ_LAST(&s->wts_dgq, wt_dgq_head);
+    if (!elem)
+        return -1;
+
+    *val = elem->buf[0];
+    return 0;
 }
 #endif
 

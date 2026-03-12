@@ -1,5 +1,6 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
@@ -23,6 +24,18 @@ int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
 int lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                           uint64_t *wt_error_code);
+lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
+                                                     size_t max_bytes);
+void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
+int lsquic_wt_test_dgq_enqueue (lsquic_wt_session_t *sess, const void *buf,
+                                size_t len,
+                                enum lsquic_wt_dg_drop_policy policy);
+unsigned lsquic_wt_test_dgq_count (const lsquic_wt_session_t *sess);
+size_t lsquic_wt_test_dgq_bytes (const lsquic_wt_session_t *sess);
+int lsquic_wt_test_dgq_front (const lsquic_wt_session_t *sess,
+                              unsigned char *val);
+int lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess,
+                             unsigned char *val);
 
 
 static void
@@ -213,6 +226,82 @@ test_invalid_public_api (void)
     assert(lsquic_wt_stream_get_ctx(&stream) == NULL);
 }
 
+static void
+test_dgq_policies (void)
+{
+    lsquic_wt_session_t *sess;
+    unsigned char v;
+    const unsigned char b1[2] = { 1, 1, };
+    const unsigned char b2[2] = { 2, 2, };
+    const unsigned char b3[2] = { 3, 3, };
+    const unsigned char b4[2] = { 4, 4, };
+    const unsigned char b5[2] = { 5, 5, };
+
+    sess = lsquic_wt_test_dgq_session_new(4, 8);
+    assert(sess);
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b1, sizeof(b1),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b2, sizeof(b2),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b3, sizeof(b3),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b4, sizeof(b4),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    errno = 0;
+    assert(0 != lsquic_wt_test_dgq_enqueue(sess, b5, sizeof(b5),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(EAGAIN == errno);
+    assert(4 == lsquic_wt_test_dgq_count(sess));
+    assert(8 == lsquic_wt_test_dgq_bytes(sess));
+    assert(0 == lsquic_wt_test_dgq_front(sess, &v));
+    assert(1 == v);
+    assert(0 == lsquic_wt_test_dgq_back(sess, &v));
+    assert(4 == v);
+    lsquic_wt_test_dgq_session_destroy(sess);
+
+    sess = lsquic_wt_test_dgq_session_new(4, 8);
+    assert(sess);
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b1, sizeof(b1),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b2, sizeof(b2),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b3, sizeof(b3),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b4, sizeof(b4),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b5, sizeof(b5),
+                                            LSQWT_DG_DROP_OLDEST));
+    assert(4 == lsquic_wt_test_dgq_count(sess));
+    assert(8 == lsquic_wt_test_dgq_bytes(sess));
+    assert(0 == lsquic_wt_test_dgq_front(sess, &v));
+    assert(2 == v);
+    assert(0 == lsquic_wt_test_dgq_back(sess, &v));
+    assert(5 == v);
+    lsquic_wt_test_dgq_session_destroy(sess);
+
+    sess = lsquic_wt_test_dgq_session_new(4, 8);
+    assert(sess);
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b1, sizeof(b1),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b2, sizeof(b2),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b3, sizeof(b3),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    assert(0 == lsquic_wt_test_dgq_enqueue(sess, b4, sizeof(b4),
+                                            LSQWT_DG_FAIL_EAGAIN));
+    errno = 0;
+    assert(0 != lsquic_wt_test_dgq_enqueue(sess, b5, sizeof(b5),
+                                            LSQWT_DG_DROP_NEWEST));
+    assert(EAGAIN == errno);
+    assert(4 == lsquic_wt_test_dgq_count(sess));
+    assert(8 == lsquic_wt_test_dgq_bytes(sess));
+    assert(0 == lsquic_wt_test_dgq_front(sess, &v));
+    assert(1 == v);
+    assert(0 == lsquic_wt_test_dgq_back(sess, &v));
+    assert(4 == v);
+    lsquic_wt_test_dgq_session_destroy(sess);
+}
+
 
 int
 main (void)
@@ -221,5 +310,6 @@ main (void)
     test_peer_query_helpers();
     test_stream_helpers();
     test_invalid_public_api();
+    test_dgq_policies();
     return 0;
 }
