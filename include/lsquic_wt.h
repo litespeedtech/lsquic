@@ -64,6 +64,8 @@ struct lsquic_wt_accept_params
     const struct lsquic_wt_stream_if *stream_if; /* stream callbacks */
     const struct lsquic_wt_connect_info *connect_info; /* optional */
     lsquic_wt_session_ctx_t *sess_ctx; /* optional if on_wt_session_open used */
+    unsigned max_datagram_queue_count; /* default 64 when zero */
+    size_t max_datagram_queue_bytes;   /* default 256*1024 when zero */
 };
 
 struct lsquic_webtransport_if
@@ -83,7 +85,7 @@ struct lsquic_webtransport_if
     lsquic_stream_ctx_t *
      (*on_wt_bidi_stream) (lsquic_wt_session_t *sess, lsquic_stream_t *stream);
 
-    void  (*on_wt_datagram) (lsquic_wt_session_t *sess,
+    void  (*on_wt_datagram_read) (lsquic_wt_session_t *sess,
                            const void *buf, size_t len);
 
     int   (*on_wt_datagram_write) (lsquic_wt_session_t *sess,
