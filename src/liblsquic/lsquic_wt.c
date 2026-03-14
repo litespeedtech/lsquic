@@ -179,6 +179,10 @@ wt_stream_bind_session (struct lsquic_wt_session *sess,
 static void
 wt_stream_unbind_session (struct lsquic_stream *stream);
 
+static void
+wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
+                                        int how, struct lsquic_conn *conn);
+
 static int
 wt_is_reserved_h3_error_code (uint64_t h3_error_code)
 {
@@ -651,21 +655,28 @@ wt_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 static void
 wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
 {
+    WT_SET_CONN_FROM_STREAM(stream);
+    struct wt_stream_ctx *wctx;
+
+    wctx = (struct wt_stream_ctx *) sctx;
+    wt_on_reset_core(stream, wctx, how, conn);
+}
+
+
+static void
+wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
+                                        int how, struct lsquic_conn *conn)
+{
     enum wt_reset_event_mask
     {
         WT_REM_STREAM_RESET = 1 << 0,
         WT_REM_STOP_SENDING = 1 << 1,
     };
-
-    WT_SET_CONN_FROM_STREAM(stream);
-    struct wt_stream_ctx *wctx;
     unsigned evmask;
     uint64_t h3_error_code, wt_error_code;
 
-    if (!stream || !sctx)
+    if (!stream || !wctx)
         return;
-
-    wctx = (struct wt_stream_ctx *) sctx;
     if (!wctx->sess || !wctx->sess->wts_if)
         return;
 
@@ -713,6 +724,88 @@ wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
                                                             h3_error_code);
     }
 }
+
+
+#if LSQUIC_TEST
+struct wt_test_reset_result
+{
+    unsigned called;
+    uint64_t reset_code;
+    uint64_t stop_code;
+};
+
+
+static void
+wt_test_on_stream_reset (struct lsquic_stream *UNUSED_stream,
+                         struct lsquic_stream_ctx *sctx, uint64_t error_code)
+{
+    struct wt_test_reset_result *result;
+
+    result = (struct wt_test_reset_result *) sctx;
+    result->called |= 1;
+    result->reset_code = error_code;
+}
+
+
+static void
+wt_test_on_stop_sending (struct lsquic_stream *UNUSED_stream,
+                         struct lsquic_stream_ctx *sctx, uint64_t error_code)
+{
+    struct wt_test_reset_result *result;
+
+    result = (struct wt_test_reset_result *) sctx;
+    result->called |= 2;
+    result->stop_code = error_code;
+}
+
+
+int
+lsquic_wt_test_dispatch_reset (int how, int ss_received, int with_ctx,
+                               int with_if, uint64_t rst_in_code,
+                               uint64_t ss_in_code, unsigned *called,
+                               uint64_t *reset_code, uint64_t *stop_code)
+{
+    struct wt_test_reset_result result;
+    struct lsquic_stream stream;
+    struct wt_stream_ctx wctx;
+    struct lsquic_wt_session sess;
+    struct lsquic_webtransport_if wt_if;
+
+    memset(&result, 0, sizeof(result));
+    memset(&stream, 0, sizeof(stream));
+    memset(&wctx, 0, sizeof(wctx));
+    memset(&sess, 0, sizeof(sess));
+    memset(&wt_if, 0, sizeof(wt_if));
+
+    if (with_if)
+    {
+        wt_if.wti_on_stream_reset = wt_test_on_stream_reset;
+        wt_if.wti_on_stop_sending = wt_test_on_stop_sending;
+        sess.wts_if = &wt_if;
+    }
+
+    stream.sm_rst_in_code = rst_in_code;
+    stream.sm_ss_in_code = ss_in_code;
+    if (ss_received)
+        stream.stream_flags |= STREAM_SS_RECVD;
+    wctx.sess = &sess;
+    wctx.app_ctx = (lsquic_stream_ctx_t *) &result;
+
+    if (with_ctx)
+        wt_on_reset_core(&stream, &wctx, how, NULL);
+    else
+        wt_on_reset_core(&stream, NULL, how, NULL);
+
+    if (called)
+        *called = result.called;
+    if (reset_code)
+        *reset_code = result.reset_code;
+    if (stop_code)
+        *stop_code = result.stop_code;
+
+    return 0;
+}
+#endif
 
 static lsquic_stream_ctx_t *
 wt_uni_on_new (void *UNUSED_ctx, struct lsquic_stream *stream)

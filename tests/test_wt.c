@@ -24,6 +24,10 @@ int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
 int lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                           uint64_t *wt_error_code);
+int lsquic_wt_test_dispatch_reset (int how, int ss_received, int with_ctx,
+                                   int with_if, uint64_t rst_in_code,
+                                   uint64_t ss_in_code, unsigned *called,
+                                   uint64_t *reset_code, uint64_t *stop_code);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -301,6 +305,54 @@ test_dgq_policies (void)
 }
 
 
+static void
+test_reset_dispatch (void)
+{
+    uint64_t h3_rst, h3_ss;
+    uint64_t reset_code, stop_code;
+    unsigned called;
+
+    assert(0 == lsquic_wt_test_app_error_to_h3_error(0x11, &h3_rst));
+    assert(0 == lsquic_wt_test_app_error_to_h3_error(0x22, &h3_ss));
+
+    called = 0;
+    reset_code = 0;
+    stop_code = 0;
+    assert(0 == lsquic_wt_test_dispatch_reset(2, 1, 1, 1, h3_rst, h3_ss,
+                            &called, &reset_code, &stop_code));
+    assert(3 == called);
+    assert(0x11 == reset_code);
+    assert(0x22 == stop_code);
+
+    called = 0;
+    reset_code = 0;
+    stop_code = 0;
+    assert(0 == lsquic_wt_test_dispatch_reset(1, 0, 1, 1, h3_rst, h3_ss,
+                            &called, &reset_code, &stop_code));
+    assert(2 == called);
+    assert(0 == reset_code);
+    assert(0x11 == stop_code);
+
+    called = 0;
+    reset_code = 0;
+    stop_code = 0;
+    assert(0 == lsquic_wt_test_dispatch_reset(0, 1, 0, 1, h3_rst, h3_ss,
+                            &called, &reset_code, &stop_code));
+    assert(0 == called);
+    assert(0 == reset_code);
+    assert(0 == stop_code);
+
+    called = 0;
+    reset_code = 0;
+    stop_code = 0;
+    assert(0 == lsquic_wt_test_dispatch_reset(2, 1, 1, 0, h3_rst, h3_ss,
+                            &called, &reset_code, &stop_code));
+    assert(0 == called);
+    assert(0 == reset_code);
+    assert(0 == stop_code);
+}
+
+
 int
 main (void)
 {
@@ -309,5 +361,6 @@ main (void)
     test_stream_helpers();
     test_invalid_public_api();
     test_dgq_policies();
+    test_reset_dispatch();
     return 0;
 }
