@@ -1399,6 +1399,13 @@ db_on_wt_stop_sending (struct lsquic_stream *stream,
                                 "WHATEVER", "received STOP_SENDING");
 }
 
+static void on_read (struct lsquic_stream *stream,
+                     struct lsquic_stream_ctx *st_h);
+static void on_write (struct lsquic_stream *stream,
+                      struct lsquic_stream_ctx *st_h);
+static void on_close (struct lsquic_stream *stream,
+                      struct lsquic_stream_ctx *st_h);
+
 
 static uint64_t
 db_ss_code (struct lsquic_stream *UNUSED_stream,
@@ -1410,6 +1417,10 @@ db_ss_code (struct lsquic_stream *UNUSED_stream,
 
 static const struct lsquic_webtransport_if wt_if =
 {
+    .on_wt_stream_read   = on_read,
+    .on_wt_stream_write  = on_write,
+    .on_wt_stream_close  = on_close,
+    .on_wt_stream_ss_code = db_ss_code,
     .on_wt_session_open  = db_on_wt_session_open,
     .on_wt_session_close = db_on_wt_session_close,
     .on_wt_uni_stream    = db_on_wt_uni_stream,
@@ -1588,8 +1599,10 @@ process_control_server (struct devious_baton_stream *st)
     params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
-    params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = &info;
+    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+                                                    cfg.dg_drop_policy;
+    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free_connect_info(&info);
@@ -1673,8 +1686,10 @@ process_control_client (struct devious_baton_stream *st)
     memset(&params, 0, sizeof(params));
     params.wt_if = &wt_if;
     params.wt_if_ctx = st->dbs_conn->app;
-    params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = &info;
+    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+                                        st->dbs_conn->app->dg_drop_policy;
+    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free(protocol);
@@ -1976,15 +1991,6 @@ static const struct lsquic_stream_if devious_baton_stream_if_impl =
     .on_close               = on_close,
 };
 
-static const struct lsquic_wt_stream_if devious_baton_wt_stream_if_impl =
-{
-    .on_read                = on_read,
-    .on_write               = on_write,
-    .on_close               = on_close,
-    .ss_code                = db_ss_code,
-};
-
-
 void
 devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
                                                                     int is_server)
@@ -2043,7 +2049,6 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.status = 200;
     params.wt_if = &wt_if;
     params.wt_if_ctx = &cfg;
-    params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = info;
     params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
                                                     cfg.dg_drop_policy;
@@ -2090,12 +2095,6 @@ const struct lsquic_stream_if *
 devious_baton_stream_if (void)
 {
     return &devious_baton_stream_if_impl;
-}
-
-const struct lsquic_wt_stream_if *
-devious_baton_wt_stream_if (void)
-{
-    return &devious_baton_wt_stream_if_impl;
 }
 
 

@@ -47,21 +47,12 @@ struct lsquic_wt_connect_info
     unsigned    draft;      /* negotiated WebTransport draft version, if known */
 };
 
-struct lsquic_wt_stream_if
-{
-    void  (*on_read)  (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
-    void  (*on_write) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
-    void  (*on_close) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
-    uint64_t (*ss_code) (lsquic_stream_t *stream, lsquic_stream_ctx_t *sctx);
-};
-
 struct lsquic_wt_accept_params
 {
     const struct lsquic_http_headers *extra_resp_headers; /* optional */
     unsigned status;      /* default 200 */
     const struct lsquic_webtransport_if *wt_if; /* per-session callbacks */
     void *wt_if_ctx;      /* passed to on_wt_session_open */
-    const struct lsquic_wt_stream_if *stream_if; /* stream callbacks */
     const struct lsquic_wt_connect_info *connect_info; /* optional */
     lsquic_wt_session_ctx_t *sess_ctx; /* optional if on_wt_session_open used */
     unsigned max_datagram_queue_count; /* default 64 when zero */
@@ -72,6 +63,18 @@ struct lsquic_wt_accept_params
 
 struct lsquic_webtransport_if
 {
+    void  (*on_wt_stream_read) (lsquic_stream_t *stream,
+                                lsquic_stream_ctx_t *sctx);
+
+    void  (*on_wt_stream_write) (lsquic_stream_t *stream,
+                                 lsquic_stream_ctx_t *sctx);
+
+    void  (*on_wt_stream_close) (lsquic_stream_t *stream,
+                                 lsquic_stream_ctx_t *sctx);
+
+    uint64_t (*on_wt_stream_ss_code) (lsquic_stream_t *stream,
+                                      lsquic_stream_ctx_t *sctx);
+
     lsquic_wt_session_ctx_t *
      (*on_wt_session_open) (void *ctx, lsquic_wt_session_t *sess,
                           const struct lsquic_wt_connect_info *info);
