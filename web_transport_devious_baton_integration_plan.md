@@ -117,6 +117,25 @@ Client flow:
 
 This turns the existing examples into a self-contained interop test harness.
 
+### Runtime Queue Tuning (current tools)
+
+You can tune per-session WT datagram queue limits at runtime without code
+changes:
+
+- `baton_client`
+  - `-u <count>`: max queued WT datagrams (0 = library default)
+  - `-v <bytes>`: max queued WT datagram bytes (0 = library default)
+- `http_server -B`
+  - `-u <count>`: max queued WT datagrams (0 = library default)
+  - `-v <bytes>`: max queued WT datagram bytes (0 = library default)
+
+Example:
+
+```bash
+./bin/http_server -c localhost,server.crt,server.key -s 127.0.0.1:12347 -B -u 64 -v 65536 -L info
+./bin/baton_client -s localhost:12347 -u 64 -v 65536 -M oldest -U 200 -L info
+```
+
 ---
 
 ## Benefits of This Approach
