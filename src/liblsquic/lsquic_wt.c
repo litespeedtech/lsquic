@@ -553,18 +553,18 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     {
         if (lsquic_wt_stream_dir(stream) == LSQWT_UNI)
         {
-            if (sess->wts_if->on_wt_uni_stream)
-                app_ctx = sess->wts_if->on_wt_uni_stream(
+            if (sess->wts_if->wti_on_uni_stream)
+                app_ctx = sess->wts_if->wti_on_uni_stream(
                                     (lsquic_wt_session_t *) sess, stream);
         }
-        else if (sess->wts_if->on_wt_bidi_stream)
-            app_ctx = sess->wts_if->on_wt_bidi_stream(
+        else if (sess->wts_if->wti_on_bidi_stream)
+            app_ctx = sess->wts_if->wti_on_bidi_stream(
                                     (lsquic_wt_session_t *) sess, stream);
     }
 
     wctx->app_ctx = app_ctx;
     if (sess->wts_if)
-        wctx->ss_code = sess->wts_if->on_wt_stream_ss_code;
+        wctx->ss_code = sess->wts_if->wti_on_stream_ss_code;
     LSQ_DEBUG("initialized WT stream %"PRIu64" in session %"PRIu64
             " (dir=%s, initiator=%s, prefix_len=%zu)",
             lsquic_stream_id(stream), sess->wts_stream_id,
@@ -586,7 +586,7 @@ wt_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
     struct wt_stream_ctx *wctx = (struct wt_stream_ctx *) sctx;
 
     if (!wctx || !wctx->sess || !wctx->sess->wts_if
-        || !wctx->sess->wts_if->on_wt_stream_read)
+        || !wctx->sess->wts_if->wti_on_stream_read)
     {
         LSQ_DEBUG("skip WT on_read for stream %"PRIu64": no callback",
                                                 lsquic_stream_id(stream));
@@ -595,7 +595,7 @@ wt_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 
     LSQ_DEBUG("dispatch WT on_read for stream %"PRIu64" session %"PRIu64,
                         lsquic_stream_id(stream), wctx->sess->wts_stream_id);
-    wctx->sess->wts_if->on_wt_stream_read(stream, wctx->app_ctx);
+    wctx->sess->wts_if->wti_on_stream_read(stream, wctx->app_ctx);
 }
 
 static void
@@ -625,11 +625,11 @@ wt_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
         wctx->prefix_off += (size_t) nw;
     }
 
-    if (wctx->sess->wts_if->on_wt_stream_write)
+    if (wctx->sess->wts_if->wti_on_stream_write)
     {
         LSQ_DEBUG("dispatch WT on_write for stream %"PRIu64" session %"PRIu64,
                         lsquic_stream_id(stream), wctx->sess->wts_stream_id);
-        wctx->sess->wts_if->on_wt_stream_write(stream, wctx->app_ctx);
+        wctx->sess->wts_if->wti_on_stream_write(stream, wctx->app_ctx);
     }
 }
 
@@ -641,8 +641,8 @@ wt_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 
     LSQ_DEBUG("WT stream %"PRIu64" closed", lsquic_stream_id(stream));
     if (wctx && wctx->sess && wctx->sess->wts_if
-        && wctx->sess->wts_if->on_wt_stream_close)
-        wctx->sess->wts_if->on_wt_stream_close(stream, wctx->app_ctx);
+        && wctx->sess->wts_if->wti_on_stream_close)
+        wctx->sess->wts_if->wti_on_stream_close(stream, wctx->app_ctx);
 
     free(wctx);
 }
@@ -664,21 +664,21 @@ wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
     switch (how)
     {
     case 0:
-        if (!wctx->sess->wts_if->on_wt_stream_reset)
+        if (!wctx->sess->wts_if->wti_on_stream_reset)
             return;
         h3_error_code = stream->sm_rst_in_code;
         if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
             h3_error_code = wt_error_code;
-        wctx->sess->wts_if->on_wt_stream_reset(stream, wctx->app_ctx,
+        wctx->sess->wts_if->wti_on_stream_reset(stream, wctx->app_ctx,
                                                             h3_error_code);
         return;
     case 1:
-        if (!wctx->sess->wts_if->on_wt_stop_sending)
+        if (!wctx->sess->wts_if->wti_on_stop_sending)
             return;
         h3_error_code = stream->sm_ss_in_code;
         if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
             h3_error_code = wt_error_code;
-        wctx->sess->wts_if->on_wt_stop_sending(stream, wctx->app_ctx,
+        wctx->sess->wts_if->wti_on_stop_sending(stream, wctx->app_ctx,
                                                             h3_error_code);
         return;
     default:
@@ -1335,8 +1335,8 @@ wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
         sess->wts_if = NULL;
         sess->wts_sess_ctx = NULL;
         if (!(sess->wts_flags & WTSF_ON_CLOSE_CALLED) && wt_if
-                                                && wt_if->on_wt_session_close)
-            wt_if->on_wt_session_close((lsquic_wt_session_t *) sess,
+                                                && wt_if->wti_on_session_close)
+            wt_if->wti_on_session_close((lsquic_wt_session_t *) sess,
                                 sess_ctx, code, reason, reason_len);
         sess->wts_flags |= WTSF_ON_CLOSE_CALLED;
 
@@ -1372,7 +1372,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
-    if (!params->wt_if || !params->wt_if->on_wt_stream_read)
+    if (!params->wt_if || !params->wt_if->wti_on_stream_read)
     {
         errno = EINVAL;
         LSQ_WARN("WT accept called without stream read callback on stream %"PRIu64,
@@ -1467,8 +1467,8 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     lsquic_stream_set_webtransport_session(connect_stream);
     TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
 
-    if (sess->wts_if && sess->wts_if->on_wt_session_open)
-        sess->wts_sess_ctx = sess->wts_if->on_wt_session_open(
+    if (sess->wts_if && sess->wts_if->wti_on_session_open)
+        sess->wts_sess_ctx = sess->wts_if->wti_on_session_open(
                         sess->wts_if_ctx, (lsquic_wt_session_t *) sess,
                         &sess->wts_info);
     wt_replay_pending_streams(sess);
@@ -1980,9 +1980,9 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
     }
 
     if ((sess->wts_flags & WTSF_WANT_DG_WRITE)
-                        && sess->wts_if && sess->wts_if->on_wt_datagram_write)
+                        && sess->wts_if && sess->wts_if->wti_on_datagram_write)
     {
-        rc = sess->wts_if->on_wt_datagram_write((lsquic_wt_session_t *) sess,
+        rc = sess->wts_if->wti_on_datagram_write((lsquic_wt_session_t *) sess,
                                                         max_quic_payload);
         if (rc < 0)
         {
@@ -2036,11 +2036,11 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
         return;
     }
 
-    if (sess->wts_if && sess->wts_if->on_wt_datagram_read)
+    if (sess->wts_if && sess->wts_if->wti_on_datagram_read)
     {
         LSQ_DEBUG("deliver WT datagram to session %"PRIu64,
                                                     sess->wts_stream_id);
-        sess->wts_if->on_wt_datagram_read((lsquic_wt_session_t *) sess,
+        sess->wts_if->wti_on_datagram_read((lsquic_wt_session_t *) sess,
                                                                     buf, len);
     }
 }

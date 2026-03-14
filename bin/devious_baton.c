@@ -1165,7 +1165,7 @@ drain_baton_stream_after_message (struct devious_baton_stream *st)
 
 
 static lsquic_wt_session_ctx_t *
-db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
+db_wti_on_session_open (void *ctx, struct lsquic_wt_session *sess,
                             const struct lsquic_wt_connect_info *UNUSED_info)
 {
     struct devious_baton_app *cfg;
@@ -1214,7 +1214,7 @@ db_on_wt_session_open (void *ctx, struct lsquic_wt_session *sess,
 
 
 static void
-db_on_wt_session_close (struct lsquic_wt_session *sess,
+db_wti_on_session_close (struct lsquic_wt_session *sess,
                                 struct lsquic_wt_session_ctx *sctx,
                                 uint64_t UNUSED_code,
                                 const char *UNUSED_reason,
@@ -1274,7 +1274,7 @@ db_on_wt_stream (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
 
 
 static lsquic_stream_ctx_t *
-db_on_wt_uni_stream (struct lsquic_wt_session *sess,
+db_wti_on_uni_stream (struct lsquic_wt_session *sess,
                                             struct lsquic_stream *stream)
 {
     return db_on_wt_stream(sess, stream, LSQWT_UNI);
@@ -1282,7 +1282,7 @@ db_on_wt_uni_stream (struct lsquic_wt_session *sess,
 
 
 static lsquic_stream_ctx_t *
-db_on_wt_bidi_stream (struct lsquic_wt_session *sess,
+db_wti_on_bidi_stream (struct lsquic_wt_session *sess,
                                             struct lsquic_stream *stream)
 {
     return db_on_wt_stream(sess, stream, LSQWT_BIDI);
@@ -1307,7 +1307,7 @@ db_on_wt_datagram (struct lsquic_wt_session *sess, const void *buf, size_t len)
 
 
 static int
-db_on_wt_datagram_write (struct lsquic_wt_session *sess,
+db_wti_on_datagram_write (struct lsquic_wt_session *sess,
                                                 size_t UNUSED_max_dg_size)
 {
     struct devious_baton_session *bsess;
@@ -1354,7 +1354,7 @@ db_on_wt_stream_fin (struct lsquic_stream *stream,
 
 
 static void
-db_on_wt_stream_reset (struct lsquic_stream *stream,
+db_wti_on_stream_reset (struct lsquic_stream *stream,
                                             struct lsquic_stream_ctx *sctx,
                                             uint64_t error_code)
 {
@@ -1380,7 +1380,7 @@ db_on_wt_stream_reset (struct lsquic_stream *stream,
 
 
 static void
-db_on_wt_stop_sending (struct lsquic_stream *stream,
+db_wti_on_stop_sending (struct lsquic_stream *stream,
                                             struct lsquic_stream_ctx *sctx,
                                             uint64_t error_code)
 {
@@ -1417,19 +1417,19 @@ db_ss_code (struct lsquic_stream *UNUSED_stream,
 
 static const struct lsquic_webtransport_if wt_if =
 {
-    .on_wt_stream_read   = on_read,
-    .on_wt_stream_write  = on_write,
-    .on_wt_stream_close  = on_close,
-    .on_wt_stream_ss_code = db_ss_code,
-    .on_wt_session_open  = db_on_wt_session_open,
-    .on_wt_session_close = db_on_wt_session_close,
-    .on_wt_uni_stream    = db_on_wt_uni_stream,
-    .on_wt_bidi_stream   = db_on_wt_bidi_stream,
-    .on_wt_datagram_read = db_on_wt_datagram,
-    .on_wt_datagram_write = db_on_wt_datagram_write,
-    .on_wt_stream_fin    = db_on_wt_stream_fin,
-    .on_wt_stream_reset  = db_on_wt_stream_reset,
-    .on_wt_stop_sending  = db_on_wt_stop_sending,
+    .wti_on_stream_read   = on_read,
+    .wti_on_stream_write  = on_write,
+    .wti_on_stream_close  = on_close,
+    .wti_on_stream_ss_code = db_ss_code,
+    .wti_on_session_open  = db_wti_on_session_open,
+    .wti_on_session_close = db_wti_on_session_close,
+    .wti_on_uni_stream    = db_wti_on_uni_stream,
+    .wti_on_bidi_stream   = db_wti_on_bidi_stream,
+    .wti_on_datagram_read = db_on_wt_datagram,
+    .wti_on_datagram_write = db_wti_on_datagram_write,
+    .wti_on_stream_fin    = db_on_wt_stream_fin,
+    .wti_on_stream_reset  = db_wti_on_stream_reset,
+    .wti_on_stop_sending  = db_wti_on_stop_sending,
 };
 
 
