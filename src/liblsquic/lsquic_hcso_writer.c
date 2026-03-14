@@ -136,7 +136,7 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
     int was_empty;
     enum {
         HCSO_SETTINGS_FRAME_SIZE_LEN = 2,
-        HCSO_MAX_SETTINGS = 7,
+        HCSO_MAX_SETTINGS = 10,
         HCSO_MAX_VARINT_LEN = VINT_MAX_SIZE,
     };
     /* Use fixed worst-case sizing: WT setting IDs are larger than 1-byte
@@ -191,12 +191,39 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
 
     if (wt_enabled)
     {
+        uint64_t wt_max_sessions;
+
+        wt_max_sessions = enpub->enp_settings.es_max_webtransport_sessions;
+        if (wt_max_sessions == 0)
+            wt_max_sessions = 1;
+
         /* Write out SETTINGS_WT_ENABLED */
         bits = hcso_setting_type2bits(writer, HQSID_WT_ENABLED);
         vint_write(p, HQSID_WT_ENABLED, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(1);
-        vint_write(p, 1, bits, 1 << bits);
+        bits = vint_val2bits(wt_max_sessions);
+        vint_write(p, wt_max_sessions, bits, 1 << bits);
+        p += 1 << bits;
+
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_DATA);
+        vint_write(p, HQSID_WT_INITIAL_MAX_DATA, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_data);
+        vint_write(p, enpub->enp_settings.es_init_max_data, bits, 1 << bits);
+        p += 1 << bits;
+
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_STREAMS_UNI);
+        vint_write(p, HQSID_WT_INITIAL_MAX_STREAMS_UNI, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_streams_uni);
+        vint_write(p, enpub->enp_settings.es_init_max_streams_uni, bits, 1 << bits);
+        p += 1 << bits;
+
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_STREAMS_BIDI);
+        vint_write(p, HQSID_WT_INITIAL_MAX_STREAMS_BIDI, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_streams_bidi);
+        vint_write(p, enpub->enp_settings.es_init_max_streams_bidi, bits, 1 << bits);
         p += 1 << bits;
 
         if (is_server)

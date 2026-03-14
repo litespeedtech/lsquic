@@ -476,9 +476,15 @@ struct ietf_full_conn
     struct {
         uint64_t    header_table_size,
                     qpack_blocked_streams;
+        uint64_t    wt_initial_max_data;
+        uint64_t    wt_initial_max_streams_uni;
+        uint64_t    wt_initial_max_streams_bidi;
         unsigned    wt_draft;
         signed char wt_enabled;
         signed char wt_enabled_seen;
+        signed char wt_initial_max_data_seen;
+        signed char wt_initial_max_streams_uni_seen;
+        signed char wt_initial_max_streams_bidi_seen;
         signed char enable_connect_protocol;
         signed char enable_connect_protocol_seen;
     }                           ifc_peer_hq_settings;
@@ -1458,6 +1464,12 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     conn->ifc_peer_hq_settings.wt_draft = 0;
     conn->ifc_peer_hq_settings.wt_enabled = 0;
     conn->ifc_peer_hq_settings.wt_enabled_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_data = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_data_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_uni = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol = 0;
     conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 0;
     conn->ifc_pub.cp_wt_peer_draft = 0;
@@ -10060,6 +10072,9 @@ update_peer_wt_support (struct ietf_full_conn *conn)
             && local_webtransport_enabled(conn)
             && conn->ifc_peer_hq_settings.wt_enabled_seen
             && conn->ifc_peer_hq_settings.wt_enabled
+            && conn->ifc_peer_hq_settings.wt_initial_max_data_seen
+            && conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen
+            && conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen
             && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
             && peer_quic_datagrams
             && peer_reset_stream_at;
@@ -10072,13 +10087,17 @@ update_peer_wt_support (struct ietf_full_conn *conn)
         conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
 
     LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_enabled_seen=%d, "
-              "wt_enabled=%d, draft=%u, connect_seen=%d, connect=%d, "
+              "wt_enabled=%d, wt_max_data_seen=%d, wt_max_uni_seen=%d, "
+              "wt_max_bidi_seen=%d, draft=%u, connect_seen=%d, connect=%d, "
               "h3_dgram=%d, quic_dgram=%d, reset_at=%d "
               "=> support=%d",
         peer_settings_received,
         local_webtransport_enabled(conn),
         conn->ifc_peer_hq_settings.wt_enabled_seen,
         conn->ifc_peer_hq_settings.wt_enabled,
+        conn->ifc_peer_hq_settings.wt_initial_max_data_seen,
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen,
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen,
         conn->ifc_peer_hq_settings.wt_draft,
         conn->ifc_peer_hq_settings.enable_connect_protocol_seen,
         peer_connect_protocol,
@@ -10193,16 +10212,22 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
         break;
     case HQSID_WT_INITIAL_MAX_DATA:
-        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_DATA=%"PRIu64
-            "; ignore it for now", value);
+        conn->ifc_peer_hq_settings.wt_initial_max_data_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_data = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_DATA=%"PRIu64, value);
         break;
     case HQSID_WT_INITIAL_MAX_STREAMS_UNI:
-        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_UNI=%"PRIu64
-            "; ignore it for now", value);
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_UNI=%"PRIu64, value);
         break;
     case HQSID_WT_INITIAL_MAX_STREAMS_BIDI:
-        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64
-            "; ignore it for now", value);
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64, value);
         break;
     case HQSID_WT_ENABLED:
         conn->ifc_peer_hq_settings.wt_enabled_seen = 1;
