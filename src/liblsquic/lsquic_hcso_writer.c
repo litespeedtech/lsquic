@@ -197,6 +197,10 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         if (wt_max_sessions == 0)
             wt_max_sessions = 1;
 
+        /* We currently map WT initial settings to connection-level engine
+         * limits.  This mapping is valid as long as we support exactly one
+         * WebTransport session per connection.
+         */
         /* Write out SETTINGS_WT_ENABLED */
         bits = hcso_setting_type2bits(writer, HQSID_WT_ENABLED);
         vint_write(p, HQSID_WT_ENABLED, bits, 1 << bits);
