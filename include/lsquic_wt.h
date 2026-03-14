@@ -55,16 +55,35 @@ struct lsquic_wt_connect_info
 
 struct lsquic_wt_accept_params
 {
-    const struct lsquic_http_headers *wtap_extra_resp_headers; /* optional */
-    unsigned wtap_status;      /* default LSQUIC_WTAP_STATUS_DEFAULT */
-    const struct lsquic_webtransport_if *wtap_wt_if; /* per-session callbacks */
-    void *wtap_wt_if_ctx;      /* passed to wti_on_session_open */
-    const struct lsquic_wt_connect_info *wtap_connect_info; /* optional */
-    lsquic_wt_session_ctx_t *wtap_sess_ctx; /* optional if wti_on_session_open used */
-    unsigned wtap_max_datagram_queue_count; /* default when zero */
-    size_t wtap_max_datagram_queue_bytes;   /* default when zero */
-    enum lsquic_wt_dg_drop_policy wtap_datagram_drop_policy; /* default FAIL_EAGAIN */
-    enum lsquic_http_dg_send_mode wtap_datagram_send_mode;   /* default SEND_DEFAULT */
+    /* Optional extra headers for CONNECT 2xx response. */
+    const struct lsquic_http_headers     *wtap_extra_resp_headers;
+
+    /* Response status; default LSQUIC_WTAP_STATUS_DEFAULT. */
+    unsigned                              wtap_status;
+
+    /* Per-session WebTransport callbacks. */
+    const struct lsquic_webtransport_if  *wtap_wt_if;
+
+    /* Passed to wti_on_session_open. */
+    void                                 *wtap_wt_if_ctx;
+
+    /* Optional parsed CONNECT metadata. */
+    const struct lsquic_wt_connect_info  *wtap_connect_info;
+
+    /* Optional fixed session ctx (if wti_on_session_open is not used). */
+    lsquic_wt_session_ctx_t              *wtap_sess_ctx;
+
+    /* Queue item count limit; default when zero. */
+    unsigned                              wtap_max_datagram_queue_count;
+
+    /* Queue bytes limit; default when zero. */
+    size_t                                wtap_max_datagram_queue_bytes;
+
+    /* Default queue-full policy; default LSQUIC_WTAP_DATAGRAM_DROP_POLICY_DEFAULT. */
+    enum lsquic_wt_dg_drop_policy         wtap_datagram_drop_policy;
+
+    /* Default send mode; default LSQUIC_WTAP_DATAGRAM_SEND_MODE_DEFAULT. */
+    enum lsquic_http_dg_send_mode         wtap_datagram_send_mode;
 };
 
 struct lsquic_webtransport_if
