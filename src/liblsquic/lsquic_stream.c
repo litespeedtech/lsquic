@@ -6196,6 +6196,84 @@ lsquic_stream_has_unacked_data (struct lsquic_stream *stream)
 
 /* RFC 9297, Section 3.2: Datagram Capsule type is 0x00. */
 #define H3_CAPSULE_DATAGRAM 0x00
+#define H3_CAPSULE_WT_MAX_DATA 0x190B4D3DULL
+#define H3_CAPSULE_WT_MAX_STREAMS_BIDI 0x190B4D3FULL
+#define H3_CAPSULE_WT_MAX_STREAMS_UNI 0x190B4D40ULL
+#define H3_CAPSULE_WT_DATA_BLOCKED 0x190B4D41ULL
+#define H3_CAPSULE_WT_STREAMS_BLOCKED_BIDI 0x190B4D43ULL
+#define H3_CAPSULE_WT_STREAMS_BLOCKED_UNI 0x190B4D44ULL
+
+
+static const char *
+wt_flow_control_capsule_name (uint64_t capsule_type)
+{
+    switch (capsule_type)
+    {
+    case H3_CAPSULE_WT_MAX_DATA:
+        return "WT_MAX_DATA";
+    case H3_CAPSULE_WT_MAX_STREAMS_BIDI:
+        return "WT_MAX_STREAMS_BIDI";
+    case H3_CAPSULE_WT_MAX_STREAMS_UNI:
+        return "WT_MAX_STREAMS_UNI";
+    case H3_CAPSULE_WT_DATA_BLOCKED:
+        return "WT_DATA_BLOCKED";
+    case H3_CAPSULE_WT_STREAMS_BLOCKED_BIDI:
+        return "WT_STREAMS_BLOCKED_BIDI";
+    case H3_CAPSULE_WT_STREAMS_BLOCKED_UNI:
+        return "WT_STREAMS_BLOCKED_UNI";
+    default:
+        return NULL;
+    }
+}
+
+
+static void
+log_wt_flow_control_capsule (struct lsquic_stream *stream,
+                             uint64_t capsule_type,
+                             uint64_t capsule_length,
+                             const unsigned char *payload,
+                             size_t payload_sz)
+{
+    const char *name;
+    const unsigned char *p;
+    struct varint_read_state vrs;
+    int s;
+
+    if (!(stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM))
+        return;
+
+    name = wt_flow_control_capsule_name(capsule_type);
+    if (!name)
+        return;
+
+    if (capsule_length > VINT_MAX_SIZE)
+    {
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has too-large payload length %"PRIu64"; ignoring",
+            name, stream->id, capsule_length);
+        return;
+    }
+
+    if (!payload || payload_sz == 0)
+    {
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has empty payload; ignoring",
+            name, stream->id);
+        return;
+    }
+
+    p = payload;
+    memset(&vrs, 0, sizeof(vrs));
+    s = lsquic_varint_read_nb(&p, payload + payload_sz, &vrs);
+    if (0 == s && p == payload + payload_sz)
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            ": value=%"PRIu64" (ignored)",
+            name, stream->id, vrs.val);
+    else
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has malformed payload (len=%zu); ignoring",
+            name, stream->id, payload_sz);
+}
 
 static void
 stream_reset_http_dg_capsule (struct lsquic_stream *stream)
@@ -6320,6 +6398,21 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                     }
                 }
             }
+            else if ((stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM)
+                        && wt_flow_control_capsule_name(rd->type))
+            {
+                if (rd->length <= VINT_MAX_SIZE && rd->length > 0)
+                {
+                    rd->buf_sz = (size_t) rd->length;
+                    rd->buf = malloc(rd->buf_sz);
+                    if (!rd->buf)
+                    {
+                        LSQ_WARN("cannot allocate WT capsule buffer "
+                            "for stream %"PRIu64, stream->id);
+                        rd->buf_sz = 0;
+                    }
+                }
+            }
             rd->state = HDC_READ_PAYLOAD;
             break;
         case HDC_READ_PAYLOAD:
@@ -6327,7 +6420,7 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
             to_copy = rd->length - rd->offset;
             if (to_copy > avail)
                 to_copy = avail;
-            if (rd->type == H3_CAPSULE_DATAGRAM && rd->buf_sz)
+            if (rd->buf_sz)
                 memcpy(rd->buf + rd->offset, p, to_copy);
             rd->offset += to_copy;
             p += to_copy;
@@ -6349,6 +6442,10 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                     LSQ_DEBUG("no callback for HTTP datagram on stream "
                         "%"PRIu64"; drop on floor", stream->id);
                 }
+                else if ((stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM)
+                            && wt_flow_control_capsule_name(rd->type))
+                    log_wt_flow_control_capsule(stream, rd->type, rd->length,
+                                                rd->buf, rd->buf_sz);
                 free(rd->buf);
                 rd->buf = NULL;
                 stream_reset_http_dg_capsule(stream);
