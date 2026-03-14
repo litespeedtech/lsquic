@@ -1367,11 +1367,11 @@ baton_connect_handler (struct lsquic_stream *stream,
         return 1;
 
     memset(&info, 0, sizeof(info));
-    info.authority = req->authority_str;
-    info.path = req->path;
-    info.origin = req->origin;
-    info.protocol = req->protocol;
-    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(stream));
+    info.wtci_authority = req->authority_str;
+    info.wtci_path = req->path;
+    info.wtci_origin = req->origin;
+    info.wtci_protocol = req->protocol;
+    info.wtci_draft = lsquic_wt_peer_draft(lsquic_stream_conn(stream));
 
     rv = devious_baton_accept(stream, &info, &st_h->server_ctx->baton_app,
                                                     err_buf, sizeof(err_buf));

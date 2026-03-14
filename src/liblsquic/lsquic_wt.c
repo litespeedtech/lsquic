@@ -122,8 +122,6 @@ struct wt_header_buf
 };
 
 #define WT_MAX_PENDING_STREAMS 64
-#define WT_DGQ_DF_MAX_COUNT 64
-#define WT_DGQ_DF_MAX_BYTES (256 * 1024)
 #define WT_APP_ERROR_MAX 0xFFFFFFFFULL
 #define WT_APP_ERROR_MIN_H3 0x52E4A40FA8DBULL
 #define WT_APP_ERROR_MAX_H3 0x52E5AC983162ULL
@@ -244,10 +242,12 @@ lsquic_wt_test_dgq_session_new (unsigned max_count, size_t max_bytes)
         return NULL;
 
     TAILQ_INIT(&sess->wts_dgq);
-    sess->wts_dgq_max_count = max_count ? max_count : WT_DGQ_DF_MAX_COUNT;
-    sess->wts_dgq_max_bytes = max_bytes ? max_bytes : WT_DGQ_DF_MAX_BYTES;
-    sess->wts_dg_policy = LSQWT_DG_FAIL_EAGAIN;
-    sess->wts_dg_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    sess->wts_dgq_max_count = max_count ? max_count
+                        : LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_COUNT_DEFAULT;
+    sess->wts_dgq_max_bytes = max_bytes ? max_bytes
+                        : LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_BYTES_DEFAULT;
+    sess->wts_dg_policy = LSQUIC_WTAP_DATAGRAM_DROP_POLICY_DEFAULT;
+    sess->wts_dg_mode = LSQUIC_WTAP_DATAGRAM_SEND_MODE_DEFAULT;
     return sess;
 }
 
@@ -1099,21 +1099,21 @@ wt_copy_connect_info (struct lsquic_wt_session *sess,
     }
 
     memset(&sess->wts_info, 0, sizeof(sess->wts_info));
-    sess->wts_info.draft = info->draft;
+    sess->wts_info.wtci_draft = info->wtci_draft;
 
-    if (0 != wt_copy_string(&sess->wts_authority, info->authority))
+    if (0 != wt_copy_string(&sess->wts_authority, info->wtci_authority))
         goto err;
-    if (0 != wt_copy_string(&sess->wts_path, info->path))
+    if (0 != wt_copy_string(&sess->wts_path, info->wtci_path))
         goto err;
-    if (0 != wt_copy_string(&sess->wts_origin, info->origin))
+    if (0 != wt_copy_string(&sess->wts_origin, info->wtci_origin))
         goto err;
-    if (0 != wt_copy_string(&sess->wts_protocol, info->protocol))
+    if (0 != wt_copy_string(&sess->wts_protocol, info->wtci_protocol))
         goto err;
 
-    sess->wts_info.authority = sess->wts_authority;
-    sess->wts_info.path = sess->wts_path;
-    sess->wts_info.origin = sess->wts_origin;
-    sess->wts_info.protocol = sess->wts_protocol;
+    sess->wts_info.wtci_authority = sess->wts_authority;
+    sess->wts_info.wtci_path = sess->wts_path;
+    sess->wts_info.wtci_origin = sess->wts_origin;
+    sess->wts_info.wtci_protocol = sess->wts_protocol;
     return 0;
 
   err:
@@ -1372,7 +1372,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
-    if (!params->wt_if || !params->wt_if->wti_on_stream_read)
+    if (!params->wtap_wt_if || !params->wtap_wt_if->wti_on_stream_read)
     {
         errno = EINVAL;
         LSQ_WARN("WT accept called without stream read callback on stream %"PRIu64,
@@ -1393,14 +1393,15 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
     LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
         lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
-        params->status);
+        params->wtap_status);
     send_headers = lsquic_stream_is_server(connect_stream)
                 && lsquic_stream_headers_state_is_begin(connect_stream);
     if (send_headers)
     {
-        status = params->status ? params->status : 200;
+        status = params->wtap_status ? params->wtap_status
+                                     : LSQUIC_WTAP_STATUS_DEFAULT;
         if (0 != wt_send_response(connect_stream, status,
-                                        params->extra_resp_headers, 0))
+                                        params->wtap_extra_resp_headers, 0))
         {
             LSQ_WARN("cannot send WT accept response on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
@@ -1409,7 +1410,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         wt_drive_connect_stream(connect_stream);
     }
 
-    info = params->connect_info;
+    info = params->wtap_connect_info;
     sess = calloc(1, sizeof(*sess));
     if (!sess)
     {
@@ -1421,20 +1422,20 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_control_stream = connect_stream;
     sess->wts_conn_pub = lsquic_stream_get_conn_public(connect_stream);
     sess->wts_conn = lsquic_stream_conn(connect_stream);
-    sess->wts_if = params->wt_if;
-    sess->wts_if_ctx = params->wt_if_ctx;
-    sess->wts_sess_ctx = params->sess_ctx;
+    sess->wts_if = params->wtap_wt_if;
+    sess->wts_if_ctx = params->wtap_wt_if_ctx;
+    sess->wts_sess_ctx = params->wtap_sess_ctx;
     sess->wts_stream_id = lsquic_stream_id(connect_stream);
-    sess->wts_dgq_max_count = params->max_datagram_queue_count
-                            ? params->max_datagram_queue_count
-                            : WT_DGQ_DF_MAX_COUNT;
-    sess->wts_dgq_max_bytes = params->max_datagram_queue_bytes
-                            ? params->max_datagram_queue_bytes
-                            : WT_DGQ_DF_MAX_BYTES;
-    sess->wts_dg_policy = params->datagram_drop_policy <= LSQWT_DG_DROP_NEWEST
-                        ? params->datagram_drop_policy
-                        : LSQWT_DG_FAIL_EAGAIN;
-    sess->wts_dg_mode = params->datagram_send_mode;
+    sess->wts_dgq_max_count = params->wtap_max_datagram_queue_count
+                        ? params->wtap_max_datagram_queue_count
+                        : LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_COUNT_DEFAULT;
+    sess->wts_dgq_max_bytes = params->wtap_max_datagram_queue_bytes
+                        ? params->wtap_max_datagram_queue_bytes
+                        : LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_BYTES_DEFAULT;
+    sess->wts_dg_policy = params->wtap_datagram_drop_policy <= LSQWT_DG_DROP_NEWEST
+                        ? params->wtap_datagram_drop_policy
+                        : LSQUIC_WTAP_DATAGRAM_DROP_POLICY_DEFAULT;
+    sess->wts_dg_mode = params->wtap_datagram_send_mode;
     TAILQ_INIT(&sess->wts_dgq);
 
     if (0 != wt_copy_connect_info(sess, info))

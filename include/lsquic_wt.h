@@ -40,25 +40,31 @@ enum lsquic_wt_dg_drop_policy
 
 struct lsquic_wt_connect_info
 {
-    const char *authority;
-    const char *path;
-    const char *origin;     /* optional */
-    const char *protocol;   /* application protocol, if present */
-    unsigned    draft;      /* negotiated WebTransport draft version, if known */
+    const char *wtci_authority;
+    const char *wtci_path;
+    const char *wtci_origin;     /* optional */
+    const char *wtci_protocol;   /* application protocol, if present */
+    unsigned    wtci_draft;      /* negotiated WebTransport draft version, if known */
 };
+
+#define LSQUIC_WTAP_STATUS_DEFAULT                      200
+#define LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_COUNT_DEFAULT    64
+#define LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_BYTES_DEFAULT    (256 * 1024)
+#define LSQUIC_WTAP_DATAGRAM_DROP_POLICY_DEFAULT        LSQWT_DG_FAIL_EAGAIN
+#define LSQUIC_WTAP_DATAGRAM_SEND_MODE_DEFAULT          LSQUIC_HTTP_DG_SEND_DEFAULT
 
 struct lsquic_wt_accept_params
 {
-    const struct lsquic_http_headers *extra_resp_headers; /* optional */
-    unsigned status;      /* default 200 */
-    const struct lsquic_webtransport_if *wt_if; /* per-session callbacks */
-    void *wt_if_ctx;      /* passed to wti_on_session_open */
-    const struct lsquic_wt_connect_info *connect_info; /* optional */
-    lsquic_wt_session_ctx_t *sess_ctx; /* optional if wti_on_session_open used */
-    unsigned max_datagram_queue_count; /* default 64 when zero */
-    size_t max_datagram_queue_bytes;   /* default 256*1024 when zero */
-    enum lsquic_wt_dg_drop_policy datagram_drop_policy; /* default FAIL_EAGAIN */
-    enum lsquic_http_dg_send_mode datagram_send_mode;   /* default SEND_DEFAULT */
+    const struct lsquic_http_headers *wtap_extra_resp_headers; /* optional */
+    unsigned wtap_status;      /* default LSQUIC_WTAP_STATUS_DEFAULT */
+    const struct lsquic_webtransport_if *wtap_wt_if; /* per-session callbacks */
+    void *wtap_wt_if_ctx;      /* passed to wti_on_session_open */
+    const struct lsquic_wt_connect_info *wtap_connect_info; /* optional */
+    lsquic_wt_session_ctx_t *wtap_sess_ctx; /* optional if wti_on_session_open used */
+    unsigned wtap_max_datagram_queue_count; /* default when zero */
+    size_t wtap_max_datagram_queue_bytes;   /* default when zero */
+    enum lsquic_wt_dg_drop_policy wtap_datagram_drop_policy; /* default FAIL_EAGAIN */
+    enum lsquic_http_dg_send_mode wtap_datagram_send_mode;   /* default SEND_DEFAULT */
 };
 
 struct lsquic_webtransport_if

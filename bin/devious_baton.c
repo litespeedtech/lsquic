@@ -420,15 +420,15 @@ free_connect_info (struct lsquic_wt_connect_info *info)
     if (!info)
         return;
 
-    free((char *) info->authority);
-    free((char *) info->path);
-    free((char *) info->origin);
-    free((char *) info->protocol);
+    free((char *) info->wtci_authority);
+    free((char *) info->wtci_path);
+    free((char *) info->wtci_origin);
+    free((char *) info->wtci_protocol);
 
-    info->authority = NULL;
-    info->path = NULL;
-    info->origin = NULL;
-    info->protocol = NULL;
+    info->wtci_authority = NULL;
+    info->wtci_path = NULL;
+    info->wtci_origin = NULL;
+    info->wtci_protocol = NULL;
 }
 
 
@@ -601,11 +601,11 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     if (info)
     {
         memset(info, 0, sizeof(*info));
-        info->authority = authority;
-        info->path = path;
-        info->origin = origin;
-        info->protocol = protocol;
-        info->draft = 0;
+        info->wtci_authority = authority;
+        info->wtci_path = path;
+        info->wtci_origin = origin;
+        info->wtci_protocol = protocol;
+        info->wtci_draft = 0;
         authority = NULL;
         path = NULL;
         origin = NULL;
@@ -1593,16 +1593,16 @@ process_control_server (struct devious_baton_stream *st)
 
     LSQ_INFO("server accepted CONNECT for %s (count=%u, baton=%u, version=%u)",
             cfg.path ? cfg.path : "<none>", cfg.count, cfg.baton, cfg.version);
-    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
+    info.wtci_draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
 
     memset(&params, 0, sizeof(params));
-    params.status = 200;
-    params.wt_if = &wt_if;
-    params.wt_if_ctx = &cfg;
-    params.connect_info = &info;
-    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+    params.wtap_status = 200;
+    params.wtap_wt_if = &wt_if;
+    params.wtap_wt_if_ctx = &cfg;
+    params.wtap_connect_info = &info;
+    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
                                                     cfg.dg_drop_policy;
-    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free_connect_info(&info);
@@ -1678,18 +1678,18 @@ process_control_client (struct devious_baton_stream *st)
                                 ? st->dbs_conn->prog->prog_hostname
                                 : "localhost";
     memset(&info, 0, sizeof(info));
-    info.authority = hostname;
-    info.path = st->dbs_conn->app->path;
-    info.protocol = protocol;
-    info.draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
+    info.wtci_authority = hostname;
+    info.wtci_path = st->dbs_conn->app->path;
+    info.wtci_protocol = protocol;
+    info.wtci_draft = lsquic_wt_peer_draft(lsquic_stream_conn(st->dbs_stream));
 
     memset(&params, 0, sizeof(params));
-    params.wt_if = &wt_if;
-    params.wt_if_ctx = st->dbs_conn->app;
-    params.connect_info = &info;
-    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+    params.wtap_wt_if = &wt_if;
+    params.wtap_wt_if_ctx = st->dbs_conn->app;
+    params.wtap_connect_info = &info;
+    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
                                         st->dbs_conn->app->dg_drop_policy;
-    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free(protocol);
@@ -2037,7 +2037,7 @@ devious_baton_accept (struct lsquic_stream *stream,
     }
 
     cfg = *app;
-    if (0 != parse_path(info->path, &cfg, err_buf, err_sz))
+    if (0 != parse_path(info->wtci_path, &cfg, err_buf, err_sz))
     {
         lsquic_wt_reject(stream, 400, err_buf ? err_buf : NULL,
                                             err_buf ? strlen(err_buf) : 0);
@@ -2046,13 +2046,13 @@ devious_baton_accept (struct lsquic_stream *stream,
     }
 
     memset(&params, 0, sizeof(params));
-    params.status = 200;
-    params.wt_if = &wt_if;
-    params.wt_if_ctx = &cfg;
-    params.connect_info = info;
-    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+    params.wtap_status = 200;
+    params.wtap_wt_if = &wt_if;
+    params.wtap_wt_if_ctx = &cfg;
+    params.wtap_connect_info = info;
+    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
                                                     cfg.dg_drop_policy;
-    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(stream, &params))
     {
         unsigned status;
