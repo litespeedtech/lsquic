@@ -9,6 +9,7 @@
 #include <unistd.h>
 #endif
 
+#include "lsquic.h"
 #include "lsquic_hash.h"
 
 
@@ -28,6 +29,7 @@ main (int argc, char **argv)
     unsigned n, nelems;
     struct widget *widgets, *widget;
 
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_CLIENT));
     hash = lsquic_hash_create();
 
     if (argc > 1)
@@ -73,6 +75,7 @@ main (int argc, char **argv)
     assert(0 == lsquic_hash_count(hash));
 
     lsquic_hash_destroy(hash);
+    lsquic_global_cleanup();
     free(widgets);
 
     exit(0);

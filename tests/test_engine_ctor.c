@@ -14,6 +14,7 @@ main (void)
     unsigned versions;
     const unsigned flags = LSENG_SERVER;
 
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
     lsquic_engine_init_settings(&settings, flags);
 
     struct lsquic_engine_api api;
@@ -32,5 +33,6 @@ main (void)
     engine = lsquic_engine_new(flags, &api);
     assert(!engine);
 
+    lsquic_global_cleanup();
     return 0;
 }

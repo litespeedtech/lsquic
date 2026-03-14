@@ -16,7 +16,7 @@ int
 main (int argc, char **argv)
 {
     struct lsquic_engine_public enpub = {
-        .enp_shi_ctx = lsquic_stock_shared_hash_new(),
+        .enp_shi_ctx = NULL,
         .enp_shi = &stock_shi,
     };
     struct token_generator *tg;
@@ -24,6 +24,10 @@ main (int argc, char **argv)
     unsigned i;
     lsquic_cid_t cid;
 
+    (void) argc;
+    (void) argv;
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
+    enpub.enp_shi_ctx = lsquic_stock_shared_hash_new();
     memset(&cid, 0, sizeof(cid));
     cid.len = 8;
 
@@ -36,6 +40,7 @@ main (int argc, char **argv)
 
     lsquic_tg_destroy(tg);
     lsquic_stock_shared_hash_destroy(enpub.enp_shi_ctx);
+    lsquic_global_cleanup();
 
     return 0;
 }

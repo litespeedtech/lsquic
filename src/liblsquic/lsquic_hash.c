@@ -8,18 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <time.h>
-
-#ifdef WIN32
-#include <vc_compat.h>
-#else
-#include <sys/time.h>
-#include <unistd.h>
-#endif
-
-#if !(defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) && defined(__APPLE__)
-#include <mach/mach_time.h>
-#endif
 
 #include "lsquic_hash.h"
 #include "lsquic_rapidhash.h"
@@ -42,34 +30,22 @@ struct lsquic_hash
 };
 
 
-static uint64_t get_seed()
+static uint64_t global_seed;
+static int global_seed_set;
+
+void
+lsquic_hash_set_global_seed (uint64_t seed)
 {
-    static uint64_t seed = 0;
-    if (seed == 0)
-    {
-#if defined(WIN32)
-        LARGE_INTEGER counter;
-        QueryPerformanceCounter(&counter);
-        seed = counter.QuadPart;
-#elif defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0
-        struct timespec ts;
-        (void) clock_gettime(CLOCK_MONOTONIC, &ts);
-        seed = ts.tv_sec * 1000000000 + ts.tv_nsec;
-#elif defined(__APPLE__)
-        seed = mach_absolute_time();
-#else
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        seed = tv.tv_sec * 1000000000 + tv.tv_usec * 1000;
-#endif
-        srand(seed);
-        for(unsigned i = 0; i < (seed & 0xf) + 1; ++i)
-        {
-            seed = (seed << 8) | (seed >> 56);
-            seed ^= rand();
-        }
-    }
-    return seed;
+    global_seed = seed;
+    global_seed_set = 1;
+}
+
+
+static uint64_t
+get_seed (void)
+{
+    assert(global_seed_set);
+    return global_seed;
 }
 
 
