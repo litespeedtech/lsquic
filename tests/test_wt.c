@@ -24,7 +24,6 @@ int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
 int lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                           uint64_t *wt_error_code);
-unsigned lsquic_wt_test_reset_event_mask (int how);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -302,17 +301,6 @@ test_dgq_policies (void)
 }
 
 
-static void
-test_reset_event_mask (void)
-{
-    assert(1 == lsquic_wt_test_reset_event_mask(0));
-    assert(2 == lsquic_wt_test_reset_event_mask(1));
-    assert(3 == lsquic_wt_test_reset_event_mask(2));
-    assert(0 == lsquic_wt_test_reset_event_mask(3));
-    assert(0 == lsquic_wt_test_reset_event_mask(-1));
-}
-
-
 int
 main (void)
 {
@@ -321,6 +309,5 @@ main (void)
     test_stream_helpers();
     test_invalid_public_api();
     test_dgq_policies();
-    test_reset_event_mask();
     return 0;
 }
