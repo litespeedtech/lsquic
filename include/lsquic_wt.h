@@ -66,6 +66,8 @@ struct lsquic_wt_accept_params
     lsquic_wt_session_ctx_t *sess_ctx; /* optional if on_wt_session_open used */
     unsigned max_datagram_queue_count; /* default 64 when zero */
     size_t max_datagram_queue_bytes;   /* default 256*1024 when zero */
+    enum lsquic_wt_dg_drop_policy datagram_drop_policy; /* default FAIL_EAGAIN */
+    enum lsquic_http_dg_send_mode datagram_send_mode;   /* default SEND_DEFAULT */
 };
 
 struct lsquic_webtransport_if
@@ -174,12 +176,7 @@ lsquic_wt_send_datagram (lsquic_wt_session_t *sess,
 /** Send a WT datagram with explicit queue-full policy. */
 ssize_t
 lsquic_wt_send_datagram_ex (lsquic_wt_session_t *sess,
-    const void *buf, size_t len, enum lsquic_wt_dg_drop_policy policy);
-
-/** Send a WT datagram with explicit queue-full policy and send mode. */
-ssize_t
-lsquic_wt_send_datagram_full (lsquic_wt_session_t *sess, const void *buf,
-    size_t len, enum lsquic_wt_dg_drop_policy policy,
+    const void *buf, size_t len, enum lsquic_wt_dg_drop_policy policy,
     enum lsquic_http_dg_send_mode mode);
 
 /** Control WT datagram write callback interest. */

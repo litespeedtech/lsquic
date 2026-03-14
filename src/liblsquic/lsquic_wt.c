@@ -108,6 +108,8 @@ struct lsquic_wt_session
     unsigned                           wts_dgq_count;
     unsigned                           wts_dgq_max_count;
     size_t                             wts_dgq_max_bytes;
+    enum lsquic_wt_dg_drop_policy      wts_dg_policy;
+    enum lsquic_http_dg_send_mode      wts_dg_mode;
     unsigned                           wts_n_streams;
     enum wt_session_flags              wts_flags;
 };
@@ -245,6 +247,8 @@ lsquic_wt_test_dgq_session_new (unsigned max_count, size_t max_bytes)
     TAILQ_INIT(&sess->wts_dgq);
     sess->wts_dgq_max_count = max_count ? max_count : WT_DGQ_DF_MAX_COUNT;
     sess->wts_dgq_max_bytes = max_bytes ? max_bytes : WT_DGQ_DF_MAX_BYTES;
+    sess->wts_dg_policy = LSQWT_DG_FAIL_EAGAIN;
+    sess->wts_dg_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     return sess;
 }
 
@@ -1444,6 +1448,10 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     sess->wts_dgq_max_bytes = params->max_datagram_queue_bytes
                             ? params->max_datagram_queue_bytes
                             : WT_DGQ_DF_MAX_BYTES;
+    sess->wts_dg_policy = params->datagram_drop_policy <= LSQWT_DG_DROP_NEWEST
+                        ? params->datagram_drop_policy
+                        : LSQWT_DG_FAIL_EAGAIN;
+    sess->wts_dg_mode = params->datagram_send_mode;
     TAILQ_INIT(&sess->wts_dgq);
 
     if (0 != wt_copy_connect_info(sess, info))
@@ -1858,22 +1866,69 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
-    return lsquic_wt_send_datagram_full(sess, buf, len, LSQWT_DG_FAIL_EAGAIN,
-                                        LSQUIC_HTTP_DG_SEND_DEFAULT);
+    WT_SET_CONN_FROM_SESSION(sess);
+    struct lsquic_stream *control_stream;
+    size_t max_sz;
+    int rc;
+
+    if (!sess || !buf || len == 0)
+    {
+        errno = EINVAL;
+        LSQ_WARN("invalid WT datagram send arguments");
+        return -1;
+    }
+
+    if (sess->wts_dg_policy > LSQWT_DG_DROP_NEWEST)
+    {
+        errno = EINVAL;
+        LSQ_WARN("invalid WT datagram default policy");
+        return -1;
+    }
+
+    LSQ_DEBUG("queue WT datagram for session %"PRIu64": len=%zu",
+                                                    sess->wts_stream_id, len);
+    control_stream = sess->wts_control_stream;
+    if (!control_stream)
+    {
+        errno = EINVAL;
+        LSQ_WARN("cannot send WT datagram in session %"PRIu64
+                                    ": no control stream", sess->wts_stream_id);
+        return -1;
+    }
+
+    max_sz = lsquic_stream_get_max_http_dg_size(control_stream);
+    if (max_sz == 0)
+    {
+        errno = ENOSYS;
+        LSQ_WARN("WT datagrams not negotiated in session %"PRIu64,
+                                                    sess->wts_stream_id);
+        return -1;
+    }
+
+    if (len > max_sz)
+    {
+        errno = EMSGSIZE;
+        LSQ_WARN("WT datagram too large in session %"PRIu64
+                        ": len=%zu, max=%zu", sess->wts_stream_id, len, max_sz);
+        return -1;
+    }
+
+    rc = wt_dgq_arm_write(sess);
+    if (rc < 0)
+        return -1;
+
+    if (0 != wt_dgq_enqueue(sess, buf, len, sess->wts_dg_policy,
+                                                    sess->wts_dg_mode))
+        return -1;
+
+    LSQ_DEBUG("enqueued WT datagram for session %"PRIu64" on stream %"PRIu64,
+        sess->wts_stream_id, lsquic_stream_id(control_stream));
+    return (ssize_t) len;
 }
 
 
 ssize_t
 lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
-        size_t len, enum lsquic_wt_dg_drop_policy policy)
-{
-    return lsquic_wt_send_datagram_full(sess, buf, len, policy,
-                                        LSQUIC_HTTP_DG_SEND_DEFAULT);
-}
-
-
-ssize_t
-lsquic_wt_send_datagram_full (struct lsquic_wt_session *sess, const void *buf,
         size_t len, enum lsquic_wt_dg_drop_policy policy,
         enum lsquic_http_dg_send_mode mode)
 {

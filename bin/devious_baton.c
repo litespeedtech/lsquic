@@ -861,8 +861,7 @@ send_datagram_if_needed (struct devious_baton_session *sess,
     if (0 != write_baton_message(sess, baton, &buf, &len))
         return;
 
-    if (0 > lsquic_wt_send_datagram_ex(sess->wt_sess, buf, len,
-            (enum lsquic_wt_dg_drop_policy) sess->cfg.dg_drop_policy))
+    if (0 > lsquic_wt_send_datagram(sess->wt_sess, buf, len))
         LSQ_DEBUG("cannot send datagram: %s", strerror(errno));
     else
         LSQ_INFO("%s sent datagram carrying baton %u (%zu bytes)",
@@ -908,8 +907,7 @@ db_send_burst_datagram (struct devious_baton_session *bsess)
                                                         db_role(bsess));
             break;
         }
-        nw = lsquic_wt_send_datagram_ex(bsess->wt_sess, buf, len,
-            (enum lsquic_wt_dg_drop_policy) bsess->cfg.dg_drop_policy);
+        nw = lsquic_wt_send_datagram(bsess->wt_sess, buf, len);
         free(buf);
 
         if (nw < 0)
@@ -2047,6 +2045,9 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.wt_if_ctx = &cfg;
     params.stream_if = devious_baton_wt_stream_if();
     params.connect_info = info;
+    params.datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+                                                    cfg.dg_drop_policy;
+    params.datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
     if (!lsquic_wt_accept(stream, &params))
     {
         unsigned status;
