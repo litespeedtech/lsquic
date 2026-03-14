@@ -487,7 +487,7 @@ static void
 wt_stream_bind_session (struct lsquic_wt_session *sess,
                                                 struct lsquic_stream *stream)
 {
-    if (!sess || !stream)
+    if (!stream)
         return;
 
     if (lsquic_stream_get_wt_session(stream) == sess)
@@ -527,12 +527,6 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     lsquic_stream_ctx_t *app_ctx;
 
     sess = onnew ? onnew->sess : NULL;
-    if (!sess)
-    {
-        LSQ_DEBUG("cannot initialize WT stream %"PRIu64": no session context",
-                                                lsquic_stream_id(stream));
-        return NULL;
-    }
 
     wctx = calloc(1, sizeof(*wctx));
     if (!wctx)
@@ -1066,9 +1060,6 @@ wt_session_find (struct lsquic_conn_public *conn_pub,
 static void
 wt_free_connect_info (struct lsquic_wt_session *sess)
 {
-    if (!sess)
-        return;
-
     free(sess->wts_authority);
     free(sess->wts_path);
     free(sess->wts_origin);
@@ -1257,7 +1248,7 @@ wt_close_data_streams (struct lsquic_wt_session *sess)
     struct lsquic_hash_elem *el;
     size_t n_streams, i;
 
-    if (!sess || !sess->wts_conn_pub || !sess->wts_conn_pub->all_streams)
+    if (!sess->wts_conn_pub || !sess->wts_conn_pub->all_streams)
         return;
 
     n_streams = 0;
@@ -1304,8 +1295,6 @@ wt_session_finalize (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-    if (!sess)
-        return;
     (void) reason;
 
     LSQ_INFO("destroy WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
@@ -1325,9 +1314,6 @@ wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
     WT_SET_CONN_FROM_SESSION(sess);
     const struct lsquic_webtransport_if *wt_if;
     lsquic_wt_session_ctx_t *sess_ctx;
-
-    if (!sess)
-        return;
 
     if (!(sess->wts_flags & WTSF_CLOSING))
     {
@@ -1547,18 +1533,8 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
-    WT_SET_CONN_FROM_SESSION(sess);
-    if (sess)
-    {
-        wt_session_close(sess, code, reason, reason_len);
-        return 0;
-    }
-    else
-    {
-        errno = EINVAL;
-        LSQ_WARN("WT close called with NULL session");
-        return -1;
-    }
+    wt_session_close(sess, code, reason, reason_len);
+    return 0;
 }
 
 
@@ -1566,7 +1542,7 @@ lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
 struct lsquic_conn *
 lsquic_wt_session_conn (struct lsquic_wt_session *sess)
 {
-    if (!sess || !sess->wts_conn_pub)
+    if (!sess->wts_conn_pub)
         return NULL;
 
     return sess->wts_conn_pub->lconn;
@@ -1577,12 +1553,6 @@ lsquic_wt_session_conn (struct lsquic_wt_session *sess)
 lsquic_stream_id_t
 lsquic_wt_session_id (struct lsquic_wt_session *sess)
 {
-    if (!sess)
-    {
-        errno = EINVAL;
-        return 0;
-    }
-
     return sess->wts_stream_id;
 }
 
@@ -1665,7 +1635,7 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
 
-    if (!sess || !sess->wts_conn_pub)
+    if (!sess->wts_conn_pub)
     {
         errno = EINVAL;
         LSQ_WARN("WT open_uni called with invalid session");
@@ -1719,7 +1689,7 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
 
-    if (!sess || !sess->wts_conn_pub)
+    if (!sess->wts_conn_pub)
     {
         errno = EINVAL;
         LSQ_WARN("WT open_bidi called with invalid session");
@@ -1814,7 +1784,7 @@ lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
         return -1;
 
     sess = wctx->sess;
-    if (!sess || lsquic_stream_get_wt_session(stream) != sess)
+    if (lsquic_stream_get_wt_session(stream) != sess)
         return -1;
 
     if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
@@ -1866,15 +1836,6 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
-    WT_SET_CONN_FROM_SESSION(sess);
-
-    if (!sess)
-    {
-        errno = EINVAL;
-        LSQ_WARN("invalid WT datagram send arguments");
-        return -1;
-    }
-
     return lsquic_wt_send_datagram_ex(sess, buf, len, sess->wts_dg_policy,
                                       sess->wts_dg_mode);
 }
@@ -1890,7 +1851,7 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
     size_t max_sz;
     int rc;
 
-    if (!sess || !buf || len == 0 || policy > LSQWT_DG_DROP_NEWEST)
+    if (!buf || len == 0 || policy > LSQWT_DG_DROP_NEWEST)
     {
         errno = EINVAL;
         LSQ_WARN("invalid WT datagram send arguments");
@@ -1944,13 +1905,6 @@ lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
 
-    if (!sess)
-    {
-        errno = EINVAL;
-        LSQ_WARN("WT datagram write interest called with NULL session");
-        return -1;
-    }
-
     control_stream = sess->wts_control_stream;
     if (!control_stream)
     {
@@ -1978,7 +1932,7 @@ size_t
 lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-    if (!sess || !sess->wts_control_stream)
+    if (!sess->wts_control_stream)
     {
         LSQ_DEBUG("WT max_datagram_size unavailable: no session/control stream");
         return 0;

@@ -220,8 +220,6 @@ test_invalid_public_api (void)
 
     memset(&stream, 0, sizeof(stream));
 
-    assert(lsquic_wt_session_conn(NULL) == NULL);
-    assert(lsquic_wt_session_id(NULL) == 0);
     assert(lsquic_wt_stream_get_ctx(NULL) == NULL);
     assert(lsquic_wt_stream_get_ctx(&stream) == NULL);
 }
