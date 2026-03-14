@@ -1867,63 +1867,16 @@ lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-    struct lsquic_stream *control_stream;
-    size_t max_sz;
-    int rc;
 
-    if (!sess || !buf || len == 0)
+    if (!sess)
     {
         errno = EINVAL;
         LSQ_WARN("invalid WT datagram send arguments");
         return -1;
     }
 
-    if (sess->wts_dg_policy > LSQWT_DG_DROP_NEWEST)
-    {
-        errno = EINVAL;
-        LSQ_WARN("invalid WT datagram default policy");
-        return -1;
-    }
-
-    LSQ_DEBUG("queue WT datagram for session %"PRIu64": len=%zu",
-                                                    sess->wts_stream_id, len);
-    control_stream = sess->wts_control_stream;
-    if (!control_stream)
-    {
-        errno = EINVAL;
-        LSQ_WARN("cannot send WT datagram in session %"PRIu64
-                                    ": no control stream", sess->wts_stream_id);
-        return -1;
-    }
-
-    max_sz = lsquic_stream_get_max_http_dg_size(control_stream);
-    if (max_sz == 0)
-    {
-        errno = ENOSYS;
-        LSQ_WARN("WT datagrams not negotiated in session %"PRIu64,
-                                                    sess->wts_stream_id);
-        return -1;
-    }
-
-    if (len > max_sz)
-    {
-        errno = EMSGSIZE;
-        LSQ_WARN("WT datagram too large in session %"PRIu64
-                        ": len=%zu, max=%zu", sess->wts_stream_id, len, max_sz);
-        return -1;
-    }
-
-    rc = wt_dgq_arm_write(sess);
-    if (rc < 0)
-        return -1;
-
-    if (0 != wt_dgq_enqueue(sess, buf, len, sess->wts_dg_policy,
-                                                    sess->wts_dg_mode))
-        return -1;
-
-    LSQ_DEBUG("enqueued WT datagram for session %"PRIu64" on stream %"PRIu64,
-        sess->wts_stream_id, lsquic_stream_id(control_stream));
-    return (ssize_t) len;
+    return lsquic_wt_send_datagram_ex(sess, buf, len, sess->wts_dg_policy,
+                                      sess->wts_dg_mode);
 }
 
 
