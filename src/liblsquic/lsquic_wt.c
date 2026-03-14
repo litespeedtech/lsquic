@@ -69,6 +69,7 @@ struct wt_dgq_elem
 {
     TAILQ_ENTRY(wt_dgq_elem)   next;
     size_t                     len;
+    enum lsquic_http_dg_send_mode mode;
     unsigned char              buf[];
 };
 
@@ -166,7 +167,8 @@ wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
 
 static int
 wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
-                enum lsquic_wt_dg_drop_policy policy);
+                enum lsquic_wt_dg_drop_policy policy,
+                enum lsquic_http_dg_send_mode mode);
 
 static void
 wt_dgq_drop_all (struct lsquic_wt_session *sess);
@@ -263,7 +265,8 @@ lsquic_wt_test_dgq_enqueue (lsquic_wt_session_t *sess, const void *buf,
                             size_t len,
                             enum lsquic_wt_dg_drop_policy policy)
 {
-    return wt_dgq_enqueue(sess, buf, len, policy);
+    return wt_dgq_enqueue(sess, buf, len, policy,
+                          LSQUIC_HTTP_DG_SEND_DEFAULT);
 }
 
 
@@ -392,7 +395,8 @@ wt_dgq_arm_write (struct lsquic_wt_session *sess)
 
 static int
 wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
-                                        enum lsquic_wt_dg_drop_policy policy)
+                                        enum lsquic_wt_dg_drop_policy policy,
+                                        enum lsquic_http_dg_send_mode mode)
 {
     WT_SET_CONN_FROM_SESSION(sess);
     struct wt_dgq_elem *elem;
@@ -421,6 +425,7 @@ wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
 
     memcpy(elem->buf, buf, len);
     elem->len = len;
+    elem->mode = mode;
     TAILQ_INSERT_TAIL(&sess->wts_dgq, elem, next);
     ++sess->wts_dgq_count;
     sess->wts_dgq_bytes += len;
@@ -441,20 +446,23 @@ wt_dgq_send_one (struct lsquic_wt_session *sess, struct lsquic_stream *stream,
     struct wt_dgq_elem *elem;
     int rc;
 
-    for (;;)
-    {
-        elem = TAILQ_FIRST(&sess->wts_dgq);
-        if (!elem)
-            return 0;
-        if (elem->len <= max_quic_payload)
-            break;
-        wt_dgq_drop_head(sess, "too large for max QUIC datagram payload");
-    }
+    elem = TAILQ_FIRST(&sess->wts_dgq);
+    if (!elem)
+        return 0;
 
-    rc = consume_datagram(stream, elem->buf, elem->len,
-                                            LSQUIC_HTTP_DG_SEND_DATAGRAM);
+    rc = consume_datagram(stream, elem->buf, elem->len, elem->mode);
     if (rc != 0)
     {
+        if (elem->mode == LSQUIC_HTTP_DG_SEND_DATAGRAM
+                                && max_quic_payload > 0
+                                && elem->len > max_quic_payload)
+        {
+            LSQ_INFO("drop queued WT datagram too large for QUIC DATAGRAM "
+                "in session %"PRIu64" (len=%zu, max=%zu)",
+                sess->wts_stream_id, elem->len, max_quic_payload);
+            wt_dgq_drop_head(sess, "too large for QUIC DATAGRAM mode");
+            return 1;
+        }
         LSQ_WARN("WT datagram consume failed on stream %"PRIu64
                             ": %s", lsquic_stream_id(stream), strerror(errno));
         return -1;
@@ -1850,13 +1858,24 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
-    return lsquic_wt_send_datagram_ex(sess, buf, len, LSQWT_DG_FAIL_EAGAIN);
+    return lsquic_wt_send_datagram_full(sess, buf, len, LSQWT_DG_FAIL_EAGAIN,
+                                        LSQUIC_HTTP_DG_SEND_DEFAULT);
 }
 
 
 ssize_t
 lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
         size_t len, enum lsquic_wt_dg_drop_policy policy)
+{
+    return lsquic_wt_send_datagram_full(sess, buf, len, policy,
+                                        LSQUIC_HTTP_DG_SEND_DEFAULT);
+}
+
+
+ssize_t
+lsquic_wt_send_datagram_full (struct lsquic_wt_session *sess, const void *buf,
+        size_t len, enum lsquic_wt_dg_drop_policy policy,
+        enum lsquic_http_dg_send_mode mode)
 {
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
@@ -1902,7 +1921,7 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
     if (rc < 0)
         return -1;
 
-    if (0 != wt_dgq_enqueue(sess, buf, len, policy))
+    if (0 != wt_dgq_enqueue(sess, buf, len, policy, mode))
         return -1;
 
     LSQ_DEBUG("enqueued WT datagram for session %"PRIu64" on stream %"PRIu64,

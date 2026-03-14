@@ -176,6 +176,12 @@ ssize_t
 lsquic_wt_send_datagram_ex (lsquic_wt_session_t *sess,
     const void *buf, size_t len, enum lsquic_wt_dg_drop_policy policy);
 
+/** Send a WT datagram with explicit queue-full policy and send mode. */
+ssize_t
+lsquic_wt_send_datagram_full (lsquic_wt_session_t *sess, const void *buf,
+    size_t len, enum lsquic_wt_dg_drop_policy policy,
+    enum lsquic_http_dg_send_mode mode);
+
 /** Control WT datagram write callback interest. */
 int
 lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want);
