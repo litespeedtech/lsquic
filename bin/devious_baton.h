@@ -39,6 +39,8 @@ struct devious_baton_app
     unsigned       padding_len;
     unsigned       dg_burst_count;
     unsigned       dg_drop_policy;
+    unsigned       dgq_max_count;
+    size_t         dgq_max_bytes;
     unsigned       max_count;
     const char    *path_base;
     const char    *path;

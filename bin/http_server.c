@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1953,6 +1954,8 @@ usage (const char *prog)
 "                 size of the immediate write.\n"
 #if HAVE_REGEX
 "   -B          Enable Devious Baton WebTransport handler (interop mode)\n"
+"   -u count    With -B: max queued WT datagrams per session (0 = default)\n"
+"   -v bytes    With -B: max queued WT datagram bytes per session (0 = default)\n"
 #endif
 #if HAVE_PREADV
 "   -P SIZE     Use preadv(2) to read from disk and lsquic_stream_pwritev() to\n"
@@ -2213,8 +2216,9 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
+    devious_baton_app_init(&server_ctx.baton_app, &prog, 1);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:Bh"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:Bu:v:h"
 #if HAVE_OPEN_MEMSTREAM
                                                     "Q:"
 #endif
@@ -2263,7 +2267,6 @@ main (int argc, char **argv)
 #if HAVE_REGEX
         case 'B':
             server_ctx.enable_devious_baton = 1;
-            devious_baton_app_init(&server_ctx.baton_app, &prog, 1);
             prog.prog_settings.es_http_datagrams = 1;
             prog.prog_settings.es_webtransport = 1;
             prog.prog_settings.es_reset_stream_at = 1;
@@ -2274,6 +2277,36 @@ main (int argc, char **argv)
                 prog.prog_settings.es_max_webtransport_sessions =
                                 LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
             break;
+        case 'u':
+        {
+            char *end;
+            unsigned long val;
+
+            errno = 0;
+            val = strtoul(optarg, &end, 10);
+            if (errno || *end || val > UINT_MAX)
+            {
+                LSQ_ERROR("invalid queue count `%s'", optarg);
+                exit(1);
+            }
+            server_ctx.baton_app.dgq_max_count = (unsigned) val;
+            break;
+        }
+        case 'v':
+        {
+            char *end;
+            unsigned long long val;
+
+            errno = 0;
+            val = strtoull(optarg, &end, 10);
+            if (errno || *end || val > SIZE_MAX)
+            {
+                LSQ_ERROR("invalid queue bytes `%s'", optarg);
+                exit(1);
+            }
+            server_ctx.baton_app.dgq_max_bytes = (size_t) val;
+            break;
+        }
 #endif
         case 'h':
             usage(argv[0]);

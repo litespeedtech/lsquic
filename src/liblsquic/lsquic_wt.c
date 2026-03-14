@@ -215,6 +215,30 @@ wt_h3_error_to_app_error (uint64_t h3_error_code, uint64_t *wt_error_code)
     return 0;
 }
 
+
+enum wt_reset_event_mask
+{
+    WT_REM_STREAM_RESET = 1 << 0,
+    WT_REM_STOP_SENDING = 1 << 1,
+};
+
+
+static unsigned
+wt_reset_event_mask (int how)
+{
+    switch (how)
+    {
+    case 0:
+        return WT_REM_STREAM_RESET;
+    case 1:
+        return WT_REM_STOP_SENDING;
+    case 2:
+        return WT_REM_STREAM_RESET | WT_REM_STOP_SENDING;
+    default:
+        return 0;
+    }
+}
+
 #if LSQUIC_TEST
 int
 lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
@@ -229,6 +253,13 @@ lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                       uint64_t *wt_error_code)
 {
     return wt_h3_error_to_app_error(h3_error_code, wt_error_code);
+}
+
+
+unsigned
+lsquic_wt_test_reset_event_mask (int how)
+{
+    return wt_reset_event_mask(how);
 }
 
 
@@ -652,6 +683,7 @@ wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
 {
     WT_SET_CONN_FROM_STREAM(stream);
     struct wt_stream_ctx *wctx;
+    unsigned evmask;
     uint64_t h3_error_code, wt_error_code;
 
     if (!stream || !sctx)
@@ -661,29 +693,33 @@ wt_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx, int how)
     if (!wctx->sess || !wctx->sess->wts_if)
         return;
 
-    switch (how)
+    evmask = wt_reset_event_mask(how);
+    if (!evmask)
     {
-    case 0:
-        if (!wctx->sess->wts_if->wti_on_stream_reset)
-            return;
+        LSQ_DEBUG("WT stream reset callback got unsupported reset kind %d", how);
+        return;
+    }
+
+    if ((evmask & WT_REM_STREAM_RESET)
+                        && wctx->sess->wts_if->wti_on_stream_reset)
+    {
         h3_error_code = stream->sm_rst_in_code;
         if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
             h3_error_code = wt_error_code;
         wctx->sess->wts_if->wti_on_stream_reset(stream, wctx->app_ctx,
                                                             h3_error_code);
-        return;
-    case 1:
-        if (!wctx->sess->wts_if->wti_on_stop_sending)
-            return;
+    }
+
+    if ((evmask & WT_REM_STOP_SENDING)
+                        && wctx->sess->wts_if->wti_on_stop_sending)
+    {
         h3_error_code = stream->sm_ss_in_code;
+        if (!(stream->stream_flags & STREAM_SS_RECVD))
+            h3_error_code = stream->sm_rst_in_code;
         if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
             h3_error_code = wt_error_code;
         wctx->sess->wts_if->wti_on_stop_sending(stream, wctx->app_ctx,
                                                             h3_error_code);
-        return;
-    default:
-        LSQ_DEBUG("WT stream reset callback got unsupported reset kind %d", how);
-        return;
     }
 }
 

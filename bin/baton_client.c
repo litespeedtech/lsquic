@@ -4,9 +4,11 @@
  */
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <sys/queue.h>
 
 #ifndef WIN32
@@ -42,6 +44,8 @@ usage (const char *prog)
 "   -c count   Number of parallel batons\n"
 "   -U count   Burst WT datagrams to queue via write callback\n"
 "   -M policy  WT datagram queue-full policy: fail|oldest|newest\n"
+"   -u count   Max queued WT datagrams per session (0 = library default)\n"
+"   -v bytes   Max queued WT datagram bytes per session (0 = library default)\n"
 "   -P path    CONNECT path base (default: " DEVIOUS_BATON_PATH ")\n"
 "   -p bytes   Padding length for baton messages\n"
             , prog);
@@ -74,7 +78,7 @@ main (int argc, char **argv)
 
     devious_baton_app_init(&app, &prog, 0);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:U:M:P:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:U:M:u:v:P:p:h")))
     {
         switch (opt) {
         case 'b':
@@ -99,6 +103,36 @@ main (int argc, char **argv)
                 exit(1);
             }
             break;
+        case 'u':
+        {
+            char *end;
+            unsigned long val;
+
+            errno = 0;
+            val = strtoul(optarg, &end, 10);
+            if (errno || *end || val > UINT_MAX)
+            {
+                LSQ_ERROR("invalid queue count `%s'", optarg);
+                exit(1);
+            }
+            app.dgq_max_count = (unsigned) val;
+            break;
+        }
+        case 'v':
+        {
+            char *end;
+            unsigned long long val;
+
+            errno = 0;
+            val = strtoull(optarg, &end, 10);
+            if (errno || *end || val > SIZE_MAX)
+            {
+                LSQ_ERROR("invalid queue bytes `%s'", optarg);
+                exit(1);
+            }
+            app.dgq_max_bytes = (size_t) val;
+            break;
+        }
         case 'P':
             app.path_base = optarg;
             break;

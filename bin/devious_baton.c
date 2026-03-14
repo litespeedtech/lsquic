@@ -1397,6 +1397,10 @@ db_wti_on_stop_sending (struct lsquic_stream *stream,
             (uint64_t) lsquic_stream_id(stream), error_code);
     db_maybe_reset_stream(st, DEVIOUS_BATON_STREAM_ERR_WHATEVER,
                                 "WHATEVER", "received STOP_SENDING");
+    if (stream_is_readable_by_us(st->dbs_session, st))
+        lsquic_stream_wantread(stream, 0);
+    lsquic_stream_wantwrite(stream, 0);
+    db_finish_stream(st, 1, "got STOP_SENDING");
 }
 
 static void on_read (struct lsquic_stream *stream,
@@ -1431,6 +1435,18 @@ static const struct lsquic_webtransport_if wt_if =
     .wti_on_stream_reset  = db_wti_on_stream_reset,
     .wti_on_stop_sending  = db_wti_on_stop_sending,
 };
+
+
+static void
+apply_wt_datagram_params (struct lsquic_wt_accept_params *params,
+                                            const struct devious_baton_app *app)
+{
+    params->wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
+                                                        app->dg_drop_policy;
+    params->wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    params->wtap_max_datagram_queue_count = app->dgq_max_count;
+    params->wtap_max_datagram_queue_bytes = app->dgq_max_bytes;
+}
 
 
 static void *
@@ -1600,9 +1616,7 @@ process_control_server (struct devious_baton_stream *st)
     params.wtap_wt_if = &wt_if;
     params.wtap_wt_if_ctx = &cfg;
     params.wtap_connect_info = &info;
-    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
-                                                    cfg.dg_drop_policy;
-    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    apply_wt_datagram_params(&params, &cfg);
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free_connect_info(&info);
@@ -1687,9 +1701,7 @@ process_control_client (struct devious_baton_stream *st)
     params.wtap_wt_if = &wt_if;
     params.wtap_wt_if_ctx = st->dbs_conn->app;
     params.wtap_connect_info = &info;
-    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
-                                        st->dbs_conn->app->dg_drop_policy;
-    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    apply_wt_datagram_params(&params, st->dbs_conn->app);
     if (!lsquic_wt_accept(st->dbs_stream, &params))
     {
         free(protocol);
@@ -2004,6 +2016,8 @@ devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
     app->padding_len = 0;
     app->dg_burst_count = 0;
     app->dg_drop_policy = LSQWT_DG_FAIL_EAGAIN;
+    app->dgq_max_count = 0;
+    app->dgq_max_bytes = 0;
     app->max_count = 100;
     app->path_base = DEVIOUS_BATON_PATH;
     app->path = DEVIOUS_BATON_PATH;
@@ -2050,9 +2064,7 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.wtap_wt_if = &wt_if;
     params.wtap_wt_if_ctx = &cfg;
     params.wtap_connect_info = info;
-    params.wtap_datagram_drop_policy = (enum lsquic_wt_dg_drop_policy)
-                                                    cfg.dg_drop_policy;
-    params.wtap_datagram_send_mode = LSQUIC_HTTP_DG_SEND_DEFAULT;
+    apply_wt_datagram_params(&params, &cfg);
     if (!lsquic_wt_accept(stream, &params))
     {
         unsigned status;
