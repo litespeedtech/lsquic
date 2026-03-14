@@ -65,60 +65,62 @@ struct lsquic_webtransport_if
 {
     /* Session opened from CONNECT stream acceptance. */
     lsquic_wt_session_ctx_t *
-     (*wti_on_session_open) (void *ctx, lsquic_wt_session_t *sess,
-                          const struct lsquic_wt_connect_info *info);
+    (*wti_on_session_open) (void *ctx, lsquic_wt_session_t *,
+                            const struct lsquic_wt_connect_info *info);
 
     /* Session closed (normal or error path). */
-    void  (*wti_on_session_close) (lsquic_wt_session_t *sess,
-                                lsquic_wt_session_ctx_t *sctx,
-                                uint64_t code, const char *reason,
-                                size_t reason_len);
+    void
+    (*wti_on_session_close) (lsquic_wt_session_t *, lsquic_wt_session_ctx_t *,
+                             uint64_t code, const char *reason,
+                             size_t reason_len);
 
     /* New peer-initiated WT unidirectional stream. */
     lsquic_stream_ctx_t *
-     (*wti_on_uni_stream) (lsquic_wt_session_t *sess, lsquic_stream_t *stream);
+    (*wti_on_uni_stream) (lsquic_wt_session_t *, lsquic_stream_t *);
 
     /* New peer-initiated WT bidirectional stream. */
     lsquic_stream_ctx_t *
-     (*wti_on_bidi_stream) (lsquic_wt_session_t *sess, lsquic_stream_t *stream);
+    (*wti_on_bidi_stream) (lsquic_wt_session_t *, lsquic_stream_t *);
 
     /* Stream readable callback for WT data streams. */
-    void  (*wti_on_stream_read) (lsquic_stream_t *stream,
-                                 lsquic_stream_ctx_t *sctx);
+    void
+    (*wti_on_stream_read) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Stream writeable callback for WT data streams. */
-    void  (*wti_on_stream_write) (lsquic_stream_t *stream,
-                                  lsquic_stream_ctx_t *sctx);
+    void
+    (*wti_on_stream_write) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Stream close callback for WT data streams. */
-    void  (*wti_on_stream_close) (lsquic_stream_t *stream,
-                                  lsquic_stream_ctx_t *sctx);
+    void
+    (*wti_on_stream_close) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Supplies STOP_SENDING code for outgoing STOP_SENDING frame. */
-    uint64_t (*wti_on_stream_ss_code) (lsquic_stream_t *stream,
-                                       lsquic_stream_ctx_t *sctx);
+    uint64_t
+    (*wti_on_stream_ss_code) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Received WT datagram payload. */
-    void  (*wti_on_datagram_read) (lsquic_wt_session_t *sess,
-                           const void *buf, size_t len);
+    void
+    (*wti_on_datagram_read) (lsquic_wt_session_t *, const void *buf,
+                             size_t len);
 
     /* Datagram write interest callback; app should enqueue/send now. */
-    int   (*wti_on_datagram_write) (lsquic_wt_session_t *sess,
-                                 size_t max_datagram_size);
+    int
+    (*wti_on_datagram_write) (lsquic_wt_session_t *,
+                              size_t max_datagram_size);
 
     /* FIN observed on stream. */
-    void  (*wti_on_stream_fin) (lsquic_stream_t *stream,
-                             lsquic_stream_ctx_t *sctx);
+    void
+    (*wti_on_stream_fin) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* RESET_STREAM observed on stream. */
-    void  (*wti_on_stream_reset) (lsquic_stream_t *stream,
-                               lsquic_stream_ctx_t *sctx,
-                               uint64_t error_code);
+    void
+    (*wti_on_stream_reset) (lsquic_stream_t *, lsquic_stream_ctx_t *,
+                            uint64_t error_code);
 
     /* STOP_SENDING observed on stream. */
-    void  (*wti_on_stop_sending) (lsquic_stream_t *stream,
-                               lsquic_stream_ctx_t *sctx,
-                               uint64_t error_code);
+    void
+    (*wti_on_stop_sending) (lsquic_stream_t *, lsquic_stream_ctx_t *,
+                            uint64_t error_code);
 };
 
 /** Accept WebTransport CONNECT. */
