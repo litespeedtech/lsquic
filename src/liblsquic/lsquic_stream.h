@@ -21,6 +21,7 @@ union hblock_ctx;
 struct lsquic_packet_out;
 struct lsquic_send_ctl;
 struct network_path;
+struct capsule_parsers;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 
@@ -154,6 +155,11 @@ struct http_dg_stream_state
     struct http_dg_capsule_read_state    read;
     struct http_dg_capsule_write_state   write;
 };
+
+
+typedef void (*lsquic_capsule_read_f)(lsquic_stream_t *stream,
+                    lsquic_stream_ctx_t *h, uint64_t capsule_type,
+                    const void *payload, size_t payload_len);
 
 
 struct stream_filter_if
@@ -335,6 +341,7 @@ struct lsquic_stream
 #define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
 
     struct http_dg_stream_state   *sm_http_dg;
+    struct capsule_parsers        *sm_capsule_parsers;
     void                           *sm_http_dg_consume_ctx;
 
     /** If @ref SMQF_WANT_FLUSH is set, flush until this offset. */
@@ -454,6 +461,13 @@ lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream);
 int
 lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
                                                     const void *buf, size_t sz);
+
+int
+lsquic_stream_set_capsule_handler (lsquic_stream_t *stream,
+                        uint64_t capsule_type, lsquic_capsule_read_f cb);
+
+void
+lsquic_stream_clear_capsule_handlers (lsquic_stream_t *stream);
 
 
 enum stream_ctor_flags

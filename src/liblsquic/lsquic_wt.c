@@ -83,6 +83,16 @@ enum wt_session_flags
     WTSF_WANT_DG_WRITE   = 1 << 2,
 };
 
+enum wt_capsule_type
+{
+    WT_CAPSULE_MAX_DATA               = 0x190B4D3DULL,
+    WT_CAPSULE_MAX_STREAMS_BIDI       = 0x190B4D3FULL,
+    WT_CAPSULE_MAX_STREAMS_UNI        = 0x190B4D40ULL,
+    WT_CAPSULE_DATA_BLOCKED           = 0x190B4D41ULL,
+    WT_CAPSULE_STREAMS_BLOCKED_BIDI   = 0x190B4D43ULL,
+    WT_CAPSULE_STREAMS_BLOCKED_UNI    = 0x190B4D44ULL,
+};
+
 
 struct lsquic_wt_session
 {
@@ -120,6 +130,121 @@ struct wt_header_buf
     char    buf[128];
     size_t  off;
 };
+
+
+static const char *
+wt_capsule_name (uint64_t capsule_type)
+{
+    switch (capsule_type)
+    {
+    case WT_CAPSULE_MAX_DATA:
+        return "WT_MAX_DATA";
+    case WT_CAPSULE_MAX_STREAMS_BIDI:
+        return "WT_MAX_STREAMS_BIDI";
+    case WT_CAPSULE_MAX_STREAMS_UNI:
+        return "WT_MAX_STREAMS_UNI";
+    case WT_CAPSULE_DATA_BLOCKED:
+        return "WT_DATA_BLOCKED";
+    case WT_CAPSULE_STREAMS_BLOCKED_BIDI:
+        return "WT_STREAMS_BLOCKED_BIDI";
+    case WT_CAPSULE_STREAMS_BLOCKED_UNI:
+        return "WT_STREAMS_BLOCKED_UNI";
+    default:
+        return NULL;
+    }
+}
+
+
+static void
+wt_on_capsule (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h,
+    uint64_t capsule_type, const void *payload, size_t payload_len)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    const char *name;
+    const unsigned char *p;
+    const unsigned char *end;
+    struct varint_read_state vrs;
+    int s;
+
+    name = wt_capsule_name(capsule_type);
+    if (!name)
+        return;
+
+    if (payload_len == 0)
+    {
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has empty payload; ignoring",
+            name, lsquic_stream_id(stream));
+        return;
+    }
+
+    if (payload_len > VINT_MAX_SIZE)
+    {
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has too-large payload length %zu; ignoring",
+            name, lsquic_stream_id(stream), payload_len);
+        return;
+    }
+
+    p = payload;
+    end = (const unsigned char *) payload + payload_len;
+    memset(&vrs, 0, sizeof(vrs));
+    s = lsquic_varint_read_nb(&p, end, &vrs);
+    if (0 == s && p == end)
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            ": value=%"PRIu64" (ignored)",
+            name, lsquic_stream_id(stream), vrs.val);
+    else
+        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
+            " has malformed payload (len=%zu); ignoring",
+            name, lsquic_stream_id(stream), payload_len);
+}
+
+
+static void
+wt_unregister_capsule_handlers (struct lsquic_stream *stream)
+{
+    static const uint64_t wt_capsule_types[] = {
+        WT_CAPSULE_MAX_DATA,
+        WT_CAPSULE_MAX_STREAMS_BIDI,
+        WT_CAPSULE_MAX_STREAMS_UNI,
+        WT_CAPSULE_DATA_BLOCKED,
+        WT_CAPSULE_STREAMS_BLOCKED_BIDI,
+        WT_CAPSULE_STREAMS_BLOCKED_UNI,
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof(wt_capsule_types) / sizeof(wt_capsule_types[0]); ++i)
+        (void) lsquic_stream_set_capsule_handler(stream, wt_capsule_types[i],
+                                                                        NULL);
+}
+
+
+static int
+wt_register_capsule_handlers (struct lsquic_stream *stream)
+{
+    static const uint64_t wt_capsule_types[] = {
+        WT_CAPSULE_MAX_DATA,
+        WT_CAPSULE_MAX_STREAMS_BIDI,
+        WT_CAPSULE_MAX_STREAMS_UNI,
+        WT_CAPSULE_DATA_BLOCKED,
+        WT_CAPSULE_STREAMS_BLOCKED_BIDI,
+        WT_CAPSULE_STREAMS_BLOCKED_UNI,
+    };
+    unsigned i;
+
+    for (i = 0; i < sizeof(wt_capsule_types) / sizeof(wt_capsule_types[0]); ++i)
+        if (0 != lsquic_stream_set_capsule_handler(stream, wt_capsule_types[i],
+                                                                    wt_on_capsule))
+        {
+            while (i-- > 0)
+                (void) lsquic_stream_set_capsule_handler(stream,
+                                                wt_capsule_types[i], NULL);
+            return -1;
+        }
+
+    return 0;
+}
 
 #define WT_MAX_PENDING_STREAMS 64
 #define WT_APP_ERROR_MAX 0xFFFFFFFFULL
@@ -1448,7 +1573,10 @@ wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
         }
 
         if (sess->wts_control_stream)
+        {
+            wt_unregister_capsule_handlers(sess->wts_control_stream);
             lsquic_stream_set_http_dg_if(sess->wts_control_stream, NULL);
+        }
 
         wt_if = sess->wts_if;
         sess_ctx = sess->wts_sess_ctx;
@@ -1588,6 +1716,17 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     {
         LSQ_WARN("cannot enable WT capsule parsing on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
+        lsquic_stream_set_http_dg_if(connect_stream, NULL);
+        wt_free_connect_info(sess);
+        free(sess);
+        return NULL;
+    }
+
+    if (0 != wt_register_capsule_handlers(connect_stream))
+    {
+        LSQ_WARN("cannot register WT capsule handlers on stream %"PRIu64,
+                                        lsquic_stream_id(connect_stream));
+        lsquic_stream_set_http_dg_capsules(connect_stream, 0);
         lsquic_stream_set_http_dg_if(connect_stream, NULL);
         wt_free_connect_info(sess);
         free(sess);

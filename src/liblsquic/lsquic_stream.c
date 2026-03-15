@@ -111,6 +111,21 @@ enum stream_write_options
 };
 
 
+struct capsule_parser
+{
+    uint64_t                cp_type;
+    lsquic_capsule_read_f   cp_cb;
+};
+
+
+struct capsule_parsers
+{
+    unsigned                cps_count;
+    unsigned                cps_nalloc;
+    struct capsule_parser   cps_elems[0];
+};
+
+
 static ssize_t
 stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t,
                                                     enum stream_write_options);
@@ -123,6 +138,13 @@ http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
 
 static void
 http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+
+static lsquic_capsule_read_f
+stream_find_capsule_cb (struct lsquic_stream *stream, uint64_t capsule_type);
+
+static void
+http_dg_capsule_datagram_cb (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+    uint64_t capsule_type, const void *payload, size_t payload_len);
 
 static int
 stream_flush (lsquic_stream_t *stream);
@@ -749,6 +771,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         free(stream->sm_http_dg);
         stream->sm_http_dg = NULL;
     }
+    lsquic_stream_clear_capsule_handlers(stream);
     free(stream->sm_buf);
     free(stream->sm_header_block);
     lsquic_wt_on_stream_destroy(stream);
@@ -2549,6 +2572,110 @@ lsquic_stream_set_http_dg_if (lsquic_stream_t *stream,
 }
 
 
+static struct capsule_parser *
+stream_find_capsule_parser (struct lsquic_stream *stream,
+                            uint64_t capsule_type, unsigned *idx)
+{
+    struct capsule_parsers *parsers;
+    unsigned i;
+
+    parsers = stream->sm_capsule_parsers;
+    if (!parsers)
+        return NULL;
+
+    for (i = 0; i < parsers->cps_count; ++i)
+        if (parsers->cps_elems[i].cp_type == capsule_type)
+        {
+            if (idx)
+                *idx = i;
+            return &parsers->cps_elems[i];
+        }
+
+    return NULL;
+}
+
+
+static lsquic_capsule_read_f
+stream_find_capsule_cb (struct lsquic_stream *stream, uint64_t capsule_type)
+{
+    struct capsule_parser *parser;
+
+    parser = stream_find_capsule_parser(stream, capsule_type, NULL);
+    return parser ? parser->cp_cb : NULL;
+}
+
+
+int
+lsquic_stream_set_capsule_handler (lsquic_stream_t *stream,
+                        uint64_t capsule_type, lsquic_capsule_read_f cb)
+{
+    struct capsule_parsers *parsers;
+    struct capsule_parsers *new_parsers;
+    struct capsule_parser *parser;
+    size_t alloc_sz;
+    unsigned idx, new_nalloc;
+
+    if (!stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    parsers = stream->sm_capsule_parsers;
+    parser = stream_find_capsule_parser(stream, capsule_type, &idx);
+    if (parser)
+    {
+        if (cb)
+        {
+            parser->cp_cb = cb;
+            return 0;
+        }
+
+        --parsers->cps_count;
+        if (idx < parsers->cps_count)
+            parsers->cps_elems[idx] = parsers->cps_elems[parsers->cps_count];
+        return 0;
+    }
+
+    if (!cb)
+        return 0;
+
+    if (!parsers || parsers->cps_count == parsers->cps_nalloc)
+    {
+        new_nalloc = parsers ? parsers->cps_nalloc * 2 : 2;
+        alloc_sz = sizeof(*parsers)
+                 + new_nalloc * sizeof(parsers->cps_elems[0]);
+        new_parsers = realloc(parsers, alloc_sz);
+        if (!new_parsers)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+        if (!parsers)
+            new_parsers->cps_count = 0;
+        new_parsers->cps_nalloc = new_nalloc;
+        stream->sm_capsule_parsers = new_parsers;
+        parsers = new_parsers;
+    }
+
+    parsers->cps_elems[parsers->cps_count].cp_type = capsule_type;
+    parsers->cps_elems[parsers->cps_count].cp_cb = cb;
+    ++parsers->cps_count;
+    return 0;
+}
+
+
+void
+lsquic_stream_clear_capsule_handlers (lsquic_stream_t *stream)
+{
+    if (!stream)
+        return;
+
+    free(stream->sm_capsule_parsers);
+    stream->sm_capsule_parsers = NULL;
+}
+
+
 static void
 http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
 static void
@@ -2582,6 +2709,9 @@ lsquic_stream_set_http_dg_capsules (lsquic_stream_t *stream, int enable)
                 return -1;
             }
         }
+        if (0 != lsquic_stream_set_capsule_handler(stream, 0x00,
+                                            http_dg_capsule_datagram_cb))
+            return -1;
         stream->sm_bflags |= SMBF_HTTP_DG_CAPSULES;
         SM_HISTORY_APPEND(stream, SHE_HTTP_DG_CAPSULE_ON);
         LSQ_DEBUG("HTTP DG capsule mode enabled on stream %"PRIu64, stream->id);
@@ -2599,6 +2729,7 @@ lsquic_stream_set_http_dg_capsules (lsquic_stream_t *stream, int enable)
         LSQ_DEBUG("HTTP DG capsule mode disabled on stream %"PRIu64, stream->id);
         (void) lsquic_stream_wantread(stream, 0);
         (void) lsquic_stream_wantwrite(stream, 0);
+        (void) lsquic_stream_set_capsule_handler(stream, 0x00, NULL);
         if (stream->sm_http_dg)
         {
             free(stream->sm_http_dg->read.buf);
@@ -6196,84 +6327,6 @@ lsquic_stream_has_unacked_data (struct lsquic_stream *stream)
 
 /* RFC 9297, Section 3.2: Datagram Capsule type is 0x00. */
 #define H3_CAPSULE_DATAGRAM 0x00
-#define H3_CAPSULE_WT_MAX_DATA 0x190B4D3DULL
-#define H3_CAPSULE_WT_MAX_STREAMS_BIDI 0x190B4D3FULL
-#define H3_CAPSULE_WT_MAX_STREAMS_UNI 0x190B4D40ULL
-#define H3_CAPSULE_WT_DATA_BLOCKED 0x190B4D41ULL
-#define H3_CAPSULE_WT_STREAMS_BLOCKED_BIDI 0x190B4D43ULL
-#define H3_CAPSULE_WT_STREAMS_BLOCKED_UNI 0x190B4D44ULL
-
-
-static const char *
-wt_flow_control_capsule_name (uint64_t capsule_type)
-{
-    switch (capsule_type)
-    {
-    case H3_CAPSULE_WT_MAX_DATA:
-        return "WT_MAX_DATA";
-    case H3_CAPSULE_WT_MAX_STREAMS_BIDI:
-        return "WT_MAX_STREAMS_BIDI";
-    case H3_CAPSULE_WT_MAX_STREAMS_UNI:
-        return "WT_MAX_STREAMS_UNI";
-    case H3_CAPSULE_WT_DATA_BLOCKED:
-        return "WT_DATA_BLOCKED";
-    case H3_CAPSULE_WT_STREAMS_BLOCKED_BIDI:
-        return "WT_STREAMS_BLOCKED_BIDI";
-    case H3_CAPSULE_WT_STREAMS_BLOCKED_UNI:
-        return "WT_STREAMS_BLOCKED_UNI";
-    default:
-        return NULL;
-    }
-}
-
-
-static void
-log_wt_flow_control_capsule (struct lsquic_stream *stream,
-                             uint64_t capsule_type,
-                             uint64_t capsule_length,
-                             const unsigned char *payload,
-                             size_t payload_sz)
-{
-    const char *name;
-    const unsigned char *p;
-    struct varint_read_state vrs;
-    int s;
-
-    if (!(stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM))
-        return;
-
-    name = wt_flow_control_capsule_name(capsule_type);
-    if (!name)
-        return;
-
-    if (capsule_length > VINT_MAX_SIZE)
-    {
-        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
-            " has too-large payload length %"PRIu64"; ignoring",
-            name, stream->id, capsule_length);
-        return;
-    }
-
-    if (!payload || payload_sz == 0)
-    {
-        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
-            " has empty payload; ignoring",
-            name, stream->id);
-        return;
-    }
-
-    p = payload;
-    memset(&vrs, 0, sizeof(vrs));
-    s = lsquic_varint_read_nb(&p, payload + payload_sz, &vrs);
-    if (0 == s && p == payload + payload_sz)
-        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
-            ": value=%"PRIu64" (ignored)",
-            name, stream->id, vrs.val);
-    else
-        LSQ_INFO("%s capsule on WT CONNECT stream %"PRIu64
-            " has malformed payload (len=%zu); ignoring",
-            name, stream->id, payload_sz);
-}
 
 static void
 stream_reset_http_dg_capsule (struct lsquic_stream *stream)
@@ -6328,6 +6381,25 @@ static void
 }
 
 
+static void
+http_dg_capsule_datagram_cb (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+    uint64_t UNUSED_capsule_type, const void *payload, size_t payload_len)
+{
+    void (*on_dg_read)(lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+                        const void *buf, size_t buf_sz);
+
+    on_dg_read = select_on_dg_read(stream);
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64" size %zu",
+        stream->id, payload_len);
+    if (on_dg_read)
+        on_dg_read(stream, h, payload, payload_len);
+    else
+        LSQ_DEBUG("no callback for HTTP datagram on stream "
+            "%"PRIu64"; drop on floor", stream->id);
+}
+
+
 static size_t
 http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
 {
@@ -6337,8 +6409,7 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
     const unsigned char *end = buf + len;
     struct varint_read_state *vrs;
     size_t avail, to_copy;
-    void (*on_dg_read)(lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
-                        const void *buf, size_t buf_sz);
+    lsquic_capsule_read_f on_capsule;
     int s;
 
     if (!stream->sm_http_dg)
@@ -6373,8 +6444,8 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                         "capsule length too large");
                 goto end;
             }
-            /* RFC 9297, Section 3.2: Datagram Capsule payload. */
-            if (rd->type == H3_CAPSULE_DATAGRAM)
+            on_capsule = stream_find_capsule_cb(stream, rd->type);
+            if (on_capsule)
             {
                 unsigned max_sz;
 
@@ -6398,21 +6469,6 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                     }
                 }
             }
-            else if ((stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM)
-                        && wt_flow_control_capsule_name(rd->type))
-            {
-                if (rd->length <= VINT_MAX_SIZE && rd->length > 0)
-                {
-                    rd->buf_sz = (size_t) rd->length;
-                    rd->buf = malloc(rd->buf_sz);
-                    if (!rd->buf)
-                    {
-                        LSQ_WARN("cannot allocate WT capsule buffer "
-                            "for stream %"PRIu64, stream->id);
-                        rd->buf_sz = 0;
-                    }
-                }
-            }
             rd->state = HDC_READ_PAYLOAD;
             break;
         case HDC_READ_PAYLOAD:
@@ -6426,26 +6482,14 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
             p += to_copy;
             if (rd->offset == rd->length)
             {
-                if (rd->type == H3_CAPSULE_DATAGRAM
-                        && (on_dg_read = select_on_dg_read(stream)))
-                {
-                    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
-                    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
-                        " size %zu", stream->id, rd->buf_sz);
-                    on_dg_read(stream, stream->st_ctx, rd->buf, rd->buf_sz);
-                }
-                else if (rd->type == H3_CAPSULE_DATAGRAM)
-                {
-                    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
-                    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64
-                        " size %zu", stream->id, rd->buf_sz);
-                    LSQ_DEBUG("no callback for HTTP datagram on stream "
-                        "%"PRIu64"; drop on floor", stream->id);
-                }
-                else if ((stream->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM)
-                            && wt_flow_control_capsule_name(rd->type))
-                    log_wt_flow_control_capsule(stream, rd->type, rd->length,
-                                                rd->buf, rd->buf_sz);
+                on_capsule = stream_find_capsule_cb(stream, rd->type);
+                if (on_capsule)
+                    on_capsule(stream, stream->st_ctx, rd->type,
+                                                        rd->buf, rd->buf_sz);
+                else
+                    LSQ_DEBUG("no callback for capsule type 0x%"PRIX64
+                        " on stream %"PRIu64"; drop on floor",
+                        rd->type, stream->id);
                 free(rd->buf);
                 rd->buf = NULL;
                 stream_reset_http_dg_capsule(stream);
