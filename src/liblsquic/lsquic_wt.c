@@ -1584,6 +1584,16 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return NULL;
     }
 
+    if (0 != lsquic_stream_set_http_dg_capsules(connect_stream, 1))
+    {
+        LSQ_WARN("cannot enable WT capsule parsing on stream %"PRIu64,
+                                        lsquic_stream_id(connect_stream));
+        lsquic_stream_set_http_dg_if(connect_stream, NULL);
+        wt_free_connect_info(sess);
+        free(sess);
+        return NULL;
+    }
+
     wt_stream_bind_session(sess, connect_stream);
     lsquic_stream_set_webtransport_session(connect_stream);
     TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
