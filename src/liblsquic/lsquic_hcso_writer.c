@@ -209,6 +209,14 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, wt_max_sessions, bits, 1 << bits);
         p += 1 << bits;
 
+        /* Write out draft-14 compatibility setting WT_MAX_SESSIONS. */
+        bits = hcso_setting_type2bits(writer, HQSID_WT_MAX_SESSIONS);
+        vint_write(p, HQSID_WT_MAX_SESSIONS, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(wt_max_sessions);
+        vint_write(p, wt_max_sessions, bits, 1 << bits);
+        p += 1 << bits;
+
         bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_DATA);
         vint_write(p, HQSID_WT_INITIAL_MAX_DATA, bits, 1 << bits);
         p += 1 << bits;

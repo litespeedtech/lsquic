@@ -64,9 +64,11 @@ struct devious_baton_conn
     struct devious_baton_app             *app;
     struct prog                          *prog;
     struct lsquic_stream                 *control_stream;
+    const char                           *connect_protocol;
     int                                   headers_sent;
     int                                   response_seen;
     int                                   response_ok;
+    signed char                           retried_with_legacy_protocol;
 };
 
 
@@ -373,6 +375,18 @@ dup_header_value (const char *value, size_t value_len, char **out)
 
 
 static int
+is_supported_connect_protocol (const char *value, size_t value_len)
+{
+    return (value_len == sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1
+            && 0 == memcmp(value, WEBTRANSPORT_H3_CONNECT_PROTOCOL,
+                        sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1))
+        || (value_len == sizeof(WEBTRANSPORT_CONNECT_PROTOCOL) - 1
+            && 0 == memcmp(value, WEBTRANSPORT_CONNECT_PROTOCOL,
+                        sizeof(WEBTRANSPORT_CONNECT_PROTOCOL) - 1));
+}
+
+
+static int
 dup_first_sf_string (const char *value, size_t value_len, char **out)
 {
     char *buf;
@@ -525,10 +539,7 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         {
             have_connect_protocol = 1;
             connect_protocol_ok =
-                    el->xhdr.val_len
-                        == sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1
-                && 0 == memcmp(value, WEBTRANSPORT_H3_CONNECT_PROTOCOL,
-                    sizeof(WEBTRANSPORT_H3_CONNECT_PROTOCOL) - 1);
+                    is_supported_connect_protocol(value, el->xhdr.val_len);
         }
         else if (el->xhdr.name_len == sizeof("wt-available-protocols") - 1
                 && 0 == memcmp(name, "wt-available-protocols",
@@ -645,10 +656,14 @@ send_headers (struct devious_baton_conn *conn)
 {
     struct header_buf hbuf;
     struct lsxpack_header headers_arr[5];
+    const char *connect_protocol;
     const char *hostname;
     unsigned h_idx;
 
     h_idx = 0;
+    connect_protocol = conn->connect_protocol
+                            ? conn->connect_protocol
+                            : WEBTRANSPORT_H3_CONNECT_PROTOCOL;
     hostname = conn->prog->prog_hostname ? conn->prog->prog_hostname
                                          : "localhost";
 
@@ -656,7 +671,8 @@ send_headers (struct devious_baton_conn *conn)
     hbuf.off = 0;
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V("CONNECT"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":protocol"),
-                                        V(WEBTRANSPORT_H3_CONNECT_PROTOCOL));
+                                        connect_protocol,
+                                        strlen(connect_protocol));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":authority"),
                                         hostname, strlen(hostname));
@@ -1636,6 +1652,41 @@ process_control_server (struct devious_baton_stream *st)
 }
 
 
+static int
+retry_connect_with_legacy_protocol (struct devious_baton_stream *st)
+{
+    struct devious_baton_conn *conn;
+    struct lsquic_conn *lconn;
+
+    conn = st->dbs_conn;
+    if (!conn || conn->app->is_server)
+        return 0;
+
+    if (conn->retried_with_legacy_protocol)
+        return 0;
+
+    if (!conn->connect_protocol
+        || 0 != strcmp(conn->connect_protocol, WEBTRANSPORT_H3_CONNECT_PROTOCOL))
+        return 0;
+
+    conn->retried_with_legacy_protocol = 1;
+    conn->connect_protocol = WEBTRANSPORT_CONNECT_PROTOCOL;
+    conn->headers_sent = 0;
+    conn->response_seen = 0;
+    conn->response_ok = 0;
+    conn->control_stream = NULL;
+
+    LSQ_INFO("CONNECT failed; retrying with protocol `%s'",
+                                                    conn->connect_protocol);
+    lsquic_stream_wantread(st->dbs_stream, 0);
+    lsquic_stream_wantwrite(st->dbs_stream, 0);
+    lconn = lsquic_stream_conn(st->dbs_stream);
+    lsquic_stream_close(st->dbs_stream);
+    lsquic_conn_make_stream(lconn);
+    return 1;
+}
+
+
 static void
 process_control_client (struct devious_baton_stream *st)
 {
@@ -1675,6 +1726,12 @@ process_control_client (struct devious_baton_stream *st)
 
     if (!st->dbs_conn->response_ok)
     {
+        if (retry_connect_with_legacy_protocol(st))
+        {
+            free(protocol);
+            return;
+        }
+
         if (status_code)
             LSQ_ERROR("CONNECT failed with status %u", status_code);
         else
@@ -1851,7 +1908,8 @@ on_write (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
                     lsquic_conn_abort(lsquic_stream_conn(stream));
                     return;
                 }
-                LSQ_INFO("client sent CONNECT request for %s", conn->app->path);
+                LSQ_INFO("client sent CONNECT request for %s using protocol `%s'",
+                        conn->app->path, conn->connect_protocol);
                 conn->headers_sent = 1;
                 if (0 != lsquic_stream_flush(stream))
                 {
@@ -1940,6 +1998,7 @@ on_new_conn (void *stream_if_ctx, struct lsquic_conn *conn)
 
     ctx->app = app;
     ctx->prog = app->prog;
+    ctx->connect_protocol = WEBTRANSPORT_H3_CONNECT_PROTOCOL;
 
     if (!app->is_server)
         lsquic_conn_make_stream(conn);

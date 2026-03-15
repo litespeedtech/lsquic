@@ -1355,6 +1355,14 @@ path_prefix_matches (const char *path, const char *prefix)
 
 
 static int
+is_supported_connect_protocol (const char *connect_protocol)
+{
+    return 0 == strcmp(connect_protocol, WEBTRANSPORT_H3_CONNECT_PROTOCOL)
+        || 0 == strcmp(connect_protocol, WEBTRANSPORT_CONNECT_PROTOCOL);
+}
+
+
+static int
 baton_connect_handler (struct lsquic_stream *stream,
                                     struct lsquic_stream_ctx *st_h)
 {
@@ -1418,7 +1426,7 @@ handle_connect_request (struct lsquic_stream *stream,
         return 1;
     }
 
-    if (0 != strcmp(req->connect_protocol, WEBTRANSPORT_H3_CONNECT_PROTOCOL))
+    if (!is_supported_connect_protocol(req->connect_protocol))
     {
         snprintf(err_buf, sizeof(err_buf), "Unsupported CONNECT protocol");
         lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));

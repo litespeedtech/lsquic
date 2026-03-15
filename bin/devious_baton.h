@@ -9,6 +9,7 @@ struct lsquic_wt_connect_info;
 struct prog;
 
 #define WEBTRANSPORT_H3_CONNECT_PROTOCOL "webtransport-h3"
+#define WEBTRANSPORT_CONNECT_PROTOCOL    "webtransport"
 #define DEVIOUS_BATON_PATH "/webtransport/devious-baton"
 
 
