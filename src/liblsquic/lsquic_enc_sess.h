@@ -3,6 +3,7 @@
 #define LSQUIC_ENC_SESS_H 1
 
 #include "lsquic_shared_support.h"
+#include "lsquic_ietf.h"
 
 struct lsquic_alarmset;
 struct lsquic_engine_public;
@@ -279,6 +280,9 @@ struct enc_session_funcs_iquic
 
     struct transport_params *
     (*esfi_get_peer_transport_params) (enc_session_t *);
+
+    enum trans_error_code
+    (*esfi_get_peer_transport_error) (enc_session_t *);
 
     int
     (*esfi_reset_dcid) (enc_session_t *, const struct lsquic_cid *,

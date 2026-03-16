@@ -296,6 +296,8 @@ struct enc_sess_iquic
     struct lsquic_packet_out *
                          esi_hp_batch_packets[HP_BATCH_SIZE];
     unsigned char        esi_hp_batch_samples[HP_BATCH_SIZE][SAMPLE_SZ];
+    enum trans_error_code
+                         esi_tp_error;
     unsigned char        esi_grease;
     signed char          esi_have_forw;
 };
@@ -864,6 +866,7 @@ iquic_esfi_create_client (const char *hostname,
     enc_sess->esi_odcid = *dcid;
     enc_sess->esi_flags |= ESI_ODCID;
     enc_sess->esi_grease = 0xFF;
+    enc_sess->esi_tp_error = TEC_NO_ERROR;
 
     LSQ_DEBUGC("created client, DCID: %"CID_FMT, CID_BITS(dcid));
     {
@@ -1058,6 +1061,7 @@ iquic_esfi_create_server (struct lsquic_engine_public *enpub,
     enc_sess->esi_enpub = enpub;
     enc_sess->esi_conn = lconn;
     enc_sess->esi_grease = 0xFF;
+    enc_sess->esi_tp_error = TEC_NO_ERROR;
 
     if (odcid)
     {
@@ -1734,6 +1738,8 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     const enum lsquic_version version = enc_sess->esi_conn->cn_version;
     int have_0rtt_tp;
 
+    enc_sess->esi_tp_error = TEC_TRANSPORT_PARAMETER_ERROR;
+
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
     if (!params_buf || !bufsz)
     {
@@ -1784,7 +1790,10 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
 
     if (have_0rtt_tp && 0 != check_server_tps_for_violations(enc_sess,
                                                 &params_0rtt, trans_params))
+    {
+        enc_sess->esi_tp_error = TEC_PROTOCOL_VIOLATION;
         return -1;
+    }
 
     const lsquic_cid_t *const cids[LAST_TPI + 1] = {
         [TP_CID_IDX(TPI_ORIGINAL_DEST_CID)]  = enc_sess->esi_flags & ESI_ODCID ? &enc_sess->esi_odcid : NULL,
@@ -1824,6 +1833,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
         {
             LSQ_WARN("do not have CID %s for checking",
                                                     lsquic_tpi2str[tpi]);
+            enc_sess->esi_tp_error = TEC_INTERNAL_ERROR;
             return -1;
         }
         if (LSQUIC_CIDS_EQ(cids[TP_CID_IDX(tpi)],
@@ -1910,6 +1920,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
             LSQ_INFO("peer transport parameters: %s=%"PRIu64" does not pass "
                 "sanity check", lsquic_tpi2str[stream_data],
                 trans_params->tp_numerics[stream_data]);
+            enc_sess->esi_tp_error = TEC_PROTOCOL_VIOLATION;
             return -1;
         }
         if (!((trans_params->tp_set & (1 << TPI_INIT_MAX_DATA))
@@ -1918,10 +1929,12 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
             LSQ_INFO("peer transport parameters: %s=%"PRIu64" does not pass "
                 "sanity check", lsquic_tpi2str[TPI_INIT_MAX_DATA],
                 trans_params->tp_numerics[TPI_INIT_MAX_DATA]);
+            enc_sess->esi_tp_error = TEC_PROTOCOL_VIOLATION;
             return -1;
         }
     }
 
+    enc_sess->esi_tp_error = TEC_NO_ERROR;
     return 0;
 }
 
@@ -1932,11 +1945,17 @@ maybe_get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     int s;
 
     if (enc_sess->esi_flags & ESI_HAVE_PEER_TP)
+    {
+        enc_sess->esi_tp_error = TEC_NO_ERROR;
         return 0;
+    }
 
     s = get_peer_transport_params(enc_sess);
     if (s == 0)
+    {
         enc_sess->esi_flags |= ESI_HAVE_PEER_TP;
+        enc_sess->esi_tp_error = TEC_NO_ERROR;
+    }
 
     return s;
 }
@@ -2049,11 +2068,22 @@ iquic_esfi_get_peer_transport_params (enc_session_t *enc_session_p)
     struct enc_sess_iquic *const enc_sess = enc_session_p;
 
     if (enc_sess->esi_flags & ESI_HAVE_0RTT_TP)
+    {
+        enc_sess->esi_tp_error = TEC_NO_ERROR;
         return &enc_sess->esi_peer_tp;
+    }
     else if (0 == maybe_get_peer_transport_params(enc_sess))
         return &enc_sess->esi_peer_tp;
     else
         return NULL;
+}
+
+
+static enum trans_error_code
+iquic_esfi_get_peer_transport_error (enc_session_t *enc_session_p)
+{
+    struct enc_sess_iquic *const enc_sess = enc_session_p;
+    return enc_sess->esi_tp_error;
 }
 
 
@@ -2841,6 +2871,8 @@ const struct enc_session_funcs_iquic lsquic_enc_session_iquic_ietf_v1 =
     .esfi_destroy        = iquic_esfi_destroy,
     .esfi_get_peer_transport_params
                          = iquic_esfi_get_peer_transport_params,
+    .esfi_get_peer_transport_error
+                         = iquic_esfi_get_peer_transport_error,
     .esfi_reset_dcid     = iquic_esfi_reset_dcid,
     .esfi_init_server    = iquic_esfi_init_server,
     .esfi_set_iscid      = iquic_esfi_set_iscid,
