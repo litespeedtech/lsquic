@@ -10,7 +10,6 @@ struct lsquic_stream_ctx;
 struct lsquic_conn_public;
 struct stream_frame;
 struct uncompressed_headers;
-struct lsquic_wt_session;
 enum enc_level;
 enum swtp_status;
 struct frame_gen_ctx;
@@ -794,13 +793,6 @@ lsquic_stream_get_attachment (const struct lsquic_stream *);
 
 void
 lsquic_stream_set_attachment (struct lsquic_stream *, void *);
-
-struct lsquic_wt_session *
-lsquic_stream_get_wt_session (const struct lsquic_stream *);
-
-void
-lsquic_stream_set_wt_session (struct lsquic_stream *,
-                                                struct lsquic_wt_session *);
 
 int
 lsquic_stream_is_server (const struct lsquic_stream *);
