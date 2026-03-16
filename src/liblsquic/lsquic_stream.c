@@ -5021,6 +5021,63 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
 }
 
 void
+lsquic_stream_mark_session_stream (struct lsquic_stream *stream)
+{
+    stream->sm_bflags |= SMBF_SESSION_STREAM;
+}
+
+
+int
+lsquic_stream_is_session_stream (const struct lsquic_stream *stream)
+{
+    return !!(stream->sm_bflags & SMBF_SESSION_STREAM);
+}
+
+
+void
+lsquic_stream_mark_switch_client_bidi (struct lsquic_stream *stream,
+                                        lsquic_stream_id_t stream_id)
+{
+    stream->sm_switch_stream_id = stream_id;
+    stream->sm_bflags |= SMBF_SWITCH_CLIENT_BIDI_STREAM;
+}
+
+
+int
+lsquic_stream_is_switch_client_bidi (const struct lsquic_stream *stream)
+{
+    return !!(stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM);
+}
+
+
+int
+lsquic_stream_get_switch_stream_id (const struct lsquic_stream *stream,
+                                    lsquic_stream_id_t *stream_id)
+{
+    if (!(stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM)
+        || !stream_id)
+        return -1;
+
+    *stream_id = stream->sm_switch_stream_id;
+    return 0;
+}
+
+
+int
+lsquic_stream_onclose_done (const struct lsquic_stream *stream)
+{
+    return !!(stream->stream_flags & STREAM_ONCLOSE_DONE);
+}
+
+
+void
+lsquic_stream_mark_rejected (struct lsquic_stream *stream)
+{
+    stream->stream_flags |= STREAM_SS_RECVD;
+}
+
+
+void
 lsquic_stream_set_reset_stream_at_size (struct lsquic_stream *s, uint8_t sz)
 {
     if (!s || !sz || !(s->sm_bflags & SMBF_IETF)
@@ -5591,11 +5648,11 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 && stream->conn_pub->cp_is_hq_switch_frame(stream,
                                 filter->hqfi_type, filter->hqfi_switch_stream_id))
             {
-                stream->sm_switch_stream_id = filter->hqfi_switch_stream_id;
+                lsquic_stream_mark_switch_client_bidi(stream,
+                                                filter->hqfi_switch_stream_id);
                 lsquic_stream_set_reset_stream_at_size(stream, (uint8_t) (
                     vint_size(filter->hqfi_type)
-                  + vint_size(stream->sm_switch_stream_id)));
-                stream->sm_bflags |= SMBF_SWITCH_CLIENT_BIDI_STREAM;
+                  + vint_size(filter->hqfi_switch_stream_id)));
                 stream->stream_flags |= STREAM_SWITCH_PENDING;
                 /* Switch from framed parsing to raw DATA for this stream. */
                 stream->sm_bflags &= ~SMBF_USE_HEADERS;

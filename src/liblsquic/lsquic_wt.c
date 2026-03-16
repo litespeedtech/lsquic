@@ -483,14 +483,14 @@ lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess, unsigned char *val)
 void
 lsquic_stream_set_webtransport_session (struct lsquic_stream *stream)
 {
-    stream->sm_bflags |= SMBF_SESSION_STREAM;
+    lsquic_stream_mark_session_stream(stream);
 }
 
 
 int
 lsquic_stream_is_webtransport_session (const struct lsquic_stream *stream)
 {
-    return (stream->sm_bflags & SMBF_SESSION_STREAM) != 0;
+    return lsquic_stream_is_session_stream(stream);
 }
 
 
@@ -498,18 +498,16 @@ int
 lsquic_stream_is_webtransport_client_bidi_stream (
                                             const struct lsquic_stream *stream)
 {
-    return (stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM) != 0;
+    return lsquic_stream_is_switch_client_bidi(stream);
 }
 
 
 int
 lsquic_stream_get_webtransport_session_stream_id (
-                                            const struct lsquic_stream *stream)
+                                            const struct lsquic_stream *stream,
+                                            lsquic_stream_id_t *stream_id)
 {
-    if (stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM)
-        return stream->sm_switch_stream_id;
-    else
-        return -1;
+    return lsquic_stream_get_switch_stream_id(stream, stream_id);
 }
 
 
@@ -918,7 +916,7 @@ wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
                         && wctx->sess->wts_if->wti_on_stop_sending)
     {
         h3_error_code = stream->sm_ss_in_code;
-        if (!(stream->stream_flags & STREAM_SS_RECVD))
+        if (!lsquic_stream_is_rejected(stream))
             h3_error_code = stream->sm_rst_in_code;
         if (0 == wt_h3_error_to_app_error(h3_error_code, &wt_error_code))
             h3_error_code = wt_error_code;
@@ -1076,7 +1074,7 @@ lsquic_wt_test_dispatch_reset (int how, int ss_received, int with_ctx,
     stream.sm_rst_in_code = rst_in_code;
     stream.sm_ss_in_code = ss_in_code;
     if (ss_received)
-        stream.stream_flags |= STREAM_SS_RECVD;
+        lsquic_stream_mark_rejected(&stream);
     wctx.sess = &sess;
     wctx.app_ctx = (lsquic_stream_ctx_t *) &result;
 
@@ -1230,7 +1228,7 @@ static int
 wt_is_pending_bidi_stream (const struct lsquic_stream *stream,
                                                 lsquic_stream_id_t *session_id)
 {
-    int sid;
+    lsquic_stream_id_t sid;
 
     if (!lsquic_stream_is_webtransport_client_bidi_stream(stream))
         return 0;
@@ -1238,12 +1236,11 @@ wt_is_pending_bidi_stream (const struct lsquic_stream *stream,
     if (lsquic_stream_get_wt_session(stream))
         return 0;
 
-    sid = lsquic_stream_get_webtransport_session_stream_id(stream);
-    if (sid < 0)
+    if (0 != lsquic_stream_get_webtransport_session_stream_id(stream, &sid))
         return 0;
 
     if (session_id)
-        *session_id = (lsquic_stream_id_t) sid;
+        *session_id = sid;
 
     return 1;
 }
@@ -2224,7 +2221,7 @@ wt_stream_ss_code (const struct lsquic_stream *stream,
     if (!stream || !ss_code)
         return -1;
 
-    if (stream->stream_flags & STREAM_ONCLOSE_DONE)
+    if (lsquic_stream_onclose_done(stream))
         return -1;
 
     wctx = (struct wt_stream_ctx *) lsquic_stream_get_ctx(stream);

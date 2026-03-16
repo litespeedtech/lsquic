@@ -2014,7 +2014,8 @@ int
 lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s);
 
 int
-lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s);
+lsquic_stream_get_webtransport_session_stream_id (const lsquic_stream_t *s,
+                                                 lsquic_stream_id_t *stream_id);
 
 /* Record reliable size for RESET_STREAM_AT.  Returns 0 on success. */
 int

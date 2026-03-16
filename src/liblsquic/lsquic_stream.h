@@ -552,6 +552,29 @@ lsquic_stream_set_reset_stream_at_size (lsquic_stream_t *s, uint8_t sz);
 int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
 
+void
+lsquic_stream_mark_session_stream (struct lsquic_stream *stream);
+
+int
+lsquic_stream_is_session_stream (const struct lsquic_stream *stream);
+
+void
+lsquic_stream_mark_switch_client_bidi (struct lsquic_stream *stream,
+                                        lsquic_stream_id_t stream_id);
+
+int
+lsquic_stream_is_switch_client_bidi (const struct lsquic_stream *stream);
+
+int
+lsquic_stream_get_switch_stream_id (const struct lsquic_stream *stream,
+                                    lsquic_stream_id_t *stream_id);
+
+int
+lsquic_stream_onclose_done (const struct lsquic_stream *stream);
+
+void
+lsquic_stream_mark_rejected (struct lsquic_stream *stream);
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
 
