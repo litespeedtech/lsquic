@@ -43,7 +43,8 @@
 #include "test_common.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "http_client"
+#include "tool_log.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
 #include "../src/liblsquic/lsquic_hash.h"

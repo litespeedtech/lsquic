@@ -2707,7 +2707,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
                                                 lsquic_stream_id_t stream_id)
 {
     struct lsquic_packet_out *packet_out, *next;
-    unsigned n, adj;
+    unsigned adj;
     int dropped;
 
     dropped = 0;
@@ -2739,6 +2739,17 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
 
     if (dropped)
         lsquic_send_ctl_reset_packnos(ctl);
+
+    lsquic_send_ctl_elide_stream_frames_from_buffered(ctl, stream_id);
+}
+
+
+void
+lsquic_send_ctl_elide_stream_frames_from_buffered (lsquic_send_ctl_t *ctl,
+                                                lsquic_stream_id_t stream_id)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned n;
 
     for (n = 0; n < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++n)
@@ -3164,14 +3175,14 @@ send_ctl_maybe_flush_decoder (struct lsquic_send_ctl *ctl,
 lsquic_packet_out_t *
 lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
                 unsigned need_at_least, const struct network_path *path,
-                const struct lsquic_stream *stream)
+                const struct lsquic_stream *stream, int buffered_packet_ok)
 {
     enum buf_packet_type packet_type;
 
     if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
         return lsquic_send_ctl_get_writeable_packet(ctl, PNS_APP,
                                                 need_at_least, path, 0, NULL);
-    else
+    else if (buffered_packet_ok)
     {
         if (!lsquic_send_ctl_has_buffered(ctl))
             send_ctl_maybe_flush_decoder(ctl, stream);
@@ -3179,6 +3190,8 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
         return send_ctl_get_buffered_packet(ctl, packet_type, need_at_least,
                                             path, stream);
     }
+    else
+        return NULL;
 }
 
 
@@ -3197,7 +3210,7 @@ lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
     off = lsquic_stream_combined_send_off(stream);
     need = pf->pf_stream_blocked_frame_size(stream->id, off);
     packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need,
-                       stream->conn_pub->path, stream);
+                       stream->conn_pub->path, stream, 1);
     if (!packet_out)
     {
         LSQ_DEBUG("failed to get packet_out with lsquic_send_ctl_get_packet_for_stream");

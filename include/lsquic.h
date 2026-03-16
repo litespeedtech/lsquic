@@ -160,6 +160,25 @@ enum lsquic_hsk_status
  * process events.
  *
  */
+
+/**
+ * HTTP Datagram send mode controls transport selection.
+ * See apiref.rst for detailed explanation of each mode.
+ */
+enum lsquic_http_dg_send_mode
+{
+    /* Automatic: use QUIC DATAGRAM if available and fits, else Capsule */
+    LSQUIC_HTTP_DG_SEND_DEFAULT = 0,
+    /* Force QUIC DATAGRAM only (unreliable, unordered, low latency) */
+    LSQUIC_HTTP_DG_SEND_DATAGRAM,
+    /* Force Capsule Protocol only (reliable, ordered) */
+    LSQUIC_HTTP_DG_SEND_CAPSULE,
+};
+
+typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
+                                        size_t sz,
+                                        enum lsquic_http_dg_send_mode mode);
+
 struct lsquic_stream_if {
 
     /**
@@ -191,10 +210,28 @@ struct lsquic_stream_if {
     /* Called when datagram is ready to be written */
     ssize_t (*on_dg_write)(lsquic_conn_t *c, void *, size_t);
     /* Called when datagram is read from a packet.  This callback is required
-     * when es_datagrams is true.  Take care to process it quickly, as this
-     * is called during lsquic_engine_packet_in().
+     * when es_datagrams is true and HTTP Datagrams are not enabled.  Take care
+     * to process it quickly, as this is called during
+     * lsquic_engine_packet_in().
      */
     void (*on_datagram)(lsquic_conn_t *, const void *buf, size_t);
+    /**
+     * Called when HTTP Datagram (RFC 9297) is ready to be written.
+     * Must call consume_datagram exactly once to supply the payload.
+     * Return 0 on success, -1 on error.
+     * max_quic_payload is the maximum size that fits in a QUIC DATAGRAM frame.
+     * See apiref.rst "HTTP Datagrams" section for details and examples.
+     */
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+            size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram);
+    /**
+     * Called when an HTTP Datagram (RFC 9297) payload is received.
+     * For QUIC DATAGRAM frames, this can be invoked during packet processing.
+     * For capsule-carried datagrams, it is invoked during stream read events.
+     * Process payload quickly; buffer is only valid during callback.
+     */
+    void (*on_http_dg_read)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                                                const void *buf, size_t);
     /* This callback in only called in client mode */
     /**
      * When handshake is completed, this optional callback is called.
@@ -237,6 +274,16 @@ struct lsquic_stream_if {
                                        int app_error, uint64_t error_code,
                                        const char *reason, int reason_len);
 };
+
+
+struct lsquic_http_dg_if
+{
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+            size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram);
+    void (*on_http_dg_read)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                                                const void *buf, size_t);
+};
+
 
 struct ssl_ctx_st;
 struct ssl_st;
@@ -409,6 +456,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Turn on timestamp extension by default */
 #define LSQUIC_DF_TIMESTAMPS 1
 
+/** Turn off RESET_STREAM_AT extension by default */
+#define LSQUIC_DF_RESET_STREAM_AT 0
+
 /** default anti-amplification factor is 3 */
 #define LSQUIC_DF_AMP_FACTOR 3
 
@@ -423,6 +473,15 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Turn off datagram extension by default */
 #define LSQUIC_DF_DATAGRAMS 0
+
+/** Turn off HTTP Datagrams by default */
+#define LSQUIC_DF_HTTP_DATAGRAMS 0
+
+/** Default maximum HTTP Datagram capsule read buffer size. */
+#define LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE (10 * 1024)
+
+/** Default maximum HTTP Datagram capsule write buffer size. */
+#define LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE (10 * 1024)
 
 /** Assume optimistic NAT by default. */
 #define LSQUIC_DF_OPTIMISTIC_NAT 1
@@ -469,13 +528,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-/** Turn off webtransport extension for server by default */
+/** Turn off WebTransport extension by default. */
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
 
-/** Default allowed server webtransport streams count */
-#define LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS 10
-#endif
+/** Default allowed WebTransport sessions count per connection. */
+#define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 1
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -972,6 +1029,13 @@ struct lsquic_engine_settings {
     int             es_timestamps;
 
     /**
+     * Enable RESET_STREAM_AT extension.  Allowed values are 0 and 1.
+     *
+     * Default value is @ref LSQUIC_DF_RESET_STREAM_AT
+     */
+    int             es_reset_stream_at;
+
+    /**
      * Maximum packet size we are willing to receive.  This is sent to
      * peer in transport parameters: the library does not enforce this
      * limit for incoming packets.
@@ -1040,6 +1104,33 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_DATAGRAMS
      */
     int             es_datagrams;
+
+    /**
+     * Enable HTTP Datagram support (RFC 9297) for HTTP/3.
+     * HTTP Datagrams can be sent via QUIC DATAGRAM frames or Capsule Protocol.
+     * Different from es_datagrams (raw QUIC datagrams); see apiref.rst.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DATAGRAMS
+     */
+    int             es_http_datagrams;
+
+    /**
+     * Maximum buffer size for reading encapsulated HTTP Datagram payloads.
+     * Per-stream limit for Capsule Protocol payloads (not QUIC DATAGRAMs).
+     * Zero means capsule payloads are not accepted.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE
+     */
+    unsigned        es_http_dg_max_capsule_read_size;
+
+    /**
+     * Maximum buffer size for writing encapsulated HTTP Datagram payloads.
+     * Per-stream limit for Capsule Protocol payloads (not QUIC DATAGRAMs).
+     * Zero means capsule payloads are not allowed.
+     *
+     * Default value is @ref LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE
+     */
+    unsigned        es_http_dg_max_capsule_write_size;
 
     /**
      * If set to true, changes in peer port are assumed to be due to a
@@ -1159,21 +1250,19 @@ struct lsquic_engine_settings {
      */
     uint8_t         es_preferred_address[24];
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**
-     * Enable datagram extension for http3 server.  Allowed values are 0 and 1.
+     * Enable WebTransport support for this endpoint.  Allowed values are 0 and 1.
      *
-     * Default value is @ref LSQUIC_DF_WEBTRANSPORT_SERVER
+     * Default value is @ref LSQUIC_DF_WEBTRANSPORT_SERVER.
      */
-    int             es_webtransport_server;
+    int             es_webtransport;
 
     /**
-     * Maximum number of webtransport streams allowed by server for a connection.
+     * Maximum number of WebTransport sessions allowed for a connection.
      *
-     * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
+     * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS.
      */
-    unsigned        es_max_webtransport_server_streams;
-#endif    
+    unsigned        es_max_webtransport_sessions;
 };
 
 /* Initialize `settings' to default values */
@@ -1605,9 +1694,13 @@ lsquic_conn_close (lsquic_conn_t *);
 /**
  * Set whether you want to read from stream.  If @param is_want is true,
  * @ref on_read() will be called when there is readable data in the
- * stream.  If @param is false, @ref on_read() will not be called.
+ * stream.  If @param is_want is false, @ref on_read() will not be called.
  *
- * Returns previous value of this flag.
+ * Returns previous value of this flag.  On error, returns -1 and sets errno:
+ *
+ *  EBADF           The read side is shut down.
+ *  EINVAL          Reading from this stream is not allowed (for example,
+ *                  locally-initiated unidirectional IETF stream).
  */
 int
 lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
@@ -1911,7 +2004,6 @@ lsquic_stream_set_http_prio (lsquic_stream_t *,
  */
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 void
 lsquic_stream_set_webtransport_session(lsquic_stream_t *s);
 
@@ -1922,8 +2014,12 @@ int
 lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s);
 
 int
-lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s);
-#endif
+lsquic_stream_get_webtransport_session_stream_id (const lsquic_stream_t *s,
+                                                 lsquic_stream_id_t *stream_id);
+
+/* Record reliable size for RESET_STREAM_AT.  Returns 0 on success. */
+int
+lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
 
 /** Get connection ID */
 const lsquic_cid_t *
@@ -1950,6 +2046,46 @@ lsquic_conn_get_min_datagram_size (lsquic_conn_t *);
  */
 int
 lsquic_conn_set_min_datagram_size (lsquic_conn_t *, size_t sz);
+
+/**
+ * Register per-stream HTTP Datagram callbacks.  These take precedence over
+ * engine-wide on_http_dg_* callbacks.  Pass NULL to clear.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_stream_set_http_dg_if (lsquic_stream_t *,
+                                const struct lsquic_http_dg_if *);
+
+/**
+ * Control whether stream is eligible to supply HTTP Datagram payloads.
+ * Call with is_want=1 to enable on_http_dg_write() callbacks.
+ * Returns previous value, or -1 on error.
+ * See apiref.rst "HTTP Datagrams" for usage examples.
+ */
+int
+lsquic_stream_want_http_dg_write (lsquic_stream_t *, int is_want);
+
+/**
+ * Enable HTTP Datagram capsule processing on this stream.
+ * Required to receive capsule-carried HTTP Datagrams.
+ * Library takes over on_read to parse capsule framing; delivers payloads
+ * via on_http_dg_read(). May suppress on_write while flushing capsules.
+ * Call after successful Extended CONNECT response with Capsule-Protocol: ?1.
+ * Returns 0 on success, -1 on error (sets errno).
+ */
+int
+lsquic_stream_set_http_dg_capsules (lsquic_stream_t *, int enable);
+
+/**
+ * Get maximum HTTP Datagram payload size for QUIC DATAGRAM frames.
+ * Returns 0 if HTTP Datagrams were not negotiated.
+ * Accounts for QUIC DATAGRAM overhead, context ID, and current PMTU.
+ * Value may change due to PMTU or stream ID growth; use SEND_DEFAULT for
+ * automatic fallback.
+ */
+size_t
+lsquic_stream_get_max_http_dg_size (lsquic_stream_t *);
+
 
 struct lsquic_logger_if {
     /* Return number of bytes written/consumed; return value is ignored. */
@@ -2157,6 +2293,7 @@ enum lsquic_conn_param
      * Pacing must be turned on via es_pace_packets in lsquic_engine_settings.
      */
     LSQCP_MAX_PACING_RATE = 1,
+
     /**
      * If you plan to call lsquic_conn_get_info(), set this value to true.
      *
@@ -2173,6 +2310,30 @@ enum lsquic_conn_param
      * lsquic_conn_get_info() enables sampling if needed for functionality.
      */
     LSQCP_ENABLE_BW_SAMPLER = 2,
+
+    /**
+     * Whether peer HTTP/3 SETTINGS frame has been received.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_SETTINGS_RECEIVED,
+
+    /**
+     * Whether peer currently satisfies WebTransport requirements.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_SUPPORTS,
+
+    /**
+     * Draft version implied by peer's WebTransport SETTINGS codepoint.
+     * Type: uint64_t
+     */
+    LSQCP_WT_PEER_DRAFT,
+
+    /**
+     * Whether peer advertised SETTINGS_ENABLE_CONNECT_PROTOCOL=1.
+     * Type: uint64_t (0 or 1)
+     */
+    LSQCP_WT_PEER_CONNECT_PROTOCOL,
 };
 
 struct lsquic_conn_info

@@ -1382,6 +1382,7 @@ static unsigned (*const imico_process_frames[N_QUIC_FRAMES])
      * them the same: handshake cannot proceed.
      */
     [QUIC_FRAME_RST_STREAM]         =  imico_process_invalid_frame,
+    [QUIC_FRAME_RESET_STREAM_AT]    =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_DATA]           =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_STREAM_DATA]    =  imico_process_invalid_frame,
     [QUIC_FRAME_MAX_STREAMS]        =  imico_process_invalid_frame,

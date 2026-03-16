@@ -24,7 +24,8 @@
 #include "test_cert.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "echo_server"
+#include "tool_log.h"
 
 
 struct lsquic_conn_ctx;

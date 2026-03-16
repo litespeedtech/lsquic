@@ -10,12 +10,16 @@
 #ifndef LSQUIC_CONN_PUBLIC_H
 #define LSQUIC_CONN_PUBLIC_H 1
 
+#include <sys/queue.h>
+
 struct lsquic_conn;
 struct lsquic_engine_public;
 struct lsquic_mm;
 struct lsquic_hash;
 struct headers_stream;
 struct lsquic_send_ctl;
+struct lsquic_wt_session;
+struct lsquic_stream;
 #if LSQUIC_CONN_STATS
 struct conn_stats;
 #endif
@@ -27,8 +31,10 @@ struct lsquic_conn_public {
     struct lsquic_streams_tailq     sending_streams,    /* Send RST_STREAM, BLOCKED, and WUF frames */
                                     read_streams,
                                     write_streams,      /* Send STREAM frames */
-                                    service_streams;
+                                    service_streams,
+                                    http_dg_streams;    /* Send HTTP Datagrams */
     struct lsquic_hash             *all_streams;
+    struct lsquic_hash             *http_dg_handlers;
     struct lsquic_cfcw              cfcw;
     struct lsquic_conn_cap          conn_cap;
     struct lsquic_rtt_stats         rtt_stats;
@@ -49,12 +55,24 @@ struct lsquic_conn_public {
     }                               u;
     enum {
         CP_STREAM_UNBLOCKED     = 1 << 0,   /* Set when a stream becomes unblocked */
+        CP_HTTP_DATAGRAMS       = 1 << 1,   /* HTTP Datagram support negotiated */
+        CP_WEBTRANSPORT         = 1 << 2,   /* WebTransport support negotiated */
+        CP_H3_PEER_SETTINGS     = 1 << 3,   /* Peer SETTINGS frame received */
+        CP_CONNECT_PROTOCOL     = 1 << 4,   /* Peer enabled CONNECT protocol */
     }                               cp_flags;
+    uint64_t                        cp_wt_peer_draft;
+    int     (*cp_get_ss_code) (const struct lsquic_stream *, uint64_t *);
+    void    (*cp_on_stream_destroy) (struct lsquic_stream *);
+    int     (*cp_is_hq_switch_frame) (struct lsquic_stream *, uint64_t,
+                                                    uint64_t);
+    void    (*cp_on_hq_switch_stream) (struct lsquic_stream *,
+                                                    lsquic_stream_id_t);
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;
 #endif
     const struct network_path      *path;
+    TAILQ_HEAD(, lsquic_wt_session) wt_sessions;
 #if LSQUIC_EXTRA_CHECKS
     unsigned long                   stream_frame_bytes;
     unsigned                        wtp_level;  /* wtp: Write To Packets */

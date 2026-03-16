@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,8 +30,10 @@
 #include <openssl/md5.h>
 
 #include "lsquic.h"
+#include "lsquic_wt.h"
 #include "../src/liblsquic/lsquic_hash.h"
 #include "lsxpack_header.h"
+#include "devious_baton.h"
 #include "test_config.h"
 #include "test_common.h"
 #include "test_cert.h"
@@ -44,7 +47,8 @@
 #endif
 #endif
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "http_server"
+#include "tool_log.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
 
@@ -305,6 +309,8 @@ struct server_ctx {
     unsigned                     max_conn;
     unsigned                     n_conn;
     unsigned                     n_current_conns;
+    struct devious_baton_app     baton_app;
+    int                          enable_devious_baton;
     unsigned                     delay_resp_sec;
     uint64_t                     max_pacing_rate;
 };
@@ -431,7 +437,7 @@ struct md5sum_ctx
 struct req
 {
     enum method {
-        UNSET, GET, POST, UNSUPPORTED,
+        UNSET, GET, POST, CONNECT, UNSUPPORTED,
     }            method;
     enum {
         HAVE_XHDR   = 1 << 0,
@@ -440,10 +446,14 @@ struct req
         PH_AUTHORITY    = 1 << 0,
         PH_METHOD       = 1 << 1,
         PH_PATH         = 1 << 2,
+        PH_PROTOCOL     = 1 << 3,
     }            pseudo_headers;
     char        *path;
     char        *method_str;
     char        *authority_str;
+    char        *connect_protocol;
+    char        *protocol;
+    char        *origin;
     char        *qif_str;
     size_t       qif_sz;
     struct lsxpack_header
@@ -480,6 +490,7 @@ struct lsquic_stream_ctx {
         SH_HEADERS_SENT = (1 << 0),
         SH_DELAYED      = (1 << 1),
         SH_HEADERS_READ = (1 << 2),
+        SH_WT_HANDOFF   = (1 << 3),
     }                    flags;
     struct lsquic_reader reader;
     int                  file_fd;   /* Used by pwritev */
@@ -1078,6 +1089,7 @@ http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 }
 
 
+
 const struct lsquic_stream_if http_server_if = {
     .on_new_conn            = http_server_on_new_conn,
     .on_conn_closed         = http_server_on_conn_closed,
@@ -1321,6 +1333,152 @@ static const char INDEX_HTML[] =
 ;
 
 
+struct wt_connect_handler
+{
+    const char *path_prefix;
+    int (*handler)(struct lsquic_stream *, struct lsquic_stream_ctx *);
+};
+
+
+static int
+path_prefix_matches (const char *path, const char *prefix)
+{
+    size_t len;
+
+    if (!path || !prefix)
+        return 0;
+
+    len = strlen(prefix);
+    return 0 == strncmp(path, prefix, len)
+        && (path[len] == '\0' || path[len] == '?');
+}
+
+
+static int
+is_supported_connect_protocol (const char *connect_protocol)
+{
+    return 0 == strcmp(connect_protocol, WEBTRANSPORT_H3_CONNECT_PROTOCOL)
+        || 0 == strcmp(connect_protocol, WEBTRANSPORT_CONNECT_PROTOCOL);
+}
+
+
+static int
+baton_connect_handler (struct lsquic_stream *stream,
+                                    struct lsquic_stream_ctx *st_h)
+{
+    struct lsquic_wt_connect_info info;
+    struct req *req;
+    char err_buf[128];
+    int rv;
+
+    req = st_h->req;
+    if (!req)
+        return 1;
+
+    memset(&info, 0, sizeof(info));
+    info.wtci_authority = req->authority_str;
+    info.wtci_path = req->path;
+    info.wtci_origin = req->origin;
+    info.wtci_protocol = req->protocol;
+    info.wtci_draft = lsquic_wt_peer_draft(lsquic_stream_conn(stream));
+
+    rv = devious_baton_accept(stream, &info, &st_h->server_ctx->baton_app,
+                                                    err_buf, sizeof(err_buf));
+    if (0 == rv)
+    {
+        st_h->flags |= SH_WT_HANDOFF;
+        interop_server_hset_destroy(req);
+        st_h->req = NULL;
+        lsquic_stream_wantread(stream, 0);
+        lsquic_stream_wantwrite(stream, 0);
+    }
+
+    return 1;
+}
+
+
+static const struct wt_connect_handler wt_connect_handlers[] =
+{
+    {
+        .path_prefix = DEVIOUS_BATON_PATH,
+        .handler = baton_connect_handler,
+    },
+};
+
+
+static int
+handle_connect_request (struct lsquic_stream *stream,
+                                    struct lsquic_stream_ctx *st_h)
+{
+    const struct wt_connect_handler *handler;
+    struct req *req;
+    char err_buf[128];
+
+    req = st_h->req;
+    if (!req)
+        return 0;
+
+    if (!req->connect_protocol)
+    {
+        snprintf(err_buf, sizeof(err_buf), "Protocol is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (!is_supported_connect_protocol(req->connect_protocol))
+    {
+        snprintf(err_buf, sizeof(err_buf), "Unsupported CONNECT protocol");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (!req->path)
+    {
+        snprintf(err_buf, sizeof(err_buf), "Path is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (st_h->server_ctx->enable_devious_baton)
+        for (handler = wt_connect_handlers;
+             handler < wt_connect_handlers
+                        + sizeof(wt_connect_handlers)
+                            / sizeof(wt_connect_handlers[0]); ++handler)
+            if (path_prefix_matches(req->path, handler->path_prefix))
+            {
+                if (!lsquic_wt_peer_settings_received(
+                                            lsquic_stream_conn(stream)))
+                {
+                    snprintf(err_buf, sizeof(err_buf),
+                                    "Peer SETTINGS not received yet");
+                    lsquic_wt_reject(stream, 503, err_buf, strlen(err_buf));
+                    lsquic_stream_close(stream);
+                    return 1;
+                }
+
+                if (!lsquic_wt_peer_supports(lsquic_stream_conn(stream)))
+                {
+                    snprintf(err_buf, sizeof(err_buf),
+                                "Peer does not support WebTransport");
+                    lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+                    lsquic_stream_close(stream);
+                    return 1;
+                }
+
+                return handler->handler(stream, st_h);
+            }
+
+    snprintf(err_buf, sizeof(err_buf), "No WebTransport handler for %s",
+                                        req->path);
+    lsquic_wt_reject(stream, 404, err_buf, strlen(err_buf));
+    lsquic_stream_close(stream);
+    return 1;
+}
+
+
 static size_t
 read_md5 (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
@@ -1362,6 +1520,9 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     char md5str[ sizeof(md5sum) * 2 + 1 ];
     char byte[1];
 
+    if (st_h->flags & SH_WT_HANDOFF)
+        return;
+
     if (!(st_h->flags & SH_HEADERS_READ))
     {
         st_h->flags |= SH_HEADERS_READ;
@@ -1374,6 +1535,11 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             ERROR_RESP(400, "Path is not specified");
         else if (st_h->req->method == UNSUPPORTED)
             ERROR_RESP(501, "Method %s is not supported", st_h->req->method_str);
+        else if (st_h->req->method == CONNECT)
+        {
+            handle_connect_request(stream, st_h);
+            return;
+        }
         else if (!(map = find_handler(st_h->req->method, st_h->req->path, matches)))
             ERROR_RESP(404, "No handler found for method: %s; path: %s",
                 st_h->req->method_str, st_h->req->path);
@@ -1718,6 +1884,9 @@ http_server_interop_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h
     struct resp *resp;
     ssize_t nw;
 
+    if (st_h->flags & SH_WT_HANDOFF)
+        return;
+
     switch (st_h->interop_handler)
     {
     case IOH_ERROR:
@@ -1791,9 +1960,14 @@ usage (const char *prog)
 "   -p FILE     Push request with this path\n"
 "   -w SIZE     Write immediately (LSWS mode).  Argument specifies maximum\n"
 "                 size of the immediate write.\n"
+#if HAVE_REGEX
+"   -B          Enable Devious Baton WebTransport handler (interop mode)\n"
+"   -u count    With -B: max queued WT datagrams per session (0 = default)\n"
+"   -v bytes    With -B: max queued WT datagram bytes per session (0 = default)\n"
+#endif
 #if HAVE_PREADV
 "   -P SIZE     Use preadv(2) to read from disk and lsquic_stream_pwritev() to\n"
-"                 write to stream.  Positive SIZE indicate maximum value per\n"
+                 "                 write to stream.  Positive SIZE indicate maximum value per\n"
 "                 write; negative means always use remaining file size.\n"
 "                 Incompatible with -w.\n"
 #endif
@@ -1801,6 +1975,48 @@ usage (const char *prog)
 "   -Y DELAY    Delay response for this many seconds -- use for debugging\n"
 "   -Q ALPN     Use hq mode; ALPN could be \"hq-29\", for example.\n"
             , prog);
+}
+
+
+static int
+dup_first_sf_string (const char *value, size_t value_len, char **out)
+{
+    char *buf;
+    size_t in_off, out_off;
+
+    for (in_off = 0; in_off < value_len; ++in_off)
+        if (value[in_off] == '"')
+            break;
+    if (in_off >= value_len)
+        return -1;
+
+    ++in_off;
+    buf = malloc(value_len - in_off + 1);
+    if (!buf)
+        return -1;
+
+    out_off = 0;
+    while (in_off < value_len)
+    {
+        if (value[in_off] == '"')
+        {
+            buf[out_off] = '\0';
+            *out = buf;
+            return 0;
+        }
+
+        if (value[in_off] == '\\')
+        {
+            ++in_off;
+            if (in_off >= value_len)
+                break;
+        }
+
+        buf[out_off++] = value[in_off++];
+    }
+
+    free(buf);
+    return -1;
 }
 
 
@@ -1857,7 +2073,8 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
 
     if (!xhdr)
     {
-        if (req->pseudo_headers == (PH_AUTHORITY|PH_METHOD|PH_PATH))
+        if ((req->pseudo_headers & (PH_AUTHORITY|PH_METHOD|PH_PATH))
+                                    == (PH_AUTHORITY|PH_METHOD|PH_PATH))
             return 0;
         else
         {
@@ -1907,9 +2124,22 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
             req->method = GET;
         else if (0 == strcmp(req->method_str, "POST"))
             req->method = POST;
+        else if (0 == strcmp(req->method_str, "CONNECT"))
+            req->method = CONNECT;
         else
             req->method = UNSUPPORTED;
         req->pseudo_headers |= PH_METHOD;
+        return 0;
+    }
+
+    if (9 == name_len && 0 == strncmp(name, ":protocol", 9))
+    {
+        if (req->connect_protocol)
+            return 1;
+        req->connect_protocol = strndup(value, value_len);
+        if (!req->connect_protocol)
+            return -1;
+        req->pseudo_headers |= PH_PROTOCOL;
         return 0;
     }
 
@@ -1919,6 +2149,30 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
         if (!req->authority_str)
             return -1;
         req->pseudo_headers |= PH_AUTHORITY;
+        return 0;
+    }
+
+    if (6 == name_len && 0 == strncmp(name, "origin", 6))
+    {
+        if (req->origin)
+            return 1;
+        req->origin = strndup(value, value_len);
+        if (!req->origin)
+            return -1;
+        return 0;
+    }
+
+    if (name_len == sizeof("wt-available-protocols") - 1
+        && 0 == strncmp(name, "wt-available-protocols",
+                                    sizeof("wt-available-protocols") - 1))
+    {
+        if (req->protocol)
+        {
+            free(req->protocol);
+            req->protocol = NULL;
+        }
+        if (0 != dup_first_sf_string(value, value_len, &req->protocol))
+            LSQ_DEBUG("ignore malformed WT-Available-Protocols");
         return 0;
     }
 
@@ -1934,6 +2188,9 @@ interop_server_hset_destroy (void *hset_p)
     free(req->path);
     free(req->method_str);
     free(req->authority_str);
+    free(req->connect_protocol);
+    free(req->protocol);
+    free(req->origin);
     free(req);
 }
 
@@ -1967,8 +2224,9 @@ main (int argc, char **argv)
 
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
+    devious_baton_app_init(&server_ctx.baton_app, &prog, 1);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:Bu:v:h"
 #if HAVE_OPEN_MEMSTREAM
                                                     "Q:"
 #endif
@@ -2014,6 +2272,50 @@ main (int argc, char **argv)
         case 'x':
             server_ctx.max_pacing_rate = strtoull(optarg, NULL, 10);
             break;
+#if HAVE_REGEX
+        case 'B':
+            server_ctx.enable_devious_baton = 1;
+            prog.prog_settings.es_http_datagrams = 1;
+            prog.prog_settings.es_webtransport = 1;
+            prog.prog_settings.es_reset_stream_at = 1;
+            prog.prog_settings.es_init_max_streams_uni = 64;
+            if (0 == prog.prog_settings.es_init_max_stream_data_bidi_local)
+                prog.prog_settings.es_init_max_stream_data_bidi_local = 100000;
+            if (0 == prog.prog_settings.es_max_webtransport_sessions)
+                prog.prog_settings.es_max_webtransport_sessions =
+                                LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
+            break;
+        case 'u':
+        {
+            char *end;
+            unsigned long val;
+
+            errno = 0;
+            val = strtoul(optarg, &end, 10);
+            if (errno || *end || val > UINT_MAX)
+            {
+                LSQ_ERROR("invalid queue count `%s'", optarg);
+                exit(1);
+            }
+            server_ctx.baton_app.dgq_max_count = (unsigned) val;
+            break;
+        }
+        case 'v':
+        {
+            char *end;
+            unsigned long long val;
+
+            errno = 0;
+            val = strtoull(optarg, &end, 10);
+            if (errno || *end || val > SIZE_MAX)
+            {
+                LSQ_ERROR("invalid queue bytes `%s'", optarg);
+                exit(1);
+            }
+            server_ctx.baton_app.dgq_max_bytes = (size_t) val;
+            break;
+        }
+#endif
         case 'h':
             usage(argv[0]);
             prog_print_common_options(&prog, stdout);
@@ -2032,7 +2334,21 @@ main (int argc, char **argv)
         }
     }
 
-    if (!server_ctx.document_root)
+    if (server_ctx.enable_devious_baton)
+    {
+#if HAVE_REGEX
+        if (server_ctx.document_root)
+            LSQ_NOTICE("Devious Baton enabled: ignoring document root");
+        init_map_regexes();
+        prog.prog_api.ea_stream_if = &interop_http_server_if;
+        prog.prog_api.ea_hsi_if = &header_bypass_api;
+        prog.prog_api.ea_hsi_ctx = NULL;
+#else
+        LSQ_ERROR("Devious Baton requires regex support");
+        exit(EXIT_FAILURE);
+#endif
+    }
+    else if (!server_ctx.document_root)
     {
 #if HAVE_REGEX
         LSQ_NOTICE("Document root is not set: start in Interop Mode");
