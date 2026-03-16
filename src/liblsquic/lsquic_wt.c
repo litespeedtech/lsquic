@@ -328,6 +328,10 @@ wt_stream_ss_code (const struct lsquic_stream *stream, uint64_t *ss_code);
 static void
 wt_on_stream_destroy (struct lsquic_stream *stream);
 
+static int
+wt_is_hq_switch_frame (struct lsquic_stream *stream, uint64_t frame_type,
+                                                            uint64_t frame_len);
+
 static void
 wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id);
@@ -474,6 +478,55 @@ lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess, unsigned char *val)
     return 0;
 }
 #endif
+
+
+void
+lsquic_stream_set_webtransport_session (struct lsquic_stream *stream)
+{
+    stream->sm_bflags |= SMBF_SESSION_STREAM;
+}
+
+
+int
+lsquic_stream_is_webtransport_session (const struct lsquic_stream *stream)
+{
+    return (stream->sm_bflags & SMBF_SESSION_STREAM) != 0;
+}
+
+
+int
+lsquic_stream_is_webtransport_client_bidi_stream (
+                                            const struct lsquic_stream *stream)
+{
+    return (stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM) != 0;
+}
+
+
+int
+lsquic_stream_get_webtransport_session_stream_id (
+                                            const struct lsquic_stream *stream)
+{
+    if (stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM)
+        return stream->sm_switch_stream_id;
+    else
+        return -1;
+}
+
+
+struct lsquic_wt_session *
+lsquic_stream_get_wt_session (const struct lsquic_stream *stream)
+{
+    return lsquic_stream_get_attachment(stream);
+}
+
+
+void
+lsquic_stream_set_wt_session (struct lsquic_stream *stream,
+                                            struct lsquic_wt_session *sess)
+{
+    lsquic_stream_set_attachment(stream, sess);
+}
+
 
 static void
 wt_build_prefix (unsigned char *buf, size_t *len, uint64_t first,
@@ -694,7 +747,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     {
         memcpy(wctx->prefix, onnew->prefix, onnew->prefix_len);
         wctx->prefix_len = onnew->prefix_len;
-        lsquic_stream_set_wt_header_size(stream, (uint8_t) onnew->prefix_len);
+        lsquic_stream_set_reset_stream_at_size(stream, (uint8_t) onnew->prefix_len);
     }
 
     /* Mark stream as belonging to the session before calling app hooks:
@@ -1753,11 +1806,13 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
         lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
         params->wtap_status);
-    lsquic_stream_get_conn_public(connect_stream)->cp_stream_ss_code =
+    lsquic_stream_get_conn_public(connect_stream)->cp_get_ss_code =
                                                             wt_stream_ss_code;
     lsquic_stream_get_conn_public(connect_stream)->cp_on_stream_destroy =
                                                         wt_on_stream_destroy;
-    lsquic_stream_get_conn_public(connect_stream)->cp_on_wt_bidi_stream =
+    lsquic_stream_get_conn_public(connect_stream)->cp_is_hq_switch_frame =
+                                                      wt_is_hq_switch_frame;
+    lsquic_stream_get_conn_public(connect_stream)->cp_on_hq_switch_stream =
                                             wt_on_client_bidi_stream;
     send_headers = lsquic_stream_is_server(connect_stream)
                 && lsquic_stream_headers_state_is_begin(connect_stream);
@@ -2528,6 +2583,17 @@ wt_on_stream_destroy (struct lsquic_stream *stream)
         wt_session_close(sess, 0, NULL, 0);
 }
 
+
+static int
+wt_is_hq_switch_frame (struct lsquic_stream *stream, uint64_t frame_type,
+                                                           uint64_t frame_len)
+{
+    (void) frame_len;
+
+    return frame_type == HQFT_WT_STREAM
+        && (stream->conn_pub->enpub->enp_settings.es_webtransport
+            || (stream->conn_pub->cp_flags & CP_WEBTRANSPORT));
+}
 
 
 static void

@@ -1280,7 +1280,7 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
     {
         if (stream->n_unacked)
         {
-            if (stream->sm_wt_header_sz == 0)
+            if (stream->sm_reset_stream_at_sz == 0)
                 lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
                                                     stream->id);
             else
@@ -1428,7 +1428,7 @@ enum quic_frame_type
 lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
                                                     uint64_t *reliable_size)
 {
-    if (stream->sm_wt_header_sz == 0)
+    if (stream->sm_reset_stream_at_sz == 0)
     {
         if (reliable_size)
             *reliable_size = 0;
@@ -1441,7 +1441,7 @@ lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
          * and that don't want to retract and we want to implement them, we will
          * worry about this later.
          */
-        *reliable_size = stream->sm_wt_header_sz;
+        *reliable_size = stream->sm_reset_stream_at_sz;
         return QUIC_FRAME_RESET_STREAM_AT;
     }
 }
@@ -2058,8 +2058,8 @@ handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
     if (stream->sm_ss_code == HEC_NO_ERROR)
     {
         ss_code = stream->sm_ss_code;
-        if (stream->conn_pub->cp_stream_ss_code
-            && 0 == stream->conn_pub->cp_stream_ss_code(stream, &ss_code))
+        if (stream->conn_pub->cp_get_ss_code
+            && 0 == stream->conn_pub->cp_get_ss_code(stream, &ss_code))
             stream->sm_ss_code = ss_code;
     }
 
@@ -3892,8 +3892,8 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     else
         need_at_least += size > 0;
   get_packet:
-    buffered_packet_ok = !(stream->sm_wt_header_sz != 0
-                                        && stream->tosend_off < stream->sm_wt_header_sz);
+    buffered_packet_ok = !(stream->sm_reset_stream_at_sz != 0
+                                        && stream->tosend_off < stream->sm_reset_stream_at_sz);
     packet_out = stream->sm_get_packet_for_stream(send_ctl,
                     need_at_least, stream->conn_pub->path, stream,
                     buffered_packet_ok);
@@ -4975,7 +4975,7 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
     LSQ_INFO("reset, error code %"PRIu64, error_code);
     stream->error_code = error_code;
 
-    if (stream->tosend_off < stream->sm_wt_header_sz
+    if (stream->tosend_off < stream->sm_reset_stream_at_sz
         && !(stream->stream_flags & STREAM_U_WRITE_DONE))
     {
         (void) stream_flush_nocheck(stream);
@@ -5020,53 +5020,14 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
     return stream->conn_pub->lconn;
 }
 
-
-
 void
-lsquic_stream_set_webtransport_session (struct lsquic_stream *s)
-{
-    s->sm_bflags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
-}
-
-
-
-int
-lsquic_stream_is_webtransport_session (const struct lsquic_stream *s)
-{
-    return (s->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM);
-}
-
-
-
-int
-lsquic_stream_is_webtransport_client_bidi_stream (const struct lsquic_stream *s)
-{
-    return (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
-}
-
-
-
-int
-lsquic_stream_get_webtransport_session_stream_id (const struct lsquic_stream *s)
-{
-    if (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
-    {
-        return s->webtransport_session_stream_id;
-    }
-
-    return -1;
-}
-
-
-
-void
-lsquic_stream_set_wt_header_size (struct lsquic_stream *s, uint8_t sz)
+lsquic_stream_set_reset_stream_at_size (struct lsquic_stream *s, uint8_t sz)
 {
     if (!s || !sz || !(s->sm_bflags & SMBF_IETF)
         || !s->conn_pub->enpub->enp_settings.es_reset_stream_at)
         return;
 
-    s->sm_wt_header_sz = sz;
+    s->sm_reset_stream_at_sz = sz;
     s->sm_bflags |= SMBF_DELAY_ONCLOSE;
 }
 
@@ -5076,7 +5037,7 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
 {
     const struct transport_params *params;
 
-    if (sz > ((1ULL << (sizeof(s->sm_wt_header_sz) * 8)) - 1))
+    if (sz > ((1ULL << (sizeof(s->sm_reset_stream_at_sz) * 8)) - 1))
         return -1;
     if (!(s->sm_bflags & SMBF_IETF))
         return -1;
@@ -5093,7 +5054,7 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
     if (!params || !(params->tp_set & (1 << TPI_RESET_STREAM_AT)))
         return -1;
 
-    lsquic_stream_set_wt_header_size(s, (uint8_t) sz);
+    lsquic_stream_set_reset_stream_at_size(s, (uint8_t) sz);
     return 0;
 }
 
@@ -5626,25 +5587,22 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
-            if (stream->conn_pub->enpub->enp_settings.es_webtransport
-                || (stream->conn_pub->cp_flags & CP_WEBTRANSPORT))
+            if (stream->conn_pub->cp_is_hq_switch_frame
+                && stream->conn_pub->cp_is_hq_switch_frame(stream,
+                                filter->hqfi_type, filter->hqfi_switch_stream_id))
             {
-                if (filter->hqfi_type == HQFT_WT_STREAM)
-                {
-                    stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
-                    lsquic_stream_set_wt_header_size(stream, (uint8_t) (
-                        vint_size(HQFT_WT_STREAM)
-                      + vint_size(stream->webtransport_session_stream_id)));
-                    stream->sm_bflags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
-                    stream->stream_flags |= STREAM_WT_SWITCH_PENDING;
-                    /* Disable HTTP/3 header processing for WT bidi stream. */
-                    stream->sm_bflags &= ~SMBF_USE_HEADERS;
-                    stream->sm_write_avail = stream_write_avail_no_frames;
-                    filter->hqfi_type = HQFT_DATA;
-                    /* Keep consuming payload until stream end/reset. */
-                    filter->hqfi_left = UINT64_MAX;
-                    goto end;
-                }
+                stream->sm_switch_stream_id = filter->hqfi_switch_stream_id;
+                lsquic_stream_set_reset_stream_at_size(stream, (uint8_t) (
+                    vint_size(filter->hqfi_type)
+                  + vint_size(stream->sm_switch_stream_id)));
+                stream->sm_bflags |= SMBF_SWITCH_CLIENT_BIDI_STREAM;
+                stream->stream_flags |= STREAM_SWITCH_PENDING;
+                /* Switch from framed parsing to raw DATA for this stream. */
+                stream->sm_bflags &= ~SMBF_USE_HEADERS;
+                stream->sm_write_avail = stream_write_avail_no_frames;
+                filter->hqfi_type = HQFT_DATA;
+                filter->hqfi_left = UINT64_MAX;
+                goto end;
             }
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
@@ -5838,12 +5796,12 @@ hq_filter_readable (struct lsquic_stream *stream)
         }
     }
 
-    if (stream->stream_flags & STREAM_WT_SWITCH_PENDING)
+    if (stream->stream_flags & STREAM_SWITCH_PENDING)
     {
-        stream->stream_flags &= ~STREAM_WT_SWITCH_PENDING;
-        if (stream->conn_pub->cp_on_wt_bidi_stream)
-            stream->conn_pub->cp_on_wt_bidi_stream(stream,
-                                    stream->webtransport_session_stream_id);
+        stream->stream_flags &= ~STREAM_SWITCH_PENDING;
+        if (stream->conn_pub->cp_on_hq_switch_stream)
+            stream->conn_pub->cp_on_hq_switch_stream(stream,
+                                    stream->sm_switch_stream_id);
     }
 
     return hq_filter_readable_now(stream);
@@ -6682,18 +6640,17 @@ lsquic_stream_get_conn_public (const struct lsquic_stream *stream)
 }
 
 
-struct lsquic_wt_session *
-lsquic_stream_get_wt_session (const struct lsquic_stream *stream)
+void *
+lsquic_stream_get_attachment (const struct lsquic_stream *stream)
 {
-    return stream->sm_wt_session;
+    return stream->sm_attachment;
 }
 
 
 void
-lsquic_stream_set_wt_session (struct lsquic_stream *stream,
-                                            struct lsquic_wt_session *sess)
+lsquic_stream_set_attachment (struct lsquic_stream *stream, void *attachment)
 {
-    stream->sm_wt_session = sess;
+    stream->sm_attachment = attachment;
 }
 
 

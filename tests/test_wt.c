@@ -209,7 +209,7 @@ test_stream_helpers (void)
     assert(lsquic_wt_stream_initiator(&stream) == LSQWT_SERVER);
 
     sess = (struct lsquic_wt_session *) (uintptr_t) 0x1234;
-    stream.sm_wt_session = sess;
+    stream.sm_attachment = sess;
     assert(lsquic_wt_session_from_stream(&stream) == sess);
     assert(lsquic_wt_session_from_stream(NULL) == NULL);
 

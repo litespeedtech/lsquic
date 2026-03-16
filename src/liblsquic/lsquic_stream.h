@@ -103,7 +103,7 @@ struct hq_filter
     struct varint_read2_state   hqfi_vint2_state;
     /* No need to copy the values: use it directly */
 #define hqfi_left hqfi_vint2_state.vr2s_two
-#define hqfi_webtransport_session_id hqfi_vint2_state.vr2s_two
+#define hqfi_switch_stream_id hqfi_vint2_state.vr2s_two
 #define hqfi_type hqfi_vint2_state.vr2s_one
     struct varint_read_state    hqfi_vint1_state;
 #define hqfi_push_id hqfi_vint1_state.value
@@ -232,9 +232,10 @@ enum stream_b_flags
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
     SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
     SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
-    SMBF_HTTP_DG_CAPSULES                = 1 <<14,  /* HTTP Datagram capsules are enabled */
-    SMBF_WEBTRANSPORT_SESSION_STREAM     = 1 <<15,  /* WEBTRANSPORT session stream */
-    SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM = 1 <<16,  /* WEBTRANSPORT client initiated bidi stream */
+    SMBF_HTTP_DG_CAPSULES        = 1 <<14,  /* HTTP Datagram capsules are enabled */
+    SMBF_SESSION_STREAM          = 1 <<15,  /* Extension session stream */
+    SMBF_SWITCH_CLIENT_BIDI_STREAM
+                                = 1 <<16,  /* Extension switched client bidi stream */
 #define N_SMBF_FLAGS 17
 };
 
@@ -281,8 +282,8 @@ enum stream_flags {
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
-    STREAM_WT_SWITCH_PENDING
-                        = 1 << 30,  /* Defer WT stream-if switch out of parser */
+    STREAM_SWITCH_PENDING
+                        = 1 << 30,  /* Defer stream-if switch out of parser */
 };
 
 
@@ -431,10 +432,10 @@ struct lsquic_stream
     enum stream_d_flags             sm_dflags:8;
     signed char                     sm_saved_want_write;
     signed char                     sm_has_frame;
-    lsquic_stream_id_t              webtransport_session_stream_id;
-    struct lsquic_wt_session       *sm_wt_session;
+    lsquic_stream_id_t              sm_switch_stream_id;
+    void                           *sm_attachment;
     /* When non-zero, send RESET_STREAM_AT with this reliable size. */
-    uint8_t                         sm_wt_header_sz;
+    uint8_t                         sm_reset_stream_at_sz;
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
@@ -546,7 +547,7 @@ lsquic_stream_push_req (lsquic_stream_t *,
                         struct uncompressed_headers *push_req);
 
 void
-lsquic_stream_set_wt_header_size (lsquic_stream_t *s, uint8_t sz);
+lsquic_stream_set_reset_stream_at_size (lsquic_stream_t *s, uint8_t sz);
 
 int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
@@ -764,6 +765,12 @@ lsquic_stream_drop_hset_ref (struct lsquic_stream *);
 
 struct lsquic_conn_public *
 lsquic_stream_get_conn_public (const struct lsquic_stream *);
+
+void *
+lsquic_stream_get_attachment (const struct lsquic_stream *);
+
+void
+lsquic_stream_set_attachment (struct lsquic_stream *, void *);
 
 struct lsquic_wt_session *
 lsquic_stream_get_wt_session (const struct lsquic_stream *);

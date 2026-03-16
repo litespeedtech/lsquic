@@ -1583,7 +1583,7 @@ test_reset_stream_at_reliable_size_errors (struct test_objs *tobjs)
     stream = new_stream(tobjs, 345);
     assert(stream->sm_bflags & SMBF_IETF);
 
-    too_big = (size_t) (1ULL << (sizeof(stream->sm_wt_header_sz) * 8));
+    too_big = (size_t) (1ULL << (sizeof(stream->sm_reset_stream_at_sz) * 8));
     assert(-1 == lsquic_stream_set_reliable_size(stream, too_big));
 
     stream->tosend_off = 8;
@@ -3252,7 +3252,7 @@ test_reliable_prefix_bypasses_buffered (void)
 
     init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
     stream = new_stream(&tobjs, 123);
-    stream->sm_wt_header_sz = 5;
+    stream->sm_reset_stream_at_sz = 5;
 
     nw = lsquic_stream_write(stream, "ABCDE", 5);
     assert(("5 bytes written correctly", nw == 5));
