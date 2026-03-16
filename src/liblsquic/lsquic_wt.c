@@ -93,6 +93,14 @@ enum wt_capsule_type
     WT_CAPSULE_STREAMS_BLOCKED_UNI    = 0x190B4D44ULL,
 };
 
+struct lsquic_wt_session;
+
+struct wt_control_ctx
+{
+    const struct lsquic_stream_if    *wtcc_orig_if;
+    lsquic_stream_ctx_t              *wtcc_orig_ctx;
+};
+
 
 struct lsquic_wt_session
 {
@@ -110,6 +118,8 @@ struct lsquic_wt_session
     char                              *wts_path;
     char                              *wts_origin;
     char                              *wts_protocol;
+    struct lsquic_stream_if            wts_control_if;
+    struct wt_control_ctx              wts_control_ctx;
     struct lsquic_stream_if            wts_data_if;
     struct wt_onnew_ctx                wts_onnew_ctx;
     struct wt_dgq_head                 wts_dgq;
@@ -307,6 +317,20 @@ wt_stream_unbind_session (struct lsquic_stream *stream);
 static void
 wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
                                         int how, struct lsquic_conn *conn);
+
+static int
+wt_wrap_control_stream (struct lsquic_wt_session *sess,
+                                                struct lsquic_stream *stream);
+
+static int
+wt_stream_ss_code (const struct lsquic_stream *stream, uint64_t *ss_code);
+
+static void
+wt_on_stream_destroy (struct lsquic_stream *stream);
+
+static void
+wt_on_client_bidi_stream (struct lsquic_stream *stream,
+                                                lsquic_stream_id_t session_id);
 
 static int
 wt_is_reserved_h3_error_code (uint64_t h3_error_code)
@@ -848,6 +872,93 @@ wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
         wctx->sess->wts_if->wti_on_stop_sending(stream, wctx->app_ctx,
                                                             h3_error_code);
     }
+}
+
+
+static lsquic_stream_ctx_t *
+wt_control_on_new (void *ctx, struct lsquic_stream *stream)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    const struct wt_control_ctx *const control_ctx = ctx;
+
+    if (!control_ctx)
+        return NULL;
+
+    LSQ_DEBUG("WT control stream %"PRIu64" switched to wrapper stream_if",
+                                                    lsquic_stream_id(stream));
+    return control_ctx->wtcc_orig_ctx;
+}
+
+
+static void
+wt_control_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    struct lsquic_wt_session *sess;
+    const struct wt_control_ctx *control_ctx;
+
+    sess = lsquic_stream_get_wt_session(stream);
+    if (!sess)
+        return;
+
+    control_ctx = &sess->wts_control_ctx;
+    if (control_ctx->wtcc_orig_if && control_ctx->wtcc_orig_if->on_close)
+        control_ctx->wtcc_orig_if->on_close(stream, sctx);
+
+    LSQ_INFO("WT control stream %"PRIu64" closed; close session %"PRIu64,
+            lsquic_stream_id(stream), sess->wts_stream_id);
+    wt_session_close(sess, 0, NULL, 0);
+}
+
+
+static void
+wt_control_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx,
+                                                                    int how)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    struct lsquic_wt_session *sess;
+    const struct wt_control_ctx *control_ctx;
+
+    sess = lsquic_stream_get_wt_session(stream);
+    if (!sess)
+        return;
+
+    control_ctx = &sess->wts_control_ctx;
+    if (control_ctx->wtcc_orig_if && control_ctx->wtcc_orig_if->on_reset)
+        control_ctx->wtcc_orig_if->on_reset(stream, sctx, how);
+
+    LSQ_INFO("WT control stream %"PRIu64" reset (how=%d); close session "
+             "%"PRIu64, lsquic_stream_id(stream), how, sess->wts_stream_id);
+    wt_session_close(sess, 0, NULL, 0);
+}
+
+
+static int
+wt_wrap_control_stream (struct lsquic_wt_session *sess,
+                                                struct lsquic_stream *stream)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    const struct lsquic_stream_if *orig_if;
+
+    orig_if = lsquic_stream_get_stream_if(stream);
+    if (!orig_if)
+    {
+        errno = EINVAL;
+        LSQ_WARN("cannot wrap WT control stream %"PRIu64": stream_if is NULL",
+                                                    lsquic_stream_id(stream));
+        return -1;
+    }
+
+    sess->wts_control_ctx.wtcc_orig_if = orig_if;
+    sess->wts_control_ctx.wtcc_orig_ctx = lsquic_stream_get_ctx(stream);
+    sess->wts_control_if = *orig_if;
+    sess->wts_control_if.on_new_stream = wt_control_on_new;
+    sess->wts_control_if.on_close = wt_control_on_close;
+    sess->wts_control_if.on_reset = wt_control_on_reset;
+
+    lsquic_stream_set_stream_if(stream, &sess->wts_control_if,
+                                                &sess->wts_control_ctx);
+    return 0;
 }
 
 
@@ -1642,6 +1753,12 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
         lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
         params->wtap_status);
+    lsquic_stream_get_conn_public(connect_stream)->cp_stream_ss_code =
+                                                            wt_stream_ss_code;
+    lsquic_stream_get_conn_public(connect_stream)->cp_on_stream_destroy =
+                                                        wt_on_stream_destroy;
+    lsquic_stream_get_conn_public(connect_stream)->cp_on_wt_bidi_stream =
+                                            wt_on_client_bidi_stream;
     send_headers = lsquic_stream_is_server(connect_stream)
                 && lsquic_stream_headers_state_is_begin(connect_stream);
     if (send_headers)
@@ -1726,6 +1843,15 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     {
         LSQ_WARN("cannot register WT capsule handlers on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
+        lsquic_stream_set_http_dg_capsules(connect_stream, 0);
+        lsquic_stream_set_http_dg_if(connect_stream, NULL);
+        wt_free_connect_info(sess);
+        free(sess);
+        return NULL;
+    }
+
+    if (0 != wt_wrap_control_stream(sess, connect_stream))
+    {
         lsquic_stream_set_http_dg_capsules(connect_stream, 0);
         lsquic_stream_set_http_dg_if(connect_stream, NULL);
         wt_free_connect_info(sess);
@@ -2032,9 +2158,9 @@ lsquic_wt_stream_get_ctx (struct lsquic_stream *stream)
 }
 
 
-int
-lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
-                                                           uint64_t *ss_code)
+static int
+wt_stream_ss_code (const struct lsquic_stream *stream,
+                                                      uint64_t *ss_code)
 {
     struct wt_stream_ctx *wctx;
     struct lsquic_wt_session *sess;
@@ -2376,8 +2502,8 @@ lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
 
 
 
-void
-lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
+static void
+wt_on_stream_destroy (struct lsquic_stream *stream)
 {
     WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
@@ -2404,8 +2530,8 @@ lsquic_wt_on_stream_destroy (struct lsquic_stream *stream)
 
 
 
-void
-lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
+static void
+wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id)
 {
     WT_SET_CONN_FROM_STREAM(stream);

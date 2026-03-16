@@ -65,18 +65,6 @@
 #include "lsquic_sizes.h"
 #include "lsquic_trans_params.h"
 
-void
-lsquic_wt_on_stream_destroy (struct lsquic_stream *stream);
-
-
-void
-lsquic_wt_on_client_bidi_stream (struct lsquic_stream *stream,
-                                            lsquic_stream_id_t session_id);
-
-int
-lsquic_wt_stream_ss_code (const struct lsquic_stream *stream,
-                                                           uint64_t *ss_code);
-
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
 #define LSQUIC_LOG_STREAM_ID stream->id
@@ -774,7 +762,8 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     lsquic_stream_clear_capsule_handlers(stream);
     free(stream->sm_buf);
     free(stream->sm_header_block);
-    lsquic_wt_on_stream_destroy(stream);
+    if (stream->conn_pub->cp_on_stream_destroy)
+        stream->conn_pub->cp_on_stream_destroy(stream);
     LSQ_DEBUG("destroyed stream");
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);
@@ -2069,7 +2058,8 @@ handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
     if (stream->sm_ss_code == HEC_NO_ERROR)
     {
         ss_code = stream->sm_ss_code;
-        if (0 == lsquic_wt_stream_ss_code(stream, &ss_code))
+        if (stream->conn_pub->cp_stream_ss_code
+            && 0 == stream->conn_pub->cp_stream_ss_code(stream, &ss_code))
             stream->sm_ss_code = ss_code;
     }
 
@@ -5851,7 +5841,8 @@ hq_filter_readable (struct lsquic_stream *stream)
     if (stream->stream_flags & STREAM_WT_SWITCH_PENDING)
     {
         stream->stream_flags &= ~STREAM_WT_SWITCH_PENDING;
-        lsquic_wt_on_client_bidi_stream(stream,
+        if (stream->conn_pub->cp_on_wt_bidi_stream)
+            stream->conn_pub->cp_on_wt_bidi_stream(stream,
                                     stream->webtransport_session_stream_id);
     }
 

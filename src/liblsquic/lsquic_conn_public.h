@@ -19,6 +19,7 @@ struct lsquic_hash;
 struct headers_stream;
 struct lsquic_send_ctl;
 struct lsquic_wt_session;
+struct lsquic_stream;
 #if LSQUIC_CONN_STATS
 struct conn_stats;
 #endif
@@ -60,6 +61,10 @@ struct lsquic_conn_public {
         CP_CONNECT_PROTOCOL     = 1 << 4,   /* Peer enabled CONNECT protocol */
     }                               cp_flags;
     uint64_t                        cp_wt_peer_draft;
+    int     (*cp_stream_ss_code) (const struct lsquic_stream *, uint64_t *);
+    void    (*cp_on_stream_destroy) (struct lsquic_stream *);
+    void    (*cp_on_wt_bidi_stream) (struct lsquic_stream *,
+                                                    lsquic_stream_id_t);
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;
