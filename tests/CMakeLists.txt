@@ -45,6 +45,7 @@ SET(TESTS
     goaway_gquic_be
     hkdf
     hpi
+    issue_616
     lsquic_hash
     mini_conn_delay
     packet_out
