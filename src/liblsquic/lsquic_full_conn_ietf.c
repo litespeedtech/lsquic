@@ -105,6 +105,8 @@
  */
 #define CLIENT_PUSH_SUPPORT 0
 
+#define N_DO_WRITES 5
+
 struct ietf_full_conn;
 static void update_peer_wt_support (struct ietf_full_conn *conn);
 
@@ -547,6 +549,7 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     lsquic_time_t               ifc_last_tick;
+    int                       (*ifc_do_write[N_DO_WRITES])(struct ietf_full_conn *);
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
@@ -626,6 +629,9 @@ packet_tolerance_alarm_expired (enum alarm_id al_id, void *ctx,
 
 static int
 init_http (struct ietf_full_conn *);
+
+static void
+set_write_datagram_priority (struct ietf_full_conn *, unsigned prio);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -1498,6 +1504,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         conn->ifc_pii = &orig_prio_iter_if;
     if (conn->ifc_settings->es_reset_stream_at)
         conn->ifc_mflags |= MF_RESET_STREAM_AT;
+    set_write_datagram_priority(conn, 1);
     return 0;
 }
 
@@ -9068,13 +9075,100 @@ ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
+static int
+do_write_buffered_some_prio (struct ietf_full_conn *conn,
+                                                enum buf_packet_type bpt)
+{
+    int s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, bpt);
+    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
+    return !write_is_possible(conn);
+}
+
+
+static int
+do_write_buffered_high_prio (struct ietf_full_conn *conn)
+{
+    return do_write_buffered_some_prio(conn, BPT_HIGHEST_PRIO);
+}
+
+
+static int
+do_write_buffered_other_prio (struct ietf_full_conn *conn)
+{
+    return do_write_buffered_some_prio(conn, BPT_OTHER_PRIO);
+}
+
+
+static int
+do_write_events_some_prio (struct ietf_full_conn *conn, int high_prio)
+{
+    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
+    {
+        process_streams_write_events(conn, high_prio);
+        return !write_is_possible(conn);
+    }
+    else
+        return 0;
+}
+
+
+static int
+do_write_events_high_prio (struct ietf_full_conn *conn)
+{
+    return do_write_events_some_prio(conn, 1);
+}
+
+
+static int
+do_write_events_low_prio (struct ietf_full_conn *conn)
+{
+    return do_write_events_some_prio(conn, 0);
+}
+
+
+static int
+do_write_datagram (struct ietf_full_conn *conn)
+{
+    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
+        if (!write_is_possible(conn))
+            return 1;
+    return 0;
+}
+
+
+static void
+set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
+{
+    int (*const do_write[])(struct ietf_full_conn *) = {
+        do_write_buffered_high_prio,
+        do_write_events_high_prio,
+        do_write_buffered_other_prio,
+        do_write_events_low_prio,
+    };
+    unsigned src, dst;
+
+    if (prio >= sizeof(conn->ifc_do_write) / sizeof(conn->ifc_do_write[0]))
+    {
+        LSQ_WARN("invalid write datagram priority %u: ignore", prio);
+        return;
+    }
+
+    for (src = 0, dst = 0; dst < N_DO_WRITES; ++dst)
+        if (dst == prio)
+            conn->ifc_do_write[dst] = do_write_datagram;
+        else
+            conn->ifc_do_write[dst] = do_write[src++];
+    assert(src + 1 == N_DO_WRITES);
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     int have_delayed_packets, s;
     enum tick_st tick = 0;
-    unsigned n;
+    unsigned i, n;
 
 #define CLOSE_IF_NECESSARY() do {                                       \
     if (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS)                    \
@@ -9239,29 +9333,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     maybe_conn_flush_special_streams(conn);
 
-    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_HIGHEST_PRIO);
-    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
-    if (!write_is_possible(conn))
-        goto end_write;
-
-    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
-        if (!write_is_possible(conn))
+    for (i = 0; i < N_DO_WRITES; ++i)
+        if (conn->ifc_do_write[i](conn))
             goto end_write;
-
-    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
-    {
-        process_streams_write_events(conn, 1);
-        if (!write_is_possible(conn))
-            goto end_write;
-    }
-
-    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_OTHER_PRIO);
-    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
-    if (!write_is_possible(conn))
-        goto end_write;
-
-    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
-        process_streams_write_events(conn, 0);
 
     lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
