@@ -46,7 +46,8 @@
 #include "prog.h"
 #include "lsxpack_header.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "test_common"
+#include "tool_log.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))

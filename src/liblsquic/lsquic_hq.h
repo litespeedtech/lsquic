@@ -18,6 +18,10 @@ enum hq_frame_type
     HQFT_PUSH_PROMISE   = 5,
     HQFT_GOAWAY         = 7,
     HQFT_MAX_PUSH_ID    = 0xD,
+    /* WebTransport signal value carried where frame type is otherwise parsed.
+     * Per draft-ietf-webtrans-http3, this is not a regular HTTP/3 frame.
+     */
+    HQFT_WT_STREAM      = 0x41,
     /* These made me expand shf_frame_type to 4 bytes from 1.  If at some
      * point we have to support a frame that is wider than 4 byte, it will
      * be time to bite the bullet and use our own enum for these types
@@ -37,8 +41,15 @@ enum hq_frame_type
 enum hq_setting_id
 {
     HQSID_QPACK_MAX_TABLE_CAPACITY  = 1,
+    HQSID_ENABLE_CONNECT_PROTOCOL   = 8,
     HQSID_MAX_HEADER_LIST_SIZE      = 6,
     HQSID_QPACK_BLOCKED_STREAMS     = 7,
+    HQSID_H3_DATAGRAM_ENABLED       = 0x33,
+    HQSID_WT_MAX_SESSIONS           = 0x14E9CD29,
+    HQSID_WT_ENABLED                = 0x2C7CF000,
+    HQSID_WT_INITIAL_MAX_DATA       = 0x2B61,
+    HQSID_WT_INITIAL_MAX_STREAMS_UNI  = 0x2B64,
+    HQSID_WT_INITIAL_MAX_STREAMS_BIDI = 0x2B65,
 };
 
 /* As of 12/18/2018: */
@@ -56,6 +67,7 @@ enum hq_uni_stream_type
     HQUST_PUSH      = 1,
     HQUST_QPACK_ENC = 2,
     HQUST_QPACK_DEC = 3,
+    HQUST_WEBTRANSPORT = 0x54,
 };
 
 
@@ -63,6 +75,7 @@ enum hq_uni_stream_type
  */
 enum http_error_code
 {
+    HEC_DATAGRAM_ERROR          =  0x33,
     HEC_NO_ERROR                =  0x100,
     HEC_GENERAL_PROTOCOL_ERROR  =  0x101,
     HEC_INTERNAL_ERROR          =  0x102,
@@ -83,6 +96,7 @@ enum http_error_code
     HEC_QPACK_DECOMPRESSION_FAILED  = 0x200,
     HEC_QPACK_ENCODER_STREAM_ERROR  = 0x201,
     HEC_QPACK_DECODER_STREAM_ERROR  = 0x202,
+    HEC_WT_BUFFERED_STREAM_REJECTED =  0x3994BD84,
 };
 
 

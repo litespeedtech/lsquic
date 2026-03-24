@@ -97,6 +97,7 @@ enum lsq_log_level lsq_log_levels[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_BW_SAMPLER]  = LSQ_LOG_WARN,
     [LSQLM_PACKET_RESIZE] = LSQ_LOG_WARN,
     [LSQLM_CONN_STATS]  = LSQ_LOG_WARN,
+    [LSQLM_WT]          = LSQ_LOG_WARN,
 };
 
 const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
@@ -142,6 +143,7 @@ const char *const lsqlm_to_str[N_LSQUIC_LOGGER_MODULES] = {
     [LSQLM_BW_SAMPLER]  = "bw-sampler",
     [LSQLM_PACKET_RESIZE] = "packet-resize",
     [LSQLM_CONN_STATS]  = "conn-stats",
+    [LSQLM_WT]          = "wt",
 };
 
 const char *const lsq_loglevel2str[N_LSQUIC_LOG_LEVELS] = {
@@ -384,6 +386,17 @@ end:
 void
 lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
 {
+    va_list ap;
+
+    va_start(ap, fmt);
+    lsquic_logger_log0v(log_level, fmt, ap);
+    va_end(ap);
+}
+
+
+void
+lsquic_logger_log0v (enum lsq_log_level log_level, const char *fmt, va_list ap)
+{
     const int saved_errno = errno;
     size_t len = 0;
     int lb;
@@ -402,10 +415,7 @@ lsquic_logger_log0 (enum lsq_log_level log_level, const char *fmt, ...)
     if (FORMAT_PROBLEM(lb, len, max))
         goto end;
     len += lb;
-    va_list ap;
-    va_start(ap, fmt);
     lb = vsnprintf(buf + len, max - len, fmt, ap);
-    va_end(ap);
     if (lb > 0 && (size_t) lb >= max - len && max - len >= TRUNC_SZ)
     {
         len = max - TRUNC_SZ;

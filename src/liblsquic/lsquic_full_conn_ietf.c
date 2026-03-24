@@ -81,6 +81,7 @@
 #include "ls-sfparser.h"
 #include "lsquic_qpack_exp.h"
 
+
 #define LSQUIC_LOGGER_MODULE LSQLM_CONN
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(&conn->ifc_conn)
 #include "lsquic_logger.h"
@@ -103,6 +104,11 @@
  * future: right now, we punt it.
  */
 #define CLIENT_PUSH_SUPPORT 0
+
+#define N_DO_WRITES 5
+
+struct ietf_full_conn;
+static void update_peer_wt_support (struct ietf_full_conn *conn);
 
 
 
@@ -153,14 +159,17 @@ enum ifull_conn_flags
 enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
-    /* HOLE */                      /* <- Hole!  Reuse me! */
+    MF_HTTP_DATAGRAMS   = 1 << 1,
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
     MF_SEND_WRONG_COUNTS= 1 << 5,   /* Send wrong ECN counts to peer */
-    MF_WANT_DATAGRAM_WRITE  = 1 << 6,
+    MF_WANT_DATAGRAM_WRITE  = 1 << 6,   /* Effective: conn or HTTP datagrams */
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_WANT_CONN_DG_WRITE   = 1 << 9,   /* Connection-level datagrams */
+    MF_RESET_STREAM_AT  = 1 << 10,  /* RESET_STREAM_AT support is enabled */
+    MF_PEER_RESET_STREAM_AT = 1 << 11,  /* Peer supports RESET_STREAM_AT */
 };
 
 
@@ -282,7 +291,7 @@ struct stream_id_to_ss
 {
     STAILQ_ENTRY(stream_id_to_ss)   sits_next;
     lsquic_stream_id_t              sits_stream_id;
-    enum http_error_code            sits_error_code;
+    uint64_t                        sits_error_code;
 };
 
 struct http_ctl_stream_in
@@ -446,7 +455,9 @@ struct ietf_full_conn
     lsquic_packno_t             ifc_max_ack_packno[N_PNS];
     lsquic_packno_t             ifc_max_non_probing;
     struct {
-        uint64_t    max_stream_send;
+        uint64_t    max_stream_send_bidi_local;
+        uint64_t    max_stream_send_bidi_remote;
+        uint64_t    max_stream_send_uni;
         uint8_t     ack_exp;
     }                           ifc_cfg;
     int                       (*ifc_process_incoming_packet)(
@@ -467,6 +478,19 @@ struct ietf_full_conn
     struct {
         uint64_t    header_table_size,
                     qpack_blocked_streams;
+        uint64_t    wt_max_sessions;
+        uint64_t    wt_initial_max_data;
+        uint64_t    wt_initial_max_streams_uni;
+        uint64_t    wt_initial_max_streams_bidi;
+        unsigned    wt_draft;
+        signed char wt_max_sessions_seen;
+        signed char wt_enabled;
+        signed char wt_enabled_seen;
+        signed char wt_initial_max_data_seen;
+        signed char wt_initial_max_streams_uni_seen;
+        signed char wt_initial_max_streams_bidi_seen;
+        signed char enable_connect_protocol;
+        signed char enable_connect_protocol_seen;
     }                           ifc_peer_hq_settings;
     struct dcid_elem           *ifc_dces[MAX_IETF_CONN_DCIDS];
     TAILQ_HEAD(, dcid_elem)     ifc_to_retire;
@@ -525,6 +549,7 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     lsquic_time_t               ifc_last_tick;
+    int                       (*ifc_do_write[N_DO_WRITES])(struct ietf_full_conn *);
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
@@ -604,6 +629,9 @@ packet_tolerance_alarm_expired (enum alarm_id al_id, void *ctx,
 
 static int
 init_http (struct ietf_full_conn *);
+
+static void
+set_write_datagram_priority (struct ietf_full_conn *, unsigned prio);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -1000,6 +1028,7 @@ static const struct crypto_stream_if crypto_stream_if =
 
 
 static const struct lsquic_stream_if *unicla_if_ptr;
+const struct lsquic_stream_if *lsquic_wt_uni_stream_if (void);
 
 
 static lsquic_stream_id_t
@@ -1033,6 +1062,36 @@ avail_streams_count (const struct ietf_full_conn *conn, int server,
         assert(0);
         return 0;
     }
+}
+
+static void
+queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd);
+
+
+static int
+is_our_stream_id (const struct ietf_full_conn *conn, lsquic_stream_id_t stream_id)
+{
+    const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
+    return (1u & stream_id) == is_server;
+}
+
+
+static uint64_t
+max_send_off_for_stream (const struct ietf_full_conn *conn,
+                                                lsquic_stream_id_t stream_id)
+{
+    const enum stream_dir sd = (stream_id >> SD_SHIFT) & 1;
+    if (sd == SD_UNI)
+    {
+        if (is_our_stream_id(conn, stream_id))
+            return conn->ifc_cfg.max_stream_send_uni;
+        else
+            return 0;
+    }
+    else if (is_our_stream_id(conn, stream_id))
+        return conn->ifc_cfg.max_stream_send_bidi_remote;
+    else
+        return conn->ifc_cfg.max_stream_send_bidi_local;
 }
 
 
@@ -1095,6 +1154,7 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     struct lsquic_stream *stream;
     lsquic_stream_id_t stream_id;
     enum stream_ctor_flags flags;
+    uint64_t max_send_off;
 
     flags = SCF_IETF|SCF_DI_AUTOSWITCH;
     if (conn->ifc_enpub->enp_settings.es_rw_once)
@@ -1109,11 +1169,15 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     }
 
     stream_id = generate_stream_id(conn, SD_BIDI);
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create outgoing bidi stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64, stream_id,
+        conn->ifc_settings->es_init_max_stream_data_bidi_local, max_send_off);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
                 conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
+                max_send_off, flags);
     if (!stream)
         return -1;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -1124,6 +1188,86 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
     }
     lsquic_stream_call_on_new(stream);
     return 0;
+}
+
+static struct lsquic_stream *
+create_bidi_stream_out_with_if (struct ietf_full_conn *conn,
+    const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct lsquic_stream *stream;
+    lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
+    uint64_t max_send_off;
+
+    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_BIDI))
+    {
+        queue_streams_blocked_frame(conn, SD_BIDI);
+        errno = ENOSPC;
+        return NULL;
+    }
+
+    flags = SCF_IETF|SCF_DI_AUTOSWITCH;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
+
+    stream_id = generate_stream_id(conn, SD_BIDI);
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create outgoing bidi stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64, stream_id,
+        conn->ifc_settings->es_init_max_stream_data_bidi_local, max_send_off);
+    stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                stream_if, stream_if_ctx,
+                conn->ifc_settings->es_init_max_stream_data_bidi_local,
+                max_send_off, flags);
+    if (!stream)
+        return NULL;
+    if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+                            sizeof(stream->id), stream, &stream->sm_hash_el))
+    {
+        lsquic_stream_destroy(stream);
+        return NULL;
+    }
+    lsquic_stream_call_on_new(stream);
+    return stream;
+}
+
+static struct lsquic_stream *
+create_uni_stream_out_with_if (struct ietf_full_conn *conn,
+    const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct lsquic_stream *stream;
+    lsquic_stream_id_t stream_id;
+    enum stream_ctor_flags flags;
+
+    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI))
+    {
+        queue_streams_blocked_frame(conn, SD_UNI);
+        errno = ENOSPC;
+        return NULL;
+    }
+
+    flags = SCF_IETF;
+    if (conn->ifc_enpub->enp_settings.es_rw_once)
+        flags |= SCF_DISP_RW_ONCE;
+    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
+        flags |= SCF_DELAY_ONCLOSE;
+
+    stream_id = generate_stream_id(conn, SD_UNI);
+    stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
+                stream_if, stream_if_ctx, 0, conn->ifc_max_stream_data_uni,
+                flags);
+    if (!stream)
+        return NULL;
+    if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
+                            sizeof(stream->id), stream, &stream->sm_hash_el))
+    {
+        lsquic_stream_destroy(stream);
+        return NULL;
+    }
+    lsquic_stream_call_on_new(stream);
+    return stream;
 }
 
 
@@ -1143,11 +1287,13 @@ create_push_stream (struct ietf_full_conn *conn)
         flags |= SCF_DELAY_ONCLOSE;
 
     stream_id = generate_stream_id(conn, SD_UNI);
+    LSQ_DEBUG("create outgoing push stream %"PRIu64
+        ": recv_window=0, send_limit=%"PRIu64, stream_id,
+        conn->ifc_max_stream_data_uni);
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                 conn->ifc_enpub->enp_stream_if,
                 conn->ifc_enpub->enp_stream_if_ctx,
-                conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
+                0, conn->ifc_max_stream_data_uni, flags);
     if (!stream)
         return NULL;
     if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
@@ -1282,6 +1428,8 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
     TAILQ_INIT(&conn->ifc_pub.read_streams);
     TAILQ_INIT(&conn->ifc_pub.write_streams);
     TAILQ_INIT(&conn->ifc_pub.service_streams);
+    TAILQ_INIT(&conn->ifc_pub.http_dg_streams);
+    TAILQ_INIT(&conn->ifc_pub.wt_sessions);
     STAILQ_INIT(&conn->ifc_stream_ids_to_ss);
     TAILQ_INIT(&conn->ifc_to_retire);
     conn->ifc_n_to_retire = 0;
@@ -1321,6 +1469,20 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
+    conn->ifc_peer_hq_settings.wt_max_sessions = 0;
+    conn->ifc_peer_hq_settings.wt_max_sessions_seen = 0;
+    conn->ifc_peer_hq_settings.wt_draft = 0;
+    conn->ifc_peer_hq_settings.wt_enabled = 0;
+    conn->ifc_peer_hq_settings.wt_enabled_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_data = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_data_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_uni = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi = 0;
+    conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen = 0;
+    conn->ifc_peer_hq_settings.enable_connect_protocol = 0;
+    conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 0;
+    conn->ifc_pub.cp_wt_peer_draft = 0;
 
     conn->ifc_flags = flags | IFC_FIRST_TICK;
     conn->ifc_max_ack_packno[PNS_INIT] = IQUIC_INVALID_PACKNO;
@@ -1340,6 +1502,9 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         conn->ifc_pii = &ext_prio_iter_if;
     else
         conn->ifc_pii = &orig_prio_iter_if;
+    if (conn->ifc_settings->es_reset_stream_at)
+        conn->ifc_mflags |= MF_RESET_STREAM_AT;
+    set_write_datagram_priority(conn, 1);
     return 0;
 }
 
@@ -1411,11 +1576,12 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
 
     if (flags & IFC_HTTP)
     {
+        unsigned max_uni_streams = 3;
         if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
-            conn->ifc_max_streams_in[SD_UNI]
-                            = MAX(3, enpub->enp_settings.es_max_streams_in);
-        else
-            conn->ifc_max_streams_in[SD_UNI] = 3;
+            max_uni_streams = MAX(max_uni_streams, enpub->enp_settings.es_max_streams_in);
+        if (enpub->enp_settings.es_init_max_streams_uni)
+            max_uni_streams = MAX(max_uni_streams, enpub->enp_settings.es_init_max_streams_uni);
+        conn->ifc_max_streams_in[SD_UNI] = max_uni_streams;
     }
     else
         conn->ifc_max_streams_in[SD_UNI] = enpub->enp_settings.es_max_streams_in;
@@ -2515,7 +2681,7 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
 
 static int
 generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
-                lsquic_stream_id_t stream_id, enum http_error_code error_code)
+                        lsquic_stream_id_t stream_id, uint64_t error_code)
 {
     struct lsquic_packet_out *packet_out;
     size_t need;
@@ -2537,7 +2703,7 @@ generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
         return -1;
     }
     LSQ_DEBUG("generated %d-byte STOP_SENDING frame (stream id: %"PRIu64", "
-        "error code: %u)", w, stream_id, error_code);
+        "error code: %"PRIu64")", w, stream_id, error_code);
     EV_LOG_GENERATED_STOP_SENDING_FRAME(LSQUIC_LOG_CONN_ID, stream_id,
                                                                 error_code);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
@@ -2558,7 +2724,9 @@ static int
 generate_stop_sending_frame (struct ietf_full_conn *conn,
                                                 struct lsquic_stream *stream)
 {
-    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
+    const uint64_t error_code = stream->sm_ss_code;
+
+    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, error_code))
     {
         lsquic_stream_ss_frame_sent(stream);
         return 1;
@@ -2593,7 +2761,51 @@ generate_stop_sending_frames (struct ietf_full_conn *conn, lsquic_time_t now)
 }
 
 
-/* Return true if generated, false otherwise */
+static int
+generate_reset_stream_at_frame (struct ietf_full_conn *conn,
+                struct lsquic_stream *stream, uint64_t reliable_size)
+{
+    lsquic_packet_out_t *packet_out;
+    unsigned need;
+    int sz;
+
+    need = conn->ifc_conn.cn_pf->pf_reset_stream_at_frame_size(stream->id,
+                    stream->tosend_off, reliable_size, stream->error_code);
+    packet_out = get_writeable_packet(conn, need);
+    if (!packet_out)
+    {
+        LSQ_DEBUG("cannot get writeable packet for RESET_STREAM_AT frame");
+        return 0;
+    }
+    sz = conn->ifc_conn.cn_pf->pf_gen_reset_stream_at_frame(
+                    packet_out->po_data + packet_out->po_data_sz,
+                    lsquic_packet_out_avail(packet_out), stream->id,
+                    stream->tosend_off, reliable_size, stream->error_code);
+    if (sz < 0)
+    {
+        ABORT_ERROR("gen_reset_stream_at_frame failed");
+        return 0;
+    }
+    if (0 != lsquic_packet_out_add_stream(packet_out, conn->ifc_pub.mm, stream,
+                    QUIC_FRAME_RESET_STREAM_AT, packet_out->po_data_sz, sz))
+    {
+        ABORT_ERROR("adding frame to packet failed: %d", errno);
+        return 0;
+    }
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_RESET_STREAM_AT;
+    lsquic_stream_rst_frame_sent(stream);
+    LSQ_DEBUG("wrote RESET_STREAM_AT: stream %"PRIu64"; final %"PRIu64"; "
+              "reliable %"PRIu64"; error code %"PRIu64, stream->id,
+              stream->tosend_off, reliable_size, stream->error_code);
+    EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "generated RESET_STREAM_AT: stream "
+        "%"PRIu64"; final %"PRIu64"; reliable %"PRIu64"; error code %"PRIu64,
+        stream->id, stream->tosend_off, reliable_size, stream->error_code);
+
+    return 1;
+}
+
+
 static int
 generate_rst_stream_frame (struct ietf_full_conn *conn,
                                                 struct lsquic_stream *stream)
@@ -2638,12 +2850,33 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
 }
 
 
+/* Return true if generated, false otherwise */
+static int
+generate_stream_reset_frame (struct ietf_full_conn *conn,
+                                                struct lsquic_stream *stream)
+{
+    uint64_t reliable_size;
+    enum quic_frame_type frame_type;
+
+    frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
+    if (frame_type == QUIC_FRAME_RST_STREAM)
+        return generate_rst_stream_frame(conn, stream);
+    else if (conn->ifc_mflags & MF_PEER_RESET_STREAM_AT)
+        return generate_reset_stream_at_frame(conn, stream, reliable_size);
+    else
+    {
+        LSQ_WARN("peer does not support RESET_STREAM_AT, "
+            "sending RST_STREAM");
+        return generate_rst_stream_frame(conn, stream);
+    }
+}
+
+
 static int
 is_our_stream (const struct ietf_full_conn *conn,
                                         const struct lsquic_stream *stream)
 {
-    const unsigned is_server = !!(conn->ifc_flags & IFC_SERVER);
-    return (1 & stream->id) == is_server;
+    return is_our_stream_id(conn, stream->id);
 }
 
 
@@ -2918,7 +3151,7 @@ process_stream_ready_to_send (struct ietf_full_conn *conn,
                                                          stream);
     }
     if (stream->sm_qflags & SMQF_SEND_RST)
-        r &= generate_rst_stream_frame(conn, stream);
+        r &= generate_stream_reset_frame(conn, stream);
     if (stream->sm_qflags & SMQF_SEND_STOP_SENDING)
         r &= generate_stop_sending_frame(conn, stream);
     return r;
@@ -2955,6 +3188,29 @@ ietf_full_conn_ci_write_ack (struct lsquic_conn *lconn,
     generate_ack_frame_for_pns(conn, packet_out, PNS_APP, lsquic_time_now());
 }
 
+static void
+update_datagram_want (struct ietf_full_conn *conn)
+{
+    int want;
+
+    want = (conn->ifc_mflags & MF_WANT_CONN_DG_WRITE)
+        || ((conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && !TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams));
+
+    if (want)
+    {
+        if (!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE))
+        {
+            conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
+            if (lsquic_send_ctl_can_send(&conn->ifc_send_ctl))
+                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
+                                                             &conn->ifc_conn);
+        }
+    }
+    else
+        conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+}
+
 
 static int
 ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
@@ -2964,16 +3220,12 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
 
     if (conn->ifc_flags & IFC_DATAGRAMS)
     {
-        old = !!(conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE);
+        old = !!(conn->ifc_mflags & MF_WANT_CONN_DG_WRITE);
         if (is_want)
-        {
-            conn->ifc_mflags |= MF_WANT_DATAGRAM_WRITE;
-            if (lsquic_send_ctl_can_send (&conn->ifc_send_ctl))
-                lsquic_engine_add_conn_to_tickable(conn->ifc_enpub,
-                                                             &conn->ifc_conn);
-        }
+            conn->ifc_mflags |= MF_WANT_CONN_DG_WRITE;
         else
-            conn->ifc_mflags &= ~MF_WANT_DATAGRAM_WRITE;
+            conn->ifc_mflags &= ~MF_WANT_CONN_DG_WRITE;
+        update_datagram_want(conn);
         LSQ_DEBUG("turn %s \"want datagram write\" flag",
                                                     is_want ? "on" : "off");
         return old;
@@ -2982,6 +3234,26 @@ ietf_full_conn_ci_want_datagram_write (struct lsquic_conn *lconn, int is_want)
         return -1;
 }
 
+
+static void
+ietf_full_conn_ci_http_dg_streams_updated (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    update_datagram_want(conn);
+}
+
+
+static size_t
+ietf_full_conn_ci_get_max_datagram_size (struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    if (conn->ifc_flags & IFC_DATAGRAMS)
+        return conn->ifc_max_dg_sz;
+    else
+        return 0;
+}
 
 static void
 ietf_full_conn_ci_client_call_on_new (struct lsquic_conn *lconn)
@@ -3172,6 +3444,7 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
         lsquic_hash_erase(conn->ifc_pub.all_streams, el);
         lsquic_stream_destroy(stream);
     }
+    lsquic_conn_http_dg_cleanup(&conn->ifc_pub);
     if (conn->ifc_flags & IFC_HTTP)
     {
         lsquic_qdh_cleanup(&conn->ifc_qdh);
@@ -3573,6 +3846,9 @@ apply_trans_params (struct ietf_full_conn *conn,
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
     }
 
+    if (params->tp_set & (1 << TPI_RESET_STREAM_AT))
+        conn->ifc_mflags |= MF_PEER_RESET_STREAM_AT;
+
     if (params->tp_init_max_streams_bidi > (1ull << 60)
                             || params->tp_init_max_streams_uni > (1ull << 60))
     {
@@ -3609,7 +3885,15 @@ apply_trans_params (struct ietf_full_conn *conn,
                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (is_our_stream(conn, stream))
+        const enum stream_dir sd = (stream->id >> SD_SHIFT) & 1;
+        if (sd == SD_UNI)
+        {
+            if (is_our_stream(conn, stream))
+                limit = params->tp_init_max_stream_data_uni;
+            else
+                limit = 0;
+        }
+        else if (is_our_stream(conn, stream))
             limit = params->tp_init_max_stream_data_bidi_remote;
         else
             limit = params->tp_init_max_stream_data_bidi_local;
@@ -3621,12 +3905,12 @@ apply_trans_params (struct ietf_full_conn *conn,
         }
     }
 
-    if (conn->ifc_flags & IFC_SERVER)
-        conn->ifc_cfg.max_stream_send
+    conn->ifc_cfg.max_stream_send_bidi_local
                                 = params->tp_init_max_stream_data_bidi_local;
-    else
-        conn->ifc_cfg.max_stream_send
+    conn->ifc_cfg.max_stream_send_bidi_remote
                                 = params->tp_init_max_stream_data_bidi_remote;
+    conn->ifc_cfg.max_stream_send_uni
+                                = params->tp_init_max_stream_data_uni;
     conn->ifc_cfg.ack_exp = params->tp_ack_delay_exponent;
 
     switch ((!!conn->ifc_settings->es_idle_timeout << 1)
@@ -3685,7 +3969,8 @@ apply_trans_params (struct ietf_full_conn *conn,
         LSQ_DEBUG("timestamps enabled: will send TIMESTAMP frames");
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
-    if (conn->ifc_settings->es_datagrams
+    if ((conn->ifc_settings->es_datagrams
+            || conn->ifc_settings->es_http_datagrams)
             && (params->tp_set & (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)))
     {
         LSQ_DEBUG("datagrams enabled");
@@ -3694,6 +3979,8 @@ apply_trans_params (struct ietf_full_conn *conn,
             params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] > USHRT_MAX
             ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
     }
+
+    update_peer_wt_support(conn);
 
     conn->ifc_pub.max_peer_ack_usec = params->tp_max_ack_delay * 1000;
 
@@ -3791,12 +4078,8 @@ init_http (struct ietf_full_conn *conn)
     if (0 != lsquic_hcso_write_settings(&conn->ifc_hcso,
                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
                 max_risked_streams, conn->ifc_flags & IFC_SERVER
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
                 ,
-                conn->ifc_settings->es_webtransport_server,
-                conn->ifc_settings->es_max_webtransport_server_streams
-#endif
-                ))
+                conn->ifc_settings->es_webtransport))
     {
         ABORT_WARN("cannot write SETTINGS");
         return -1;
@@ -5420,7 +5703,7 @@ find_stream_by_id (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id)
 
 static void
 maybe_schedule_ss_for_stream (struct ietf_full_conn *conn,
-                lsquic_stream_id_t stream_id, enum http_error_code error_code)
+                        lsquic_stream_id_t stream_id, uint64_t error_code)
 {
     struct stream_id_to_ss *sits;
 
@@ -5459,12 +5742,14 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
     void *stream_ctx;
     struct lsquic_stream *stream;
     unsigned initial_window;
+    uint64_t max_send_off;
     const int call_on_new = flags & SCF_CALL_ON_NEW;
+    const enum stream_dir sd = (stream_id >> SD_SHIFT) & 1;
 
     flags &= ~SCF_CALL_ON_NEW;
     flags |= SCF_DI_AUTOSWITCH|SCF_IETF;
 
-    if ((conn->ifc_flags & IFC_HTTP) && ((stream_id >> SD_SHIFT) & 1) == SD_UNI)
+    if ((conn->ifc_flags & IFC_HTTP) && sd == SD_UNI)
     {
         iface = unicla_if_ptr;
         stream_ctx = conn;
@@ -5495,16 +5780,22 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
         }
     }
 
-    if (((stream_id >> SD_SHIFT) & 1) == SD_UNI)
+    if (sd == SD_UNI)
         initial_window = conn->ifc_enpub->enp_settings
                                         .es_init_max_stream_data_uni;
     else
         initial_window = conn->ifc_enpub->enp_settings
                                         .es_init_max_stream_data_bidi_remote;
 
+    max_send_off = max_send_off_for_stream(conn, stream_id);
+    LSQ_DEBUG("create incoming %sdirectional stream %"PRIu64
+        ": recv_window=%u, send_limit=%"PRIu64,
+        sd == SD_BIDI ? "bi" : "uni", stream_id, initial_window,
+        max_send_off);
+
     stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
                                iface, stream_ctx, initial_window,
-                               conn->ifc_cfg.max_stream_send, flags);
+                               max_send_off, flags);
     if (stream)
     {
         if (conn->ifc_bpus)
@@ -5618,6 +5909,81 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
     if (0 != lsquic_stream_rst_in(stream, offset, error_code))
     {
         ABORT_ERROR("received invalid RST_STREAM");
+        return 0;
+    }
+    if (call_on_new)
+        lsquic_stream_call_on_new(stream);
+    return parsed_len;
+}
+
+
+static unsigned
+process_reset_stream_at_frame (struct ietf_full_conn *conn,
+        struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
+{
+    lsquic_stream_id_t stream_id;
+    uint64_t final_size, reliable_size, error_code;
+    lsquic_stream_t *stream;
+    int call_on_new;
+    int parsed_len;
+
+    if (!(conn->ifc_mflags & MF_RESET_STREAM_AT))
+    {
+        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
+            "Received unexpected RESET_STREAM_AT frame (not negotiated)");
+        return 0;
+    }
+
+    parsed_len = conn->ifc_conn.cn_pf->pf_parse_reset_stream_at_frame(p, len,
+                                &stream_id, &error_code, &final_size,
+                                &reliable_size);
+    if (parsed_len < 0)
+    {
+        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR,
+                                                "cannot parse RESET_STREAM_AT");
+        return 0;
+    }
+
+    LSQ_DEBUG("Got RESET_STREAM_AT; stream: %"PRIu64"; final: %"PRIu64"; "
+              "reliable: %"PRIu64, stream_id, final_size, reliable_size);
+
+    if (conn_is_send_only_stream(conn, stream_id))
+    {
+        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
+            "received RESET_STREAM_AT on send-only stream %"PRIu64, stream_id);
+        return 0;
+    }
+
+    call_on_new = 0;
+    stream = find_stream_by_id(conn, stream_id);
+    if (!stream)
+    {
+        if (conn_is_stream_closed(conn, stream_id))
+        {
+            LSQ_DEBUG("got reset_stream_at frame for closed stream %"PRIu64,
+                                                                stream_id);
+            return parsed_len;
+        }
+        if (!is_peer_initiated(conn, stream_id))
+        {
+            ABORT_ERROR("received reset for never-initiated stream %"PRIu64,
+                                                                    stream_id);
+            return 0;
+        }
+
+        stream = new_stream(conn, stream_id, 0);
+        if (!stream)
+        {
+            ABORT_ERROR("cannot create new stream: %s", strerror(errno));
+            return 0;
+        }
+        ++call_on_new;
+    }
+
+    if (0 != lsquic_stream_reset_stream_at_in(stream, final_size,
+                                                reliable_size, error_code))
+    {
+        ABORT_ERROR("received invalid RESET_STREAM_AT");
         return 0;
     }
     if (call_on_new)
@@ -5882,6 +6248,16 @@ process_crypto_frame (struct ietf_full_conn *conn,
 }
 
 
+static int
+http3_server_bidi_stream_forbidden (const struct ietf_full_conn *conn,
+                                                    lsquic_stream_id_t stream_id)
+{
+    return (conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
+        && SIT_BIDI_SERVER == (stream_id & SIT_MASK)
+        && !(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
+}
+
+
 static unsigned
 process_stream_frame (struct ietf_full_conn *conn,
     struct lsquic_packet_in *packet_in, const unsigned char *p, size_t len)
@@ -5916,8 +6292,7 @@ process_stream_frame (struct ietf_full_conn *conn,
         return 0;
     }
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
-                    && SIT_BIDI_SERVER == (stream_frame->stream_id & SIT_MASK))
+    if (http3_server_bidi_stream_forbidden(conn, stream_frame->stream_id))
     {
         ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
             "is not allowed to initiate bidirectional streams (got "
@@ -6243,8 +6618,7 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
     {
         if (is_peer_initiated(conn, stream_id))
         {
-            if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
-                && SIT_BIDI_SERVER == (stream_id & SIT_MASK))
+            if (http3_server_bidi_stream_forbidden(conn, stream_id))
             {
                 ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
                                                             "is not allowed to initiate bidirectional streams (got "
@@ -6886,6 +7260,97 @@ process_timestamp_frame (struct ietf_full_conn *conn,
     return 0;
 }
 
+static unsigned
+process_http_dg_frame (struct ietf_full_conn *conn,
+                                    const unsigned char *data, size_t data_sz,
+                                    unsigned parsed_len)
+{
+    const unsigned char *p = data;
+    const unsigned char *end = p + data_sz;
+    uint64_t qsid;
+    int nread;
+    lsquic_stream_id_t stream_id;
+    struct lsquic_stream *stream;
+    struct lsquic_hash_elem *el;
+    const struct lsquic_http_dg_if *dg_if;
+
+    if (!(conn->ifc_mflags & MF_HTTP_DATAGRAMS)
+            || !conn->ifc_settings->es_http_datagrams)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram received without SETTINGS_H3_DATAGRAM");
+        return 0;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID is a varint. */
+    nread = vint_read(p, end, &qsid);
+    if (nread <= 0)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "invalid HTTP Datagram Quarter Stream ID");
+        return 0;
+    }
+
+    if (qsid > VINT_MAX_VALUE / 4)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram Quarter Stream ID too large");
+        return 0;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID maps to stream ID * 4. */
+    stream_id = (lsquic_stream_id_t) (qsid * 4);
+    LSQ_DEBUG("HTTP Datagram qsid=%"PRIu64" stream=%"PRIu64, qsid, stream_id);
+    /* RFC 9297, Section 2.1: Quarter Stream ID refers to client-initiated
+     * bidirectional request streams (stream IDs divisible by 4).
+     */
+    if ((stream_id & SIT_MASK) != SIT_BIDI_CLIENT)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram stream ID %"PRIu64" is invalid", stream_id);
+        return 0;
+    }
+
+    el = lsquic_hash_find(conn->ifc_pub.all_streams, &stream_id,
+                                                    sizeof(stream_id));
+    if (!el)
+    {
+        ABORT_QUIETLY(1, HEC_DATAGRAM_ERROR,
+            "HTTP Datagram for stream %"PRIu64" not found", stream_id);
+        return 0;
+    }
+
+    stream = lsquic_hashelem_getdata(el);
+    LSQ_DEBUG("HTTP Datagram stream %"PRIu64" ptr=%p",
+                                                stream_id, (void *) stream);
+    dg_if = lsquic_conn_http_dg_get_if(&conn->ifc_pub, stream_id);
+    if (dg_if && dg_if->on_http_dg_read)
+    {
+        lsquic_stream_hist_http_dg_recv(stream);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "RX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream_id, (size_t) (end - (p + nread)));
+        LSQ_DEBUG("HTTP Datagram deliver to stream %"PRIu64, stream_id);
+        dg_if->on_http_dg_read(stream, stream->st_ctx,
+                                        p + nread, end - (p + nread));
+    }
+    else if (stream->stream_if && stream->stream_if->on_http_dg_read)
+    {
+        lsquic_stream_hist_http_dg_recv(stream);
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "RX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream_id, (size_t) (end - (p + nread)));
+        LSQ_DEBUG("HTTP Datagram deliver to stream %"PRIu64, stream_id);
+        stream->stream_if->on_http_dg_read(stream, stream->st_ctx,
+                                        p + nread, end - (p + nread));
+    }
+    else
+        LSQ_DEBUG("HTTP Datagram stream %"PRIu64" has no callback",
+                                                            stream_id);
+
+    return parsed_len;
+}
+
 
 static unsigned
 process_datagram_frame (struct ietf_full_conn *conn,
@@ -6909,8 +7374,13 @@ process_datagram_frame (struct ietf_full_conn *conn,
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "%zd-byte DATAGRAM", data_sz);
     LSQ_DEBUG("%zd-byte DATAGRAM", data_sz);
+    LSQ_DEBUG("process DATAGRAM: ifc_flags=0x%X", conn->ifc_flags);
 
-    conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
+    if ((conn->ifc_flags & IFC_HTTP)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
+        return process_http_dg_frame(conn, data, data_sz, parsed_len);
+    else
+        conn->ifc_enpub->enp_stream_if->on_datagram(&conn->ifc_conn, data, data_sz);
 
     return parsed_len;
 }
@@ -6925,6 +7395,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
 {
     [QUIC_FRAME_PADDING]            =  process_padding_frame,
     [QUIC_FRAME_RST_STREAM]         =  process_rst_stream_frame,
+    [QUIC_FRAME_RESET_STREAM_AT]    =  process_reset_stream_at_frame,
     [QUIC_FRAME_CONNECTION_CLOSE]   =  process_connection_close_frame,
     [QUIC_FRAME_MAX_DATA]           =  process_max_data_frame,
     [QUIC_FRAME_MAX_STREAM_DATA]    =  process_max_stream_data_frame,
@@ -8389,7 +8860,145 @@ ietf_full_conn_ci_set_min_datagram_size (struct lsquic_conn *lconn,
 }
 
 
+struct http_dg_consume_ctx
+{
+    unsigned char          *payload_buf;
+    size_t                  payload_buf_sz;
+    size_t                  payload_sz;
+    int                     consumed;
+    int                     encapsulated;
+};
+
+static int
+http_dg_consume (lsquic_stream_t *stream, const void *buf, size_t sz,
+                                        enum lsquic_http_dg_send_mode mode)
+{
+    struct http_dg_consume_ctx *ctx;
+
+    ctx = stream->sm_http_dg_consume_ctx;
+    if (!ctx || ctx->consumed)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (mode != LSQUIC_HTTP_DG_SEND_CAPSULE && sz <= ctx->payload_buf_sz)
+    {
+        memcpy(ctx->payload_buf, buf, sz);
+        ctx->payload_sz = sz;
+        ctx->consumed = 1;
+        lsquic_stream_hist_http_dg_send(stream);
+        EV_LOG_CONN_EVENT(lsquic_conn_log_cid(stream->conn_pub->lconn),
+            "TX HTTP DATAGRAM: stream=%"PRIu64" size=%zu",
+            stream->id, sz);
+        return 0;
+    }
+
+    if (mode == LSQUIC_HTTP_DG_SEND_DATAGRAM)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    if (0 != lsquic_stream_http_dg_queue_capsule(stream, buf, sz))
+        return -1;
+
+    ctx->consumed = 1;
+    ctx->encapsulated = 1;
+    EV_LOG_CONN_EVENT(lsquic_conn_log_cid(stream->conn_pub->lconn),
+        "TX HTTP DG capsule: stream=%"PRIu64" size=%zu",
+        stream->id, sz);
+    return 0;
+}
+
 /* Return true if datagram was written, false otherwise */
+static ssize_t
+http_dg_write_cb (struct lsquic_conn *lconn, void *buf, size_t sz)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    struct lsquic_stream *stream;
+    struct http_dg_consume_ctx ctx;
+    const struct lsquic_http_dg_if *dg_if;
+    int (*on_http_dg_write)(lsquic_stream_t *s, lsquic_stream_ctx_t *h,
+                size_t max_quic_payload,
+                lsquic_http_dg_consume_f consume_datagram);
+    uint64_t qsid;
+    uint64_t bits;
+    size_t vlen;
+    int rc;
+
+    if (!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
+        return -1;
+
+    stream = TAILQ_FIRST(&conn->ifc_pub.http_dg_streams);
+    if (!stream)
+        return -1;
+    dg_if = lsquic_conn_http_dg_get_if(&conn->ifc_pub, stream->id);
+    if (dg_if && dg_if->on_http_dg_write)
+        on_http_dg_write = dg_if->on_http_dg_write;
+    else if (stream->stream_if && stream->stream_if->on_http_dg_write)
+        on_http_dg_write = stream->stream_if->on_http_dg_write;
+    else
+        return -1;
+    if (lsquic_stream_http_dg_capsule_pending(stream))
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    /* RFC 9297, Section 2.1: Quarter Stream ID is stream ID / 4. */
+    qsid = stream->id / 4;
+    bits = vint_val2bits(qsid);
+    vlen = 1u << bits;
+    if (vlen >= sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.payload_buf = (unsigned char *) buf + vlen;
+    ctx.payload_buf_sz = sz - vlen;
+
+    assert(!stream->sm_http_dg_consume_ctx);
+    stream->sm_http_dg_consume_ctx = &ctx;
+    rc = on_http_dg_write(stream, stream->st_ctx,
+                                    ctx.payload_buf_sz, http_dg_consume);
+    stream->sm_http_dg_consume_ctx = NULL;
+
+    if (!ctx.consumed)
+    {
+        if (rc != 0)
+            return -1;
+        errno = EAGAIN;
+        return -1;
+    }
+
+    if (stream->sm_qflags & SMQF_WANT_HTTP_DG)
+    {
+        TAILQ_REMOVE(&conn->ifc_pub.http_dg_streams, stream,
+                                                    next_http_dg_stream);
+        TAILQ_INSERT_TAIL(&conn->ifc_pub.http_dg_streams, stream,
+                                                    next_http_dg_stream);
+    }
+
+    if (ctx.encapsulated)
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    if (ctx.payload_sz > ctx.payload_buf_sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    vint_write(buf, qsid, bits, vlen);
+    return (ssize_t) (vlen + ctx.payload_sz);
+}
+
+
 static int
 write_datagram (struct ietf_full_conn *conn)
 {
@@ -8402,16 +9011,29 @@ write_datagram (struct ietf_full_conn *conn)
     if (!packet_out)
         return 0;
 
-    w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
-            packet_out->po_data + packet_out->po_data_sz,
-            lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
-            conn->ifc_max_dg_sz,
-            conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
+    if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
+        w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+                conn->ifc_max_dg_sz,
+                http_dg_write_cb, &conn->ifc_conn);
+    else
+        w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out), conn->ifc_min_dg_sz,
+                conn->ifc_max_dg_sz,
+                conn->ifc_enpub->enp_stream_if->on_dg_write, &conn->ifc_conn);
     if (w < 0)
     {
-        LSQ_DEBUG("could not generate DATAGRAM frame");
+        if (errno != EAGAIN)
+            LSQ_DEBUG("could not generate DATAGRAM frame");
         return 0;
     }
+    if (!TAILQ_EMPTY(&conn->ifc_pub.http_dg_streams)
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS))
+        EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
+            "TX HTTP DATAGRAM: size=%d", w);
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                         QUIC_FRAME_DATAGRAM, packet_out->po_data_sz, w))
     {
@@ -8453,13 +9075,100 @@ ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
+static int
+do_write_buffered_some_prio (struct ietf_full_conn *conn,
+                                                enum buf_packet_type bpt)
+{
+    int s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, bpt);
+    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
+    return !write_is_possible(conn);
+}
+
+
+static int
+do_write_buffered_high_prio (struct ietf_full_conn *conn)
+{
+    return do_write_buffered_some_prio(conn, BPT_HIGHEST_PRIO);
+}
+
+
+static int
+do_write_buffered_other_prio (struct ietf_full_conn *conn)
+{
+    return do_write_buffered_some_prio(conn, BPT_OTHER_PRIO);
+}
+
+
+static int
+do_write_events_some_prio (struct ietf_full_conn *conn, int high_prio)
+{
+    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
+    {
+        process_streams_write_events(conn, high_prio);
+        return !write_is_possible(conn);
+    }
+    else
+        return 0;
+}
+
+
+static int
+do_write_events_high_prio (struct ietf_full_conn *conn)
+{
+    return do_write_events_some_prio(conn, 1);
+}
+
+
+static int
+do_write_events_low_prio (struct ietf_full_conn *conn)
+{
+    return do_write_events_some_prio(conn, 0);
+}
+
+
+static int
+do_write_datagram (struct ietf_full_conn *conn)
+{
+    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
+        if (!write_is_possible(conn))
+            return 1;
+    return 0;
+}
+
+
+static void
+set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
+{
+    int (*const do_write[])(struct ietf_full_conn *) = {
+        do_write_buffered_high_prio,
+        do_write_events_high_prio,
+        do_write_buffered_other_prio,
+        do_write_events_low_prio,
+    };
+    unsigned src, dst;
+
+    if (prio >= sizeof(conn->ifc_do_write) / sizeof(conn->ifc_do_write[0]))
+    {
+        LSQ_WARN("invalid write datagram priority %u: ignore", prio);
+        return;
+    }
+
+    for (src = 0, dst = 0; dst < N_DO_WRITES; ++dst)
+        if (dst == prio)
+            conn->ifc_do_write[dst] = do_write_datagram;
+        else
+            conn->ifc_do_write[dst] = do_write[src++];
+    assert(src + 1 == N_DO_WRITES);
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     int have_delayed_packets, s;
     enum tick_st tick = 0;
-    unsigned n;
+    unsigned i, n;
 
 #define CLOSE_IF_NECESSARY() do {                                       \
     if (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS)                    \
@@ -8624,29 +9333,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     maybe_conn_flush_special_streams(conn);
 
-    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_HIGHEST_PRIO);
-    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
-    if (!write_is_possible(conn))
-        goto end_write;
-
-    while ((conn->ifc_mflags & MF_WANT_DATAGRAM_WRITE) && write_datagram(conn))
-        if (!write_is_possible(conn))
+    for (i = 0; i < N_DO_WRITES; ++i)
+        if (conn->ifc_do_write[i](conn))
             goto end_write;
-
-    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
-    {
-        process_streams_write_events(conn, 1);
-        if (!write_is_possible(conn))
-            goto end_write;
-    }
-
-    s = lsquic_send_ctl_schedule_buffered(&conn->ifc_send_ctl, BPT_OTHER_PRIO);
-    conn->ifc_flags |= (s < 0) << IFC_BIT_ERROR;
-    if (!write_is_possible(conn))
-        goto end_write;
-
-    if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
-        process_streams_write_events(conn, 0);
 
     lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
@@ -8867,6 +9556,36 @@ ietf_full_conn_ci_make_stream (struct lsquic_conn *lconn)
         LSQ_DEBUG("delayed stream creation.  Backlog size: %u",
                                                 conn->ifc_n_delayed_streams);
     }
+}
+
+static struct lsquic_stream *
+ietf_full_conn_ci_make_bidi_stream_with_if (struct lsquic_conn *lconn,
+        const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+
+    if (!handshake_done_or_doing_sess_resume(conn))
+    {
+        errno = EAGAIN;
+        return NULL;
+    }
+
+    return create_bidi_stream_out_with_if(conn, stream_if, stream_if_ctx);
+}
+
+static struct lsquic_stream *
+ietf_full_conn_ci_make_uni_stream_with_if (struct lsquic_conn *lconn,
+        const struct lsquic_stream_if *stream_if, void *stream_if_ctx)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+
+    if (!handshake_done_or_doing_sess_resume(conn))
+    {
+        errno = EAGAIN;
+        return NULL;
+    }
+
+    return create_uni_stream_out_with_if(conn, stream_if, stream_if_ctx);
 }
 
 
@@ -9114,17 +9833,38 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                              void *value, size_t *value_len)
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
-    uint64_t rate;
+    uint64_t u64;
     int enable_bw_sampler;
+
+    if (*value_len < sizeof(uint64_t))
+        return -1;
 
     switch (param)
     {
     case LSQCP_MAX_PACING_RATE:
-        if (*value_len < sizeof(uint64_t))
-            return -1;
-        rate = conn->ifc_send_ctl.sc_max_pacing_rate;
-        memcpy(value, &rate, sizeof(rate));
-        *value_len = sizeof(rate);
+        u64 = conn->ifc_send_ctl.sc_max_pacing_rate;
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_SETTINGS_RECEIVED:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_H3_PEER_SETTINGS);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_SUPPORTS:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_DRAFT:
+        u64 = conn->ifc_pub.cp_wt_peer_draft;
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
+        return 0;
+    case LSQCP_WT_PEER_CONNECT_PROTOCOL:
+        u64 = !!(conn->ifc_pub.cp_flags & CP_CONNECT_PROTOCOL);
+        memcpy(value, &u64, sizeof(u64));
+        *value_len = sizeof(u64);
         return 0;
     case LSQCP_ENABLE_BW_SAMPLER:
         if (*value_len < sizeof(int))
@@ -9206,6 +9946,8 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_early_data_failed    =  ietf_full_conn_ci_early_data_failed, \
     .ci_get_engine           =  ietf_full_conn_ci_get_engine, \
     .ci_get_min_datagram_size=  ietf_full_conn_ci_get_min_datagram_size, \
+    .ci_get_max_datagram_size=  ietf_full_conn_ci_get_max_datagram_size, \
+    .ci_get_stream_by_id     =  NULL, \
     .ci_get_path             =  ietf_full_conn_ci_get_path, \
     .ci_going_away           =  ietf_full_conn_ci_going_away, \
     .ci_hsk_done             =  ietf_full_conn_ci_hsk_done, \
@@ -9213,6 +9955,8 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_is_push_enabled      =  ietf_full_conn_ci_is_push_enabled, \
     .ci_is_tickable          =  ietf_full_conn_ci_is_tickable, \
     .ci_make_stream          =  ietf_full_conn_ci_make_stream, \
+    .ci_make_bidi_stream_with_if = ietf_full_conn_ci_make_bidi_stream_with_if, \
+    .ci_make_uni_stream_with_if =  ietf_full_conn_ci_make_uni_stream_with_if, \
     .ci_mtu_probe_acked      =  ietf_full_conn_ci_mtu_probe_acked, \
     .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
     .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
@@ -9227,6 +9971,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_stateless_reset      =  ietf_full_conn_ci_stateless_reset, \
     .ci_tick                 =  ietf_full_conn_ci_tick, \
     .ci_tls_alert            =  ietf_full_conn_ci_tls_alert, \
+    .ci_http_dg_streams_updated = ietf_full_conn_ci_http_dg_streams_updated, \
     .ci_want_datagram_write  =  ietf_full_conn_ci_want_datagram_write, \
     .ci_user_stream_progress =  ietf_full_conn_ci_user_stream_progress, \
     .ci_write_ack            =  ietf_full_conn_ci_write_ack
@@ -9367,6 +10112,97 @@ on_max_push_id (void *ctx, uint64_t push_id)
 }
 
 
+static int
+local_webtransport_enabled (const struct ietf_full_conn *conn)
+{
+    return conn->ifc_settings->es_webtransport != 0;
+}
+
+
+static void
+update_peer_wt_support (struct ietf_full_conn *conn)
+{
+    int had_support;
+    int supports;
+    int peer_settings_received;
+    int peer_connect_protocol;
+    int peer_wt_enabled;
+    int peer_quic_datagrams;
+    int peer_reset_stream_at;
+
+    peer_settings_received = !!(conn->ifc_flags & IFC_HAVE_PEER_SET);
+    if (peer_settings_received)
+        conn->ifc_pub.cp_flags |= CP_H3_PEER_SETTINGS;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_H3_PEER_SETTINGS;
+
+    peer_connect_protocol =
+            conn->ifc_peer_hq_settings.enable_connect_protocol_seen
+            && conn->ifc_peer_hq_settings.enable_connect_protocol;
+    if (peer_connect_protocol)
+        conn->ifc_pub.cp_flags |= CP_CONNECT_PROTOCOL;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_CONNECT_PROTOCOL;
+
+    conn->ifc_pub.cp_wt_peer_draft = conn->ifc_peer_hq_settings.wt_draft;
+    peer_wt_enabled =
+            (conn->ifc_peer_hq_settings.wt_max_sessions_seen
+             && conn->ifc_peer_hq_settings.wt_max_sessions > 0)
+        ||  (conn->ifc_peer_hq_settings.wt_enabled_seen
+             && conn->ifc_peer_hq_settings.wt_enabled);
+    peer_quic_datagrams = !!(conn->ifc_flags & IFC_DATAGRAMS);
+    peer_reset_stream_at = !!(conn->ifc_mflags & MF_PEER_RESET_STREAM_AT);
+    had_support = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
+
+    supports = peer_settings_received
+            && local_webtransport_enabled(conn)
+            && peer_wt_enabled
+            && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+            && peer_quic_datagrams;
+    if (!(conn->ifc_flags & IFC_SERVER))
+        supports = supports && peer_connect_protocol;
+
+    if (supports)
+        conn->ifc_pub.cp_flags |= CP_WEBTRANSPORT;
+    else
+        conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
+
+    if (supports && !had_support)
+    {
+        if (!peer_reset_stream_at)
+            LSQ_WARN("peer missing reset_stream_at TP: enabling WT in "
+                     "compatibility mode");
+        if (!conn->ifc_peer_hq_settings.wt_initial_max_data_seen
+            || !conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen
+            || !conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen)
+            LSQ_WARN("peer missing one or more WT initial settings: "
+                     "enabling WT in compatibility mode");
+    }
+
+    LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_max_seen=%d, wt_max=%"PRIu64
+              ", wt_enabled_seen=%d, wt_enabled=%d, wt_max_data_seen=%d, wt_max_uni_seen=%d, "
+              "wt_max_bidi_seen=%d, draft=%u, connect_seen=%d, connect=%d, "
+              "h3_dgram=%d, quic_dgram=%d, reset_at=%d "
+              "=> support=%d",
+        peer_settings_received,
+        local_webtransport_enabled(conn),
+        conn->ifc_peer_hq_settings.wt_max_sessions_seen,
+        conn->ifc_peer_hq_settings.wt_max_sessions,
+        conn->ifc_peer_hq_settings.wt_enabled_seen,
+        conn->ifc_peer_hq_settings.wt_enabled,
+        conn->ifc_peer_hq_settings.wt_initial_max_data_seen,
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen,
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen,
+        conn->ifc_peer_hq_settings.wt_draft,
+        conn->ifc_peer_hq_settings.enable_connect_protocol_seen,
+        peer_connect_protocol,
+        !!(conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS),
+        peer_quic_datagrams,
+        peer_reset_stream_at,
+        !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT));
+}
+
+
 static void
 on_settings_frame (void *ctx)
 {
@@ -9412,6 +10248,7 @@ on_settings_frame (void *ctx)
         queue_streams_blocked_frame(conn, SD_UNI);
         LSQ_DEBUG("cannot create QPACK encoder stream due to unidir limit");
     }
+    update_peer_wt_support(conn);
     maybe_create_delayed_streams(conn);
 }
 
@@ -9420,6 +10257,7 @@ static void
 on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 {
     struct ietf_full_conn *const conn = ctx;
+    int enable;
 
     switch (setting_id)
     {
@@ -9434,6 +10272,76 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
     case HQSID_MAX_HEADER_LIST_SIZE:
         LSQ_DEBUG("Peer's SETTINGS_MAX_HEADER_LIST_SIZE=%"PRIu64"; "
                                                         "we ignore it", value);
+        break;
+    case HQSID_H3_DATAGRAM_ENABLED:
+        if (value > 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_H3_DATAGRAM value %"PRIu64, value);
+            return;
+        }
+        enable = value == 1;
+        if (enable)
+            conn->ifc_mflags |= MF_HTTP_DATAGRAMS;
+        else
+            conn->ifc_mflags &= ~MF_HTTP_DATAGRAMS;
+        if (conn->ifc_settings->es_http_datagrams && enable)
+            conn->ifc_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+        else
+            conn->ifc_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
+        update_datagram_want(conn);
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
+        break;
+    case HQSID_ENABLE_CONNECT_PROTOCOL:
+        if (value > 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_ENABLE_CONNECT_PROTOCOL value %"PRIu64,
+                value);
+            return;
+        }
+        conn->ifc_peer_hq_settings.enable_connect_protocol_seen = 1;
+        conn->ifc_peer_hq_settings.enable_connect_protocol = value == 1;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
+        break;
+    case HQSID_WT_MAX_SESSIONS:
+        conn->ifc_peer_hq_settings.wt_max_sessions_seen = 1;
+        conn->ifc_peer_hq_settings.wt_max_sessions = value;
+        if (conn->ifc_peer_hq_settings.wt_draft < 14)
+            conn->ifc_peer_hq_settings.wt_draft = 14;
+        if (!local_webtransport_enabled(conn) && value > 0)
+            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_MAX_SESSIONS=%"PRIu64, value);
+        break;
+    case HQSID_WT_INITIAL_MAX_DATA:
+        conn->ifc_peer_hq_settings.wt_initial_max_data_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_data = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_DATA=%"PRIu64, value);
+        break;
+    case HQSID_WT_INITIAL_MAX_STREAMS_UNI:
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_uni = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_UNI=%"PRIu64, value);
+        break;
+    case HQSID_WT_INITIAL_MAX_STREAMS_BIDI:
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen = 1;
+        conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi = value;
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64, value);
+        break;
+    case HQSID_WT_ENABLED:
+        conn->ifc_peer_hq_settings.wt_enabled_seen = 1;
+        conn->ifc_peer_hq_settings.wt_enabled = value > 0;
+        conn->ifc_peer_hq_settings.wt_draft = 15;
+        if (!local_webtransport_enabled(conn) && value > 0)
+            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
+        update_peer_wt_support(conn);
+        LSQ_DEBUG("Peer's SETTINGS_WT_ENABLED=%"PRIu64, value);
         break;
     default:
         LSQ_DEBUG("received unknown SETTING 0x%"PRIX64"=0x%"PRIX64
@@ -9963,6 +10871,10 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
             lsquic_stream_close(stream);
         }
         break;
+    case HQUST_WEBTRANSPORT:
+        LSQ_DEBUG("Incoming WebTransport stream ID: %"PRIu64, stream->id);
+        lsquic_stream_set_stream_if(stream, lsquic_wt_uni_stream_if(), conn);
+        break;
     case HQUST_PUSH:
         if (conn->ifc_flags & IFC_SERVER)
         {
@@ -10098,4 +11010,3 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
-
