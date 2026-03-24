@@ -295,6 +295,11 @@ wt_replay_pending_streams (struct lsquic_wt_session *sess);
 static void
 wt_drive_connect_stream (struct lsquic_stream *stream);
 
+static int
+wt_send_response (struct lsquic_stream *stream, unsigned status,
+                                const struct lsquic_http_headers *extra,
+                                int fin);
+
 static void
 wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len);
@@ -1013,6 +1018,16 @@ wt_wrap_control_stream (struct lsquic_wt_session *sess,
 }
 
 
+static void
+wt_unwrap_control_stream (struct lsquic_wt_session *sess,
+                                                struct lsquic_stream *stream)
+{
+    if (sess->wts_control_ctx.wtcc_orig_if)
+        lsquic_stream_set_stream_if(stream, sess->wts_control_ctx.wtcc_orig_if,
+                                    sess->wts_control_ctx.wtcc_orig_ctx);
+}
+
+
 #if LSQUIC_TEST
 struct wt_test_reset_result
 {
@@ -1542,6 +1557,31 @@ wt_drive_connect_stream (struct lsquic_stream *stream)
 }
 
 
+static void
+wt_install_conn_hooks (struct lsquic_conn_public *conn_pub)
+{
+    conn_pub->cp_get_ss_code = wt_stream_ss_code;
+    conn_pub->cp_on_stream_destroy = wt_on_stream_destroy;
+    conn_pub->cp_is_hq_switch_frame = wt_is_hq_switch_frame;
+    conn_pub->cp_on_hq_switch_stream = wt_on_client_bidi_stream;
+}
+
+
+static void
+wt_send_accept_internal_error (struct lsquic_stream *stream, int send_headers)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    if (!send_headers || !lsquic_stream_headers_state_is_begin(stream))
+        return;
+
+    if (0 != wt_send_response(stream, 500, NULL, 1))
+        LSQ_WARN("cannot send WT accept failure response on stream %"PRIu64,
+                                                lsquic_stream_id(stream));
+    else
+        wt_drive_connect_stream(stream);
+}
+
+
 static int
 wt_set_header (struct lsxpack_header *hdr, struct wt_header_buf *hbuf,
                const char *name, size_t name_len,
@@ -1770,8 +1810,11 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 {
     WT_SET_CONN_FROM_STREAM(connect_stream);
     struct lsquic_wt_session *sess;
+    struct lsquic_conn_public *conn_pub;
     const struct lsquic_wt_connect_info *info;
     unsigned status;
+    int send_internal_error;
+    int saved_errno;
     int send_headers;
 
     if (!connect_stream || !params)
@@ -1800,44 +1843,38 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     if (0 != wt_can_accept_session(connect_stream))
         return NULL;
 
-    LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
-        lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
-        params->wtap_status);
-    lsquic_stream_get_conn_public(connect_stream)->cp_get_ss_code =
-                                                            wt_stream_ss_code;
-    lsquic_stream_get_conn_public(connect_stream)->cp_on_stream_destroy =
-                                                        wt_on_stream_destroy;
-    lsquic_stream_get_conn_public(connect_stream)->cp_is_hq_switch_frame =
-                                                      wt_is_hq_switch_frame;
-    lsquic_stream_get_conn_public(connect_stream)->cp_on_hq_switch_stream =
-                                            wt_on_client_bidi_stream;
-    send_headers = lsquic_stream_is_server(connect_stream)
-                && lsquic_stream_headers_state_is_begin(connect_stream);
-    if (send_headers)
+    conn_pub = lsquic_stream_get_conn_public(connect_stream);
+    if (!conn_pub)
     {
-        status = params->wtap_status ? params->wtap_status
-                                     : LSQUIC_WTAP_STATUS_DEFAULT;
-        if (0 != wt_send_response(connect_stream, status,
-                                        params->wtap_extra_resp_headers, 0))
-        {
-            LSQ_WARN("cannot send WT accept response on stream %"PRIu64,
-                                        lsquic_stream_id(connect_stream));
-            return NULL;
-        }
-        wt_drive_connect_stream(connect_stream);
-    }
-
-    info = params->wtap_connect_info;
-    sess = calloc(1, sizeof(*sess));
-    if (!sess)
-    {
-        LSQ_WARN("cannot allocate WT session for stream %"PRIu64,
+        errno = EINVAL;
+        LSQ_WARN("WT accept called without conn_pub on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
         return NULL;
     }
 
+    LSQ_INFO("accept WT CONNECT stream %"PRIu64" (server=%d, status=%u)",
+        lsquic_stream_id(connect_stream), lsquic_stream_is_server(connect_stream),
+        params->wtap_status);
+    send_headers = lsquic_stream_is_server(connect_stream)
+                && lsquic_stream_headers_state_is_begin(connect_stream);
+    status = params->wtap_status ? params->wtap_status
+                                 : LSQUIC_WTAP_STATUS_DEFAULT;
+    send_internal_error = 0;
+    saved_errno = 0;
+    info = params->wtap_connect_info;
+
+    sess = calloc(1, sizeof(*sess));
+    if (!sess)
+    {
+        saved_errno = errno;
+        send_internal_error = 1;
+        LSQ_WARN("cannot allocate WT session for stream %"PRIu64,
+                                        lsquic_stream_id(connect_stream));
+        goto err0;
+    }
+
     sess->wts_control_stream = connect_stream;
-    sess->wts_conn_pub = lsquic_stream_get_conn_public(connect_stream);
+    sess->wts_conn_pub = conn_pub;
     sess->wts_conn = lsquic_stream_conn(connect_stream);
     sess->wts_if = params->wtap_wt_if;
     sess->wts_if_ctx = params->wtap_wt_if_ctx;
@@ -1857,8 +1894,9 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
     if (0 != wt_copy_connect_info(sess, info))
     {
-        free(sess);
-        return NULL;
+        saved_errno = errno;
+        send_internal_error = 1;
+        goto err1;
     }
 
     sess->wts_data_if = *sess->wts_conn_pub->enpub->enp_stream_if;
@@ -1874,43 +1912,52 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
     if (0 != lsquic_stream_set_http_dg_if(connect_stream, &wt_http_dg_if))
     {
+        saved_errno = errno;
+        send_internal_error = 1;
         LSQ_WARN("cannot set WT HTTP datagram callbacks on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
-        wt_free_connect_info(sess);
-        free(sess);
-        return NULL;
+        goto err1;
     }
 
     if (0 != lsquic_stream_set_http_dg_capsules(connect_stream, 1))
     {
+        saved_errno = errno;
+        send_internal_error = 1;
         LSQ_WARN("cannot enable WT capsule parsing on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
-        lsquic_stream_set_http_dg_if(connect_stream, NULL);
-        wt_free_connect_info(sess);
-        free(sess);
-        return NULL;
+        goto err2;
     }
 
     if (0 != wt_register_capsule_handlers(connect_stream))
     {
+        saved_errno = errno;
+        send_internal_error = 1;
         LSQ_WARN("cannot register WT capsule handlers on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
-        lsquic_stream_set_http_dg_capsules(connect_stream, 0);
-        lsquic_stream_set_http_dg_if(connect_stream, NULL);
-        wt_free_connect_info(sess);
-        free(sess);
-        return NULL;
+        goto err3;
     }
 
     if (0 != wt_wrap_control_stream(sess, connect_stream))
     {
-        lsquic_stream_set_http_dg_capsules(connect_stream, 0);
-        lsquic_stream_set_http_dg_if(connect_stream, NULL);
-        wt_free_connect_info(sess);
-        free(sess);
-        return NULL;
+        saved_errno = errno;
+        send_internal_error = 1;
+        goto err4;
     }
 
+    if (send_headers)
+    {
+        if (0 != wt_send_response(connect_stream, status,
+                                        params->wtap_extra_resp_headers, 0))
+        {
+            saved_errno = errno;
+            LSQ_WARN("cannot send WT accept response on stream %"PRIu64,
+                                        lsquic_stream_id(connect_stream));
+            goto err5;
+        }
+        wt_drive_connect_stream(connect_stream);
+    }
+
+    wt_install_conn_hooks(conn_pub);
     wt_stream_bind_session(sess, connect_stream);
     lsquic_stream_set_webtransport_session(connect_stream);
     TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
@@ -1924,6 +1971,25 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     LSQ_INFO("accepted WT session %"PRIu64" on stream %"PRIu64,
                                 sess->wts_stream_id, lsquic_stream_id(connect_stream));
     return (lsquic_wt_session_t *) sess;
+
+err5:
+    wt_unwrap_control_stream(sess, connect_stream);
+err4:
+    wt_unregister_capsule_handlers(connect_stream);
+err3:
+    lsquic_stream_set_http_dg_capsules(connect_stream, 0);
+err2:
+    lsquic_stream_set_http_dg_if(connect_stream, NULL);
+err1:
+    wt_free_connect_info(sess);
+    free(sess);
+err0:
+    if (send_internal_error)
+        wt_send_accept_internal_error(connect_stream, send_headers);
+    if (!saved_errno)
+        saved_errno = errno ? errno : EIO;
+    errno = saved_errno;
+    return NULL;
 }
 
 
