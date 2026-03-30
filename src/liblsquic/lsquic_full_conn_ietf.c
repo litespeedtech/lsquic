@@ -558,7 +558,7 @@ struct ietf_full_conn
         }                       fixed;
         struct {
             unsigned            ifwdrr_next_class;
-            unsigned short      ifwdrr_weight[LSQWSC_N_CLASSES];
+            unsigned char       ifwdrr_weight[LSQWSC_N_CLASSES];
             uint64_t            ifwdrr_deficit[LSQWSC_N_CLASSES];
         }                       drr;
     }                           ifc_write_sched;
@@ -9215,7 +9215,7 @@ set_weights_from_class_priorities (struct ietf_full_conn *conn,
 
     for (class_id = 0; class_id < LSQWSC_N_CLASSES; ++class_id)
         conn->ifc_write_sched.drr.ifwdrr_weight[class_id]
-            = (unsigned short) (LSQWSC_N_CLASSES - priorities[class_id]);
+            = (unsigned char) (LSQWSC_N_CLASSES - priorities[class_id]);
 }
 
 
@@ -9349,13 +9349,13 @@ set_write_sched_class_weight (struct ietf_full_conn *conn,
         LSQ_WARN("invalid write scheduler class %u", (unsigned) class_id);
         return;
     }
-    if (0 == weight || weight > USHRT_MAX)
+    if (0 == weight || weight > LSQUIC_WRITE_WEIGHT_MAX)
     {
         LSQ_WARN("invalid write scheduler weight %u for class %u",
                         weight, (unsigned) class_id);
         return;
     }
-    conn->ifc_write_sched.drr.ifwdrr_weight[class_id] = (unsigned short) weight;
+    conn->ifc_write_sched.drr.ifwdrr_weight[class_id] = (unsigned char) weight;
 }
 
 
@@ -10104,7 +10104,7 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         memcpy(&class_weight, value, sizeof(class_weight));
         if (class_weight.wscw_class >= LSQWSC_N_CLASSES
             || 0 == class_weight.wscw_weight
-            || class_weight.wscw_weight > USHRT_MAX)
+            || class_weight.wscw_weight > LSQUIC_WRITE_WEIGHT_MAX)
             return -1;
         set_write_sched_class_weight(conn, class_weight.wscw_class,
                                      class_weight.wscw_weight);

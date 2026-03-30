@@ -556,6 +556,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Default datagram class priority in fixed scheduler. */
 #define LSQUIC_DF_WRITE_DATAGRAM_PRIO 2
 
+/* DRR weight cap: keeps per-class quantum/deficit bursts bounded while
+ * preserving enough granularity for meaningful class shares.
+ */
+#define LSQUIC_WRITE_WEIGHT_MAX 64
+
 /** Default DRR scheduler class weights. */
 #define LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH 5
 #define LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH 4
@@ -1312,7 +1317,7 @@ struct lsquic_engine_settings {
     /**
      * Per-class DRR weight used to derive class quantum.
      */
-    unsigned short  es_write_class_weight[LSQWSC_N_CLASSES];
+    unsigned char   es_write_class_weight[LSQWSC_N_CLASSES];
 };
 
 /* Initialize `settings' to default values */
@@ -2407,7 +2412,7 @@ enum lsquic_conn_param
 struct lsquic_write_sched_class_weight
 {
     enum lsquic_write_sched_class  wscw_class;
-    unsigned                       wscw_weight;
+    unsigned char                  wscw_weight;
 };
 
 struct lsquic_conn_info

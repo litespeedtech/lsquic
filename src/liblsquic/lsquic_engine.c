@@ -576,6 +576,22 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 "write scheduler class weights must be non-zero");
         return -1;
     }
+    if (settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
+                                                    > LSQUIC_WRITE_WEIGHT_MAX
+        || settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
+                                                    > LSQUIC_WRITE_WEIGHT_MAX
+        || settings->es_write_class_weight[LSQWSC_DATAGRAM]
+                                                    > LSQUIC_WRITE_WEIGHT_MAX
+        || settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
+                                                    > LSQUIC_WRITE_WEIGHT_MAX
+        || settings->es_write_class_weight[LSQWSC_EVENTS_LOW]
+                                                    > LSQUIC_WRITE_WEIGHT_MAX)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "write scheduler class weights "
+                "must be between 1 and %u", LSQUIC_WRITE_WEIGHT_MAX);
+        return -1;
+    }
 
     return 0;
 }
