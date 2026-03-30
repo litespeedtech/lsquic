@@ -14,7 +14,7 @@
 struct test_read_varint
 {
     /* Input: */
-#if __GNUC__
+#if __GNUC__ >= 8
     __attribute__((nonstring))
 #endif
     unsigned char       input[MAX_INPUT_SZ];
