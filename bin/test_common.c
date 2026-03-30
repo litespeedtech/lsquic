@@ -2212,7 +2212,19 @@ set_engine_option (struct lsquic_engine_settings *settings,
             return 0;
         }
         break;
+    case 19:
+        if (0 == strncmp(name, "write_datagram_prio", 19))
+        {
+            settings->es_write_datagram_prio = atoi(val);
+            return 0;
+        }
+        break;
     case 20:
+        if (0 == strncmp(name, "write_sched_strategy", 20))
+        {
+            settings->es_write_sched_strategy = atoi(val);
+            return 0;
+        }
         if (0 == strncmp(name, "max_header_list_size", 20))
         {
             settings->es_max_header_list_size = atoi(val);
@@ -2255,6 +2267,27 @@ set_engine_option (struct lsquic_engine_settings *settings,
             return 0;
         }
         break;
+    case 27:
+        if (0 == strncmp(name, "write_class_weight_datagram", 27))
+        {
+            settings->es_write_class_weight[LSQWSC_DATAGRAM] = atoi(val);
+            return 0;
+        }
+        break;
+    case 29:
+        if (0 == strncmp(name, "write_class_weight_events_low", 29))
+        {
+            settings->es_write_class_weight[LSQWSC_EVENTS_LOW] = atoi(val);
+            return 0;
+        }
+        break;
+    case 30:
+        if (0 == strncmp(name, "write_class_weight_events_high", 30))
+        {
+            settings->es_write_class_weight[LSQWSC_EVENTS_HIGH] = atoi(val);
+            return 0;
+        }
+        break;
     case 31:
         if (0 == strncmp(name, "init_max_stream_data_bidi_local", 31))
         {
@@ -2263,9 +2296,21 @@ set_engine_option (struct lsquic_engine_settings *settings,
         }
         break;
     case 32:
+        if (0 == strncmp(name, "write_class_weight_buffered_high", 32))
+        {
+            settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH] = atoi(val);
+            return 0;
+        }
         if (0 == strncmp(name, "init_max_stream_data_bidi_remote", 32))
         {
             settings->es_init_max_stream_data_bidi_remote = atoi(val);
+            return 0;
+        }
+        break;
+    case 33:
+        if (0 == strncmp(name, "write_class_weight_buffered_other", 33))
+        {
+            settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER] = atoi(val);
             return 0;
         }
         break;

@@ -954,6 +954,47 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_CHECK_TP_SANITY`
 
+    .. member:: int             es_webtransport
+
+       Enable WebTransport support.  Allowed values are 0 and 1.
+
+       Default value is :macro:`LSQUIC_DF_WEBTRANSPORT_SERVER`
+
+    .. member:: unsigned        es_max_webtransport_sessions
+
+       Maximum number of concurrent WebTransport sessions per connection.
+
+       Default value is :macro:`LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS`
+
+    .. member:: unsigned        es_write_sched_strategy
+
+       Outbound write scheduler strategy.
+
+       - 0: fixed priority class dispatch (:member:`LSQWSS_FIXED`)
+       - 1: deficit round robin class dispatch (:member:`LSQWSS_DRR`)
+
+       Default value is :macro:`LSQUIC_DF_WRITE_SCHED_STRATEGY`
+
+    .. member:: unsigned char   es_write_datagram_prio
+
+       Datagram class position in fixed scheduler mode.
+       Lower values are dispatched earlier.
+
+       Default value is :macro:`LSQUIC_DF_WRITE_DATAGRAM_PRIO`
+
+    .. member:: unsigned char   es_write_class_weight[LSQWSC_N_CLASSES]
+
+       DRR class weights used to derive per-class quantum.
+       Weight values must be in [1, :macro:`LSQUIC_WRITE_WEIGHT_MAX`].
+
+       Default values are:
+
+       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH`
+       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH`
+       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM`
+       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER`
+       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW`
+
 To initialize the settings structure to library defaults, use the following
 convenience function:
 
@@ -1198,6 +1239,34 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_CHECK_TP_SANITY
 
     Transport parameter sanity checks are performed by default.
+
+.. macro:: LSQUIC_DF_WEBTRANSPORT_SERVER
+
+    WebTransport support is disabled by default.
+
+.. macro:: LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS
+
+    Default max concurrent WebTransport sessions per connection is 1.
+
+.. macro:: LSQUIC_DF_WRITE_SCHED_STRATEGY
+
+    Default write scheduler strategy is fixed priority.
+
+.. macro:: LSQUIC_DF_WRITE_DATAGRAM_PRIO
+
+    Default datagram class position in fixed scheduler mode is 2.
+
+.. macro:: LSQUIC_WRITE_WEIGHT_MAX
+
+    Maximum allowed DRR class weight.  Default cap is 64.
+
+.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH
+.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH
+.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM
+.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER
+.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW
+
+    Default DRR class weights.
 
 Receiving Packets
 -----------------
@@ -2138,6 +2207,40 @@ LSQUIC provides a mechanism to set and retrieve per-connection parameters at run
 These parameters allow fine-grained control over connection behavior beyond what is
 available through engine settings.
 
+.. type:: enum lsquic_write_sched_strategy
+
+    Write scheduler strategy.
+
+    .. member:: LSQWSS_FIXED
+
+        Fixed-priority class dispatch.
+
+    .. member:: LSQWSS_DRR
+
+        Deficit round-robin class dispatch.
+
+.. type:: enum lsquic_write_sched_class
+
+    Write scheduler classes.
+
+    .. member:: LSQWSC_BUFFERED_HIGH
+    .. member:: LSQWSC_EVENTS_HIGH
+    .. member:: LSQWSC_DATAGRAM
+    .. member:: LSQWSC_BUFFERED_OTHER
+    .. member:: LSQWSC_EVENTS_LOW
+
+.. type:: struct lsquic_write_sched_class_weight
+
+    Per-class DRR weight pair used with :member:`LSQCP_WRITE_CLASS_WEIGHT`.
+
+    .. member:: enum lsquic_write_sched_class wscw_class
+
+        Class whose weight to set or query.
+
+    .. member:: unsigned char wscw_weight
+
+        Weight value.  Valid range is 1 to :macro:`LSQUIC_WRITE_WEIGHT_MAX`.
+
 .. type:: enum lsquic_conn_param
 
     Connection parameter identifiers for use with :func:`lsquic_conn_set_param()`
@@ -2181,6 +2284,52 @@ available through engine settings.
 
         **Note:** :func:`lsquic_conn_get_info()` enables the sampler if needed.
 
+    .. member:: LSQCP_WT_PEER_SETTINGS_RECEIVED
+
+        Whether peer HTTP/3 SETTINGS has been received.
+
+        **Type:** ``uint64_t`` (0 or 1, get-only)
+
+    .. member:: LSQCP_WT_PEER_SUPPORTS
+
+        Whether peer currently satisfies WebTransport requirements.
+
+        **Type:** ``uint64_t`` (0 or 1, get-only)
+
+    .. member:: LSQCP_WT_PEER_DRAFT
+
+        WebTransport draft version inferred from peer SETTINGS.
+
+        **Type:** ``uint64_t`` (get-only)
+
+    .. member:: LSQCP_WT_PEER_CONNECT_PROTOCOL
+
+        Whether peer advertised ``SETTINGS_ENABLE_CONNECT_PROTOCOL=1``.
+
+        **Type:** ``uint64_t`` (0 or 1, get-only)
+
+    .. member:: LSQCP_WRITE_SCHED_STRATEGY
+
+        Set or query write scheduler strategy at runtime.
+
+        **Type:** ``enum lsquic_write_sched_strategy``
+
+    .. member:: LSQCP_WRITE_DATAGRAM_PRIO
+
+        Set or query datagram class position in fixed scheduler mode.
+
+        **Type:** ``unsigned``
+
+        **Note:** valid only when strategy is :member:`LSQWSS_FIXED`.
+
+    .. member:: LSQCP_WRITE_CLASS_WEIGHT
+
+        Set or query DRR weight for a single class.
+
+        **Type:** ``struct lsquic_write_sched_class_weight``
+
+        **Note:** valid only when strategy is :member:`LSQWSS_DRR`.
+
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
     Set a connection parameter.
@@ -2221,6 +2370,20 @@ available through engine settings.
         lsquic_conn_set_param(conn, LSQCP_ENABLE_BW_SAMPLER,
                               &on, sizeof(on));
 
+    **Example - Switching to DRR and tuning datagram class weight:**
+
+    ::
+
+        enum lsquic_write_sched_strategy strategy = LSQWSS_DRR;
+        struct lsquic_write_sched_class_weight cw = {
+            .wscw_class = LSQWSC_DATAGRAM,
+            .wscw_weight = 8,
+        };
+        lsquic_conn_set_param(conn, LSQCP_WRITE_SCHED_STRATEGY,
+                              &strategy, sizeof(strategy));
+        lsquic_conn_set_param(conn, LSQCP_WRITE_CLASS_WEIGHT,
+                              &cw, sizeof(cw));
+
     **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
     via :member:`lsquic_engine_settings.es_pace_packets` for this parameter
     to have any effect.
@@ -2251,6 +2414,19 @@ available through engine settings.
             else
                 printf("Max rate: %lu bytes/sec\\n", max_rate);
         }
+
+    **Example - Reading DRR weight of datagram class:**
+
+    ::
+
+        struct lsquic_write_sched_class_weight cw = {
+            .wscw_class = LSQWSC_DATAGRAM,
+            .wscw_weight = 0,
+        };
+        size_t len = sizeof(cw);
+        if (lsquic_conn_get_param(conn, LSQCP_WRITE_CLASS_WEIGHT,
+                                  &cw, &len) == 0)
+            printf("Datagram class weight: %u\\n", (unsigned) cw.wscw_weight);
 
 Miscellaneous Stream Functions
 ------------------------------
