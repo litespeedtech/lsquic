@@ -19,7 +19,7 @@ struct export_key_test
     size_t              ekt_ikm_sz,
                         ekt_salt_sz,
                         ekt_context_sz;
-#if __GNUC__
+#if __GNUC__ >= 8
     __attribute__((nonstring))
 #endif
     unsigned char       ekt_ikm[0x20],
@@ -30,7 +30,7 @@ struct export_key_test
                         ekt_client_key_sz,
                         ekt_client_iv_sz;
     /* Output: */
-#if __GNUC__
+#if __GNUC__ >= 8
     __attribute__((nonstring))
 #endif
     unsigned char       ekt_server_key[32],
