@@ -175,6 +175,22 @@ enum lsquic_http_dg_send_mode
     LSQUIC_HTTP_DG_SEND_CAPSULE,
 };
 
+enum lsquic_write_sched_strategy
+{
+    LSQWSS_FIXED,
+    LSQWSS_DRR,
+};
+
+enum lsquic_write_sched_class
+{
+    LSQWSC_BUFFERED_HIGH,
+    LSQWSC_EVENTS_HIGH,
+    LSQWSC_DATAGRAM,
+    LSQWSC_BUFFERED_OTHER,
+    LSQWSC_EVENTS_LOW,
+    LSQWSC_N_CLASSES,
+};
+
 typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
                                         size_t sz,
                                         enum lsquic_http_dg_send_mode mode);
@@ -533,6 +549,20 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Default allowed WebTransport sessions count per connection. */
 #define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 1
+
+/** Default write scheduler strategy. */
+#define LSQUIC_DF_WRITE_SCHED_STRATEGY LSQWSS_FIXED
+
+/** Default datagram class priority in fixed scheduler. */
+#define LSQUIC_DF_WRITE_DATAGRAM_PRIO 2
+
+/** Default DRR scheduler class weights. */
+#define LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH 5
+#define LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH 4
+#define LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM 3
+#define LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER 2
+#define LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW 1
+
 struct lsquic_engine_settings {
     /**
      * This is a bit mask wherein each bit corresponds to a value in
@@ -1263,6 +1293,26 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS.
      */
     unsigned        es_max_webtransport_sessions;
+
+    /**
+     * Outbound write scheduler strategy.
+     *
+     * Default value is @ref LSQUIC_DF_WRITE_SCHED_STRATEGY.
+     */
+    unsigned        es_write_sched_strategy;
+
+    /**
+     * Datagram class priority in fixed scheduler mode.
+     * Lower value means earlier dispatch.
+     *
+     * Default value is @ref LSQUIC_DF_WRITE_DATAGRAM_PRIO.
+     */
+    unsigned char   es_write_datagram_prio;
+
+    /**
+     * Per-class DRR weight used to derive class quantum.
+     */
+    unsigned short  es_write_class_weight[LSQWSC_N_CLASSES];
 };
 
 /* Initialize `settings' to default values */
@@ -2334,6 +2384,30 @@ enum lsquic_conn_param
      * Type: uint64_t (0 or 1)
      */
     LSQCP_WT_PEER_CONNECT_PROTOCOL,
+
+    /**
+     * Outbound write scheduler strategy.
+     * Type: enum lsquic_write_sched_strategy
+     */
+    LSQCP_WRITE_SCHED_STRATEGY,
+
+    /**
+     * Datagram class priority in fixed scheduler mode.
+     * Type: unsigned
+     */
+    LSQCP_WRITE_DATAGRAM_PRIO,
+
+    /**
+     * Per-class DRR weight.
+     * Type: struct lsquic_write_sched_class_weight
+     */
+    LSQCP_WRITE_CLASS_WEIGHT,
+};
+
+struct lsquic_write_sched_class_weight
+{
+    enum lsquic_write_sched_class  wscw_class;
+    unsigned                       wscw_weight;
 };
 
 struct lsquic_conn_info

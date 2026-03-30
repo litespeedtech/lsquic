@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #define _USE_MATH_DEFINES   /* Need this for M_E on Windows */
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -105,7 +106,8 @@
  */
 #define CLIENT_PUSH_SUPPORT 0
 
-#define N_DO_WRITES 5
+#define N_DO_WRITES LSQWSC_N_CLASSES
+#define DRR_DEFICIT_CAP_MULTIPLIER 4
 
 struct ietf_full_conn;
 static void update_peer_wt_support (struct ietf_full_conn *conn);
@@ -549,7 +551,18 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     lsquic_time_t               ifc_last_tick;
-    int                       (*ifc_do_write[N_DO_WRITES])(struct ietf_full_conn *);
+    int                       (*ifc_write_dispatch)(struct ietf_full_conn *);
+    union {
+        struct {
+            int               (*ifwf_do_write[N_DO_WRITES])(
+                                                struct ietf_full_conn *);
+        }                       fixed;
+        struct {
+            unsigned            ifwdrr_next_class;
+            unsigned short      ifwdrr_weight[N_DO_WRITES];
+            uint64_t            ifwdrr_deficit[N_DO_WRITES];
+        }                       drr;
+    }                           ifc_write_sched;
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
@@ -632,6 +645,14 @@ init_http (struct ietf_full_conn *);
 
 static void
 set_write_datagram_priority (struct ietf_full_conn *, unsigned prio);
+
+static void
+set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy);
+
+static void
+set_write_sched_class_weight (struct ietf_full_conn *conn,
+                              enum lsquic_write_sched_class class_id,
+                              unsigned weight);
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -1504,7 +1525,7 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
         conn->ifc_pii = &orig_prio_iter_if;
     if (conn->ifc_settings->es_reset_stream_at)
         conn->ifc_mflags |= MF_RESET_STREAM_AT;
-    set_write_datagram_priority(conn, 1);
+    set_write_sched_strategy(conn, conn->ifc_settings->es_write_sched_strategy);
     return 0;
 }
 
@@ -9136,6 +9157,68 @@ do_write_datagram (struct ietf_full_conn *conn)
 }
 
 
+static int
+do_write_fixed (struct ietf_full_conn *conn)
+{
+    unsigned i;
+
+    for (i = 0; i < N_DO_WRITES; ++i)
+        if (conn->ifc_write_sched.fixed.ifwf_do_write[i](conn))
+            return 1;
+    return 0;
+}
+
+
+static int
+do_write_drr (struct ietf_full_conn *conn)
+{
+    static int (*const do_write_class[N_DO_WRITES])(struct ietf_full_conn *) = {
+        [LSQWSC_BUFFERED_HIGH]  = do_write_buffered_high_prio,
+        [LSQWSC_EVENTS_HIGH]    = do_write_events_high_prio,
+        [LSQWSC_DATAGRAM]       = do_write_datagram,
+        [LSQWSC_BUFFERED_OTHER] = do_write_buffered_other_prio,
+        [LSQWSC_EVENTS_LOW]     = do_write_events_low_prio,
+    };
+    uint64_t deficit_cap, quantum, scheduled_before, scheduled_after, used;
+    const unsigned class_count = sizeof(do_write_class) / sizeof(do_write_class[0]);
+    const unsigned mtu = CUR_NPATH(conn)->np_pack_size ? CUR_NPATH(conn)->np_pack_size : 1200;
+    unsigned i, class_id;
+    int stop;
+
+    for (i = 0; i < class_count; ++i)
+    {
+        quantum = (uint64_t) mtu * conn->ifc_write_sched.drr.ifwdrr_weight[i];
+        deficit_cap = quantum * DRR_DEFICIT_CAP_MULTIPLIER;
+        if (conn->ifc_write_sched.drr.ifwdrr_deficit[i] > deficit_cap - quantum)
+            conn->ifc_write_sched.drr.ifwdrr_deficit[i] = deficit_cap;
+        else
+            conn->ifc_write_sched.drr.ifwdrr_deficit[i] += quantum;
+    }
+
+    for (i = 0; i < class_count; ++i)
+    {
+        class_id = (conn->ifc_write_sched.drr.ifwdrr_next_class + i) % class_count;
+        if (conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] < mtu)
+            continue;
+        scheduled_before = conn->ifc_send_ctl.sc_bytes_scheduled;
+        stop = do_write_class[class_id](conn);
+        scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
+        used = scheduled_after > scheduled_before
+                ? scheduled_after - scheduled_before : 0;
+        if (used >= conn->ifc_write_sched.drr.ifwdrr_deficit[class_id])
+            conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] = 0;
+        else
+            conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] -= used;
+        conn->ifc_write_sched.drr.ifwdrr_next_class = (class_id + 1)
+                                                            % class_count;
+        if (stop)
+            return 1;
+    }
+
+    return 0;
+}
+
+
 static void
 set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
 {
@@ -9147,7 +9230,7 @@ set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
     };
     unsigned src, dst;
 
-    if (prio >= sizeof(conn->ifc_do_write) / sizeof(conn->ifc_do_write[0]))
+    if (prio >= N_DO_WRITES)
     {
         LSQ_WARN("invalid write datagram priority %u: ignore", prio);
         return;
@@ -9155,10 +9238,71 @@ set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
 
     for (src = 0, dst = 0; dst < N_DO_WRITES; ++dst)
         if (dst == prio)
-            conn->ifc_do_write[dst] = do_write_datagram;
+            conn->ifc_write_sched.fixed.ifwf_do_write[dst] = do_write_datagram;
         else
-            conn->ifc_do_write[dst] = do_write[src++];
+            conn->ifc_write_sched.fixed.ifwf_do_write[dst] = do_write[src++];
     assert(src + 1 == N_DO_WRITES);
+}
+
+
+static unsigned
+get_write_datagram_priority (const struct ietf_full_conn *conn)
+{
+    unsigned i;
+
+    for (i = 0; i < N_DO_WRITES; ++i)
+        if (conn->ifc_write_sched.fixed.ifwf_do_write[i] == do_write_datagram)
+            return i;
+    return N_DO_WRITES;
+}
+
+
+static void
+set_write_sched_class_weight (struct ietf_full_conn *conn,
+                              enum lsquic_write_sched_class class_id,
+                              unsigned weight)
+{
+    if (class_id >= N_DO_WRITES)
+    {
+        LSQ_WARN("invalid write scheduler class %u", (unsigned) class_id);
+        return;
+    }
+    if (0 == weight || weight > USHRT_MAX)
+    {
+        LSQ_WARN("invalid write scheduler weight %u for class %u",
+                        weight, (unsigned) class_id);
+        return;
+    }
+    conn->ifc_write_sched.drr.ifwdrr_weight[class_id] = (unsigned short) weight;
+}
+
+
+static void
+set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy)
+{
+    if (strategy == LSQWSS_FIXED)
+    {
+        conn->ifc_write_dispatch = do_write_fixed;
+        set_write_datagram_priority(conn,
+                                conn->ifc_settings->es_write_datagram_prio);
+    }
+    else if (strategy == LSQWSS_DRR)
+    {
+        memset(&conn->ifc_write_sched.drr, 0, sizeof(conn->ifc_write_sched.drr));
+        set_write_sched_class_weight(conn, LSQWSC_BUFFERED_HIGH,
+            conn->ifc_settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]);
+        set_write_sched_class_weight(conn, LSQWSC_EVENTS_HIGH,
+            conn->ifc_settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]);
+        set_write_sched_class_weight(conn, LSQWSC_DATAGRAM,
+            conn->ifc_settings->es_write_class_weight[LSQWSC_DATAGRAM]);
+        set_write_sched_class_weight(conn, LSQWSC_BUFFERED_OTHER,
+            conn->ifc_settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]);
+        set_write_sched_class_weight(conn, LSQWSC_EVENTS_LOW,
+            conn->ifc_settings->es_write_class_weight[LSQWSC_EVENTS_LOW]);
+        conn->ifc_write_dispatch = do_write_drr;
+    }
+    else
+        LSQ_WARN("invalid write scheduler strategy %u", strategy);
 }
 
 
@@ -9168,7 +9312,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     int have_delayed_packets, s;
     enum tick_st tick = 0;
-    unsigned i, n;
+    unsigned n;
 
 #define CLOSE_IF_NECESSARY() do {                                       \
     if (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS)                    \
@@ -9333,9 +9477,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 
     maybe_conn_flush_special_streams(conn);
 
-    for (i = 0; i < N_DO_WRITES; ++i)
-        if (conn->ifc_do_write[i](conn))
-            goto end_write;
+    if (conn->ifc_write_dispatch(conn))
+        goto end_write;
 
     lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
@@ -9803,6 +9946,9 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_write_sched_strategy strategy;
+    unsigned datagram_prio;
+    struct lsquic_write_sched_class_weight class_weight;
     int enable_bw_sampler;
 
     switch (param)
@@ -9822,6 +9968,37 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         LSQ_INFO("bw sampler %s",
                  enable_bw_sampler ? "enabled" : "disabled");
         return 0;
+    case LSQCP_WRITE_SCHED_STRATEGY:
+        if (value_len != sizeof(strategy))
+            return -1;
+        memcpy(&strategy, value, sizeof(strategy));
+        if (strategy > LSQWSS_DRR)
+            return -1;
+        set_write_sched_strategy(conn, strategy);
+        return 0;
+    case LSQCP_WRITE_DATAGRAM_PRIO:
+        if (value_len != sizeof(datagram_prio))
+            return -1;
+        if (conn->ifc_write_dispatch != do_write_fixed)
+            return -1;
+        memcpy(&datagram_prio, value, sizeof(datagram_prio));
+        if (datagram_prio >= N_DO_WRITES)
+            return -1;
+        set_write_datagram_priority(conn, datagram_prio);
+        return 0;
+    case LSQCP_WRITE_CLASS_WEIGHT:
+        if (value_len != sizeof(class_weight))
+            return -1;
+        if (conn->ifc_write_dispatch != do_write_drr)
+            return -1;
+        memcpy(&class_weight, value, sizeof(class_weight));
+        if (class_weight.wscw_class >= N_DO_WRITES
+            || 0 == class_weight.wscw_weight
+            || class_weight.wscw_weight > USHRT_MAX)
+            return -1;
+        set_write_sched_class_weight(conn, class_weight.wscw_class,
+                                     class_weight.wscw_weight);
+        return 0;
     default:
         return -1;
     }
@@ -9834,34 +10011,44 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t u64;
+    enum lsquic_write_sched_strategy strategy;
+    unsigned datagram_prio;
+    struct lsquic_write_sched_class_weight class_weight;
     int enable_bw_sampler;
-
-    if (*value_len < sizeof(uint64_t))
-        return -1;
 
     switch (param)
     {
     case LSQCP_MAX_PACING_RATE:
+        if (*value_len < sizeof(u64))
+            return -1;
         u64 = conn->ifc_send_ctl.sc_max_pacing_rate;
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
     case LSQCP_WT_PEER_SETTINGS_RECEIVED:
+        if (*value_len < sizeof(u64))
+            return -1;
         u64 = !!(conn->ifc_pub.cp_flags & CP_H3_PEER_SETTINGS);
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
     case LSQCP_WT_PEER_SUPPORTS:
+        if (*value_len < sizeof(u64))
+            return -1;
         u64 = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
     case LSQCP_WT_PEER_DRAFT:
+        if (*value_len < sizeof(u64))
+            return -1;
         u64 = conn->ifc_pub.cp_wt_peer_draft;
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
         return 0;
     case LSQCP_WT_PEER_CONNECT_PROTOCOL:
+        if (*value_len < sizeof(u64))
+            return -1;
         u64 = !!(conn->ifc_pub.cp_flags & CP_CONNECT_PROTOCOL);
         memcpy(value, &u64, sizeof(u64));
         *value_len = sizeof(u64);
@@ -9873,6 +10060,38 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                 lsquic_send_ctl_bw_sampler_enabled(&conn->ifc_send_ctl);
         memcpy(value, &enable_bw_sampler, sizeof(enable_bw_sampler));
         *value_len = sizeof(enable_bw_sampler);
+        return 0;
+    case LSQCP_WRITE_SCHED_STRATEGY:
+        if (*value_len < sizeof(strategy))
+            return -1;
+        strategy = conn->ifc_write_dispatch == do_write_drr
+                                            ? LSQWSS_DRR : LSQWSS_FIXED;
+        memcpy(value, &strategy, sizeof(strategy));
+        *value_len = sizeof(strategy);
+        return 0;
+    case LSQCP_WRITE_DATAGRAM_PRIO:
+        if (*value_len < sizeof(datagram_prio))
+            return -1;
+        if (conn->ifc_write_dispatch != do_write_fixed)
+            return -1;
+        datagram_prio = get_write_datagram_priority(conn);
+        if (datagram_prio >= N_DO_WRITES)
+            return -1;
+        memcpy(value, &datagram_prio, sizeof(datagram_prio));
+        *value_len = sizeof(datagram_prio);
+        return 0;
+    case LSQCP_WRITE_CLASS_WEIGHT:
+        if (*value_len < sizeof(class_weight))
+            return -1;
+        if (conn->ifc_write_dispatch != do_write_drr)
+            return -1;
+        memcpy(&class_weight, value, sizeof(class_weight));
+        if (class_weight.wscw_class >= N_DO_WRITES)
+            return -1;
+        class_weight.wscw_weight =
+                conn->ifc_write_sched.drr.ifwdrr_weight[class_weight.wscw_class];
+        memcpy(value, &class_weight, sizeof(class_weight));
+        *value_len = sizeof(class_weight);
         return 0;
     default:
         return -1;

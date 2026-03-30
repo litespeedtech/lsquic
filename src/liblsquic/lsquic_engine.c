@@ -324,7 +324,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
         settings->es_webtransport = LSQUIC_DF_WEBTRANSPORT_SERVER;
-        settings->es_max_webtransport_sessions = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
+        settings->es_max_webtransport_sessions
+                         = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
     }
     else
     {
@@ -411,6 +412,18 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
+    settings->es_write_sched_strategy = LSQUIC_DF_WRITE_SCHED_STRATEGY;
+    settings->es_write_datagram_prio = LSQUIC_DF_WRITE_DATAGRAM_PRIO;
+    settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
+        = LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH;
+    settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
+        = LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH;
+    settings->es_write_class_weight[LSQWSC_DATAGRAM]
+        = LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM;
+    settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
+        = LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER;
+    settings->es_write_class_weight[LSQWSC_EVENTS_LOW]
+        = LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW;
 }
 
 
@@ -535,6 +548,35 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             return -1;
         }
     }
+
+    if (settings->es_write_sched_strategy > LSQWSS_DRR)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "invalid write scheduler strategy: "
+                "%u", settings->es_write_sched_strategy);
+        return -1;
+    }
+
+    if (settings->es_write_datagram_prio >= LSQWSC_N_CLASSES)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "invalid datagram write priority: "
+                "%u", settings->es_write_datagram_prio);
+        return -1;
+    }
+
+    if (0 == settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
+        || 0 == settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
+        || 0 == settings->es_write_class_weight[LSQWSC_DATAGRAM]
+        || 0 == settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
+        || 0 == settings->es_write_class_weight[LSQWSC_EVENTS_LOW])
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "%s",
+                "write scheduler class weights must be non-zero");
+        return -1;
+    }
+
     return 0;
 }
 
