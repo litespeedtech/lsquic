@@ -40,6 +40,8 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - davidlei -- Build improvements
     - Timo Voelker -- Testing and bug reports
     - Kirill Sabitov -- Bug fixes
+    - Harold Newman -- Bug fixes
+    - Richard Ramos -- Windows fixes
 
 Thank you!
 
