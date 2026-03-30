@@ -9388,25 +9388,24 @@ init_write_sched_drr (struct ietf_full_conn *conn)
 static void
 set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy)
 {
+    enum lsquic_write_sched_strategy current_strategy;
     unsigned priorities[LSQWSC_N_CLASSES];
 
-    if (strategy == LSQWSS_FIXED)
+    if (conn->ifc_write_dispatch == do_write_fixed)
+        current_strategy = LSQWSS_FIXED;
+    else
+        current_strategy = LSQWSS_DRR;
+
+    if (strategy == current_strategy)
+        /* No-op */
+        ;
+    else if (strategy == LSQWSS_FIXED)
     {
-        if (conn->ifc_write_dispatch == do_write_fixed)
-            return;
-        assert(conn->ifc_write_dispatch == do_write_drr);
-        if (conn->ifc_write_dispatch != do_write_drr)
-            return;
         set_fixed_from_weights(conn);
         conn->ifc_write_dispatch = do_write_fixed;
     }
     else if (strategy == LSQWSS_DRR)
     {
-        if (conn->ifc_write_dispatch == do_write_drr)
-            return;
-        assert(conn->ifc_write_dispatch == do_write_fixed);
-        if (conn->ifc_write_dispatch != do_write_fixed)
-            return;
         get_class_priorities_from_fixed(conn, priorities);
         memset(&conn->ifc_write_sched.drr, 0, sizeof(conn->ifc_write_sched.drr));
         set_weights_from_class_priorities(conn, priorities);
