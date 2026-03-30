@@ -9187,15 +9187,14 @@ write_dispatch_to_class (write_dispatch_f write_dispatch)
             return class_id;
 
     assert(0);
-    return LSQWSC_N_CLASSES;
+    return LSQWSC_BUFFERED_HIGH;
 }
 
 
-static int
+static void
 get_class_priorities_from_fixed (const struct ietf_full_conn *conn,
                         unsigned priorities[LSQWSC_N_CLASSES])
 {
-    unsigned char seen[LSQWSC_N_CLASSES] = { 0, };
     enum lsquic_write_sched_class class_id;
     unsigned i;
 
@@ -9203,13 +9202,8 @@ get_class_priorities_from_fixed (const struct ietf_full_conn *conn,
     {
         class_id = write_dispatch_to_class(
                             conn->ifc_write_sched.fixed.ifwf_do_write[i]);
-        if (class_id >= LSQWSC_N_CLASSES || seen[class_id])
-            return -1;
-        seen[class_id] = 1;
         priorities[class_id] = i;
     }
-
-    return 0;
 }
 
 
@@ -9413,13 +9407,9 @@ set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy)
         assert(conn->ifc_write_dispatch == do_write_fixed);
         if (conn->ifc_write_dispatch != do_write_fixed)
             return;
-        if (0 == get_class_priorities_from_fixed(conn, priorities))
-        {
+        get_class_priorities_from_fixed(conn, priorities);
         memset(&conn->ifc_write_sched.drr, 0, sizeof(conn->ifc_write_sched.drr));
-            set_weights_from_class_priorities(conn, priorities);
-        }
-        else
-            init_write_sched_drr(conn);
+        set_weights_from_class_priorities(conn, priorities);
         conn->ifc_write_dispatch = do_write_drr;
     }
     else
