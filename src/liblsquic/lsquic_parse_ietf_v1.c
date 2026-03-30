@@ -1060,7 +1060,10 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         a = vint_val2bits(gap - 1);
         b = vint_val2bits(rsize);
         if (ecn_needs + (1 << a) + (1 << b)
-                + (addl_ack_blocks == VINT_MAX_ONE_BYTE) > (unsigned)AVAIL()) break;
+                + (addl_ack_blocks == VINT_MAX_ONE_BYTE) > (unsigned)AVAIL())
+        {
+            break;
+        }
         if (addl_ack_blocks == VINT_MAX_ONE_BYTE)
         {
             memmove(block_count_p + 2, block_count_p + 1,
@@ -1089,7 +1092,8 @@ ietf_v1_gen_ack_frame (unsigned char *outbuf, size_t outbuf_sz,
         else
             for (ecn = 1; ecn <= 3; ++ecn)
             {
-                vint_write(p, ecn_counts[ecnmap[ecn]], bits[ecnmap[ecn]], 1 << bits[ecnmap[ecn]]);
+                vint_write(p, ecn_counts[ecnmap[ecn]], bits[ecnmap[ecn]],
+                                                    1 << bits[ecnmap[ecn]]);
                 p += 1 << bits[ecnmap[ecn]];
             }
     }
