@@ -1,5 +1,7 @@
 version: 2.{branch}.{build}
 
+skip_branch_with_pr: true
+
 image:
 - Ubuntu2004
 - MacOS

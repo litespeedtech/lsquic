@@ -1,5 +1,7 @@
 version: 1.{branch}.{build}
 
+skip_branch_with_pr: true
+
 image: Visual Studio 2019
 
 init:
