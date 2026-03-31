@@ -562,6 +562,9 @@ struct ietf_full_conn
             uint64_t            ifwdrr_deficit[LSQWSC_N_CLASSES];
         }                       drr;
     }                           ifc_write_sched;
+#if LSQUIC_CONN_STATS
+    uint64_t                    ifc_write_class_sent_bytes[LSQWSC_N_CLASSES];
+#endif
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
@@ -658,6 +661,11 @@ static void
 set_write_sched_class_weight (struct ietf_full_conn *conn,
                               enum lsquic_write_sched_class class_id,
                               unsigned weight);
+
+#if LSQUIC_CONN_STATS
+static void
+log_write_sched_stats (const struct ietf_full_conn *conn);
+#endif
 
 static unsigned
 highest_bit_set (unsigned sz)
@@ -3525,6 +3533,8 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
     }
     lsquic_hash_destroy(conn->ifc_pub.all_streams);
 #if LSQUIC_CONN_STATS
+    if (conn->ifc_flags & IFC_CREATED_OK)
+        log_write_sched_stats(conn);
     if (conn->ifc_flags & IFC_CREATED_OK)
     {
         LSQ_NOTICE("# ticks: %lu", conn->ifc_stats.n_ticks);
@@ -9177,6 +9187,17 @@ static write_dispatch_f const write_dispatch_by_class[LSQWSC_N_CLASSES] = {
 };
 
 
+#if LSQUIC_CONN_STATS
+static const char *const write_sched_class_str[LSQWSC_N_CLASSES] = {
+    [LSQWSC_BUFFERED_HIGH]  = "BUFFERED_HIGH",
+    [LSQWSC_EVENTS_HIGH]    = "EVENTS_HIGH",
+    [LSQWSC_DATAGRAM]       = "DATAGRAM",
+    [LSQWSC_BUFFERED_OTHER] = "BUFFERED_OTHER",
+    [LSQWSC_EVENTS_LOW]     = "EVENTS_LOW",
+};
+#endif
+
+
 static enum lsquic_write_sched_class
 write_dispatch_to_class (write_dispatch_f write_dispatch)
 {
@@ -9249,11 +9270,28 @@ set_fixed_from_weights (struct ietf_full_conn *conn)
 static int
 do_write_fixed (struct ietf_full_conn *conn)
 {
+#if LSQUIC_CONN_STATS
+    uint64_t scheduled_before, scheduled_after, used;
+    enum lsquic_write_sched_class class_id;
+#endif
     unsigned i;
 
     for (i = 0; i < LSQWSC_N_CLASSES; ++i)
+    {
+#if LSQUIC_CONN_STATS
+        scheduled_before = conn->ifc_send_ctl.sc_bytes_scheduled;
+#endif
         if (conn->ifc_write_sched.fixed.ifwf_do_write[i](conn))
             return 1;
+#if LSQUIC_CONN_STATS
+        scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
+        used = scheduled_after > scheduled_before
+                ? scheduled_after - scheduled_before : 0;
+        class_id = write_dispatch_to_class(
+                            conn->ifc_write_sched.fixed.ifwf_do_write[i]);
+        conn->ifc_write_class_sent_bytes[class_id] += used;
+#endif
+    }
     return 0;
 }
 
@@ -9287,6 +9325,9 @@ do_write_drr (struct ietf_full_conn *conn)
         scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
         used = scheduled_after > scheduled_before
                 ? scheduled_after - scheduled_before : 0;
+#if LSQUIC_CONN_STATS
+        conn->ifc_write_class_sent_bytes[class_id] += used;
+#endif
         if (used >= conn->ifc_write_sched.drr.ifwdrr_deficit[class_id])
             conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] = 0;
         else
@@ -9299,6 +9340,20 @@ do_write_drr (struct ietf_full_conn *conn)
 
     return 0;
 }
+
+
+#if LSQUIC_CONN_STATS
+static void
+log_write_sched_stats (const struct ietf_full_conn *conn)
+{
+    enum lsquic_write_sched_class class_id;
+
+    for (class_id = 0; class_id < LSQWSC_N_CLASSES; ++class_id)
+        LSQ_NOTICE("write scheduler class bytes: class=%s bytes=%"PRIu64,
+            write_sched_class_str[class_id],
+            conn->ifc_write_class_sent_bytes[class_id]);
+}
+#endif
 
 
 static void
