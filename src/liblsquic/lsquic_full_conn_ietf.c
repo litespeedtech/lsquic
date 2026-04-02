@@ -3872,6 +3872,16 @@ handshake_ok (struct lsquic_conn *lconn)
                                                         lconn->cn_enc_session);
     if (!params)
     {
+        if (0 == conn->ifc_error.u.err)
+        {
+            enum trans_error_code code = TEC_TRANSPORT_PARAMETER_ERROR;
+            if (lconn->cn_esf.i->esfi_get_peer_transport_error)
+                code = lconn->cn_esf.i->esfi_get_peer_transport_error(
+                                                    lconn->cn_enc_session);
+            if (0 == code)
+                code = TEC_TRANSPORT_PARAMETER_ERROR;
+            conn->ifc_error = CONN_ERR(0, code);
+        }
         ABORT_WARN("could not get transport parameters");
         return -1;
     }
@@ -10098,4 +10108,3 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
-
