@@ -9268,10 +9268,15 @@ do_write_datagram (struct ietf_full_conn *conn)
 static int
 do_write_stream (struct ietf_full_conn *conn)
 {
-    return do_write_buffered_high_prio(conn)
-        || do_write_events_high_prio(conn)
-        || do_write_buffered_other_prio(conn)
-        || do_write_events_low_prio(conn);
+    const size_t count = sizeof(write_stream_funcs) / sizeof(write_stream_funcs[0]);
+    const write_dispatch_f *const end = write_stream_funcs + count;
+    const write_dispatch_f *f;
+
+    for (f = write_stream_funcs; f < end; ++f)
+        if ((*f)(conn))
+            return 1;
+
+    return 0;
 }
 
 
