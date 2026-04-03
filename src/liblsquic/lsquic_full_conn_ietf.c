@@ -416,15 +416,21 @@ static const struct prio_iter_if ext_prio_iter_if = {
     lsquic_hpi_cleanup,
 };
 
-enum fixed_write_class
-{
-    FWSC_BUFFERED_HIGH,
-    FWSC_EVENTS_HIGH,
-    FWSC_DATAGRAM,
-    FWSC_BUFFERED_OTHER,
-    FWSC_EVENTS_LOW,
-    FWSC_N_CLASSES,
+struct ietf_full_conn;
+static int do_write_buffered_high_prio (struct ietf_full_conn *conn);
+static int do_write_events_high_prio (struct ietf_full_conn *conn);
+static int do_write_buffered_other_prio (struct ietf_full_conn *conn);
+static int do_write_events_low_prio (struct ietf_full_conn *conn);
+
+static int (*const fixed_write_non_dg[])(struct ietf_full_conn *) = {
+    do_write_buffered_high_prio,
+    do_write_events_high_prio,
+    do_write_buffered_other_prio,
+    do_write_events_low_prio,
 };
+
+#define FWSC_N_CLASSES ((unsigned) (sizeof(fixed_write_non_dg) \
+                                / sizeof(fixed_write_non_dg[0]) + 1))
 
 enum drr_write_class
 {
@@ -9417,12 +9423,6 @@ log_write_sched_stats (const struct ietf_full_conn *conn)
 static void
 set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
 {
-    int (*const do_write[])(struct ietf_full_conn *) = {
-        do_write_buffered_high_prio,
-        do_write_events_high_prio,
-        do_write_buffered_other_prio,
-        do_write_events_low_prio,
-    };
     unsigned src, dst;
 
     if (prio >= FWSC_N_CLASSES)
@@ -9435,8 +9435,9 @@ set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
         if (dst == prio)
             conn->ifc_write_sched.fixed.ifwf_do_write[dst] = do_write_datagram;
         else
-            conn->ifc_write_sched.fixed.ifwf_do_write[dst] = do_write[src++];
-    assert(src + 1 == FWSC_N_CLASSES);
+            conn->ifc_write_sched.fixed.ifwf_do_write[dst]
+                                                = fixed_write_non_dg[src++];
+    assert(src == sizeof(fixed_write_non_dg) / sizeof(fixed_write_non_dg[0]));
 }
 
 
