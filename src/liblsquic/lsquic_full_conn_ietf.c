@@ -583,9 +583,9 @@ struct ietf_full_conn
             write_dispatch_f  ifwf_do_write[FWSC_N_CLASSES];
         }                       fixed;
         struct {
+            unsigned            ifwdrr_blocked_accum;
+            unsigned            ifwdrr_weight[DWSC_N_CLASSES];
             unsigned char       ifwdrr_next_class;
-            unsigned char       ifwdrr_blocked_accum;
-            unsigned char       ifwdrr_weight[DWSC_N_CLASSES];
             unsigned char       ifwdrr_budget_active;
             uint64_t            ifwdrr_budget;
             uint64_t            ifwdrr_budget_start;
@@ -9307,8 +9307,8 @@ drr_next_blocked_class (struct ietf_full_conn *conn)
         return DWSC_DATAGRAM;
 
     conn->ifc_write_sched.drr.ifwdrr_blocked_accum =
-        (unsigned char) ((conn->ifc_write_sched.drr.ifwdrr_blocked_accum
-                                                + datagram_weight) % total);
+        (conn->ifc_write_sched.drr.ifwdrr_blocked_accum
+                                                + datagram_weight) % total;
 
     if (conn->ifc_write_sched.drr.ifwdrr_blocked_accum < datagram_weight)
         return DWSC_DATAGRAM;
@@ -9483,9 +9483,9 @@ set_drr_weights_from_share (struct ietf_full_conn *conn, float share)
     stream_weight = LSQUIC_WRITE_WEIGHT_MAX - datagram_weight;
 
     conn->ifc_write_sched.drr.ifwdrr_weight[DWSC_STREAM]
-                                            = (unsigned char) stream_weight;
+                                            = stream_weight;
     conn->ifc_write_sched.drr.ifwdrr_weight[DWSC_DATAGRAM]
-                                            = (unsigned char) datagram_weight;
+                                            = datagram_weight;
     conn->ifc_write_sched.drr.ifwdrr_blocked_accum = 0;
 }
 
