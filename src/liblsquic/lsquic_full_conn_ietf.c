@@ -4055,9 +4055,10 @@ apply_trans_params (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("datagrams enabled");
         conn->ifc_flags |= IFC_DATAGRAMS;
-        conn->ifc_max_dg_sz =
-            params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] > USHRT_MAX
-            ? USHRT_MAX : params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
+        if (params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] <= USHRT_MAX)
+            conn->ifc_max_dg_sz = params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE];
+        else
+            conn->ifc_max_dg_sz = USHRT_MAX;
     }
 
     update_peer_wt_support(conn);
@@ -9294,13 +9295,6 @@ static const char *const write_sched_class_str[DWSC_N_CLASSES] = {
 #endif
 
 
-static int
-write_dispatch_is_datagram (write_dispatch_f write_dispatch)
-{
-    return write_dispatch == do_write_datagram;
-}
-
-
 static unsigned
 drr_next_blocked_class (struct ietf_full_conn *conn)
 {
@@ -9344,11 +9338,14 @@ do_write_fixed (struct ietf_full_conn *conn)
             return 1;
 #if LSQUIC_CONN_STATS
         scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
-        used = scheduled_after > scheduled_before
-                ? scheduled_after - scheduled_before : 0;
-        class_id = write_dispatch_is_datagram(
-                            conn->ifc_write_sched.fixed.ifwf_do_write[i])
-                    ? DWSC_DATAGRAM : DWSC_STREAM;
+        if (scheduled_after > scheduled_before)
+            used = scheduled_after - scheduled_before;
+        else
+            used = 0;
+        if (do_write_datagram == conn->ifc_write_sched.fixed.ifwf_do_write[i])
+            class_id = DWSC_DATAGRAM;
+        else
+            class_id = DWSC_STREAM;
         conn->ifc_write_class_sent_bytes[class_id] += used;
 #endif
     }
@@ -9361,9 +9358,13 @@ do_write_drr (struct ietf_full_conn *conn)
 {
     uint64_t deficit_cap, quantum, scheduled_before, scheduled_after, used;
     const unsigned class_count = DWSC_N_CLASSES;
-    const unsigned mtu = CUR_NPATH(conn)->np_pack_size ? CUR_NPATH(conn)->np_pack_size : 1200;
-    unsigned i, class_id, start_class;
+    unsigned i, mtu, class_id, start_class;
     int stop, budget_exhausted;
+
+    if (CUR_NPATH(conn)->np_pack_size)
+        mtu = CUR_NPATH(conn)->np_pack_size;
+    else
+        mtu = 1200;
 
     for (i = 0; i < class_count; ++i)
     {
@@ -9392,8 +9393,10 @@ do_write_drr (struct ietf_full_conn *conn)
         budget_exhausted = write_budget_is_exhausted(conn);
         write_budget_clear(conn);
         scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
-        used = scheduled_after > scheduled_before
-                ? scheduled_after - scheduled_before : 0;
+        if (scheduled_after > scheduled_before)
+            used = scheduled_after - scheduled_before;
+        else
+            used = 0;
 #if LSQUIC_CONN_STATS
         conn->ifc_write_class_sent_bytes[class_id] += used;
 #endif
@@ -10352,8 +10355,10 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     case LSQCP_WRITE_SCHED_STRATEGY:
         if (*value_len < sizeof(strategy))
             return -1;
-        strategy = conn->ifc_write_dispatch == do_write_drr
-                                            ? LSQWSS_DRR : LSQWSS_FIXED;
+        if (conn->ifc_write_dispatch == do_write_drr)
+            strategy = LSQWSS_DRR;
+        else
+            strategy = LSQWSS_FIXED;
         memcpy(value, &strategy, sizeof(strategy));
         *value_len = sizeof(strategy);
         return 0;
