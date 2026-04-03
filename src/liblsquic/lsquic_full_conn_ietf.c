@@ -108,7 +108,7 @@
 
 #define DRR_DEFICIT_CAP_MULTIPLIER 4
 /* Keep DRR quantum/deficit bursts bounded while retaining share granularity. */
-#define LSQUIC_WRITE_WEIGHT_MAX 64
+#define LSQUIC_WRITE_WEIGHT_MAX 100
 
 struct ietf_full_conn;
 static void update_peer_wt_support (struct ietf_full_conn *conn);
