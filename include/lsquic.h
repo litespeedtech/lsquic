@@ -181,6 +181,18 @@ enum lsquic_write_sched_strategy
     LSQWSS_DRR,
 };
 
+enum lsquic_http_cap_flags
+{
+    LSQUIC_HTTP_CAP_DATAGRAMS        = 1 << 0,
+    LSQUIC_HTTP_CAP_CONNECT_PROTOCOL = 1 << 1,
+    LSQUIC_HTTP_CAP_WEBTRANSPORT     = 1 << 2,
+};
+
+struct lsquic_http_caps
+{
+    uint32_t    lhc_flags;
+};
+
 typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
                                         size_t sz,
                                         enum lsquic_http_dg_send_mode mode);
@@ -243,6 +255,11 @@ struct lsquic_stream_if {
      * When handshake is completed, this optional callback is called.
      */
     void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
+    /**
+     * Called when peer HTTP SETTINGS are processed and effective HTTP
+     * capabilities are known.
+     */
+    void (*on_http_caps)(lsquic_conn_t *c, const struct lsquic_http_caps *);
     /**
      * When client receives a token in NEW_TOKEN frame, this callback is called.
      * The callback is optional.

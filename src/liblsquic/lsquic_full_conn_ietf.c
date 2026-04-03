@@ -579,6 +579,7 @@ struct ietf_full_conn
         }                       fixed;
         struct {
             unsigned            ifwdrr_next_class;
+            unsigned char       ifwdrr_blocked_accum;
             unsigned char       ifwdrr_weight[DWSC_N_CLASSES];
             uint64_t            ifwdrr_deficit[DWSC_N_CLASSES];
         }                       drr;
@@ -4860,17 +4861,22 @@ write_budget_is_exhausted (const struct ietf_full_conn *conn)
 
 
 static int
-write_is_possible (struct ietf_full_conn *conn)
+write_is_possible_unbudgeted (struct ietf_full_conn *conn)
 {
     const lsquic_packet_out_t *packet_out;
-
-    if (write_budget_is_exhausted(conn))
-        return 0;
 
     packet_out = lsquic_send_ctl_last_scheduled(&conn->ifc_send_ctl, PNS_APP,
                                                         CUR_NPATH(conn), 0);
     return (packet_out && lsquic_packet_out_avail(packet_out) > 10)
         || lsquic_send_ctl_can_send(&conn->ifc_send_ctl);
+}
+
+
+static int
+write_is_possible (struct ietf_full_conn *conn)
+{
+    return !write_budget_is_exhausted(conn)
+                                && write_is_possible_unbudgeted(conn);
 }
 
 
@@ -9275,6 +9281,31 @@ write_dispatch_is_datagram (write_dispatch_f write_dispatch)
 }
 
 
+static unsigned
+drr_next_blocked_class (struct ietf_full_conn *conn)
+{
+    const unsigned stream_weight =
+                        conn->ifc_write_sched.drr.ifwdrr_weight[DWSC_STREAM];
+    const unsigned datagram_weight =
+                        conn->ifc_write_sched.drr.ifwdrr_weight[DWSC_DATAGRAM];
+    const unsigned total = stream_weight + datagram_weight;
+
+    if (0 == total || 0 == datagram_weight)
+        return DWSC_STREAM;
+    if (0 == stream_weight)
+        return DWSC_DATAGRAM;
+
+    conn->ifc_write_sched.drr.ifwdrr_blocked_accum =
+        (unsigned char) ((conn->ifc_write_sched.drr.ifwdrr_blocked_accum
+                                                + datagram_weight) % total);
+
+    if (conn->ifc_write_sched.drr.ifwdrr_blocked_accum < datagram_weight)
+        return DWSC_DATAGRAM;
+    else
+        return DWSC_STREAM;
+}
+
+
 static int
 do_write_fixed (struct ietf_full_conn *conn)
 {
@@ -9312,7 +9343,7 @@ do_write_drr (struct ietf_full_conn *conn)
     const unsigned class_count = DWSC_N_CLASSES;
     const unsigned mtu = CUR_NPATH(conn)->np_pack_size ? CUR_NPATH(conn)->np_pack_size : 1200;
     unsigned i, class_id, start_class;
-    int stop;
+    int stop, budget_exhausted;
 
     for (i = 0; i < class_count; ++i)
     {
@@ -9338,6 +9369,7 @@ do_write_drr (struct ietf_full_conn *conn)
         scheduled_before = conn->ifc_send_ctl.sc_bytes_scheduled;
         write_budget_set(conn, conn->ifc_write_sched.drr.ifwdrr_deficit[class_id]);
         stop = write_dispatch_by_drr_class[class_id](conn);
+        budget_exhausted = write_budget_is_exhausted(conn);
         write_budget_clear(conn);
         scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
         used = scheduled_after > scheduled_before
@@ -9349,10 +9381,17 @@ do_write_drr (struct ietf_full_conn *conn)
             conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] = 0;
         else
             conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] -= used;
+        if (stop)
+        {
+            if (!budget_exhausted)
+            {
+                conn->ifc_write_sched.drr.ifwdrr_next_class =
+                                                drr_next_blocked_class(conn);
+                return 1;
+            }
+        }
         conn->ifc_write_sched.drr.ifwdrr_next_class = (class_id + 1)
                                                             % class_count;
-        if (stop)
-            return 1;
     }
 
     return 0;
@@ -9441,6 +9480,7 @@ set_drr_weights_from_share (struct ietf_full_conn *conn, float share)
                                             = (unsigned char) stream_weight;
     conn->ifc_write_sched.drr.ifwdrr_weight[DWSC_DATAGRAM]
                                             = (unsigned char) datagram_weight;
+    conn->ifc_write_sched.drr.ifwdrr_blocked_accum = 0;
 }
 
 
@@ -10614,6 +10654,26 @@ update_peer_wt_support (struct ietf_full_conn *conn)
 
 
 static void
+notify_http_caps (struct ietf_full_conn *conn)
+{
+    struct lsquic_http_caps caps;
+
+    if (!conn->ifc_enpub->enp_stream_if->on_http_caps)
+        return;
+
+    caps.lhc_flags = 0;
+    if (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
+        caps.lhc_flags |= LSQUIC_HTTP_CAP_DATAGRAMS;
+    if (conn->ifc_pub.cp_flags & CP_CONNECT_PROTOCOL)
+        caps.lhc_flags |= LSQUIC_HTTP_CAP_CONNECT_PROTOCOL;
+    if (conn->ifc_pub.cp_flags & CP_WEBTRANSPORT)
+        caps.lhc_flags |= LSQUIC_HTTP_CAP_WEBTRANSPORT;
+
+    conn->ifc_enpub->enp_stream_if->on_http_caps(&conn->ifc_conn, &caps);
+}
+
+
+static void
 on_settings_frame (void *ctx)
 {
     struct ietf_full_conn *const conn = ctx;
@@ -10660,6 +10720,7 @@ on_settings_frame (void *ctx)
     }
     update_peer_wt_support(conn);
     maybe_create_delayed_streams(conn);
+    notify_http_caps(conn);
 }
 
 
