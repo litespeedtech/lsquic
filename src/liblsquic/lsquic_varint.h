@@ -3,6 +3,8 @@
 #define LSQUIC_VARINT_H 1
 
 #define VINT_MASK ((1 << 6) - 1)
+/* QUIC varint is encoded in 1, 2, 4, or 8 bytes. */
+#define VINT_MAX_SIZE 8
 
 #include <string.h>
 

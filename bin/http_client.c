@@ -43,7 +43,8 @@
 #include "test_common.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "http_client"
+#include "tool_log.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
 #include "../src/liblsquic/lsquic_hash.h"
@@ -85,6 +86,11 @@ static int s_discard_response;
  * most `s_abandon_early' bytes and then close the stream.
  */
 static long s_abandon_early;
+
+/* DRR proof mode defaults: mixed POST body and HTTP datagrams. */
+#define DRR_PROOF_DEFAULT_PATH "/cgi-bin/md5sum.cgi"
+#define DRR_PROOF_STREAM_CHUNK 16384
+#define DRR_PROOF_DGRAM_CHUNK 1200
 
 struct sample_stats
 {
@@ -195,6 +201,7 @@ struct http_client_ctx {
     unsigned                     hcc_n_open_conns;
     unsigned                     hcc_reset_after_nbytes;
     unsigned                     hcc_retire_cid_after_nbytes;
+    unsigned                     hcc_drr_proof_secs;
     const char                  *hcc_download_dir;
     
     char                        *hcc_sess_resume_file_name;
@@ -203,6 +210,8 @@ struct http_client_ctx {
         HCC_SKIP_SESS_RESUME    = (1 << 0),
         HCC_SEEN_FIN            = (1 << 1),
         HCC_ABORT_ON_INCOMPLETE = (1 << 2),
+        HCC_DRR_PROOF           = (1 << 3),
+        HCC_METHOD_SET          = (1 << 4),
     }                            hcc_flags;
     const char                  *hcc_test_type;
     struct prog                 *prog;
@@ -224,6 +233,7 @@ struct lsquic_conn_ctx {
                                              */
     enum {
         CH_SESSION_RESUME_SAVED   = 1 << 0,
+        CH_HTTP_CAP_DATAGRAMS     = 1 << 1,
     }                    ch_flags;
 };
 
@@ -448,6 +458,18 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
 }
 
 
+static void
+http_client_on_http_caps (lsquic_conn_t *conn, const struct lsquic_http_caps *caps)
+{
+    lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
+
+    if (caps->lhc_flags & LSQUIC_HTTP_CAP_DATAGRAMS)
+        conn_h->ch_flags |= CH_HTTP_CAP_DATAGRAMS;
+    else
+        conn_h->ch_flags &= ~CH_HTTP_CAP_DATAGRAMS;
+}
+
+
 /* Now only used for gQUIC and will be going away after that */
 static void
 http_client_on_sess_resume_info (lsquic_conn_t *conn, const unsigned char *buf,
@@ -503,17 +525,70 @@ struct lsquic_stream_ctx {
         ABANDON = 1 << 2,   /* Abandon reading from stream after sh_stop bytes
                              * have been read.
                              */
+        SH_DG_WANT_WRITE = 1 << 3,
     }                    sh_flags;
     lsquic_time_t        sh_created;
     lsquic_time_t        sh_ttfb;
+    lsquic_time_t        sh_proof_deadline;
     size_t               sh_stop;   /* Stop after reading this many bytes if ABANDON is set */
     size_t               sh_nread;  /* Number of bytes read from stream using one of
                                      * lsquic_stream_read* functions.
                                      */
+    size_t               sh_stream_gen_bytes;
+    size_t               sh_dgram_gen_bytes;
     unsigned             count;
     FILE                *download_fh;
     struct lsquic_reader reader;
+    unsigned char        sh_dgram_payload[DRR_PROOF_DGRAM_CHUNK];
 };
+
+
+static int
+stream_in_drr_proof (const lsquic_stream_ctx_t *st_h)
+{
+    return !!(st_h->client_ctx->hcc_flags & HCC_DRR_PROOF);
+}
+
+
+static int
+drr_proof_expired (const lsquic_stream_ctx_t *st_h)
+{
+    return stream_in_drr_proof(st_h)
+        && lsquic_time_now() >= st_h->sh_proof_deadline;
+}
+
+
+static void
+stop_drr_proof_writes (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
+{
+    if (st_h->sh_flags & SH_DG_WANT_WRITE)
+    {
+        (void) lsquic_stream_want_http_dg_write(stream, 0);
+        st_h->sh_flags &= ~SH_DG_WANT_WRITE;
+    }
+    lsquic_stream_shutdown(stream, 1);
+    lsquic_stream_wantread(stream, 1);
+}
+
+
+static void
+start_drr_proof_datagram_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
+{
+    lsquic_conn_ctx_t *conn_h;
+
+    if (st_h->sh_flags & SH_DG_WANT_WRITE)
+        return;
+
+    conn_h = lsquic_conn_get_ctx(lsquic_stream_conn(stream));
+    if (!(conn_h->ch_flags & CH_HTTP_CAP_DATAGRAMS))
+        return;
+
+    if (0 == lsquic_stream_want_http_dg_write(stream, 1))
+        st_h->sh_flags |= SH_DG_WANT_WRITE;
+    else
+        LSQ_WARN("cannot enable HTTP datagram write for stream %"PRIu64": %s",
+            lsquic_stream_id(stream), strerror(errno));
+}
 
 
 static lsquic_stream_ctx_t *
@@ -533,6 +608,12 @@ http_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     st_h->client_ctx = stream_if_ctx;
     /* Internal helper (not in lsquic.h); example-only timing. */
     st_h->sh_created = lsquic_time_now();
+    if (stream_in_drr_proof(st_h))
+    {
+        st_h->sh_proof_deadline = st_h->sh_created
+            + (lsquic_time_t) st_h->client_ctx->hcc_drr_proof_secs * 1000000;
+        memset(st_h->sh_dgram_payload, 'D', sizeof(st_h->sh_dgram_payload));
+    }
     if (st_h->client_ctx->hcc_cur_pe)
     {
         st_h->client_ctx->hcc_cur_pe = TAILQ_NEXT(
@@ -609,6 +690,8 @@ send_headers (lsquic_stream_ctx_t *st_h)
         hostname = st_h->client_ctx->prog->prog_hostname;
     hbuf.off = 0;
     struct lsxpack_header headers_arr[10];
+    const int has_request_body = !!st_h->client_ctx->payload
+                            || stream_in_drr_proof(st_h);
 #define V(v) (v), strlen(v)
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":method"), V(st_h->client_ctx->method));
     header_set_ptr(&headers_arr[h_idx++], &hbuf, V(":scheme"), V("https"));
@@ -629,17 +712,19 @@ send_headers (lsquic_stream_ctx_t *st_h)
             sprintf(pfv, "i=?0");
         header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V(pfv));
     }
-    if (st_h->client_ctx->payload)
+    if (has_request_body)
     {
         header_set_ptr(&headers_arr[h_idx++], &hbuf, V("content-type"), V("application/octet-stream"));
-        header_set_ptr(&headers_arr[h_idx++], &hbuf, V("content-length"), V( st_h->client_ctx->payload_size));
+        if (st_h->client_ctx->payload)
+            header_set_ptr(&headers_arr[h_idx++], &hbuf, V("content-length"),
+                                                        V(st_h->client_ctx->payload_size));
     }
     lsquic_http_headers_t headers = {
         .count = h_idx,
         .headers = headers_arr,
     };
     if (0 != lsquic_stream_send_headers(st_h->stream, &headers,
-                                    st_h->client_ctx->payload == NULL))
+                                                            !has_request_body))
     {
         LSQ_ERROR("cannot send headers: %s", strerror(errno));
         exit(1);
@@ -677,6 +762,34 @@ display_cert_chain (lsquic_conn_t *conn)
 }
 
 
+static int
+http_client_on_http_dg_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h,
+    size_t max_quic_payload, lsquic_http_dg_consume_f consume_datagram)
+{
+    size_t payload_sz;
+
+    if (!stream_in_drr_proof(st_h))
+        return -1;
+
+    if (drr_proof_expired(st_h))
+    {
+        stop_drr_proof_writes(stream, st_h);
+        return -1;
+    }
+
+    payload_sz = MIN(max_quic_payload, sizeof(st_h->sh_dgram_payload));
+    if (0 == payload_sz)
+        return -1;
+
+    if (0 != consume_datagram(stream, st_h->sh_dgram_payload, payload_sz,
+                                                LSQUIC_HTTP_DG_SEND_DATAGRAM))
+        return -1;
+
+    st_h->sh_dgram_gen_bytes += payload_sz;
+    return 0;
+}
+
+
 static void
 http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
@@ -684,7 +797,32 @@ http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 
     if (st_h->sh_flags & HEADERS_SENT)
     {
-        if (st_h->client_ctx->payload && test_reader_size(st_h->reader.lsqr_ctx) > 0)
+        if (stream_in_drr_proof(st_h))
+        {
+            unsigned char buf[DRR_PROOF_STREAM_CHUNK];
+
+            if (drr_proof_expired(st_h))
+            {
+                stop_drr_proof_writes(stream, st_h);
+                return;
+            }
+
+            memset(buf, 'S', sizeof(buf));
+            while ((nw = lsquic_stream_write(stream, buf, sizeof(buf))) > 0)
+                st_h->sh_stream_gen_bytes += (size_t) nw;
+
+            if (nw < 0 && errno != EWOULDBLOCK)
+            {
+                LSQ_ERROR("write error: %s", strerror(errno));
+                exit(1);
+            }
+
+            start_drr_proof_datagram_write(stream, st_h);
+            lsquic_stream_wantwrite(stream, 1);
+            return;
+        }
+        else if (st_h->client_ctx->payload
+                                    && test_reader_size(st_h->reader.lsqr_ctx) > 0)
         {
             nw = lsquic_stream_writef(stream, &st_h->reader);
             if (nw < 0)
@@ -712,6 +850,8 @@ http_client_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     {
         st_h->sh_flags |= HEADERS_SENT;
         send_headers(st_h);
+        if (stream_in_drr_proof(st_h))
+            start_drr_proof_datagram_write(stream, st_h);
     }
 }
 
@@ -939,6 +1079,9 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 (client_ctx->hcc_cc_reqs_per_conn - conn_h->ch_n_cc_streams)));
         create_streams(client_ctx, conn_h);
     }
+    if (stream_in_drr_proof(st_h))
+        LSQ_INFO("DRR proof stream stats: stream-bytes=%zu, dgram-bytes=%zu",
+            st_h->sh_stream_gen_bytes, st_h->sh_dgram_gen_bytes);
     if (st_h->reader.lsqr_ctx)
         destroy_lsquic_reader_ctx(st_h->reader.lsqr_ctx);
     if (st_h->download_fh)
@@ -954,7 +1097,9 @@ static struct lsquic_stream_if http_client_if = {
     .on_read                = http_client_on_read,
     .on_write               = http_client_on_write,
     .on_close               = http_client_on_close,
+    .on_http_dg_write       = http_client_on_http_dg_write,
     .on_hsk_done            = http_client_on_hsk_done,
+    .on_http_caps           = http_client_on_http_caps,
 };
 
 
@@ -1067,6 +1212,8 @@ usage (const char *prog)
 "   -Q ALPN     Use hq ALPN.  Specify, for example, \"h3-29\".\n"
 "   -J TEST     Run test. Available tests:\n"
 "                 goaway - call lsquic_conn_going_away() after handshake\n"
+"   -Y SECS     DRR proof mode: send POST stream body and HTTP datagrams\n"
+"                 as fast as possible for SECS seconds, then stop writes.\n"
             , prog);
 }
 
@@ -1725,6 +1872,7 @@ main (int argc, char **argv)
             break;
         case 'M':
             client_ctx.method = optarg;
+            client_ctx.hcc_flags |= HCC_METHOD_SET;
             break;
         case 'r':
             client_ctx.hcc_total_n_reqs = atoi(optarg);
@@ -1837,6 +1985,15 @@ main (int argc, char **argv)
             prog.prog_api.ea_alpn      = optarg;
             prog.prog_api.ea_stream_if = &hq_client_if;
             break;
+        case 'Y':
+            client_ctx.hcc_drr_proof_secs = atoi(optarg);
+            if (0 == client_ctx.hcc_drr_proof_secs)
+            {
+                LSQ_ERROR("invalid DRR proof duration `%s'", optarg);
+                exit(1);
+            }
+            client_ctx.hcc_flags |= HCC_DRR_PROOF;
+            break;
         common_opts:
         default:
             if (0 != prog_set_opt(&prog, opt, optarg))
@@ -1851,6 +2008,11 @@ main (int argc, char **argv)
 
     if (client_ctx.qif_file)
     {
+        if (client_ctx.hcc_flags & HCC_DRR_PROOF)
+        {
+            LSQ_ERROR("DRR proof mode is incompatible with QIF mode");
+            exit(1);
+        }
         client_ctx.qif_fh = fopen(client_ctx.qif_file, "r");
         if (!client_ctx.qif_fh)
         {
@@ -1866,8 +2028,43 @@ main (int argc, char **argv)
     }
     else if (TAILQ_EMPTY(&client_ctx.hcc_path_elems))
     {
-        fprintf(stderr, "Specify at least one path using -p option\n");
-        exit(1);
+        if (client_ctx.hcc_flags & HCC_DRR_PROOF)
+        {
+            pe = calloc(1, sizeof(*pe));
+            if (!pe)
+            {
+                perror("calloc");
+                exit(1);
+            }
+            pe->path = DRR_PROOF_DEFAULT_PATH;
+            TAILQ_INSERT_TAIL(&client_ctx.hcc_path_elems, pe, next_pe);
+        }
+        else
+        {
+            fprintf(stderr, "Specify at least one path using -p option\n");
+            exit(1);
+        }
+    }
+
+    if (client_ctx.hcc_flags & HCC_DRR_PROOF)
+    {
+        if (client_ctx.payload)
+        {
+            LSQ_ERROR("DRR proof mode is incompatible with -P payload");
+            exit(1);
+        }
+        if (!((prog.prog_engine_flags & LSENG_HTTP)
+                                        && prog.prog_api.ea_stream_if == &http_client_if))
+        {
+            LSQ_ERROR("DRR proof mode requires HTTP/3 mode");
+            exit(1);
+        }
+        if (!(client_ctx.hcc_flags & HCC_METHOD_SET))
+            client_ctx.method = "POST";
+        prog.prog_settings.es_http_datagrams = 1;
+        LSQ_INFO("DRR proof mode enabled for %u second%s",
+            client_ctx.hcc_drr_proof_secs,
+            client_ctx.hcc_drr_proof_secs == 1 ? "" : "s");
     }
 
     /* Internal helper (not in lsquic.h); example-only timing. */

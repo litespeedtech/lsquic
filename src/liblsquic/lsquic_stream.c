@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,6 +62,8 @@
 #include "lsquic_ietf.h"
 #include "lsquic_push_promise.h"
 #include "lsquic_hcso_writer.h"
+#include "lsquic_sizes.h"
+#include "lsquic_trans_params.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_STREAM
 #define LSQUIC_LOG_CONN_ID lsquic_conn_log_cid(stream->conn_pub->lconn)
@@ -73,6 +76,9 @@ static void
 drop_frames_in (lsquic_stream_t *stream);
 
 static void
+maybe_finish_reset_at (lsquic_stream_t *stream);
+
+static void
 maybe_schedule_call_on_close (lsquic_stream_t *stream);
 
 static int
@@ -81,9 +87,30 @@ stream_wantread (lsquic_stream_t *stream, int is_want);
 static int
 stream_wantwrite (lsquic_stream_t *stream, int is_want);
 
+static int
+stream_is_locally_initiated_unidir (const struct lsquic_stream *stream);
+
+static int
+stream_is_incoming_unidir (const struct lsquic_stream *stream);
+
 enum stream_write_options
 {
     SWO_BUFFER  = 1 << 0,       /* Allow buffering in sm_buf */
+};
+
+
+struct capsule_parser
+{
+    uint64_t                cp_type;
+    lsquic_capsule_read_f   cp_cb;
+};
+
+
+struct capsule_parsers
+{
+    unsigned                cps_count;
+    unsigned                cps_nalloc;
+    struct capsule_parser   cps_elems[0];
 };
 
 
@@ -94,8 +121,24 @@ stream_write_to_packets (lsquic_stream_t *, struct lsquic_reader *, size_t,
 static ssize_t
 save_to_buffer (lsquic_stream_t *, struct lsquic_reader *, size_t len);
 
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+
+static lsquic_capsule_read_f
+stream_find_capsule_cb (struct lsquic_stream *stream, uint64_t capsule_type);
+
+static void
+http_dg_capsule_datagram_cb (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+    uint64_t capsule_type, const void *payload, size_t payload_len);
+
 static int
 stream_flush (lsquic_stream_t *stream);
+
+static void
+maybe_mark_as_blocked (lsquic_stream_t *stream);
 
 static int
 stream_flush_nocheck (lsquic_stream_t *stream);
@@ -206,6 +249,10 @@ enum stream_history_event
     SHE_FLUSH              =  'u',
     SHE_STOP_SENDIG_OUT    =  'U',
     SHE_USER_WRITE_DATA    =  'w',
+    SHE_HTTP_DG_RECV       =  'm',
+    SHE_HTTP_DG_SEND       =  'M',
+    SHE_HTTP_DG_CAPSULE_ON =  'k',
+    SHE_HTTP_DG_CAPSULE_OFF=  'K',
     SHE_SHUTDOWN_WRITE     =  'W',
     SHE_CLOSE              =  'X',
     SHE_DELAY_SW           =  'y',
@@ -240,7 +287,6 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
                                                         stream->sm_hist_buf);
 }
 
-
 #   define SM_HISTORY_APPEND(stream, event) sm_history_append(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream) do {                           \
         if (stream->sm_hist_idx & SM_HIST_IDX_MASK)                         \
@@ -251,6 +297,20 @@ sm_history_append (lsquic_stream_t *stream, enum stream_history_event sh_event)
 #else
 #   define SM_HISTORY_APPEND(stream, event)
 #   define SM_HISTORY_DUMP_REMAINING(stream)
+#endif
+
+#if LSQUIC_KEEP_STREAM_HISTORY
+void
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+}
+
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream)
+{
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_SEND);
+}
 #endif
 
 
@@ -362,7 +422,7 @@ stream_is_hsk (const struct lsquic_stream *stream)
 static struct lsquic_packet_out *
 stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
                 unsigned need_at_least, const struct network_path *path,
-                const struct lsquic_stream *stream)
+                const struct lsquic_stream *stream, int buffered_packet_ok)
 {
     struct lsquic_packet_out *packet_out;
 
@@ -375,12 +435,12 @@ stream_get_packet_for_stream_0rtt (struct lsquic_send_ctl *ctl,
         ((struct lsquic_stream *) stream)->sm_get_packet_for_stream
                                 = lsquic_send_ctl_get_packet_for_stream;
         return lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
     }
     else
     {
         packet_out = lsquic_send_ctl_get_packet_for_stream(ctl, need_at_least,
-                                                            path, stream);
+                                                path, stream, buffered_packet_ok);
         if (packet_out)
             packet_out->po_header_type = HETY_0RTT;
         return packet_out;
@@ -414,6 +474,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->conn_pub  = conn_pub;
     stream->sm_onnew_arg = stream_if_ctx;
     stream->sm_write_avail = stream_write_avail_no_frames;
+    stream->sm_ss_code = HEC_NO_ERROR;
 
     STAILQ_INIT(&stream->sm_hq_frames);
 
@@ -645,6 +706,7 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         SM_HISTORY_APPEND(stream, SHE_ONCLOSE_CALL);
         stream->stream_if->on_close(stream, stream->st_ctx);
     }
+    lsquic_stream_set_http_dg_if(stream, NULL);
     if (stream->sm_qflags & SMQF_SENDING_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
     if (stream->sm_qflags & SMQF_WANT_READ)
@@ -653,6 +715,8 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         TAILQ_REMOVE(&stream->conn_pub->write_streams, stream, next_write_stream);
     if (stream->sm_qflags & SMQF_SERVICE_FLAGS)
         TAILQ_REMOVE(&stream->conn_pub->service_streams, stream, next_service_stream);
+    if (stream->sm_qflags & SMQF_WANT_HTTP_DG)
+        TAILQ_REMOVE(&stream->conn_pub->http_dg_streams, stream, next_http_dg_stream);
     if (stream->sm_qflags & SMQF_QPACK_DEC)
         lsquic_qdh_cancel_stream(stream->conn_pub->u.ietf.qdh, stream);
     else if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
@@ -688,8 +752,18 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
         stream->uh = uh->uh_next;
         destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
     }
+    if (stream->sm_http_dg)
+    {
+        free(stream->sm_http_dg->read.buf);
+        free(stream->sm_http_dg->write.buf);
+        free(stream->sm_http_dg);
+        stream->sm_http_dg = NULL;
+    }
+    lsquic_stream_clear_capsule_handlers(stream);
     free(stream->sm_buf);
     free(stream->sm_header_block);
+    if (stream->conn_pub->cp_on_stream_destroy)
+        stream->conn_pub->cp_on_stream_destroy(stream);
     LSQ_DEBUG("destroyed stream");
     SM_HISTORY_DUMP_REMAINING(stream);
     free(stream);
@@ -715,7 +789,9 @@ stream_is_finished (struct lsquic_stream *stream)
            /* Can't finish stream until all "self" flags are unset: */
                     | SMQF_SELF_FLAGS))
         && ((stream->stream_flags & STREAM_FORCE_FINISH)
-          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT)));
+          || (stream->stream_flags & (STREAM_FIN_SENT |STREAM_RST_SENT))
+          || (stream_is_incoming_unidir(stream)
+                            && (stream->stream_flags & STREAM_U_READ_DONE)));
 }
 
 
@@ -872,6 +948,7 @@ stream_readable_discard (struct lsquic_stream *stream)
     }
 
     (void) maybe_switch_data_in(stream);
+    maybe_finish_reset_at(stream);
 
     return 0;   /* Never readable */
 }
@@ -1101,6 +1178,18 @@ lsquic_stream_frame_in (lsquic_stream_t *stream, stream_frame_t *frame)
     }
 
     if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
+            && (stream->stream_flags & STREAM_RESET_AT_RECVD)
+            && stream->sm_reset_at_final != DF_END(frame))
+    {
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
+            "final size %"PRIu64" from STREAM frame (id: %"PRIu64") does not "
+            "match RESET_STREAM_AT final size %"PRIu64, DF_END(frame),
+            stream->id, stream->sm_reset_at_final);
+        goto release_packet_frame;
+    }
+
+    if (frame->data_frame.df_fin && (stream->sm_bflags & SMBF_IETF)
             && (stream->stream_flags & STREAM_FIN_RECVD)
             && stream->sm_fin_off != DF_END(frame))
     {
@@ -1190,31 +1279,178 @@ maybe_elide_stream_frames (struct lsquic_stream *stream)
     if (!(stream->stream_flags & STREAM_FRAMES_ELIDED))
     {
         if (stream->n_unacked)
-            lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
-                                                stream->id);
+        {
+            if (stream->sm_reset_stream_at_sz == 0)
+                lsquic_send_ctl_elide_stream_frames(stream->conn_pub->send_ctl,
+                                                    stream->id);
+            else
+                /* Don't elide STREAM frames from scheduled packets because we
+                 * want to ensure that the reliable bytes get delivered.
+                 */
+                lsquic_send_ctl_elide_stream_frames_from_buffered(
+                                        stream->conn_pub->send_ctl, stream->id);
+        }
         stream->stream_flags |= STREAM_FRAMES_ELIDED;
     }
 }
 
 
-int
-lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
-                      uint64_t error_code)
+static void
+maybe_finish_reset_at (struct lsquic_stream *stream)
+{
+    if (!(stream->stream_flags & STREAM_RESET_AT_RECVD)
+                                    || (stream->stream_flags & STREAM_RST_RECVD)
+                                    || stream->read_offset < stream->sm_reset_at)
+        return;
+
+    stream->stream_flags |= STREAM_RST_RECVD;
+
+    if (stream->stream_if->on_reset
+                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
+                            && !(stream->sm_dflags & SMDF_ONRESET0))
+    {
+        stream->stream_if->on_reset(stream, stream->st_ctx, 0);
+        stream->sm_dflags |= SMDF_ONRESET0;
+    }
+
+    /* Let user collect error: */
+    maybe_conn_to_tickable_if_readable(stream);
+
+    lsquic_sfcw_consume_rem(&stream->fc);
+    drop_frames_in(stream);
+
+    maybe_finish_stream(stream);
+    maybe_schedule_call_on_close(stream);
+}
+
+
+static int
+stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
+                      uint64_t reliable_size, uint64_t error_code,
+                      enum quic_frame_type frame_type)
 {
     struct lsquic_conn *lconn;
+    const char *frame_name;
 
-    if ((stream->sm_bflags & SMBF_IETF)
-            && (stream->stream_flags & STREAM_FIN_RECVD)
-            && stream->sm_fin_off != offset)
+    frame_name = frame_type_2_str[frame_type];
+
+    if (stream->stream_flags & STREAM_RESET_AT_RECVD)
+    {
+        if (stream->sm_reset_at_final != final_size
+                                || stream->sm_reset_at_error != error_code)
+        {
+            lconn = stream->conn_pub->lconn;
+            lconn->cn_if->ci_abort_error(lconn, 0,
+                stream->sm_reset_at_final != final_size
+                                    ? TEC_FINAL_SIZE_ERROR
+                                    : TEC_STREAM_STATE_ERROR,
+                "%s frame changes final size or error code for stream "
+                "%"PRIu64" (final: %"PRIu64" vs %"PRIu64"; error: "
+                "%"PRIu64" vs %"PRIu64")", frame_name, stream->id,
+                stream->sm_reset_at_final, final_size,
+                stream->sm_reset_at_error, error_code);
+            return -1;
+        }
+
+        if (reliable_size > stream->sm_reset_at)
+        {
+            LSQ_DEBUG("ignore %s increasing reliable size on stream %"PRIu64
+                      " (old %"PRIu64", new %"PRIu64")",
+                      frame_name, stream->id, stream->sm_reset_at,
+                      reliable_size);
+            return 0;
+        }
+        if (reliable_size < stream->sm_reset_at)
+        {
+            LSQ_DEBUG("update %s reliable size on stream %"PRIu64
+                      " from %"PRIu64" to %"PRIu64, frame_name, stream->id,
+                      stream->sm_reset_at, reliable_size);
+            stream->sm_reset_at = reliable_size;
+            maybe_finish_reset_at(stream);
+        }
+        return 0;
+    }
+
+    if ((stream->stream_flags & STREAM_FIN_RECVD)
+                                        && stream->sm_fin_off != final_size)
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
-            "final size %"PRIu64" from RESET_STREAM frame (id: %"PRIu64") "
-            "does not match previous final size %"PRIu64, offset,
+            "final size %"PRIu64" from %s frame (id: %"PRIu64") does not "
+            "match previous final size %"PRIu64, final_size, frame_name,
             stream->id, stream->sm_fin_off);
         return -1;
     }
 
+    SM_HISTORY_APPEND(stream, SHE_RST_IN);
+    stream->stream_flags |= STREAM_RESET_AT_RECVD;
+    stream->sm_reset_at = reliable_size;
+    stream->sm_reset_at_final = final_size;
+    stream->sm_reset_at_error = error_code;
+    if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
+    {
+        stream->sm_qflags &= ~SMQF_WAIT_FIN_OFF;
+        LSQ_DEBUG("final offset is now known: %"PRIu64, final_size);
+    }
+
+    if (lsquic_sfcw_get_max_recv_off(&stream->fc) > final_size)
+    {
+        LSQ_INFO("%s invalid: its final size %"PRIu64" is "
+            "smaller than that of byte following the last byte we have seen: "
+            "%"PRIu64, frame_name, final_size,
+            lsquic_sfcw_get_max_recv_off(&stream->fc));
+        return -1;
+    }
+
+    if (!lsquic_sfcw_set_max_recv_off(&stream->fc, final_size))
+    {
+        LSQ_INFO("%s invalid: its final size %"PRIu64
+            " violates flow control", frame_name, final_size);
+        return -1;
+    }
+
+    maybe_finish_reset_at(stream);
+    return 0;
+}
+
+
+int
+lsquic_stream_reset_stream_at_in (struct lsquic_stream *stream,
+            uint64_t final_size, uint64_t reliable_size, uint64_t error_code)
+{
+    assert(stream->sm_bflags & SMBF_IETF);
+    return stream_reset_in_ietf(stream, final_size, reliable_size,
+                                error_code, QUIC_FRAME_RESET_STREAM_AT);
+}
+
+
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                                    uint64_t *reliable_size)
+{
+    if (stream->sm_reset_stream_at_sz == 0)
+    {
+        if (reliable_size)
+            *reliable_size = 0;
+        return QUIC_FRAME_RST_STREAM;
+    }
+    else
+    {
+        /* I would not worry about other users: STREAM_RESET_AT is used by
+         * WebTransport only. If other protocols evolve that use STREAM_RESET_AT
+         * and that don't want to retract and we want to implement them, we will
+         * worry about this later.
+         */
+        *reliable_size = stream->sm_reset_stream_at_sz;
+        return QUIC_FRAME_RESET_STREAM_AT;
+    }
+}
+
+
+static int
+stream_reset_in_gquic (struct lsquic_stream *stream, uint64_t offset,
+                                                       uint64_t error_code)
+{
     if (stream->stream_flags & STREAM_RST_RECVD)
     {
         LSQ_DEBUG("ignore duplicate RST_STREAM frame");
@@ -1225,6 +1461,7 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     /* This flag must always be set, even if we are "ignoring" it: it is
      * used by elision code.
      */
+    stream->sm_rst_in_code = error_code;
     stream->stream_flags |= STREAM_RST_RECVD;
 
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > offset)
@@ -1246,22 +1483,11 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     if (stream->stream_if->on_reset
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
-        if (stream->sm_bflags & SMBF_IETF)
-        {
-            if (!(stream->sm_dflags & SMDF_ONRESET0))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 0);
-                stream->sm_dflags |= SMDF_ONRESET0;
-            }
-        }
-        else
-        {
-            if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
+        if ((stream->sm_dflags & (SMDF_ONRESET0|SMDF_ONRESET1))
                                     != (SMDF_ONRESET0|SMDF_ONRESET1))
-            {
-                stream->stream_if->on_reset(stream, stream->st_ctx, 2);
-                stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
-            }
+        {
+            stream->stream_if->on_reset(stream, stream->st_ctx, 2);
+            stream->sm_dflags |= SMDF_ONRESET0|SMDF_ONRESET1;
         }
     }
 
@@ -1271,11 +1497,8 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     lsquic_sfcw_consume_rem(&stream->fc);
     drop_frames_in(stream);
 
-    if (!(stream->sm_bflags & SMBF_IETF))
-    {
-        drop_buffered_data(stream);
-        maybe_elide_stream_frames(stream);
-    }
+    drop_buffered_data(stream);
+    maybe_elide_stream_frames(stream);
 
     if (stream->sm_qflags & SMQF_WAIT_FIN_OFF)
     {
@@ -1285,7 +1508,6 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 
     if (!(stream->stream_flags &
                         (STREAM_RST_SENT|STREAM_SS_SENT|STREAM_FIN_SENT))
-                            && !(stream->sm_bflags & SMBF_IETF)
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
         stream_reset(stream, 7 /* QUIC_RST_ACKNOWLEDGEMENT */, 0);
 
@@ -1295,6 +1517,18 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
     maybe_schedule_call_on_close(stream);
 
     return 0;
+}
+
+
+int
+lsquic_stream_rst_in (struct lsquic_stream *stream, uint64_t offset,
+                                                      uint64_t error_code)
+{
+    if (stream->sm_bflags & SMBF_IETF)
+        return stream_reset_in_ietf(stream, offset, 0, error_code,
+                                                    QUIC_FRAME_RST_STREAM);
+    else
+        return stream_reset_in_gquic(stream, offset, error_code);
 }
 
 
@@ -1309,6 +1543,7 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     }
 
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
+    stream->sm_ss_in_code = error_code;
     stream->stream_flags |= STREAM_SS_RECVD;
 
     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
@@ -1423,6 +1658,17 @@ lsquic_stream_peer_blocked_gquic (struct lsquic_stream *stream)
 }
 
 
+int
+lsquic_stream_is_blocked (const lsquic_stream_t *stream)
+{
+    return (stream->blocked_off
+                && stream->blocked_off == stream->max_send_off)
+        || (0 == stream->blocked_off
+                && 0 == stream->max_send_off
+                && (stream->stream_flags & STREAM_BLOCKED_SENT));
+}
+
+
 void
 lsquic_stream_blocked_frame_sent (lsquic_stream_t *stream)
 {
@@ -1527,10 +1773,17 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 {
     struct data_frame *data_frame;
     size_t nread, toread, total_nread;
+    ssize_t rv;
     int short_read, processed_frames;
+
+#ifndef NDEBUG
+    assert(!(stream->sm_dflags & SMDF_READING_DATA_FRAMES));
+    stream->sm_dflags |= SMDF_READING_DATA_FRAMES;
+#endif
 
     processed_frames = 0;
     total_nread = 0;
+    rv = 0;
 
     while ((data_frame = stream->data_in->di_if->di_get_frame(
                                         stream->data_in, stream->read_offset)))
@@ -1565,7 +1818,10 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
                 data_frame = NULL;
                 if (0 != maybe_switch_data_in(stream))
-                    return -1;
+                {
+                    rv = -1;
+                    goto end;
+                }
                 if (fin)
                 {
                     stream->stream_flags |= STREAM_FIN_REACHED;
@@ -1584,7 +1840,13 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
     if (processed_frames)
         stream_consumed_bytes(stream);
 
-    return total_nread;
+    rv = total_nread;
+
+  end:
+#ifndef NDEBUG
+    stream->sm_dflags &= ~SMDF_READING_DATA_FRAMES;
+#endif
+    return rv;
 }
 
 
@@ -1703,7 +1965,10 @@ lsquic_stream_readf (struct lsquic_stream *stream,
 
     nread = stream_readf(stream, readf, ctx);
     if (nread >= 0)
+    {
         maybe_update_last_progress(stream);
+        maybe_finish_reset_at(stream);
+    }
 
     return nread;
 }
@@ -1781,6 +2046,23 @@ lsquic_stream_ss_frame_sent (struct lsquic_stream *stream)
 static void
 handle_early_read_shutdown_ietf (struct lsquic_stream *stream)
 {
+    uint64_t ss_code;
+
+    if (stream_is_locally_initiated_unidir(stream))
+    {
+        LSQ_DEBUG("skip STOP_SENDING for locally initiated unidirectional "
+                                            "stream %"PRIu64, stream->id);
+        return;
+    }
+
+    if (stream->sm_ss_code == HEC_NO_ERROR)
+    {
+        ss_code = stream->sm_ss_code;
+        if (stream->conn_pub->cp_get_ss_code
+            && 0 == stream->conn_pub->cp_get_ss_code(stream, &ss_code))
+            stream->sm_ss_code = ss_code;
+    }
+
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                     next_send_stream);
@@ -1843,6 +2125,24 @@ stream_is_incoming_unidir (const struct lsquic_stream *stream)
             return sit == SIT_UNI_CLIENT;
         else
             return sit == SIT_UNI_SERVER;
+    }
+    else
+        return 0;
+}
+
+
+static int
+stream_is_locally_initiated_unidir (const struct lsquic_stream *stream)
+{
+    enum stream_id_type sit;
+
+    if (stream->sm_bflags & SMBF_IETF)
+    {
+        sit = stream->id & SIT_MASK;
+        if (stream->sm_bflags & SMBF_SERVER)
+            return sit == SIT_UNI_SERVER;
+        else
+            return sit == SIT_UNI_CLIENT;
     }
     else
         return 0;
@@ -2022,6 +2322,13 @@ lsquic_stream_received_goaway (lsquic_stream_t *stream)
 }
 
 
+void
+lsquic_stream_set_ss_code (lsquic_stream_t *stream, uint64_t error_code)
+{
+    stream->sm_ss_code = error_code;
+}
+
+
 uint64_t
 lsquic_stream_read_offset (const lsquic_stream_t *stream)
 {
@@ -2094,10 +2401,42 @@ stream_wantwrite (struct lsquic_stream *stream, int new_val)
     if (old_val != new_val)
     {
         if (new_val)
+        {
             maybe_put_onto_write_q(stream, SMQF_WANT_WRITE);
+            if (!(stream->stream_flags & STREAM_ONCLOSE_DONE)
+                && !lsquic_stream_is_write_reset(stream)
+                && 0 == lsquic_stream_write_avail(stream))
+                maybe_mark_as_blocked(stream);
+        }
         else
             maybe_remove_from_write_q(stream, SMQF_WANT_WRITE);
     }
+    return old_val;
+}
+
+static int
+stream_want_http_dg (struct lsquic_stream *stream, int is_want)
+{
+    const int old_val = !!(stream->sm_qflags & SMQF_WANT_HTTP_DG);
+    const int new_val = !!is_want;
+
+    if (old_val != new_val)
+    {
+        if (new_val)
+        {
+            TAILQ_INSERT_TAIL(&stream->conn_pub->http_dg_streams, stream,
+                                                    next_http_dg_stream);
+            stream->sm_qflags |= SMQF_WANT_HTTP_DG;
+        }
+        else
+        {
+            stream->sm_qflags &= ~SMQF_WANT_HTTP_DG;
+            TAILQ_REMOVE(&stream->conn_pub->http_dg_streams, stream,
+                                                    next_http_dg_stream);
+        }
+        lsquic_conn_http_dg_streams_updated(stream->conn_pub->lconn);
+    }
+
     return old_val;
 }
 
@@ -2106,17 +2445,22 @@ int
 lsquic_stream_wantread (lsquic_stream_t *stream, int is_want)
 {
     SM_HISTORY_APPEND(stream, SHE_WANTREAD_NO + !!is_want);
-    if (!(stream->stream_flags & STREAM_U_READ_DONE))
-    {
-        if (is_want)
-            maybe_conn_to_tickable_if_readable(stream);
-        return stream_wantread(stream, is_want);
-    }
-    else
+
+    if (stream->stream_flags & STREAM_U_READ_DONE)
     {
         errno = EBADF;
         return -1;
     }
+
+    if (is_want && stream_is_locally_initiated_unidir(stream))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (is_want)
+        maybe_conn_to_tickable_if_readable(stream);
+    return stream_wantread(stream, is_want);
 }
 
 
@@ -2150,6 +2494,284 @@ lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
 }
 
 
+int
+lsquic_stream_want_http_dg_write (lsquic_stream_t *stream, int is_want)
+{
+    size_t max_sz;
+    const struct lsquic_http_dg_if *dg_if;
+
+    is_want = !!is_want;
+
+    if (!is_want)
+        return stream_want_http_dg(stream, 0);
+
+    dg_if = lsquic_conn_http_dg_get_if(stream->conn_pub, stream->id);
+    if (!((dg_if && dg_if->on_http_dg_write)
+        || (stream->stream_if && stream->stream_if->on_http_dg_write)))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!stream->conn_pub->enpub->enp_settings.es_http_datagrams
+            || !(stream->conn_pub->cp_flags & CP_HTTP_DATAGRAMS))
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (stream->conn_pub->lconn->cn_if
+            && stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size)
+        max_sz = stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size(
+                                                stream->conn_pub->lconn);
+    else
+        max_sz = 0;
+
+    if (0 == max_sz)
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    return stream_want_http_dg(stream, 1);
+}
+
+int
+lsquic_stream_set_http_dg_if (lsquic_stream_t *stream,
+                                const struct lsquic_http_dg_if *dg_if)
+{
+    int rc;
+
+    if (!stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (dg_if && !dg_if->on_http_dg_read && !dg_if->on_http_dg_write)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!dg_if && (stream->sm_qflags & SMQF_WANT_HTTP_DG))
+        (void) lsquic_stream_want_http_dg_write(stream, 0);
+
+    rc = lsquic_conn_http_dg_set_if(stream->conn_pub, stream->id, dg_if);
+    return rc;
+}
+
+
+static struct capsule_parser *
+stream_find_capsule_parser (struct lsquic_stream *stream,
+                            uint64_t capsule_type, unsigned *idx)
+{
+    struct capsule_parsers *parsers;
+    unsigned i;
+
+    parsers = stream->sm_capsule_parsers;
+    if (!parsers)
+        return NULL;
+
+    for (i = 0; i < parsers->cps_count; ++i)
+        if (parsers->cps_elems[i].cp_type == capsule_type)
+        {
+            if (idx)
+                *idx = i;
+            return &parsers->cps_elems[i];
+        }
+
+    return NULL;
+}
+
+
+static lsquic_capsule_read_f
+stream_find_capsule_cb (struct lsquic_stream *stream, uint64_t capsule_type)
+{
+    struct capsule_parser *parser;
+
+    parser = stream_find_capsule_parser(stream, capsule_type, NULL);
+    return parser ? parser->cp_cb : NULL;
+}
+
+
+int
+lsquic_stream_set_capsule_handler (lsquic_stream_t *stream,
+                        uint64_t capsule_type, lsquic_capsule_read_f cb)
+{
+    struct capsule_parsers *parsers;
+    struct capsule_parsers *new_parsers;
+    struct capsule_parser *parser;
+    size_t alloc_sz;
+    unsigned idx, new_nalloc;
+
+    if (!stream)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    parsers = stream->sm_capsule_parsers;
+    parser = stream_find_capsule_parser(stream, capsule_type, &idx);
+    if (parser)
+    {
+        if (cb)
+        {
+            parser->cp_cb = cb;
+            return 0;
+        }
+
+        --parsers->cps_count;
+        if (idx < parsers->cps_count)
+            parsers->cps_elems[idx] = parsers->cps_elems[parsers->cps_count];
+        return 0;
+    }
+
+    if (!cb)
+        return 0;
+
+    if (!parsers || parsers->cps_count == parsers->cps_nalloc)
+    {
+        new_nalloc = parsers ? parsers->cps_nalloc * 2 : 2;
+        alloc_sz = sizeof(*parsers)
+                 + new_nalloc * sizeof(parsers->cps_elems[0]);
+        new_parsers = realloc(parsers, alloc_sz);
+        if (!new_parsers)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+        if (!parsers)
+            new_parsers->cps_count = 0;
+        new_parsers->cps_nalloc = new_nalloc;
+        stream->sm_capsule_parsers = new_parsers;
+        parsers = new_parsers;
+    }
+
+    parsers->cps_elems[parsers->cps_count].cp_type = capsule_type;
+    parsers->cps_elems[parsers->cps_count].cp_cb = cb;
+    ++parsers->cps_count;
+    return 0;
+}
+
+
+void
+lsquic_stream_clear_capsule_handlers (lsquic_stream_t *stream)
+{
+    if (!stream)
+        return;
+
+    free(stream->sm_capsule_parsers);
+    stream->sm_capsule_parsers = NULL;
+}
+
+
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h);
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream,
+                                            lsquic_stream_ctx_t *UNUSED_h);
+
+int
+lsquic_stream_set_http_dg_capsules (lsquic_stream_t *stream, int enable)
+{
+    if (!(stream->sm_bflags & SMBF_IETF)
+            || !(stream->sm_bflags & SMBF_USE_HEADERS))
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (!stream->conn_pub->enpub->enp_settings.es_http_datagrams)
+    {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (enable)
+    {
+        if (!stream->sm_http_dg)
+        {
+            stream->sm_http_dg = calloc(1, sizeof(*stream->sm_http_dg));
+            if (!stream->sm_http_dg)
+            {
+                errno = ENOMEM;
+                return -1;
+            }
+        }
+        if (0 != lsquic_stream_set_capsule_handler(stream, 0x00,
+                                            http_dg_capsule_datagram_cb))
+            return -1;
+        stream->sm_bflags |= SMBF_HTTP_DG_CAPSULES;
+        SM_HISTORY_APPEND(stream, SHE_HTTP_DG_CAPSULE_ON);
+        LSQ_DEBUG("HTTP DG capsule mode enabled on stream %"PRIu64, stream->id);
+        (void) lsquic_stream_wantread(stream, 1);
+        free(stream->sm_http_dg->read.buf);
+        stream->sm_http_dg->read.buf = NULL;
+        stream->sm_http_dg->read.state = HDC_READ_TYPE;
+        stream->sm_http_dg->read.type_state.pos = 0;
+        stream->sm_http_dg->read.len_state.pos = 0;
+    }
+    else
+    {
+        stream->sm_bflags &= ~SMBF_HTTP_DG_CAPSULES;
+        SM_HISTORY_APPEND(stream, SHE_HTTP_DG_CAPSULE_OFF);
+        LSQ_DEBUG("HTTP DG capsule mode disabled on stream %"PRIu64, stream->id);
+        (void) lsquic_stream_wantread(stream, 0);
+        (void) lsquic_stream_wantwrite(stream, 0);
+        (void) lsquic_stream_set_capsule_handler(stream, 0x00, NULL);
+        if (stream->sm_http_dg)
+        {
+            free(stream->sm_http_dg->read.buf);
+            stream->sm_http_dg->read.buf = NULL;
+            stream->sm_http_dg->read.buf_sz = 0;
+            stream->sm_http_dg->read.state = HDC_READ_TYPE;
+            free(stream->sm_http_dg->write.buf);
+            stream->sm_http_dg->write.buf = NULL;
+            stream->sm_http_dg->write.buf_sz = 0;
+            stream->sm_http_dg->write.offset = 0;
+            stream->sm_http_dg->write.header_len = 0;
+        }
+    }
+
+    return 0;
+}
+
+
+size_t
+lsquic_stream_get_max_http_dg_size (lsquic_stream_t *stream)
+{
+    size_t max_sz;
+    uint64_t qsid;
+    size_t overhead;
+
+    if (!(stream->conn_pub->cp_flags & CP_HTTP_DATAGRAMS))
+        return 0;
+
+    if (stream->conn_pub->lconn->cn_if
+            && stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size)
+        max_sz = stream->conn_pub->lconn->cn_if->ci_get_max_datagram_size(
+                                                stream->conn_pub->lconn);
+    else
+        max_sz = 0;
+
+    if (0 == max_sz)
+        return 0;
+
+    if (stream->id & 3)
+        return 0;
+
+    qsid = stream->id / 4;
+    if (qsid > VINT_MAX_VALUE)
+        return 0;
+    overhead = vint_size(qsid);
+    if (max_sz <= overhead)
+        return 0;
+    return max_sz - overhead;
+}
+
+
+
 struct progress
 {
     enum stream_flags   s_flags;
@@ -2175,7 +2797,6 @@ progress_eq (struct progress a, struct progress b)
     return a.s_flags == b.s_flags && a.q_flags == b.q_flags;
 }
 
-
 static void
 stream_dispatch_read_events_loop (lsquic_stream_t *stream)
 {
@@ -2192,7 +2813,10 @@ stream_dispatch_read_events_loop (lsquic_stream_t *stream)
         progress = stream_progress(stream);
         size  = stream->read_offset;
 
-        stream->stream_if->on_read(stream, stream->st_ctx);
+        if (stream->sm_bflags & SMBF_HTTP_DG_CAPSULES)
+            http_dg_capsule_on_read(stream, stream->st_ctx);
+        else
+            stream->stream_if->on_read(stream, stream->st_ctx);
 
         if (no_progress_limit && size == stream->read_offset &&
                                 progress_eq(progress, stream_progress(stream)))
@@ -2257,6 +2881,9 @@ on_write_header_wrapper (struct lsquic_stream *stream, lsquic_stream_ctx_t *h)
             stream->sm_hblock_sz = 0;
             stream_hblock_sent(stream);
             LSQ_DEBUG("header block written out successfully");
+            if (0 != lsquic_stream_flush(stream))
+                LSQ_DEBUG("cannot flush completed header block: %s",
+                                                        strerror(errno));
             /* TODO: if there was eos, do something else */
             if (stream->sm_qflags & SMQF_WANT_WRITE)
                 stream->stream_if->on_write(stream, h);
@@ -2278,6 +2905,9 @@ static void
 (*select_on_write (struct lsquic_stream *stream))(struct lsquic_stream *,
                                                         lsquic_stream_ctx_t *)
 {
+    if (stream->sm_http_dg
+            && stream->sm_http_dg->write.header_len)
+        return http_dg_capsule_on_write;
     if (0 == (stream->stream_flags & STREAM_PUSHING)
                     && SSHS_HBLOCK_SENDING != stream->sm_send_headers_state)
         /* Common case */
@@ -2293,7 +2923,6 @@ static void
             return stream->stream_if->on_write;
     }
 }
-
 
 static void
 stream_dispatch_write_events_loop (lsquic_stream_t *stream)
@@ -2339,7 +2968,10 @@ stream_dispatch_read_events_once (lsquic_stream_t *stream)
 {
     if ((stream->sm_qflags & SMQF_WANT_READ) && lsquic_stream_readable(stream))
     {
-        stream->stream_if->on_read(stream, stream->st_ctx);
+        if (stream->sm_bflags & SMBF_HTTP_DG_CAPSULES)
+            http_dg_capsule_on_read(stream, stream->st_ctx);
+        else
+            stream->stream_if->on_read(stream, stream->st_ctx);
     }
 }
 
@@ -2363,7 +2995,10 @@ maybe_mark_as_blocked (lsquic_stream_t *stream)
     used = lsquic_stream_combined_send_off(stream);
     if (stream->max_send_off == used)
     {
-        if (stream->blocked_off < stream->max_send_off)
+        if (stream->blocked_off < stream->max_send_off
+            || (0 == used
+                && !(stream->sm_qflags & SMQF_SEND_BLOCKED)
+                && !(stream->stream_flags & STREAM_BLOCKED_SENT)))
         {
             stream->blocked_off = used;
             if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
@@ -3220,7 +3855,7 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     unsigned stream_header_sz, need_at_least;
     struct lsquic_packet_out *packet_out;
     struct lsquic_stream *headers_stream;
-    int len;
+    int buffered_packet_ok, len;
 
     if ((stream->stream_flags & (STREAM_HEADERS_SENT|STREAM_HDRS_FLUSHED))
                                                         == STREAM_HEADERS_SENT)
@@ -3257,8 +3892,11 @@ stream_write_to_packet_std (struct frame_gen_ctx *fg_ctx, const size_t size)
     else
         need_at_least += size > 0;
   get_packet:
+    buffered_packet_ok = !(stream->sm_reset_stream_at_sz != 0
+                                        && stream->tosend_off < stream->sm_reset_stream_at_sz);
     packet_out = stream->sm_get_packet_for_stream(send_ctl,
-                                need_at_least, stream->conn_pub->path, stream);
+                    need_at_least, stream->conn_pub->path, stream,
+                    buffered_packet_ok);
     if (packet_out)
     {
         len = write_stream_frame(fg_ctx, size, packet_out);
@@ -3690,6 +4328,11 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
     ssize_t nw;
 
     len = reader->lsqr_size(reader->lsqr_ctx);
+#ifdef SSIZE_MAX
+    len = MIN(len, (size_t) SSIZE_MAX);
+#else
+    len = MIN(len, (size_t) PTRDIFF_MAX);
+#endif
     if (len == 0)
         return 0;
 
@@ -3727,7 +4370,7 @@ stream_write (lsquic_stream_t *stream, struct lsquic_reader *reader,
     {
         lsquic_sendctl_gen_stream_blocked_frame(stream->conn_pub->send_ctl, stream);
     }
-    return nwritten;
+    return (ssize_t) nwritten;
 }
 
 
@@ -4332,6 +4975,12 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
     LSQ_INFO("reset, error code %"PRIu64, error_code);
     stream->error_code = error_code;
 
+    if (stream->tosend_off < stream->sm_reset_stream_at_sz
+        && !(stream->stream_flags & STREAM_U_WRITE_DONE))
+    {
+        (void) stream_flush_nocheck(stream);
+    }
+
     if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
         TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
                                                         next_send_stream);
@@ -4371,38 +5020,100 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
     return stream->conn_pub->lconn;
 }
 
-
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 void
-lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
-    s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+lsquic_stream_mark_session_stream (struct lsquic_stream *stream)
+{
+    stream->sm_bflags |= SMBF_SESSION_STREAM;
 }
 
 
 int
-lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
+lsquic_stream_is_session_stream (const struct lsquic_stream *stream)
+{
+    return !!(stream->sm_bflags & SMBF_SESSION_STREAM);
+}
+
+
+void
+lsquic_stream_mark_switch_client_bidi (struct lsquic_stream *stream,
+                                        lsquic_stream_id_t stream_id)
+{
+    stream->sm_switch_stream_id = stream_id;
+    stream->sm_bflags |= SMBF_SWITCH_CLIENT_BIDI_STREAM;
 }
 
 
 int
-lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
+lsquic_stream_is_switch_client_bidi (const struct lsquic_stream *stream)
+{
+    return !!(stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM);
 }
 
 
 int
-lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
-    if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
-    {
-        return s->webtransport_session_stream_id;
-    }
+lsquic_stream_get_switch_stream_id (const struct lsquic_stream *stream,
+                                    lsquic_stream_id_t *stream_id)
+{
+    if (!(stream->sm_bflags & SMBF_SWITCH_CLIENT_BIDI_STREAM)
+        || !stream_id)
+        return -1;
 
-    return -1;
+    *stream_id = stream->sm_switch_stream_id;
+    return 0;
 }
 
 
-#endif
+int
+lsquic_stream_onclose_done (const struct lsquic_stream *stream)
+{
+    return !!(stream->stream_flags & STREAM_ONCLOSE_DONE);
+}
+
+
+void
+lsquic_stream_mark_rejected (struct lsquic_stream *stream)
+{
+    stream->stream_flags |= STREAM_SS_RECVD;
+}
+
+
+void
+lsquic_stream_set_reset_stream_at_size (struct lsquic_stream *s, uint8_t sz)
+{
+    if (!s || !sz || !(s->sm_bflags & SMBF_IETF)
+        || !s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return;
+
+    s->sm_reset_stream_at_sz = sz;
+    s->sm_bflags |= SMBF_DELAY_ONCLOSE;
+}
+
+
+int
+lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
+{
+    const struct transport_params *params;
+
+    if (sz > ((1ULL << (sizeof(s->sm_reset_stream_at_sz) * 8)) - 1))
+        return -1;
+    if (!(s->sm_bflags & SMBF_IETF))
+        return -1;
+    if (!s->conn_pub->enpub->enp_settings.es_reset_stream_at)
+        return -1;
+    if (s->tosend_off < sz)
+        return -1;
+    if (!s->conn_pub->lconn->cn_esf.i
+            || !s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params)
+        return -1;
+
+    params = s->conn_pub->lconn->cn_esf.i->esfi_get_peer_transport_params(
+                                                s->conn_pub->lconn->cn_enc_session);
+    if (!params || !(params->tp_set & (1 << TPI_RESET_STREAM_AT)))
+        return -1;
+
+    lsquic_stream_set_reset_stream_at_size(s, (uint8_t) sz);
+    return 0;
+}
 
 int
 lsquic_stream_close (lsquic_stream_t *stream)
@@ -4438,10 +5149,12 @@ lsquic_stream_acked (struct lsquic_stream *stream,
     {
         --stream->n_unacked;
         LSQ_DEBUG("ACKed; n_unacked: %u", stream->n_unacked);
-        if (frame_type == QUIC_FRAME_RST_STREAM)
+        if (frame_type == QUIC_FRAME_RST_STREAM
+                        || frame_type == QUIC_FRAME_RESET_STREAM_AT)
         {
             SM_HISTORY_APPEND(stream, SHE_RST_ACKED);
-            LSQ_DEBUG("RESET that we sent has been acked by peer");
+            LSQ_DEBUG("%s that we sent has been acked by peer",
+                      frame_type_2_str[frame_type]);
             stream->stream_flags |= STREAM_RST_ACKED;
         }
     }
@@ -4931,23 +5644,23 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 break;
             filter->hqfi_flags |= HQFI_FLAG_BEGIN;
             filter->hqfi_state = HQFI_STATE_READING_PAYLOAD;
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-            if(stream->conn_pub->enpub->enp_settings.es_webtransport_server) {
-                // 4.2.  Bidirectional Streams, https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/05/
-#define WEBTRANSPORT_BIDI_STREAM_TYPE (0x41)
-                if(filter->hqfi_type == WEBTRANSPORT_BIDI_STREAM_TYPE) {
-                    // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
-                    // flag for webtransport_session_stream_id stream in app code
-                    stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
-                    stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
-                    // disable header processing as we will not have any headers for this stream anymore
-                    stream->sm_bflags &= ~SMBF_USE_HEADERS;
-                    filter->hqfi_type = HQFT_DATA;
-                    filter->hqfi_left = UINT64_MAX; // set data size infinite to keep processing till stream reset
-                    goto end;
-                }
+            if (stream->conn_pub->cp_is_hq_switch_frame
+                && stream->conn_pub->cp_is_hq_switch_frame(stream,
+                                filter->hqfi_type, filter->hqfi_switch_stream_id))
+            {
+                lsquic_stream_mark_switch_client_bidi(stream,
+                                                filter->hqfi_switch_stream_id);
+                lsquic_stream_set_reset_stream_at_size(stream, (uint8_t) (
+                    vint_size(filter->hqfi_type)
+                  + vint_size(filter->hqfi_switch_stream_id)));
+                stream->stream_flags |= STREAM_SWITCH_PENDING;
+                /* Switch from framed parsing to raw DATA for this stream. */
+                stream->sm_bflags &= ~SMBF_USE_HEADERS;
+                stream->sm_write_avail = stream_write_avail_no_frames;
+                filter->hqfi_type = HQFT_DATA;
+                filter->hqfi_left = UINT64_MAX;
+                goto end;
             }
-#endif
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);
@@ -5138,6 +5851,14 @@ hq_filter_readable (struct lsquic_stream *stream)
             }
             return 0;
         }
+    }
+
+    if (stream->stream_flags & STREAM_SWITCH_PENDING)
+    {
+        stream->stream_flags &= ~STREAM_SWITCH_PENDING;
+        if (stream->conn_pub->cp_on_hq_switch_stream)
+            stream->conn_pub->cp_on_hq_switch_stream(stream,
+                                    stream->sm_switch_stream_id);
     }
 
     return hq_filter_readable_now(stream);
@@ -5608,4 +6329,404 @@ int
 lsquic_stream_has_unacked_data (struct lsquic_stream *stream)
 {
     return stream->n_unacked > 0 || stream->sm_n_buffered > 0;
+}
+
+/* RFC 9297, Section 3.2: Datagram Capsule type is 0x00. */
+#define H3_CAPSULE_DATAGRAM 0x00
+
+static void
+stream_reset_http_dg_capsule (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_read_state *rd;
+
+    if (!stream->sm_http_dg)
+        return;
+
+    rd = &stream->sm_http_dg->read;
+    rd->state = HDC_READ_TYPE;
+    rd->type_state.pos = 0;
+    rd->len_state.pos = 0;
+    rd->type = 0;
+    rd->length = 0;
+    rd->offset = 0;
+    rd->buf = NULL;
+    rd->buf_sz = 0;
+}
+
+static void
+stream_abort_http_dg_capsule (struct lsquic_stream *stream, const char *reason)
+{
+    struct http_dg_capsule_read_state *rd;
+    struct lsquic_conn *lconn = stream->conn_pub->lconn;
+
+    if (stream->sm_http_dg)
+    {
+        rd = &stream->sm_http_dg->read;
+        free(rd->buf);
+        rd->buf = NULL;
+    }
+    lconn->cn_if->ci_abort_error(lconn, 1, HEC_DATAGRAM_ERROR,
+        "%s on stream %"PRIu64, reason, stream->id);
+}
+
+
+static void
+(*select_on_dg_read (struct lsquic_stream *stream))
+    (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, const void *buf,
+                                                                size_t buf_sz)
+{
+    const struct lsquic_http_dg_if *dg_if;
+
+    dg_if = lsquic_conn_http_dg_get_if(stream->conn_pub, stream->id);
+    if (dg_if && dg_if->on_http_dg_read)
+        return dg_if->on_http_dg_read;
+    else if (stream->stream_if && stream->stream_if->on_http_dg_read)
+        return stream->stream_if->on_http_dg_read;
+    else
+        return NULL;
+}
+
+
+static void
+http_dg_capsule_datagram_cb (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+    uint64_t UNUSED_capsule_type, const void *payload, size_t payload_len)
+{
+    void (*on_dg_read)(lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
+                        const void *buf, size_t buf_sz);
+
+    on_dg_read = select_on_dg_read(stream);
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_RECV);
+    LSQ_DEBUG("HTTP DG capsule received on stream %"PRIu64" size %zu",
+        stream->id, payload_len);
+    if (on_dg_read)
+        on_dg_read(stream, h, payload, payload_len);
+    else
+        LSQ_DEBUG("no callback for HTTP datagram on stream "
+            "%"PRIu64"; drop on floor", stream->id);
+}
+
+
+static size_t
+http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
+{
+    struct lsquic_stream *stream = ctx;
+    struct http_dg_capsule_read_state *rd;
+    const unsigned char *p = buf;
+    const unsigned char *end = buf + len;
+    struct varint_read_state *vrs;
+    size_t avail, to_copy;
+    lsquic_capsule_read_f on_capsule;
+    int s;
+
+    if (!stream->sm_http_dg)
+        return 0;
+
+    rd = &stream->sm_http_dg->read;
+    while (p < end)
+    {
+        switch (rd->state)
+        {
+        case HDC_READ_TYPE:
+            /* RFC 9297, Section 3: Capsule fields are varint-encoded. */
+            vrs = &rd->type_state;
+            s = lsquic_varint_read_nb(&p, end, vrs);
+            if (s < 0)
+                goto end;
+            rd->type = vrs->val;
+            rd->state = HDC_READ_LENGTH;
+            rd->len_state.pos = 0;
+            break;
+        case HDC_READ_LENGTH:
+            /* RFC 9297, Section 3: Capsule length is varint-encoded. */
+            vrs = &rd->len_state;
+            s = lsquic_varint_read_nb(&p, end, vrs);
+            if (s < 0)
+                goto end;
+            rd->length = vrs->val;
+            rd->offset = 0;
+            if (rd->length > SIZE_MAX)
+            {
+                stream_abort_http_dg_capsule(stream,
+                        "capsule length too large");
+                goto end;
+            }
+            on_capsule = stream_find_capsule_cb(stream, rd->type);
+            if (on_capsule)
+            {
+                unsigned max_sz;
+
+                max_sz = stream->conn_pub->enpub->enp_settings
+                                        .es_http_dg_max_capsule_read_size;
+                if (rd->length > max_sz)
+                {
+                    stream_abort_http_dg_capsule(stream,
+                        "capsule length exceeds configured maximum");
+                    goto end;
+                }
+                rd->buf_sz = (size_t) rd->length;
+                if (rd->buf_sz)
+                {
+                    rd->buf = malloc(rd->buf_sz);
+                    if (!rd->buf)
+                    {
+                        stream_abort_http_dg_capsule(stream,
+                                "cannot allocate capsule buffer");
+                        goto end;
+                    }
+                }
+            }
+            rd->state = HDC_READ_PAYLOAD;
+            break;
+        case HDC_READ_PAYLOAD:
+            avail = (size_t) (end - p);
+            to_copy = rd->length - rd->offset;
+            if (to_copy > avail)
+                to_copy = avail;
+            if (rd->buf_sz)
+                memcpy(rd->buf + rd->offset, p, to_copy);
+            rd->offset += to_copy;
+            p += to_copy;
+            if (rd->offset == rd->length)
+            {
+                on_capsule = stream_find_capsule_cb(stream, rd->type);
+                if (on_capsule)
+                    on_capsule(stream, stream->st_ctx, rd->type,
+                                                        rd->buf, rd->buf_sz);
+                else
+                    LSQ_DEBUG("no callback for capsule type 0x%"PRIX64
+                        " on stream %"PRIu64"; drop on floor",
+                        rd->type, stream->id);
+                free(rd->buf);
+                rd->buf = NULL;
+                stream_reset_http_dg_capsule(stream);
+            }
+            break;
+        }
+    }
+
+  end:
+    if (fin && rd->state != HDC_READ_TYPE)
+        stream_abort_http_dg_capsule(stream, "truncated capsule");
+    return len;
+}
+
+static void
+http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+    ssize_t nread;
+
+    nread = lsquic_stream_readf(stream, http_dg_capsule_readf, stream);
+    if (nread == 0 || (nread < 0 && errno != EWOULDBLOCK))
+        (void) lsquic_stream_wantread(stream, 0);
+}
+
+int
+lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream)
+{
+    return stream->sm_http_dg
+        && stream->sm_http_dg->write.header_len != 0;
+}
+
+static void
+http_dg_capsule_clear_pending (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_write_state *wr;
+
+    if (!stream->sm_http_dg)
+        return;
+
+    wr = &stream->sm_http_dg->write;
+    free(wr->buf);
+    wr->buf = NULL;
+    wr->buf_sz = 0;
+    wr->offset = 0;
+    wr->header_len = 0;
+}
+
+static int
+http_dg_capsule_try_write (struct lsquic_stream *stream)
+{
+    struct http_dg_capsule_write_state *wr;
+    struct iovec iov[2];
+    size_t total, off, header_len, payload_off;
+    int iovcnt;
+    ssize_t nw;
+
+    if (!stream->sm_http_dg)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    wr = &stream->sm_http_dg->write;
+    header_len = wr->header_len;
+    if (header_len == 0)
+        return 1;
+
+    total = header_len + wr->buf_sz;
+    off = wr->offset;
+    if (off >= total)
+        return 1;
+
+    if (off < header_len)
+    {
+        iov[0].iov_base = wr->header + off;
+        iov[0].iov_len = header_len - off;
+        iov[1].iov_base = wr->buf;
+        iov[1].iov_len = wr->buf_sz;
+        iovcnt = 2;
+    }
+    else
+    {
+        payload_off = off - header_len;
+        iov[0].iov_base = wr->buf + payload_off;
+        iov[0].iov_len = wr->buf_sz - payload_off;
+        iovcnt = 1;
+    }
+
+    nw = lsquic_stream_writev(stream, iov, iovcnt);
+    if (nw < 0)
+        return -1;
+    if (nw == 0)
+        return 0;
+
+    wr->offset += (size_t) nw;
+    if (wr->offset >= total)
+        return 1;
+
+    return 0;
+}
+
+int
+lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
+                                                    const void *buf, size_t sz)
+{
+    struct http_dg_capsule_write_state *wr;
+    unsigned char header[16];
+    unsigned max_sz;
+    uint64_t bits;
+    size_t header_len;
+    if (!stream->sm_http_dg)
+    {
+        stream->sm_http_dg = calloc(1, sizeof(*stream->sm_http_dg));
+        if (!stream->sm_http_dg)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+
+    if (lsquic_stream_http_dg_capsule_pending(stream))
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    max_sz = stream->conn_pub->enpub->enp_settings
+                                    .es_http_dg_max_capsule_write_size;
+    if (max_sz == 0 || sz > max_sz)
+    {
+        errno = EMSGSIZE;
+        return -1;
+    }
+
+    if (sz > VINT_MAX_VALUE)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* RFC 9297, Section 3.2: Capsule type and length are varint-encoded. */
+    bits = vint_val2bits(H3_CAPSULE_DATAGRAM);
+    header_len = 1u << bits;
+    vint_write(header, H3_CAPSULE_DATAGRAM, bits, header_len);
+    bits = vint_val2bits(sz);
+    vint_write(header + header_len, sz, bits, 1u << bits);
+    header_len += 1u << bits;
+
+    wr = &stream->sm_http_dg->write;
+    wr->buf = NULL;
+    if (sz)
+    {
+        /* Copy payload; possible optimization via SMBF_RW_ONCE remains. */
+        wr->buf = malloc(sz);
+        if (!wr->buf)
+        {
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy(wr->buf, buf, sz);
+    }
+    wr->buf_sz = sz;
+    memcpy(wr->header, header, header_len);
+    wr->header_len = header_len;
+    wr->offset = 0;
+    LSQ_DEBUG("HTTP DG capsule queued on stream %"PRIu64" size %zu",
+        stream->id, sz);
+    if (lsquic_stream_wantwrite(stream, 1) != 0)
+    {
+        http_dg_capsule_clear_pending(stream);
+        return -1;
+    }
+    return 0;
+}
+
+static void
+http_dg_capsule_on_write (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
+{
+    int rc;
+
+    rc = http_dg_capsule_try_write(stream);
+    if (rc < 0)
+        return;
+    if (rc == 0)
+        return;
+
+    http_dg_capsule_clear_pending(stream);
+    SM_HISTORY_APPEND(stream, SHE_HTTP_DG_SEND);
+    LSQ_DEBUG("HTTP DG capsule flushed on stream %"PRIu64, stream->id);
+    (void) lsquic_stream_wantwrite(stream, 0);
+    (void) lsquic_stream_flush(stream);
+}
+
+
+struct lsquic_conn_public *
+lsquic_stream_get_conn_public (const struct lsquic_stream *stream)
+{
+    return stream->conn_pub;
+}
+
+
+void *
+lsquic_stream_get_attachment (const struct lsquic_stream *stream)
+{
+    return stream->sm_attachment;
+}
+
+
+void
+lsquic_stream_set_attachment (struct lsquic_stream *stream, void *attachment)
+{
+    stream->sm_attachment = attachment;
+}
+
+
+int
+lsquic_stream_is_server (const struct lsquic_stream *stream)
+{
+    return (stream->sm_bflags & SMBF_SERVER) != 0;
+}
+
+
+int
+lsquic_stream_headers_state_is_begin (const struct lsquic_stream *stream)
+{
+    return stream->sm_send_headers_state == SSHS_BEGIN;
+}
+
+
+const struct lsquic_stream_if *
+lsquic_stream_get_stream_if (const struct lsquic_stream *stream)
+{
+    return stream->stream_if;
 }

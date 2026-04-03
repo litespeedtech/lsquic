@@ -46,7 +46,8 @@
 #include "prog.h"
 #include "lsxpack_header.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "test_common"
+#include "tool_log.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -2211,7 +2212,24 @@ set_engine_option (struct lsquic_engine_settings *settings,
             return 0;
         }
         break;
+    case 19:
+        if (0 == strncmp(name, "write_datagram_prio", 19))
+        {
+            settings->es_write_datagram_prio = atoi(val);
+            return 0;
+        }
+        break;
     case 20:
+        if (0 == strncmp(name, "write_sched_strategy", 20))
+        {
+            settings->es_write_sched_strategy = atoi(val);
+            return 0;
+        }
+        if (0 == strncmp(name, "write_datagram_share", 20))
+        {
+            settings->es_write_datagram_share = atof(val);
+            return 0;
+        }
         if (0 == strncmp(name, "max_header_list_size", 20))
         {
             settings->es_max_header_list_size = atoi(val);
