@@ -70,7 +70,7 @@ static const uint64_t salts[N_TOKEN_TYPES] =
     [TOKEN_RESUME] = 0x0b3664549086b8ca,
 };
 
-#if __GNUC__
+#if __GNUC__ >= 8
 __attribute__((nonstring))
 #endif
 static const uint8_t srst_salt[8] = "\x28\x6e\x81\x02\x40\x5b\x2c\x2b";

@@ -207,6 +207,39 @@ run_test (const struct test *test)
     compare_ackis(&test->acki, &acki);
 }
 
+
+static void
+test_ack_block_count_expansion_regression (void)
+{
+    const struct parse_funcs *pf;
+    struct ack_info acki;
+    struct rechist rechist;
+    lsquic_packno_t largest_received;
+    unsigned char buf[140];
+    size_t outbuf_sz;
+    unsigned i;
+    int len, has_missing;
+
+    pf = select_pf_by_ver(LSQVER_I001);
+    memset(&acki, 0, sizeof(acki));
+    acki.n_ranges = 65;
+    for (i = 0; i < acki.n_ranges; ++i)
+        acki.ranges[i].high = acki.ranges[i].low = 128 - i * 2;
+
+    memset(buf, 0xA5, sizeof(buf));
+    outbuf_sz = 134;
+    rechist.acki = &acki;
+    len = pf->pf_gen_ack_frame(buf, outbuf_sz, rechist_first, rechist_next,
+        rechist_largest_recv, &rechist, now, &has_missing, &largest_received,
+        NULL);
+    assert(len > 0);
+    assert((size_t) len <= outbuf_sz);
+    assert(buf[outbuf_sz] == 0xA5);
+    assert(largest_received == acki.ranges[0].high);
+    assert(has_missing);
+}
+
+
 int
 main (void)
 {
@@ -214,6 +247,7 @@ main (void)
 
     for (test = tests; test < tests + sizeof(tests) / sizeof(tests[0]); ++test)
         run_test(test);
+    test_ack_block_count_expansion_regression();
 
     return 0;
 }
