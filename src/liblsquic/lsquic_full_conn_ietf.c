@@ -417,12 +417,13 @@ static const struct prio_iter_if ext_prio_iter_if = {
 };
 
 struct ietf_full_conn;
+typedef int (*write_dispatch_f)(struct ietf_full_conn *);
 static int do_write_buffered_high_prio (struct ietf_full_conn *conn);
 static int do_write_events_high_prio (struct ietf_full_conn *conn);
 static int do_write_buffered_other_prio (struct ietf_full_conn *conn);
 static int do_write_events_low_prio (struct ietf_full_conn *conn);
 
-static int (*const fixed_write_non_dg[])(struct ietf_full_conn *) = {
+static write_dispatch_f const fixed_write_non_dg[] = {
     do_write_buffered_high_prio,
     do_write_events_high_prio,
     do_write_buffered_other_prio,
@@ -575,15 +576,14 @@ struct ietf_full_conn
     lsquic_time_t               ifc_idle_to;
     lsquic_time_t               ifc_ping_period;
     lsquic_time_t               ifc_last_tick;
-    int                       (*ifc_write_dispatch)(struct ietf_full_conn *);
+    write_dispatch_f            ifc_write_dispatch;
     float                       ifc_write_datagram_share;
     uint64_t                    ifc_write_budget;
     uint64_t                    ifc_write_budget_start;
     unsigned char               ifc_write_budget_active;
     union {
         struct {
-            int               (*ifwf_do_write[FWSC_N_CLASSES])(
-                                                struct ietf_full_conn *);
+            write_dispatch_f  ifwf_do_write[FWSC_N_CLASSES];
         }                       fixed;
         struct {
             unsigned            ifwdrr_next_class;
@@ -9253,9 +9253,6 @@ do_write_datagram (struct ietf_full_conn *conn)
             return 1;
     return 0;
 }
-
-
-typedef int (*write_dispatch_f)(struct ietf_full_conn *);
 
 
 static int
