@@ -423,15 +423,20 @@ static int do_write_events_high_prio (struct ietf_full_conn *conn);
 static int do_write_buffered_other_prio (struct ietf_full_conn *conn);
 static int do_write_events_low_prio (struct ietf_full_conn *conn);
 
-static write_dispatch_f const fixed_write_non_dg[] = {
+/* The functions for writing STREAM frames are ordered here by priority */
+static write_dispatch_f const write_stream_funcs[] = {
     do_write_buffered_high_prio,
     do_write_events_high_prio,
     do_write_buffered_other_prio,
     do_write_events_low_prio,
 };
 
-#define FWSC_N_CLASSES ((unsigned) (sizeof(fixed_write_non_dg) \
-                                / sizeof(fixed_write_non_dg[0]) + 1))
+/* In addition to the stream-writing functions above, there is a function
+ * for writing datagrams.  Together, they are put together in an array
+ * for the fixed (the "F" in "FW" below) writing strategy.
+ */
+#define ALL_FW_COUNT ((unsigned) (sizeof(write_stream_funcs) \
+                                / sizeof(write_stream_funcs[0]) + 1))
 
 enum drr_write_class
 {
@@ -549,6 +554,7 @@ struct ietf_full_conn
     unsigned                    ifc_max_ack_freq_seqno; /* Incoming */
     unsigned short              ifc_min_dg_sz,
                                 ifc_max_dg_sz;
+    float                       ifc_write_datagram_share;
     lsquic_time_t               ifc_last_live_update;
     struct conn_path            ifc_paths[N_PATHS];
     union {
@@ -577,29 +583,27 @@ struct ietf_full_conn
     lsquic_time_t               ifc_ping_period;
     lsquic_time_t               ifc_last_tick;
     write_dispatch_f            ifc_write_dispatch;
-    float                       ifc_write_datagram_share;
     union {
         struct {
-            write_dispatch_f  ifwf_do_write[FWSC_N_CLASSES];
+            write_dispatch_f    ifwf_do_write[ALL_FW_COUNT];
+            unsigned            ifwf_count;
         }                       fixed;
         struct {
+            uint64_t            ifwdrr_budget;
+            uint64_t            ifwdrr_budget_start;
+            uint64_t            ifwdrr_deficit[DWSC_N_CLASSES];
             unsigned            ifwdrr_blocked_accum;
             unsigned            ifwdrr_weight[DWSC_N_CLASSES];
             unsigned char       ifwdrr_next_class;
             unsigned char       ifwdrr_budget_active;
-            uint64_t            ifwdrr_budget;
-            uint64_t            ifwdrr_budget_start;
-            uint64_t            ifwdrr_deficit[DWSC_N_CLASSES];
         }                       drr;
     }                           ifc_write_sched;
-#if LSQUIC_CONN_STATS
-    uint64_t                    ifc_write_class_sent_bytes[DWSC_N_CLASSES];
-#endif
     struct lsquic_hash         *ifc_bpus;
     uint64_t                    ifc_last_max_data_off_sent;
     struct packet_tolerance_stats
                                 ifc_pts;
 #if LSQUIC_CONN_STATS
+    uint64_t                    ifc_write_class_sent_bytes[DWSC_N_CLASSES];
     struct conn_stats           ifc_stats,
                                *ifc_last_stats;
 #endif
@@ -9326,7 +9330,7 @@ do_write_fixed (struct ietf_full_conn *conn)
 #endif
     unsigned i;
 
-    for (i = 0; i < FWSC_N_CLASSES; ++i)
+    for (i = 0; i < conn->ifc_write_sched.fixed.ifwf_count; ++i)
     {
 #if LSQUIC_CONN_STATS
         scheduled_before = conn->ifc_send_ctl.sc_bytes_scheduled;
@@ -9414,11 +9418,23 @@ static void
 log_write_sched_stats (const struct ietf_full_conn *conn)
 {
     enum drr_write_class class_id;
+    uint64_t total = 0;
 
     for (class_id = 0; class_id < DWSC_N_CLASSES; ++class_id)
+    {
         LSQ_NOTICE("write scheduler class bytes: class=%s bytes=%"PRIu64,
             write_sched_class_str[class_id],
             conn->ifc_write_class_sent_bytes[class_id]);
+        total += conn->ifc_write_class_sent_bytes[class_id];
+    }
+
+    /* There are only two classes for now and we are interested in the
+     * datagram share -- log it explicitly for ease:
+     */
+    if (total)
+        LSQ_NOTICE("datagram target share: %.3f; actual share: %.3f",
+            conn->ifc_write_datagram_share,
+            conn->ifc_write_class_sent_bytes[DWSC_DATAGRAM] / (float) total);
 }
 #endif
 
@@ -9428,19 +9444,37 @@ set_write_datagram_priority (struct ietf_full_conn *conn, unsigned prio)
 {
     unsigned src, dst;
 
-    if (prio >= FWSC_N_CLASSES)
+    if (prio >= ALL_FW_COUNT)
     {
         LSQ_WARN("invalid write datagram priority %u: ignore", prio);
         return;
     }
 
-    for (src = 0, dst = 0; dst < FWSC_N_CLASSES; ++dst)
+    for (src = 0, dst = 0; dst < ALL_FW_COUNT; ++dst)
         if (dst == prio)
             conn->ifc_write_sched.fixed.ifwf_do_write[dst] = do_write_datagram;
         else
             conn->ifc_write_sched.fixed.ifwf_do_write[dst]
-                                                = fixed_write_non_dg[src++];
-    assert(src == sizeof(fixed_write_non_dg) / sizeof(fixed_write_non_dg[0]));
+                                                = write_stream_funcs[src++];
+    assert(src == sizeof(write_stream_funcs) / sizeof(write_stream_funcs[0]));
+    conn->ifc_write_sched.fixed.ifwf_count = ALL_FW_COUNT;
+}
+
+
+/* Optimization: if datagrams are not supported, do not call that function */
+static void
+init_do_write_stream_only (struct ietf_full_conn *conn)
+{
+    set_write_datagram_priority(conn, ALL_FW_COUNT - 1);
+    conn->ifc_write_sched.fixed.ifwf_count = ALL_FW_COUNT - 1;
+}
+
+
+static int
+can_write_datagrams (const struct ietf_full_conn *conn)
+{
+    return (conn->ifc_flags & IFC_DATAGRAMS)
+        || (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS);
 }
 
 
@@ -9449,10 +9483,10 @@ get_write_datagram_priority (const struct ietf_full_conn *conn)
 {
     unsigned i;
 
-    for (i = 0; i < FWSC_N_CLASSES; ++i)
+    for (i = 0; i < ALL_FW_COUNT; ++i)
         if (conn->ifc_write_sched.fixed.ifwf_do_write[i] == do_write_datagram)
             return i;
-    return FWSC_N_CLASSES;
+    return ALL_FW_COUNT;
 }
 
 
@@ -9493,7 +9527,10 @@ set_drr_weights_from_share (struct ietf_full_conn *conn, float share)
 static void
 init_write_sched_fixed (struct ietf_full_conn *conn)
 {
-    set_write_datagram_priority(conn, conn->ifc_settings->es_write_datagram_prio);
+    if (can_write_datagrams(conn))
+        set_write_datagram_priority(conn, conn->ifc_settings->es_write_datagram_prio);
+    else
+        init_do_write_stream_only(conn);
     conn->ifc_write_datagram_share = conn->ifc_settings->es_write_datagram_share;
     conn->ifc_write_dispatch = do_write_fixed;
 }
@@ -9502,7 +9539,10 @@ init_write_sched_fixed (struct ietf_full_conn *conn)
 static void
 init_write_sched_fixed_default (struct ietf_full_conn *conn)
 {
-    set_write_datagram_priority(conn, LSQUIC_DF_WRITE_DATAGRAM_PRIO);
+    if (can_write_datagrams(conn))
+        set_write_datagram_priority(conn, LSQUIC_DF_WRITE_DATAGRAM_PRIO);
+    else
+        init_do_write_stream_only(conn);
     conn->ifc_write_datagram_share = LSQUIC_DF_WRITE_DATAGRAM_SHARE;
     conn->ifc_write_dispatch = do_write_fixed;
 }
@@ -10224,16 +10264,26 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         set_write_sched_strategy(conn, strategy);
         return 0;
     case LSQCP_WRITE_DATAGRAM_PRIO:
+        if (!(conn->ifc_flags & IFC_DATAGRAMS))
+        {
+            LSQ_WARN("datagrams are not enabled: cannot set write priority");
+            return -1;
+        }
         if (value_len != sizeof(datagram_prio))
             return -1;
         if (conn->ifc_write_dispatch != do_write_fixed)
             return -1;
         memcpy(&datagram_prio, value, sizeof(datagram_prio));
-        if (datagram_prio >= FWSC_N_CLASSES)
+        if (datagram_prio >= ALL_FW_COUNT)
             return -1;
         set_write_datagram_priority(conn, datagram_prio);
         return 0;
     case LSQCP_WRITE_DATAGRAM_SHARE:
+        if (!(conn->ifc_flags & IFC_DATAGRAMS))
+        {
+            LSQ_WARN("datagrams are not enabled: cannot set datagram share");
+            return -1;
+        }
         if (value_len != sizeof(datagram_share))
             return -1;
         memcpy(&datagram_share, value, sizeof(datagram_share));
@@ -10318,7 +10368,7 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         if (conn->ifc_write_dispatch != do_write_fixed)
             return -1;
         datagram_prio = get_write_datagram_priority(conn);
-        if (datagram_prio >= FWSC_N_CLASSES)
+        if (datagram_prio >= ALL_FW_COUNT)
             return -1;
         memcpy(value, &datagram_prio, sizeof(datagram_prio));
         *value_len = sizeof(datagram_prio);
@@ -10766,6 +10816,9 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
             conn->ifc_pub.cp_flags |= CP_HTTP_DATAGRAMS;
         else
             conn->ifc_pub.cp_flags &= ~CP_HTTP_DATAGRAMS;
+        if (conn->ifc_write_dispatch == do_write_fixed && enable)
+            set_write_datagram_priority(conn,
+                                conn->ifc_settings->es_write_datagram_prio);
         update_datagram_want(conn);
         update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_H3_DATAGRAM=%"PRIu64, value);
