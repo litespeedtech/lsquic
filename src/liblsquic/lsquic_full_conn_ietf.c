@@ -10264,11 +10264,6 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         set_write_sched_strategy(conn, strategy);
         return 0;
     case LSQCP_WRITE_DATAGRAM_PRIO:
-        if (!(conn->ifc_flags & IFC_DATAGRAMS))
-        {
-            LSQ_WARN("datagrams are not enabled: cannot set write priority");
-            return -1;
-        }
         if (value_len != sizeof(datagram_prio))
             return -1;
         if (conn->ifc_write_dispatch != do_write_fixed)
@@ -10279,11 +10274,6 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         set_write_datagram_priority(conn, datagram_prio);
         return 0;
     case LSQCP_WRITE_DATAGRAM_SHARE:
-        if (!(conn->ifc_flags & IFC_DATAGRAMS))
-        {
-            LSQ_WARN("datagrams are not enabled: cannot set datagram share");
-            return -1;
-        }
         if (value_len != sizeof(datagram_share))
             return -1;
         memcpy(&datagram_share, value, sizeof(datagram_share));
