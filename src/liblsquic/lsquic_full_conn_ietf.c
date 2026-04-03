@@ -578,17 +578,17 @@ struct ietf_full_conn
     lsquic_time_t               ifc_last_tick;
     write_dispatch_f            ifc_write_dispatch;
     float                       ifc_write_datagram_share;
-    uint64_t                    ifc_write_budget;
-    uint64_t                    ifc_write_budget_start;
-    unsigned char               ifc_write_budget_active;
     union {
         struct {
             write_dispatch_f  ifwf_do_write[FWSC_N_CLASSES];
         }                       fixed;
         struct {
-            unsigned            ifwdrr_next_class;
+            unsigned char       ifwdrr_next_class;
             unsigned char       ifwdrr_blocked_accum;
             unsigned char       ifwdrr_weight[DWSC_N_CLASSES];
+            unsigned char       ifwdrr_budget_active;
+            uint64_t            ifwdrr_budget;
+            uint64_t            ifwdrr_budget_start;
             uint64_t            ifwdrr_deficit[DWSC_N_CLASSES];
         }                       drr;
     }                           ifc_write_sched;
@@ -698,6 +698,9 @@ set_write_datagram_share (struct ietf_full_conn *conn, float share);
 
 static void
 set_drr_weights_from_share (struct ietf_full_conn *conn, float share);
+
+static int
+do_write_drr (struct ietf_full_conn *conn);
 
 #if LSQUIC_CONN_STATS
 static void
@@ -4834,9 +4837,10 @@ maybe_conn_flush_special_streams (struct ietf_full_conn *conn)
 static uint64_t
 write_budget_used (const struct ietf_full_conn *conn)
 {
-    if (conn->ifc_send_ctl.sc_bytes_scheduled > conn->ifc_write_budget_start)
+    if (conn->ifc_send_ctl.sc_bytes_scheduled
+                        > conn->ifc_write_sched.drr.ifwdrr_budget_start)
         return conn->ifc_send_ctl.sc_bytes_scheduled
-                                        - conn->ifc_write_budget_start;
+                                - conn->ifc_write_sched.drr.ifwdrr_budget_start;
     else
         return 0;
 }
@@ -4845,26 +4849,28 @@ write_budget_used (const struct ietf_full_conn *conn)
 static void
 write_budget_set (struct ietf_full_conn *conn, uint64_t budget)
 {
-    conn->ifc_write_budget = budget;
-    conn->ifc_write_budget_start = conn->ifc_send_ctl.sc_bytes_scheduled;
-    conn->ifc_write_budget_active = 1;
+    conn->ifc_write_sched.drr.ifwdrr_budget = budget;
+    conn->ifc_write_sched.drr.ifwdrr_budget_start =
+                                        conn->ifc_send_ctl.sc_bytes_scheduled;
+    conn->ifc_write_sched.drr.ifwdrr_budget_active = 1;
 }
 
 
 static void
 write_budget_clear (struct ietf_full_conn *conn)
 {
-    conn->ifc_write_budget_active = 0;
-    conn->ifc_write_budget = 0;
-    conn->ifc_write_budget_start = 0;
+    conn->ifc_write_sched.drr.ifwdrr_budget_active = 0;
+    conn->ifc_write_sched.drr.ifwdrr_budget = 0;
+    conn->ifc_write_sched.drr.ifwdrr_budget_start = 0;
 }
 
 
 static int
 write_budget_is_exhausted (const struct ietf_full_conn *conn)
 {
-    return conn->ifc_write_budget_active
-        && write_budget_used(conn) >= conn->ifc_write_budget;
+    return conn->ifc_write_dispatch == do_write_drr
+        && conn->ifc_write_sched.drr.ifwdrr_budget_active
+        && write_budget_used(conn) >= conn->ifc_write_sched.drr.ifwdrr_budget;
 }
 
 
