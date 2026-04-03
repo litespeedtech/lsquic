@@ -1384,6 +1384,31 @@ Stream Callback Interface
 The stream callback interface structure lists the callbacks used by
 the engine to communicate with the user code:
 
+.. type:: enum lsquic_http_cap_flags
+
+    Effective HTTP capability flags delivered via
+    :member:`lsquic_stream_if.on_http_caps`.
+
+    .. member:: LSQUIC_HTTP_CAP_DATAGRAMS
+
+        HTTP Datagrams are negotiated and usable.
+
+    .. member:: LSQUIC_HTTP_CAP_CONNECT_PROTOCOL
+
+        Extended CONNECT is negotiated and usable.
+
+    .. member:: LSQUIC_HTTP_CAP_WEBTRANSPORT
+
+        WebTransport is negotiated and usable.
+
+.. type:: struct lsquic_http_caps
+
+    Effective HTTP capabilities after peer SETTINGS are processed.
+
+    .. member:: uint32_t lhc_flags
+
+        Bitmask of :type:`lsquic_http_cap_flags`.
+
 .. type:: struct lsquic_stream_if
 
     .. member:: lsquic_conn_ctx_t *(*on_new_conn)(void *stream_if_ctx, lsquic_conn_t *)
@@ -1459,6 +1484,13 @@ the engine to communicate with the user code:
     .. member:: void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s)
 
         When handshake is completed, this callback is called.
+
+        This callback is optional.
+
+    .. member:: void (*on_http_caps)(lsquic_conn_t *c, const struct lsquic_http_caps *caps)
+
+        Called when peer HTTP SETTINGS are processed and effective HTTP
+        capabilities are known.
 
         This callback is optional.
 

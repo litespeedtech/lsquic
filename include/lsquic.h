@@ -258,6 +258,7 @@ struct lsquic_stream_if {
     /**
      * Called when peer HTTP SETTINGS are processed and effective HTTP
      * capabilities are known.
+     * This callback is optional.
      */
     void (*on_http_caps)(lsquic_conn_t *c, const struct lsquic_http_caps *);
     /**
@@ -562,11 +563,6 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Default datagram class priority in fixed scheduler. */
 #define LSQUIC_DF_WRITE_DATAGRAM_PRIO 2
-
-/* DRR weight cap: keeps per-class quantum/deficit bursts bounded while
- * preserving enough granularity for meaningful class shares.
- */
-#define LSQUIC_WRITE_WEIGHT_MAX 64
 
 /** Default DRR datagram share. */
 #define LSQUIC_DF_WRITE_DATAGRAM_SHARE 0.30f
