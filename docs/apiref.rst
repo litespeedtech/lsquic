@@ -982,18 +982,12 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_WRITE_DATAGRAM_PRIO`
 
-    .. member:: unsigned char   es_write_class_weight[LSQWSC_N_CLASSES]
+    .. member:: float           es_write_datagram_share
 
-       DRR class weights used to derive per-class quantum.
-       Weight values must be in [1, :macro:`LSQUIC_WRITE_WEIGHT_MAX`].
+       DATAGRAM share used by DRR scheduler.
+       Must be in [0.0, 1.0].
 
-       Default values are:
-
-       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH`
-       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH`
-       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM`
-       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER`
-       - :macro:`LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW`
+       Default value is :macro:`LSQUIC_DF_WRITE_DATAGRAM_SHARE`
 
 To initialize the settings structure to library defaults, use the following
 convenience function:
@@ -1258,15 +1252,11 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_WRITE_WEIGHT_MAX
 
-    Maximum allowed DRR class weight.  Default cap is 64.
+    Internal DRR weight cap used to derive stream/datagram quanta.
 
-.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH
-.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH
-.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM
-.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER
-.. macro:: LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW
+.. macro:: LSQUIC_DF_WRITE_DATAGRAM_SHARE
 
-    Default DRR class weights.
+    Default DATAGRAM share in DRR mode.
 
 Receiving Packets
 -----------------
@@ -2219,28 +2209,6 @@ available through engine settings.
 
         Deficit round-robin class dispatch.
 
-.. type:: enum lsquic_write_sched_class
-
-    Write scheduler classes.
-
-    .. member:: LSQWSC_BUFFERED_HIGH
-    .. member:: LSQWSC_EVENTS_HIGH
-    .. member:: LSQWSC_DATAGRAM
-    .. member:: LSQWSC_BUFFERED_OTHER
-    .. member:: LSQWSC_EVENTS_LOW
-
-.. type:: struct lsquic_write_sched_class_weight
-
-    Per-class DRR weight pair used with :member:`LSQCP_WRITE_CLASS_WEIGHT`.
-
-    .. member:: enum lsquic_write_sched_class wscw_class
-
-        Class whose weight to set or query.
-
-    .. member:: unsigned char wscw_weight
-
-        Weight value.  Valid range is 1 to :macro:`LSQUIC_WRITE_WEIGHT_MAX`.
-
 .. type:: enum lsquic_conn_param
 
     Connection parameter identifiers for use with :func:`lsquic_conn_set_param()`
@@ -2322,13 +2290,11 @@ available through engine settings.
 
         **Note:** valid only when strategy is :member:`LSQWSS_FIXED`.
 
-    .. member:: LSQCP_WRITE_CLASS_WEIGHT
+    .. member:: LSQCP_WRITE_DATAGRAM_SHARE
 
-        Set or query DRR weight for a single class.
+        Set or query DATAGRAM share for DRR mode.
 
-        **Type:** ``struct lsquic_write_sched_class_weight``
-
-        **Note:** valid only when strategy is :member:`LSQWSS_DRR`.
+        **Type:** ``float`` in [0.0, 1.0]
 
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
@@ -2370,19 +2336,16 @@ available through engine settings.
         lsquic_conn_set_param(conn, LSQCP_ENABLE_BW_SAMPLER,
                               &on, sizeof(on));
 
-    **Example - Switching to DRR and tuning datagram class weight:**
+    **Example - Switching to DRR and setting DATAGRAM share:**
 
     ::
 
         enum lsquic_write_sched_strategy strategy = LSQWSS_DRR;
-        struct lsquic_write_sched_class_weight cw = {
-            .wscw_class = LSQWSC_DATAGRAM,
-            .wscw_weight = 8,
-        };
+        float dg_share = 0.30f;
         lsquic_conn_set_param(conn, LSQCP_WRITE_SCHED_STRATEGY,
                               &strategy, sizeof(strategy));
-        lsquic_conn_set_param(conn, LSQCP_WRITE_CLASS_WEIGHT,
-                              &cw, sizeof(cw));
+        lsquic_conn_set_param(conn, LSQCP_WRITE_DATAGRAM_SHARE,
+                              &dg_share, sizeof(dg_share));
 
     **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
     via :member:`lsquic_engine_settings.es_pace_packets` for this parameter
@@ -2415,18 +2378,15 @@ available through engine settings.
                 printf("Max rate: %lu bytes/sec\\n", max_rate);
         }
 
-    **Example - Reading DRR weight of datagram class:**
+    **Example - Reading DATAGRAM share for DRR mode:**
 
     ::
 
-        struct lsquic_write_sched_class_weight cw = {
-            .wscw_class = LSQWSC_DATAGRAM,
-            .wscw_weight = 0,
-        };
-        size_t len = sizeof(cw);
-        if (lsquic_conn_get_param(conn, LSQCP_WRITE_CLASS_WEIGHT,
-                                  &cw, &len) == 0)
-            printf("Datagram class weight: %u\\n", (unsigned) cw.wscw_weight);
+        float dg_share = 0.f;
+        size_t len = sizeof(dg_share);
+        if (lsquic_conn_get_param(conn, LSQCP_WRITE_DATAGRAM_SHARE,
+                                  &dg_share, &len) == 0)
+            printf("Datagram share: %.2f\\n", dg_share);
 
 Miscellaneous Stream Functions
 ------------------------------

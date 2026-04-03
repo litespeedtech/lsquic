@@ -414,16 +414,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
     settings->es_write_sched_strategy = LSQUIC_DF_WRITE_SCHED_STRATEGY;
     settings->es_write_datagram_prio = LSQUIC_DF_WRITE_DATAGRAM_PRIO;
-    settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
-        = LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH;
-    settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
-        = LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH;
-    settings->es_write_class_weight[LSQWSC_DATAGRAM]
-        = LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM;
-    settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
-        = LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER;
-    settings->es_write_class_weight[LSQWSC_EVENTS_LOW]
-        = LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW;
+    settings->es_write_datagram_share = LSQUIC_DF_WRITE_DATAGRAM_SHARE;
 }
 
 
@@ -557,7 +548,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_write_datagram_prio >= LSQWSC_N_CLASSES)
+    if (settings->es_write_datagram_prio >= 5)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "invalid datagram write priority: "
@@ -565,31 +556,13 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (0 == settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
-        || 0 == settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
-        || 0 == settings->es_write_class_weight[LSQWSC_DATAGRAM]
-        || 0 == settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
-        || 0 == settings->es_write_class_weight[LSQWSC_EVENTS_LOW])
+    if (settings->es_write_datagram_share != settings->es_write_datagram_share
+        || settings->es_write_datagram_share < 0.f
+        || settings->es_write_datagram_share > 1.f)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "%s",
-                "write scheduler class weights must be non-zero");
-        return -1;
-    }
-    if (settings->es_write_class_weight[LSQWSC_BUFFERED_HIGH]
-                                                    > LSQUIC_WRITE_WEIGHT_MAX
-        || settings->es_write_class_weight[LSQWSC_EVENTS_HIGH]
-                                                    > LSQUIC_WRITE_WEIGHT_MAX
-        || settings->es_write_class_weight[LSQWSC_DATAGRAM]
-                                                    > LSQUIC_WRITE_WEIGHT_MAX
-        || settings->es_write_class_weight[LSQWSC_BUFFERED_OTHER]
-                                                    > LSQUIC_WRITE_WEIGHT_MAX
-        || settings->es_write_class_weight[LSQWSC_EVENTS_LOW]
-                                                    > LSQUIC_WRITE_WEIGHT_MAX)
-    {
-        if (err_buf)
-            snprintf(err_buf, err_buf_sz, "write scheduler class weights "
-                "must be between 1 and %u", LSQUIC_WRITE_WEIGHT_MAX);
+                "write datagram share must be in [0.0, 1.0]");
         return -1;
     }
 

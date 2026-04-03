@@ -225,11 +225,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 Write scheduler options:\n"
 "                   write_sched_strategy=0|1    # 0=fixed, 1=DRR\n"
 "                   write_datagram_prio=0..4\n"
-"                   write_class_weight_buffered_high=1..64\n"
-"                   write_class_weight_events_high=1..64\n"
-"                   write_class_weight_datagram=1..64\n"
-"                   write_class_weight_buffered_other=1..64\n"
-"                   write_class_weight_events_low=1..64\n"
+"                   write_datagram_share=0.0..1.0\n"
 "   -i USECS    Clock granularity in microseconds.  Defaults to %u.\n",
         LSQUIC_DF_CLOCK_GRANULARITY
     );

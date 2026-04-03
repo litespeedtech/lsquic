@@ -181,16 +181,6 @@ enum lsquic_write_sched_strategy
     LSQWSS_DRR,
 };
 
-enum lsquic_write_sched_class
-{
-    LSQWSC_BUFFERED_HIGH,
-    LSQWSC_EVENTS_HIGH,
-    LSQWSC_DATAGRAM,
-    LSQWSC_BUFFERED_OTHER,
-    LSQWSC_EVENTS_LOW,
-    LSQWSC_N_CLASSES,
-};
-
 typedef int (*lsquic_http_dg_consume_f)(lsquic_stream_t *s, const void *buf,
                                         size_t sz,
                                         enum lsquic_http_dg_send_mode mode);
@@ -561,12 +551,8 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  */
 #define LSQUIC_WRITE_WEIGHT_MAX 64
 
-/** Default DRR scheduler class weights. */
-#define LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_HIGH 5
-#define LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_HIGH 4
-#define LSQUIC_DF_WRITE_CLASS_WEIGHT_DATAGRAM 3
-#define LSQUIC_DF_WRITE_CLASS_WEIGHT_BUFFERED_OTHER 2
-#define LSQUIC_DF_WRITE_CLASS_WEIGHT_EVENTS_LOW 1
+/** Default DRR datagram share. */
+#define LSQUIC_DF_WRITE_DATAGRAM_SHARE 0.30f
 
 struct lsquic_engine_settings {
     /**
@@ -1315,9 +1301,9 @@ struct lsquic_engine_settings {
     unsigned char   es_write_datagram_prio;
 
     /**
-     * Per-class DRR weight used to derive class quantum.
+     * Datagram share used by DRR scheduler.  Valid range is [0.0, 1.0].
      */
-    unsigned char   es_write_class_weight[LSQWSC_N_CLASSES];
+    float           es_write_datagram_share;
 };
 
 /* Initialize `settings' to default values */
@@ -2403,16 +2389,10 @@ enum lsquic_conn_param
     LSQCP_WRITE_DATAGRAM_PRIO,
 
     /**
-     * Per-class DRR weight.
-     * Type: struct lsquic_write_sched_class_weight
+     * DATAGRAM share in DRR mode.
+     * Type: float in [0.0, 1.0]
      */
-    LSQCP_WRITE_CLASS_WEIGHT,
-};
-
-struct lsquic_write_sched_class_weight
-{
-    enum lsquic_write_sched_class  wscw_class;
-    unsigned char                  wscw_weight;
+    LSQCP_WRITE_DATAGRAM_SHARE,
 };
 
 struct lsquic_conn_info
