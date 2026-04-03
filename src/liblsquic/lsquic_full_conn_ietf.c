@@ -569,6 +569,9 @@ struct ietf_full_conn
     lsquic_time_t               ifc_last_tick;
     int                       (*ifc_write_dispatch)(struct ietf_full_conn *);
     float                       ifc_write_datagram_share;
+    uint64_t                    ifc_write_budget;
+    uint64_t                    ifc_write_budget_start;
+    unsigned char               ifc_write_budget_active;
     union {
         struct {
             int               (*ifwf_do_write[FWSC_N_CLASSES])(
@@ -4819,10 +4822,50 @@ maybe_conn_flush_special_streams (struct ietf_full_conn *conn)
 }
 
 
+static uint64_t
+write_budget_used (const struct ietf_full_conn *conn)
+{
+    if (conn->ifc_send_ctl.sc_bytes_scheduled > conn->ifc_write_budget_start)
+        return conn->ifc_send_ctl.sc_bytes_scheduled
+                                        - conn->ifc_write_budget_start;
+    else
+        return 0;
+}
+
+
+static void
+write_budget_set (struct ietf_full_conn *conn, uint64_t budget)
+{
+    conn->ifc_write_budget = budget;
+    conn->ifc_write_budget_start = conn->ifc_send_ctl.sc_bytes_scheduled;
+    conn->ifc_write_budget_active = 1;
+}
+
+
+static void
+write_budget_clear (struct ietf_full_conn *conn)
+{
+    conn->ifc_write_budget_active = 0;
+    conn->ifc_write_budget = 0;
+    conn->ifc_write_budget_start = 0;
+}
+
+
+static int
+write_budget_is_exhausted (const struct ietf_full_conn *conn)
+{
+    return conn->ifc_write_budget_active
+        && write_budget_used(conn) >= conn->ifc_write_budget;
+}
+
+
 static int
 write_is_possible (struct ietf_full_conn *conn)
 {
     const lsquic_packet_out_t *packet_out;
+
+    if (write_budget_is_exhausted(conn))
+        return 0;
 
     packet_out = lsquic_send_ctl_last_scheduled(&conn->ifc_send_ctl, PNS_APP,
                                                         CUR_NPATH(conn), 0);
@@ -4842,7 +4885,6 @@ process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
         (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
         &conn->ifc_pub,
         high_prio ? "write-high" : "write-low", NULL, NULL);
-    LSQ_DEBUG("write is possible: %d", write_is_possible(conn));
 
     if (high_prio)
         conn->ifc_pii->pii_drop_non_high(&pi);
@@ -9294,7 +9336,9 @@ do_write_drr (struct ietf_full_conn *conn)
         if (conn->ifc_write_sched.drr.ifwdrr_deficit[class_id] < mtu)
             continue;
         scheduled_before = conn->ifc_send_ctl.sc_bytes_scheduled;
+        write_budget_set(conn, conn->ifc_write_sched.drr.ifwdrr_deficit[class_id]);
         stop = write_dispatch_by_drr_class[class_id](conn);
+        write_budget_clear(conn);
         scheduled_after = conn->ifc_send_ctl.sc_bytes_scheduled;
         used = scheduled_after > scheduled_before
                 ? scheduled_after - scheduled_before : 0;
