@@ -24,6 +24,9 @@ int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
 int lsquic_wt_test_h3_error_to_app_error (uint64_t h3_error_code,
                                           uint64_t *wt_error_code);
+int lsquic_wt_test_validate_incoming_session_id (
+    lsquic_stream_id_t stream_id, lsquic_stream_id_t session_id,
+    const char *stream_kind, unsigned *error_code);
 int lsquic_wt_test_dispatch_reset (int how, int ss_received, int with_ctx,
                                    int with_if, uint64_t rst_in_code,
                                    uint64_t ss_in_code, unsigned *called,
@@ -228,6 +231,33 @@ test_invalid_public_api (void)
     assert(lsquic_wt_stream_get_ctx(&stream) == NULL);
 }
 
+
+static void
+test_incoming_session_id_validation (void)
+{
+    unsigned error_code;
+
+    error_code = 0;
+    assert(0 != lsquic_wt_test_validate_incoming_session_id(15, 1, "uni",
+                                                            &error_code));
+    assert(error_code == HEC_ID_ERROR);
+
+    error_code = 0;
+    assert(0 != lsquic_wt_test_validate_incoming_session_id(15, 2, "bidi",
+                                                            &error_code));
+    assert(error_code == HEC_ID_ERROR);
+
+    error_code = 0;
+    assert(0 == lsquic_wt_test_validate_incoming_session_id(15, 0, "uni",
+                                                            &error_code));
+    assert(0 == error_code);
+
+    error_code = 0;
+    assert(0 == lsquic_wt_test_validate_incoming_session_id(15, 4, "bidi",
+                                                            &error_code));
+    assert(0 == error_code);
+}
+
 static void
 test_dgq_policies (void)
 {
@@ -360,6 +390,7 @@ main (void)
     test_peer_query_helpers();
     test_stream_helpers();
     test_invalid_public_api();
+    test_incoming_session_id_validation();
     test_dgq_policies();
     test_reset_dispatch();
     return 0;

@@ -350,6 +350,72 @@ wt_is_reserved_h3_error_code (uint64_t h3_error_code)
 }
 
 
+#ifndef LSQUIC_TEST
+static
+#endif
+int
+lsquic_wt_validate_incoming_session_id (struct lsquic_stream *stream,
+    lsquic_stream_id_t session_id, const char *stream_kind)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+
+    if ((session_id & SIT_MASK) == SIT_BIDI_CLIENT)
+        return 0;
+
+    LSQ_WARN("invalid WT %s stream session ID %"PRIu64
+        " on stream %"PRIu64, stream_kind, (uint64_t) session_id,
+        lsquic_stream_id(stream));
+    conn->cn_if->ci_abort_error(conn, 1, HEC_ID_ERROR,
+        "invalid WT %s stream session ID %"PRIu64
+        " on stream %"PRIu64, stream_kind, (uint64_t) session_id,
+        lsquic_stream_id(stream));
+    return -1;
+}
+
+
+#if LSQUIC_TEST
+static unsigned s_wt_test_error_code;
+
+
+static void
+wt_test_abort_error (struct lsquic_conn *UNUSED_conn, int UNUSED_is_app,
+                     unsigned error_code, const char *UNUSED_format, ...)
+{
+    s_wt_test_error_code = error_code;
+}
+
+
+int
+lsquic_wt_test_validate_incoming_session_id (lsquic_stream_id_t stream_id,
+    lsquic_stream_id_t session_id, const char *stream_kind,
+    unsigned *error_code)
+{
+    struct lsquic_conn conn = LSCONN_INITIALIZER_CIDLEN(conn, 0);
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+    static const struct conn_iface conn_iface = {
+        .ci_abort_error = wt_test_abort_error,
+    };
+    int s;
+
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    TAILQ_INIT(&conn_pub.wt_sessions);
+    conn.cn_if = &conn_iface;
+    conn_pub.lconn = &conn;
+    stream.id = stream_id;
+    stream.conn_pub = &conn_pub;
+    s_wt_test_error_code = 0;
+    s = lsquic_wt_validate_incoming_session_id(&stream, session_id,
+                                               stream_kind);
+    if (error_code)
+        *error_code = s_wt_test_error_code;
+    return s;
+}
+
+
+#endif
+
 static int
 wt_app_error_to_h3_error (uint64_t wt_error_code, uint64_t *h3_error_code)
 {
@@ -1172,6 +1238,10 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
         return;
 
     if (!uctx->done)
+        return;
+
+    if (0 != lsquic_wt_validate_incoming_session_id(stream, uctx->sess_id,
+                                                                "uni"))
         return;
 
     sess = wt_session_find(lsquic_stream_get_conn_public(stream),
@@ -2679,6 +2749,10 @@ wt_on_client_bidi_stream (struct lsquic_stream *stream,
                 existing->wts_stream_id, (uint64_t) session_id);
         return;
     }
+
+    if (0 != lsquic_wt_validate_incoming_session_id(stream, session_id,
+                                                                "bidi"))
+        return;
 
     LSQ_DEBUG("associate client-initiated bidi stream %"PRIu64
             " with WT session %"PRIu64, lsquic_stream_id(stream),
