@@ -24,6 +24,10 @@ struct capsule_parsers;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
 
+typedef void (*lsquic_capsule_read_f)(lsquic_stream_t *stream,
+                    lsquic_stream_ctx_t *h, uint64_t capsule_type,
+                    const void *payload, size_t payload_len);
+
 
 #ifndef LSQUIC_KEEP_STREAM_HISTORY
 #   define LSQUIC_KEEP_STREAM_HISTORY 1
@@ -138,6 +142,7 @@ struct http_dg_capsule_read_state
     uint64_t                    offset;
     unsigned char              *buf;
     size_t                      buf_sz;
+    lsquic_capsule_read_f       cb;
 };
 
 struct http_dg_capsule_write_state
@@ -154,11 +159,6 @@ struct http_dg_stream_state
     struct http_dg_capsule_read_state    read;
     struct http_dg_capsule_write_state   write;
 };
-
-
-typedef void (*lsquic_capsule_read_f)(lsquic_stream_t *stream,
-                    lsquic_stream_ctx_t *h, uint64_t capsule_type,
-                    const void *payload, size_t payload_len);
 
 
 struct stream_filter_if

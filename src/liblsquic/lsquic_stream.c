@@ -6351,6 +6351,7 @@ stream_reset_http_dg_capsule (struct lsquic_stream *stream)
     rd->offset = 0;
     rd->buf = NULL;
     rd->buf_sz = 0;
+    rd->cb = NULL;
 }
 
 static void
@@ -6406,8 +6407,11 @@ http_dg_capsule_datagram_cb (lsquic_stream_t *stream, lsquic_stream_ctx_t *h,
 }
 
 
-static size_t
-http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
+#ifndef LSQUIC_TEST
+static
+#endif
+size_t
+lsquic_http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
 {
     struct lsquic_stream *stream = ctx;
     struct http_dg_capsule_read_state *rd;
@@ -6415,7 +6419,6 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
     const unsigned char *end = buf + len;
     struct varint_read_state *vrs;
     size_t avail, to_copy;
-    lsquic_capsule_read_f on_capsule;
     int s;
 
     if (!stream->sm_http_dg)
@@ -6450,8 +6453,8 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                         "capsule length too large");
                 goto end;
             }
-            on_capsule = stream_find_capsule_cb(stream, rd->type);
-            if (on_capsule)
+            rd->cb = stream_find_capsule_cb(stream, rd->type);
+            if (rd->cb)
             {
                 unsigned max_sz;
 
@@ -6475,6 +6478,10 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
                     }
                 }
             }
+            else
+                LSQ_DEBUG("no callback for capsule type 0x%"PRIX64
+                    " on stream %"PRIu64"; drop on floor",
+                    rd->type, stream->id);
             rd->state = HDC_READ_PAYLOAD;
             break;
         case HDC_READ_PAYLOAD:
@@ -6482,20 +6489,18 @@ http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, int fin)
             to_copy = rd->length - rd->offset;
             if (to_copy > avail)
                 to_copy = avail;
-            if (rd->buf_sz)
-                memcpy(rd->buf + rd->offset, p, to_copy);
+            if (rd->cb)
+            {
+                if (rd->buf_sz)
+                    memcpy(rd->buf + rd->offset, p, to_copy);
+            }
             rd->offset += to_copy;
             p += to_copy;
             if (rd->offset == rd->length)
             {
-                on_capsule = stream_find_capsule_cb(stream, rd->type);
-                if (on_capsule)
-                    on_capsule(stream, stream->st_ctx, rd->type,
-                                                        rd->buf, rd->buf_sz);
-                else
-                    LSQ_DEBUG("no callback for capsule type 0x%"PRIX64
-                        " on stream %"PRIu64"; drop on floor",
-                        rd->type, stream->id);
+                if (rd->cb)
+                    rd->cb(stream, stream->st_ctx, rd->type,
+                                                rd->buf, rd->buf_sz);
                 free(rd->buf);
                 rd->buf = NULL;
                 stream_reset_http_dg_capsule(stream);
@@ -6515,10 +6520,11 @@ http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
 {
     ssize_t nread;
 
-    nread = lsquic_stream_readf(stream, http_dg_capsule_readf, stream);
+    nread = lsquic_stream_readf(stream, lsquic_http_dg_capsule_readf, stream);
     if (nread == 0 || (nread < 0 && errno != EWOULDBLOCK))
         (void) lsquic_stream_wantread(stream, 0);
 }
+
 
 int
 lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream)

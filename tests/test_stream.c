@@ -278,6 +278,21 @@ http_dg_on_read_datagram (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *h
     memcpy(ctx->read_buf, buf, to_copy);
 }
 
+static void
+http_capsule_test_cb (lsquic_stream_t *UNUSED_stream, lsquic_stream_ctx_t *h,
+    uint64_t UNUSED_capsule_type, const void *payload, size_t payload_len)
+{
+    struct http_dg_test_ctx *ctx = (struct http_dg_test_ctx *) h;
+    size_t to_copy;
+
+    ++ctx->read_calls;
+    ctx->read_len = payload_len;
+    to_copy = payload_len;
+    if (to_copy > sizeof(ctx->read_buf))
+        to_copy = sizeof(ctx->read_buf);
+    memcpy(ctx->read_buf, payload, to_copy);
+}
+
 static const struct lsquic_stream_if http_dg_stream_if = {
     .on_new_stream          = http_dg_on_new_stream,
     .on_read                = http_dg_on_read,
@@ -294,6 +309,10 @@ static struct {
 } s_abort_error;
 
 static size_t s_max_dgram_size;
+
+extern size_t
+lsquic_http_dg_capsule_readf (void *ctx, const unsigned char *buf,
+            size_t len, int fin);
 
 static void
 abort_error (struct lsquic_conn *UNUSED_lconn, int UNUSED_is_app,
@@ -4486,6 +4505,32 @@ test_http_dg_capsules (void)
     assert(dg_ctx.read_calls == 1);
     assert(dg_ctx.read_len == sizeof(payload_b) - 1);
     assert(0 == memcmp(dg_ctx.read_buf, payload_b, sizeof(payload_b) - 1));
+    stream->stream_flags |= STREAM_FIN_REACHED;
+    lsquic_stream_destroy(stream);
+
+    memset(&dg_ctx, 0, sizeof(dg_ctx));
+    /* Test: payload completion uses the latched capsule callback. */
+    stream = new_stream(&tobjs, 10);
+    s = lsquic_stream_set_http_dg_capsules(stream, 1);
+    assert(s == 0);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    stream->sm_http_dg->read.state = HDC_READ_PAYLOAD;
+    stream->sm_http_dg->read.type = H3_CAPSULE_DATAGRAM;
+    stream->sm_http_dg->read.length = sizeof(payload_b) - 1;
+    stream->sm_http_dg->read.offset = 0;
+    stream->sm_http_dg->read.buf_sz = sizeof(payload_b) - 1;
+    stream->sm_http_dg->read.buf = malloc(sizeof(payload_b) - 1);
+    assert(stream->sm_http_dg->read.buf);
+    stream->sm_http_dg->read.cb = http_capsule_test_cb;
+    s = lsquic_stream_set_capsule_handler(stream, H3_CAPSULE_DATAGRAM, NULL);
+    assert(s == 0);
+    assert(lsquic_http_dg_capsule_readf(stream, payload_b,
+                sizeof(payload_b) - 1, 0) == sizeof(payload_b) - 1);
+    assert(dg_ctx.read_calls == 1);
+    assert(dg_ctx.read_len == sizeof(payload_b) - 1);
+    assert(0 == memcmp(dg_ctx.read_buf, payload_b, sizeof(payload_b) - 1));
+    assert(stream->sm_http_dg->read.state == HDC_READ_TYPE);
     stream->stream_flags |= STREAM_FIN_REACHED;
     lsquic_stream_destroy(stream);
 
