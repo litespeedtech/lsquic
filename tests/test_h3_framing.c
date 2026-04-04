@@ -685,7 +685,8 @@ test_hq_framing (int sched_immed, int dispatch_once, unsigned wsize,
 
 
 static void
-main_test_hq_framing (void)
+main_test_hq_framing_slice (int sched_immed_begin, int sched_immed_end,
+                            int dispatch_once_begin, int dispatch_once_end)
 {
     const unsigned wsizes[] = { 1, 2, 3, 7, 10, 50, 100, 201, 211, 1000, 2003, 20000, };
     const size_t conn_limits[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
@@ -697,14 +698,24 @@ main_test_hq_framing (void)
     unsigned i, j, k, l;
     int sched_immed, dispatch_once, flush_after_each_write;
 
-    for (sched_immed = 0; sched_immed <= 1; ++sched_immed)
-        for (dispatch_once = 0; dispatch_once <= 1; ++dispatch_once)
+    for (sched_immed = sched_immed_begin; sched_immed < sched_immed_end;
+                                                            ++sched_immed)
+        for (dispatch_once = dispatch_once_begin;
+                                dispatch_once < dispatch_once_end;
+                                                            ++dispatch_once)
             for (i = 0; i < sizeof(wsizes) / sizeof(wsizes[i]); ++i)
                 for (j = 0; j < sizeof(conn_limits) / sizeof(conn_limits[j]); ++j)
                     for (flush_after_each_write = 0; flush_after_each_write < 2; ++flush_after_each_write)
                         for (k = 0; k < sizeof(n_packets) / sizeof(n_packets[0]); ++k)
                             for (l = 0; l < sizeof(packet_sz) / sizeof(packet_sz[0]); ++l)
                                 test_hq_framing(sched_immed, dispatch_once, wsizes[i], flush_after_each_write, conn_limits[j], n_packets[k], packet_sz[l]);
+}
+
+
+static void
+main_test_hq_framing (void)
+{
+    main_test_hq_framing_slice(0, 2, 0, 2);
 }
 
 
@@ -1686,16 +1697,25 @@ main (int argc, char **argv)
         case 5:  /* pwritev combo 5 (100 iovecs, 100 frames) */
             main_test_pwritev_combo(5, 6);
             break;
-        case 10:  /* hq_framing tests */
-            main_test_hq_framing();
+        case 10:  /* hq_framing tests: sched_immed=0, dispatch_once=0 */
+            main_test_hq_framing_slice(0, 1, 0, 1);
             break;
-        case 11:  /* frame header split tests */
+        case 11:  /* hq_framing tests: sched_immed=0, dispatch_once=1 */
+            main_test_hq_framing_slice(0, 1, 1, 2);
+            break;
+        case 12:  /* hq_framing tests: sched_immed=1, dispatch_once=0 */
+            main_test_hq_framing_slice(1, 2, 0, 1);
+            break;
+        case 13:  /* hq_framing tests: sched_immed=1, dispatch_once=1 */
+            main_test_hq_framing_slice(1, 2, 1, 2);
+            break;
+        case 14:  /* frame header split tests */
             for (n_packets = 1; n_packets <= 2; ++n_packets)
                 for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
                     for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                         test_frame_header_split(n_packets, extra_sz, add_one_more);
             break;
-        case 12:  /* zero size frame tests */
+        case 15:  /* zero size frame tests */
             test_zero_size_frame();
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
