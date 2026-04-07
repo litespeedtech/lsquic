@@ -78,19 +78,26 @@ TAILQ_HEAD(wt_dgq_head, wt_dgq_elem);
 
 enum wt_session_flags
 {
-    WTSF_CLOSING         = 1 << 0,
-    WTSF_ON_CLOSE_CALLED = 1 << 1,
-    WTSF_WANT_DG_WRITE   = 1 << 2,
+    WTSF_CLOSING              = 1 << 0,
+    WTSF_ON_CLOSE_CALLED      = 1 << 1,
+    WTSF_WANT_DG_WRITE        = 1 << 2,
+    WTSF_CLOSE_RCVD           = 1 << 3,
+    WTSF_CLOSE_SENT           = 1 << 4,
+    WTSF_CLOSE_CAPSULE_PENDING = 1 << 5,
 };
 
 enum wt_capsule_type
 {
+    /* [draft-ietf-webtrans-http3-15], Section 5.4 */
+    WT_CAPSULE_DRAIN_SESSION          = 0x78AEULL,
     WT_CAPSULE_MAX_DATA               = 0x190B4D3DULL,
     WT_CAPSULE_MAX_STREAMS_BIDI       = 0x190B4D3FULL,
     WT_CAPSULE_MAX_STREAMS_UNI        = 0x190B4D40ULL,
     WT_CAPSULE_DATA_BLOCKED           = 0x190B4D41ULL,
     WT_CAPSULE_STREAMS_BLOCKED_BIDI   = 0x190B4D43ULL,
     WT_CAPSULE_STREAMS_BLOCKED_UNI    = 0x190B4D44ULL,
+    /* [draft-ietf-webtrans-http3-15], Section 6, Figure 11 */
+    WT_CAPSULE_CLOSE_SESSION          = 0x2843ULL,
 };
 
 struct lsquic_wt_session;
@@ -123,12 +130,18 @@ struct lsquic_wt_session
     struct lsquic_stream_if            wts_data_if;
     struct wt_onnew_ctx                wts_onnew_ctx;
     struct wt_dgq_head                 wts_dgq;
+    unsigned char                     *wts_close_buf;
+    char                              *wts_close_reason;
     size_t                             wts_dgq_bytes;
+    size_t                             wts_close_buf_len;
+    size_t                             wts_close_buf_off;
+    size_t                             wts_close_reason_len;
     unsigned                           wts_dgq_count;
     unsigned                           wts_dgq_max_count;
     size_t                             wts_dgq_max_bytes;
     enum lsquic_wt_dg_drop_policy      wts_dg_policy;
     enum lsquic_http_dg_send_mode      wts_dg_mode;
+    uint64_t                           wts_close_code;
     unsigned                           wts_n_streams;
     enum wt_session_flags              wts_flags;
 };
@@ -140,6 +153,132 @@ struct wt_header_buf
     char    buf[128];
     size_t  off;
 };
+
+
+#define WT_MAX_PENDING_STREAMS 64
+#define WT_APP_ERROR_MAX 0xFFFFFFFFULL
+#define WT_APP_ERROR_MIN_H3 0x52E4A40FA8DBULL
+#define WT_APP_ERROR_MAX_H3 0x52E5AC983162ULL
+#define WT_CLOSE_REASON_MAX 1024
+
+static void wt_dgq_drop_all (struct lsquic_wt_session *sess);
+static struct lsquic_wt_session *
+wt_stream_get_session (const struct lsquic_stream *stream);
+static void
+wt_close_remote (struct lsquic_wt_session *sess, uint64_t code,
+                 const char *reason, size_t reason_len, int close_received);
+static void
+wt_close_stream_with_session_gone (struct lsquic_stream *stream);
+static int
+wt_build_close_capsule (uint64_t code, const char *reason, size_t reason_len,
+                        unsigned char **buf, size_t *buf_len);
+
+static void
+wt_drop_send_state (struct lsquic_wt_session *sess)
+{
+    if (sess->wts_control_stream)
+        (void) lsquic_stream_want_http_dg_write(sess->wts_control_stream, 0);
+    sess->wts_flags &= ~WTSF_WANT_DG_WRITE;
+    wt_dgq_drop_all(sess);
+}
+
+
+/* [draft-ietf-webtrans-http3-15], Section 6 */
+static void
+wt_latch_close_info (struct lsquic_wt_session *sess, uint64_t code,
+                     const char *reason, size_t reason_len)
+{
+    char *copy;
+
+    if (sess->wts_flags & WTSF_CLOSING)
+        return;
+
+    if (code > WT_APP_ERROR_MAX)
+    {
+        LSQ_LOG0(LSQ_LOG_WARN, "WT close code %"PRIu64" is too large; clamp to 0x%X",
+                 code, (unsigned) WT_APP_ERROR_MAX);
+        code = WT_APP_ERROR_MAX;
+    }
+
+    if (!reason && reason_len > 0)
+    {
+        LSQ_LOG0(LSQ_LOG_WARN, "WT close reason is NULL with non-zero length; ignore it");
+        reason_len = 0;
+    }
+    else if (reason_len > WT_CLOSE_REASON_MAX)
+    {
+        LSQ_LOG0(LSQ_LOG_WARN, "WT close reason length %zu exceeds %u; truncate",
+                 reason_len, WT_CLOSE_REASON_MAX);
+        reason_len = WT_CLOSE_REASON_MAX;
+    }
+
+    copy = NULL;
+    if (reason_len > 0)
+    {
+        copy = malloc(reason_len);
+        if (!copy)
+        {
+            LSQ_LOG0(LSQ_LOG_WARN, "cannot copy WT close reason; omit it");
+            reason_len = 0;
+        }
+        else
+            memcpy(copy, reason, reason_len);
+    }
+
+    free(sess->wts_close_reason);
+    sess->wts_close_reason = copy;
+    sess->wts_close_reason_len = reason_len;
+    sess->wts_close_code = code;
+}
+
+
+static void
+wt_abort_connect_message_error (struct lsquic_stream *stream,
+                                const char *reason)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+
+    conn->cn_if->ci_abort_error(conn, 1, HEC_MESSAGE_ERROR, "%s", reason);
+}
+
+
+/* [draft-ietf-webtrans-http3-15], Section 6, Figure 11 */
+static void
+wt_on_close_capsule (struct lsquic_stream *stream, const void *payload,
+                     size_t payload_len)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    struct lsquic_wt_session *sess;
+    uint64_t code;
+    const unsigned char *p;
+
+    sess = wt_stream_get_session(stream);
+    if (!sess)
+        return;
+
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (sess->wts_flags & WTSF_CLOSE_RCVD)
+    {
+        wt_abort_connect_message_error(stream,
+                "received WT_CLOSE_SESSION after session close capsule");
+        return;
+    }
+
+    if (payload_len < 4 || payload_len > 4 + WT_CLOSE_REASON_MAX)
+    {
+        wt_abort_connect_message_error(stream,
+                        "malformed WT_CLOSE_SESSION capsule payload");
+        return;
+    }
+
+    p = payload;
+    code = (uint64_t) p[0] << 24 | (uint64_t) p[1] << 16
+         | (uint64_t) p[2] << 8 | (uint64_t) p[3];
+    LSQ_INFO("received WT_CLOSE_SESSION on stream %"PRIu64
+        " for session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
+        lsquic_stream_id(stream), sess->wts_stream_id, code, payload_len - 4);
+    wt_close_remote(sess, code, (const char *) p + 4, payload_len - 4, 1);
+}
 
 
 static const char *
@@ -159,6 +298,8 @@ wt_capsule_name (uint64_t capsule_type)
         return "WT_STREAMS_BLOCKED_BIDI";
     case WT_CAPSULE_STREAMS_BLOCKED_UNI:
         return "WT_STREAMS_BLOCKED_UNI";
+    case WT_CAPSULE_CLOSE_SESSION:
+        return "WT_CLOSE_SESSION";
     default:
         return NULL;
     }
@@ -170,11 +311,26 @@ wt_on_capsule (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h,
     uint64_t capsule_type, const void *payload, size_t payload_len)
 {
     WT_SET_CONN_FROM_STREAM(stream);
+    struct lsquic_wt_session *sess;
     const char *name;
     const unsigned char *p;
     const unsigned char *end;
     struct varint_read_state vrs;
     int s;
+
+    sess = wt_stream_get_session(stream);
+    if (sess && (sess->wts_flags & WTSF_CLOSE_RCVD))
+    {
+        wt_abort_connect_message_error(stream,
+                    "received capsule after WT_CLOSE_SESSION");
+        return;
+    }
+
+    if (capsule_type == WT_CAPSULE_CLOSE_SESSION)
+    {
+        wt_on_close_capsule(stream, payload, payload_len);
+        return;
+    }
 
     name = wt_capsule_name(capsule_type);
     if (!name)
@@ -221,6 +377,7 @@ wt_unregister_capsule_handlers (struct lsquic_stream *stream)
         WT_CAPSULE_DATA_BLOCKED,
         WT_CAPSULE_STREAMS_BLOCKED_BIDI,
         WT_CAPSULE_STREAMS_BLOCKED_UNI,
+        WT_CAPSULE_CLOSE_SESSION,
     };
     unsigned i;
 
@@ -240,6 +397,7 @@ wt_register_capsule_handlers (struct lsquic_stream *stream)
         WT_CAPSULE_DATA_BLOCKED,
         WT_CAPSULE_STREAMS_BLOCKED_BIDI,
         WT_CAPSULE_STREAMS_BLOCKED_UNI,
+        WT_CAPSULE_CLOSE_SESSION,
     };
     unsigned i;
 
@@ -255,11 +413,6 @@ wt_register_capsule_handlers (struct lsquic_stream *stream)
 
     return 0;
 }
-
-#define WT_MAX_PENDING_STREAMS 64
-#define WT_APP_ERROR_MAX 0xFFFFFFFFULL
-#define WT_APP_ERROR_MIN_H3 0x52E4A40FA8DBULL
-#define WT_APP_ERROR_MAX_H3 0x52E5AC983162ULL
 
 static int
 lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
@@ -300,9 +453,17 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
                                 const struct lsquic_http_headers *extra,
                                 int fin);
 
+static int
+wt_queue_close_capsule (struct lsquic_wt_session *sess, uint64_t code,
+                        const char *reason, size_t reason_len);
+
 static void
-wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
-                                        const char *reason, size_t reason_len);
+wt_begin_close (struct lsquic_wt_session *sess, uint64_t code,
+                const char *reason, size_t reason_len);
+
+static void
+wt_close_remote (struct lsquic_wt_session *sess, uint64_t code,
+                 const char *reason, size_t reason_len, int close_received);
 
 static int
 wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
@@ -332,6 +493,9 @@ wt_stream_ss_code (const struct lsquic_stream *stream, uint64_t *ss_code);
 
 static void
 wt_on_stream_destroy (struct lsquic_stream *stream);
+
+static void
+wt_session_maybe_finalize (struct lsquic_wt_session *sess);
 
 static int
 wt_is_hq_switch_frame (struct lsquic_stream *stream, uint64_t frame_type,
@@ -546,6 +710,135 @@ lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess, unsigned char *val)
         return -1;
 
     *val = elem->buf[0];
+    return 0;
+}
+
+
+struct wt_test_close_result
+{
+    unsigned called;
+    uint64_t close_code;
+    size_t close_reason_len;
+};
+
+
+static void
+wt_test_on_session_close (lsquic_wt_session_t *UNUSED_sess,
+                          lsquic_wt_session_ctx_t *sctx, uint64_t code,
+                          const char *UNUSED_reason, size_t reason_len)
+{
+    struct wt_test_close_result *result;
+
+    result = (struct wt_test_close_result *) sctx;
+    result->called += 1;
+    result->close_code = code;
+    result->close_reason_len = reason_len;
+}
+
+
+int
+lsquic_wt_test_build_close_capsule (uint64_t code, const char *reason,
+                                    size_t reason_len, unsigned char *buf,
+                                    size_t *buf_len)
+{
+    unsigned char *capsule;
+    size_t capsule_len;
+
+    if (code > WT_APP_ERROR_MAX
+        || reason_len > WT_CLOSE_REASON_MAX
+        || (!reason && reason_len > 0))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (0 != wt_build_close_capsule(code, reason, reason_len,
+                                    &capsule, &capsule_len))
+        return -1;
+
+    if (!buf_len || *buf_len < capsule_len)
+    {
+        free(capsule);
+        errno = ENOBUFS;
+        return -1;
+    }
+
+    memcpy(buf, capsule, capsule_len);
+    *buf_len = capsule_len;
+    free(capsule);
+    return 0;
+}
+
+
+int
+lsquic_wt_test_remote_close (uint64_t code, const char *reason,
+                             size_t reason_len, unsigned *called,
+                             uint64_t *close_code, size_t *close_reason_len,
+                             int *is_closing, int *close_received,
+                             int *on_close_called)
+{
+    struct lsquic_wt_session sess;
+    struct wt_test_close_result result;
+    struct lsquic_webtransport_if wt_if;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&result, 0, sizeof(result));
+    memset(&wt_if, 0, sizeof(wt_if));
+    wt_if.wti_on_session_close = wt_test_on_session_close;
+    sess.wts_if = &wt_if;
+    sess.wts_sess_ctx = (lsquic_wt_session_ctx_t *) &result;
+    sess.wts_n_streams = 1;
+
+    wt_close_remote(&sess, code, reason, reason_len, 1);
+
+    if (called)
+        *called = result.called;
+    if (close_code)
+        *close_code = sess.wts_close_code;
+    if (close_reason_len)
+        *close_reason_len = sess.wts_close_reason_len;
+    if (is_closing)
+        *is_closing = !!(sess.wts_flags & WTSF_CLOSING);
+    if (close_received)
+        *close_received = !!(sess.wts_flags & WTSF_CLOSE_RCVD);
+    if (on_close_called)
+        *on_close_called = !!(sess.wts_flags & WTSF_ON_CLOSE_CALLED);
+
+    free(sess.wts_close_reason);
+    free(sess.wts_close_buf);
+    return 0;
+}
+
+int
+lsquic_wt_test_closing_rejects (unsigned *mask)
+{
+    struct lsquic_wt_session sess;
+    unsigned bits;
+
+    memset(&sess, 0, sizeof(sess));
+    sess.wts_flags = WTSF_CLOSING;
+    bits = 0;
+
+    errno = 0;
+    if (!lsquic_wt_open_uni(&sess) && errno == EPIPE)
+        bits |= 1u << 0;
+
+    errno = 0;
+    if (!lsquic_wt_open_bidi(&sess) && errno == EPIPE)
+        bits |= 1u << 1;
+
+    errno = 0;
+    if (0 > lsquic_wt_send_datagram_ex(&sess, "x", 1, LSQWT_DG_FAIL_EAGAIN,
+                                       LSQUIC_HTTP_DG_SEND_DEFAULT)
+        && errno == EPIPE)
+        bits |= 1u << 2;
+
+    errno = 0;
+    if (0 > lsquic_wt_want_datagram_write(&sess, 1) && errno == EPIPE)
+        bits |= 1u << 3;
+
+    if (mask)
+        *mask = bits;
     return 0;
 }
 #endif
@@ -789,6 +1082,9 @@ wt_stream_unbind_session (struct lsquic_stream *stream)
     wt_stream_set_session(stream, NULL);
     if (sess->wts_n_streams > 0)
         --sess->wts_n_streams;
+
+    if ((sess->wts_flags & WTSF_CLOSING) && sess->wts_n_streams == 0)
+        wt_session_maybe_finalize(sess);
 }
 
 
@@ -997,6 +1293,100 @@ wt_on_reset_core (struct lsquic_stream *stream, struct wt_stream_ctx *wctx,
 }
 
 
+static size_t
+wt_control_drain_readf (void *ctx, const unsigned char *buf, size_t sz, int fin)
+{
+    int *saw_data = ctx;
+
+    (void) fin;
+    if (sz > 0)
+        *saw_data = 1;
+    return sz;
+}
+
+
+/* [draft-ietf-webtrans-http3-15], Section 6 */
+static void
+wt_control_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct lsquic_wt_session *sess;
+    int saw_data;
+    ssize_t nread;
+
+    (void) sctx;
+    sess = wt_stream_get_session(stream);
+    if (!sess)
+        return;
+
+    saw_data = 0;
+    nread = lsquic_stream_readf(stream, wt_control_drain_readf, &saw_data);
+    if (nread > 0)
+    {
+        if ((sess->wts_flags & WTSF_CLOSE_RCVD) && saw_data)
+            wt_abort_connect_message_error(stream,
+                    "received data after WT_CLOSE_SESSION on CONNECT stream");
+        return;
+    }
+
+    if (0 == nread)
+    {
+        (void) lsquic_stream_shutdown(stream, 0);
+        wt_close_remote(sess, 0, NULL, 0, 0);
+    }
+}
+
+
+static void
+wt_control_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
+{
+    struct lsquic_wt_session *sess;
+    const struct wt_control_ctx *control_ctx;
+    ssize_t nw;
+
+    sess = wt_stream_get_session(stream);
+    if (!sess)
+        return;
+
+    control_ctx = &sess->wts_control_ctx;
+    if (sess->wts_flags & WTSF_CLOSE_CAPSULE_PENDING)
+    {
+        while (sess->wts_close_buf_off < sess->wts_close_buf_len)
+        {
+            nw = lsquic_stream_write(stream,
+                            sess->wts_close_buf + sess->wts_close_buf_off,
+                            sess->wts_close_buf_len - sess->wts_close_buf_off);
+            if (nw <= 0)
+                return;
+            sess->wts_close_buf_off += (size_t) nw;
+        }
+
+        free(sess->wts_close_buf);
+        sess->wts_close_buf = NULL;
+        sess->wts_close_buf_len = 0;
+        sess->wts_close_buf_off = 0;
+        sess->wts_flags &= ~WTSF_CLOSE_CAPSULE_PENDING;
+        sess->wts_flags |= WTSF_CLOSE_SENT;
+        /*
+         * [draft-ietf-webtrans-http3-15], Section 6 says the endpoint MAY
+         * send STOP_SENDING on the CONNECT stream here.  Do not exercise
+         * this yet: incoming STOP_SENDING is processed eagerly in stream
+         * code, which can preempt delivery of WT_CLOSE_SESSION.
+         */
+        if (0)
+        {
+            lsquic_stream_set_ss_code(stream, HEC_WT_SESSION_GONE);
+            (void) lsquic_stream_shutdown(stream, 0);
+        }
+        (void) lsquic_stream_shutdown(stream, 1);
+        return;
+    }
+
+    if (!(sess->wts_flags & WTSF_CLOSING)
+        && control_ctx->wtcc_orig_if && control_ctx->wtcc_orig_if->on_write)
+        control_ctx->wtcc_orig_if->on_write(stream, sctx);
+}
+
+
 static lsquic_stream_ctx_t *
 wt_control_on_new (void *ctx, struct lsquic_stream *stream)
 {
@@ -1029,7 +1419,8 @@ wt_control_on_close (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 
     LSQ_INFO("WT control stream %"PRIu64" closed; close session %"PRIu64,
             lsquic_stream_id(stream), sess->wts_stream_id);
-    wt_session_close(sess, 0, NULL, 0);
+    if (!(sess->wts_flags & WTSF_CLOSING))
+        wt_close_remote(sess, 0, NULL, 0, 0);
 }
 
 
@@ -1051,7 +1442,8 @@ wt_control_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx,
 
     LSQ_INFO("WT control stream %"PRIu64" reset (how=%d); close session "
              "%"PRIu64, lsquic_stream_id(stream), how, sess->wts_stream_id);
-    wt_session_close(sess, 0, NULL, 0);
+    if (0 == how && !(sess->wts_flags & WTSF_CLOSING))
+        wt_close_remote(sess, 0, NULL, 0, 0);
 }
 
 
@@ -1075,11 +1467,14 @@ wt_wrap_control_stream (struct lsquic_wt_session *sess,
     sess->wts_control_ctx.wtcc_orig_ctx = lsquic_stream_get_ctx(stream);
     sess->wts_control_if = *orig_if;
     sess->wts_control_if.on_new_stream = wt_control_on_new;
+    sess->wts_control_if.on_read = wt_control_on_read;
+    sess->wts_control_if.on_write = wt_control_on_write;
     sess->wts_control_if.on_close = wt_control_on_close;
     sess->wts_control_if.on_reset = wt_control_on_reset;
 
     lsquic_stream_set_stream_if(stream, &sess->wts_control_if,
                                                 &sess->wts_control_ctx);
+    lsquic_stream_wantread(stream, 1);
     return 0;
 }
 
@@ -1246,6 +1641,12 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 
     sess = wt_session_find(lsquic_stream_get_conn_public(stream),
                                                         uctx->sess_id);
+    if (sess && (sess->wts_flags & WTSF_CLOSING))
+    {
+        wt_close_stream_with_session_gone(stream);
+        return;
+    }
+
     if (!sess)
     {
         if (0 != wt_buffer_or_reject_stream(stream, uctx->sess_id, LSQWT_UNI))
@@ -1497,6 +1898,9 @@ wt_replay_pending_streams (struct lsquic_wt_session *sess)
     struct wt_uni_read_ctx *uctx;
     lsquic_stream_id_t session_id;
     unsigned n_replayed;
+
+    if (sess->wts_flags & WTSF_CLOSING)
+        return;
 
     n_replayed = 0;
     for (el = lsquic_hash_first(sess->wts_conn_pub->all_streams); el;
@@ -1755,12 +2159,56 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
 }
 
 
+static int
+wt_stream_can_read (const struct lsquic_stream *stream)
+{
+    enum stream_id_type type;
+
+    type = lsquic_stream_id(stream) & SIT_MASK;
+    return type == SIT_BIDI_CLIENT
+        || type == SIT_BIDI_SERVER
+        || (lsquic_stream_is_server(stream)
+                ? type == SIT_UNI_CLIENT
+                : type == SIT_UNI_SERVER);
+}
+
+
+static int
+wt_stream_can_write (const struct lsquic_stream *stream)
+{
+    enum stream_id_type type;
+
+    type = lsquic_stream_id(stream) & SIT_MASK;
+    return type == SIT_BIDI_CLIENT
+        || type == SIT_BIDI_SERVER
+        || (lsquic_stream_is_server(stream)
+                ? type == SIT_UNI_SERVER
+                : type == SIT_UNI_CLIENT);
+}
+
+
+/* [draft-ietf-webtrans-http3-15], Section 6; [RFC9000], Section 2.4 */
+static void
+wt_close_stream_with_session_gone (struct lsquic_stream *stream)
+{
+    if (wt_stream_can_read(stream))
+    {
+        lsquic_stream_set_ss_code(stream, HEC_WT_SESSION_GONE);
+        (void) lsquic_stream_shutdown(stream, 0);
+    }
+
+    if (wt_stream_can_write(stream))
+        lsquic_stream_maybe_reset(stream, HEC_WT_SESSION_GONE, 1);
+}
+
+
 static void
 wt_close_data_streams (struct lsquic_wt_session *sess)
 {
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream **streams, *stream;
     struct lsquic_hash_elem *el;
+    lsquic_stream_id_t session_id;
     size_t n_streams, i;
 
     if (!sess->wts_conn_pub || !sess->wts_conn_pub->all_streams)
@@ -1771,8 +2219,12 @@ wt_close_data_streams (struct lsquic_wt_session *sess)
                             el = lsquic_hash_next(sess->wts_conn_pub->all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (wt_stream_get_session(stream) == sess
-                                        && stream != sess->wts_control_stream)
+        if ((wt_stream_get_session(stream) == sess
+                && stream != sess->wts_control_stream)
+            || (wt_is_pending_uni_stream(stream, &session_id)
+                    && session_id == sess->wts_stream_id)
+            || (wt_is_pending_bidi_stream(stream, &session_id)
+                    && session_id == sess->wts_stream_id))
             ++n_streams;
     }
 
@@ -1792,84 +2244,179 @@ wt_close_data_streams (struct lsquic_wt_session *sess)
                             el = lsquic_hash_next(sess->wts_conn_pub->all_streams))
     {
         stream = lsquic_hashelem_getdata(el);
-        if (wt_stream_get_session(stream) == sess
-                                        && stream != sess->wts_control_stream)
+        if ((wt_stream_get_session(stream) == sess
+                && stream != sess->wts_control_stream)
+            || (wt_is_pending_uni_stream(stream, &session_id)
+                    && session_id == sess->wts_stream_id)
+            || (wt_is_pending_bidi_stream(stream, &session_id)
+                    && session_id == sess->wts_stream_id))
             streams[i++] = stream;
     }
 
     for (i = 0; i < n_streams; ++i)
-        if (!lsquic_stream_is_closed(streams[i]))
-            lsquic_stream_close(streams[i]);
+        wt_close_stream_with_session_gone(streams[i]);
 
     free(streams);
 }
 
 
 static void
-wt_session_finalize (struct lsquic_wt_session *sess, uint64_t code,
-                                        const char *reason, size_t reason_len)
+wt_fire_session_close_cb (struct lsquic_wt_session *sess)
+{
+    const struct lsquic_webtransport_if *wt_if;
+    lsquic_wt_session_ctx_t *sess_ctx;
+
+    if (sess->wts_flags & WTSF_ON_CLOSE_CALLED)
+        return;
+
+    wt_if = sess->wts_if;
+    sess_ctx = sess->wts_sess_ctx;
+    sess->wts_if = NULL;
+    sess->wts_sess_ctx = NULL;
+    sess->wts_flags |= WTSF_ON_CLOSE_CALLED;
+
+    if (wt_if && wt_if->wti_on_session_close)
+        wt_if->wti_on_session_close((lsquic_wt_session_t *) sess,
+                sess_ctx, sess->wts_close_code, sess->wts_close_reason,
+                sess->wts_close_reason_len);
+}
+
+
+/* [draft-ietf-webtrans-http3-15], Section 6, Figure 11 */
+static int
+wt_build_close_capsule (uint64_t code, const char *reason, size_t reason_len,
+                        unsigned char **buf, size_t *buf_len)
+{
+    unsigned char *capsule;
+    unsigned bits;
+    size_t type_len, payload_len_len, payload_len, total_len, off;
+
+    payload_len = 4 + reason_len;
+    type_len = vint_size(WT_CAPSULE_CLOSE_SESSION);
+    payload_len_len = vint_size(payload_len);
+    total_len = type_len + payload_len_len + payload_len;
+
+    capsule = malloc(total_len);
+    if (!capsule)
+        return -1;
+
+    bits = vint_val2bits(WT_CAPSULE_CLOSE_SESSION);
+    vint_write(capsule, WT_CAPSULE_CLOSE_SESSION, bits, type_len);
+    off = type_len;
+
+    bits = vint_val2bits(payload_len);
+    vint_write(capsule + off, payload_len, bits, payload_len_len);
+    off += payload_len_len;
+
+    capsule[off + 0] = (unsigned char) (code >> 24);
+    capsule[off + 1] = (unsigned char) (code >> 16);
+    capsule[off + 2] = (unsigned char) (code >> 8);
+    capsule[off + 3] = (unsigned char) code;
+    off += 4;
+
+    if (reason_len > 0)
+        memcpy(capsule + off, reason, reason_len);
+
+    *buf = capsule;
+    *buf_len = total_len;
+    return 0;
+}
+
+
+static int
+wt_queue_close_capsule (struct lsquic_wt_session *sess, uint64_t code,
+                        const char *reason, size_t reason_len)
+{
+    if (sess->wts_flags & (WTSF_CLOSE_CAPSULE_PENDING | WTSF_CLOSE_SENT))
+        return 0;
+
+    if (0 != wt_build_close_capsule(code, reason, reason_len,
+                                    &sess->wts_close_buf,
+                                    &sess->wts_close_buf_len))
+        return -1;
+
+    sess->wts_close_buf_off = 0;
+    sess->wts_flags |= WTSF_CLOSE_CAPSULE_PENDING;
+
+    if (0 != lsquic_stream_wantwrite(sess->wts_control_stream, 1))
+    {
+        free(sess->wts_close_buf);
+        sess->wts_close_buf = NULL;
+        sess->wts_close_buf_len = 0;
+        sess->wts_close_buf_off = 0;
+        sess->wts_flags &= ~WTSF_CLOSE_CAPSULE_PENDING;
+        return -1;
+    }
+
+    return 0;
+}
+
+
+static void
+wt_session_maybe_finalize (struct lsquic_wt_session *sess)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-    (void) reason;
+
+    if (!(sess->wts_flags & WTSF_CLOSING) || sess->wts_n_streams != 0)
+        return;
+
+    wt_fire_session_close_cb(sess);
 
     LSQ_INFO("destroy WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
-                                    sess->wts_stream_id, code, reason_len);
+        sess->wts_stream_id, sess->wts_close_code, sess->wts_close_reason_len);
+
+    if (sess->wts_conn_pub
+        && wt_session_find(sess->wts_conn_pub, sess->wts_stream_id) == sess)
+    {
+        TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
+        LSQ_DEBUG("removed WT session %"PRIu64" from connection list",
+                  sess->wts_stream_id);
+    }
 
     wt_dgq_drop_all(sess);
-
+    free(sess->wts_close_buf);
+    free(sess->wts_close_reason);
     wt_free_connect_info(sess);
     free(sess);
 }
 
 
 static void
-wt_session_close (struct lsquic_wt_session *sess, uint64_t code,
-                                        const char *reason, size_t reason_len)
+wt_begin_close (struct lsquic_wt_session *sess, uint64_t code,
+                const char *reason, size_t reason_len)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-    const struct lsquic_webtransport_if *wt_if;
-    lsquic_wt_session_ctx_t *sess_ctx;
 
-    if (!(sess->wts_flags & WTSF_CLOSING))
-    {
-        LSQ_INFO("closing WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
-                            sess->wts_stream_id, code, reason_len);
-        sess->wts_flags |= WTSF_CLOSING;
+    if (sess->wts_flags & WTSF_CLOSING)
+        return;
 
-        if (sess->wts_conn_pub)
-        {
-            TAILQ_REMOVE(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
-            LSQ_DEBUG("removed WT session %"PRIu64" from connection list",
-                                                        sess->wts_stream_id);
-        }
+    wt_latch_close_info(sess, code, reason, reason_len);
 
-        if (sess->wts_control_stream)
-        {
-            wt_unregister_capsule_handlers(sess->wts_control_stream);
-            lsquic_stream_set_http_dg_if(sess->wts_control_stream, NULL);
-        }
+    LSQ_INFO("closing WT session %"PRIu64" (code=%"PRIu64", reason_len=%zu)",
+             sess->wts_stream_id, sess->wts_close_code,
+             sess->wts_close_reason_len);
+    sess->wts_flags |= WTSF_CLOSING;
+    wt_drop_send_state(sess);
+    wt_close_data_streams(sess);
+}
 
-        wt_if = sess->wts_if;
-        sess_ctx = sess->wts_sess_ctx;
-        sess->wts_if = NULL;
-        sess->wts_sess_ctx = NULL;
-        if (!(sess->wts_flags & WTSF_ON_CLOSE_CALLED) && wt_if
-                                                && wt_if->wti_on_session_close)
-            wt_if->wti_on_session_close((lsquic_wt_session_t *) sess,
-                                sess_ctx, code, reason, reason_len);
-        sess->wts_flags |= WTSF_ON_CLOSE_CALLED;
 
-        wt_close_data_streams(sess);
-        if (sess->wts_control_stream)
-            lsquic_stream_shutdown(sess->wts_control_stream, 1);
-    }
+/* [draft-ietf-webtrans-http3-15], Section 6 */
+static void
+wt_close_remote (struct lsquic_wt_session *sess, uint64_t code,
+                 const char *reason, size_t reason_len, int close_received)
+{
+    if (close_received)
+        sess->wts_flags |= WTSF_CLOSE_RCVD;
 
-    if (sess->wts_n_streams == 0)
-        wt_session_finalize(sess, code, reason, reason_len);
-    else
-        LSQ_DEBUG("defer WT session %"PRIu64" free: %u stream%s still attached",
-            sess->wts_stream_id, sess->wts_n_streams,
-            sess->wts_n_streams == 1 ? "" : "s");
+    wt_begin_close(sess, code, reason, reason_len);
+
+    if (sess->wts_control_stream
+        && !(sess->wts_flags & WTSF_CLOSE_CAPSULE_PENDING)
+        && !lsquic_stream_is_closed(sess->wts_control_stream))
+        (void) lsquic_stream_shutdown(sess->wts_control_stream, 1);
+
+    wt_session_maybe_finalize(sess);
 }
 
 
@@ -2114,7 +2661,44 @@ int
 lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
                                         const char *reason, size_t reason_len)
 {
-    wt_session_close(sess, code, reason, reason_len);
+    WT_SET_CONN_FROM_SESSION(sess);
+
+    if (sess->wts_flags & WTSF_CLOSING)
+        return 0;
+
+    wt_begin_close(sess, code, reason, reason_len);
+
+    if (!sess->wts_control_stream)
+    {
+        wt_session_maybe_finalize(sess);
+        return 0;
+    }
+
+    if (sess->wts_close_code != 0 || sess->wts_close_reason_len != 0)
+    {
+        if (0 == wt_queue_close_capsule(sess, sess->wts_close_code,
+                                        sess->wts_close_reason,
+                                        sess->wts_close_reason_len))
+            wt_drive_connect_stream(sess->wts_control_stream);
+        else
+        {
+            LSQ_WARN("cannot queue WT_CLOSE_SESSION for session %"PRIu64,
+                     sess->wts_stream_id);
+            /* [draft-ietf-webtrans-http3-15], Section 6 */
+            lsquic_stream_set_ss_code(sess->wts_control_stream,
+                                                    HEC_WT_SESSION_GONE);
+            (void) lsquic_stream_shutdown(sess->wts_control_stream, 0);
+            (void) lsquic_stream_shutdown(sess->wts_control_stream, 1);
+        }
+    }
+    else
+    {
+        /* [draft-ietf-webtrans-http3-15], Section 6 */
+        lsquic_stream_set_ss_code(sess->wts_control_stream, HEC_WT_SESSION_GONE);
+        (void) lsquic_stream_shutdown(sess->wts_control_stream, 0);
+        (void) lsquic_stream_shutdown(sess->wts_control_stream, 1);
+    }
+
     return 0;
 }
 
@@ -2216,6 +2800,14 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
 
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (sess->wts_flags & WTSF_CLOSING)
+    {
+        errno = EPIPE;
+        return NULL;
+    }
+
     if (!sess->wts_conn_pub)
     {
         errno = EINVAL;
@@ -2269,6 +2861,13 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
     struct wt_onnew_ctx *onnew;
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
+
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (sess->wts_flags & WTSF_CLOSING)
+    {
+        errno = EPIPE;
+        return NULL;
+    }
 
     if (!sess->wts_conn_pub)
     {
@@ -2432,6 +3031,13 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
     size_t max_sz;
     int rc;
 
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (sess->wts_flags & WTSF_CLOSING)
+    {
+        errno = EPIPE;
+        return -1;
+    }
+
     if (!buf || len == 0 || policy > LSQWT_DG_DROP_NEWEST)
     {
         errno = EINVAL;
@@ -2486,6 +3092,13 @@ lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
 
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (is_want && (sess->wts_flags & WTSF_CLOSING))
+    {
+        errno = EPIPE;
+        return -1;
+    }
+
     control_stream = sess->wts_control_stream;
     if (!control_stream)
     {
@@ -2496,6 +3109,12 @@ lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
 
     if (is_want)
     {
+        if (sess->wts_flags & WTSF_CLOSING)
+        {
+            errno = EPIPE;
+            return -1;
+        }
+
         sess->wts_flags |= WTSF_WANT_DG_WRITE;
         return wt_dgq_arm_write(sess);
     }
@@ -2550,6 +3169,14 @@ lsquic_wt_on_http_dg_write (struct lsquic_stream *stream,
         errno = EAGAIN;
         LSQ_DEBUG("WT HTTP datagram write has no control session on stream %"PRIu64,
                                                 lsquic_stream_id(stream));
+        return -1;
+    }
+
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (sess->wts_flags & WTSF_CLOSING)
+    {
+        (void) lsquic_stream_want_http_dg_write(stream, 0);
+        errno = EAGAIN;
         return -1;
     }
 
@@ -2620,7 +3247,9 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
         return;
     }
 
-    if (sess->wts_if && sess->wts_if->wti_on_datagram_read)
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    if (!(sess->wts_flags & WTSF_CLOSING)
+        && sess->wts_if && sess->wts_if->wti_on_datagram_read)
     {
         LSQ_DEBUG("deliver WT datagram to session %"PRIu64,
                                                     sess->wts_stream_id);
@@ -2695,7 +3324,7 @@ wt_on_stream_destroy (struct lsquic_stream *stream)
 {
     WT_SET_CONN_FROM_STREAM(stream);
     struct lsquic_wt_session *sess;
-    int is_control_stream, should_close;
+    int is_control_stream;
 
     if (!stream)
         return;
@@ -2705,15 +3334,15 @@ wt_on_stream_destroy (struct lsquic_stream *stream)
         return;
 
     is_control_stream = sess->wts_control_stream == stream;
-    should_close = is_control_stream || (sess->wts_flags & WTSF_CLOSING);
     if (is_control_stream)
         sess->wts_control_stream = NULL;
     LSQ_DEBUG("WT stream destroy: stream=%"PRIu64", session=%"PRIu64
-        ", is_control=%d, should_close: %d", lsquic_stream_id(stream),
-        sess->wts_stream_id, is_control_stream, should_close);
+        ", is_control=%d, closing=%d", lsquic_stream_id(stream),
+        sess->wts_stream_id, is_control_stream,
+        !!(sess->wts_flags & WTSF_CLOSING));
     wt_stream_unbind_session(stream);
-    if (should_close)
-        wt_session_close(sess, 0, NULL, 0);
+    if (is_control_stream && !(sess->wts_flags & WTSF_CLOSING))
+        wt_close_remote(sess, 0, NULL, 0, 0);
 }
 
 
@@ -2759,6 +3388,12 @@ wt_on_client_bidi_stream (struct lsquic_stream *stream,
             (uint64_t) session_id);
     sess = wt_session_find(lsquic_stream_get_conn_public(stream),
                                                             session_id);
+    if (sess && (sess->wts_flags & WTSF_CLOSING))
+    {
+        wt_close_stream_with_session_gone(stream);
+        return;
+    }
+
     if (!sess)
     {
         if (0 != wt_buffer_or_reject_stream(stream, session_id, LSQWT_BIDI))

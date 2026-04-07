@@ -96,6 +96,8 @@ enum http_error_code
     HEC_QPACK_DECOMPRESSION_FAILED  = 0x200,
     HEC_QPACK_ENCODER_STREAM_ERROR  = 0x201,
     HEC_QPACK_DECODER_STREAM_ERROR  = 0x202,
+    /* [draft-ietf-webtrans-http3-15], Section 6 */
+    HEC_WT_SESSION_GONE            = 0x170D7B68,
     HEC_WT_BUFFERED_STREAM_REJECTED =  0x3994BD84,
 };
 

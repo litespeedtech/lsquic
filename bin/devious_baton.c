@@ -55,6 +55,7 @@ struct devious_baton_session
     unsigned                              dg_burst_pending;
     unsigned                              dg_burst_sent;
     unsigned                              dg_burst_failed;
+    unsigned                              received_batons;
     signed char                           closed;
 };
 
@@ -1014,6 +1015,18 @@ handle_baton (struct devious_baton_stream *st, unsigned char baton)
     sess = st->dbs_session;
     db_log_receive(st, baton);
 
+    ++sess->received_batons;
+    if (sess->cfg.close_reason
+        && sess->received_batons == sess->cfg.close_after_n_batons)
+    {
+        LSQ_INFO("%s closing session after baton %u with reason `%s'",
+            db_role(sess), sess->received_batons, sess->cfg.close_reason);
+        lsquic_wt_close(sess->wt_sess, DEVIOUS_BATON_SESS_ERR_BRUH,
+                        sess->cfg.close_reason,
+                        strlen(sess->cfg.close_reason));
+        return 0;
+    }
+
     send_datagram_if_needed(sess, baton);
 
     if (baton == 0)
@@ -1079,7 +1092,9 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
             LSQ_WARN("%s got FIN before full baton message; closing session",
                                                 db_role(st->dbs_session));
             lsquic_wt_close(st->dbs_session->wt_sess,
-                            DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+                            DEVIOUS_BATON_SESS_ERR_BRUH,
+                            "got FIN before full baton message",
+                            sizeof("got FIN before full baton message") - 1);
         }
         return;
     }
@@ -1089,7 +1104,9 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
         LSQ_WARN("%s got malformed baton message; closing session",
                                                 db_role(st->dbs_session));
         lsquic_wt_close(st->dbs_session->wt_sess,
-                        DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+                        DEVIOUS_BATON_SESS_ERR_BRUH,
+                        "got malformed baton message",
+                        sizeof("got malformed baton message") - 1);
         return;
     }
 
@@ -1098,7 +1115,9 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
         LSQ_WARN("%s got trailing bytes in baton message; closing session",
                                                 db_role(st->dbs_session));
         lsquic_wt_close(st->dbs_session->wt_sess,
-                        DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+                        DEVIOUS_BATON_SESS_ERR_BRUH,
+                        "got trailing bytes in baton message",
+                        sizeof("got trailing bytes in baton message") - 1);
         return;
     }
 
@@ -1106,7 +1125,9 @@ consume_baton_data (struct devious_baton_stream *st, int fin)
     st->dbs_buf_len = 0;
     if (0 != handle_baton(st, baton))
         lsquic_wt_close(st->dbs_session->wt_sess,
-                        DEVIOUS_BATON_SESS_ERR_DA_YAMN, NULL, 0);
+                        DEVIOUS_BATON_SESS_ERR_DA_YAMN,
+                        "could not handle baton",
+                        sizeof("could not handle baton") - 1);
 }
 
 
@@ -1129,7 +1150,9 @@ consume_baton_datagram (struct devious_baton_session *sess, const void *buf,
     {
         LSQ_WARN("%s got malformed/incomplete datagram baton; closing session",
                                                                 db_role(sess));
-        lsquic_wt_close(sess->wt_sess, DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+        lsquic_wt_close(sess->wt_sess, DEVIOUS_BATON_SESS_ERR_BRUH,
+                        "got malformed or incomplete datagram baton",
+                        sizeof("got malformed or incomplete datagram baton") - 1);
         return;
     }
 
@@ -1163,7 +1186,9 @@ drain_baton_stream_after_message (struct devious_baton_stream *st)
         LSQ_WARN("%s got trailing bytes in baton stream; closing session",
                                             db_role(st->dbs_session));
         lsquic_wt_close(st->dbs_session->wt_sess,
-                    DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+                    DEVIOUS_BATON_SESS_ERR_BRUH,
+                    "got trailing bytes in baton stream",
+                    sizeof("got trailing bytes in baton stream") - 1);
         return;
     }
 
@@ -1219,7 +1244,9 @@ db_wti_on_session_open (void *ctx, struct lsquic_wt_session *sess,
             if (0 != open_stream_and_queue(bsess, LSQWT_UNI,
                                         (unsigned char) bsess->cfg.baton))
             {
-                lsquic_wt_close(sess, DEVIOUS_BATON_SESS_ERR_DA_YAMN, NULL, 0);
+                lsquic_wt_close(sess, DEVIOUS_BATON_SESS_ERR_DA_YAMN,
+                                    "could not open initial baton stream",
+                                    sizeof("could not open initial baton stream") - 1);
                 break;
             }
         }
@@ -1857,7 +1884,9 @@ on_read (struct lsquic_stream *stream, struct lsquic_stream_ctx *st_h)
             if (0 != buf_append(st, buf, (size_t) nread))
             {
                 lsquic_wt_close(st->dbs_session->wt_sess,
-                        DEVIOUS_BATON_SESS_ERR_BRUH, NULL, 0);
+                        DEVIOUS_BATON_SESS_ERR_BRUH,
+                        "could not buffer baton stream data",
+                        sizeof("could not buffer baton stream data") - 1);
                 return;
             }
         }
@@ -2078,6 +2107,8 @@ devious_baton_app_init (struct devious_baton_app *app, struct prog *prog,
     app->dgq_max_count = 0;
     app->dgq_max_bytes = 0;
     app->max_count = 100;
+    app->close_after_n_batons = 0;
+    app->close_reason = NULL;
     app->path_base = DEVIOUS_BATON_PATH;
     app->path = DEVIOUS_BATON_PATH;
 

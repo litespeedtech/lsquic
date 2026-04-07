@@ -19,6 +19,7 @@
 #define WT_APP_ERROR_MAX         0xFFFFFFFFULL
 #define WT_APP_ERROR_MIN_H3      0x52E4A40FA8DBULL
 #define WT_APP_ERROR_MAX_H3      0x52E5AC983162ULL
+#define WT_CLOSE_REASON_MAX      1024
 
 int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
@@ -31,6 +32,15 @@ int lsquic_wt_test_dispatch_reset (int how, int ss_received, int with_ctx,
                                    int with_if, uint64_t rst_in_code,
                                    uint64_t ss_in_code, unsigned *called,
                                    uint64_t *reset_code, uint64_t *stop_code);
+int lsquic_wt_test_build_close_capsule (uint64_t code, const char *reason,
+                                        size_t reason_len,
+                                        unsigned char *buf, size_t *buf_len);
+int lsquic_wt_test_remote_close (uint64_t code, const char *reason,
+                                 size_t reason_len, unsigned *called,
+                                 uint64_t *close_code,
+                                 size_t *close_reason_len, int *is_closing,
+                                 int *close_received, int *on_close_called);
+int lsquic_wt_test_closing_rejects (unsigned *mask);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -335,6 +345,79 @@ test_dgq_policies (void)
 }
 
 
+
+
+static void
+test_close_capsule_and_close_state (void)
+{
+    char long_reason[WT_CLOSE_REASON_MAX + 9];
+    unsigned char buf[64];
+    unsigned called, mask;
+    uint64_t capsule_type, payload_len, close_code;
+    size_t buf_len, close_reason_len;
+    int is_closing, close_received, on_close_called;
+    const unsigned char *p, *end;
+    int nr;
+
+    memset(long_reason, 'x', sizeof(long_reason));
+    buf_len = sizeof(buf);
+    assert(0 == lsquic_wt_test_build_close_capsule(0x12345678, "ok", 2,
+                                                   buf, &buf_len));
+    p = buf;
+    end = buf + buf_len;
+    nr = lsquic_varint_read(p, end, &capsule_type);
+    assert(nr > 0);
+    p += nr;
+    assert(capsule_type == 0x2843);
+    nr = lsquic_varint_read(p, end, &payload_len);
+    assert(nr > 0);
+    p += nr;
+    assert(payload_len == 6);
+    assert((size_t) (end - p) == payload_len);
+    close_code = (uint64_t) p[0] << 24 | (uint64_t) p[1] << 16
+               | (uint64_t) p[2] << 8 | (uint64_t) p[3];
+    assert(close_code == 0x12345678);
+    assert(0 == memcmp(p + 4, "ok", 2));
+
+    called = 0;
+    close_code = 0;
+    close_reason_len = 0;
+    is_closing = 0;
+    close_received = 0;
+    on_close_called = 0;
+    assert(0 == lsquic_wt_test_remote_close(0x22, "bye", 3, &called,
+                &close_code, &close_reason_len, &is_closing,
+                &close_received, &on_close_called));
+    assert(called == 0);
+    assert(close_code == 0x22);
+    assert(close_reason_len == 3);
+    assert(is_closing);
+    assert(close_received);
+    assert(!on_close_called);
+
+    called = 0;
+    close_code = 0;
+    close_reason_len = 0;
+    is_closing = 0;
+    close_received = 0;
+    on_close_called = 0;
+    assert(0 == lsquic_wt_test_remote_close(WT_APP_ERROR_MAX + 1,
+                long_reason, sizeof(long_reason), &called,
+                &close_code, &close_reason_len, &is_closing,
+                &close_received, &on_close_called));
+    assert(called == 0);
+    assert(close_code == WT_APP_ERROR_MAX);
+    assert(close_reason_len == WT_CLOSE_REASON_MAX);
+    assert(is_closing);
+    assert(close_received);
+    assert(!on_close_called);
+
+    mask = 0;
+    assert(0 == lsquic_wt_test_closing_rejects(&mask));
+    assert(mask == 0xF);
+}
+
+
 static void
 test_reset_dispatch (void)
 {
@@ -392,6 +475,7 @@ main (void)
     test_invalid_public_api();
     test_incoming_session_id_validation();
     test_dgq_policies();
+    test_close_capsule_and_close_state();
     test_reset_dispatch();
     return 0;
 }

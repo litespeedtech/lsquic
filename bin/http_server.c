@@ -1389,8 +1389,6 @@ baton_connect_handler (struct lsquic_stream *stream,
         st_h->flags |= SH_WT_HANDOFF;
         interop_server_hset_destroy(req);
         st_h->req = NULL;
-        lsquic_stream_wantread(stream, 0);
-        lsquic_stream_wantwrite(stream, 0);
     }
 
     return 1;

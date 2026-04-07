@@ -30,6 +30,47 @@
 #include "tool_log.h"
 
 
+static int
+parse_close_spec (const char *spec, unsigned *after_n_batons,
+                  const char **reason)
+{
+    char *end;
+    unsigned long val;
+    const char *colon;
+
+    if (!spec || !*spec)
+        return -1;
+
+    colon = strchr(spec, ':');
+    if (!colon)
+    {
+        *after_n_batons = 1;
+        *reason = spec;
+        return 0;
+    }
+
+    if (colon == spec)
+    {
+        *after_n_batons = 1;
+        *reason = spec + 1;
+        return 0;
+    }
+
+    errno = 0;
+    val = strtoul(spec, &end, 10);
+    if (0 == errno && end == colon && val > 0 && val <= UINT_MAX)
+    {
+        *after_n_batons = (unsigned) val;
+        *reason = colon + 1;
+        return 0;
+    }
+
+    *after_n_batons = 1;
+    *reason = spec;
+    return 0;
+}
+
+
 static void
 usage (const char *prog)
 {
@@ -48,6 +89,7 @@ usage (const char *prog)
 "   -v bytes   Max queued WT datagram bytes per session (0 = library default)\n"
 "   -P path    CONNECT path base (default: " DEVIOUS_BATON_PATH ")\n"
 "   -p bytes   Padding length for baton messages\n"
+"   -E spec    Close WT session after Nth received baton: N:reason or reason\n"
             , prog);
 }
 
@@ -78,7 +120,7 @@ main (int argc, char **argv)
 
     devious_baton_app_init(&app, &prog, 0);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:U:M:u:v:P:p:h")))
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "b:c:U:M:u:v:P:p:E:h")))
     {
         switch (opt) {
         case 'b':
@@ -138,6 +180,14 @@ main (int argc, char **argv)
             break;
         case 'p':
             app.padding_len = (unsigned) atoi(optarg);
+            break;
+        case 'E':
+            if (0 != parse_close_spec(optarg, &app.close_after_n_batons,
+                                                    &app.close_reason))
+            {
+                LSQ_ERROR("invalid close spec `%s'", optarg);
+                exit(1);
+            }
             break;
         case 'h':
             usage(argv[0]);

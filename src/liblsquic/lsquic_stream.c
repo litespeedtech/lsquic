@@ -6521,7 +6521,13 @@ http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
     ssize_t nread;
 
     nread = lsquic_stream_readf(stream, lsquic_http_dg_capsule_readf, stream);
-    if (nread == 0 || (nread < 0 && errno != EWOULDBLOCK))
+    if (nread == 0)
+    {
+        if (stream->stream_if && stream->stream_if->on_read)
+            stream->stream_if->on_read(stream, stream->st_ctx);
+        (void) lsquic_stream_wantread(stream, 0);
+    }
+    else if (nread < 0 && errno != EWOULDBLOCK)
         (void) lsquic_stream_wantread(stream, 0);
 }
 

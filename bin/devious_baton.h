@@ -43,11 +43,12 @@ struct devious_baton_app
     unsigned       dgq_max_count;
     size_t         dgq_max_bytes;
     unsigned       max_count;
+    unsigned       close_after_n_batons;
+    const char    *close_reason;
     const char    *path_base;
     const char    *path;
     char           path_buf[256];
 };
-
 
 void
 devious_baton_app_init (struct devious_baton_app *, struct prog *, int);
