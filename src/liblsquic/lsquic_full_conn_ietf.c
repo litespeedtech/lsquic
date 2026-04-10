@@ -10660,6 +10660,21 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     peer_reset_stream_at = !!(conn->ifc_mflags & MF_PEER_RESET_STREAM_AT);
     had_support = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
 
+    /*
+     * Strict draft-15 support requires peer SETTINGS, negotiated HTTP
+     * Datagrams and QUIC DATAGRAM, plus peer WT advertisement.  Client-side
+     * CONNECT also requires SETTINGS_ENABLE_CONNECT_PROTOCOL=1.
+     *
+     * Compatibility policy on this branch:
+     *  - still enable WT for draft-14 peers that advertise WT via
+     *    WT_MAX_SESSIONS and negotiate the transport pieces above;
+     *  - still enable WT when peers omit reset_stream_at TP or WT initial
+     *    settings, but warn and treat this as compatibility mode.
+     *
+     * This keeps draft-14 / partial draft-15 interop working while WT flow
+     * control remains deferred and the implementation supports one WT
+     * session per connection.
+     */
     supports = peer_settings_received
             && local_webtransport_enabled(conn)
             && peer_wt_enabled

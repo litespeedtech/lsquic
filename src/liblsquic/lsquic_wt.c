@@ -725,6 +725,13 @@ struct wt_test_close_result
 };
 
 
+struct wt_test_datagram_result
+{
+    unsigned called;
+    size_t len;
+};
+
+
 static void
 wt_test_on_session_close (lsquic_wt_session_t *UNUSED_sess,
                           lsquic_wt_session_ctx_t *sctx, uint64_t code,
@@ -736,6 +743,19 @@ wt_test_on_session_close (lsquic_wt_session_t *UNUSED_sess,
     result->called += 1;
     result->close_code = code;
     result->close_reason_len = reason_len;
+}
+
+
+static void
+wt_test_on_datagram_read (lsquic_wt_session_t *sess, const void *UNUSED_buf,
+                          size_t len)
+{
+    struct wt_test_datagram_result *result;
+
+    result = (struct wt_test_datagram_result *)
+                                ((struct lsquic_wt_session *) sess)->wts_sess_ctx;
+    result->called += 1;
+    result->len = len;
 }
 
 
@@ -980,6 +1000,51 @@ lsquic_wt_test_control_reset_close (unsigned *called, int *is_closing,
 
     free(sess.wts_close_reason);
     free(sess.wts_close_buf);
+    return 0;
+}
+
+
+int
+lsquic_wt_test_http_dg_read (int with_session, int is_control_stream,
+                             int is_closing, unsigned *called)
+{
+    struct wt_test_datagram_result result;
+    struct lsquic_webtransport_if wt_if;
+    struct lsquic_wt_session sess;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream, control_stream;
+    static const unsigned char dg[] = { 'd', 'g', };
+
+    memset(&result, 0, sizeof(result));
+    memset(&wt_if, 0, sizeof(wt_if));
+    memset(&sess, 0, sizeof(sess));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    memset(&control_stream, 0, sizeof(control_stream));
+
+    wt_if.wti_on_datagram_read = wt_test_on_datagram_read;
+    sess.wts_if = &wt_if;
+    sess.wts_sess_ctx = (lsquic_wt_session_ctx_t *) &result;
+    sess.wts_conn = &conn;
+    sess.wts_conn_pub = &conn_pub;
+    if (is_closing)
+        sess.wts_flags |= WTSF_CLOSING;
+
+    conn_pub.lconn = &conn;
+    stream.conn_pub = &conn_pub;
+    control_stream.conn_pub = &conn_pub;
+
+    if (with_session)
+    {
+        stream.sm_attachment = &sess;
+        sess.wts_control_stream = is_control_stream ? &stream : &control_stream;
+    }
+
+    lsquic_wt_on_http_dg_read(&stream, NULL, dg, sizeof(dg));
+    if (called)
+        *called = result.called;
     return 0;
 }
 #endif

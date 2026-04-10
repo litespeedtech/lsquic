@@ -148,7 +148,12 @@ struct lsquic_webtransport_if
                             uint64_t error_code);
 };
 
-/** Accept WebTransport CONNECT. */
+/**
+ * Accept WebTransport CONNECT.
+ *
+ * Applications are responsible for validating wtci_origin, if present,
+ * before accepting the session.
+ */
 lsquic_wt_session_t *
 lsquic_wt_accept (lsquic_stream_t *connect_stream,
                  const struct lsquic_wt_accept_params *params);
@@ -175,7 +180,14 @@ lsquic_wt_session_id (lsquic_wt_session_t *sess);
 int
 lsquic_wt_peer_settings_received (lsquic_conn_t *conn);
 
-/** Return whether peer currently supports WebTransport on this connection. */
+/**
+ * Return whether peer currently supports WebTransport on this connection.
+ *
+ * This is a best-effort capability check.  On this branch it may become
+ * true in compatibility mode for draft-14 peers, or for peers that
+ * negotiate the core transport pieces but omit reset_stream_at or WT
+ * initial flow-control settings.
+ */
 int
 lsquic_wt_peer_supports (lsquic_conn_t *conn);
 

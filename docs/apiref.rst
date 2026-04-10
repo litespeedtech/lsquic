@@ -964,6 +964,10 @@ settings structure:
 
        Maximum number of concurrent WebTransport sessions per connection.
 
+       Current WebTransport support on this branch is limited to a single
+       session per connection while per-session WT flow control remains
+       deferred.
+
        Default value is :macro:`LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS`
 
     .. member:: unsigned        es_write_sched_strategy
@@ -1400,6 +1404,11 @@ the engine to communicate with the user code:
     .. member:: LSQUIC_HTTP_CAP_WEBTRANSPORT
 
         WebTransport is negotiated and usable.
+
+        This is a best-effort capability bit.  It can be set in
+        compatibility mode for draft-14 peers, or for peers that negotiate
+        the transport pieces needed by the current implementation while
+        omitting ``reset_stream_at`` or WT initial flow-control settings.
 
 .. type:: struct lsquic_http_caps
 
@@ -2293,6 +2302,9 @@ available through engine settings.
     .. member:: LSQCP_WT_PEER_SUPPORTS
 
         Whether peer currently satisfies WebTransport requirements.
+
+        This reflects the implementation's effective policy, including the
+        compatibility mode described above.
 
         **Type:** ``uint64_t`` (0 or 1, get-only)
 

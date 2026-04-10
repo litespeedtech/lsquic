@@ -51,6 +51,8 @@ int lsquic_wt_test_finalize (uint64_t code, const char *reason,
                              unsigned *dropped_datagrams);
 int lsquic_wt_test_control_reset_close (unsigned *called, int *is_closing,
                                         int *close_received);
+int lsquic_wt_test_http_dg_read (int with_session, int is_control_stream,
+                                 int is_closing, unsigned *called);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -256,6 +258,7 @@ static void
 test_incoming_session_id_validation (void)
 {
     unsigned error_code;
+    unsigned called;
 
     error_code = 0;
     assert(0 != lsquic_wt_test_validate_incoming_session_id(15, 1, "uni",
@@ -276,6 +279,27 @@ test_incoming_session_id_validation (void)
     assert(0 == lsquic_wt_test_validate_incoming_session_id(15, 4, "bidi",
                                                             &error_code));
     assert(0 == error_code);
+
+    error_code = 0;
+    assert(0 != lsquic_wt_test_validate_incoming_session_id(15, 3, "uni",
+                                                            &error_code));
+    assert(error_code == HEC_ID_ERROR);
+
+    called = 1;
+    assert(0 == lsquic_wt_test_http_dg_read(0, 0, 0, &called));
+    assert(0 == called);
+
+    called = 1;
+    assert(0 == lsquic_wt_test_http_dg_read(1, 0, 0, &called));
+    assert(0 == called);
+
+    called = 1;
+    assert(0 == lsquic_wt_test_http_dg_read(1, 1, 1, &called));
+    assert(0 == called);
+
+    called = 0;
+    assert(0 == lsquic_wt_test_http_dg_read(1, 1, 0, &called));
+    assert(1 == called);
 }
 
 static void
