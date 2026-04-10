@@ -496,6 +496,9 @@ wt_on_stream_destroy (struct lsquic_stream *stream);
 
 static void
 wt_session_maybe_finalize (struct lsquic_wt_session *sess);
+static void
+wt_control_on_reset (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx,
+                     int how);
 
 static int
 wt_is_hq_switch_frame (struct lsquic_stream *stream, uint64_t frame_type,
@@ -839,6 +842,144 @@ lsquic_wt_test_closing_rejects (unsigned *mask)
 
     if (mask)
         *mask = bits;
+    return 0;
+}
+
+
+int
+lsquic_wt_test_local_close (uint64_t code, const char *reason,
+                            size_t reason_len, int *queued_capsule,
+                            unsigned *dgq_count)
+{
+    struct lsquic_wt_session sess;
+    unsigned char capsule_buf[WT_CLOSE_REASON_MAX + 32];
+    size_t capsule_len;
+    static const unsigned char dg[] = { 'd', 'g', };
+
+    memset(&sess, 0, sizeof(sess));
+    TAILQ_INIT(&sess.wts_dgq);
+    sess.wts_dgq_max_count = LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_COUNT_DEFAULT;
+    sess.wts_dgq_max_bytes = LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_BYTES_DEFAULT;
+
+    assert(0 == wt_dgq_enqueue(&sess, dg, sizeof(dg), LSQWT_DG_FAIL_EAGAIN,
+                               LSQUIC_HTTP_DG_SEND_DEFAULT));
+    wt_begin_close(&sess, code, reason, reason_len);
+
+    if (queued_capsule)
+    {
+        *queued_capsule = 0;
+        if (sess.wts_close_code != 0 || sess.wts_close_reason_len != 0)
+        {
+            capsule_len = sizeof(capsule_buf);
+            if (0 == lsquic_wt_test_build_close_capsule(sess.wts_close_code,
+                    sess.wts_close_reason, sess.wts_close_reason_len,
+                    capsule_buf, &capsule_len))
+                *queued_capsule = 1;
+        }
+    }
+
+    if (dgq_count)
+        *dgq_count = sess.wts_dgq_count;
+
+    free(sess.wts_close_reason);
+    return 0;
+}
+
+
+int
+lsquic_wt_test_finalize (uint64_t code, const char *reason, size_t reason_len,
+                         unsigned *called, uint64_t *close_code,
+                         size_t *close_reason_len, int *removed,
+                         unsigned *dropped_datagrams)
+{
+    struct lsquic_wt_session *sess;
+    struct wt_test_close_result result;
+    struct lsquic_webtransport_if wt_if;
+    struct lsquic_conn_public conn_pub;
+    static const unsigned char dg[] = { 'd', 'g', };
+    unsigned n_dgrams;
+
+    sess = calloc(1, sizeof(*sess));
+    if (!sess)
+        return -1;
+
+    memset(&result, 0, sizeof(result));
+    memset(&wt_if, 0, sizeof(wt_if));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    TAILQ_INIT(&conn_pub.wt_sessions);
+    TAILQ_INIT(&sess->wts_dgq);
+
+    wt_if.wti_on_session_close = wt_test_on_session_close;
+    sess->wts_if = &wt_if;
+    sess->wts_sess_ctx = (lsquic_wt_session_ctx_t *) &result;
+    sess->wts_conn_pub = &conn_pub;
+    sess->wts_stream_id = 4;
+    sess->wts_dgq_max_count = LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_COUNT_DEFAULT;
+    sess->wts_dgq_max_bytes = LSQUIC_WTAP_MAX_DATAGRAM_QUEUE_BYTES_DEFAULT;
+    wt_latch_close_info(sess, code, reason, reason_len);
+    sess->wts_flags |= WTSF_CLOSING;
+    assert(0 == wt_dgq_enqueue(sess, dg, sizeof(dg), LSQWT_DG_FAIL_EAGAIN,
+                               LSQUIC_HTTP_DG_SEND_DEFAULT));
+    n_dgrams = sess->wts_dgq_count;
+    TAILQ_INSERT_TAIL(&conn_pub.wt_sessions, sess, wts_next);
+
+    wt_session_maybe_finalize(sess);
+
+    if (called)
+        *called = result.called;
+    if (close_code)
+        *close_code = result.close_code;
+    if (close_reason_len)
+        *close_reason_len = result.close_reason_len;
+    if (removed)
+        *removed = TAILQ_EMPTY(&conn_pub.wt_sessions);
+    if (dropped_datagrams)
+        *dropped_datagrams = n_dgrams;
+
+    return 0;
+}
+
+
+int
+lsquic_wt_test_control_reset_close (unsigned *called, int *is_closing,
+                                    int *close_received)
+{
+    struct lsquic_wt_session sess;
+    struct wt_test_close_result result;
+    struct lsquic_webtransport_if wt_if;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&result, 0, sizeof(result));
+    memset(&wt_if, 0, sizeof(wt_if));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+
+    wt_if.wti_on_session_close = wt_test_on_session_close;
+    sess.wts_if = &wt_if;
+    sess.wts_sess_ctx = (lsquic_wt_session_ctx_t *) &result;
+    sess.wts_n_streams = 1;
+    sess.wts_conn = &conn;
+    sess.wts_conn_pub = &conn_pub;
+    conn_pub.lconn = &conn;
+    stream.sm_attachment = &sess;
+    stream.conn_pub = &conn_pub;
+    stream.id = 0;
+
+    wt_control_on_reset(&stream, NULL, 0);
+
+    if (called)
+        *called = result.called;
+    if (is_closing)
+        *is_closing = !!(sess.wts_flags & WTSF_CLOSING);
+    if (close_received)
+        *close_received = !!(sess.wts_flags & WTSF_CLOSE_RCVD);
+
+    free(sess.wts_close_reason);
+    free(sess.wts_close_buf);
     return 0;
 }
 #endif

@@ -41,6 +41,16 @@ int lsquic_wt_test_remote_close (uint64_t code, const char *reason,
                                  size_t *close_reason_len, int *is_closing,
                                  int *close_received, int *on_close_called);
 int lsquic_wt_test_closing_rejects (unsigned *mask);
+int lsquic_wt_test_local_close (uint64_t code, const char *reason,
+                                size_t reason_len, int *queued_capsule,
+                                unsigned *dgq_count);
+int lsquic_wt_test_finalize (uint64_t code, const char *reason,
+                             size_t reason_len, unsigned *called,
+                             uint64_t *close_code,
+                             size_t *close_reason_len, int *removed,
+                             unsigned *dropped_datagrams);
+int lsquic_wt_test_control_reset_close (unsigned *called, int *is_closing,
+                                        int *close_received);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -352,10 +362,10 @@ test_close_capsule_and_close_state (void)
 {
     char long_reason[WT_CLOSE_REASON_MAX + 9];
     unsigned char buf[64];
-    unsigned called, mask;
+    unsigned called, mask, dgq_count, dropped_datagrams;
     uint64_t capsule_type, payload_len, close_code;
     size_t buf_len, close_reason_len;
-    int is_closing, close_received, on_close_called;
+    int is_closing, close_received, on_close_called, queued_capsule, removed;
     const unsigned char *p, *end;
     int nr;
 
@@ -412,9 +422,46 @@ test_close_capsule_and_close_state (void)
     assert(close_received);
     assert(!on_close_called);
 
+    queued_capsule = 0;
+    dgq_count = 1;
+    assert(0 == lsquic_wt_test_local_close(0x1234, "bye", 3,
+                                           &queued_capsule, &dgq_count));
+    assert(queued_capsule);
+    assert(0 == dgq_count);
+
+    queued_capsule = 1;
+    dgq_count = 1;
+    assert(0 == lsquic_wt_test_local_close(0, NULL, 0,
+                                           &queued_capsule, &dgq_count));
+    assert(!queued_capsule);
+    assert(0 == dgq_count);
+
     mask = 0;
     assert(0 == lsquic_wt_test_closing_rejects(&mask));
     assert(mask == 0xF);
+
+    called = 0;
+    close_code = 0;
+    close_reason_len = 0;
+    removed = 0;
+    dropped_datagrams = 0;
+    assert(0 == lsquic_wt_test_finalize(0x33, "done", 4, &called,
+                &close_code, &close_reason_len, &removed,
+                &dropped_datagrams));
+    assert(called == 1);
+    assert(close_code == 0x33);
+    assert(close_reason_len == 4);
+    assert(removed);
+    assert(dropped_datagrams);
+
+    called = 0;
+    is_closing = 0;
+    close_received = 1;
+    assert(0 == lsquic_wt_test_control_reset_close(&called, &is_closing,
+                                                   &close_received));
+    assert(called == 0);
+    assert(is_closing);
+    assert(!close_received);
 }
 
 
