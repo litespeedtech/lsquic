@@ -153,3 +153,15 @@ Base commit: a2e3c27
     the stream in the middle of the capsule-type varint, the parser treats the
     bytes as a clean EOF instead of aborting with HEC_DATAGRAM_ERROR. WT
     CONNECT streams in capsule mode inherit this malformed-input bypass.
+
+21. WT settings validation allows impossible multi-session capability.
+    Files: src/liblsquic/lsquic_engine.c, src/liblsquic/lsquic_hcso_writer.c,
+           src/liblsquic/lsquic_wt.c
+    Sites: lsquic_engine_check_settings(), wt_get_session_limit(),
+           lsquic_hcso_writer_write_settings()
+    Summary: Current WT support on this branch only implements a single
+    session per connection, but engine validation accepts
+    `es_max_webtransport_sessions > 1` and SETTINGS then advertises that
+    larger value to peers. The accept path still hard-limits the effective
+    session count to one, so the library can overstate WT capability and
+    reject a peer-visible second session that it previously advertised.

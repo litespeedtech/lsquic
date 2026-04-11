@@ -531,6 +531,16 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             return -1;
         }
 
+        if (settings->es_max_webtransport_sessions > 1)
+        {
+            if (err_buf)
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but current WT implementation "
+                                              "only supports 1 session per "
+                                              "connection");
+            return -1;
+        }
+
         if (!settings->es_reset_stream_at)
         {
             if (err_buf)
