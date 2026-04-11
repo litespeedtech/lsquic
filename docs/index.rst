@@ -63,6 +63,7 @@ Contents
 
    gettingstarted
    tutorial
+   webtransport
    apiref
    devel
    internals
