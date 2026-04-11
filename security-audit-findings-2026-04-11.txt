@@ -228,3 +228,12 @@ Base commit: a2e3c27
     never checked that the supplied control stream was server-side. A caller
     could therefore pass a client-side stream and start binding WT session
     state to the wrong endpoint role instead of getting a clean `EINVAL`.
+
+28. WT datagram convenience wrapper still dereferences NULL sessions.
+    File: src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_send_datagram()
+    Summary: The earlier NULL-session hardening covered
+    `lsquic_wt_send_datagram_ex()`, but the convenience wrapper still reads
+    `sess->wts_dg_policy` and `sess->wts_dg_mode` before forwarding the call.
+    Passing a NULL session handle to the wrapper therefore still crashes at the
+    WT API boundary instead of failing cleanly with `EINVAL`.

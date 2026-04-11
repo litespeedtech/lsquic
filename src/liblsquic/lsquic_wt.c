@@ -4648,6 +4648,10 @@ lsquic_wt_test_null_session_api_guards (unsigned *checked)
         ++count;
 
     errno = 0;
+    if (-1 == lsquic_wt_send_datagram(NULL, "x", 1) && errno == EINVAL)
+        ++count;
+
+    errno = 0;
     if (-1 == lsquic_wt_send_datagram_ex(NULL, "x", 1, LSQWT_DG_FAIL_EAGAIN,
                                          LSQUIC_HTTP_DG_SEND_DEFAULT)
         && errno == EINVAL)
@@ -5124,6 +5128,12 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
+    if (!sess)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
     return lsquic_wt_send_datagram_ex(sess, buf, len, sess->wts_dg_policy,
                                       sess->wts_dg_mode);
 }

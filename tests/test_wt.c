@@ -753,7 +753,7 @@ test_null_session_api_guards (void)
 
     checked = 0;
     assert(0 == lsquic_wt_test_null_session_api_guards(&checked));
-    assert(checked == 8);
+    assert(checked == 9);
 }
 
 
