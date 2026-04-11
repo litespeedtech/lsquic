@@ -1553,6 +1553,40 @@ lsquic_wt_test_send_response_rejects_missing_extra_headers (int *rejected)
 
 
 int
+lsquic_wt_test_response_header_count_validation (int *negative_rejected,
+                                                 int *overflow_rejected)
+{
+    struct lsquic_stream stream;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_wt_session sess;
+    struct lsquic_http_headers headers;
+    int rc;
+
+    memset(&stream, 0, sizeof(stream));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&sess, 0, sizeof(sess));
+    memset(&headers, 0, sizeof(headers));
+
+    headers.count = -1;
+    rc = wt_copy_extra_resp_headers(&sess, &headers);
+    if (negative_rejected)
+        *negative_rejected = rc != 0 && errno == EINVAL;
+
+    conn_pub.lconn = &conn;
+    stream.conn_pub = &conn_pub;
+    headers.count = INT_MAX;
+    headers.headers = (struct lsxpack_header *) (uintptr_t) 1;
+    rc = wt_send_response(&stream, 200, &headers, 0);
+    if (overflow_rejected)
+        *overflow_rejected = rc != 0 && errno == EOVERFLOW;
+
+    return 0;
+}
+
+
+int
 lsquic_wt_test_dgq_overflow_rejected (int incoming, int *overflow_rejected)
 {
     struct lsquic_wt_session sess;
@@ -1643,6 +1677,7 @@ lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
     memset(&sess, 0, sizeof(sess));
     ctx.conn.cn_if = &conn_iface;
     ctx.conn_pub.lconn = &ctx.conn;
+    sess.wts_conn = &ctx.conn;
     sess.wts_conn_pub = &ctx.conn_pub;
     sess.wts_stream_id = 4;
     sess.wts_data_if.on_new_stream = wt_on_new_stream;
@@ -3053,7 +3088,16 @@ wt_copy_extra_resp_headers (struct lsquic_wt_session *sess,
     const char *hdr_buf;
 
     wt_free_extra_resp_headers(sess);
-    if (!headers || headers->count <= 0)
+    if (!headers)
+        return 0;
+
+    if (headers->count < 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (headers->count == 0)
         return 0;
 
     if (!headers->headers)
@@ -3214,6 +3258,13 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
     {
         errno = EINVAL;
         LSQ_WARN("invalid WT extra header count: %d", extra_count);
+        return -1;
+    }
+    if (extra_count >= INT_MAX)
+    {
+        errno = EOVERFLOW;
+        LSQ_WARN("WT extra header count overflows response total: %d",
+                 extra_count);
         return -1;
     }
 
@@ -4131,10 +4182,10 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
 
     if (wt_stream_get_session(stream) != sess)
     {
-        errno = errno ? errno : ENOMEM;
         LSQ_WARN("WT uni stream %"PRIu64" failed to initialize in session "
                  "%"PRIu64, lsquic_stream_id(stream), sess->wts_stream_id);
         wt_abort_failed_local_stream(stream);
+        errno = ENOMEM;
         return NULL;
     }
 
@@ -4201,10 +4252,10 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
 
     if (wt_stream_get_session(stream) != sess)
     {
-        errno = errno ? errno : ENOMEM;
         LSQ_WARN("WT bidi stream %"PRIu64" failed to initialize in session "
                  "%"PRIu64, lsquic_stream_id(stream), sess->wts_stream_id);
         wt_abort_failed_local_stream(stream);
+        errno = ENOMEM;
         return NULL;
     }
 

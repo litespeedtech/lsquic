@@ -77,6 +77,8 @@ int lsquic_wt_test_extra_resp_header_validation (int *null_headers_rejected,
                                                  int *zero_len_ok);
 int lsquic_wt_test_send_response_rejects_missing_extra_headers (
     int *rejected);
+int lsquic_wt_test_response_header_count_validation (int *negative_rejected,
+                                                     int *overflow_rejected);
 int lsquic_wt_test_dgq_overflow_rejected (int incoming,
                                           int *overflow_rejected);
 int lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
@@ -759,8 +761,10 @@ static void
 test_extra_resp_header_validation (void)
 {
     int null_headers_rejected, zero_len_ok, rejected;
+    int negative_rejected, overflow_rejected;
 
     null_headers_rejected = zero_len_ok = rejected = 0;
+    negative_rejected = overflow_rejected = 0;
     assert(0 == lsquic_wt_test_extra_resp_header_validation(
                                 &null_headers_rejected, &zero_len_ok));
     assert(null_headers_rejected);
@@ -769,6 +773,11 @@ test_extra_resp_header_validation (void)
     assert(0 == lsquic_wt_test_send_response_rejects_missing_extra_headers(
                                                                     &rejected));
     assert(rejected);
+
+    assert(0 == lsquic_wt_test_response_header_count_validation(
+                                &negative_rejected, &overflow_rejected));
+    assert(negative_rejected);
+    assert(overflow_rejected);
 }
 
 

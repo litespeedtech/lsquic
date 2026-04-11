@@ -103,3 +103,11 @@ Base commit: a2e3c27
     the dynamic onnew context leaks and the open helper can still receive a
     stream object whose WT initialization never completed. The caller can end up
     with a half-initialized outgoing WT stream instead of a clean ENOMEM error.
+
+15. WT response-header helpers mishandle pathological header counts.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_copy_extra_resp_headers(), wt_send_response()
+    Summary: A negative copied-header count is currently treated as “no headers”
+    instead of invalid input, and `wt_send_response()` allows `extra->count ==
+    INT_MAX`, which overflows the one-added header total when cast back to the
+    `int` count field passed to stream header sending.
