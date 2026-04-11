@@ -85,6 +85,8 @@ int lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
                                              int *freed_dynamic_onnew);
 int lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
                                                   int *send_disarmed);
+int lsquic_wt_test_read_error_closes_stream (int *control_closed,
+                                             int *uni_closed);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -848,6 +850,19 @@ test_wt_uni_switch_failure (void)
 }
 
 
+static void
+test_read_error_closes_stream (void)
+{
+    int control_closed, uni_closed;
+
+    control_closed = uni_closed = 0;
+    assert(0 == lsquic_wt_test_read_error_closes_stream(&control_closed,
+                                                        &uni_closed));
+    assert(control_closed);
+    assert(uni_closed);
+}
+
+
 int
 main (void)
 {
@@ -869,5 +884,6 @@ main (void)
     test_open_stream_init_failure();
     test_datagram_write_state_rollback();
     test_wt_uni_switch_failure();
+    test_read_error_closes_stream();
     return 0;
 }

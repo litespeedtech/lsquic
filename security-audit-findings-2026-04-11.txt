@@ -127,3 +127,11 @@ Base commit: a2e3c27
     stream to the WT uni handler without checking whether the WT on_new
     callback actually created a read context. An allocation failure leaves the
     stream half-switched with a NULL WT context on a remote ingress path.
+
+18. WT readers ignore stream read failures and leave broken streams live.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_control_on_read(), wt_uni_on_read()
+    Summary: The CONNECT-stream wrapper and WT uni-stream reader return
+    immediately on negative `lsquic_stream_readf()` results. A read error does
+    not tear down the affected WT stream, which can strand the session or keep
+    a broken incoming WT stream around instead of closing it promptly.
