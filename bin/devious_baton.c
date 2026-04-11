@@ -878,6 +878,12 @@ write_baton_message (struct devious_baton_session *sess, unsigned char baton,
 
     padding_len = sess->cfg.padding_len;
     varint_len = (size_t) vint_size(padding_len);
+    if (varint_len > SIZE_MAX - 1
+        || (size_t) padding_len > SIZE_MAX - varint_len - 1)
+    {
+        errno = EOVERFLOW;
+        return -1;
+    }
     need = varint_len + (size_t) padding_len + 1;
 
     buf = malloc(need);
@@ -1605,6 +1611,11 @@ hset_prepare_decode (void *hset_p, struct lsxpack_header *xhdr,
         if (req_space <= el->nalloc)
         {
             LSQ_ERROR("requested space is smaller than already allocated");
+            return NULL;
+        }
+        if (el->nalloc > SIZE_MAX / 2)
+        {
+            LSQ_WARN("requested hset buffer growth overflows");
             return NULL;
         }
         if (req_space < el->nalloc * 2)

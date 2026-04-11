@@ -1649,8 +1649,9 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 st_h->interop_u.vhc.req_body = malloc(st_h->req->qif_sz);
                 if (!st_h->interop_u.vhc.req_body)
                 {
-                    perror("malloc");
-                    exit(1);
+                    LSQ_ERROR("cannot allocate request body buffer");
+                    lsquic_stream_close(stream);
+                    return;
                 }
             }
             need = st_h->req->qif_sz - st_h->interop_u.vhc.req_sz;
@@ -2092,13 +2093,27 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
     name_len = xhdr->name_len;
     value_len = xhdr->val_len;
 
-    req->qif_str = realloc(req->qif_str,
-                        req->qif_sz + name_len + value_len + 2);
-    if (!req->qif_str)
+    if (name_len > SIZE_MAX - value_len - 2
+        || req->qif_sz > SIZE_MAX - (name_len + value_len + 2))
     {
-        LSQ_ERROR("malloc failed");
+        LSQ_ERROR("header accumulation size overflow");
         return -1;
     }
+
+    {
+        char *new_qif_str;
+        size_t new_qif_sz;
+
+        new_qif_sz = req->qif_sz + name_len + value_len + 2;
+        new_qif_str = realloc(req->qif_str, new_qif_sz);
+        if (!new_qif_str)
+        {
+            LSQ_ERROR("malloc failed");
+            return -1;
+        }
+        req->qif_str = new_qif_str;
+    }
+
     memcpy(req->qif_str + req->qif_sz, name, name_len);
     req->qif_str[req->qif_sz + name_len] = '\t';
     memcpy(req->qif_str + req->qif_sz + name_len + 1, value, value_len);
