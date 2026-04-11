@@ -2023,7 +2023,13 @@ interop_server_hset_create (void *hsi_ctx, lsquic_stream_t *stream,
 {
     struct req *req;
 
+    (void) hsi_ctx;
+    (void) stream;
+    (void) is_push_promise;
+
     req = malloc(sizeof(struct req));
+    if (!req)
+        return NULL;
     memset(req, 0, offsetof(struct req, decode_buf));
 
     return req;

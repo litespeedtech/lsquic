@@ -66,6 +66,10 @@ int lsquic_wt_test_accept_resolution (unsigned initial_flags,
                                       unsigned *status);
 int lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
                                             unsigned *called_after);
+int lsquic_wt_test_pending_datagram_replay_stops_on_close (
+    unsigned *called_after, int *is_closing);
+int lsquic_wt_test_destroy_while_closing (int is_control_stream,
+                                          unsigned *called, int *removed);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -690,6 +694,41 @@ test_compatibility_mode_behavior (void)
 }
 
 
+static void
+test_pending_replay_stops_on_close (void)
+{
+    unsigned called_after;
+    int is_closing;
+
+    called_after = UINT_MAX;
+    is_closing = 0;
+    assert(0 == lsquic_wt_test_pending_datagram_replay_stops_on_close(
+                                                &called_after, &is_closing));
+    assert(called_after == 1);
+    assert(is_closing);
+}
+
+
+static void
+test_destroy_while_closing (void)
+{
+    unsigned called;
+    int removed;
+
+    called = UINT_MAX;
+    removed = 0;
+    assert(0 == lsquic_wt_test_destroy_while_closing(0, &called, &removed));
+    assert(called == 1);
+    assert(removed);
+
+    called = UINT_MAX;
+    removed = 0;
+    assert(0 == lsquic_wt_test_destroy_while_closing(1, &called, &removed));
+    assert(called == 1);
+    assert(removed);
+}
+
+
 int
 main (void)
 {
@@ -703,5 +742,7 @@ main (void)
     test_deferred_accept_resolution();
     test_compatibility_mode_behavior();
     test_reset_dispatch();
+    test_pending_replay_stops_on_close();
+    test_destroy_while_closing();
     return 0;
 }

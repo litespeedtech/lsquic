@@ -798,10 +798,18 @@ static int
 buf_append (struct devious_baton_stream *st, const unsigned char *buf,
                                                                 size_t len)
 {
+    size_t need;
     size_t new_cap;
     unsigned char *new_buf;
 
-    if (st->dbs_buf_len + len <= st->dbs_buf_cap)
+    if (len > SIZE_MAX - st->dbs_buf_len)
+    {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
+    need = st->dbs_buf_len + len;
+    if (need <= st->dbs_buf_cap)
     {
         memcpy(st->dbs_buf + st->dbs_buf_len, buf, len);
         st->dbs_buf_len += len;
@@ -809,8 +817,15 @@ buf_append (struct devious_baton_stream *st, const unsigned char *buf,
     }
 
     new_cap = st->dbs_buf_cap ? st->dbs_buf_cap : 64;
-    while (new_cap < st->dbs_buf_len + len)
+    while (new_cap < need)
+    {
+        if (new_cap > SIZE_MAX / 2)
+        {
+            new_cap = need;
+            break;
+        }
         new_cap *= 2;
+    }
 
     new_buf = realloc(st->dbs_buf, new_cap);
     if (!new_buf)
