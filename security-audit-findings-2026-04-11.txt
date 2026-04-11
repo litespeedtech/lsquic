@@ -87,3 +87,11 @@ Base commit: a2e3c27
     Summary: The MD5 and verification-body handlers call exit(1) when a stream
     read returns an error. A peer-induced per-stream failure can therefore kill
     the entire sample server instead of being contained to the affected stream.
+
+13. WT datagram queue allocators can wrap their element size calculation.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_dgq_enqueue(), wt_in_dgq_enqueue()
+    Summary: Both outgoing and incoming WT datagram queues allocate elements as
+    sizeof(elem) + len without overflow checks. A very large datagram length on
+    the public send path, or an unexpectedly large queued incoming length, can
+    wrap the allocation size before memcpy and corrupt the heap.

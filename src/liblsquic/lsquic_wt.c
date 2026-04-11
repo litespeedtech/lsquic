@@ -674,6 +674,19 @@ wt_size_add (size_t *total, size_t add)
     return 0;
 }
 
+
+static struct wt_dgq_elem *
+wt_dgq_elem_alloc (size_t len)
+{
+    size_t need;
+
+    need = sizeof(struct wt_dgq_elem);
+    if (0 != wt_size_add(&need, len))
+        return NULL;
+
+    return malloc(need);
+}
+
 static int
 wt_app_error_to_h3_error (uint64_t wt_error_code, uint64_t *h3_error_code)
 {
@@ -1522,6 +1535,38 @@ lsquic_wt_test_send_response_rejects_missing_extra_headers (int *rejected)
         *rejected = rc != 0;
     return 0;
 }
+
+
+int
+lsquic_wt_test_dgq_overflow_rejected (int incoming, int *overflow_rejected)
+{
+    struct lsquic_wt_session sess;
+    static const unsigned char byte = 0;
+    int rc;
+
+    memset(&sess, 0, sizeof(sess));
+    TAILQ_INIT(&sess.wts_dgq);
+    TAILQ_INIT(&sess.wts_in_dgq);
+    sess.wts_dgq_max_count = UINT_MAX;
+    sess.wts_dgq_max_bytes = SIZE_MAX;
+
+    errno = 0;
+    if (incoming)
+        rc = wt_in_dgq_enqueue(&sess, &byte,
+                               SIZE_MAX - sizeof(struct wt_dgq_elem) + 1);
+    else
+        rc = wt_dgq_enqueue(&sess, &byte,
+                            SIZE_MAX - sizeof(struct wt_dgq_elem) + 1,
+                            LSQWT_DG_FAIL_EAGAIN,
+                            LSQUIC_HTTP_DG_SEND_DEFAULT);
+
+    if (overflow_rejected)
+        *overflow_rejected = rc != 0 && errno == EOVERFLOW;
+
+    wt_dgq_drop_all(&sess);
+    wt_in_dgq_drop_all(&sess);
+    return 0;
+}
 #endif
 
 int
@@ -1702,7 +1747,7 @@ wt_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len,
         return -1;
     }
 
-    elem = malloc(sizeof(*elem) + len);
+    elem = wt_dgq_elem_alloc(len);
     if (!elem)
         return -1;
 
@@ -1749,7 +1794,7 @@ wt_in_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len)
         return -1;
     }
 
-    elem = malloc(sizeof(*elem) + len);
+    elem = wt_dgq_elem_alloc(len);
     if (!elem)
         return -1;
 

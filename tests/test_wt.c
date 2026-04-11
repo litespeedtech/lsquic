@@ -77,6 +77,8 @@ int lsquic_wt_test_extra_resp_header_validation (int *null_headers_rejected,
                                                  int *zero_len_ok);
 int lsquic_wt_test_send_response_rejects_missing_extra_headers (
     int *rejected);
+int lsquic_wt_test_dgq_overflow_rejected (int incoming,
+                                          int *overflow_rejected);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -768,6 +770,21 @@ test_extra_resp_header_validation (void)
 }
 
 
+static void
+test_dgq_overflow_rejected (void)
+{
+    int overflow_rejected;
+
+    overflow_rejected = 0;
+    assert(0 == lsquic_wt_test_dgq_overflow_rejected(0, &overflow_rejected));
+    assert(overflow_rejected);
+
+    overflow_rejected = 0;
+    assert(0 == lsquic_wt_test_dgq_overflow_rejected(1, &overflow_rejected));
+    assert(overflow_rejected);
+}
+
+
 int
 main (void)
 {
@@ -785,5 +802,6 @@ main (void)
     test_destroy_while_closing();
     test_stream_switch_failure_restores_state();
     test_extra_resp_header_validation();
+    test_dgq_overflow_rejected();
     return 0;
 }
