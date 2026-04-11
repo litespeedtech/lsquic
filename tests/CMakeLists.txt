@@ -141,6 +141,12 @@ IF(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     ADD_TEST(h3_framing_zero_size test_h3_framing -s 12)
 ENDIF()
 
+ADD_EXECUTABLE(fuzz_wt fuzz_wt.c ${ADDL_SOURCES})
+TARGET_LINK_LIBRARIES(fuzz_wt ${LIBS} ${LIB_FLAGS})
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(fuzz_wt ${GETOPT_LIB})
+ENDIF()
+
 IF(NOT MSVC)
 ADD_EXECUTABLE(graph_cubic graph_cubic.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(graph_cubic ${LIBS})

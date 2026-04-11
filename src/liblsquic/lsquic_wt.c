@@ -472,6 +472,8 @@ static void
 lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
                            lsquic_stream_ctx_t *UNUSED_sctx,
                            const void *buf, size_t len);
+static size_t
+wt_uni_readf (void *ctx, const unsigned char *buf, size_t sz, int fin);
 
 static const struct lsquic_http_dg_if wt_http_dg_if =
 {
@@ -1260,6 +1262,128 @@ lsquic_wt_test_http_dg_read (int with_session, int is_control_stream,
     lsquic_wt_on_http_dg_read(&stream, NULL, dg, sizeof(dg));
     if (called)
         *called = result.called;
+    return 0;
+}
+
+
+int
+lsquic_wt_test_http_dg_read_bytes (const unsigned char *buf, size_t len,
+                                   unsigned flags, unsigned *called)
+{
+    struct wt_test_datagram_result result;
+    struct lsquic_webtransport_if wt_if;
+    struct lsquic_wt_session sess;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream, control_stream;
+
+    memset(&result, 0, sizeof(result));
+    memset(&wt_if, 0, sizeof(wt_if));
+    memset(&sess, 0, sizeof(sess));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    memset(&control_stream, 0, sizeof(control_stream));
+
+    wt_if.wti_on_datagram_read = wt_test_on_datagram_read;
+    sess.wts_if = &wt_if;
+    sess.wts_sess_ctx = (lsquic_wt_session_ctx_t *) &result;
+    sess.wts_conn = &conn;
+    sess.wts_conn_pub = &conn_pub;
+    if (flags & 4)
+        sess.wts_flags |= WTSF_CLOSING;
+
+    conn_pub.lconn = &conn;
+    stream.conn_pub = &conn_pub;
+    control_stream.conn_pub = &conn_pub;
+
+    if (flags & 1)
+    {
+        stream.sm_attachment = &sess;
+        sess.wts_control_stream = flags & 2 ? &stream : &control_stream;
+    }
+
+    if (buf && len > 0)
+        lsquic_wt_on_http_dg_read(&stream, NULL, buf, len);
+    else
+        lsquic_wt_on_http_dg_read(&stream, NULL, "", 0);
+
+    if (called)
+        *called = result.called;
+    return 0;
+}
+
+
+int
+lsquic_wt_test_close_capsule_payload (const unsigned char *payload,
+                                      size_t payload_len, unsigned flags,
+                                      unsigned *error_code,
+                                      int *is_closing,
+                                      int *close_received,
+                                      size_t *close_reason_len)
+{
+    struct lsquic_wt_session sess;
+    struct lsquic_conn conn = LSCONN_INITIALIZER_CIDLEN(conn, 0);
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+    static const struct conn_iface conn_iface = {
+        .ci_abort_error = wt_test_abort_error,
+    };
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+
+    conn.cn_if = &conn_iface;
+    conn_pub.lconn = &conn;
+    stream.id = 0;
+    stream.conn_pub = &conn_pub;
+    stream.sm_attachment = &sess;
+    sess.wts_conn = &conn;
+    sess.wts_conn_pub = &conn_pub;
+    sess.wts_control_stream = &stream;
+    sess.wts_n_streams = 1;
+    sess.wts_stream_id = 4;
+    if (flags & 1)
+        sess.wts_flags |= WTSF_CLOSE_RCVD;
+    s_wt_test_error_code = 0;
+
+    wt_on_close_capsule(&stream, payload ? payload
+                                         : (const unsigned char *) "",
+                        payload_len);
+
+    if (error_code)
+        *error_code = s_wt_test_error_code;
+    if (is_closing)
+        *is_closing = !!(sess.wts_flags & WTSF_CLOSING);
+    if (close_received)
+        *close_received = !!(sess.wts_flags & WTSF_CLOSE_RCVD);
+    if (close_reason_len)
+        *close_reason_len = sess.wts_close_reason_len;
+
+    free(sess.wts_close_reason);
+    free(sess.wts_close_buf);
+    return 0;
+}
+
+
+int
+lsquic_wt_test_uni_read_bytes (const unsigned char *buf, size_t len, int fin,
+                               size_t *consumed, int *done,
+                               lsquic_stream_id_t *session_id)
+{
+    struct wt_uni_read_ctx uctx;
+    size_t nr;
+
+    memset(&uctx, 0, sizeof(uctx));
+    nr = wt_uni_readf(&uctx, buf ? buf : (const unsigned char *) "", len, fin);
+
+    if (consumed)
+        *consumed = nr;
+    if (done)
+        *done = uctx.done;
+    if (session_id)
+        *session_id = uctx.sess_id;
     return 0;
 }
 
