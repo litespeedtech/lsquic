@@ -2282,6 +2282,38 @@ lsquic_wt_test_accept_rejects_client_stream (int *rejected)
         *rejected = rc == -1 && errno == EINVAL;
     return 0;
 }
+
+
+int
+lsquic_wt_test_accept_rejects_started_headers (int *rejected)
+{
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+    struct lsquic_wt_accept_params params;
+    struct lsquic_webtransport_if wt_if;
+    int rc;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    memset(&params, 0, sizeof(params));
+    memset(&wt_if, 0, sizeof(wt_if));
+
+    wt_if.wti_on_stream_read = wt_test_on_stream_read;
+    params.wtap_wt_if = &wt_if;
+    conn_pub.lconn = &conn;
+    stream.conn_pub = &conn_pub;
+    stream.id = 0;
+    stream.sm_bflags = SMBF_SERVER;
+    stream.sm_send_headers_state = SSHS_HBLOCK_SENDING;
+
+    errno = 0;
+    rc = lsquic_wt_accept(&stream, &params);
+    if (rejected)
+        *rejected = rc == -1 && errno == EALREADY;
+    return 0;
+}
 #endif
 
 int
@@ -4416,6 +4448,14 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
     {
         errno = EINVAL;
         LSQ_WARN("WT accept called on client stream %"PRIu64,
+                 lsquic_stream_id(connect_stream));
+        return -1;
+    }
+
+    if (!lsquic_stream_headers_state_is_begin(connect_stream))
+    {
+        errno = EALREADY;
+        LSQ_WARN("WT accept called after headers started on stream %"PRIu64,
                  lsquic_stream_id(connect_stream));
         return -1;
     }

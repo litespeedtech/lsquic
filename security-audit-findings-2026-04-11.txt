@@ -237,3 +237,12 @@ Base commit: a2e3c27
     `sess->wts_dg_policy` and `sess->wts_dg_mode` before forwarding the call.
     Passing a NULL session handle to the wrapper therefore still crashes at the
     WT API boundary instead of failing cleanly with `EINVAL`.
+
+29. WT accept does not reject streams whose response headers already started.
+    File: src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_accept()
+    Summary: `lsquic_wt_reject()` already refuses CONNECT streams once response
+    header emission has started, but `lsquic_wt_accept()` did not. A caller
+    could therefore hand a stream to WT after application code had already
+    started the HTTP response, and WT would still bind session state internally
+    even though it could no longer send its own CONNECT 2xx handshake cleanly.
