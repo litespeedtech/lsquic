@@ -144,3 +144,12 @@ Base commit: a2e3c27
     session ID. The zero-initialized `sess_id` is then treated as real input,
     so the stream can be buffered or associated as if it belonged to session
     0 instead of being rejected as malformed.
+
+20. Partial capsule-type varints at EOF are accepted as clean stream end.
+    File: src/liblsquic/lsquic_stream.c
+    Site: lsquic_http_dg_capsule_readf()
+    Summary: The HTTP Datagram capsule reader only reports a truncated capsule
+    at EOF after it has advanced past the capsule-type field. If the peer ends
+    the stream in the middle of the capsule-type varint, the parser treats the
+    bytes as a clean EOF instead of aborting with HEC_DATAGRAM_ERROR. WT
+    CONNECT streams in capsule mode inherit this malformed-input bypass.

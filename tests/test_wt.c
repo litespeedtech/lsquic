@@ -91,6 +91,8 @@ int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
                                    int fin, size_t *consumed, int *done,
                                    int *malformed,
                                    lsquic_stream_id_t *session_id);
+int lsquic_stream_test_truncated_capsule_type_fin_aborts (
+    unsigned *error_code);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -889,6 +891,18 @@ test_truncated_uni_session_id_is_malformed (void)
 }
 
 
+static void
+test_truncated_capsule_type_fin_aborts (void)
+{
+    unsigned error_code;
+
+    error_code = 0;
+    assert(0 == lsquic_stream_test_truncated_capsule_type_fin_aborts(
+                                                                    &error_code));
+    assert(error_code == HEC_DATAGRAM_ERROR);
+}
+
+
 int
 main (void)
 {
@@ -912,5 +926,6 @@ main (void)
     test_wt_uni_switch_failure();
     test_read_error_closes_stream();
     test_truncated_uni_session_id_is_malformed();
+    test_truncated_capsule_type_fin_aborts();
     return 0;
 }

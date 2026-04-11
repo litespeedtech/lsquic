@@ -6510,10 +6510,54 @@ lsquic_http_dg_capsule_readf (void *ctx, const unsigned char *buf, size_t len, i
     }
 
   end:
-    if (fin && rd->state != HDC_READ_TYPE)
+    if (fin && (rd->state != HDC_READ_TYPE || rd->type_state.pos != 0))
         stream_abort_http_dg_capsule(stream, "truncated capsule");
     return len;
 }
+
+
+#if LSQUIC_TEST
+static unsigned s_stream_test_http_dg_capsule_error;
+
+
+static void
+stream_test_abort_error (struct lsquic_conn *UNUSED_conn, int UNUSED_is_app,
+                         unsigned error_code, const char *UNUSED_format, ...)
+{
+    s_stream_test_http_dg_capsule_error = error_code;
+}
+
+
+int
+lsquic_stream_test_truncated_capsule_type_fin_aborts (unsigned *error_code)
+{
+    static const unsigned char truncated_type[] = { 0x40, };
+    static const struct conn_iface conn_iface = {
+        .ci_abort_error = stream_test_abort_error,
+    };
+    struct lsquic_conn conn = LSCONN_INITIALIZER_CIDLEN(conn, 0);
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+    struct http_dg_stream_state http_dg;
+
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    memset(&http_dg, 0, sizeof(http_dg));
+    conn.cn_if = &conn_iface;
+    conn_pub.lconn = &conn;
+    stream.id = 0;
+    stream.conn_pub = &conn_pub;
+    stream.sm_http_dg = &http_dg;
+    s_stream_test_http_dg_capsule_error = 0;
+
+    (void) lsquic_http_dg_capsule_readf(&stream, truncated_type,
+                                        sizeof(truncated_type), 1);
+
+    if (error_code)
+        *error_code = s_stream_test_http_dg_capsule_error;
+    return 0;
+}
+#endif
 
 static void
 http_dg_capsule_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *UNUSED_h)
