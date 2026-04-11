@@ -496,6 +496,13 @@ wt_replay_pending_streams (struct lsquic_wt_session *sess);
 static void
 wt_drive_connect_stream (struct lsquic_stream *stream);
 
+static void
+wt_free_extra_resp_headers (struct lsquic_wt_session *sess);
+
+static int
+wt_copy_extra_resp_headers (struct lsquic_wt_session *sess,
+                            const struct lsquic_http_headers *headers);
+
 static int
 wt_send_response (struct lsquic_stream *stream, unsigned status,
                                 const struct lsquic_http_headers *extra,
@@ -651,6 +658,20 @@ wt_stream_ctx_alloc (void)
     }
 #endif
     return calloc(1, sizeof(struct wt_stream_ctx));
+}
+
+
+static int
+wt_size_add (size_t *total, size_t add)
+{
+    if (add > SIZE_MAX - *total)
+    {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
+    *total += add;
+    return 0;
 }
 
 static int
@@ -1398,6 +1419,8 @@ lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
                                                      int *restored_session)
 {
     struct lsquic_wt_session sess;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
     struct lsquic_stream stream;
     const struct lsquic_stream_if *orig_if;
     lsquic_stream_ctx_t *orig_ctx;
@@ -1406,6 +1429,8 @@ lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
     int rc;
 
     memset(&sess, 0, sizeof(sess));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
     memset(&stream, 0, sizeof(stream));
 
     orig_if = &old_if;
@@ -1413,12 +1438,14 @@ lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
     orig_onnew_arg = (void *) (uintptr_t) 0x5678;
 
     stream.id = 8;
+    stream.conn_pub = &conn_pub;
     stream.stream_if = orig_if;
     stream.st_ctx = orig_ctx;
     stream.sm_onnew_arg = orig_onnew_arg;
     stream.stream_flags = STREAM_ONNEW_DONE;
 
     sess.wts_stream_id = 4;
+    conn_pub.lconn = &conn;
     sess.wts_data_if.on_new_stream = wt_on_new_stream;
     sess.wts_onnew_ctx.sess = &sess;
 
@@ -1436,6 +1463,64 @@ lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
                          && sess.wts_n_streams == 0;
 
     return rc == -1 ? 0 : -1;
+}
+
+
+int
+lsquic_wt_test_extra_resp_header_validation (int *null_headers_rejected,
+                                             int *zero_len_ok)
+{
+    struct lsquic_wt_session sess;
+    struct lsquic_http_headers headers;
+    struct lsxpack_header header_arr[1];
+    static const char empty[] = "";
+    int rc;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&headers, 0, sizeof(headers));
+    memset(header_arr, 0, sizeof(header_arr));
+
+    headers.count = 1;
+    headers.headers = NULL;
+    rc = wt_copy_extra_resp_headers(&sess, &headers);
+    if (null_headers_rejected)
+        *null_headers_rejected = rc != 0;
+
+    headers.headers = header_arr;
+    lsxpack_header_set_offset2(&header_arr[0], empty, 0, 0, 0, 0);
+    rc = wt_copy_extra_resp_headers(&sess, &headers);
+    if (zero_len_ok)
+        *zero_len_ok = rc == 0
+                    && sess.wts_extra_resp_headers.headers.count == 1
+                    && sess.wts_extra_resp_headers.headers.headers != NULL;
+
+    wt_free_extra_resp_headers(&sess);
+    return 0;
+}
+
+
+int
+lsquic_wt_test_send_response_rejects_missing_extra_headers (int *rejected)
+{
+    struct lsquic_stream stream;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_http_headers headers;
+    int rc;
+
+    memset(&stream, 0, sizeof(stream));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&headers, 0, sizeof(headers));
+
+    conn_pub.lconn = &conn;
+    stream.conn_pub = &conn_pub;
+    headers.count = 1;
+    headers.headers = NULL;
+    rc = wt_send_response(&stream, 200, &headers, 0);
+    if (rejected)
+        *rejected = rc != 0;
+    return 0;
 }
 #endif
 
@@ -2804,21 +2889,37 @@ wt_copy_extra_resp_headers (struct lsquic_wt_session *sess,
 {
     struct lsxpack_header *dst;
     const struct lsxpack_header *src;
-    size_t bufsz, off, i, name_len, val_len;
+    size_t count, bufsz, off, i, name_len, val_len;
     char *buf;
+    const char *hdr_buf;
 
     wt_free_extra_resp_headers(sess);
-    if (!headers || headers->count <= 0 || !headers->headers)
+    if (!headers || headers->count <= 0)
         return 0;
 
-    bufsz = 0;
-    for (i = 0; i < (size_t) headers->count; ++i)
+    if (!headers->headers)
     {
-        src = &headers->headers[i];
-        bufsz += src->name_len + src->val_len;
+        errno = EINVAL;
+        return -1;
     }
 
-    dst = malloc(sizeof(*dst) * headers->count);
+    count = (size_t) headers->count;
+    if (count > SIZE_MAX / sizeof(*dst))
+    {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
+    bufsz = 0;
+    for (i = 0; i < count; ++i)
+    {
+        src = &headers->headers[i];
+        if (0 != wt_size_add(&bufsz, src->name_len)
+            || 0 != wt_size_add(&bufsz, src->val_len))
+            return -1;
+    }
+
+    dst = malloc(sizeof(*dst) * count);
     if (!dst)
         return -1;
 
@@ -2830,21 +2931,25 @@ wt_copy_extra_resp_headers (struct lsquic_wt_session *sess,
     }
 
     off = 0;
-    for (i = 0; i < (size_t) headers->count; ++i)
+    for (i = 0; i < count; ++i)
     {
         src = &headers->headers[i];
         name_len = src->name_len;
         val_len = src->val_len;
-        memcpy(buf + off, lsxpack_header_get_name(src), name_len);
-        memcpy(buf + off + name_len, lsxpack_header_get_value(src), val_len);
-        lsxpack_header_set_offset2(&dst[i], buf + off, 0, name_len, name_len,
+        hdr_buf = buf ? buf + off : "";
+        if (name_len > 0)
+            memcpy(buf + off, lsxpack_header_get_name(src), name_len);
+        if (val_len > 0)
+            memcpy(buf + off + name_len, lsxpack_header_get_value(src),
+                   val_len);
+        lsxpack_header_set_offset2(&dst[i], hdr_buf, 0, name_len, name_len,
                                    val_len);
         off += name_len + val_len;
     }
 
     sess->wts_extra_resp_headers.headers_arr = dst;
     sess->wts_extra_resp_headers.buf = buf;
-    sess->wts_extra_resp_headers.headers.count = headers->count;
+    sess->wts_extra_resp_headers.headers.count = (int) count;
     sess->wts_extra_resp_headers.headers.headers = dst;
     return 0;
 }
@@ -2926,6 +3031,7 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
     struct wt_header_buf hbuf;
     char status_val[4];
     int extra_count;
+    size_t header_count;
     int n;
     int i;
 
@@ -2952,7 +3058,23 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
         return -1;
     }
 
-    headers_arr = malloc(sizeof(*headers_arr) * (1 + extra_count));
+    if (extra_count > 0 && (!extra || !extra->headers))
+    {
+        errno = EINVAL;
+        LSQ_WARN("missing WT extra response headers array");
+        return -1;
+    }
+
+    header_count = 1 + (size_t) extra_count;
+    if (header_count > SIZE_MAX / sizeof(*headers_arr))
+    {
+        errno = EOVERFLOW;
+        LSQ_WARN("WT response header count overflows allocation: %zu",
+                 header_count);
+        return -1;
+    }
+
+    headers_arr = malloc(sizeof(*headers_arr) * header_count);
     if (!headers_arr)
     {
         LSQ_WARN("cannot allocate WT response headers array");
@@ -2973,7 +3095,7 @@ wt_send_response (struct lsquic_stream *stream, unsigned status,
 
     if (0 != lsquic_stream_send_headers(stream,
             &(struct lsquic_http_headers) {
-                .count = 1 + extra_count,
+                .count = (int) header_count,
                 .headers = headers_arr,
             }, fin))
     {

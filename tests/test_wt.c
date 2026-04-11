@@ -73,6 +73,10 @@ int lsquic_wt_test_destroy_while_closing (int is_control_stream,
 int lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
                                                          int *restored_ctx,
                                                          int *restored_session);
+int lsquic_wt_test_extra_resp_header_validation (int *null_headers_rejected,
+                                                 int *zero_len_ok);
+int lsquic_wt_test_send_response_rejects_missing_extra_headers (
+    int *rejected);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -747,6 +751,23 @@ test_stream_switch_failure_restores_state (void)
 }
 
 
+static void
+test_extra_resp_header_validation (void)
+{
+    int null_headers_rejected, zero_len_ok, rejected;
+
+    null_headers_rejected = zero_len_ok = rejected = 0;
+    assert(0 == lsquic_wt_test_extra_resp_header_validation(
+                                &null_headers_rejected, &zero_len_ok));
+    assert(null_headers_rejected);
+    assert(zero_len_ok);
+
+    assert(0 == lsquic_wt_test_send_response_rejects_missing_extra_headers(
+                                                                    &rejected));
+    assert(rejected);
+}
+
+
 int
 main (void)
 {
@@ -763,5 +784,6 @@ main (void)
     test_pending_replay_stops_on_close();
     test_destroy_while_closing();
     test_stream_switch_failure_restores_state();
+    test_extra_resp_header_validation();
     return 0;
 }
