@@ -109,6 +109,7 @@ int lsquic_wt_test_read_error_closes_stream (int *control_closed,
 int lsquic_wt_test_write_error_closes_stream (int *control_closed,
                                               int *data_closed);
 int lsquic_wt_test_control_stream_ops_rejected (unsigned *mask);
+int lsquic_wt_test_accept_rejects_client_stream (int *rejected);
 int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
                                    int fin, size_t *consumed, int *done,
                                    int *malformed,
@@ -781,6 +782,17 @@ test_control_stream_ops_rejected (void)
 
 
 static void
+test_accept_rejects_client_stream (void)
+{
+    int rejected;
+
+    rejected = 0;
+    assert(0 == lsquic_wt_test_accept_rejects_client_stream(&rejected));
+    assert(rejected);
+}
+
+
+static void
 test_compatibility_mode_behavior (void)
 {
     unsigned supports, draft;
@@ -1082,6 +1094,7 @@ main (void)
     test_null_session_api_guards();
     test_write_error_closes_stream();
     test_control_stream_ops_rejected();
+    test_accept_rejects_client_stream();
     test_compatibility_mode_behavior();
     test_reset_dispatch();
     test_pending_replay_stops_on_close();

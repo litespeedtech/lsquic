@@ -219,3 +219,12 @@ Base commit: a2e3c27
     STOP_SENDING with WT application error codes on the control stream instead
     of using the WT close-session path. That is the wrong protocol surface for
     closing a WebTransport session and should be rejected at the API boundary.
+
+27. WT accept allows client-side streams.
+    Files: docs/webtransport.rst, src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_accept()
+    Summary: The public WT acceptance flow is documented as the server-side
+    handoff for an incoming Extended CONNECT request, but `lsquic_wt_accept()`
+    never checked that the supplied control stream was server-side. A caller
+    could therefore pass a client-side stream and start binding WT session
+    state to the wrong endpoint role instead of getting a clean `EINVAL`.
