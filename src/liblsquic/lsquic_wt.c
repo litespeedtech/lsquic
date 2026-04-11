@@ -616,6 +616,8 @@ static unsigned s_wt_test_dg_write_arm_calls;
 static unsigned s_wt_test_dg_write_disarm_calls;
 static unsigned s_wt_test_read_error_close_calls;
 static int s_wt_test_stub_read_error_close;
+static unsigned s_wt_test_write_error_close_calls;
+static int s_wt_test_stub_write_error_close;
 static struct wt_test_http_dg_write_ctx *s_wt_test_http_dg_write_ctx;
 
 
@@ -707,6 +709,25 @@ wt_close_stream_after_read_error (struct lsquic_stream *stream,
     if (s_wt_test_stub_read_error_close)
     {
         ++s_wt_test_read_error_close_calls;
+        return;
+    }
+#endif
+    lsquic_stream_close(stream);
+}
+
+
+static void
+wt_close_stream_after_write_error (struct lsquic_stream *stream,
+                                   const char *stream_kind)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+
+    LSQ_WARN("error writing WT %s stream %"PRIu64, stream_kind,
+             lsquic_stream_id(stream));
+#if LSQUIC_TEST
+    if (s_wt_test_stub_write_error_close)
+    {
+        ++s_wt_test_write_error_close_calls;
         return;
     }
 #endif
@@ -2167,6 +2188,36 @@ lsquic_wt_test_read_error_closes_stream (int *control_closed,
     s_wt_test_stub_read_error_close = 0;
     return 0;
 }
+
+
+int
+lsquic_wt_test_write_error_closes_stream (int *control_closed,
+                                          int *data_closed)
+{
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_stream stream;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&stream, 0, sizeof(stream));
+    conn_pub.lconn = &conn;
+    stream.id = 0;
+    stream.conn_pub = &conn_pub;
+    s_wt_test_stub_write_error_close = 1;
+    s_wt_test_write_error_close_calls = 0;
+
+    wt_close_stream_after_write_error(&stream, "control");
+    if (control_closed)
+        *control_closed = s_wt_test_write_error_close_calls == 1;
+
+    wt_close_stream_after_write_error(&stream, "data");
+    if (data_closed)
+        *data_closed = s_wt_test_write_error_close_calls == 2;
+
+    s_wt_test_stub_write_error_close = 0;
+    return 0;
+}
 #endif
 
 int
@@ -2657,7 +2708,12 @@ wt_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
     {
         nw = lsquic_stream_write(stream, wctx->prefix + wctx->prefix_off,
                                     wctx->prefix_len - wctx->prefix_off);
-        if (nw <= 0)
+        if (nw < 0)
+        {
+            wt_close_stream_after_write_error(stream, "data");
+            return;
+        }
+        if (nw == 0)
         {
             LSQ_DEBUG("WT stream %"PRIu64" prefix write blocked/off=%zu/%zu",
                 lsquic_stream_id(stream), wctx->prefix_off, wctx->prefix_len);
@@ -2832,7 +2888,12 @@ wt_control_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
             nw = lsquic_stream_write(stream,
                             sess->wts_close_buf + sess->wts_close_buf_off,
                             sess->wts_close_buf_len - sess->wts_close_buf_off);
-            if (nw <= 0)
+            if (nw < 0)
+            {
+                wt_close_stream_after_write_error(stream, "control");
+                return;
+            }
+            if (nw == 0)
                 return;
             sess->wts_close_buf_off += (size_t) nw;
         }

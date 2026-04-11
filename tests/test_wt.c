@@ -106,6 +106,8 @@ int lsquic_wt_test_http_dg_write_path (unsigned flags,
                                        int *saved_errno);
 int lsquic_wt_test_read_error_closes_stream (int *control_closed,
                                              int *uni_closed);
+int lsquic_wt_test_write_error_closes_stream (int *control_closed,
+                                              int *data_closed);
 int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
                                    int fin, size_t *consumed, int *done,
                                    int *malformed,
@@ -754,6 +756,19 @@ test_null_session_api_guards (void)
 
 
 static void
+test_write_error_closes_stream (void)
+{
+    int control_closed, data_closed;
+
+    control_closed = data_closed = 0;
+    assert(0 == lsquic_wt_test_write_error_closes_stream(&control_closed,
+                                                         &data_closed));
+    assert(control_closed);
+    assert(data_closed);
+}
+
+
+static void
 test_compatibility_mode_behavior (void)
 {
     unsigned supports, draft;
@@ -1053,6 +1068,7 @@ main (void)
     test_accept_status_validation();
     test_reject_status_validation();
     test_null_session_api_guards();
+    test_write_error_closes_stream();
     test_compatibility_mode_behavior();
     test_reset_dispatch();
     test_pending_replay_stops_on_close();

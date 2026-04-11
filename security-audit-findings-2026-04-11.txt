@@ -199,3 +199,13 @@ Base commit: a2e3c27
     result. This is a local API robustness bug in library code, not a remote
     parser issue, but it is still a user-triggerable denial-of-service in
     applications that route external state into the WT API boundary.
+
+25. WT write handlers treat stream write errors as mere backpressure.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_on_write(), wt_control_on_write()
+    Summary: The WT data-stream prefix writer and CONNECT close-capsule writer
+    both return immediately on `lsquic_stream_write() <= 0`. In core stream
+    code, a negative return indicates an actual write-side stream error, not
+    just blocked output. WT therefore leaves the affected stream/session live
+    after a write failure instead of aborting it, which can strand an outgoing
+    WT stream prefix or a closing control stream indefinitely.
