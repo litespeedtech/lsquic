@@ -1339,6 +1339,7 @@ lsquic_wt_test_close_capsule_payload (const unsigned char *payload,
     stream.id = 0;
     stream.conn_pub = &conn_pub;
     stream.sm_attachment = &sess;
+    stream.stream_flags = STREAM_U_READ_DONE | STREAM_U_WRITE_DONE;
     sess.wts_conn = &conn;
     sess.wts_conn_pub = &conn_pub;
     sess.wts_control_stream = &stream;
