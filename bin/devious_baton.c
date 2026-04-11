@@ -513,13 +513,16 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     const char *name;
     const char *value;
     char *path = NULL;
+    char *scheme = NULL;
     char *authority = NULL;
     char *origin = NULL;
     char *protocol = NULL;
     int have_method = 0;
     int have_connect_protocol = 0;
+    int have_scheme = 0;
     int method_ok = 0;
     int connect_protocol_ok = 0;
+    int scheme_ok = 0;
     int ok = 0;
     int rv = -1;
 
@@ -541,6 +544,22 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
             have_connect_protocol = 1;
             connect_protocol_ok =
                     is_supported_connect_protocol(value, el->xhdr.val_len);
+        }
+        else if (el->xhdr.name_len == sizeof(":scheme") - 1
+                && 0 == memcmp(name, ":scheme", sizeof(":scheme") - 1))
+        {
+            char *new_scheme;
+
+            have_scheme = 1;
+            scheme_ok = el->xhdr.val_len == sizeof("https") - 1
+                     && 0 == memcmp(value, "https", sizeof("https") - 1);
+            if (0 != dup_header_value(value, el->xhdr.val_len, &new_scheme))
+            {
+                snprintf(err_buf, err_sz, "cannot copy scheme");
+                goto end;
+            }
+            free(scheme);
+            scheme = new_scheme;
         }
         else if (el->xhdr.name_len == sizeof("wt-available-protocols") - 1
                 && 0 == memcmp(name, "wt-available-protocols",
@@ -598,8 +617,9 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
         }
     }
 
-    if (have_method && have_connect_protocol)
-        ok = method_ok && connect_protocol_ok;
+    if (have_method && have_connect_protocol && have_scheme)
+        ok = method_ok && connect_protocol_ok && scheme_ok
+          && authority != NULL;
 
     if (!ok)
     {
@@ -627,6 +647,7 @@ parse_request (struct hset *hset, struct devious_baton_app *cfg,
     rv = 0;
 
   end:
+    free(scheme);
     free(authority);
     free(path);
     free(origin);

@@ -447,8 +447,10 @@ struct req
         PH_METHOD       = 1 << 1,
         PH_PATH         = 1 << 2,
         PH_PROTOCOL     = 1 << 3,
+        PH_SCHEME       = 1 << 4,
     }            pseudo_headers;
     char        *path;
+    char        *scheme;
     char        *method_str;
     char        *authority_str;
     char        *connect_protocol;
@@ -1432,6 +1434,22 @@ handle_connect_request (struct lsquic_stream *stream,
         return 1;
     }
 
+    if (!req->scheme)
+    {
+        snprintf(err_buf, sizeof(err_buf), "Scheme is not specified");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
+    if (0 != strcmp(req->scheme, "https"))
+    {
+        snprintf(err_buf, sizeof(err_buf), "Unsupported CONNECT scheme");
+        lsquic_wt_reject(stream, 400, err_buf, strlen(err_buf));
+        lsquic_stream_close(stream);
+        return 1;
+    }
+
     if (!req->path)
     {
         snprintf(err_buf, sizeof(err_buf), "Path is not specified");
@@ -2122,6 +2140,17 @@ interop_server_hset_add_header (void *hset_p, struct lsxpack_header *xhdr)
         return 0;
     }
 
+    if (7 == name_len && 0 == strncmp(name, ":scheme", 7))
+    {
+        if (req->scheme)
+            return 1;
+        req->scheme = strndup(value, value_len);
+        if (!req->scheme)
+            return -1;
+        req->pseudo_headers |= PH_SCHEME;
+        return 0;
+    }
+
     if (10 == name_len && 0 == strncmp(name, ":authority", 10))
     {
         req->authority_str = strndup(value, value_len);
@@ -2165,6 +2194,7 @@ interop_server_hset_destroy (void *hset_p)
     struct req *req = hset_p;
     free(req->qif_str);
     free(req->path);
+    free(req->scheme);
     free(req->method_str);
     free(req->authority_str);
     free(req->connect_protocol);
