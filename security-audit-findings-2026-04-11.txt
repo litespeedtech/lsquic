@@ -186,3 +186,16 @@ Base commit: a2e3c27
     would format. A caller could therefore "reject" a CONNECT stream
     with a 2xx response, violating the API contract and emitting a
     protocol-confusing success status from the explicit reject path.
+
+24. Multiple public WT session APIs crash on NULL session handles.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_close(), lsquic_wt_session_conn(),
+           lsquic_wt_session_id(), lsquic_wt_open_uni(),
+           lsquic_wt_open_bidi(), lsquic_wt_send_datagram_ex(),
+           lsquic_wt_want_datagram_write(), lsquic_wt_max_datagram_size()
+    Summary: Several public WebTransport session helpers dereference `sess`
+    before any argument validation. A caller that passes a NULL session handle
+    gets a direct crash instead of a clean `EINVAL` failure or safe zero/null
+    result. This is a local API robustness bug in library code, not a remote
+    parser issue, but it is still a user-triggerable denial-of-service in
+    applications that route external state into the WT API boundary.
