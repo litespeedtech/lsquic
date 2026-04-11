@@ -209,3 +209,13 @@ Base commit: a2e3c27
     just blocked output. WT therefore leaves the affected stream/session live
     after a write failure instead of aborting it, which can strand an outgoing
     WT stream prefix or a closing control stream indefinitely.
+
+26. WT stream reset APIs accept the CONNECT control stream.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_stream_reset(), lsquic_wt_stream_stop_sending()
+    Summary: Both public WT app-error stream helpers only check whether a
+    stream has a WT session attachment. The CONNECT control stream is attached
+    to its WT session too, so callers can currently send RESET_STREAM or
+    STOP_SENDING with WT application error codes on the control stream instead
+    of using the WT close-session path. That is the wrong protocol surface for
+    closing a WebTransport session and should be rejected at the API boundary.

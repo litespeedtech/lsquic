@@ -2218,6 +2218,33 @@ lsquic_wt_test_write_error_closes_stream (int *control_closed,
     s_wt_test_stub_write_error_close = 0;
     return 0;
 }
+
+
+int
+lsquic_wt_test_control_stream_ops_rejected (unsigned *mask)
+{
+    struct lsquic_wt_session sess;
+    struct lsquic_stream stream;
+    unsigned bits;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&stream, 0, sizeof(stream));
+    sess.wts_control_stream = &stream;
+    wt_stream_bind_session(&sess, &stream);
+    bits = 0;
+
+    errno = 0;
+    if (-1 == lsquic_wt_stream_reset(&stream, 0) && errno == EINVAL)
+        bits |= 1u << 0;
+
+    errno = 0;
+    if (-1 == lsquic_wt_stream_stop_sending(&stream, 0) && errno == EINVAL)
+        bits |= 1u << 1;
+
+    if (mask)
+        *mask = bits;
+    return 0;
+}
 #endif
 
 int
@@ -5330,6 +5357,7 @@ lsquic_wt_on_http_dg_read (struct lsquic_stream *stream,
 int
 lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
 {
+    struct lsquic_wt_session *sess;
     uint64_t h3_error_code;
 
     if (!stream)
@@ -5338,7 +5366,14 @@ lsquic_wt_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
         return -1;
     }
 
-    if (!wt_stream_get_session(stream))
+    sess = wt_stream_get_session(stream);
+    if (!sess)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
     {
         errno = EINVAL;
         return -1;
@@ -5360,6 +5395,7 @@ int
 lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
                                                     uint64_t error_code)
 {
+    struct lsquic_wt_session *sess;
     uint64_t h3_error_code;
 
     if (!stream)
@@ -5368,7 +5404,14 @@ lsquic_wt_stream_stop_sending (struct lsquic_stream *stream,
         return -1;
     }
 
-    if (!wt_stream_get_session(stream))
+    sess = wt_stream_get_session(stream);
+    if (!sess)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (lsquic_stream_get_stream_if(stream) != &sess->wts_data_if)
     {
         errno = EINVAL;
         return -1;
