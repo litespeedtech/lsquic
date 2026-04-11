@@ -616,6 +616,7 @@ static unsigned s_wt_test_dg_write_arm_calls;
 static unsigned s_wt_test_dg_write_disarm_calls;
 static unsigned s_wt_test_read_error_close_calls;
 static int s_wt_test_stub_read_error_close;
+static struct wt_test_http_dg_write_ctx *s_wt_test_http_dg_write_ctx;
 
 
 static void
@@ -1964,6 +1965,177 @@ lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
     s_wt_test_dg_write_stub_active = 0;
     wt_dgq_drop_all(&sess);
     return 0;
+}
+
+
+enum wt_test_http_dg_write_flags
+{
+    WT_TEST_HTTP_DG_WRITE_PREQUEUE        = 1 << 0,
+    WT_TEST_HTTP_DG_WRITE_WANT            = 1 << 1,
+    WT_TEST_HTTP_DG_WRITE_CB_QUEUE        = 1 << 2,
+    WT_TEST_HTTP_DG_WRITE_CB_FAIL         = 1 << 3,
+    WT_TEST_HTTP_DG_WRITE_CB_CLOSE        = 1 << 4,
+    WT_TEST_HTTP_DG_WRITE_CONSUME_FAIL    = 1 << 5,
+    WT_TEST_HTTP_DG_WRITE_DATAGRAM_MODE   = 1 << 6,
+};
+
+
+struct wt_test_http_dg_write_ctx
+{
+    unsigned            flags;
+    const unsigned char *buf;
+    size_t              len;
+    unsigned            callback_calls;
+    unsigned            consume_calls;
+};
+
+
+static int
+wt_test_http_dg_consume (struct lsquic_stream *UNUSED_stream, const void *buf,
+                         size_t len, enum lsquic_http_dg_send_mode UNUSED_mode)
+{
+    struct wt_test_http_dg_write_ctx *ctx = s_wt_test_http_dg_write_ctx;
+
+    if (ctx)
+        ++ctx->consume_calls;
+    (void) buf;
+    (void) len;
+    if (ctx && (ctx->flags & WT_TEST_HTTP_DG_WRITE_CONSUME_FAIL))
+    {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+
+static int
+wt_test_on_datagram_write (lsquic_wt_session_t *sess, size_t UNUSED_max_payload)
+{
+    struct wt_test_http_dg_write_ctx *ctx = s_wt_test_http_dg_write_ctx;
+    enum lsquic_http_dg_send_mode mode;
+    static const unsigned char zero = 0;
+
+    if (ctx)
+        ++ctx->callback_calls;
+
+    if (ctx && (ctx->flags & WT_TEST_HTTP_DG_WRITE_CB_QUEUE))
+    {
+        mode = (ctx->flags & WT_TEST_HTTP_DG_WRITE_DATAGRAM_MODE)
+                ? LSQUIC_HTTP_DG_SEND_DATAGRAM
+                : LSQUIC_HTTP_DG_SEND_DEFAULT;
+        if (0 != wt_dgq_enqueue((struct lsquic_wt_session *) sess,
+                    ctx->buf ? (const void *) ctx->buf : &zero,
+                    ctx->len > 0 ? ctx->len : 1, LSQWT_DG_FAIL_EAGAIN, mode))
+            return -1;
+    }
+
+    if (ctx && (ctx->flags & WT_TEST_HTTP_DG_WRITE_CB_CLOSE))
+        wt_begin_close((struct lsquic_wt_session *) sess, 0, NULL, 0);
+
+    if (ctx && (ctx->flags & WT_TEST_HTTP_DG_WRITE_CB_FAIL))
+    {
+        errno = EIO;
+        return -1;
+    }
+
+    return 0;
+}
+
+
+int
+lsquic_wt_test_http_dg_write_path (unsigned flags, const unsigned char *buf,
+                                   size_t len, size_t max_quic_payload,
+                                   unsigned *consume_calls,
+                                   unsigned *callback_calls,
+                                   unsigned *queued_after,
+                                   int *want_flag_set, int *is_closing,
+                                   unsigned *disarm_calls, int *saved_errno)
+{
+    struct wt_test_http_dg_write_ctx ctx;
+    struct lsquic_webtransport_if wt_if;
+    struct lsquic_wt_session sess;
+    struct lsquic_stream stream;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    static const struct conn_iface conn_iface = {
+        .ci_get_max_datagram_size = wt_test_get_max_datagram_size,
+    };
+    static const unsigned char zero = 0;
+    enum lsquic_http_dg_send_mode mode;
+    int rc;
+
+    memset(&ctx, 0, sizeof(ctx));
+    memset(&wt_if, 0, sizeof(wt_if));
+    memset(&sess, 0, sizeof(sess));
+    memset(&stream, 0, sizeof(stream));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    TAILQ_INIT(&sess.wts_dgq);
+    TAILQ_INIT(&sess.wts_in_dgq);
+
+    ctx.flags = flags;
+    ctx.buf = buf ? buf : &zero;
+    ctx.len = len > 0 ? len : 1;
+    wt_if.wti_on_datagram_write = wt_test_on_datagram_write;
+
+    conn.cn_if = &conn_iface;
+    conn_pub.lconn = &conn;
+    conn_pub.cp_flags = CP_HTTP_DATAGRAMS;
+    stream.id = 0;
+    stream.conn_pub = &conn_pub;
+    sess.wts_control_stream = &stream;
+    sess.wts_conn = &conn;
+    sess.wts_conn_pub = &conn_pub;
+    sess.wts_if = &wt_if;
+    sess.wts_stream_id = 4;
+    sess.wts_dgq_max_count = UINT_MAX;
+    sess.wts_dgq_max_bytes = SIZE_MAX;
+    wt_stream_bind_session(&sess, &stream);
+
+    mode = (flags & WT_TEST_HTTP_DG_WRITE_DATAGRAM_MODE)
+            ? LSQUIC_HTTP_DG_SEND_DATAGRAM
+            : LSQUIC_HTTP_DG_SEND_DEFAULT;
+    if (flags & WT_TEST_HTTP_DG_WRITE_PREQUEUE)
+        if (0 != wt_dgq_enqueue(&sess, ctx.buf, ctx.len, LSQWT_DG_FAIL_EAGAIN,
+                                mode))
+            return -1;
+
+    if (flags & WT_TEST_HTTP_DG_WRITE_WANT)
+        sess.wts_flags |= WTSF_WANT_DG_WRITE;
+
+    s_wt_test_dg_write_stub_active = 1;
+    s_wt_test_dg_write_arm_result = 0;
+    s_wt_test_dg_write_arm_calls = 0;
+    s_wt_test_dg_write_disarm_calls = 0;
+    s_wt_test_http_dg_write_ctx = &ctx;
+
+    errno = 0;
+    rc = lsquic_wt_on_http_dg_write(&stream, NULL, max_quic_payload,
+                                    wt_test_http_dg_consume);
+
+    if (consume_calls)
+        *consume_calls = ctx.consume_calls;
+    if (callback_calls)
+        *callback_calls = ctx.callback_calls;
+    if (queued_after)
+        *queued_after = sess.wts_dgq_count;
+    if (want_flag_set)
+        *want_flag_set = !!(sess.wts_flags & WTSF_WANT_DG_WRITE);
+    if (is_closing)
+        *is_closing = !!(sess.wts_flags & WTSF_CLOSING);
+    if (disarm_calls)
+        *disarm_calls = s_wt_test_dg_write_disarm_calls;
+    if (saved_errno)
+        *saved_errno = rc < 0 ? errno : 0;
+
+    s_wt_test_http_dg_write_ctx = NULL;
+    s_wt_test_dg_write_stub_active = 0;
+    wt_dgq_drop_all(&sess);
+    wt_in_dgq_drop_all(&sess);
+    free(sess.wts_close_buf);
+    free(sess.wts_close_reason);
+    return rc;
 }
 
 

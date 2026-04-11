@@ -23,6 +23,13 @@
 #define WT_TEST_CP_WEBTRANSPORT      (1u << 2)
 #define WT_TEST_CP_H3_PEER_SETTINGS  (1u << 3)
 #define WT_TEST_CP_CONNECT_PROTOCOL  (1u << 4)
+#define WT_TEST_HTTP_DG_WRITE_PREQUEUE      (1u << 0)
+#define WT_TEST_HTTP_DG_WRITE_WANT          (1u << 1)
+#define WT_TEST_HTTP_DG_WRITE_CB_QUEUE      (1u << 2)
+#define WT_TEST_HTTP_DG_WRITE_CB_FAIL       (1u << 3)
+#define WT_TEST_HTTP_DG_WRITE_CB_CLOSE      (1u << 4)
+#define WT_TEST_HTTP_DG_WRITE_CONSUME_FAIL  (1u << 5)
+#define WT_TEST_HTTP_DG_WRITE_DATAGRAM_MODE (1u << 6)
 
 int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
@@ -85,6 +92,15 @@ int lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
                                              int *freed_dynamic_onnew);
 int lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
                                                   int *send_disarmed);
+int lsquic_wt_test_http_dg_write_path (unsigned flags,
+                                       const unsigned char *buf, size_t len,
+                                       size_t max_quic_payload,
+                                       unsigned *consume_calls,
+                                       unsigned *callback_calls,
+                                       unsigned *queued_after,
+                                       int *want_flag_set, int *is_closing,
+                                       unsigned *disarm_calls,
+                                       int *saved_errno);
 int lsquic_wt_test_read_error_closes_stream (int *control_closed,
                                              int *uni_closed);
 int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
@@ -842,6 +858,60 @@ test_datagram_write_state_rollback (void)
 
 
 static void
+test_http_dg_write_path (void)
+{
+    static const unsigned char dg[] = { 'd', 'g', };
+    unsigned consume_calls, callback_calls, queued_after, disarm_calls;
+    int want_flag_set, is_closing, saved_errno;
+
+    consume_calls = callback_calls = queued_after = disarm_calls = 0;
+    want_flag_set = is_closing = saved_errno = 0;
+    assert(0 == lsquic_wt_test_http_dg_write_path(
+                WT_TEST_HTTP_DG_WRITE_PREQUEUE, dg, sizeof(dg), 16,
+                &consume_calls, &callback_calls, &queued_after,
+                &want_flag_set, &is_closing, &disarm_calls, &saved_errno));
+    assert(consume_calls == 1);
+    assert(callback_calls == 0);
+    assert(queued_after == 0);
+    assert(!want_flag_set);
+    assert(!is_closing);
+    assert(disarm_calls == 1);
+    assert(saved_errno == 0);
+
+    consume_calls = callback_calls = queued_after = disarm_calls = 0;
+    want_flag_set = is_closing = saved_errno = 0;
+    assert(0 == lsquic_wt_test_http_dg_write_path(
+                WT_TEST_HTTP_DG_WRITE_WANT | WT_TEST_HTTP_DG_WRITE_CB_QUEUE,
+                dg, sizeof(dg), 16, &consume_calls, &callback_calls,
+                &queued_after, &want_flag_set, &is_closing, &disarm_calls,
+                &saved_errno));
+    assert(consume_calls == 1);
+    assert(callback_calls == 1);
+    assert(queued_after == 0);
+    assert(want_flag_set);
+    assert(!is_closing);
+    assert(disarm_calls == 0);
+    assert(saved_errno == 0);
+
+    consume_calls = callback_calls = queued_after = disarm_calls = 0;
+    want_flag_set = is_closing = saved_errno = 0;
+    assert(-1 == lsquic_wt_test_http_dg_write_path(
+                WT_TEST_HTTP_DG_WRITE_WANT | WT_TEST_HTTP_DG_WRITE_CB_QUEUE
+              | WT_TEST_HTTP_DG_WRITE_CB_CLOSE,
+                dg, sizeof(dg), 16, &consume_calls, &callback_calls,
+                &queued_after, &want_flag_set, &is_closing, &disarm_calls,
+                &saved_errno));
+    assert(consume_calls == 0);
+    assert(callback_calls == 1);
+    assert(queued_after == 0);
+    assert(!want_flag_set);
+    assert(is_closing);
+    assert(disarm_calls >= 1);
+    assert(saved_errno == EAGAIN);
+}
+
+
+static void
 test_wt_uni_switch_failure (void)
 {
     int restored_if, restored_ctx, close_attempted;
@@ -923,6 +993,7 @@ main (void)
     test_dgq_overflow_rejected();
     test_open_stream_init_failure();
     test_datagram_write_state_rollback();
+    test_http_dg_write_path();
     test_wt_uni_switch_failure();
     test_read_error_closes_stream();
     test_truncated_uni_session_id_is_malformed();

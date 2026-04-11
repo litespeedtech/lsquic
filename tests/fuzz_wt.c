@@ -73,6 +73,15 @@ int lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
                                              int *freed_dynamic_onnew);
 int lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
                                                   int *send_disarmed);
+int lsquic_wt_test_http_dg_write_path (unsigned flags,
+                                       const unsigned char *buf, size_t len,
+                                       size_t max_quic_payload,
+                                       unsigned *consume_calls,
+                                       unsigned *callback_calls,
+                                       unsigned *queued_after,
+                                       int *want_flag_set, int *is_closing,
+                                       unsigned *disarm_calls,
+                                       int *saved_errno);
 int lsquic_wt_test_read_error_closes_stream (int *control_closed,
                                              int *uni_closed);
 int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
@@ -119,6 +128,13 @@ int lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess,
 #define WT_TEST_CP_WEBTRANSPORT      (1u << 2)
 #define WT_TEST_CP_H3_PEER_SETTINGS  (1u << 3)
 #define WT_TEST_CP_CONNECT_PROTOCOL  (1u << 4)
+#define WT_TEST_HTTP_DG_WRITE_PREQUEUE      (1u << 0)
+#define WT_TEST_HTTP_DG_WRITE_WANT          (1u << 1)
+#define WT_TEST_HTTP_DG_WRITE_CB_QUEUE      (1u << 2)
+#define WT_TEST_HTTP_DG_WRITE_CB_FAIL       (1u << 3)
+#define WT_TEST_HTTP_DG_WRITE_CB_CLOSE      (1u << 4)
+#define WT_TEST_HTTP_DG_WRITE_CONSUME_FAIL  (1u << 5)
+#define WT_TEST_HTTP_DG_WRITE_DATAGRAM_MODE (1u << 6)
 
 static volatile uint64_t s_sink;
 static int s_extended_profile;
@@ -440,6 +456,29 @@ fuzz_datagram_write_state_rollback (void)
 }
 
 static void
+fuzz_http_dg_write_path (struct cursor *cur)
+{
+    unsigned consume_calls, callback_calls, queued_after, disarm_calls;
+    int want_flag_set, is_closing, saved_errno;
+    size_t len;
+    const unsigned char *buf;
+
+    consume_calls = callback_calls = queued_after = disarm_calls = 0;
+    want_flag_set = is_closing = saved_errno = 0;
+    buf = cur_chunk(cur, &len);
+    if (len > 64)
+        len = 64;
+    (void) lsquic_wt_test_http_dg_write_path(cur_u8(cur) & 0x7F, buf, len,
+                                             cur_u8(cur),
+                                             &consume_calls, &callback_calls,
+                                             &queued_after, &want_flag_set,
+                                             &is_closing, &disarm_calls,
+                                             &saved_errno);
+    s_sink ^= consume_calls + callback_calls + queued_after + want_flag_set
+           + is_closing + disarm_calls + (unsigned) saved_errno;
+}
+
+static void
 fuzz_read_error_closes_stream (void)
 {
     int control_closed, uni_closed;
@@ -601,6 +640,7 @@ fuzz_datagram_story (struct cursor *cur)
     fuzz_http_dg_delivery(cur);
     fuzz_http_dg_read_bytes(cur);
     fuzz_close_capsule_payload(cur);
+    fuzz_http_dg_write_path(cur);
     if (cur_bool(cur))
         fuzz_truncated_capsule_type();
     if (cur_bool(cur))
