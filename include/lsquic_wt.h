@@ -58,7 +58,7 @@ struct lsquic_wt_accept_params
     /* Optional extra headers for CONNECT 2xx response. */
     const struct lsquic_http_headers     *wtap_extra_resp_headers;
 
-    /* Response status; default LSQUIC_WTAP_STATUS_DEFAULT. */
+    /* Response status; default LSQUIC_WTAP_STATUS_DEFAULT; must be 2xx. */
     unsigned                              wtap_status;
 
     /* Per-session WebTransport callbacks. */

@@ -3858,6 +3858,13 @@ wt_stream_can_write (const struct lsquic_stream *stream)
 }
 
 
+static int
+wt_status_is_2xx (unsigned status)
+{
+    return status >= 200 && status <= 299;
+}
+
+
 /* [draft-ietf-webtrans-http3-15], Section 6; [RFC9000], Section 2.4 */
 static void
 wt_close_stream_with_session_gone (struct lsquic_stream *stream)
@@ -4280,6 +4287,14 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         return -1;
     }
 
+    if (params->wtap_status != 0 && !wt_status_is_2xx(params->wtap_status))
+    {
+        errno = EINVAL;
+        LSQ_WARN("WT accept called with non-2xx status %u on stream %"PRIu64,
+                 params->wtap_status, lsquic_stream_id(connect_stream));
+        return -1;
+    }
+
     if (wt_stream_get_session(connect_stream))
     {
         errno = EALREADY;
@@ -4448,6 +4463,19 @@ err0:
     errno = saved_errno;
     return -1;
 }
+
+#if LSQUIC_TEST
+int
+lsquic_wt_test_accept_status_validation (unsigned status, int *accepted)
+{
+    int valid;
+
+    valid = status == 0 || wt_status_is_2xx(status);
+    if (accepted)
+        *accepted = valid;
+    return 0;
+}
+#endif
 
 
 

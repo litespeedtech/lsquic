@@ -165,3 +165,14 @@ Base commit: a2e3c27
     larger value to peers. The accept path still hard-limits the effective
     session count to one, so the library can overstate WT capability and
     reject a peer-visible second session that it previously advertised.
+
+22. WT accept allows non-2xx CONNECT responses to become opened sessions.
+    Files: include/lsquic_wt.h, src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_accept(), wt_open_session()
+    Summary: The public WT API documents `wtap_extra_resp_headers` as extra
+    headers for the CONNECT 2xx response and reserves `lsquic_wt_reject()`
+    for non-2xx outcomes, but `lsquic_wt_accept()` accepted any `wtap_status`
+    in the generic `100..999` range. The open path then sent that status on
+    the wire and still marked the WT session opened internally, creating a
+    protocol/state mismatch where a 3xx/4xx/5xx CONNECT response could still
+    trigger `wti_on_session_open()`.
