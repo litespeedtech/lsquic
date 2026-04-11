@@ -1107,6 +1107,9 @@ static const struct crypto_stream_if crypto_stream_if =
 
 static const struct lsquic_stream_if *unicla_if_ptr;
 const struct lsquic_stream_if *lsquic_wt_uni_stream_if (void);
+#if LSQUIC_TEST
+void lsquic_wt_test_set_fail_stream_ctx_alloc (unsigned count);
+#endif
 
 
 static lsquic_stream_id_t
@@ -11365,6 +11368,53 @@ static const struct lsquic_stream_if hcsi_if =
 };
 
 
+#if LSQUIC_TEST
+static unsigned s_ietf_test_failed_wt_uni_switch_close;
+#endif
+
+static void
+close_failed_wt_uni_switch (struct lsquic_stream *stream)
+{
+#if LSQUIC_TEST
+    if (!stream->conn_pub)
+    {
+        ++s_ietf_test_failed_wt_uni_switch_close;
+        return;
+    }
+#endif
+    lsquic_stream_close(stream);
+}
+
+
+static int
+switch_wt_uni_stream_if (struct ietf_full_conn *conn,
+                         struct lsquic_stream *stream)
+{
+    const struct lsquic_stream_if *old_if;
+    lsquic_stream_ctx_t *old_ctx;
+    void *old_onnew_arg;
+
+    old_if = stream->stream_if;
+    old_ctx = stream->st_ctx;
+    old_onnew_arg = stream->sm_onnew_arg;
+    lsquic_stream_set_stream_if(stream, lsquic_wt_uni_stream_if(), conn);
+    if (!stream->st_ctx)
+    {
+        stream->stream_if = old_if;
+        stream->st_ctx = old_ctx;
+        stream->sm_onnew_arg = old_onnew_arg;
+        if (0 == errno)
+            errno = ENOMEM;
+        LSQ_WARN("cannot initialize incoming WT uni stream %"PRIu64,
+                 stream->id);
+        close_failed_wt_uni_switch(stream);
+        return -1;
+    }
+
+    return 0;
+}
+
+
 static void
 apply_uni_stream_class (struct ietf_full_conn *conn,
                             struct lsquic_stream *stream, uint64_t stream_type)
@@ -11421,7 +11471,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
         break;
     case HQUST_WEBTRANSPORT:
         LSQ_DEBUG("Incoming WebTransport stream ID: %"PRIu64, stream->id);
-        lsquic_stream_set_stream_if(stream, lsquic_wt_uni_stream_if(), conn);
+        (void) switch_wt_uni_stream_if(conn, stream);
         break;
     case HQUST_PUSH:
         if (conn->ifc_flags & IFC_SERVER)
@@ -11623,5 +11673,38 @@ lsquic_ietf_test_wt_support (unsigned is_server,
         *peer_wt_draft = conn.ifc_pub.cp_wt_peer_draft;
 
     return 0;
+}
+
+
+int
+lsquic_ietf_test_wt_uni_switch_failure (int *restored_if, int *restored_ctx,
+                                        int *close_attempted)
+{
+    struct ietf_full_conn conn;
+    struct lsquic_stream stream;
+    int rc;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&stream, 0, sizeof(stream));
+    stream.id = 2;
+    stream.stream_if = unicla_if_ptr;
+    stream.sm_onnew_arg = &conn;
+    stream.st_ctx = (lsquic_stream_ctx_t *) &conn;
+    stream.stream_flags = STREAM_ONNEW_DONE;
+    s_ietf_test_failed_wt_uni_switch_close = 0;
+    lsquic_wt_test_set_fail_stream_ctx_alloc(1);
+    errno = 0;
+    rc = switch_wt_uni_stream_if(&conn, &stream);
+    lsquic_wt_test_set_fail_stream_ctx_alloc(0);
+
+    if (restored_if)
+        *restored_if = stream.stream_if == unicla_if_ptr
+                    && stream.sm_onnew_arg == &conn;
+    if (restored_ctx)
+        *restored_ctx = stream.st_ctx == (lsquic_stream_ctx_t *) &conn;
+    if (close_attempted)
+        *close_attempted = s_ietf_test_failed_wt_uni_switch_close == 1;
+
+    return rc != 0 && errno == ENOMEM ? 0 : -1;
 }
 #endif

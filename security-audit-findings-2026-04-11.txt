@@ -119,3 +119,11 @@ Base commit: a2e3c27
     before confirming the underlying stream accepted the request. If enqueue or
     arm operations fail, the session can retain stale datagram-write flags or a
     needless armed write callback, causing inconsistent WT datagram state.
+
+17. Incoming WT uni-stream classification does not recover from init failure.
+    Files: src/liblsquic/lsquic_full_conn_ietf.c, src/liblsquic/lsquic_wt.c
+    Sites: apply_uni_stream_class(), wt_uni_on_new()
+    Summary: The unidirectional stream classifier switches a peer-created
+    stream to the WT uni handler without checking whether the WT on_new
+    callback actually created a read context. An allocation failure leaves the
+    stream half-switched with a NULL WT context on a remote ingress path.

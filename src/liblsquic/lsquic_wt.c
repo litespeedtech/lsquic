@@ -650,6 +650,13 @@ lsquic_wt_test_validate_incoming_session_id (lsquic_stream_id_t stream_id,
 }
 
 
+void
+lsquic_wt_test_set_fail_stream_ctx_alloc (unsigned count)
+{
+    s_wt_test_fail_stream_ctx_alloc = count;
+}
+
+
 #endif
 
 
@@ -2648,9 +2655,10 @@ wt_uni_on_new (void *UNUSED_ctx, struct lsquic_stream *stream)
     WT_SET_CONN_FROM_STREAM(stream);
     struct wt_uni_read_ctx *uctx;
 
-    uctx = calloc(1, sizeof(*uctx));
+    uctx = (struct wt_uni_read_ctx *) wt_stream_ctx_alloc();
     if (!uctx)
     {
+        errno = ENOMEM;
         LSQ_WARN("cannot allocate WT uni read ctx for stream %"PRIu64,
                                                 lsquic_stream_id(stream));
         return NULL;

@@ -102,6 +102,9 @@ int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned draft,
                                  unsigned *supports,
                                  unsigned *peer_wt_draft);
+int lsquic_ietf_test_wt_uni_switch_failure (int *restored_if,
+                                            int *restored_ctx,
+                                            int *close_attempted);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -830,6 +833,21 @@ test_datagram_write_state_rollback (void)
 }
 
 
+static void
+test_wt_uni_switch_failure (void)
+{
+    int restored_if, restored_ctx, close_attempted;
+
+    restored_if = restored_ctx = close_attempted = 0;
+    assert(0 == lsquic_ietf_test_wt_uni_switch_failure(&restored_if,
+                                                       &restored_ctx,
+                                                       &close_attempted));
+    assert(restored_if);
+    assert(restored_ctx);
+    assert(close_attempted);
+}
+
+
 int
 main (void)
 {
@@ -850,5 +868,6 @@ main (void)
     test_dgq_overflow_rejected();
     test_open_stream_init_failure();
     test_datagram_write_state_rollback();
+    test_wt_uni_switch_failure();
     return 0;
 }
