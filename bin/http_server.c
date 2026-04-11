@@ -1661,7 +1661,7 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                         st_h->interop_u.vhc.req_body
                                         + st_h->interop_u.vhc.req_sz, need);
                 if (nw > 0)
-                    st_h->interop_u.vhc.req_sz += need;
+                    st_h->interop_u.vhc.req_sz += (size_t) nw;
                 else if (nw == 0)
                 {
                     LSQ_WARN("request body too short (does not match headers)");

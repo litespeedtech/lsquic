@@ -72,3 +72,11 @@ Base commit: a2e3c27
     Site: idle_on_write()
     Summary: malloc failure for req_body calls exit(1), making memory pressure a
     remote process-kill DoS if the sample server is deployed.
+
+11. http_server verification-body reader over-advances on short reads.
+    File: bin/http_server.c
+    Site: http_server_interop_on_read()
+    Summary: The verification endpoint increments req_sz by the requested byte
+    count instead of the number of bytes actually read. A partial stream read
+    can therefore skip unread body bytes, compare uninitialized memory against
+    the header block, and desynchronize verification-state bookkeeping.
