@@ -64,7 +64,7 @@ struct lsquic_wt_accept_params
     /* Per-session WebTransport callbacks. */
     const struct lsquic_webtransport_if  *wtap_wt_if;
 
-    /* Passed to wti_on_session_open. */
+    /* Passed to wti_on_session_open and wti_on_session_rejected. */
     void                                 *wtap_wt_if_ctx;
 
     /* Optional parsed CONNECT metadata. */
@@ -88,10 +88,19 @@ struct lsquic_wt_accept_params
 
 struct lsquic_webtransport_if
 {
-    /* Session opened from CONNECT stream acceptance. */
+    /* Session became usable after WT took ownership of CONNECT stream. */
     lsquic_wt_session_ctx_t *
     (*wti_on_session_open) (void *ctx, lsquic_wt_session_t *,
                             const struct lsquic_wt_connect_info *info);
+
+    /* WT-owned CONNECT was rejected before a session became usable.
+     * Status is 0 if no HTTP response was sent.
+     */
+    void
+    (*wti_on_session_rejected) (void *ctx,
+                                const struct lsquic_wt_connect_info *info,
+                                unsigned status, const char *reason,
+                                size_t reason_len);
 
     /* Session closed (normal or error path). */
     void
@@ -152,9 +161,12 @@ struct lsquic_webtransport_if
  * Accept WebTransport CONNECT.
  *
  * Applications are responsible for validating wtci_origin, if present,
- * before accepting the session.
+ * before accepting the session.  A return value of 0 means ownership of
+ * the CONNECT stream has transferred to WT.  The session may become usable
+ * immediately or later via wti_on_session_open(), or it may be rejected via
+ * wti_on_session_rejected().
  */
-lsquic_wt_session_t *
+int
 lsquic_wt_accept (lsquic_stream_t *connect_stream,
                  const struct lsquic_wt_accept_params *params);
 

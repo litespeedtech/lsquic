@@ -1257,6 +1257,22 @@ db_wti_on_session_open (void *ctx, struct lsquic_wt_session *sess,
 
 
 static void
+db_wti_on_session_rejected (void *ctx,
+                            const struct lsquic_wt_connect_info *info,
+                            unsigned status, const char *reason,
+                            size_t reason_len)
+{
+    const struct devious_baton_app *cfg;
+
+    cfg = ctx;
+    LSQ_INFO("%s WT session rejected (status=%u, path=%s, reason=%.*s)",
+             cfg && cfg->is_server ? "server" : "client", status,
+             info && info->wtci_path ? info->wtci_path : "<none>",
+             (int) reason_len, reason ? reason : "");
+}
+
+
+static void
 db_wti_on_session_close (struct lsquic_wt_session *sess,
                                 struct lsquic_wt_session_ctx *sctx,
                                 uint64_t UNUSED_code,
@@ -1469,6 +1485,7 @@ static const struct lsquic_webtransport_if wt_if =
     .wti_on_stream_close  = on_close,
     .wti_on_stream_ss_code = db_ss_code,
     .wti_on_session_open  = db_wti_on_session_open,
+    .wti_on_session_rejected = db_wti_on_session_rejected,
     .wti_on_session_close = db_wti_on_session_close,
     .wti_on_uni_stream    = db_wti_on_uni_stream,
     .wti_on_bidi_stream   = db_wti_on_bidi_stream,
@@ -1660,7 +1677,7 @@ process_control_server (struct devious_baton_stream *st)
     params.wtap_wt_if_ctx = &cfg;
     params.wtap_connect_info = &info;
     apply_wt_datagram_params(&params, &cfg);
-    if (!lsquic_wt_accept(st->dbs_stream, &params))
+    if (0 != lsquic_wt_accept(st->dbs_stream, &params))
     {
         free_connect_info(&info);
         hset_destroy(hset);
@@ -1786,7 +1803,7 @@ process_control_client (struct devious_baton_stream *st)
     params.wtap_wt_if_ctx = st->dbs_conn->app;
     params.wtap_connect_info = &info;
     apply_wt_datagram_params(&params, st->dbs_conn->app);
-    if (!lsquic_wt_accept(st->dbs_stream, &params))
+    if (0 != lsquic_wt_accept(st->dbs_stream, &params))
     {
         free(protocol);
         lsquic_conn_abort(lsquic_stream_conn(st->dbs_stream));
@@ -2155,35 +2172,10 @@ devious_baton_accept (struct lsquic_stream *stream,
     params.wtap_wt_if_ctx = &cfg;
     params.wtap_connect_info = info;
     apply_wt_datagram_params(&params, &cfg);
-    if (!lsquic_wt_accept(stream, &params))
+    if (0 != lsquic_wt_accept(stream, &params))
     {
-        unsigned status;
-
-        status = 500;
-        if (errno == EAGAIN)
-        {
-            status = 503;
-            if (err_buf && err_sz)
-                snprintf(err_buf, err_sz, "peer SETTINGS not received yet");
-        }
-        else if (errno == EPROTO)
-        {
-            status = 400;
-            if (err_buf && err_sz)
-                snprintf(err_buf, err_sz, "peer does not support WebTransport");
-        }
-        else if (errno == ENOSPC)
-        {
-            status = 429;
-            if (err_buf && err_sz)
-                snprintf(err_buf, err_sz, "WebTransport session limit reached");
-        }
-        else if (err_buf && err_sz)
+        if (err_buf && err_sz)
             snprintf(err_buf, err_sz, "cannot accept WebTransport");
-
-        lsquic_wt_reject(stream, status, err_buf ? err_buf : NULL,
-                                            err_buf ? strlen(err_buf) : 0);
-        lsquic_stream_close(stream);
         return -1;
     }
 

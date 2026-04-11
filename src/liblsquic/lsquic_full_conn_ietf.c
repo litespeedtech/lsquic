@@ -10721,6 +10721,9 @@ update_peer_wt_support (struct ietf_full_conn *conn)
         peer_quic_datagrams,
         peer_reset_stream_at,
         !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT));
+
+    if (conn->ifc_pub.cp_on_http_caps_change)
+        conn->ifc_pub.cp_on_http_caps_change(&conn->ifc_pub);
 }
 
 

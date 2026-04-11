@@ -20,6 +20,9 @@
 #define WT_APP_ERROR_MIN_H3      0x52E4A40FA8DBULL
 #define WT_APP_ERROR_MAX_H3      0x52E5AC983162ULL
 #define WT_CLOSE_REASON_MAX      1024
+#define WT_TEST_CP_WEBTRANSPORT      (1u << 2)
+#define WT_TEST_CP_H3_PEER_SETTINGS  (1u << 3)
+#define WT_TEST_CP_CONNECT_PROTOCOL  (1u << 4)
 
 int lsquic_wt_test_app_error_to_h3_error (uint64_t wt_error_code,
                                           uint64_t *h3_error_code);
@@ -53,6 +56,16 @@ int lsquic_wt_test_control_reset_close (unsigned *called, int *is_closing,
                                         int *close_received);
 int lsquic_wt_test_http_dg_read (int with_session, int is_control_stream,
                                  int is_closing, unsigned *called);
+int lsquic_wt_test_accept_resolution (unsigned initial_flags,
+                                      unsigned final_flags,
+                                      unsigned existing_sessions,
+                                      unsigned *initial_result,
+                                      unsigned *final_result,
+                                      unsigned *opened,
+                                      unsigned *rejected,
+                                      unsigned *status);
+int lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
+                                            unsigned *called_after);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -65,6 +78,14 @@ int lsquic_wt_test_dgq_front (const lsquic_wt_session_t *sess,
                               unsigned char *val);
 int lsquic_wt_test_dgq_back (const lsquic_wt_session_t *sess,
                              unsigned char *val);
+
+
+enum wt_test_accept_result
+{
+    WT_TEST_ACCEPT_OPEN,
+    WT_TEST_ACCEPT_PENDING,
+    WT_TEST_ACCEPT_REJECT,
+};
 
 
 static void
@@ -537,6 +558,70 @@ test_reset_dispatch (void)
 }
 
 
+static void
+test_deferred_accept_resolution (void)
+{
+    unsigned initial_result, final_result, opened, rejected, status;
+    unsigned called_before, called_after;
+
+    initial_result = final_result = opened = rejected = status = UINT_MAX;
+    assert(0 == lsquic_wt_test_accept_resolution(
+                    WT_TEST_CP_H3_PEER_SETTINGS | WT_TEST_CP_WEBTRANSPORT
+                        | WT_TEST_CP_CONNECT_PROTOCOL,
+                    WT_TEST_CP_H3_PEER_SETTINGS | WT_TEST_CP_WEBTRANSPORT
+                        | WT_TEST_CP_CONNECT_PROTOCOL,
+                    0, &initial_result, &final_result,
+                    &opened, &rejected, &status));
+    assert(initial_result == WT_TEST_ACCEPT_OPEN);
+    assert(final_result == WT_TEST_ACCEPT_OPEN);
+    assert(opened == 1);
+    assert(rejected == 0);
+
+    initial_result = final_result = opened = rejected = status = UINT_MAX;
+    assert(0 == lsquic_wt_test_accept_resolution(
+                    0,
+                    WT_TEST_CP_H3_PEER_SETTINGS | WT_TEST_CP_WEBTRANSPORT
+                        | WT_TEST_CP_CONNECT_PROTOCOL,
+                    0, &initial_result, &final_result,
+                    &opened, &rejected, &status));
+    assert(initial_result == WT_TEST_ACCEPT_PENDING);
+    assert(final_result == WT_TEST_ACCEPT_OPEN);
+    assert(opened == 1);
+    assert(rejected == 0);
+
+    initial_result = final_result = opened = rejected = status = UINT_MAX;
+    assert(0 == lsquic_wt_test_accept_resolution(
+                    0, WT_TEST_CP_H3_PEER_SETTINGS, 0,
+                    &initial_result, &final_result,
+                    &opened, &rejected, &status));
+    assert(initial_result == WT_TEST_ACCEPT_PENDING);
+    assert(final_result == WT_TEST_ACCEPT_REJECT);
+    assert(opened == 0);
+    assert(rejected == 1);
+    assert(status == 400);
+
+    initial_result = final_result = opened = rejected = status = UINT_MAX;
+    assert(0 == lsquic_wt_test_accept_resolution(
+                    WT_TEST_CP_H3_PEER_SETTINGS | WT_TEST_CP_WEBTRANSPORT
+                        | WT_TEST_CP_CONNECT_PROTOCOL,
+                    WT_TEST_CP_H3_PEER_SETTINGS | WT_TEST_CP_WEBTRANSPORT
+                        | WT_TEST_CP_CONNECT_PROTOCOL,
+                    1, &initial_result, &final_result,
+                    &opened, &rejected, &status));
+    assert(initial_result == WT_TEST_ACCEPT_REJECT);
+    assert(final_result == WT_TEST_ACCEPT_REJECT);
+    assert(opened == 0);
+    assert(rejected == 1);
+    assert(status == 429);
+
+    called_before = called_after = UINT_MAX;
+    assert(0 == lsquic_wt_test_pending_datagram_replay(&called_before,
+                                                       &called_after));
+    assert(called_before == 0);
+    assert(called_after == 1);
+}
+
+
 int
 main (void)
 {
@@ -547,6 +632,7 @@ main (void)
     test_incoming_session_id_validation();
     test_dgq_policies();
     test_close_capsule_and_close_state();
+    test_deferred_accept_resolution();
     test_reset_dispatch();
     return 0;
 }
