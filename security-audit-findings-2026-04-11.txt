@@ -95,3 +95,11 @@ Base commit: a2e3c27
     sizeof(elem) + len without overflow checks. A very large datagram length on
     the public send path, or an unexpectedly large queued incoming length, can
     wrap the allocation size before memcpy and corrupt the heap.
+
+14. WT local stream opens can return broken streams after init failure.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_on_new_stream(), lsquic_wt_open_uni(), lsquic_wt_open_bidi()
+    Summary: If WT stream-context allocation fails during local stream creation,
+    the dynamic onnew context leaks and the open helper can still receive a
+    stream object whose WT initialization never completed. The caller can end up
+    with a half-initialized outgoing WT stream instead of a clean ENOMEM error.

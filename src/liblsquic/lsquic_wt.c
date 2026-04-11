@@ -605,6 +605,8 @@ lsquic_wt_validate_incoming_session_id (struct lsquic_stream *stream,
 #if LSQUIC_TEST
 static unsigned s_wt_test_error_code;
 static unsigned s_wt_test_fail_stream_ctx_alloc;
+static unsigned s_wt_test_freed_dynamic_onnew;
+static unsigned s_wt_test_aborted_outgoing_stream;
 
 
 static void
@@ -658,6 +660,19 @@ wt_stream_ctx_alloc (void)
     }
 #endif
     return calloc(1, sizeof(struct wt_stream_ctx));
+}
+
+
+static void
+wt_free_onnew_ctx (struct wt_onnew_ctx *onnew)
+{
+    if (onnew && onnew->is_dynamic)
+    {
+#if LSQUIC_TEST
+        ++s_wt_test_freed_dynamic_onnew;
+#endif
+        free(onnew);
+    }
 }
 
 
@@ -1567,6 +1582,90 @@ lsquic_wt_test_dgq_overflow_rejected (int incoming, int *overflow_rejected)
     wt_in_dgq_drop_all(&sess);
     return 0;
 }
+
+
+struct wt_test_open_fail_ctx
+{
+    struct lsquic_conn         conn;
+    struct lsquic_conn_public  conn_pub;
+    struct lsquic_stream       stream;
+};
+
+static struct wt_test_open_fail_ctx *s_wt_test_open_fail_ctx;
+
+static struct lsquic_stream *
+wt_test_make_stream_with_if (struct lsquic_conn *UNUSED_lconn,
+                             const struct lsquic_stream_if *stream_if,
+                             void *stream_if_ctx, lsquic_stream_id_t stream_id)
+{
+    struct wt_test_open_fail_ctx *ctx = s_wt_test_open_fail_ctx;
+
+    memset(&ctx->stream, 0, sizeof(ctx->stream));
+    ctx->stream.id = stream_id;
+    ctx->stream.conn_pub = &ctx->conn_pub;
+    ctx->stream.stream_if = stream_if;
+    ctx->stream.sm_onnew_arg = stream_if_ctx;
+    ctx->stream.stream_flags = STREAM_ONNEW_DONE;
+    ctx->stream.st_ctx = stream_if->on_new_stream(stream_if_ctx, &ctx->stream);
+    ctx->stream.conn_pub = NULL;
+    return &ctx->stream;
+}
+
+static struct lsquic_stream *
+wt_test_make_uni_stream_with_if (struct lsquic_conn *lconn,
+                                 const struct lsquic_stream_if *stream_if,
+                                 void *stream_if_ctx)
+{
+    return wt_test_make_stream_with_if(lconn, stream_if, stream_if_ctx, 2);
+}
+
+static struct lsquic_stream *
+wt_test_make_bidi_stream_with_if (struct lsquic_conn *lconn,
+                                  const struct lsquic_stream_if *stream_if,
+                                  void *stream_if_ctx)
+{
+    return wt_test_make_stream_with_if(lconn, stream_if, stream_if_ctx, 0);
+}
+
+int
+lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
+                                         int *freed_dynamic_onnew)
+{
+    struct wt_test_open_fail_ctx ctx;
+    struct lsquic_wt_session sess;
+    static const struct conn_iface conn_iface = {
+        .ci_make_uni_stream_with_if = wt_test_make_uni_stream_with_if,
+        .ci_make_bidi_stream_with_if = wt_test_make_bidi_stream_with_if,
+    };
+    struct lsquic_stream *stream;
+
+    memset(&ctx, 0, sizeof(ctx));
+    memset(&sess, 0, sizeof(sess));
+    ctx.conn.cn_if = &conn_iface;
+    ctx.conn_pub.lconn = &ctx.conn;
+    sess.wts_conn_pub = &ctx.conn_pub;
+    sess.wts_stream_id = 4;
+    sess.wts_data_if.on_new_stream = wt_on_new_stream;
+    sess.wts_onnew_ctx.sess = &sess;
+    s_wt_test_open_fail_ctx = &ctx;
+    s_wt_test_fail_stream_ctx_alloc = 1;
+    s_wt_test_aborted_outgoing_stream = 0;
+    s_wt_test_freed_dynamic_onnew = 0;
+
+    if (bidi)
+        stream = lsquic_wt_open_bidi(&sess);
+    else
+        stream = lsquic_wt_open_uni(&sess);
+
+    s_wt_test_open_fail_ctx = NULL;
+    s_wt_test_fail_stream_ctx_alloc = 0;
+    if (aborted)
+        *aborted = s_wt_test_aborted_outgoing_stream == 1;
+    if (freed_dynamic_onnew)
+        *freed_dynamic_onnew = s_wt_test_freed_dynamic_onnew == 1;
+
+    return stream == NULL && errno == ENOMEM ? 0 : -1;
+}
 #endif
 
 int
@@ -1919,6 +2018,21 @@ wt_switch_to_data_if (struct lsquic_stream *stream,
 }
 
 
+static void
+wt_abort_failed_local_stream (struct lsquic_stream *stream)
+{
+#if LSQUIC_TEST
+    if (stream && !stream->conn_pub)
+    {
+        ++s_wt_test_aborted_outgoing_stream;
+        return;
+    }
+#endif
+    if (stream)
+        (void) lsquic_stream_close(stream);
+}
+
+
 static lsquic_stream_ctx_t *
 wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
 {
@@ -1933,6 +2047,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
     wctx = wt_stream_ctx_alloc();
     if (!wctx)
     {
+        wt_free_onnew_ctx(onnew);
         LSQ_WARN("cannot allocate WT stream ctx for stream %"PRIu64,
                                                 lsquic_stream_id(stream));
         return NULL;
@@ -1976,8 +2091,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
                                                     ? "server" : "client",
             wctx->prefix_len);
 
-    if (onnew->is_dynamic)
-        free(onnew);
+    wt_free_onnew_ctx(onnew);
 
     return (lsquic_stream_ctx_t *) wctx;
 }
@@ -4015,6 +4129,15 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
         return NULL;
     }
 
+    if (wt_stream_get_session(stream) != sess)
+    {
+        errno = errno ? errno : ENOMEM;
+        LSQ_WARN("WT uni stream %"PRIu64" failed to initialize in session "
+                 "%"PRIu64, lsquic_stream_id(stream), sess->wts_stream_id);
+        wt_abort_failed_local_stream(stream);
+        return NULL;
+    }
+
     LSQ_DEBUG("opened WT uni stream %"PRIu64" in session %"PRIu64,
                                 lsquic_stream_id(stream), sess->wts_stream_id);
     return stream;
@@ -4073,6 +4196,15 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
         LSQ_WARN("cannot open WT bidi stream in session %"PRIu64,
                                                     sess->wts_stream_id);
         free(onnew);
+        return NULL;
+    }
+
+    if (wt_stream_get_session(stream) != sess)
+    {
+        errno = errno ? errno : ENOMEM;
+        LSQ_WARN("WT bidi stream %"PRIu64" failed to initialize in session "
+                 "%"PRIu64, lsquic_stream_id(stream), sess->wts_stream_id);
+        wt_abort_failed_local_stream(stream);
         return NULL;
     }
 
