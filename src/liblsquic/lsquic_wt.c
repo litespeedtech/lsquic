@@ -1267,14 +1267,6 @@ lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
 }
 #endif
 
-
-void
-lsquic_stream_set_webtransport_session (struct lsquic_stream *stream)
-{
-    lsquic_stream_mark_session_stream(stream);
-}
-
-
 int
 lsquic_stream_is_webtransport_session (const struct lsquic_stream *stream)
 {
@@ -3346,7 +3338,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
 
     wt_install_conn_hooks(conn_pub);
     wt_stream_bind_session(sess, connect_stream);
-    lsquic_stream_set_webtransport_session(connect_stream);
+    lsquic_stream_mark_session_stream(connect_stream);
     TAILQ_INSERT_TAIL(&sess->wts_conn_pub->wt_sessions, sess, wts_next);
 
     reject_reason = "cannot accept WebTransport";

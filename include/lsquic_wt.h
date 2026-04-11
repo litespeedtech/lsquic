@@ -223,6 +223,20 @@ lsquic_wt_open_bidi (lsquic_wt_session_t *sess);
 lsquic_wt_session_t *
 lsquic_wt_session_from_stream (lsquic_stream_t *stream);
 
+/** Return whether this is the CONNECT control stream for a WT session. */
+int
+lsquic_stream_is_webtransport_session (const lsquic_stream_t *stream);
+
+/** Return whether this is a switched client-initiated WT bidirectional stream. */
+int
+lsquic_stream_is_webtransport_client_bidi_stream (const lsquic_stream_t *stream);
+
+/** Get the CONNECT stream ID associated with a switched WT stream. */
+int
+lsquic_stream_get_webtransport_session_stream_id (
+                                const lsquic_stream_t *stream,
+                                lsquic_stream_id_t *stream_id);
+
 /** Return WT stream context (set by WT callbacks). */
 lsquic_stream_ctx_t *
 lsquic_wt_stream_get_ctx (lsquic_stream_t *stream);

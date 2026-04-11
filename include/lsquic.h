@@ -2058,19 +2058,6 @@ lsquic_stream_set_http_prio (lsquic_stream_t *,
  */
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
 
-void
-lsquic_stream_set_webtransport_session(lsquic_stream_t *s);
-
-int
-lsquic_stream_is_webtransport_session (const lsquic_stream_t *s);
-
-int
-lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s);
-
-int
-lsquic_stream_get_webtransport_session_stream_id (const lsquic_stream_t *s,
-                                                 lsquic_stream_id_t *stream_id);
-
 /* Record reliable size for RESET_STREAM_AT.  Returns 0 on success. */
 int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
