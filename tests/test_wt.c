@@ -83,6 +83,8 @@ int lsquic_wt_test_dgq_overflow_rejected (int incoming,
                                           int *overflow_rejected);
 int lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
                                              int *freed_dynamic_onnew);
+int lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
+                                                  int *send_disarmed);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -815,6 +817,19 @@ test_open_stream_init_failure (void)
 }
 
 
+static void
+test_datagram_write_state_rollback (void)
+{
+    int want_flag_cleared, send_disarmed;
+
+    want_flag_cleared = send_disarmed = 0;
+    assert(0 == lsquic_wt_test_datagram_write_state_rollback(
+                                        &want_flag_cleared, &send_disarmed));
+    assert(want_flag_cleared);
+    assert(send_disarmed);
+}
+
+
 int
 main (void)
 {
@@ -834,5 +849,6 @@ main (void)
     test_extra_resp_header_validation();
     test_dgq_overflow_rejected();
     test_open_stream_init_failure();
+    test_datagram_write_state_rollback();
     return 0;
 }

@@ -607,6 +607,10 @@ static unsigned s_wt_test_error_code;
 static unsigned s_wt_test_fail_stream_ctx_alloc;
 static unsigned s_wt_test_freed_dynamic_onnew;
 static unsigned s_wt_test_aborted_outgoing_stream;
+static int s_wt_test_dg_write_stub_active;
+static int s_wt_test_dg_write_arm_result;
+static unsigned s_wt_test_dg_write_arm_calls;
+static unsigned s_wt_test_dg_write_disarm_calls;
 
 
 static void
@@ -1661,6 +1665,12 @@ wt_test_make_bidi_stream_with_if (struct lsquic_conn *lconn,
     return wt_test_make_stream_with_if(lconn, stream_if, stream_if_ctx, 0);
 }
 
+static size_t
+wt_test_get_max_datagram_size (struct lsquic_conn *UNUSED_lconn)
+{
+    return 16;
+}
+
 int
 lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
                                          int *freed_dynamic_onnew)
@@ -1700,6 +1710,68 @@ lsquic_wt_test_open_stream_init_failure (int bidi, int *aborted,
         *freed_dynamic_onnew = s_wt_test_freed_dynamic_onnew == 1;
 
     return stream == NULL && errno == ENOMEM ? 0 : -1;
+}
+
+
+int
+lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
+                                              int *send_disarmed)
+{
+    struct lsquic_wt_session sess;
+    struct lsquic_stream stream;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    static const struct conn_iface conn_iface = {
+        .ci_get_max_datagram_size = wt_test_get_max_datagram_size,
+    };
+    static const unsigned char byte = 0;
+    ssize_t nw;
+    int rc;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&stream, 0, sizeof(stream));
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    TAILQ_INIT(&sess.wts_dgq);
+    conn.cn_if = &conn_iface;
+    conn_pub.lconn = &conn;
+    conn_pub.cp_flags = CP_HTTP_DATAGRAMS;
+    stream.id = 0;
+    stream.conn_pub = &conn_pub;
+    sess.wts_control_stream = &stream;
+
+    s_wt_test_dg_write_stub_active = 1;
+    s_wt_test_dg_write_arm_calls = 0;
+    s_wt_test_dg_write_disarm_calls = 0;
+    s_wt_test_dg_write_arm_result = -1;
+    errno = 0;
+    rc = lsquic_wt_want_datagram_write(&sess, 1);
+    if (want_flag_cleared)
+        *want_flag_cleared = rc != 0
+                          && errno == EIO
+                          && !(sess.wts_flags & WTSF_WANT_DG_WRITE)
+                          && s_wt_test_dg_write_arm_calls == 1
+                          && s_wt_test_dg_write_disarm_calls == 0;
+
+    sess.wts_dgq_max_count = 0;
+    sess.wts_dgq_max_bytes = 0;
+    s_wt_test_dg_write_arm_calls = 0;
+    s_wt_test_dg_write_disarm_calls = 0;
+    s_wt_test_dg_write_arm_result = 0;
+    errno = 0;
+    nw = lsquic_wt_send_datagram_ex(&sess, &byte, sizeof(byte),
+                                    LSQWT_DG_FAIL_EAGAIN,
+                                    LSQUIC_HTTP_DG_SEND_DEFAULT);
+    if (send_disarmed)
+        *send_disarmed = nw < 0
+                      && errno == EAGAIN
+                      && s_wt_test_dg_write_arm_calls == 1
+                      && s_wt_test_dg_write_disarm_calls == 1
+                      && sess.wts_dgq_count == 0;
+
+    s_wt_test_dg_write_stub_active = 0;
+    wt_dgq_drop_all(&sess);
+    return 0;
 }
 #endif
 
@@ -1842,11 +1914,34 @@ wt_dgq_arm_write (struct lsquic_wt_session *sess)
     WT_SET_CONN_FROM_SESSION(sess);
     int rc;
 
+#if LSQUIC_TEST
+    if (s_wt_test_dg_write_stub_active)
+    {
+        ++s_wt_test_dg_write_arm_calls;
+        if (s_wt_test_dg_write_arm_result < 0)
+            errno = EIO;
+        return s_wt_test_dg_write_arm_result;
+    }
+#endif
     rc = lsquic_stream_want_http_dg_write(sess->wts_control_stream, 1);
     if (rc < 0)
         LSQ_WARN("cannot arm WT datagram write on stream %"PRIu64": %s",
                 lsquic_stream_id(sess->wts_control_stream), strerror(errno));
     return rc;
+}
+
+
+static int
+wt_dgq_disarm_write (struct lsquic_stream *stream)
+{
+#if LSQUIC_TEST
+    if (s_wt_test_dg_write_stub_active)
+    {
+        ++s_wt_test_dg_write_disarm_calls;
+        return 0;
+    }
+#endif
+    return lsquic_stream_want_http_dg_write(stream, 0);
 }
 
 
@@ -4380,7 +4475,7 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
     size_t max_sz;
-    int rc;
+    int old_want;
 
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     if (sess->wts_flags & WTSF_CLOSING)
@@ -4424,12 +4519,17 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
         return -1;
     }
 
-    rc = wt_dgq_arm_write(sess);
-    if (rc < 0)
+    old_want = wt_dgq_arm_write(sess);
+    if (old_want < 0)
         return -1;
 
     if (0 != wt_dgq_enqueue(sess, buf, len, policy, mode))
+    {
+        if (0 == old_want && 0 == sess->wts_dgq_count
+                            && !(sess->wts_flags & WTSF_WANT_DG_WRITE))
+            (void) wt_dgq_disarm_write(control_stream);
         return -1;
+    }
 
     LSQ_DEBUG("enqueued WT datagram for session %"PRIu64" on stream %"PRIu64,
         sess->wts_stream_id, lsquic_stream_id(control_stream));
@@ -4466,14 +4566,16 @@ lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
             return -1;
         }
 
+        if (0 > wt_dgq_arm_write(sess))
+            return -1;
         sess->wts_flags |= WTSF_WANT_DG_WRITE;
-        return wt_dgq_arm_write(sess);
+        return 0;
     }
     else
     {
         sess->wts_flags &= ~WTSF_WANT_DG_WRITE;
         if (sess->wts_dgq_count == 0)
-            return lsquic_stream_want_http_dg_write(control_stream, 0);
+            return wt_dgq_disarm_write(control_stream);
         return 0;
     }
 }
