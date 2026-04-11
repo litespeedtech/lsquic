@@ -87,6 +87,10 @@ int lsquic_wt_test_datagram_write_state_rollback (int *want_flag_cleared,
                                                   int *send_disarmed);
 int lsquic_wt_test_read_error_closes_stream (int *control_closed,
                                              int *uni_closed);
+int lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len,
+                                   int fin, size_t *consumed, int *done,
+                                   int *malformed,
+                                   lsquic_stream_id_t *session_id);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -863,6 +867,28 @@ test_read_error_closes_stream (void)
 }
 
 
+static void
+test_truncated_uni_session_id_is_malformed (void)
+{
+    static const unsigned char truncated_varint[] = { 0x40, };
+    size_t consumed;
+    int done, malformed;
+    lsquic_stream_id_t session_id;
+
+    consumed = 0;
+    done = malformed = 0;
+    session_id = 123;
+    assert(0 == lsquic_wt_test_uni_read_state(truncated_varint,
+                                              sizeof(truncated_varint), 1,
+                                              &consumed, &done, &malformed,
+                                              &session_id));
+    assert(consumed == sizeof(truncated_varint));
+    assert(done);
+    assert(malformed);
+    assert(session_id == 0);
+}
+
+
 int
 main (void)
 {
@@ -885,5 +911,6 @@ main (void)
     test_datagram_write_state_rollback();
     test_wt_uni_switch_failure();
     test_read_error_closes_stream();
+    test_truncated_uni_session_id_is_malformed();
     return 0;
 }

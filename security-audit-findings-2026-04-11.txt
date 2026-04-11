@@ -135,3 +135,12 @@ Base commit: a2e3c27
     immediately on negative `lsquic_stream_readf()` results. A read error does
     not tear down the affected WT stream, which can strand the session or keep
     a broken incoming WT stream around instead of closing it promptly.
+
+19. Truncated WT uni session IDs are misparsed as session 0.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_uni_readf(), wt_uni_on_read()
+    Summary: If a peer ends a WT uni stream in the middle of the session-id
+    varint, the parser marks the read context "done" without producing a valid
+    session ID. The zero-initialized `sess_id` is then treated as real input,
+    so the stream can be buffered or associated as if it belonged to session
+    0 instead of being rejected as malformed.

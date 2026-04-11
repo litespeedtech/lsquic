@@ -63,6 +63,7 @@ struct wt_uni_read_ctx
     struct varint_read_state   state;
     lsquic_stream_id_t         sess_id;
     int                        done;
+    int                        malformed;
 };
 
 struct wt_dgq_elem
@@ -1383,6 +1384,29 @@ lsquic_wt_test_uni_read_bytes (const unsigned char *buf, size_t len, int fin,
         *consumed = nr;
     if (done)
         *done = uctx.done;
+    if (session_id)
+        *session_id = uctx.sess_id;
+    return 0;
+}
+
+
+int
+lsquic_wt_test_uni_read_state (const unsigned char *buf, size_t len, int fin,
+                               size_t *consumed, int *done, int *malformed,
+                               lsquic_stream_id_t *session_id)
+{
+    struct wt_uni_read_ctx uctx;
+    size_t nr;
+
+    memset(&uctx, 0, sizeof(uctx));
+    nr = wt_uni_readf(&uctx, buf ? buf : (const unsigned char *) "", len, fin);
+
+    if (consumed)
+        *consumed = nr;
+    if (done)
+        *done = uctx.done;
+    if (malformed)
+        *malformed = uctx.malformed;
     if (session_id)
         *session_id = uctx.sess_id;
     return 0;
@@ -2887,6 +2911,7 @@ wt_uni_readf (void *ctx, const unsigned char *buf, size_t sz, int fin)
     else if (fin)
     {
         uctx->done = 1;
+        uctx->malformed = 1;
         return (size_t) (p - buf);
     }
     else
@@ -2913,6 +2938,14 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
 
     if (!uctx->done)
         return;
+
+    if (uctx->malformed)
+    {
+        LSQ_INFO("unexpected FIN while reading WT uni session ID from stream "
+                 "%"PRIu64, lsquic_stream_id(stream));
+        lsquic_stream_close(stream);
+        return;
+    }
 
     if (0 != lsquic_wt_validate_incoming_session_id(stream, uctx->sess_id,
                                                                 "uni"))
