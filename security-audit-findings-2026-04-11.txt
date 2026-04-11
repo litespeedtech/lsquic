@@ -80,3 +80,10 @@ Base commit: a2e3c27
     count instead of the number of bytes actually read. A partial stream read
     can therefore skip unread body bytes, compare uninitialized memory against
     the header block, and desynchronize verification-state bookkeeping.
+
+12. http_server interop read failures still terminate the whole process.
+    File: bin/http_server.c
+    Site: http_server_interop_on_read()
+    Summary: The MD5 and verification-body handlers call exit(1) when a stream
+    read returns an error. A peer-induced per-stream failure can therefore kill
+    the entire sample server instead of being contained to the affected stream.

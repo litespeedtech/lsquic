@@ -1622,7 +1622,8 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
             if (nw < 0)
             {
                 LSQ_ERROR("could not read from stream for MD5: %s", strerror(errno));
-                exit(1);
+                lsquic_stream_close(stream);
+                return;
             }
             if (nw == 0)
                 st_h->interop_u.md5c.done = 1;
@@ -1671,7 +1672,8 @@ http_server_interop_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
                 else
                 {
                     LSQ_ERROR("error reading from stream");
-                    exit(1);
+                    lsquic_stream_close(stream);
+                    return;
                 }
             }
             else
