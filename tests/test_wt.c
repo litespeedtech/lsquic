@@ -72,6 +72,7 @@ int lsquic_wt_test_accept_resolution (unsigned initial_flags,
                                       unsigned *rejected,
                                       unsigned *status);
 int lsquic_wt_test_accept_status_validation (unsigned status, int *accepted);
+int lsquic_wt_test_reject_status_validation (unsigned status, int *accepted);
 int lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
                                             unsigned *called_after);
 int lsquic_wt_test_pending_datagram_replay_stops_on_close (
@@ -714,6 +715,33 @@ test_accept_status_validation (void)
 
 
 static void
+test_reject_status_validation (void)
+{
+    int accepted;
+
+    accepted = -1;
+    assert(0 == lsquic_wt_test_reject_status_validation(0, &accepted));
+    assert(accepted == 1);
+
+    accepted = -1;
+    assert(0 == lsquic_wt_test_reject_status_validation(199, &accepted));
+    assert(accepted == 1);
+
+    accepted = -1;
+    assert(0 == lsquic_wt_test_reject_status_validation(200, &accepted));
+    assert(accepted == 0);
+
+    accepted = -1;
+    assert(0 == lsquic_wt_test_reject_status_validation(299, &accepted));
+    assert(accepted == 0);
+
+    accepted = -1;
+    assert(0 == lsquic_wt_test_reject_status_validation(300, &accepted));
+    assert(accepted == 1);
+}
+
+
+static void
 test_compatibility_mode_behavior (void)
 {
     unsigned supports, draft;
@@ -1011,6 +1039,7 @@ main (void)
     test_close_capsule_and_close_state();
     test_deferred_accept_resolution();
     test_accept_status_validation();
+    test_reject_status_validation();
     test_compatibility_mode_behavior();
     test_reset_dispatch();
     test_pending_replay_stops_on_close();

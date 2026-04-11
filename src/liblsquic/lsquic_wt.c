@@ -4475,6 +4475,17 @@ lsquic_wt_test_accept_status_validation (unsigned status, int *accepted)
         *accepted = valid;
     return 0;
 }
+
+int
+lsquic_wt_test_reject_status_validation (unsigned status, int *accepted)
+{
+    int valid;
+
+    valid = status == 0 || !wt_status_is_2xx(status);
+    if (accepted)
+        *accepted = valid;
+    return 0;
+}
 #endif
 
 
@@ -4510,6 +4521,14 @@ lsquic_wt_reject (struct lsquic_stream *connect_stream,
 
     if (0 == status)
         status = 400;
+
+    if (wt_status_is_2xx(status))
+    {
+        errno = EINVAL;
+        LSQ_WARN("WT reject called with 2xx status %u on stream %"PRIu64,
+                 status, lsquic_stream_id(connect_stream));
+        return -1;
+    }
 
     if (0 != wt_send_response(connect_stream, status, NULL, 1))
     {

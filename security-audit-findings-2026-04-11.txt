@@ -176,3 +176,13 @@ Base commit: a2e3c27
     the wire and still marked the WT session opened internally, creating a
     protocol/state mismatch where a 3xx/4xx/5xx CONNECT response could still
     trigger `wti_on_session_open()`.
+
+23. WT reject accepts 2xx status codes.
+    File: src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_reject()
+    Summary: The public WT API documents `lsquic_wt_reject()` as the
+    non-2xx path for rejecting a WebTransport CONNECT request, but the
+    implementation accepted any status code that `wt_send_response()`
+    would format. A caller could therefore "reject" a CONNECT stream
+    with a 2xx response, violating the API contract and emitting a
+    protocol-confusing success status from the explicit reject path.
