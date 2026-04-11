@@ -70,6 +70,9 @@ int lsquic_wt_test_pending_datagram_replay_stops_on_close (
     unsigned *called_after, int *is_closing);
 int lsquic_wt_test_destroy_while_closing (int is_control_stream,
                                           unsigned *called, int *removed);
+int lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
+                                                         int *restored_ctx,
+                                                         int *restored_session);
 int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned peer_settings_received,
                                  unsigned local_webtransport,
@@ -729,6 +732,21 @@ test_destroy_while_closing (void)
 }
 
 
+static void
+test_stream_switch_failure_restores_state (void)
+{
+    int restored_if, restored_ctx, restored_session;
+
+    restored_if = restored_ctx = restored_session = 0;
+    assert(0 == lsquic_wt_test_stream_switch_failure_restores_state(
+                                                &restored_if, &restored_ctx,
+                                                &restored_session));
+    assert(restored_if);
+    assert(restored_ctx);
+    assert(restored_session);
+}
+
+
 int
 main (void)
 {
@@ -744,5 +762,6 @@ main (void)
     test_reset_dispatch();
     test_pending_replay_stops_on_close();
     test_destroy_while_closing();
+    test_stream_switch_failure_restores_state();
     return 0;
 }

@@ -1,0 +1,74 @@
+LSQUIC WebTransport Follow-up Findings
+Date: 2026-04-11
+Base commit: a2e3c27
+
+1. WT uni-stream remap can orphan the stream on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_uni_on_read(), lsquic_stream_set_stream_if(), wt_on_new_stream()
+   Summary: The code frees the old pending-uni context before switching the
+   stream interface. The switch immediately invokes the new on_new_stream
+   callback. If that callback cannot allocate the WT stream context, the stream
+   is left switched with a NULL context and no longer has its old pending state.
+
+2. WT client-bidi remap has the same unchecked failure mode.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_on_client_bidi_stream(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: A failed WT on_new_stream allocation after interface switching can
+   leave a bidi stream attached to a session without a valid WT stream context.
+
+3. Pending WT uni replay can orphan streams on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_replay_pending_streams(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: Replay frees the old wt_uni_read_ctx before switching to the WT
+   stream interface. If the immediate on_new_stream call fails, the replayed
+   stream loses both the old and new context.
+
+4. Pending WT bidi replay can orphan streams on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_replay_pending_streams(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: Bidi replay has the same unchecked switch-to-WT failure mode as the
+   uni replay path.
+
+5. wt_copy_extra_resp_headers() lacks overflow checks and has a zero-buffer UB
+   path.
+   File: src/liblsquic/lsquic_wt.c
+   Site: wt_copy_extra_resp_headers()
+   Summary: The aggregate size and allocation math are unchecked, and the copy
+   loop can dereference buf + off even when bufsz is zero.
+
+6. wt_send_response() lacks checked allocation math for extra headers.
+   File: src/liblsquic/lsquic_wt.c
+   Site: wt_send_response()
+   Summary: The headers array allocation uses 1 + extra_count without overflow
+   protection and then copies extra headers blindly.
+
+7. devious_baton write_baton_message() lacks overflow checks.
+   File: bin/devious_baton.c
+   Site: write_baton_message()
+   Summary: The code computes varint_len + padding_len + 1 without guarding
+   against size_t overflow or absurdly large allocations from attacker-fed
+   configuration.
+
+8. devious_baton header decode growth can overflow.
+   File: bin/devious_baton.c
+   Site: hset_prepare_decode()
+   Summary: Doubling el->nalloc without overflow checks can wrap req_space
+   before reallocating the decode buffer.
+
+9. http_server interop header accumulation uses unchecked growth math and a
+   lossy realloc.
+   File: bin/http_server.c
+   Site: interop_server_hset_add_header()
+   Summary: req->qif_sz + name_len + value_len + 2 is unchecked for overflow,
+   and assigning realloc() directly to req->qif_str can lose the old buffer on
+   OOM.
+
+10. http_server verification HEAD path exits the whole process on allocation
+    failure.
+    File: bin/http_server.c
+    Site: idle_on_write()
+    Summary: malloc failure for req_body calls exit(1), making memory pressure a
+    remote process-kill DoS if the sample server is deployed.

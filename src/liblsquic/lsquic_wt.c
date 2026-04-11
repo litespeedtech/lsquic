@@ -557,6 +557,13 @@ wt_on_client_bidi_stream (struct lsquic_stream *stream,
                                                 lsquic_stream_id_t session_id);
 
 static int
+wt_switch_to_data_if (struct lsquic_stream *stream,
+                      struct lsquic_wt_session *sess);
+
+static lsquic_stream_ctx_t *
+wt_on_new_stream (void *ctx, struct lsquic_stream *stream);
+
+static int
 wt_is_reserved_h3_error_code (uint64_t h3_error_code)
 {
     return h3_error_code >= WT_APP_ERROR_MIN_H3
@@ -590,6 +597,7 @@ lsquic_wt_validate_incoming_session_id (struct lsquic_stream *stream,
 
 #if LSQUIC_TEST
 static unsigned s_wt_test_error_code;
+static unsigned s_wt_test_fail_stream_ctx_alloc;
 
 
 static void
@@ -630,6 +638,20 @@ lsquic_wt_test_validate_incoming_session_id (lsquic_stream_id_t stream_id,
 
 
 #endif
+
+
+static struct wt_stream_ctx *
+wt_stream_ctx_alloc (void)
+{
+#if LSQUIC_TEST
+    if (s_wt_test_fail_stream_ctx_alloc > 0)
+    {
+        --s_wt_test_fail_stream_ctx_alloc;
+        return NULL;
+    }
+#endif
+    return calloc(1, sizeof(struct wt_stream_ctx));
+}
 
 static int
 wt_app_error_to_h3_error (uint64_t wt_error_code, uint64_t *h3_error_code)
@@ -1368,6 +1390,53 @@ lsquic_wt_test_destroy_while_closing (int is_control_stream, unsigned *called,
 
     return 0;
 }
+
+
+int
+lsquic_wt_test_stream_switch_failure_restores_state (int *restored_if,
+                                                     int *restored_ctx,
+                                                     int *restored_session)
+{
+    struct lsquic_wt_session sess;
+    struct lsquic_stream stream;
+    const struct lsquic_stream_if *orig_if;
+    lsquic_stream_ctx_t *orig_ctx;
+    void *orig_onnew_arg;
+    static const struct lsquic_stream_if old_if;
+    int rc;
+
+    memset(&sess, 0, sizeof(sess));
+    memset(&stream, 0, sizeof(stream));
+
+    orig_if = &old_if;
+    orig_ctx = (lsquic_stream_ctx_t *) (uintptr_t) 0x1234;
+    orig_onnew_arg = (void *) (uintptr_t) 0x5678;
+
+    stream.id = 8;
+    stream.stream_if = orig_if;
+    stream.st_ctx = orig_ctx;
+    stream.sm_onnew_arg = orig_onnew_arg;
+    stream.stream_flags = STREAM_ONNEW_DONE;
+
+    sess.wts_stream_id = 4;
+    sess.wts_data_if.on_new_stream = wt_on_new_stream;
+    sess.wts_onnew_ctx.sess = &sess;
+
+    s_wt_test_fail_stream_ctx_alloc = 1;
+    rc = wt_switch_to_data_if(&stream, &sess);
+    s_wt_test_fail_stream_ctx_alloc = 0;
+
+    if (restored_if)
+        *restored_if = stream.stream_if == orig_if;
+    if (restored_ctx)
+        *restored_ctx = stream.st_ctx == orig_ctx
+                     && stream.sm_onnew_arg == orig_onnew_arg;
+    if (restored_session)
+        *restored_session = wt_stream_get_session(&stream) == NULL
+                         && sess.wts_n_streams == 0;
+
+    return rc == -1 ? 0 : -1;
+}
 #endif
 
 int
@@ -1692,6 +1761,34 @@ wt_stream_unbind_session (struct lsquic_stream *stream)
 }
 
 
+static int
+wt_switch_to_data_if (struct lsquic_stream *stream,
+                      struct lsquic_wt_session *sess)
+{
+    WT_SET_CONN_FROM_STREAM(stream);
+    const struct lsquic_stream_if *orig_if;
+    lsquic_stream_ctx_t *orig_ctx;
+    void *orig_onnew_arg;
+
+    orig_if = lsquic_stream_get_stream_if(stream);
+    orig_ctx = lsquic_stream_get_ctx(stream);
+    orig_onnew_arg = stream->sm_onnew_arg;
+
+    lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
+                                &sess->wts_onnew_ctx);
+    if (lsquic_stream_get_ctx(stream))
+        return 0;
+
+    stream->stream_if = orig_if;
+    stream->st_ctx = orig_ctx;
+    stream->sm_onnew_arg = orig_onnew_arg;
+    errno = ENOMEM;
+    LSQ_WARN("failed to switch stream %"PRIu64" into WT session %"PRIu64,
+             lsquic_stream_id(stream), sess->wts_stream_id);
+    return -1;
+}
+
+
 static lsquic_stream_ctx_t *
 wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
 {
@@ -1703,7 +1800,7 @@ wt_on_new_stream (void *ctx, struct lsquic_stream *stream)
 
     sess = onnew ? onnew->sess : NULL;
 
-    wctx = calloc(1, sizeof(*wctx));
+    wctx = wt_stream_ctx_alloc();
     if (!wctx)
     {
         LSQ_WARN("cannot allocate WT stream ctx for stream %"PRIu64,
@@ -2258,11 +2355,16 @@ wt_uni_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *sctx)
         return;
     }
 
+    if (0 != wt_switch_to_data_if(stream, sess))
+    {
+        lsquic_stream_set_ss_code(stream, HEC_INTERNAL_ERROR);
+        lsquic_stream_close(stream);
+        return;
+    }
+
     free(uctx);
     LSQ_DEBUG("mapped WT uni stream %"PRIu64" to session %"PRIu64,
                         lsquic_stream_id(stream), sess->wts_stream_id);
-    lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
-                                                &sess->wts_onnew_ctx);
 }
 
 static void
@@ -2542,11 +2644,16 @@ wt_replay_pending_streams (struct lsquic_wt_session *sess)
                                             && session_id == sess->wts_stream_id)
         {
             uctx = (struct wt_uni_read_ctx *) lsquic_stream_get_ctx(stream);
+            if (0 != wt_switch_to_data_if(stream, sess))
+            {
+                lsquic_stream_set_ss_code(stream, HEC_INTERNAL_ERROR);
+                lsquic_stream_close(stream);
+                continue;
+            }
+
             free(uctx);
             LSQ_INFO("replay buffered WT uni stream %"PRIu64" for session %"PRIu64,
                         lsquic_stream_id(stream), sess->wts_stream_id);
-            lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
-                                                &sess->wts_onnew_ctx);
             ++n_replayed;
             if (sess->wts_flags & WTSF_CLOSING)
                 break;
@@ -2557,8 +2664,11 @@ wt_replay_pending_streams (struct lsquic_wt_session *sess)
             LSQ_INFO("replay buffered WT bidi stream %"PRIu64
                 " for session %"PRIu64, lsquic_stream_id(stream),
                                                         sess->wts_stream_id);
-            lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
-                                                &sess->wts_onnew_ctx);
+            if (0 != wt_switch_to_data_if(stream, sess))
+            {
+                lsquic_stream_maybe_reset(stream, HEC_INTERNAL_ERROR, 1);
+                continue;
+            }
             ++n_replayed;
             if (sess->wts_flags & WTSF_CLOSING)
                 break;
@@ -4306,6 +4416,6 @@ wt_on_client_bidi_stream (struct lsquic_stream *stream,
 
     LSQ_DEBUG("bound stream %"PRIu64" to WT session %"PRIu64,
                                 lsquic_stream_id(stream), sess->wts_stream_id);
-    lsquic_stream_set_stream_if(stream, &sess->wts_data_if,
-                                                &sess->wts_onnew_ctx);
+    if (0 != wt_switch_to_data_if(stream, sess))
+        lsquic_stream_maybe_reset(stream, HEC_INTERNAL_ERROR, 1);
 }
