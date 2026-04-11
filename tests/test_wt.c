@@ -66,6 +66,23 @@ int lsquic_wt_test_accept_resolution (unsigned initial_flags,
                                       unsigned *status);
 int lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
                                             unsigned *called_after);
+int lsquic_ietf_test_wt_support (unsigned is_server,
+                                 unsigned peer_settings_received,
+                                 unsigned local_webtransport,
+                                 unsigned http_datagrams,
+                                 unsigned quic_datagrams,
+                                 unsigned connect_protocol,
+                                 unsigned wt_max_sessions_seen,
+                                 uint64_t wt_max_sessions,
+                                 unsigned wt_enabled_seen,
+                                 unsigned wt_enabled,
+                                 unsigned wt_initial_max_data_seen,
+                                 unsigned wt_initial_max_streams_uni_seen,
+                                 unsigned wt_initial_max_streams_bidi_seen,
+                                 unsigned peer_reset_stream_at,
+                                 unsigned draft,
+                                 unsigned *supports,
+                                 unsigned *peer_wt_draft);
 lsquic_wt_session_t *lsquic_wt_test_dgq_session_new (unsigned max_count,
                                                      size_t max_bytes);
 void lsquic_wt_test_dgq_session_destroy (lsquic_wt_session_t *sess);
@@ -622,6 +639,57 @@ test_deferred_accept_resolution (void)
 }
 
 
+static void
+test_compatibility_mode_behavior (void)
+{
+    unsigned supports, draft;
+
+    supports = draft = UINT_MAX;
+    assert(0 == lsquic_ietf_test_wt_support(
+                    1,  /* server side */
+                    1,  /* peer SETTINGS received */
+                    1,  /* local WT enabled */
+                    1,  /* HTTP datagrams */
+                    1,  /* QUIC datagrams */
+                    0,  /* CONNECT protocol not needed server-side */
+                    1, 1,  /* draft-14 WT_MAX_SESSIONS */
+                    0, 0,  /* no WT_ENABLED setting */
+                    0, 0, 0,  /* no WT initial settings */
+                    0,  /* no reset_stream_at TP */
+                    14,
+                    &supports, &draft));
+    assert(supports == 1);
+    assert(draft == 14);
+
+    supports = draft = UINT_MAX;
+    assert(0 == lsquic_ietf_test_wt_support(
+                    0,  /* client side */
+                    1, 1, 1, 1,
+                    1,  /* CONNECT protocol required and present */
+                    0, 0,  /* no WT_MAX_SESSIONS */
+                    1, 1,  /* draft-15 WT enabled */
+                    0, 0, 0,  /* missing WT initial settings */
+                    0,  /* no reset_stream_at TP */
+                    15,
+                    &supports, &draft));
+    assert(supports == 1);
+    assert(draft == 15);
+
+    supports = draft = UINT_MAX;
+    assert(0 == lsquic_ietf_test_wt_support(
+                    0, 1, 1, 1, 1,
+                    0,  /* missing CONNECT protocol */
+                    0, 0,
+                    1, 1,
+                    1, 1, 1,
+                    1,
+                    15,
+                    &supports, &draft));
+    assert(supports == 0);
+    assert(draft == 15);
+}
+
+
 int
 main (void)
 {
@@ -633,6 +701,7 @@ main (void)
     test_dgq_policies();
     test_close_capsule_and_close_state();
     test_deferred_accept_resolution();
+    test_compatibility_mode_behavior();
     test_reset_dispatch();
     return 0;
 }

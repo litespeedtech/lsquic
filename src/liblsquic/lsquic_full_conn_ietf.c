@@ -11558,3 +11558,70 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+
+#if LSQUIC_TEST
+int
+lsquic_ietf_test_wt_support (unsigned is_server,
+                             unsigned peer_settings_received,
+                             unsigned local_webtransport,
+                             unsigned http_datagrams,
+                             unsigned quic_datagrams,
+                             unsigned connect_protocol,
+                             unsigned wt_max_sessions_seen,
+                             uint64_t wt_max_sessions,
+                             unsigned wt_enabled_seen,
+                             unsigned wt_enabled,
+                             unsigned wt_initial_max_data_seen,
+                             unsigned wt_initial_max_streams_uni_seen,
+                             unsigned wt_initial_max_streams_bidi_seen,
+                             unsigned peer_reset_stream_at,
+                             unsigned draft,
+                             unsigned *supports,
+                             unsigned *peer_wt_draft)
+{
+    struct ietf_full_conn conn;
+    struct lsquic_engine_settings settings;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&settings, 0, sizeof(settings));
+
+    settings.es_webtransport = local_webtransport != 0;
+    conn.ifc_settings = &settings;
+
+    if (is_server)
+        conn.ifc_flags |= IFC_SERVER;
+    if (peer_settings_received)
+        conn.ifc_flags |= IFC_HAVE_PEER_SET;
+    if (quic_datagrams)
+        conn.ifc_flags |= IFC_DATAGRAMS;
+    if (http_datagrams)
+        conn.ifc_pub.cp_flags |= CP_HTTP_DATAGRAMS;
+    if (peer_reset_stream_at)
+        conn.ifc_mflags |= MF_PEER_RESET_STREAM_AT;
+
+    conn.ifc_peer_hq_settings.enable_connect_protocol_seen =
+                                                        connect_protocol != 0;
+    conn.ifc_peer_hq_settings.enable_connect_protocol =
+                                                        connect_protocol != 0;
+    conn.ifc_peer_hq_settings.wt_max_sessions_seen = wt_max_sessions_seen != 0;
+    conn.ifc_peer_hq_settings.wt_max_sessions = wt_max_sessions;
+    conn.ifc_peer_hq_settings.wt_enabled_seen = wt_enabled_seen != 0;
+    conn.ifc_peer_hq_settings.wt_enabled = wt_enabled != 0;
+    conn.ifc_peer_hq_settings.wt_initial_max_data_seen =
+                                            wt_initial_max_data_seen != 0;
+    conn.ifc_peer_hq_settings.wt_initial_max_streams_uni_seen =
+                                     wt_initial_max_streams_uni_seen != 0;
+    conn.ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen =
+                                    wt_initial_max_streams_bidi_seen != 0;
+    conn.ifc_peer_hq_settings.wt_draft = draft;
+
+    update_peer_wt_support(&conn);
+
+    if (supports)
+        *supports = !!(conn.ifc_pub.cp_flags & CP_WEBTRANSPORT);
+    if (peer_wt_draft)
+        *peer_wt_draft = conn.ifc_pub.cp_wt_peer_draft;
+
+    return 0;
+}
+#endif
