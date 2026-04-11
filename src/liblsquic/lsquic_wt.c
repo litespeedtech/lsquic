@@ -661,7 +661,7 @@ lsquic_wt_test_set_fail_stream_ctx_alloc (unsigned count)
 
 
 static struct wt_stream_ctx *
-wt_stream_ctx_alloc (void)
+wt_test_calloc (size_t size)
 {
 #if LSQUIC_TEST
     if (s_wt_test_fail_stream_ctx_alloc > 0)
@@ -670,7 +670,22 @@ wt_stream_ctx_alloc (void)
         return NULL;
     }
 #endif
-    return calloc(1, sizeof(struct wt_stream_ctx));
+    return calloc(1, size);
+}
+
+
+static struct wt_stream_ctx *
+wt_stream_ctx_alloc (void)
+{
+    return (struct wt_stream_ctx *) wt_test_calloc(sizeof(struct wt_stream_ctx));
+}
+
+
+static struct wt_uni_read_ctx *
+wt_uni_read_ctx_alloc (void)
+{
+    return (struct wt_uni_read_ctx *) wt_test_calloc(
+                                        sizeof(struct wt_uni_read_ctx));
 }
 
 
@@ -2655,7 +2670,7 @@ wt_uni_on_new (void *UNUSED_ctx, struct lsquic_stream *stream)
     WT_SET_CONN_FROM_STREAM(stream);
     struct wt_uni_read_ctx *uctx;
 
-    uctx = (struct wt_uni_read_ctx *) wt_stream_ctx_alloc();
+    uctx = wt_uni_read_ctx_alloc();
     if (!uctx)
     {
         errno = ENOMEM;

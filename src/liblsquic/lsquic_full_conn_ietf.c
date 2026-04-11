@@ -11370,13 +11370,14 @@ static const struct lsquic_stream_if hcsi_if =
 
 #if LSQUIC_TEST
 static unsigned s_ietf_test_failed_wt_uni_switch_close;
+static int s_ietf_test_stub_wt_uni_switch_close;
 #endif
 
 static void
 close_failed_wt_uni_switch (struct lsquic_stream *stream)
 {
 #if LSQUIC_TEST
-    if (!stream->conn_pub)
+    if (s_ietf_test_stub_wt_uni_switch_close)
     {
         ++s_ietf_test_failed_wt_uni_switch_close;
         return;
@@ -11686,16 +11687,20 @@ lsquic_ietf_test_wt_uni_switch_failure (int *restored_if, int *restored_ctx,
 
     memset(&conn, 0, sizeof(conn));
     memset(&stream, 0, sizeof(stream));
+    conn.ifc_pub.lconn = &conn.ifc_conn;
     stream.id = 2;
+    stream.conn_pub = &conn.ifc_pub;
     stream.stream_if = unicla_if_ptr;
     stream.sm_onnew_arg = &conn;
     stream.st_ctx = (lsquic_stream_ctx_t *) &conn;
     stream.stream_flags = STREAM_ONNEW_DONE;
     s_ietf_test_failed_wt_uni_switch_close = 0;
+    s_ietf_test_stub_wt_uni_switch_close = 1;
     lsquic_wt_test_set_fail_stream_ctx_alloc(1);
     errno = 0;
     rc = switch_wt_uni_stream_if(&conn, &stream);
     lsquic_wt_test_set_fail_stream_ctx_alloc(0);
+    s_ietf_test_stub_wt_uni_switch_close = 0;
 
     if (restored_if)
         *restored_if = stream.stream_if == unicla_if_ptr
