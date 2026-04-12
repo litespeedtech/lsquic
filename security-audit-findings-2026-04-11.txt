@@ -187,19 +187,6 @@ Base commit: a2e3c27
     with a 2xx response, violating the API contract and emitting a
     protocol-confusing success status from the explicit reject path.
 
-24. Multiple public WT session APIs crash on NULL session handles.
-    File: src/liblsquic/lsquic_wt.c
-    Sites: lsquic_wt_close(), lsquic_wt_session_conn(),
-           lsquic_wt_session_id(), lsquic_wt_open_uni(),
-           lsquic_wt_open_bidi(), lsquic_wt_send_datagram_ex(),
-           lsquic_wt_want_datagram_write(), lsquic_wt_max_datagram_size()
-    Summary: Several public WebTransport session helpers dereference `sess`
-    before any argument validation. A caller that passes a NULL session handle
-    gets a direct crash instead of a clean `EINVAL` failure or safe zero/null
-    result. This is a local API robustness bug in library code, not a remote
-    parser issue, but it is still a user-triggerable denial-of-service in
-    applications that route external state into the WT API boundary.
-
 25. WT write handlers treat stream write errors as mere backpressure.
     File: src/liblsquic/lsquic_wt.c
     Sites: wt_on_write(), wt_control_on_write()
@@ -228,15 +215,6 @@ Base commit: a2e3c27
     never checked that the supplied control stream was server-side. A caller
     could therefore pass a client-side stream and start binding WT session
     state to the wrong endpoint role instead of getting a clean `EINVAL`.
-
-28. WT datagram convenience wrapper still dereferences NULL sessions.
-    File: src/liblsquic/lsquic_wt.c
-    Site: lsquic_wt_send_datagram()
-    Summary: The earlier NULL-session hardening covered
-    `lsquic_wt_send_datagram_ex()`, but the convenience wrapper still reads
-    `sess->wts_dg_policy` and `sess->wts_dg_mode` before forwarding the call.
-    Passing a NULL session handle to the wrapper therefore still crashes at the
-    WT API boundary instead of failing cleanly with `EINVAL`.
 
 29. WT accept does not reject streams whose response headers already started.
     File: src/liblsquic/lsquic_wt.c

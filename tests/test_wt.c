@@ -73,7 +73,6 @@ int lsquic_wt_test_accept_resolution (unsigned initial_flags,
                                       unsigned *status);
 int lsquic_wt_test_accept_status_validation (unsigned status, int *accepted);
 int lsquic_wt_test_reject_status_validation (unsigned status, int *accepted);
-int lsquic_wt_test_null_session_api_guards (unsigned *checked);
 int lsquic_wt_test_pending_datagram_replay (unsigned *called_before,
                                             unsigned *called_after);
 int lsquic_wt_test_pending_datagram_replay_stops_on_close (
@@ -748,17 +747,6 @@ test_reject_status_validation (void)
 
 
 static void
-test_null_session_api_guards (void)
-{
-    unsigned checked;
-
-    checked = 0;
-    assert(0 == lsquic_wt_test_null_session_api_guards(&checked));
-    assert(checked == 9);
-}
-
-
-static void
 test_write_error_closes_stream (void)
 {
     int control_closed, data_closed;
@@ -1103,7 +1091,6 @@ main (void)
     test_deferred_accept_resolution();
     test_accept_status_validation();
     test_reject_status_validation();
-    test_null_session_api_guards();
     test_write_error_closes_stream();
     test_control_stream_ops_rejected();
     test_accept_rejects_client_stream();

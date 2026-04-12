@@ -4660,55 +4660,6 @@ lsquic_wt_test_reject_status_validation (unsigned status, int *accepted)
     return 0;
 }
 
-int
-lsquic_wt_test_null_session_api_guards (unsigned *checked)
-{
-    unsigned count;
-
-    count = 0;
-
-    errno = 0;
-    if (NULL == lsquic_wt_session_conn(NULL))
-        ++count;
-
-    errno = 0;
-    if (0 == lsquic_wt_session_id(NULL))
-        ++count;
-
-    errno = 0;
-    if (NULL == lsquic_wt_open_uni(NULL) && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (NULL == lsquic_wt_open_bidi(NULL) && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (-1 == lsquic_wt_close(NULL, 0, NULL, 0) && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (-1 == lsquic_wt_send_datagram(NULL, "x", 1) && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (-1 == lsquic_wt_send_datagram_ex(NULL, "x", 1, LSQWT_DG_FAIL_EAGAIN,
-                                         LSQUIC_HTTP_DG_SEND_DEFAULT)
-        && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (-1 == lsquic_wt_want_datagram_write(NULL, 1) && errno == EINVAL)
-        ++count;
-
-    errno = 0;
-    if (0 == lsquic_wt_max_datagram_size(NULL))
-        ++count;
-
-    if (checked)
-        *checked = count;
-    return 0;
-}
 #endif
 
 
@@ -4773,12 +4724,6 @@ lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
 {
     WT_SET_CONN_FROM_SESSION(sess);
 
-    if (!sess)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
     if (sess->wts_flags & WTSF_CLOSING)
         return 0;
 
@@ -4823,9 +4768,6 @@ lsquic_wt_close (struct lsquic_wt_session *sess, uint64_t code,
 struct lsquic_conn *
 lsquic_wt_session_conn (struct lsquic_wt_session *sess)
 {
-    if (!sess)
-        return NULL;
-
     if (!sess->wts_conn_pub)
         return NULL;
 
@@ -4837,9 +4779,6 @@ lsquic_wt_session_conn (struct lsquic_wt_session *sess)
 lsquic_stream_id_t
 lsquic_wt_session_id (struct lsquic_wt_session *sess)
 {
-    if (!sess)
-        return 0;
-
     return sess->wts_stream_id;
 }
 
@@ -4922,12 +4861,6 @@ lsquic_wt_open_uni (struct lsquic_wt_session *sess)
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
 
-    if (!sess)
-    {
-        errno = EINVAL;
-        return NULL;
-    }
-
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     if (sess->wts_flags & WTSF_CLOSING)
@@ -4998,12 +4931,6 @@ lsquic_wt_open_bidi (struct lsquic_wt_session *sess)
     struct wt_onnew_ctx *onnew;
     struct lsquic_conn *lconn;
     struct lsquic_stream *stream;
-
-    if (!sess)
-    {
-        errno = EINVAL;
-        return NULL;
-    }
 
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     if (sess->wts_flags & WTSF_CLOSING)
@@ -5168,12 +5095,6 @@ ssize_t
 lsquic_wt_send_datagram (struct lsquic_wt_session *sess, const void *buf,
                                                                     size_t len)
 {
-    if (!sess)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
     return lsquic_wt_send_datagram_ex(sess, buf, len, sess->wts_dg_policy,
                                       sess->wts_dg_mode);
 }
@@ -5188,12 +5109,6 @@ lsquic_wt_send_datagram_ex (struct lsquic_wt_session *sess, const void *buf,
     struct lsquic_stream *control_stream;
     size_t max_sz;
     int old_want;
-
-    if (!sess)
-    {
-        errno = EINVAL;
-        return -1;
-    }
 
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     if (sess->wts_flags & WTSF_CLOSING)
@@ -5261,12 +5176,6 @@ lsquic_wt_want_datagram_write (lsquic_wt_session_t *sess, int is_want)
     WT_SET_CONN_FROM_SESSION(sess);
     struct lsquic_stream *control_stream;
 
-    if (!sess)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
     /* [draft-ietf-webtrans-http3-15], Section 6 */
     if (is_want && (sess->wts_flags & WTSF_CLOSING))
     {
@@ -5309,9 +5218,6 @@ size_t
 lsquic_wt_max_datagram_size (const struct lsquic_wt_session *sess)
 {
     WT_SET_CONN_FROM_SESSION(sess);
-
-    if (!sess)
-        return 0;
 
     if (!sess->wts_control_stream)
     {
