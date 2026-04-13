@@ -323,10 +323,9 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = 0;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-        settings->es_webtransport_server = LSQUIC_DF_WEBTRANSPORT_SERVER;
-        settings->es_max_webtransport_server_streams = LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS;
-#endif
+        settings->es_webtransport = LSQUIC_DF_WEBTRANSPORT_SERVER;
+        settings->es_max_webtransport_sessions
+                         = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
     }
     else
     {
@@ -386,9 +385,16 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_spin            = LSQUIC_DF_SPIN;
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
     settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
+    settings->es_reset_stream_at = LSQUIC_DF_RESET_STREAM_AT;
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
+    settings->es_datagrams       = LSQUIC_DF_DATAGRAMS;
+    settings->es_http_datagrams  = LSQUIC_DF_HTTP_DATAGRAMS;
+    settings->es_http_dg_max_capsule_read_size =
+                                        LSQUIC_DF_HTTP_DG_MAX_CAPSULE_READ_SIZE;
+    settings->es_http_dg_max_capsule_write_size =
+                                        LSQUIC_DF_HTTP_DG_MAX_CAPSULE_WRITE_SIZE;
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
     settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
     settings->es_enable_bw_sampler = LSQUIC_DF_ENABLE_BW_SAMPLER;
@@ -406,6 +412,9 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
+    settings->es_write_sched_strategy = LSQUIC_DF_WRITE_SCHED_STRATEGY;
+    settings->es_write_datagram_prio = LSQUIC_DF_WRITE_DATAGRAM_PRIO;
+    settings->es_write_datagram_share = LSQUIC_DF_WRITE_DATAGRAM_SHARE;
 }
 
 
@@ -504,26 +513,69 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
         return -1;
     }
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-    if(settings->es_webtransport_server)
+    if(settings->es_webtransport)
     {
-        if(!(flags & ENG_SERVER))
+        if (!settings->es_http_datagrams)
         {
             if (err_buf)
-                snprintf(err_buf, err_buf_sz, "server webtransport support enabled, but "
-                                              "ENG_SERVER flag is not set");
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but HTTP datagrams are disabled");
             return -1;
         }
 
-        if(settings->es_max_webtransport_server_streams == 0)
+        if(settings->es_max_webtransport_sessions == 0)
         {
             if (err_buf)
-                snprintf(err_buf, err_buf_sz, "server webtransport support enabled, but "
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, but "
                                               "webtransport sessions count is 0");
             return -1;
         }
+
+        if (settings->es_max_webtransport_sessions > 1)
+        {
+            if (err_buf)
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but current WT implementation "
+                                              "only supports 1 session per "
+                                              "connection");
+            return -1;
+        }
+
+        if (!settings->es_reset_stream_at)
+        {
+            if (err_buf)
+                snprintf(err_buf, err_buf_sz, "webtransport support enabled, "
+                                              "but reset_stream_at is disabled");
+            return -1;
+        }
     }
-#endif
+
+    if (settings->es_write_sched_strategy > LSQWSS_DRR)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "invalid write scheduler strategy: "
+                "%u", settings->es_write_sched_strategy);
+        return -1;
+    }
+
+    if (settings->es_write_datagram_prio >= 5)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "invalid datagram write priority: "
+                "%u", settings->es_write_datagram_prio);
+        return -1;
+    }
+
+    if (settings->es_write_datagram_share != settings->es_write_datagram_share
+        || settings->es_write_datagram_share < 0.f
+        || settings->es_write_datagram_share > 1.f)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "%s",
+                "write datagram share must be in [0.0, 1.0]");
+        return -1;
+    }
+
     return 0;
 }
 
@@ -3623,5 +3675,3 @@ lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
     conn->cn_cces_mask &= ~(1u << cce_idx);
     LSQ_DEBUGC("retire CID %"CID_FMT, CID_BITS(&cce->cce_cid));
 }
-
-

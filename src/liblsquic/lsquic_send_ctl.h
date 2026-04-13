@@ -243,7 +243,7 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *, enum packnum_space,
 struct lsquic_packet_out *
 lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *,
                     unsigned need_at_least, const struct network_path *,
-                    const struct lsquic_stream *);
+                    const struct lsquic_stream *, int buffered_packet_ok);
 
 int
 lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
@@ -283,6 +283,10 @@ lsquic_send_ctl_turn_nstp_on (lsquic_send_ctl_t *ctl)
 
 void
 lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *, lsquic_stream_id_t);
+
+void
+lsquic_send_ctl_elide_stream_frames_from_buffered (lsquic_send_ctl_t *,
+                                                   lsquic_stream_id_t);
 
 int
 lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *);

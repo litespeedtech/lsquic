@@ -676,6 +676,8 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
     TAILQ_INIT(&conn->fc_pub.read_streams);
     TAILQ_INIT(&conn->fc_pub.write_streams);
     TAILQ_INIT(&conn->fc_pub.service_streams);
+    TAILQ_INIT(&conn->fc_pub.http_dg_streams);
+    TAILQ_INIT(&conn->fc_pub.wt_sessions);
     STAILQ_INIT(&conn->fc_stream_ids_to_reset);
     lsquic_conn_cap_init(&conn->fc_pub.conn_cap, LSQUIC_MIN_FCW);
     lsquic_alarmset_init(&conn->fc_alset, &conn->fc_conn);
@@ -1131,6 +1133,7 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
         lsquic_hash_erase(conn->fc_pub.all_streams, el);
         lsquic_stream_destroy(stream);
     }
+    lsquic_conn_http_dg_cleanup(&conn->fc_pub);
     lsquic_hash_destroy(conn->fc_pub.all_streams);
     if (conn->fc_flags & FC_CREATED_OK)
         conn->fc_stream_ifs[STREAM_IF_STD].stream_if
@@ -1447,6 +1450,24 @@ full_conn_ci_make_stream (struct lsquic_conn *lconn)
         LSQ_DEBUG("delayed stream creation.  Backlog size: %u",
                                                 conn->fc_n_delayed_streams);
     }
+}
+
+static struct lsquic_stream *
+full_conn_ci_make_bidi_stream_with_if (struct lsquic_conn *UNUSED_lconn,
+        const struct lsquic_stream_if *UNUSED_stream_if,
+        void *UNUSED_stream_if_ctx)
+{
+    errno = ENOSYS;
+    return NULL;
+}
+
+static struct lsquic_stream *
+full_conn_ci_make_uni_stream_with_if (struct lsquic_conn *UNUSED_lconn,
+        const struct lsquic_stream_if *UNUSED_stream_if,
+        void *UNUSED_stream_if_ctx)
+{
+    errno = ENOSYS;
+    return NULL;
 }
 
 
@@ -2251,6 +2272,7 @@ static process_frame_f const process_frames[N_QUIC_FRAMES] =
     [QUIC_FRAME_PADDING]              =  process_padding_frame,
     [QUIC_FRAME_PING]                 =  process_ping_frame,
     [QUIC_FRAME_RST_STREAM]           =  process_rst_stream_frame,
+    [QUIC_FRAME_RESET_STREAM_AT]      =  process_invalid_frame,
     [QUIC_FRAME_STOP_WAITING]         =  process_stop_waiting_frame,
     [QUIC_FRAME_STREAM]               =  process_stream_frame,
     [QUIC_FRAME_WINDOW_UPDATE]        =  process_window_update_frame,
@@ -4630,6 +4652,8 @@ static const struct conn_iface full_conn_iface = {
     .ci_is_push_enabled      =  full_conn_ci_is_push_enabled,
     .ci_is_tickable          =  full_conn_ci_is_tickable,
     .ci_make_stream          =  full_conn_ci_make_stream,
+    .ci_make_bidi_stream_with_if = full_conn_ci_make_bidi_stream_with_if,
+    .ci_make_uni_stream_with_if  = full_conn_ci_make_uni_stream_with_if,
     .ci_n_avail_streams      =  full_conn_ci_n_avail_streams,
     .ci_n_pending_streams    =  full_conn_ci_n_pending_streams,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,

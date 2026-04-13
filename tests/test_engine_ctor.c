@@ -12,6 +12,7 @@ main (void)
     struct lsquic_engine_settings settings;
     lsquic_engine_t *engine;
     unsigned versions;
+    char err_buf[0x100];
     const unsigned flags = LSENG_SERVER;
 
     assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
@@ -32,6 +33,16 @@ main (void)
     settings.es_versions |= (1 << N_LSQVER /* Invalid value by definition */);
     engine = lsquic_engine_new(flags, &api);
     assert(!engine);
+
+    lsquic_engine_init_settings(&settings, flags);
+    settings.es_webtransport = 1;
+    settings.es_http_datagrams = 1;
+    settings.es_reset_stream_at = 1;
+    settings.es_max_webtransport_sessions = 2;
+    memset(err_buf, 0, sizeof(err_buf));
+    assert(0 != lsquic_engine_check_settings(&settings, flags,
+                                             err_buf, sizeof(err_buf)));
+    assert(strstr(err_buf, "only supports 1 session"));
 
     lsquic_global_cleanup();
     return 0;

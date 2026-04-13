@@ -20,8 +20,13 @@ union hblock_ctx;
 struct lsquic_packet_out;
 struct lsquic_send_ctl;
 struct network_path;
+struct capsule_parsers;
 
 TAILQ_HEAD(lsquic_streams_tailq, lsquic_stream);
+
+typedef void (*lsquic_capsule_read_f)(lsquic_stream_t *stream,
+                    lsquic_stream_ctx_t *h, uint64_t capsule_type,
+                    const void *payload, size_t payload_len);
 
 
 #ifndef LSQUIC_KEEP_STREAM_HISTORY
@@ -101,9 +106,7 @@ struct hq_filter
     struct varint_read2_state   hqfi_vint2_state;
     /* No need to copy the values: use it directly */
 #define hqfi_left hqfi_vint2_state.vr2s_two
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-#define hqfi_webtransport_session_id hqfi_vint2_state.vr2s_two
-#endif
+#define hqfi_switch_stream_id hqfi_vint2_state.vr2s_two
 #define hqfi_type hqfi_vint2_state.vr2s_one
     struct varint_read_state    hqfi_vint1_state;
 #define hqfi_push_id hqfi_vint1_state.value
@@ -123,6 +126,38 @@ struct hq_filter
         HQFI_STATE_PUSH_ID_BEGIN,
         HQFI_STATE_PUSH_ID_CONTINUE,
     }                           hqfi_state:8;
+};
+
+struct http_dg_capsule_read_state
+{
+    enum {
+        HDC_READ_TYPE = 0,
+        HDC_READ_LENGTH,
+        HDC_READ_PAYLOAD,
+    }                           state;
+    struct varint_read_state    type_state;
+    struct varint_read_state    len_state;
+    uint64_t                    type;
+    uint64_t                    length;
+    uint64_t                    offset;
+    unsigned char              *buf;
+    size_t                      buf_sz;
+    lsquic_capsule_read_f       cb;
+};
+
+struct http_dg_capsule_write_state
+{
+    unsigned char              *buf;
+    size_t                      buf_sz;
+    size_t                      offset;
+    unsigned char               header[16];
+    size_t                      header_len;
+};
+
+struct http_dg_stream_state
+{
+    struct http_dg_capsule_read_state    read;
+    struct http_dg_capsule_write_state   write;
 };
 
 
@@ -175,6 +210,7 @@ enum stream_q_flags
     /* The stream can reference itself, preventing its own destruction: */
 #define SMQF_SELF_FLAGS SMQF_WAIT_FIN_OFF
     SMQF_WAIT_FIN_OFF = 1 << 11,    /* Waiting for final offset: FIN or RST */
+    SMQF_WANT_HTTP_DG = 1 << 12,    /* Want to send HTTP Datagrams */
 };
 
 
@@ -195,13 +231,11 @@ enum stream_b_flags
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
     SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
     SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-    SMBF_WEBTRANSPORT_SESSION_STREAM     = 1 <<14,  /* WEBTRANSPORT session stream */
-    SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM = 1 <<15,  /* WEBTRANSPORT client initiated bidi stream */
-#define N_SMBF_FLAGS 16
-#else
-#define N_SMBF_FLAGS 14
-#endif
+    SMBF_HTTP_DG_CAPSULES        = 1 <<14,  /* HTTP Datagram capsules are enabled */
+    SMBF_SESSION_STREAM          = 1 <<15,  /* Extension session stream */
+    SMBF_SWITCH_CLIENT_BIDI_STREAM
+                                = 1 <<16,  /* Extension switched client bidi stream */
+#define N_SMBF_FLAGS 17
 };
 
 
@@ -211,6 +245,8 @@ enum stream_d_flags
 {
     SMDF_ONRESET0       =   1 << 0, /* Called on_reset(0) */
     SMDF_ONRESET1       =   1 << 1, /* Called on_reset(1) */
+    SMDF_READING_DATA_FRAMES
+                        =   1 << 2, /* Internal: detect nested read_data_frames() */
 };
 
 
@@ -241,10 +277,12 @@ enum stream_flags {
     STREAM_BLOCKED_SENT = 1 << 23,  /* Stays set once a STREAM_BLOCKED frame is sent */
     STREAM_RST_READ     = 1 << 24,  /* User code collected the error */
     STREAM_DATA_RECVD   = 1 << 25,  /* Cache stream state calculation */
-    STREAM_UNUSED26     = 1 << 26,  /* Unused */
+    STREAM_RESET_AT_RECVD = 1 << 26,  /* Received RESET_STREAM_AT frame */
     STREAM_HDRS_FLUSHED = 1 << 27,  /* Only used in buffered packets mode */
     STREAM_SS_RECVD     = 1 << 28,  /* Received STOP_SENDING frame */
     STREAM_DELAYED_SW   = 1 << 29,  /* Delayed shutdown_write call */
+    STREAM_SWITCH_PENDING
+                        = 1 << 30,  /* Defer stream-if switch out of parser */
 };
 
 
@@ -268,13 +306,16 @@ struct lsquic_stream
     struct lsquic_conn_public      *conn_pub;
     TAILQ_ENTRY(lsquic_stream)      next_send_stream, next_read_stream,
                                         next_write_stream, next_service_stream,
-                                        next_prio_stream;
+                                        next_prio_stream, next_http_dg_stream;
 
     uint64_t                        tosend_off;
     uint64_t                        sm_payload;     /* Not counting HQ frames */
     uint64_t                        max_send_off;
     uint64_t                        sm_last_recv_off;
     uint64_t                        error_code;
+    uint64_t                        sm_ss_code;
+    uint64_t                        sm_rst_in_code;
+    uint64_t                        sm_ss_in_code;
 
     /* From the network, we get frames, which we keep on a list ordered
      * by offset.
@@ -298,6 +339,10 @@ struct lsquic_stream
 
     /* We can safely use sm_hq_filter */
 #define sm_uni_type_state sm_hq_filter.hqfi_vint2_state.vr2s_varint_state
+
+    struct http_dg_stream_state   *sm_http_dg;
+    struct capsule_parsers        *sm_capsule_parsers;
+    void                           *sm_http_dg_consume_ctx;
 
     /** If @ref SMQF_WANT_FLUSH is set, flush until this offset. */
     uint64_t                        sm_flush_to;
@@ -324,6 +369,10 @@ struct lsquic_stream
 
     /* Valid if STREAM_FIN_RECVD is set: */
     uint64_t                        sm_fin_off;
+    /* Valid if STREAM_RESET_AT_RECVD is set: */
+    uint64_t                        sm_reset_at;
+    uint64_t                        sm_reset_at_final;
+    uint64_t                        sm_reset_at_error;
 
     /* A stream may be generating STREAM or CRYPTO frames */
     size_t                        (*sm_frame_header_sz)(
@@ -336,7 +385,8 @@ struct lsquic_stream
     struct lsquic_packet_out *    (*sm_get_packet_for_stream)(
                                         struct lsquic_send_ctl *,
                                         unsigned, const struct network_path *,
-                                        const struct lsquic_stream *);
+                                        const struct lsquic_stream *,
+                                        int buffered_packet_ok);
 
     /* This element is optional */
     const struct stream_filter_if  *sm_sfi;
@@ -381,9 +431,10 @@ struct lsquic_stream
     enum stream_d_flags             sm_dflags:8;
     signed char                     sm_saved_want_write;
     signed char                     sm_has_frame;
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-    lsquic_stream_id_t              webtransport_session_stream_id;
-#endif
+    lsquic_stream_id_t              sm_switch_stream_id;
+    void                           *sm_attachment;
+    /* When non-zero, send RESET_STREAM_AT with this reliable size. */
+    uint8_t                         sm_reset_stream_at_sz;
 #if LSQUIC_KEEP_STREAM_HISTORY
     sm_hist_idx_t                   sm_hist_idx;
 #endif
@@ -393,6 +444,30 @@ struct lsquic_stream
     unsigned char                   sm_hist_buf[ 1 << SM_HIST_BITS ];
 #endif
 };
+
+#if LSQUIC_KEEP_STREAM_HISTORY
+void
+lsquic_stream_hist_http_dg_recv (lsquic_stream_t *stream);
+void
+lsquic_stream_hist_http_dg_send (lsquic_stream_t *stream);
+#else
+#define lsquic_stream_hist_http_dg_recv(stream) do { } while (0)
+#define lsquic_stream_hist_http_dg_send(stream) do { } while (0)
+#endif
+
+int
+lsquic_stream_http_dg_capsule_pending (const struct lsquic_stream *stream);
+
+int
+lsquic_stream_http_dg_queue_capsule (struct lsquic_stream *stream,
+                                                    const void *buf, size_t sz);
+
+int
+lsquic_stream_set_capsule_handler (lsquic_stream_t *stream,
+                        uint64_t capsule_type, lsquic_capsule_read_f cb);
+
+void
+lsquic_stream_clear_capsule_handlers (lsquic_stream_t *stream);
 
 
 enum stream_ctor_flags
@@ -470,11 +545,51 @@ void
 lsquic_stream_push_req (lsquic_stream_t *,
                         struct uncompressed_headers *push_req);
 
+void
+lsquic_stream_set_reset_stream_at_size (lsquic_stream_t *s, uint8_t sz);
+
+int
+lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
+
+void
+lsquic_stream_mark_session_stream (struct lsquic_stream *stream);
+
+int
+lsquic_stream_is_session_stream (const struct lsquic_stream *stream);
+
+void
+lsquic_stream_mark_switch_client_bidi (struct lsquic_stream *stream,
+                                        lsquic_stream_id_t stream_id);
+
+int
+lsquic_stream_is_switch_client_bidi (const struct lsquic_stream *stream);
+
+int
+lsquic_stream_get_switch_stream_id (const struct lsquic_stream *stream,
+                                    lsquic_stream_id_t *stream_id);
+
+int
+lsquic_stream_onclose_done (const struct lsquic_stream *stream);
+
+void
+lsquic_stream_mark_rejected (struct lsquic_stream *stream);
+
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
 
+int
+lsquic_stream_reset_stream_at_in (lsquic_stream_t *, uint64_t final_size,
+                                  uint64_t reliable_size, uint64_t error_code);
+
+enum quic_frame_type
+lsquic_stream_get_reset_frame_type (const struct lsquic_stream *stream,
+                                    uint64_t *reliable_size);
+
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *, uint64_t error_code);
+
+void
+lsquic_stream_set_ss_code (lsquic_stream_t *, uint64_t error_code);
 
 uint64_t
 lsquic_stream_read_offset (const lsquic_stream_t *stream);
@@ -656,12 +771,8 @@ lsquic_stream_header_is_trailer (const struct lsquic_stream *);
 int
 lsquic_stream_verify_len (struct lsquic_stream *, unsigned long long);
 
-static inline unsigned
-lsquic_stream_is_blocked (const lsquic_stream_t *stream_)
-{
-    return stream_->blocked_off &&
-           stream_->blocked_off == stream_->max_send_off;
-}
+int
+lsquic_stream_is_blocked (const lsquic_stream_t *stream);
 
 void
 lsquic_stream_ss_frame_sent (struct lsquic_stream *);
@@ -673,5 +784,23 @@ lsquic_stream_set_pwritev_params (unsigned iovecs, unsigned frames);
 
 void
 lsquic_stream_drop_hset_ref (struct lsquic_stream *);
+
+struct lsquic_conn_public *
+lsquic_stream_get_conn_public (const struct lsquic_stream *);
+
+void *
+lsquic_stream_get_attachment (const struct lsquic_stream *);
+
+void
+lsquic_stream_set_attachment (struct lsquic_stream *, void *);
+
+int
+lsquic_stream_is_server (const struct lsquic_stream *);
+
+int
+lsquic_stream_headers_state_is_begin (const struct lsquic_stream *);
+
+const struct lsquic_stream_if *
+lsquic_stream_get_stream_if (const struct lsquic_stream *);
 
 #endif

@@ -928,7 +928,7 @@ is parsed to see which setting to alter.
 
   while (/* getopt */)
   {
-      case 'o':   /* For example: -o version=h3-27 -o cc_algo=2 */
+      case 'o':   /* Example: -o version=h3-27 -o cc_algo=2 */
         if (!settings_initialized) {
           lsquic_engine_init_settings(&settings,
                           cert_file || key_file ? LSENG_SERVER : 0);
@@ -957,6 +957,12 @@ buffer is used to log a configuration error.
 
 Finally, the settings struct is pointed to by the engine API struct before
 the engine constructor is called.
+
+The example programs also expose write scheduler settings via ``-o``:
+
+- ``-o write_sched_strategy=0|1`` (0=fixed, 1=DRR)
+- ``-o write_datagram_prio=0..4`` (fixed mode)
+- ``-o write_datagram_share=0.0..1.0`` (DRR mode)
 
 Logging
 =======

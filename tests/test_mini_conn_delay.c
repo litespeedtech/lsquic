@@ -1,8 +1,6 @@
 /* Copyright (c) 2017 - 2022 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Test for mini connection delayed packet data corruption bug */
 
-#undef LSQUIC_TEST
-
 #include <assert.h>
 #include <string.h>
 #include <sys/queue.h>
