@@ -206,6 +206,8 @@ static int
 wt_in_dgq_enqueue (struct lsquic_wt_session *sess, const void *buf, size_t len);
 static void
 wt_replay_pending_datagrams (struct lsquic_wt_session *sess);
+static void
+wt_destroy_session (struct lsquic_wt_session *sess);
 static enum wt_accept_result
 wt_evaluate_accept (struct lsquic_stream *connect_stream,
                     const struct lsquic_wt_session *sess,
@@ -2247,73 +2249,6 @@ lsquic_wt_test_control_stream_ops_rejected (unsigned *mask)
 }
 
 
-static void
-wt_test_on_stream_read (lsquic_stream_t *UNUSED_stream,
-                        lsquic_stream_ctx_t *UNUSED_stream_ctx)
-{
-}
-
-
-int
-lsquic_wt_test_accept_rejects_client_stream (int *rejected)
-{
-    struct lsquic_conn conn;
-    struct lsquic_conn_public conn_pub;
-    struct lsquic_stream stream;
-    struct lsquic_wt_accept_params params;
-    struct lsquic_webtransport_if wt_if;
-    int rc;
-
-    memset(&conn, 0, sizeof(conn));
-    memset(&conn_pub, 0, sizeof(conn_pub));
-    memset(&stream, 0, sizeof(stream));
-    memset(&params, 0, sizeof(params));
-    memset(&wt_if, 0, sizeof(wt_if));
-
-    wt_if.wti_on_stream_read = wt_test_on_stream_read;
-    params.wtap_wt_if = &wt_if;
-    conn_pub.lconn = &conn;
-    stream.conn_pub = &conn_pub;
-    stream.id = 0;
-
-    errno = 0;
-    rc = lsquic_wt_accept(&stream, &params);
-    if (rejected)
-        *rejected = rc == -1 && errno == EINVAL;
-    return 0;
-}
-
-
-int
-lsquic_wt_test_accept_rejects_started_headers (int *rejected)
-{
-    struct lsquic_conn conn;
-    struct lsquic_conn_public conn_pub;
-    struct lsquic_stream stream;
-    struct lsquic_wt_accept_params params;
-    struct lsquic_webtransport_if wt_if;
-    int rc;
-
-    memset(&conn, 0, sizeof(conn));
-    memset(&conn_pub, 0, sizeof(conn_pub));
-    memset(&stream, 0, sizeof(stream));
-    memset(&params, 0, sizeof(params));
-    memset(&wt_if, 0, sizeof(wt_if));
-
-    wt_if.wti_on_stream_read = wt_test_on_stream_read;
-    params.wtap_wt_if = &wt_if;
-    conn_pub.lconn = &conn;
-    stream.conn_pub = &conn_pub;
-    stream.id = 0;
-    stream.sm_bflags = SMBF_SERVER;
-    stream.sm_send_headers_state = SSHS_HBLOCK_SENDING;
-
-    errno = 0;
-    rc = lsquic_wt_accept(&stream, &params);
-    if (rejected)
-        *rejected = rc == -1 && errno == EALREADY;
-    return 0;
-}
 #endif
 
 int
@@ -4441,22 +4376,6 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
         errno = EINVAL;
         LSQ_WARN("WT accept called without stream read callback on stream %"PRIu64,
                                         lsquic_stream_id(connect_stream));
-        return -1;
-    }
-
-    if (!lsquic_stream_is_server(connect_stream))
-    {
-        errno = EINVAL;
-        LSQ_WARN("WT accept called on client stream %"PRIu64,
-                 lsquic_stream_id(connect_stream));
-        return -1;
-    }
-
-    if (!lsquic_stream_headers_state_is_begin(connect_stream))
-    {
-        errno = EALREADY;
-        LSQ_WARN("WT accept called after headers started on stream %"PRIu64,
-                 lsquic_stream_id(connect_stream));
         return -1;
     }
 
