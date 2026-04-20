@@ -329,7 +329,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Do not use NSTP by default */
 #define LSQUIC_DF_SUPPORT_NSTP     0
 /** TODO: IETF QUIC clients do not support push */
-#define LSQUIC_DF_SUPPORT_PUSH         1
+#define LSQUIC_DF_SUPPORT_PUSH         0
 #define LSQUIC_DF_SUPPORT_TCID0    1
 /** By default, LSQUIC ignores Public Reset packets. */
 #define LSQUIC_DF_HONOR_PRST       0

@@ -1127,39 +1127,6 @@ create_bidi_stream_out (struct ietf_full_conn *conn)
 }
 
 
-static struct lsquic_stream *
-create_push_stream (struct ietf_full_conn *conn)
-{
-    struct lsquic_stream *stream;
-    lsquic_stream_id_t stream_id;
-    enum stream_ctor_flags flags;
-
-    assert((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == (IFC_SERVER|IFC_HTTP));
-
-    flags = SCF_IETF|SCF_HTTP;
-    if (conn->ifc_enpub->enp_settings.es_rw_once)
-        flags |= SCF_DISP_RW_ONCE;
-    if (conn->ifc_enpub->enp_settings.es_delay_onclose)
-        flags |= SCF_DELAY_ONCLOSE;
-
-    stream_id = generate_stream_id(conn, SD_UNI);
-    stream = lsquic_stream_new(stream_id, &conn->ifc_pub,
-                conn->ifc_enpub->enp_stream_if,
-                conn->ifc_enpub->enp_stream_if_ctx,
-                conn->ifc_settings->es_init_max_stream_data_bidi_local,
-                conn->ifc_cfg.max_stream_send, flags);
-    if (!stream)
-        return NULL;
-    if (!lsquic_hash_insert(conn->ifc_pub.all_streams, &stream->id,
-                            sizeof(stream->id), stream, &stream->sm_hash_el))
-    {
-        lsquic_stream_destroy(stream);
-        return NULL;
-    }
-    return stream;
-}
-
-
 /* This function looks through the SCID array searching for an available
  * slot. If it finds an available slot it will
  *  1. generate an SCID,
@@ -1410,13 +1377,7 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
         enpub->enp_settings.es_max_streams_in << SIT_SHIFT;
 
     if (flags & IFC_HTTP)
-    {
-        if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
-            conn->ifc_max_streams_in[SD_UNI]
-                            = MAX(3, enpub->enp_settings.es_max_streams_in);
-        else
-            conn->ifc_max_streams_in[SD_UNI] = 3;
-    }
+        conn->ifc_max_streams_in[SD_UNI] = 3;
     else
         conn->ifc_max_streams_in[SD_UNI] = enpub->enp_settings.es_max_streams_in;
     conn->ifc_max_allowed_stream_id[SIT_UNI_SERVER]
@@ -1430,13 +1391,6 @@ lsquic_ietf_full_conn_client_new (struct lsquic_engine_public *enpub,
     conn->ifc_idle_to = conn->ifc_settings->es_idle_timeout * 1000000;
     if (conn->ifc_idle_to)
         lsquic_alarmset_set(&conn->ifc_alset, AL_IDLE, now + conn->ifc_idle_to);
-    if (enpub->enp_settings.es_support_push && CLIENT_PUSH_SUPPORT)
-    {
-        conn->ifc_u.cli.ifcli_flags |= IFCLI_PUSH_ENABLED;
-        conn->ifc_u.cli.ifcli_max_push_id = 100;
-        LSQ_DEBUG("push enabled: set MAX_PUSH_ID to %"PRIu64,
-                                            conn->ifc_u.cli.ifcli_max_push_id);
-    }
     conn->ifc_conn.cn_pf = select_pf_by_ver(ver);
     conn->ifc_conn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
     conn->ifc_conn.cn_esf.i = esfi;
@@ -1595,8 +1549,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_conn.cn_esf_c       = mini_conn->cn_esf_c;
     conn->ifc_conn.cn_esf         = mini_conn->cn_esf;
 
-    if (enpub->enp_settings.es_support_push)
-        conn->ifc_u.ser.ifser_flags |= IFSER_PUSH_ENABLED;
     if (flags & IFC_HTTP)
     {
         fiu_do_on("full_conn_ietf/promise_hash", goto promise_alloc_failed);
@@ -3801,14 +3753,6 @@ init_http (struct ietf_full_conn *conn)
         ABORT_WARN("cannot write SETTINGS");
         return -1;
     }
-    if (!(conn->ifc_flags & IFC_SERVER)
-        && (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
-        && 0 != lsquic_hcso_write_max_push_id(&conn->ifc_hcso,
-                                        conn->ifc_u.cli.ifcli_max_push_id))
-    {
-        ABORT_WARN("cannot write MAX_PUSH_ID");
-        return -1;
-    }
     if (0 != lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
                             conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
                             dyn_table_size, max_risked_streams))
@@ -4018,17 +3962,7 @@ ietf_full_conn_ci_report_live (struct lsquic_conn *lconn, lsquic_time_t now)
 static int
 ietf_full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 {
-    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-
-    return (conn->ifc_flags & IFC_SERVER)
-        && (conn->ifc_u.ser.ifser_flags
-                & (IFSER_PUSH_ENABLED|IFSER_MAX_PUSH_ID))
-                    == (IFSER_PUSH_ENABLED|IFSER_MAX_PUSH_ID)
-        && conn->ifc_u.ser.ifser_next_push_id
-                        <= conn->ifc_u.ser.ifser_max_push_id
-        && !either_side_going_away(conn)
-        && avail_streams_count(conn, 1, SD_UNI) > 0
-    ;
+    return 0;
 }
 
 
@@ -4049,173 +3983,13 @@ undo_stream_creation (struct ietf_full_conn *conn,
 }
 
 
-/* This function is long because there are a lot of steps to perform, several
- * things can go wrong, which we want to roll back, yet at the same time we
- * want to do everything efficiently.
- */
 static int
 ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     struct lsquic_stream *dep_stream, const struct lsquic_http_headers *headers)
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
-    unsigned char *header_block_buf, *end, *p;
-    size_t hea_sz, enc_sz;
-    ssize_t prefix_sz;
-    struct lsquic_hash_elem *el;
-    struct push_promise *promise;
-    struct lsquic_stream *pushed_stream;
-    struct uncompressed_headers *uh;
-    enum lsqpack_enc_status enc_st;
-    int i;
-    unsigned char discard[2];
-    struct lsxpack_header *xhdr;
-
-    if (!ietf_full_conn_ci_is_push_enabled(lconn)
-                                || !lsquic_stream_can_push(dep_stream))
-    {
-        LSQ_DEBUG("cannot push using stream %"PRIu64, dep_stream->id);
-        return -1;
-    }
-
-    if (!hset)
-    {
-        LSQ_ERROR("header set must be specified when pushing");
-        return -1;
-    }
-
-    if (0 != lsqpack_enc_start_header(&conn->ifc_qeh.qeh_encoder, 0, 0))
-    {
-        LSQ_WARN("cannot start header for push stream");
-        return -1;
-    }
-
-    header_block_buf = lsquic_mm_get_4k(conn->ifc_pub.mm);
-    if (!header_block_buf)
-    {
-        LSQ_WARN("cannot allocate 4k");
-        (void) lsqpack_enc_cancel_header(&conn->ifc_qeh.qeh_encoder);
-        return -1;
-    }
-
-    /* Generate header block in cheap 4K memory.  It it will be copied to
-     * a new push_promise object.
-     */
-    p = header_block_buf;
-    end = header_block_buf + 0x1000;
-    enc_sz = 0; /* Should not change */
-    for (i = 0; i < headers->count; ++i)
-    {
-        xhdr = &headers->headers[i];
-        if (!xhdr->buf)
-            continue;
-        hea_sz = end - p;
-        enc_st = lsqpack_enc_encode(&conn->ifc_qeh.qeh_encoder, NULL,
-            &enc_sz, p, &hea_sz, xhdr, LQEF_NO_HIST_UPD|LQEF_NO_DYN);
-        if (enc_st == LQES_OK)
-            p += hea_sz;
-        else
-        {
-            (void) lsqpack_enc_cancel_header(&conn->ifc_qeh.qeh_encoder);
-            lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-            LSQ_DEBUG("cannot encode header field for push %u", enc_st);
-            return -1;
-        }
-    }
-    prefix_sz = lsqpack_enc_end_header(&conn->ifc_qeh.qeh_encoder,
-                                            discard, sizeof(discard), NULL);
-    if (!(prefix_sz == 2 && discard[0] == 0 && discard[1] == 0))
-    {
-        LSQ_WARN("stream push: unexpected prefix values %zd, %hhu, %hhu",
-            prefix_sz, discard[0], discard[1]);
-        lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        return -1;
-    }
-    LSQ_DEBUG("generated push promise header block of %ld bytes",
-                                            (long) (p - header_block_buf));
-
-    pushed_stream = create_push_stream(conn);
-    if (!pushed_stream)
-    {
-        LSQ_WARN("could not create push stream");
-        lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        return -1;
-    }
-
-    promise = malloc(sizeof(*promise) + (p - header_block_buf));
-    if (!promise)
-    {
-        LSQ_WARN("stream push: cannot allocate promise");
-        lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        undo_stream_creation(conn, pushed_stream);
-        return -1;
-    }
-
-    uh = malloc(sizeof(*uh));
-    if (!uh)
-    {
-        LSQ_WARN("stream push: cannot allocate uh");
-        free(promise);
-        lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-        undo_stream_creation(conn, pushed_stream);
-        return -1;
-    }
-    uh->uh_stream_id     = pushed_stream->id;
-    uh->uh_oth_stream_id = 0;
-    uh->uh_weight        = lsquic_stream_priority(dep_stream) / 2 + 1;
-    uh->uh_exclusive     = 0;
-    uh->uh_flags         = UH_FIN;
-    uh->uh_hset          = hset;
-    uh->uh_next          = NULL;
-
-    memset(promise, 0, sizeof(*promise));
-    promise->pp_refcnt = 1; /* This function itself keeps a reference */
-    memcpy(promise->pp_content_buf, header_block_buf, p - header_block_buf);
-    promise->pp_content_len = p - header_block_buf;
-    promise->pp_id = conn->ifc_u.ser.ifser_next_push_id++;
-    lsquic_mm_put_4k(conn->ifc_pub.mm, header_block_buf);
-
-    el = lsquic_hash_insert(conn->ifc_pub.u.ietf.promises,
-            &promise->pp_id, sizeof(promise->pp_id), promise,
-            &promise->pp_hash_id);
-    if (!el)
-    {
-        LSQ_WARN("cannot insert push promise (ID)");
-        undo_stream_creation(conn, pushed_stream);
-        lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-        free(uh);
-        return -1;
-    }
-
-    if (0 != lsquic_stream_push_promise(dep_stream, promise))
-    {
-        LSQ_DEBUG("push promise failed");
-        undo_stream_creation(conn, pushed_stream);
-        lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-        free(uh);
-        return -1;
-    }
-
-    if (0 != lsquic_stream_uh_in(pushed_stream, uh))
-    {
-        LSQ_WARN("stream barfed when fed synthetic request");
-        undo_stream_creation(conn, pushed_stream);
-        free(uh);
-        if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso,
-                                                    promise->pp_id))
-            ABORT_WARN("cannot write CANCEL_PUSH");
-        lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-        return -1;
-    }
-
-    /* Linking push promise with pushed stream is necessary for cancellation */
-    ++promise->pp_refcnt;
-    promise->pp_pushed_stream = pushed_stream;
-    pushed_stream->sm_promise = promise;
-
-    lsquic_stream_call_on_new(pushed_stream);
-
-    lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-    return 0;
+    LSQ_INFO("push promises have been removed");
+    return -1;
 }
 
 
@@ -9269,24 +9043,8 @@ on_cancel_push_client (void *ctx, uint64_t push_id)
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
                                                                     push_id);
-    if (conn->ifc_u.cli.ifcli_flags & IFCLI_PUSH_ENABLED)
-    {
-        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH but push is "
-                                                                "not enabled");
-        return;
-    }
-
-    if (push_id > conn->ifc_u.cli.ifcli_max_push_id)
-    {
-        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH with ID=%"PRIu64
-            ", which is greater than the maximum Push ID=%"PRIu64, push_id,
-            conn->ifc_u.cli.ifcli_max_push_id);
-        return;
-    }
-
-#if CLIENT_PUSH_SUPPORT
-    LSQ_WARN("TODO: support for CANCEL_PUSH is not implemented");
-#endif
+    ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR,
+                            "received CANCEL_PUSH but push is not enabled");
 }
 
 
@@ -9312,29 +9070,11 @@ static void
 on_cancel_push_server (void *ctx, uint64_t push_id)
 {
     struct ietf_full_conn *const conn = ctx;
-    struct lsquic_hash_elem *el;
-    struct push_promise *promise;
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
                                                                     push_id);
-    if (push_id >= conn->ifc_u.ser.ifser_next_push_id)
-    {
-        ABORT_QUIETLY(1, HEC_ID_ERROR, "received CANCEL_PUSH with ID=%"PRIu64
-            ", which is greater than the maximum Push ID ever generated by "
-            "this connection", push_id);
-        return;
-    }
-
-    el = lsquic_hash_find(conn->ifc_pub.u.ietf.promises, &push_id,
-                                                            sizeof(push_id));
-    if (!el)
-    {
-        LSQ_DEBUG("push promise %"PRIu64" not found", push_id);
-        return;
-    }
-
-    promise = lsquic_hashelem_getdata(el);
-    cancel_push_promise(conn, promise);
+    ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR,
+                            "received CANCEL_PUSH but push is not enabled");
 }
 
 
