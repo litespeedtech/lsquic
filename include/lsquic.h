@@ -16,7 +16,7 @@
 #include <sys/uio.h>
 #include <time.h>
 #else
-#include <vc_compat.h>
+#include "vc_compat.h"
 #endif
 
 struct sockaddr;
