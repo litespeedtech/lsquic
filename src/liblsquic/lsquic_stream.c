@@ -5612,6 +5612,8 @@ verify_cl_on_new_data_frame (struct lsquic_stream *stream,
     if (stream->sm_data_in > stream->sm_cont_len)
     {
         lconn = stream->conn_pub->lconn;
+        filter->hqfi_flags |= HQFI_FLAG_ERROR;
+        stream->sm_bflags &= ~SMBF_VERIFY_CL;
         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
             "number of bytes in DATA frames of stream %"PRIu64" exceeds "
             "content-length limit of %llu", stream->id, stream->sm_cont_len);

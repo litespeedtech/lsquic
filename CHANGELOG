@@ -1,3 +1,10 @@
+2026-04-20
+    - 4.6.2
+    - [FIX] Crash in shortcut IETF mini conn promotion.
+    - [FIX] IETF mini conn ACK validation: use run-time check instead
+      of assertion.
+    - [FIX] Stop oversized DATA from reaching stream readers.
+
 2026-03-30
     - 4.6.1
     - [FIX] Prevent ACK frame generation overflow (unlikely).
