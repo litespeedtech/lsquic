@@ -9580,7 +9580,8 @@ apply_write_sched_settings (struct ietf_full_conn *conn)
 
 
 static void
-set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy)
+set_write_sched_strategy (struct ietf_full_conn *conn,
+                          enum lsquic_write_sched_strategy strategy)
 {
     enum lsquic_write_sched_strategy current_strategy;
 
@@ -9600,7 +9601,7 @@ set_write_sched_strategy (struct ietf_full_conn *conn, unsigned strategy)
         conn->ifc_write_dispatch = do_write_drr;
     }
     else
-        LSQ_WARN("invalid write scheduler strategy %u", strategy);
+        LSQ_WARN("invalid write scheduler strategy %d", strategy);
 }
 
 
