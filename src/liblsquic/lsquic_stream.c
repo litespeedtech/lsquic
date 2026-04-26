@@ -416,6 +416,7 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->sm_write_avail = stream_write_avail_no_frames;
 
     STAILQ_INIT(&stream->sm_hq_frames);
+    STAILQ_INIT(&stream->uh);
 
     stream->sm_bflags |= ctor_flags & ((1 << N_SMBF_FLAGS) - 1);
     if (conn_pub->lconn->cn_flags & LSCONN_SERVER)
@@ -613,8 +614,8 @@ drop_buffered_data (struct lsquic_stream *stream)
 void
 lsquic_stream_drop_hset_ref (struct lsquic_stream *stream)
 {
-    if (stream->uh)
-        stream->uh->uh_hset = NULL;
+    if (!STAILQ_EMPTY(&stream->uh))
+        STAILQ_FIRST(&stream->uh)->uh_hset = NULL;
 }
 
 
@@ -682,10 +683,9 @@ lsquic_stream_destroy (lsquic_stream_t *stream)
     }
     while ((shf = STAILQ_FIRST(&stream->sm_hq_frames)))
         stream_hq_frame_put(stream, shf);
-    while(stream->uh)
+    while ((uh = STAILQ_FIRST(&stream->uh)))
     {
-        uh = stream->uh;
-        stream->uh = uh->uh_next;
+        STAILQ_REMOVE_HEAD(&stream->uh, uh_next);
         destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
     }
     free(stream->sm_buf);
@@ -810,7 +810,7 @@ static int
 stream_readable_http_gquic (struct lsquic_stream *stream)
 {
     return (stream->stream_flags & STREAM_HAVE_UH)
-        && (stream->uh
+        && (!STAILQ_EMPTY(&stream->uh)
             || stream_has_frame_at_read_offset(stream));
 }
 
@@ -822,7 +822,7 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
         /* If we have read the header set and the header set has not yet
          * been read, the stream is readable.
          */
-        ((stream->stream_flags & STREAM_HAVE_UH) && stream->uh)
+        ((stream->stream_flags & STREAM_HAVE_UH) && !STAILQ_EMPTY(&stream->uh))
         ||
         /* Alternatively, run the filter and check for payload availability. */
         (stream->sm_sfi->sfi_readable(stream)
@@ -1457,7 +1457,7 @@ static size_t
 read_uh (struct lsquic_stream *stream,
         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)
 {
-    struct uncompressed_headers *uh = stream->uh;
+    struct uncompressed_headers *uh = STAILQ_FIRST(&stream->uh);
     struct http1x_headers *const h1h = uh->uh_hset;
     size_t nread;
 
@@ -1467,9 +1467,9 @@ read_uh (struct lsquic_stream *stream,
     h1h->h1h_off += nread;
     if (h1h->h1h_off == h1h->h1h_size)
     {
-        stream->uh = uh->uh_next;
+        STAILQ_REMOVE_HEAD(&stream->uh, uh_next);
         LSQ_DEBUG("read all uncompressed headers from uh: %p, next uh: %p",
-                    uh, stream->uh);
+                    uh, STAILQ_FIRST(&stream->uh));
         destroy_uh(uh, stream->conn_pub->enpub->enp_hsi_if);
         if (stream->stream_flags & STREAM_HEAD_IN_FIN)
         {
@@ -1600,7 +1600,7 @@ stream_readf (struct lsquic_stream *stream,
     if ((stream->sm_bflags & (SMBF_USE_HEADERS|SMBF_IETF))
                                             == (SMBF_USE_HEADERS|SMBF_IETF)
             && !(stream->stream_flags & STREAM_HAVE_UH)
-            && !stream->uh)
+            && STAILQ_EMPTY(&stream->uh))
     {
         if (stream->sm_readable(stream))
         {
@@ -1611,7 +1611,7 @@ stream_readf (struct lsquic_stream *stream,
                 return -1;
             }
 
-            if (!stream->uh)
+            if (STAILQ_EMPTY(&stream->uh))
             {
                 LSQ_DEBUG("cannot read: headers not available");
                 errno = EBADMSG;
@@ -1625,12 +1625,12 @@ stream_readf (struct lsquic_stream *stream,
         }
     }
 
-    if (stream->uh)
+    if (!STAILQ_EMPTY(&stream->uh))
     {
-        if (stream->uh->uh_flags & UH_H1H)
+        if (STAILQ_FIRST(&stream->uh)->uh_flags & UH_H1H)
         {
             total_nread += read_uh(stream, readf, ctx);
-            if (stream->uh)
+            if (!STAILQ_EMPTY(&stream->uh))
                 return total_nread;
         }
         else
@@ -1694,7 +1694,8 @@ lsquic_stream_readf (struct lsquic_stream *stream,
     {
        if (stream->sm_bflags & SMBF_USE_HEADERS)
        {
-            if ((stream->stream_flags & STREAM_HAVE_UH) && !stream->uh)
+            if ((stream->stream_flags & STREAM_HAVE_UH)
+                                            && STAILQ_EMPTY(&stream->uh))
                 return 0;
        }
        else
@@ -4508,7 +4509,6 @@ static int
 stream_uh_in_gquic (struct lsquic_stream *stream,
                                             struct uncompressed_headers *uh)
 {
-    struct uncompressed_headers **next;
     if ((stream->sm_bflags & SMBF_USE_HEADERS))
     {
         SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
@@ -4516,11 +4516,8 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         stream->stream_flags |= STREAM_HAVE_UH;
         if (uh->uh_flags & UH_FIN)
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
-        next = &stream->uh;
-        while(*next)
-            next = &(*next)->uh_next;
-        *next = uh;
-        assert(uh->uh_next == NULL);
+        STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
+        assert(STAILQ_NEXT(uh, uh_next) == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -4544,7 +4541,6 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
                                             struct uncompressed_headers *uh)
 {
     int push_promise;
-    struct uncompressed_headers **next;
 
     push_promise = lsquic_stream_header_is_pp(stream);
     if (!push_promise)
@@ -4562,11 +4558,8 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
                                             && lsquic_stream_is_pushed(stream));
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
         }
-        next = &stream->uh;
-        while(*next)
-            next = &(*next)->uh_next;
-        *next = uh;
-        assert(uh->uh_next == NULL);
+        STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
+        assert(STAILQ_NEXT(uh, uh_next) == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -4782,17 +4775,17 @@ lsquic_stream_get_hset (struct lsquic_stream *stream)
         return NULL;
     }
 
-    if (!stream->uh)
+    if (STAILQ_EMPTY(&stream->uh))
     {
         LSQ_INFO("%s: headers unavailable (already fetched?)", __func__);
         return NULL;
     }
 
-    hset = stream->uh->uh_hset;
-    stream->uh->uh_hset = NULL;
+    uh = STAILQ_FIRST(&stream->uh);
+    hset = uh->uh_hset;
+    uh->uh_hset = NULL;
 
-    uh = stream->uh;
-    stream->uh = uh->uh_next;
+    STAILQ_REMOVE_HEAD(&stream->uh, uh_next);
     free(uh);
 
     if (stream->stream_flags & STREAM_HEAD_IN_FIN)
@@ -5119,7 +5112,7 @@ hq_filter_readable_now (const struct lsquic_stream *stream)
     return (filter->hqfi_type == HQFT_DATA
                     && filter->hqfi_state == HQFI_STATE_READING_PAYLOAD)
         || (filter->hqfi_flags & HQFI_FLAG_ERROR)
-        || stream->uh
+        || !STAILQ_EMPTY(&stream->uh)
         || (stream->stream_flags & STREAM_FIN_REACHED)
     ;
 }

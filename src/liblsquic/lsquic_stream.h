@@ -312,8 +312,9 @@ struct lsquic_stream
     /* Last offset sent in BLOCKED frame */
     uint64_t                        blocked_off;
 
-    struct uncompressed_headers    *uh,
-                                   *push_req;
+    STAILQ_HEAD(, uncompressed_headers)
+                                    uh;
+    struct uncompressed_headers    *push_req;
     union hblock_ctx               *sm_hblock_ctx;
 
     unsigned char                  *sm_buf;
