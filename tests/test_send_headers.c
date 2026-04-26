@@ -65,6 +65,9 @@
 static int s_call_wantwrite_in_ctor;
 static int s_wantwrite_arg;
 static int s_onwrite_called;
+static unsigned s_on_hset_in_count;
+static struct lsquic_stream *s_on_hset_in_stream;
+static lsquic_stream_ctx_t *s_on_hset_in_ctx;
 
 static lsquic_stream_ctx_t *
 on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
@@ -102,11 +105,29 @@ on_reset (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how)
 }
 
 
+static void
+on_hset_in (lsquic_stream_t *stream, lsquic_stream_ctx_t *h)
+{
+    ++s_on_hset_in_count;
+    s_on_hset_in_stream = stream;
+    s_on_hset_in_ctx = h;
+}
+
+
 const struct lsquic_stream_if stream_if = {
     .on_new_stream          = on_new_stream,
     .on_write               = on_write,
     .on_close               = on_close,
     .on_reset               = on_reset,
+};
+
+
+const struct lsquic_stream_if stream_if_on_hset = {
+    .on_new_stream          = on_new_stream,
+    .on_write               = on_write,
+    .on_close               = on_close,
+    .on_reset               = on_reset,
+    .on_hset_in             = on_hset_in,
 };
 
 
@@ -685,6 +706,55 @@ test_read_headers (int ietf, int use_hset)
 
 
 static void
+test_multiple_hsets_fifo (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct uncompressed_headers *uh;
+    char hsets[3];
+    void *hset;
+    unsigned i;
+    int s;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+    tobjs.stream_if = &stream_if_on_hset;
+
+    s_on_hset_in_count = 0;
+    s_on_hset_in_stream = NULL;
+    s_on_hset_in_ctx = NULL;
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    for (i = 0; i < sizeof(hsets); ++i)
+    {
+        uh = calloc(1, sizeof(*uh));
+        *uh = (struct uncompressed_headers) {
+            .uh_stream_id   = stream->id,
+            .uh_weight      = 127,
+            .uh_hset        = &hsets[i],
+        };
+        s = lsquic_stream_uh_in(stream, uh);
+        assert(s == 0);
+        assert(s_on_hset_in_count == i + 1);
+        assert(s_on_hset_in_stream == stream);
+        assert(s_on_hset_in_ctx == NULL);
+    }
+
+    for (i = 0; i < sizeof(hsets); ++i)
+    {
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset == &hsets[i]);
+    }
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset == NULL);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
 test_read_headers_http1x (void)
 {
     struct test_objs tobjs;
@@ -754,6 +824,7 @@ main (int argc, char **argv)
     test_read_headers(0, 1);
     test_read_headers(1, 0);
     test_read_headers(1, 1);
+    test_multiple_hsets_fifo();
     test_read_headers_http1x();
 
     return 0;

@@ -236,6 +236,11 @@ struct lsquic_stream_if {
     void (*on_conncloseframe_received)(lsquic_conn_t *c,
                                        int app_error, uint64_t error_code,
                                        const char *reason, int reason_len);
+    /**
+     * Optional callback is called when a new header set becomes available.
+     * The user may pick it off immediately using lsquic_stream_get_hset().
+     */
+    void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
 };
 
 struct ssl_ctx_st;

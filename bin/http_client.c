@@ -766,10 +766,43 @@ maybe_perform_priority_actions (struct lsquic_stream *stream,
 
 
 static void
+http_client_process_hset (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
+{
+    struct hset *hset;
+
+    hset = lsquic_stream_get_hset(stream);
+    if (!hset)
+    {
+        LSQ_ERROR("could not get header set from stream");
+        exit(2);
+    }
+    if (!(st_h->sh_flags & PROCESSED_HEADERS))
+    {
+        /* Internal helper (not in lsquic.h); example-only timing. */
+        st_h->sh_ttfb = lsquic_time_now();
+        update_sample_stats(&s_stat_ttfb, st_h->sh_ttfb - st_h->sh_created);
+        st_h->sh_flags |= PROCESSED_HEADERS;
+    }
+    if (s_discard_response)
+        LSQ_DEBUG("discard response: do not dump headers");
+    else
+        hset_dump(hset, stdout);
+    hset_destroy(hset);
+}
+
+
+static void
+http_client_on_hset_in (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
+{
+    if (g_header_bypass)
+        http_client_process_hset(stream, st_h);
+}
+
+
+static void
 http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
     struct http_client_ctx *const client_ctx = st_h->client_ctx;
-    struct hset *hset;
     ssize_t nread;
     unsigned old_prio, new_prio;
     unsigned char buf[0x200];
@@ -781,23 +814,7 @@ http_client_on_read (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     do
     {
         if (g_header_bypass && !(st_h->sh_flags & PROCESSED_HEADERS))
-        {
-            hset = lsquic_stream_get_hset(stream);
-            if (!hset)
-            {
-                LSQ_ERROR("could not get header set from stream");
-                exit(2);
-            }
-            /* Internal helper (not in lsquic.h); example-only timing. */
-            st_h->sh_ttfb = lsquic_time_now();
-            update_sample_stats(&s_stat_ttfb, st_h->sh_ttfb - st_h->sh_created);
-            if (s_discard_response)
-                LSQ_DEBUG("discard response: do not dump headers");
-            else
-                hset_dump(hset, stdout);
-            hset_destroy(hset);
-            st_h->sh_flags |= PROCESSED_HEADERS;
-        }
+            http_client_process_hset(stream, st_h);
         else if (nread = (s_discard_response
                             ? lsquic_stream_readf(stream, discard, st_h)
                             : lsquic_stream_read(stream, buf,
@@ -955,6 +972,7 @@ static struct lsquic_stream_if http_client_if = {
     .on_write               = http_client_on_write,
     .on_close               = http_client_on_close,
     .on_hsk_done            = http_client_on_hsk_done,
+    .on_hset_in             = http_client_on_hset_in,
 };
 
 
