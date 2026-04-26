@@ -2,8 +2,6 @@
 #ifndef LSQUIC_HEADERS_H
 #define LSQUIC_HEADERS_H 1
 
-#include <sys/queue.h>
-
 /* When ea_hsi_if is not specified, the headers are converted to a C string
  * that contains HTTP/1.x-like header structure.
  */
