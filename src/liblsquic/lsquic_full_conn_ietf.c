@@ -4165,7 +4165,6 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     uh->uh_exclusive     = 0;
     uh->uh_flags         = UH_FIN;
     uh->uh_hset          = hset;
-    uh->uh_next          = NULL;
 
     memset(promise, 0, sizeof(*promise));
     promise->pp_refcnt = 1; /* This function itself keeps a reference */
@@ -10098,4 +10097,3 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
-

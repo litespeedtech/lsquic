@@ -4108,7 +4108,6 @@ synthesize_push_request (struct full_conn *conn, void *hset,
     if (lsquic_http1x_if == conn->fc_enpub->enp_hsi_if)
         uh->uh_flags    |= UH_H1H;
     uh->uh_hset          = hset;
-    uh->uh_next          = NULL;
 
     return uh;
 }
