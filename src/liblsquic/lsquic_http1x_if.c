@@ -192,6 +192,7 @@ code_str_to_reason (const char code_str[HTTP_CODE_LEN])
     #define HTTP_REASON_CODE(code, reason) [code - 100] = reason
         HTTP_REASON_CODE(100, "Continue"),
         HTTP_REASON_CODE(101, "Switching Protocols"),
+        HTTP_REASON_CODE(103, "Early Hints"),
         HTTP_REASON_CODE(200, "OK"),
         HTTP_REASON_CODE(201, "Created"),
         HTTP_REASON_CODE(202, "Accepted"),
@@ -240,7 +241,7 @@ code_str_to_reason (const char code_str[HTTP_CODE_LEN])
     memcpy(code_buf, code_str, HTTP_CODE_LEN);
     code_buf[HTTP_CODE_LEN] = '\0';
     code = strtol(code_buf, NULL, 10) - 100;
-    if (code > 0 && code < (long) (sizeof(http_reason_phrases) /
+    if (code >= 0 && code < (long) (sizeof(http_reason_phrases) /
                                         sizeof(http_reason_phrases[0])))
         return http_reason_phrases[code];
     else

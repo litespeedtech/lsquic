@@ -755,28 +755,32 @@ test_multiple_hsets_fifo (void)
 
 
 static void
-test_read_headers_http1x (void)
+test_read_headers_http1x_case (const unsigned char *field_line,
+                                    size_t field_line_sz, const char *expected)
 {
     struct test_objs tobjs;
     struct lsquic_stream *stream;
     struct stream_frame *frame;
     int s;
-    const unsigned char headers_frame[5] = {
-        0x01,   /* Headers frame */
-        0x03,   /* Frame length */
-        0x00,
-        0x00,
-        0xC0 | 25   /* :status 200 */,
-    };
+    unsigned char headers_frame[0x10];
     ssize_t nr;
     unsigned char buf[0x100];
+
+    assert(2 + field_line_sz < 0x40);
+    assert(2 + 2 + field_line_sz <= sizeof(headers_frame));
+
+    headers_frame[0] = 0x01; /* Headers frame */
+    headers_frame[1] = 2 + field_line_sz; /* Frame length */
+    headers_frame[2] = 0x00;
+    headers_frame[3] = 0x00;
+    memcpy(headers_frame + 4, field_line, field_line_sz);
 
     init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
 
     stream = new_stream(&tobjs, 0, 0x1000);
-    frame = new_frame_in(&tobjs, 0, sizeof(headers_frame), 1);
+    frame = new_frame_in(&tobjs, 0, 4 + field_line_sz, 1);
     memcpy((unsigned char *) frame->data_frame.df_data, headers_frame,
-                                                    sizeof(headers_frame));
+                                                    4 + field_line_sz);
     s = lsquic_stream_frame_in(stream, frame);
     assert(s == 0);
 
@@ -785,12 +789,34 @@ test_read_headers_http1x (void)
 
     nr = lsquic_stream_read(stream, buf, sizeof(buf));
     assert(nr > 0);
-    assert(nr == 19);
-    assert(0 == memcmp(buf, "HTTP/1.1 200 OK\r\n\r\n", nr));
+    assert(nr == (ssize_t) strlen(expected));
+    assert(0 == memcmp(buf, expected, nr));
 
     lsquic_stream_destroy(stream);
 
     deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_read_headers_http1x (void)
+{
+    const unsigned char status_100[] = {
+        0xC0 | 63, 0x00,  /* :status 100 */
+    };
+    const unsigned char status_103[] = {
+        0xC0 | 24,        /* :status 103 */
+    };
+    const unsigned char status_200[] = {
+        0xC0 | 25,        /* :status 200 */
+    };
+
+    test_read_headers_http1x_case(status_100, sizeof(status_100),
+                                        "HTTP/1.1 100 Continue\r\n\r\n");
+    test_read_headers_http1x_case(status_103, sizeof(status_103),
+                                        "HTTP/1.1 103 Early Hints\r\n\r\n");
+    test_read_headers_http1x_case(status_200, sizeof(status_200),
+                                        "HTTP/1.1 200 OK\r\n\r\n");
 }
 
 
