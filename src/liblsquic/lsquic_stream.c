@@ -1527,7 +1527,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 {
     struct data_frame *data_frame;
     size_t nread, toread, total_nread;
-    int short_read, processed_frames, stop_for_hset;
+    int short_read, processed_frames;
 
     processed_frames = 0;
     total_nread = 0;
@@ -1540,23 +1540,10 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 
         do
         {
-            stop_for_hset = 0;
             if (do_filtering && stream->sm_sfi)
                 toread = stream->sm_sfi->sfi_filter_df(stream, data_frame);
             else
                 toread = data_frame->df_size - data_frame->df_read_off;
-
-            if (do_filtering
-                && (stream->sm_bflags & (SMBF_USE_HEADERS|SMBF_IETF))
-                                        == (SMBF_USE_HEADERS|SMBF_IETF)
-                && !STAILQ_EMPTY(&stream->uh)
-                && !(STAILQ_FIRST(&stream->uh)->uh_flags & UH_H1H))
-            {
-                /* DATA must not overtake an unclaimed HTTP/3 header set. */
-                stop_for_hset = 1;
-                if (toread || data_frame->df_read_off < data_frame->df_size)
-                    goto end_while;
-            }
 
             if (toread || data_frame->df_fin)
             {
@@ -1586,8 +1573,6 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                         verify_cl_on_fin(stream);
                     goto end_while;
                 }
-                if (stop_for_hset)
-                    goto end_while;
             }
             else if (short_read)
                 goto end_while;
