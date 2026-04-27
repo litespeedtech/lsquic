@@ -1381,6 +1381,21 @@ the engine to communicate with the user code:
 
         This callback is optional.
 
+    .. member:: void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h)
+
+        This callback is called when a decoded HTTP header set becomes
+        available on a stream.  It is only used when the optional header set
+        interface (:member:`lsquic_engine_api.ea_hsi_if`) is specified.
+
+        The application can call :func:`lsquic_stream_get_hset()` from this
+        callback to take ownership of the header set.  This is useful for
+        HTTP/3 responses that contain more than one header set, such as one or
+        more informational responses followed by the final response.
+
+        This callback is optional.  If it is not specified, header sets can
+        still be collected during the next :member:`lsquic_stream_if.on_read`
+        callback.
+
     .. member:: ssize_t (*on_dg_write)(lsquic_conn_t *c, void *buf, size_t buf_sz)
 
         Called when datagram is ready to be written.  Write at most
@@ -1888,6 +1903,10 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
     Get header set associated with the stream.  The header set is created by
     ``hsi_create_header_set()`` callback.  After this call, the ownership of
     the header set is transferred to the caller.
+
+    When :member:`lsquic_stream_if.on_hset_in` is specified, the application
+    can call this function from that callback.  Otherwise, call this function
+    from :member:`lsquic_stream_if.on_read` before reading stream data.
 
     This call must precede calls to :func:`lsquic_stream_read()`,
     :func:`lsquic_stream_readv()`, and :func:`lsquic_stream_readf()`.
