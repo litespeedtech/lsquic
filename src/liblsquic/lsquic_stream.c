@@ -5226,7 +5226,6 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         while(*next)
             next = &(*next)->uh_next;
         *next = uh;
-        assert(uh->uh_next == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -5272,7 +5271,6 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
         while(*next)
             next = &(*next)->uh_next;
         *next = uh;
-        assert(uh->uh_next == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
