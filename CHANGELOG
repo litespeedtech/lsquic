@@ -1,3 +1,9 @@
+2026-04-27
+    - 4.6.3
+    - [FIX] Reject overlapping header sends, making code safer.
+    - [FIX] Follow spec: max datagram size of zero disables datagrams.
+    - [IMPROVEMENT] Include statement for vc_compat.h to use quotes.
+
 2026-04-20
     - 4.6.2
     - [FIX] Crash in shortcut IETF mini conn promotion.
