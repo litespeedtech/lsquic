@@ -2155,8 +2155,7 @@ struct progress
 {
     enum stream_flags   s_flags;
     enum stream_q_flags q_flags;
-    const struct uncompressed_headers
-                       *uh;
+    uintptr_t           uh;
 };
 
 
@@ -2168,7 +2167,7 @@ stream_progress (const struct lsquic_stream *stream)
           & (STREAM_U_WRITE_DONE|STREAM_U_READ_DONE),
         .q_flags = stream->sm_qflags
           & (SMQF_WANT_READ|SMQF_WANT_WRITE|SMQF_WANT_FLUSH|SMQF_SEND_RST),
-        .uh = STAILQ_FIRST(&stream->uh),
+        .uh = (uintptr_t) STAILQ_FIRST(&stream->uh),
     };
 }
 
