@@ -4519,7 +4519,6 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         if (uh->uh_flags & UH_FIN)
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
         STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
-        assert(STAILQ_NEXT(uh, uh_next) == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -4561,7 +4560,6 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
         }
         STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
-        assert(STAILQ_NEXT(uh, uh_next) == NULL);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
