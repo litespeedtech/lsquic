@@ -1819,6 +1819,20 @@ more information.
 
         0 on success or -1 on error.
 
+    LSQUIC does not maintain a user-visible queue of header sets for this
+    function.  A stream can have at most one encoded header block pending in
+    the stream object.  If a previous call to this function produced a header
+    block that could not be written out completely, a subsequent call made
+    before that pending block is flushed fails with ``-1`` and sets ``errno``
+    to ``EBADMSG``.
+
+    This is intentional: queuing multiple outbound header sets internally
+    would create a second buffering layer with unclear ownership and resource
+    limits.  Applications that send more than one header set on a stream, for
+    example an informational response followed by the final response, should
+    serialize those calls and let LSQUIC flush the previous header block before
+    calling this function again.
+
 Receiving HTTP Headers
 ----------------------
 
