@@ -75,7 +75,6 @@
 #include "lsquic_min_heap.h"
 #include "lsquic_hpi.h"
 #include "lsquic_ietf.h"
-#include "lsquic_push_promise.h"
 #include "lsquic_headers.h"
 #include "lsquic_crand.h"
 #include "ls-sfparser.h"
@@ -96,14 +95,6 @@
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-
-/* IETF QUIC push promise does not contain stream ID.  This means that, unlike
- * in GQUIC, one cannot create a stream immediately and pass it to the client.
- * We may have to add a special API for IETF push promises.  That's in the
- * future: right now, we punt it.
- */
-#define CLIENT_PUSH_SUPPORT 0
-
 
 
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER
@@ -1548,17 +1539,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_conn.cn_pf          = mini_conn->cn_pf;
     conn->ifc_conn.cn_esf_c       = mini_conn->cn_esf_c;
     conn->ifc_conn.cn_esf         = mini_conn->cn_esf;
-
-    if (flags & IFC_HTTP)
-    {
-        fiu_do_on("full_conn_ietf/promise_hash", goto promise_alloc_failed);
-        conn->ifc_pub.u.ietf.promises = lsquic_hash_create();
-#if FIU_ENABLE
-  promise_alloc_failed:
-#endif
-        if (!conn->ifc_pub.u.ietf.promises)
-            goto err2;
-    }
 
     assert(mini_conn->cn_flags & LSCONN_HANDSHAKE_DONE);
     conn->ifc_conn.cn_flags      |= LSCONN_HANDSHAKE_DONE;
@@ -3159,11 +3139,6 @@ ietf_full_conn_ci_destroy (struct lsquic_conn *lconn)
         STAILQ_REMOVE_HEAD(&conn->ifc_stream_ids_to_ss, sits_next);
         free(sits);
     }
-    if (conn->ifc_flags & IFC_SERVER)
-    {
-        if (conn->ifc_pub.u.ietf.promises)
-            lsquic_hash_destroy(conn->ifc_pub.u.ietf.promises);
-    }
     for (i = 0; i < N_SITS; ++i)
         lsquic_set64_cleanup(&conn->ifc_closed_stream_ids[i]);
     if (conn->ifc_bpus)
@@ -3274,13 +3249,6 @@ ietf_full_conn_ci_going_away (struct lsquic_conn *lconn)
             stream_id = conn->ifc_max_req_id;
         else
             goto end;
-    }
-    else if (CLIENT_PUSH_SUPPORT)
-    {
-        /* TODO: Track highest Push ID received and send that value */
-        LSQ_DEBUG("client connection marked as going away, but push "
-                            "support is enabled - not sending GOAWAY frame");
-        goto end;
     }
     else
     {
@@ -3964,23 +3932,6 @@ static int
 ietf_full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 {
     return 0;
-}
-
-
-static void
-undo_stream_creation (struct ietf_full_conn *conn,
-                                                struct lsquic_stream *stream)
-{
-    enum stream_dir sd;
-
-    assert(stream->sm_hash_el.qhe_flags & QHE_HASHED);
-    assert(!(stream->stream_flags & STREAM_ONCLOSE_DONE));
-
-    LSQ_DEBUG("undo creation of stream %"PRIu64, stream->id);
-    lsquic_hash_erase(conn->ifc_pub.all_streams, &stream->sm_hash_el);
-    sd = (stream->id >> SD_SHIFT) & 1;
-    --conn->ifc_n_created_streams[sd];
-    lsquic_stream_destroy(stream);
 }
 
 
@@ -5243,11 +5194,6 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
     {
         iface = unicla_if_ptr;
         stream_ctx = conn;
-#if CLIENT_PUSH_SUPPORT
-        /* FIXME: This logic does not work for push streams.  Perhaps one way
-         * to address this is to reclassify them later?
-         */
-#endif
         if (stream_id < MAX_CRITICAL_STREAM_ID)
         {
             flags |= SCF_CRITICAL;
@@ -9049,24 +8995,6 @@ on_cancel_push_client (void *ctx, uint64_t push_id)
 }
 
 
-/* Careful: this puts promise */
-static void
-cancel_push_promise (struct ietf_full_conn *conn, struct push_promise *promise)
-{
-    LSQ_DEBUG("cancel promise %"PRIu64, promise->pp_id);
-    /* Remove promise from hash to prevent multiple cancellations */
-    lsquic_hash_erase(conn->ifc_pub.u.ietf.promises, &promise->pp_hash_id);
-    /* But let stream dtor free the promise object as sm_promise may yet
-     * be used by the stream in some ways.
-     */
-    /* TODO: drop lsquic_stream_shutdown_internal, use something else */
-    lsquic_stream_shutdown_internal(promise->pp_pushed_stream);
-    if (0 != lsquic_hcso_write_cancel_push(&conn->ifc_hcso, promise->pp_id))
-        ABORT_WARN("cannot write CANCEL_PUSH");
-    lsquic_pp_put(promise, conn->ifc_pub.u.ietf.promises);
-}
-
-
 static void
 on_cancel_push_server (void *ctx, uint64_t push_id)
 {
@@ -9300,18 +9228,10 @@ static void
 on_goaway_server (void *ctx, uint64_t max_push_id)
 {
     struct ietf_full_conn *const conn = ctx;
-    struct push_promise *promise;
-    struct lsquic_hash_elem *el;
 
+    /* TODO: validate push ID? */
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received GOAWAY(%"PRIu64")",
                                                                 max_push_id);
-    for (el = lsquic_hash_first(conn->ifc_pub.u.ietf.promises); el;
-                        el = lsquic_hash_next(conn->ifc_pub.u.ietf.promises))
-    {
-        promise = lsquic_hashelem_getdata(el);
-        if (promise->pp_id > max_push_id)
-            cancel_push_promise(conn, promise);
-    }
 }
 
 
@@ -9383,8 +9303,6 @@ on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
                                 uint64_t id, const char *pfv, size_t pfv_sz)
 {
     struct ietf_full_conn *const conn = ctx;
-    struct lsquic_hash_elem *el;
-    struct push_promise *promise;
     struct lsquic_stream *stream;
     enum stream_id_type sit;
     struct lsquic_ext_http_prio ehp;
@@ -9420,23 +9338,9 @@ on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
     }
     else
     {
-        if (id >= conn->ifc_u.ser.ifser_next_push_id)
-        {
-            ABORT_QUIETLY(1, HEC_ID_ERROR, "received PRIORITY_UPDATE with "
-                "ID=%"PRIu64", which is greater than the maximum Push ID "
-                "ever generated by this connection", id);
-            return;
-        }
-        el = lsquic_hash_find(conn->ifc_pub.u.ietf.promises, &id, sizeof(id));
-        if (!el)
-        {
-            LSQ_DEBUG("push promise %"PRIu64" not found, ignore "
-                                                    "PRIORITY_UPDATE", id);
-            return;
-        }
-        promise = lsquic_hashelem_getdata(el);
-        stream = promise->pp_pushed_stream;
-        assert(stream);
+        ABORT_QUIETLY(1, HEC_ID_ERROR, "received PRIORITY_UPDATE for a push "
+                "promise -- but we do not support push promises");
+        return;
     }
 
     ehp = (struct lsquic_ext_http_prio) {
