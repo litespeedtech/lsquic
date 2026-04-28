@@ -3686,7 +3686,8 @@ apply_trans_params (struct ietf_full_conn *conn,
         conn->ifc_flags |= IFC_TIMESTAMPS;
     }
     if (conn->ifc_settings->es_datagrams
-            && (params->tp_set & (1 << TPI_MAX_DATAGRAM_FRAME_SIZE)))
+            && (params->tp_set & (1 << TPI_MAX_DATAGRAM_FRAME_SIZE))
+            && params->tp_numerics[TPI_MAX_DATAGRAM_FRAME_SIZE] > 0)
     {
         LSQ_DEBUG("datagrams enabled");
         conn->ifc_flags |= IFC_DATAGRAMS;
