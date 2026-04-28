@@ -4041,7 +4041,7 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
     LSQ_INFO("push promises have been removed");
-    return -1;
+    return 1;
 }
 
 

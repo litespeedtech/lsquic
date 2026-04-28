@@ -3941,7 +3941,7 @@ ietf_full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
 {
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     LSQ_INFO("push promises have been removed");
-    return -1;
+    return 1;
 }
 
 
@@ -9743,4 +9743,3 @@ static const struct lsquic_stream_if unicla_if =
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
-
