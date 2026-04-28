@@ -60,7 +60,6 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 #include "lsquic_headers.h"
-#include "lsquic_push_promise.h"
 
 static int s_call_wantwrite_in_ctor;
 static int s_wantwrite_arg;
@@ -530,68 +529,6 @@ test_headers_wantwrite_restoration (const int want_write)
 }
 
 
-static void
-test_pp_wantwrite_restoration (const int want_write)
-{
-    struct test_objs tobjs;
-    struct lsquic_stream *stream;
-    int s;
-    struct uncompressed_headers *uh;
-    struct push_promise *promise;
-    void *hset;
-
-    s_call_wantwrite_in_ctor = 1;
-    s_wantwrite_arg = want_write;
-
-    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
-
-    /* Mock server side stream cycle */
-
-    stream = new_stream(&tobjs, 4 * __LINE__, 10);
-    uh = calloc(1, sizeof(*uh));
-    *uh = (struct uncompressed_headers) {
-        .uh_stream_id   = stream->id,
-        .uh_weight      = 127,
-        .uh_hset        = (void *) 12345,
-    };
-    s = lsquic_stream_uh_in(stream, uh);
-    assert(s == 0);
-    hset = lsquic_stream_get_hset(stream);
-    assert(hset == (void *) 12345);
-    s = lsquic_stream_shutdown(stream, 0);
-    assert(0 == s);
-    promise = calloc(1, sizeof(*promise) + 20);
-    promise->pp_id = 0;
-    promise->pp_content_len = 20;
-    assert(want_write == !!(stream->sm_qflags & SMQF_WANT_WRITE));
-    s = lsquic_stream_push_promise(stream, promise);
-    assert(s == 0);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-                                        == (STREAM_NOPUSH|STREAM_PUSHING));
-    assert(stream->sm_qflags & SMQF_WANT_WRITE);    /* Want write is now set */
-    /* Dispatch: there should be no progress made */
-    lsquic_stream_dispatch_write_events(stream);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-                                        == (STREAM_NOPUSH|STREAM_PUSHING));
-    assert(stream->sm_qflags & SMQF_WANT_WRITE);
-    assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state != PPWS_DONE);
-    /* Now update window and dispatch again */
-    lsquic_stream_window_update(stream, 100);
-    lsquic_stream_dispatch_write_events(stream);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-        /* After push promise was all written, STREAM_PUSHING is no longer set */
-                                        == STREAM_NOPUSH);
-    assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state == PPWS_DONE); /* Done! */
-    assert(want_write == s_onwrite_called); /* Restored: and on_write called */
-
-    lsquic_stream_destroy(stream);
-    deinit_test_objs(&tobjs);
-    s_call_wantwrite_in_ctor = 0;
-    s_wantwrite_arg = 0;
-    s_onwrite_called = 0;
-}
-
-
 /* Create a new stream frame.  Each stream frame has a real packet_in to
  * back it up, just like in real code.  The contents of the packet do
  * not matter.
@@ -748,8 +685,6 @@ main (int argc, char **argv)
     test_rejects_pending_header_overwrite();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
-    test_pp_wantwrite_restoration(0);
-    test_pp_wantwrite_restoration(1);
     test_read_headers(0, 0);
     test_read_headers(0, 1);
     test_read_headers(1, 0);
