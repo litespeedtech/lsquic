@@ -4097,7 +4097,7 @@ send_headers_ietf (struct lsquic_stream *stream,
     if (stream->sm_send_headers_state != SSHS_BEGIN || stream->sm_header_block)
     {
         LSQ_INFO("cannot send headers while previous header block is pending");
-        errno = EBADMSG;
+        errno = EAGAIN;
         return -1;
     }
 #ifndef WIN32

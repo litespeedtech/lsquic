@@ -423,9 +423,50 @@ test_rejects_pending_header_overwrite (void)
     test_vals.headers_sz = 50;
     s = lsquic_stream_send_headers(stream, headers, 0);
     assert(-1 == s);
-    assert(EBADMSG == errno);
+    assert(EAGAIN == errno);
     assert(stream->sm_hblock_sz == hblock_sz);
     assert(stream->sm_header_block == header_block);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_partially_flushed_header_is_not_writeable (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    const unsigned stream_window = 22;
+    unsigned hblock_sz, hblock_off;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, stream_window, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, stream_window);
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 0;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_HBLOCK_SENDING == stream->sm_send_headers_state);
+    assert(stream->sm_hblock_sz > 0);
+    assert(stream->sm_hblock_sz < test_vals.prefix_sz + test_vals.headers_sz);
+    assert(0 == lsquic_stream_write_avail(stream));
+    assert(stream->sm_qflags & SMQF_WANT_WRITE);
+
+    hblock_sz = stream->sm_hblock_sz;
+    hblock_off = stream->sm_hblock_off;
+    s_onwrite_called = 0;
+    lsquic_stream_dispatch_write_events(stream);
+    assert(0 == s_onwrite_called);
+    assert(stream->sm_hblock_sz == hblock_sz);
+    assert(stream->sm_hblock_off == hblock_off);
 
     lsquic_stream_destroy(stream);
 
@@ -746,6 +787,7 @@ main (int argc, char **argv)
 
     test_flushes_and_closes();
     test_rejects_pending_header_overwrite();
+    test_partially_flushed_header_is_not_writeable();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
     test_pp_wantwrite_restoration(0);
