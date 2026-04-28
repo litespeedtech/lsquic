@@ -495,11 +495,14 @@ maybe_send_settings (struct full_conn *conn)
                                                 settings[n_settings].value);
         ++n_settings;
     }
-    settings[n_settings].id    = SETTINGS_ENABLE_PUSH;
-    settings[n_settings].value = 0;
-    LSQ_DEBUG("sending settings SETTINGS_ENABLE_PUSH=%u",
-                                            settings[n_settings].value);
-    ++n_settings;
+    if (!(conn->fc_flags & FC_SERVER))
+    {
+        settings[n_settings].id    = SETTINGS_ENABLE_PUSH;
+        settings[n_settings].value = 0;
+        LSQ_DEBUG("sending settings SETTINGS_ENABLE_PUSH=%u",
+                                                settings[n_settings].value);
+        ++n_settings;
+    }
 
     if (n_settings)
     {
@@ -4001,6 +4004,12 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 static void
 headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
 {
+    struct full_conn *conn = ctx;
+
+    ABORT_ERROR("received PUSH_PROMISE but push promises have been removed");
+    if (uh->uh_hset)
+        conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
+    free(uh);
 }
 
 

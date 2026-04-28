@@ -4821,7 +4821,7 @@ lsquic_stream_set_stream_if (struct lsquic_stream *stream,
 }
 
 
-static int
+static enum http_error_code
 update_type_hist_and_check (const struct lsquic_stream *stream,
                                                     struct hq_filter *filter)
 {
@@ -4829,7 +4829,7 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
     {
     case HQFT_HEADERS:
         if (filter->hqfi_flags & HQFI_FLAG_TRAILER)
-            return -1;
+            return HEC_FRAME_UNEXPECTED;
         if (filter->hqfi_flags & HQFI_FLAG_DATA)
             filter->hqfi_flags |= HQFI_FLAG_TRAILER;
         else
@@ -4838,35 +4838,36 @@ update_type_hist_and_check (const struct lsquic_stream *stream,
     case HQFT_DATA:
         if ((filter->hqfi_flags & (HQFI_FLAG_HEADER
               | HQFI_FLAG_TRAILER)) != HQFI_FLAG_HEADER)
-            return -1;
+            return HEC_FRAME_UNEXPECTED;
         filter->hqfi_flags |= HQFI_FLAG_DATA;
         break;
     case HQFT_PUSH_PROMISE:
         /* [RFC 9114], Section 7.2.5 (PUSH_PROMISE) */
-        if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT
-                                    && !(stream->sm_bflags & SMBF_SERVER))
-            return 0;
+        if (stream->sm_bflags & SMBF_SERVER)
+            return HEC_FRAME_UNEXPECTED;
+        else if ((stream->id & SIT_MASK) == SIT_BIDI_CLIENT)
+            return HEC_ID_ERROR;    /* We do not support push promises */
         else
-            return -1;
+            return HEC_FRAME_UNEXPECTED;
     case HQFT_CANCEL_PUSH:
     case HQFT_SETTINGS:
     case HQFT_GOAWAY:
     case HQFT_MAX_PUSH_ID:
         /* [RFC 9114], Section 6.2 (Unidirectional Streams) */
-        return -1;
+        return HEC_FRAME_UNEXPECTED;
     case 2: /* HTTP/2 PRIORITY */
     case 6: /* HTTP/2 PING */
     case 8: /* HTTP/2 WINDOW_UPDATE */
     case 9: /* HTTP/2 CONTINUATION */
         /* [RFC 9114], Section 7.2.8 (HTTP/2 Frames) */
-        return -1;
+        return HEC_FRAME_UNEXPECTED;
     case HQFT_PRIORITY_UPDATE_STREAM:
     case HQFT_PRIORITY_UPDATE_PUSH:
         if (stream->sm_bflags & SMBF_HTTP_PRIO)
             /* If we know about Extensible HTTP Priorities, we should check
              * that they do not arrive on any but the control stream:
              */
-            return -1;
+            return HEC_FRAME_UNEXPECTED;
         else
             /* On the other hand, if we do not support Priorities, treat it
              * as an unknown frame:
@@ -4924,6 +4925,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
     const unsigned char *const end = buf + sz;
     struct lsquic_conn *lconn;
     enum lsqpack_read_header_status rhs;
+    enum http_error_code hq_err;
     int s;
 
     while (p < end)
@@ -4960,14 +4962,14 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             LSQ_DEBUG("HQ frame type 0x%"PRIX64" at offset %"PRIu64", size %"PRIu64,
                 filter->hqfi_type, stream->read_offset + (unsigned) (p - buf),
                 filter->hqfi_left);
-            if (0 != update_type_hist_and_check(stream, filter))
+            hq_err = update_type_hist_and_check(stream, filter);
+            if (0 != hq_err)
             {
                 lconn = stream->conn_pub->lconn;
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
                 LSQ_INFO("unexpected HTTP/3 frame sequence");
-                lconn->cn_if->ci_abort_error(lconn, 1, HEC_FRAME_UNEXPECTED,
-                    "unexpected HTTP/3 frame sequence on stream %"PRIu64,
-                    stream->id);
+                lconn->cn_if->ci_abort_error(lconn, 1, hq_err,
+                    "unexpected HTTP/3 frame on stream %"PRIu64, stream->id);
                 goto end;
             }
             if (filter->hqfi_left > 0)
@@ -4977,20 +4979,6 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     if (stream->sm_bflags & SMBF_VERIFY_CL)
                         verify_cl_on_new_data_frame(stream, filter);
                     goto end;
-                }
-                else if (filter->hqfi_type == HQFT_PUSH_PROMISE)
-                {
-                    if (stream->sm_bflags & SMBF_SERVER)
-                    {
-                        lconn = stream->conn_pub->lconn;
-                        lconn->cn_if->ci_abort_error(lconn, 1,
-                            HEC_FRAME_UNEXPECTED, "Received PUSH_PROMISE frame "
-                            "on stream %"PRIu64" (clients are not supposed to "
-                            "send those)", stream->id);
-                        goto end;
-                    }
-                    else
-                        filter->hqfi_state = HQFI_STATE_PUSH_ID_BEGIN;
                 }
             }
             else
