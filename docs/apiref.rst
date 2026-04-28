@@ -1824,14 +1824,14 @@ more information.
     the stream object.  If a previous call to this function produced a header
     block that could not be written out completely, a subsequent call made
     before that pending block is flushed fails with ``-1`` and sets ``errno``
-    to ``EBADMSG``.
+    to ``EAGAIN``.
 
     This is intentional: queuing multiple outbound header sets internally
     would create a second buffering layer with unclear ownership and resource
     limits.  Applications that send more than one header set on a stream, for
     example an informational response followed by the final response, should
-    serialize those calls and let LSQUIC flush the previous header block before
-    calling this function again.
+    serialize those calls and retry after LSQUIC has flushed the previous
+    header block.
 
 Receiving HTTP Headers
 ----------------------
