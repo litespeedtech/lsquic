@@ -1805,7 +1805,7 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 #endif
     QLOG_PACKET_RX(lsquic_conn_log_cid(conn), packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
-    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF))
+    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF | LSCONN_PROMOTE_FAIL))
                     == (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF))
     {
         if (promote_mini_conn(engine, conn, lsquic_time_now()) == -1)

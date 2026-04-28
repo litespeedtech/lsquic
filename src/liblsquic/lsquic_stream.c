@@ -4093,6 +4093,13 @@ send_headers_ietf (struct lsquic_stream *stream,
     enum lsqpack_enc_header_flags hflags;
     int rv;
     const size_t buf_sz = max_push_size + max_prefix_size + MAX_HEADERS_SIZE;
+
+    if (stream->sm_send_headers_state != SSHS_BEGIN || stream->sm_header_block)
+    {
+        LSQ_INFO("cannot send headers while previous header block is pending");
+        errno = EBADMSG;
+        return -1;
+    }
 #ifndef WIN32
     unsigned char buf[buf_sz];
 #else
@@ -4899,6 +4906,8 @@ verify_cl_on_new_data_frame (struct lsquic_stream *stream,
     if (stream->sm_data_in > stream->sm_cont_len)
     {
         lconn = stream->conn_pub->lconn;
+        filter->hqfi_flags |= HQFI_FLAG_ERROR;
+        stream->sm_bflags &= ~SMBF_VERIFY_CL;
         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
             "number of bytes in DATA frames of stream %"PRIu64" exceeds "
             "content-length limit of %llu", stream->id, stream->sm_cont_len);

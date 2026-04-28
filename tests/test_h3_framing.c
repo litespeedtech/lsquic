@@ -4,6 +4,7 @@
  */
 
 #include <assert.h>
+#include <stdarg.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -326,6 +327,25 @@ user_stream_progress (struct lsquic_conn *lconn)
 {
 }
 
+static struct {
+    int         count;
+    int         is_app;
+    unsigned    error_code;
+} s_abort_error;
+
+static void
+abort_error (struct lsquic_conn *lconn, int is_app, unsigned error_code,
+                                                    const char *format, ...)
+{
+    va_list ap;
+
+    ++s_abort_error.count;
+    s_abort_error.is_app = is_app;
+    s_abort_error.error_code = error_code;
+    va_start(ap, format);
+    va_end(ap);
+}
+
 static const struct conn_iface our_conn_if =
 {
     .ci_can_write_ack = can_write_ack,
@@ -333,6 +353,7 @@ static const struct conn_iface our_conn_if =
     .ci_get_path      = get_network_path,
     .ci_ack_snapshot  = ack_snapshot,
     .ci_ack_rollback  = ack_rollback,
+    .ci_abort_error   = abort_error,
     .ci_user_stream_progress = user_stream_progress,
 };
 
@@ -382,6 +403,9 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = &test_ctx;
     tobjs->ctor_flags = stream_ctor_flags;
+    s_abort_error.count = 0;
+    s_abort_error.is_app = 0;
+    s_abort_error.error_code = 0;
     //if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
     {
         lsquic_qeh_init(&tobjs->qeh, &tobjs->lconn);
@@ -1625,6 +1649,47 @@ test_reading_zero_size_data_frame_scenario3 (void)
 }
 
 
+static void
+test_content_length_overrun_blocks_payload_delivery (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    ssize_t nr;
+    int s;
+    unsigned char buf[4];
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.lconn.cn_flags |= LSCONN_SERVER;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    assert(0 == lsquic_stream_verify_len(stream, 1));
+
+    frame = new_frame_in_ext(&tobjs, 0, 4, 1,
+                                    (unsigned char []){ 0, 2, 'a', 'b', });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 0);
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.is_app == 1);
+    assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -1700,6 +1765,7 @@ main (int argc, char **argv)
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
             test_reading_zero_size_data_frame_scenario3();
+            test_content_length_overrun_blocks_payload_delivery();
             break;
         default:
             fprintf(stderr, "Unknown test subset: %d\n", test_subset);
@@ -1718,6 +1784,7 @@ main (int argc, char **argv)
         test_reading_zero_size_data_frame();
         test_reading_zero_size_data_frame_scenario2();
         test_reading_zero_size_data_frame_scenario3();
+        test_content_length_overrun_blocks_payload_delivery();
     }
 
     return 0;

@@ -392,6 +392,48 @@ test_flushes_and_closes (void)
 
 
 static void
+test_rejects_pending_header_overwrite (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    int s;
+    unsigned hblock_sz;
+    unsigned char *header_block;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+    test_vals.status = QWH_PARTIAL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 10;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(stream->sm_send_headers_state != SSHS_BEGIN);
+    assert(stream->sm_hblock_sz == test_vals.prefix_sz + test_vals.headers_sz);
+    assert(stream->sm_header_block);
+
+    hblock_sz = stream->sm_hblock_sz;
+    header_block = stream->sm_header_block;
+    errno = 0;
+    test_vals.prefix_sz = 3;
+    test_vals.headers_sz = 50;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(-1 == s);
+    assert(EBADMSG == errno);
+    assert(stream->sm_hblock_sz == hblock_sz);
+    assert(stream->sm_header_block == header_block);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
 test_headers_wantwrite_restoration (const int want_write)
 {
     struct test_objs tobjs;
@@ -703,6 +745,7 @@ main (int argc, char **argv)
     }
 
     test_flushes_and_closes();
+    test_rejects_pending_header_overwrite();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
     test_pp_wantwrite_restoration(0);

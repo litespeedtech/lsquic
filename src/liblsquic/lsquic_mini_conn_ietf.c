@@ -1275,8 +1275,11 @@ imico_process_ack_frame (IMICO_PROC_FRAME_ARGS)
         next = TAILQ_NEXT(packet_out, po_next);
         if ((1ULL << packet_out->po_packno) & acked)
         {
-            assert(lsquic_packet_out_pns(packet_out) == pns);
-            LSQ_DEBUG("Got ACK for packet %"PRIu64, packet_out->po_packno);
+            if (lsquic_packet_out_pns(packet_out) != pns)
+            {
+                packno = packet_out->po_packno;
+                goto err_never_sent;
+            }
             if (packet_out->po_packno == largest_acked(acki))
                 imico_take_rtt_sample(conn, packet_out,
                                     packet_in->pi_received, acki->lack_delta);
@@ -1688,6 +1691,13 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
      */
     conn->imc_bytes_in += packet_in->pi_data_sz;
     conn->imc_flags &= ~IMC_AMP_CAPPED;
+
+    if (lconn->cn_enc_session == NULL)
+    {
+        assert(lconn->cn_flags & LSCONN_PROMOTE_FAIL);
+        LSQ_DEBUG("ignore incoming packet: crypto session gone (promotion failed?)");
+        return;
+    }
 
     if (conn->imc_flags & IMC_ERROR)
     {
@@ -2324,6 +2334,10 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     enum tick_st tick;
 
+    /* Shortcut promotion: all ticks are now off */
+    if (lconn->cn_flags & (LSCONN_PROMOTED|LSCONN_PROMOTE_FAIL))
+        return TICK_CLOSE;
+
     if (conn->imc_expire < now)
     {
         LSQ_DEBUG("connection expired: closing");
@@ -2350,9 +2364,6 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         }
     }
 
-
-    if (lconn->cn_flags & (LSCONN_PROMOTED|LSCONN_PROMOTE_FAIL))
-        return TICK_CLOSE;
 
     tick = 0;
 

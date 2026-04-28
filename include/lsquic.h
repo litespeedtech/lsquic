@@ -16,7 +16,7 @@
 #include <sys/uio.h>
 #include <time.h>
 #else
-#include <vc_compat.h>
+#include "vc_compat.h"
 #endif
 
 struct sockaddr;
@@ -27,7 +27,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 6
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 3
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
