@@ -4867,7 +4867,8 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
             {
                 lconn = stream->conn_pub->lconn;
                 filter->hqfi_flags |= HQFI_FLAG_ERROR;
-                LSQ_INFO("unexpected HTTP/3 frame sequence");
+                LSQ_INFO("HTTP/3 frame type 0x%"PRIX64" rejected: %u",
+                                                    filter->hqfi_type, hq_err);
                 lconn->cn_if->ci_abort_error(lconn, 1, hq_err,
                     "unexpected HTTP/3 frame on stream %"PRIu64, stream->id);
                 goto end;

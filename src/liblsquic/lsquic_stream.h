@@ -457,10 +457,6 @@ lsquic_stream_frame_in (lsquic_stream_t *, struct stream_frame *frame);
 int
 lsquic_stream_uh_in (lsquic_stream_t *, struct uncompressed_headers *);
 
-void
-lsquic_stream_push_req (lsquic_stream_t *,
-                        struct uncompressed_headers *push_req);
-
 int
 lsquic_stream_rst_in (lsquic_stream_t *, uint64_t offset, uint64_t error_code);
 
