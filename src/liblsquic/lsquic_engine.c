@@ -403,6 +403,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_ptpc_err_thresh = LSQUIC_DF_PTPC_ERR_THRESH;
     settings->es_ptpc_err_divisor= LSQUIC_DF_PTPC_ERR_DIVISOR;
     settings->es_delay_onclose   = LSQUIC_DF_DELAY_ONCLOSE;
+    settings->es_max_delayed_0rtt_packets
+                              = LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS;
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
@@ -502,6 +504,15 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "max batch size is greater than "
                 "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
+        return -1;
+    }
+
+    if (settings->es_max_delayed_0rtt_packets > UCHAR_MAX)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "max delayed 0-RTT packet count "
+                "is greater than the allowed maximum of %u",
+                (unsigned) UCHAR_MAX);
         return -1;
     }
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
@@ -1198,50 +1209,6 @@ new_full_conn_server (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
 }
 
 
-static void
-remove_conn_from_hash (lsquic_engine_t *engine, lsquic_conn_t *conn);
-
-
-static int
-promote_mini_conn (lsquic_engine_t *engine, lsquic_conn_t *mini_conn,
-                                                        lsquic_time_t now)
-{
-    lsquic_conn_t *new_conn;
-    EV_LOG_CONN_EVENT(lsquic_conn_log_cid( mini_conn ),
-                                        "promote to full conn");
-    assert( mini_conn->cn_flags & LSCONN_MINI);
-
-    lsquic_mini_conn_ietf_pre_promote((struct ietf_mini_conn *)mini_conn, now);
-
-    new_conn = new_full_conn_server(engine, mini_conn, now);
-    if (new_conn)
-    {
-        new_conn->cn_last_sent = engine->last_sent;
-        eng_hist_inc(&engine->history, now, sl_new_full_conns);
-        mini_conn->cn_flags |= LSCONN_PROMOTED;
-        assert(engine->curr_conn == mini_conn);
-        engine->curr_conn = new_conn;
-
-        if (mini_conn->cn_flags & LSCONN_ATTQ)
-        {
-            lsquic_attq_remove(engine->attq, mini_conn);
-            (void) engine_decref_conn(engine, mini_conn, LSCONN_ATTQ);
-        }
-        if (mini_conn->cn_flags & LSCONN_HASHED)
-            remove_conn_from_hash(engine, mini_conn);
-
-        if (!(new_conn->cn_flags & LSCONN_TICKABLE))
-        {
-            lsquic_mh_insert(&engine->conns_tickable, new_conn,
-                            new_conn->cn_last_ticked);
-            engine_incref_conn(new_conn, LSCONN_TICKABLE);
-        }
-        return 0;
-    }
-    return -1;
-}
-
-
 static enum
 {
     VER_NOT_SPECIFIED,
@@ -1805,12 +1772,6 @@ process_packet_in (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
 #endif
     QLOG_PACKET_RX(lsquic_conn_log_cid(conn), packet_in, packet_in_data, packet_in_size);
     lsquic_packet_in_put(&engine->pub.enp_mm, packet_in);
-    if ((conn->cn_flags & (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF | LSCONN_PROMOTE_FAIL))
-                    == (LSCONN_MINI | LSCONN_HANDSHAKE_DONE | LSCONN_IETF))
-    {
-        if (promote_mini_conn(engine, conn, lsquic_time_now()) == -1)
-            conn->cn_flags |= LSCONN_PROMOTE_FAIL;
-    }
     return 0;
 }
 

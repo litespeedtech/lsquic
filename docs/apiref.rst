@@ -899,6 +899,16 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_MAX_BATCH_SIZE`
 
+    .. member:: unsigned        es_max_delayed_0rtt_packets
+
+       Maximum number of 0-RTT packets a server-side mini connection will
+       delay after the handshake has completed and promotion to a full
+       connection is pending.
+
+       This setting is applicable to IETF QUIC servers only.
+
+       Default value is :macro:`LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS`
+
     .. member:: int             es_check_tp_sanity
 
        When true, sanity checks are performed on peer's transport parameter
@@ -1147,6 +1157,11 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
     By default, maximum batch size is not specified, leaving it up to the
     library.
+
+.. macro:: LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS
+
+    By default, a server-side mini connection delays up to 32 0-RTT packets
+    while promotion to a full connection is pending.
 
 .. macro:: LSQUIC_DF_CHECK_TP_SANITY
 

@@ -40,7 +40,7 @@ enum lsquic_conn_flags {
     LSCONN_HASHED         = (1 << 2),
     LSCONN_MINI           = (1 << 3),   /* This is a mini connection */
     LSCONN_IMMED_CLOSE    = (1 << 4),
-    LSCONN_PROMOTE_FAIL   = (1 << 5),
+    LSCONN_UNUSED_5       = (1 << 5),
     LSCONN_HANDSHAKE_DONE = (1 << 6),
     LSCONN_CLOSING        = (1 << 7),
     LSCONN_PEER_GOING_AWAY= (1 << 8),
