@@ -747,7 +747,7 @@ test_read_headers (int ietf, int use_hset)
 
 
 static void
-test_multiple_hsets_fifo (void)
+test_multiple_hsets_fifo (int ietf)
 {
     struct test_objs tobjs;
     struct lsquic_stream *stream;
@@ -757,7 +757,7 @@ test_multiple_hsets_fifo (void)
     unsigned i;
     int s;
 
-    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+    init_test_objs(&tobjs, 0x1000, 0x1000, ietf ? SCF_IETF : 0);
     tobjs.stream_if = &stream_if_on_hset;
 
     s_on_hset_in_count = 0;
@@ -892,7 +892,8 @@ main (int argc, char **argv)
     test_read_headers(0, 1);
     test_read_headers(1, 0);
     test_read_headers(1, 1);
-    test_multiple_hsets_fifo();
+    test_multiple_hsets_fifo(0);
+    test_multiple_hsets_fifo(1);
     test_read_headers_http1x();
 
     return 0;

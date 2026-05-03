@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/queue.h>
 
 #include "lsquic.h"
 #include "lsquic_headers.h"

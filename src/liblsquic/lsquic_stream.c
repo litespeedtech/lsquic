@@ -4527,6 +4527,8 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         else
             LSQ_NOTICE("don't know how to depend on stream %"PRIu64,
                                                         uh->uh_oth_stream_id);
+        if (stream->stream_if->on_hset_in)
+            stream->stream_if->on_hset_in(stream, stream->st_ctx);
         return 0;
     }
     else
