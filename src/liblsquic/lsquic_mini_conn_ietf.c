@@ -1533,7 +1533,10 @@ imico_maybe_delay_processing (struct ietf_mini_conn *conn,
 {
     unsigned max_delayed;
 
-    if (conn->imc_flags & IMC_ADDR_VALIDATED)
+    if (conn->imc_flags & IMC_HSK_OK)
+        max_delayed =
+            conn->imc_enpub->enp_settings.es_max_delayed_0rtt_packets;
+    else if (conn->imc_flags & IMC_ADDR_VALIDATED)
         max_delayed = IMICO_MAX_DELAYED_PACKETS_VALIDATED;
     else
         max_delayed = IMICO_MAX_DELAYED_PACKETS_UNVALIDATED;
@@ -1691,13 +1694,6 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
      */
     conn->imc_bytes_in += packet_in->pi_data_sz;
     conn->imc_flags &= ~IMC_AMP_CAPPED;
-
-    if (lconn->cn_enc_session == NULL)
-    {
-        assert(lconn->cn_flags & LSCONN_PROMOTE_FAIL);
-        LSQ_DEBUG("ignore incoming packet: crypto session gone (promotion failed?)");
-        return;
-    }
 
     if (conn->imc_flags & IMC_ERROR)
     {
@@ -2139,22 +2135,6 @@ imico_generate_acks (struct ietf_mini_conn *conn, lsquic_time_t now)
 }
 
 
-int
-lsquic_mini_conn_ietf_pre_promote(struct ietf_mini_conn *conn,
-                                  lsquic_time_t now)
-{
-    if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
-    {
-        if (0 != imico_generate_acks(conn, now))
-        {
-            conn->imc_flags |= IMC_ERROR;
-            return -1;
-        }
-    }
-    return 0;
-}
-
-
 static void
 imico_generate_conn_close (struct ietf_mini_conn *conn)
 {
@@ -2334,8 +2314,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     struct ietf_mini_conn *conn = (struct ietf_mini_conn *) lconn;
     enum tick_st tick;
 
-    /* Shortcut promotion: all ticks are now off */
-    if (lconn->cn_flags & (LSCONN_PROMOTED|LSCONN_PROMOTE_FAIL))
+    if (lconn->cn_flags & LSCONN_PROMOTED)
         return TICK_CLOSE;
 
     if (conn->imc_expire < now)
