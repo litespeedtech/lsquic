@@ -1,3 +1,7 @@
+2026-05-02
+    - 4.6.4
+    - [IMPROVEMENT] Use EAGAIN for pending headers (follow up to 4.6.3)
+
 2026-04-27
     - 4.6.3
     - [FIX] Reject overlapping header sends, making code safer.

@@ -27,7 +27,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 6
-#define LSQUIC_PATCH_VERSION 3
+#define LSQUIC_PATCH_VERSION 4
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -236,6 +236,11 @@ struct lsquic_stream_if {
     void (*on_conncloseframe_received)(lsquic_conn_t *c,
                                        int app_error, uint64_t error_code,
                                        const char *reason, int reason_len);
+    /**
+     * Optional callback is called when a new header set becomes available.
+     * The user may pick it off immediately using lsquic_stream_get_hset().
+     */
+    void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
 };
 
 struct ssl_ctx_st;
@@ -465,6 +470,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  * library.
  */
 #define LSQUIC_DF_MAX_BATCH_SIZE 0
+
+/** Default number of 0-RTT packets to delay while promotion is pending. */
+#define LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS 32
 
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
@@ -1124,6 +1132,15 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_BATCH_SIZE
      */
     unsigned        es_max_batch_size;
+
+    /**
+     * Maximum number of 0-RTT packets a server-side mini connection will
+     * delay after the handshake has completed and promotion to a full
+     * connection is pending.
+     *
+     * Default value is @ref LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS.
+     */
+    unsigned        es_max_delayed_0rtt_packets;
 
     /**
      * When true, sanity checks are performed on peer's transport parameter

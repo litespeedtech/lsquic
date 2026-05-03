@@ -2248,6 +2248,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
         }
         break;
     case 24:
+        if (0 == strncmp(name, "max_delayed_0rtt_packets", 24))
+        {
+            settings->es_max_delayed_0rtt_packets = atoi(val);
+            return 0;
+        }
         if (0 == strncmp(name, "init_max_stream_data_uni", 24))
         {
             settings->es_init_max_stream_data_uni = atoi(val);
