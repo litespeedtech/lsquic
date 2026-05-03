@@ -5212,22 +5212,6 @@ lsquic_stream_is_rejected (const struct lsquic_stream *stream)
 
 
 int
-lsquic_stream_can_push (const struct lsquic_stream *stream)
-{
-    return 0;
-}
-
-
-int
-lsquic_stream_push_promise (struct lsquic_stream *stream,
-                                                struct push_promise *promise)
-{
-    LSQ_INFO("push promises are not supported");
-    return -1;
-}
-
-
-int
 lsquic_stream_verify_len (struct lsquic_stream *stream,
                                                 unsigned long long cont_len)
 {

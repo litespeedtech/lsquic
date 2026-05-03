@@ -56,11 +56,6 @@ lsquic_frame_writer_write_priority (struct lsquic_frame_writer *,
                 lsquic_stream_id_t stream_id, int exclusive,
                 lsquic_stream_id_t stream_dep_id, unsigned priority);
 
-int
-lsquic_frame_writer_write_promise (struct lsquic_frame_writer *,
-        lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-        const struct lsquic_http_headers *headers);
-
 void
 lsquic_frame_writer_max_header_list_size (struct lsquic_frame_writer *,
                                           uint32_t max_size);

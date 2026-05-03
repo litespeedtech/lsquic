@@ -266,14 +266,6 @@ headers_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-headers_on_push_promise (void *ctx, struct uncompressed_headers *uh)
-{
-    struct headers_stream *hs = ctx;
-    hs->hs_callbacks->hsc_on_push_promise(hs->hs_cb_ctx, uh);
-}
-
-
-static void
 headers_on_priority (void *ctx, lsquic_stream_id_t stream_id, int exclusive,
                      lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
@@ -339,10 +331,7 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
         LSQ_INFO("got setting enable_push: %u", setting_value);
         if (hs->hs_flags & HS_IS_SERVER)
         {
-            if (setting_value <= 1)
-                hs->hs_callbacks->hsc_on_enable_push(hs->hs_cb_ctx,
-                                                            setting_value);
-            else
+            if (setting_value > 1)
             {
                 LSQ_INFO("invalid value of enable_push");
                 hs->hs_callbacks->hsc_on_conn_error(hs->hs_cb_ctx);
@@ -370,29 +359,6 @@ headers_on_settings (void *ctx, uint16_t setting_id, uint32_t setting_value)
 }
 
 
-int
-lsquic_headers_stream_push_promise (struct headers_stream *hs,
-        lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
-        const struct lsquic_http_headers *headers)
-{
-    uint32_t stream_id = stream_id64;
-    uint32_t promised_stream_id = promised_stream_id64;
-    int s;
-    LSQ_DEBUG("promising stream %u in response to stream %u",
-                                            promised_stream_id, stream_id);
-    s = lsquic_frame_writer_write_promise(hs->hs_fw, stream_id,
-                                                promised_stream_id, headers);
-    if (0 == s)
-    {
-        lsquic_stream_wantwrite(hs->hs_stream,
-            lsquic_frame_writer_have_leftovers(hs->hs_fw));
-    }
-    else
-        LSQ_INFO("Error writing push promise: %s", strerror(errno));
-    return s;
-}
-
-
 size_t
 lsquic_headers_stream_mem_used (const struct headers_stream *hs)
 {
@@ -416,11 +382,9 @@ lsquic_headers_stream_get_stream (const struct headers_stream *hs)
 
 static const struct frame_reader_callbacks frame_callbacks = {
     .frc_on_headers      = headers_on_incoming_headers,
-    .frc_on_push_promise = headers_on_push_promise,
     .frc_on_error        = headers_on_error,
     .frc_on_settings     = headers_on_settings,
     .frc_on_priority     = headers_on_priority,
 };
 
 static const struct frame_reader_callbacks *frame_callbacks_ptr = &frame_callbacks;
-

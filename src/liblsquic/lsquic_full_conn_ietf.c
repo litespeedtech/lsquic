@@ -496,20 +496,16 @@ struct ietf_full_conn
             struct lsquic_stream   *crypto_streams[N_ENC_LEVS];
             struct ver_neg
                         ifcli_ver_neg;
-            uint64_t    ifcli_max_push_id;
             uint64_t    ifcli_min_goaway_stream_id;
             enum {
-                IFCLI_PUSH_ENABLED    = 1 << 0,
-                IFCLI_HSK_SENT_OR_DEL = 1 << 1,
+                IFCLI_HSK_SENT_OR_DEL = 1 << 0,
             }           ifcli_flags;
             unsigned    ifcli_packets_out;
         }                           cli;
         struct {
             uint64_t    ifser_max_push_id;
-            uint64_t    ifser_next_push_id;
             enum {
-                IFSER_PUSH_ENABLED    = 1 << 0,
-                IFSER_MAX_PUSH_ID     = 1 << 1,   /* ifser_max_push_id is set */
+                IFSER_MAX_PUSH_ID     = 1 << 0,   /* ifser_max_push_id is set */
             }           ifser_flags;
         }                           ser;
     }                           ifc_u;

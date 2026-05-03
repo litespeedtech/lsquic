@@ -31,7 +31,7 @@
 #include "lsquic_logger.h"
 
 
-/* headers_state is used by HEADERS, PUSH_PROMISE, and CONTINUATION frames */
+/* headers_state is used by HEADERS and CONTINUATION frames */
 struct headers_state
 {
     enum http_frame_type
@@ -39,9 +39,7 @@ struct headers_state
     unsigned        nread;  /* Not counting pesw, only payload and padding */
 
     /* Values parsed out from pesw buffer: */
-    uint32_t        oth_stream_id;  /* For HEADERS: ID of stream we depend on;
-                                     * for PUSH_PROMISE: promised stream ID.
-                                     */
+    uint32_t        oth_stream_id;  /* For HEADERS: ID of stream we depend on */
     unsigned short  weight;         /* HEADERS only */
     signed char     exclusive;      /* HEADERS only */
     unsigned char   pad_length;
@@ -49,8 +47,7 @@ struct headers_state
     unsigned char   pseh;
 
     /* PESW: Pad length, Exclusive, Stream Dependency, Weight.  This is at
-     * most six bytes for HEADERS frame (RFC 7540, page 33) and five bytes
-     * for PUSH_PROMISE frame (Ibid, p. 40).
+     * most six bytes for HEADERS frame (RFC 7540, page 33).
      */
     unsigned char   pesw_size;
     unsigned char   pesw_nread;
@@ -88,7 +85,6 @@ struct reader_state
     enum {
         READER_SKIP,
         READER_HEADERS,
-        READER_PUSH_PROMISE,
         READER_CONTIN,
         READER_SETTINGS,
         READER_PRIORITY,
@@ -115,8 +111,8 @@ struct lsquic_frame_reader
     const struct lsquic_hset_if     *fr_hsi_if;
     void                            *fr_hsi_ctx;
     struct http1x_ctor_ctx           fr_h1x_ctor_ctx;
-    /* The the header block is shared between HEADERS, PUSH_PROMISE, and
-     * CONTINUATION frames.  It gets added to as block fragments come in.
+    /* The header block is shared between HEADERS and CONTINUATION frames.
+     * It gets added to as block fragments come in.
      */
     unsigned char                   *fr_header_block;
 #if LSQUIC_CONN_STATS
@@ -258,7 +254,6 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
     if (fr->fr_state.header.hfh_type != HTTP_FRAME_CONTINUATION &&
         (fr->fr_flags & FRF_HAVE_PREV) &&
         (fr->fr_prev_frame_type == HTTP_FRAME_HEADERS      ||
-         fr->fr_prev_frame_type == HTTP_FRAME_PUSH_PROMISE ||
          fr->fr_prev_frame_type == HTTP_FRAME_CONTINUATION    ) &&
         0 == (fr->fr_prev_hfh_flags & HFHF_END_HEADERS))
     {
@@ -307,39 +302,10 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
         fr->fr_state.reader_type = READER_HEADERS;
         break;
     case HTTP_FRAME_PUSH_PROMISE:
-        if (fr->fr_flags & FRF_SERVER)
-        {
-            LSQ_INFO("clients should not push promised");
-            fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, stream_id,
+        LSQ_INFO("received PUSH_PROMISE but push promises are not supported");
+        fr->fr_callbacks->frc_on_error(fr->fr_cb_ctx, stream_id,
                                                     FR_ERR_UNEXPECTED_PUSH);
-            return -1;
-        }
-        if (fr->fr_max_headers_sz &&
-            fr->fr_state.payload_length > fr->fr_max_headers_sz)
-            goto headers_too_large;
-        fr->fr_state.by_type.headers_state.frame_type = HTTP_FRAME_PUSH_PROMISE;
-        fr->fr_state.by_type.headers_state.nread = 0;
-        fr->fr_state.by_type.headers_state.pesw_nread = 0;
-        fr->fr_state.by_type.headers_state.pseh = 0;
-        if (fr->fr_state.header.hfh_flags & HFHF_PADDED)
-            fr->fr_state.by_type.headers_state.pesw_size = 5;
-        else
-        {
-            fr->fr_state.by_type.headers_state.pad_length = 0;
-            fr->fr_state.by_type.headers_state.pesw_size = 4;
-        }
-        LSQ_DEBUG("pesw size: %u; payload length: %u; flags: 0x%X",
-            fr->fr_state.by_type.headers_state.pesw_size,
-            fr->fr_state.payload_length, fr->fr_state.header.hfh_flags);
-        if (fr->fr_state.by_type.headers_state.pesw_size >
-                                        fr->fr_state.payload_length)
-        {
-            LSQ_INFO("Invalid headers frame: payload length too small");
-            errno = EBADMSG;
-            return -1;
-        }
-        fr->fr_state.reader_type = READER_PUSH_PROMISE;
-        break;
+        return -1;
     case HTTP_FRAME_CONTINUATION:
         if (0 == (fr->fr_flags & FRF_HAVE_PREV))
         {
@@ -347,7 +313,6 @@ prepare_for_payload (struct lsquic_frame_reader *fr)
             return -1;
         }
         if (!(fr->fr_prev_frame_type == HTTP_FRAME_HEADERS      ||
-              fr->fr_prev_frame_type == HTTP_FRAME_PUSH_PROMISE ||
               fr->fr_prev_frame_type == HTTP_FRAME_CONTINUATION))
         {
             LSQ_INFO("Framing error: unexpected CONTINUATION");
@@ -591,7 +556,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
         }
     }
     hset = fr->fr_hsi_if->hsi_create_header_set(fr->fr_hsi_ctx, target_stream,
-                            READER_PUSH_PROMISE == fr->fr_state.reader_type);
+                            0);
     if (!hset)
     {
         err = FR_ERR_OTHER_ERROR;
@@ -658,20 +623,9 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
                                                 sizeof(stream_id32));
     uh->uh_stream_id     = ntohl(stream_id32);
     uh->uh_oth_stream_id = hs->oth_stream_id;
-    if (HTTP_FRAME_HEADERS == fr->fr_state.by_type.headers_state.frame_type)
-    {
-        uh->uh_weight    = hs->weight;
-        uh->uh_exclusive = hs->exclusive;
-        uh->uh_flags     = 0;
-    }
-    else
-    {
-        assert(HTTP_FRAME_PUSH_PROMISE ==
-                                fr->fr_state.by_type.headers_state.frame_type);
-        uh->uh_weight    = 0;   /* Zero unused value */
-        uh->uh_exclusive = 0;   /* Zero unused value */
-        uh->uh_flags     = UH_PP;
-    }
+    uh->uh_weight    = hs->weight;
+    uh->uh_exclusive = hs->exclusive;
+    uh->uh_flags     = 0;
     if (fr->fr_state.header.hfh_flags & HFHF_END_STREAM)
         uh->uh_flags    |= UH_FIN;
     if (fr->fr_hsi_if == lsquic_http1x_if)
@@ -679,10 +633,7 @@ decode_and_pass_payload (struct lsquic_frame_reader *fr)
     uh->uh_hset = hset;
 
     EV_LOG_HTTP_HEADERS_IN(LSQUIC_LOG_CONN_ID, fr->fr_flags & FRF_SERVER, uh);
-    if (HTTP_FRAME_HEADERS == fr->fr_state.by_type.headers_state.frame_type)
-        fr->fr_callbacks->frc_on_headers(fr->fr_cb_ctx, uh);
-    else
-        fr->fr_callbacks->frc_on_push_promise(fr->fr_cb_ctx, uh);
+    fr->fr_callbacks->frc_on_headers(fr->fr_cb_ctx, uh);
 #if LSQUIC_CONN_STATS
     fr->fr_conn_stats->in.headers_comp += fr->fr_header_block_sz;
 #endif
@@ -803,48 +754,6 @@ read_headers (struct lsquic_frame_reader *fr)
 
 
 static int
-read_push_promise_pesw (struct lsquic_frame_reader *fr)
-{
-    struct headers_state *hs = &fr->fr_state.by_type.headers_state;
-    ssize_t nr = fr->fr_read(fr->fr_stream, hs->pesw + hs->pesw_nread,
-                                            hs->pesw_size - hs->pesw_nread);
-    if (nr <= 0)
-        RETURN_ERROR(nr);
-    hs->pesw_nread += nr;
-    if (hs->pesw_nread == hs->pesw_size)
-    {
-        unsigned char *p = hs->pesw;
-        if (fr->fr_state.header.hfh_flags & HFHF_PADDED)
-            hs->pad_length = *p++;
-        p[0] &= ~0x80;  /* Clear reserved bit.  Note: modifying pesw buffer. */
-        memcpy(&hs->oth_stream_id, p, sizeof(hs->oth_stream_id));
-        hs->oth_stream_id = ntohl(hs->oth_stream_id);
-        p += 4;
-        assert(p - hs->pesw == hs->pesw_size);
-        if (hs->pesw_size + hs->pad_length > fr->fr_state.payload_length)
-        {
-            LSQ_INFO("Invalid PUSH_PROMISE frame: pesw length and padding length "
-                    "are larger than the payload length");
-            errno = EBADMSG;
-            return -1;
-        }
-    }
-    return 0;
-}
-
-
-static int
-read_push_promise (struct lsquic_frame_reader *fr)
-{
-    struct headers_state *hs = &fr->fr_state.by_type.headers_state;
-    if (hs->pesw_nread < hs->pesw_size)
-        return read_push_promise_pesw(fr);
-    else
-        return read_headers_block_fragment_and_padding(fr);
-}
-
-
-static int
 read_contin (struct lsquic_frame_reader *fr)
 {
     struct headers_state *hs = &fr->fr_state.by_type.headers_state;
@@ -954,8 +863,6 @@ read_payload (struct lsquic_frame_reader *fr)
     {
     case READER_HEADERS:
         return read_headers(fr);
-    case READER_PUSH_PROMISE:
-        return read_push_promise(fr);
     case READER_CONTIN:
         return read_contin(fr);
     case READER_SETTINGS:

@@ -30,9 +30,6 @@ struct headers_stream_callbacks
 {
     void (*hsc_on_headers)
                     (void *frame_cb_ctx, struct uncompressed_headers *);
-    void (*hsc_on_enable_push)  (void *hs_cb_ctx, int enable_push);
-    void (*hsc_on_push_promise)
-                    (void *frame_cb_ctx, struct uncompressed_headers *);
     void (*hsc_on_priority)     (void *hs_cb_ctx, lsquic_stream_id_t stream_id,
             int exclusive, lsquic_stream_id_t dep_stream_id, unsigned weight);
     void (*hsc_on_stream_error) (void *hs_cb_ctx, lsquic_stream_id_t stream_id);
@@ -56,11 +53,6 @@ lsquic_headers_stream_send_headers (struct headers_stream *hs,
                                 lsquic_stream_id_t stream_id,
                                 const struct lsquic_http_headers *, int eos,
                                 unsigned weight);
-
-int
-lsquic_headers_stream_push_promise (struct headers_stream *hs,
-            lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-                        const struct lsquic_http_headers *);
 
 int
 lsquic_headers_stream_send_priority (struct headers_stream *hs,

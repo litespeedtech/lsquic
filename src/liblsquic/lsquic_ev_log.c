@@ -523,25 +523,6 @@ lsquic_ev_log_generated_http_headers (const lsquic_cid_t *cid,
 
 
 void
-lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *cid,
-            lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id, 
-            const struct lsquic_http_headers *headers)
-{
-    int i;
-
-    LCID("generated HTTP PUSH_PROMISE for stream %"PRIu64"; promised stream %"
-        PRIu64, stream_id, promised_stream_id);
-
-    for (i = 0; i < headers->count; ++i)
-        if (headers->headers[i].buf)
-            LCID("  %.*s: %.*s",
-                (int)    headers->headers[i].name_len,
-                lsxpack_header_get_name(&headers->headers[i]),
-                (int)    headers->headers[i].val_len,
-                lsxpack_header_get_value(&headers->headers[i]));
-}
-
-void
 lsquic_ev_log_create_connection (const lsquic_cid_t *cid,
                                     const struct sockaddr *local_sa,
                                     const struct sockaddr *peer_sa)

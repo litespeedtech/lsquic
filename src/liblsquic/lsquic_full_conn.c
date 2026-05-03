@@ -3958,12 +3958,6 @@ headers_stream_on_stream_error (void *ctx, lsquic_stream_id_t stream_id)
 
 
 static void
-headers_stream_on_enable_push (void *ctx, int enable_push)
-{
-}
-
-
-static void
 headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 {
     struct full_conn *conn = ctx;
@@ -3995,18 +3989,6 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
     return;
 
   free_uh:
-    if (uh->uh_hset)
-        conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
-    free(uh);
-}
-
-
-static void
-headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
-{
-    struct full_conn *conn = ctx;
-
-    ABORT_ERROR("received PUSH_PROMISE but push promises have been removed");
     if (uh->uh_hset)
         conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
     free(uh);
@@ -4370,11 +4352,9 @@ full_conn_ci_log_stats (struct lsquic_conn *lconn)
 static const struct headers_stream_callbacks headers_callbacks =
 {
     .hsc_on_headers      = headers_stream_on_incoming_headers,
-    .hsc_on_push_promise = headers_stream_on_push_promise,
     .hsc_on_priority     = headers_stream_on_priority,
     .hsc_on_stream_error = headers_stream_on_stream_error,
     .hsc_on_conn_error   = headers_stream_on_conn_error,
-    .hsc_on_enable_push  = headers_stream_on_enable_push,
 };
 
 static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_callbacks;

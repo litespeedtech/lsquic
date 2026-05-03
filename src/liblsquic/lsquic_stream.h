@@ -15,7 +15,6 @@ enum swtp_status;
 struct frame_gen_ctx;
 struct data_frame;
 enum quic_frame_type;
-struct push_promise;
 union hblock_ctx;
 struct lsquic_packet_out;
 struct lsquic_send_ctl;
@@ -247,9 +246,7 @@ enum stream_flags {
 };
 
 
-/* By keeping this number low, we make sure that the code to allocate HQ
- * frames dynamically gets exercised whenever push promises are sent.
- */
+/* Keep this low to exercise dynamic allocation of HQ frames. */
 #define NUM_ALLOCED_HQ_FRAMES 2
 
 
@@ -313,7 +310,6 @@ struct lsquic_stream
 
     STAILQ_HEAD(, uncompressed_headers)
                                     uh;
-    struct uncompressed_headers    *push_req;
     union hblock_ctx               *sm_hblock_ctx;
 
     unsigned char                  *sm_buf;
@@ -624,12 +620,6 @@ lsquic_stream_max_stream_data_sent (struct lsquic_stream *);
 
 void
 lsquic_stream_qdec_unblocked (struct lsquic_stream *);
-
-int
-lsquic_stream_can_push (const struct lsquic_stream *);
-
-int
-lsquic_stream_push_promise (struct lsquic_stream *, struct push_promise *);
 
 void
 lsquic_stream_force_finish (struct lsquic_stream *);

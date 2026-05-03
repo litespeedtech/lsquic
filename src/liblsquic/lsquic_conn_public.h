@@ -44,7 +44,6 @@ struct lsquic_conn_public {
             struct qpack_enc_hdl *qeh;
             struct qpack_dec_hdl *qdh;
             struct hcso_writer   *hcso;
-            struct lsquic_hash   *promises;
         }                       ietf;
     }                               u;
     enum {
