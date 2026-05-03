@@ -246,7 +246,7 @@ enum stream_flags {
 };
 
 
-/* Keep this low to exercise dynamic allocation of HQ frames. */
+/* Two inline HQ frames cover the vast majority of cases. */
 #define NUM_ALLOCED_HQ_FRAMES 2
 
 
