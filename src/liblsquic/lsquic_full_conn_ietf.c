@@ -8986,7 +8986,8 @@ on_cancel_push_client (void *ctx, uint64_t push_id)
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
                                                                     push_id);
-    ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR,
+    /* [RFC 9114] Section 7.2.3 (CANCEL_PUSH) */
+    ABORT_QUIETLY(1, HEC_ID_ERROR,
                             "received CANCEL_PUSH but push is not enabled");
 }
 
@@ -8998,7 +8999,8 @@ on_cancel_push_server (void *ctx, uint64_t push_id)
 
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received CANCEL_PUSH(%"PRIu64")",
                                                                     push_id);
-    ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR,
+    /* [RFC 9114] Section 7.2.3 (CANCEL_PUSH) */
+    ABORT_QUIETLY(1, HEC_ID_ERROR,
                             "received CANCEL_PUSH but push is not enabled");
 }
 
@@ -9551,6 +9553,24 @@ static const struct lsquic_stream_if hcsi_if =
 
 
 static void
+abort_push_stream (struct ietf_full_conn *conn)
+{
+    if (conn->ifc_flags & IFC_SERVER)
+    {
+        /* [RFC 9114] Section 6.2.2 (Push Streams) */
+        ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR,
+            "clients can't open push streams");
+    }
+    else
+    {
+        /* [RFC 9114] Section 4.6 (Server Push) */
+        ABORT_QUIETLY(1, HEC_ID_ERROR,
+            "received push stream but no MAX_PUSH_ID was sent");
+    }
+}
+
+
+static void
 apply_uni_stream_class (struct ietf_full_conn *conn,
                             struct lsquic_stream *stream, uint64_t stream_type)
 {
@@ -9605,17 +9625,7 @@ apply_uni_stream_class (struct ietf_full_conn *conn,
         }
         break;
     case HQUST_PUSH:
-        if (conn->ifc_flags & IFC_SERVER)
-        {
-            ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR,
-                "clients can't open push streams");
-        }
-        else
-        {
-            LSQ_DEBUG("Refuse push stream %"PRIu64, stream->id);
-            maybe_schedule_ss_for_stream(conn, stream->id,
-                                                        HEC_REQUEST_CANCELLED);
-        }
+        abort_push_stream(conn);
         lsquic_stream_close(stream);
         break;
     default:
@@ -9737,5 +9747,41 @@ static const struct lsquic_stream_if unicla_if =
 
 
 static const struct lsquic_stream_if *unicla_if_ptr = &unicla_if;
+
+void
+lsquic_ietf_full_conn_test_push_disabled (unsigned results[5])
+{
+    enum {
+        CANCEL_PUSH_CLIENT,
+        CANCEL_PUSH_SERVER,
+        PUSH_STREAM_CLIENT,
+        PUSH_STREAM_SERVER,
+        PUSH_STREAM_CLIENT_STOP_SENDING,
+    };
+    struct ietf_full_conn conn;
+
+    memset(&conn, 0, sizeof(conn));
+    on_cancel_push_client(&conn, 0);
+    results[CANCEL_PUSH_CLIENT] = conn.ifc_error.u.err;
+    free(conn.ifc_errmsg);
+
+    memset(&conn, 0, sizeof(conn));
+    on_cancel_push_server(&conn, 0);
+    results[CANCEL_PUSH_SERVER] = conn.ifc_error.u.err;
+    free(conn.ifc_errmsg);
+
+    memset(&conn, 0, sizeof(conn));
+    abort_push_stream(&conn);
+    results[PUSH_STREAM_CLIENT] = conn.ifc_error.u.err;
+    results[PUSH_STREAM_CLIENT_STOP_SENDING] =
+                            !!(conn.ifc_send_flags & SF_SEND_STOP_SENDING);
+    free(conn.ifc_errmsg);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER;
+    abort_push_stream(&conn);
+    results[PUSH_STREAM_SERVER] = conn.ifc_error.u.err;
+    free(conn.ifc_errmsg);
+}
 
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];

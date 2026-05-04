@@ -606,16 +606,8 @@ struct lsquic_engine_settings {
     int             es_support_srej;
 
     /**
-     * Setting this value to 0 means that
-     *
-     * For client:
-     *  a) we send a SETTINGS frame to indicate that we do not support server
-     *     push; and
-     *  b) All incoming pushed streams get reset immediately.
-     * (For maximum effect, set es_max_streams_in to 0.)
-     *
-     * For server:
-     *  lsquic_conn_push_stream() will return -1.
+     * Server push is not supported.  lsquic_conn_is_push_enabled() returns
+     * false and lsquic_conn_push_stream() returns 1.
      */
     int             es_support_push;
 
