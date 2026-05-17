@@ -1,3 +1,9 @@
+2026-05-16
+    - 4.7.0
+    - [IMPROVEMENT, API] Refactor: drop mini-conn promotion shortcut.
+    - [IMPROVEMENT, API] Improve multiple incoming header set handling.
+    - Remove unused push promise support.  API stays unchanged for now.
+
 2026-05-02
     - 4.6.4
     - [IMPROVEMENT] Use EAGAIN for pending headers (follow up to 4.6.3)

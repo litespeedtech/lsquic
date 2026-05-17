@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 6
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_MINOR_VERSION 7
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
