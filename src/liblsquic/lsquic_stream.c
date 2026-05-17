@@ -2875,8 +2875,7 @@ static void
     if (stream->sm_http_dg
             && stream->sm_http_dg->write.header_len)
         return http_dg_capsule_on_write;
-    if (0 == (stream->stream_flags & STREAM_PUSHING)
-                    && SSHS_HBLOCK_SENDING != stream->sm_send_headers_state)
+    if (SSHS_HBLOCK_SENDING != stream->sm_send_headers_state)
         /* Common case */
         return stream->stream_if->on_write;
     else
@@ -5135,10 +5134,7 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
         stream->stream_flags |= STREAM_HAVE_UH;
         if (uh->uh_flags & UH_FIN)
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
-        next = &stream->uh;
-        while(*next)
-            next = &(*next)->uh_next;
-        *next = uh;
+        STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
@@ -5181,10 +5177,7 @@ stream_uh_in_ietf (struct lsquic_stream *stream,
                                             && lsquic_stream_is_pushed(stream));
             stream->stream_flags |= STREAM_FIN_RECVD|STREAM_HEAD_IN_FIN;
         }
-        next = &stream->uh;
-        while(*next)
-            next = &(*next)->uh_next;
-        *next = uh;
+        STAILQ_INSERT_TAIL(&stream->uh, uh, uh_next);
         if (uh->uh_oth_stream_id == 0)
         {
             if (uh->uh_weight)
