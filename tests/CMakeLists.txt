@@ -53,6 +53,7 @@ SET(TESTS
     packno_len
     parse_packet_in
     purga
+    push_disabled
     qlog
     quic_be_floats
     reg_pkt_headergen

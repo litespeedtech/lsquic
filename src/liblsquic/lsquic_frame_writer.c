@@ -487,58 +487,6 @@ lsquic_frame_writer_write_headers (struct lsquic_frame_writer *fw,
 }
 
 
-int
-lsquic_frame_writer_write_promise (struct lsquic_frame_writer *fw,
-    lsquic_stream_id_t stream_id64, lsquic_stream_id_t promised_stream_id64,
-    const struct lsquic_http_headers *headers)
-{
-    uint32_t stream_id = stream_id64;
-    uint32_t promised_stream_id = promised_stream_id64;
-    struct header_framer_ctx hfc;
-    struct http_push_promise_frame push_frame;
-    unsigned char *buf;
-    int s;
-
-    fiu_return_on("frame_writer/writer_promise", -1);
-
-    if (fw->fw_max_header_list_sz && 0 != check_headers_size(fw, headers))
-        return -1;
-
-    if (0 != check_headers_case(fw, headers))
-        return -1;
-
-    if (have_oversize_strings(headers))
-        return -1;
-
-    hfc_init(&hfc, fw, fw->fw_max_frame_sz, HTTP_FRAME_PUSH_PROMISE,
-                                                            stream_id, 0);
-
-    promised_stream_id = htonl(promised_stream_id);
-    memcpy(push_frame.hppf_promised_id, &promised_stream_id, 4);
-    s = hfc_write(&hfc, &push_frame, sizeof(struct http_push_promise_frame));
-    if (s < 0)
-        return s;
-
-    buf = malloc(MAX_COMP_HEADER_FIELD_SIZE);
-    if (!buf)
-        return -1;
-
-    s = write_headers(fw, headers, &hfc, buf, MAX_COMP_HEADER_FIELD_SIZE);
-    if (s != 0)
-    {
-        free(buf);
-        return -1;
-    }
-
-    free(buf);
-
-    EV_LOG_GENERATED_HTTP_PUSH_PROMISE(LSQUIC_LOG_CONN_ID, stream_id,
-                                        htonl(promised_stream_id), headers);
-    hfc_terminate_frame(&hfc, HFHF_END_HEADERS);
-    return lsquic_frame_writer_flush(fw);
-}
-
-
 void
 lsquic_frame_writer_max_header_list_size (struct lsquic_frame_writer *fw,
                                           uint32_t max_size)

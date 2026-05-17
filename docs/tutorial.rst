@@ -333,7 +333,10 @@ this tutorial, it is good to know that they are available.
 - Callbacks to control memory allocation for outgoing packets.  These are useful when sending packets using a custom library.  For example, when all packets must be in contiguous memory.
 - Callbacks to observe connection ID lifecycle.  These are useful in multi-process applications.
 - Callbacks that provide access to a shared-memory hash.  This is also used in multi-process applications.
-- HTTP header set processing.  These callbacks may be used in HTTP mode for HTTP/3 and Google QUIC.
+- HTTP header set processing.  These callbacks may be used in HTTP mode for
+  HTTP/3 and Google QUIC.  The optional ``on_hset_in`` stream callback
+  notifies the application when a decoded header set is ready to be collected
+  using :func:`lsquic_stream_get_hset()`.
 
 Please refer to :ref:`apiref-engine-settings` for details.
 
@@ -365,6 +368,7 @@ The optional callbacks are used to observe some events in the connection lifecyc
       void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
       void (*on_new_token)(lsquic_conn_t *c, const unsigned char *token,
       void (*on_sess_resume_info)(lsquic_conn_t *c, const unsigned char *, size_t);
+      void (*on_hset_in)  (lsquic_stream_t *s, lsquic_stream_ctx_t *h);
   };
 
 On new connection

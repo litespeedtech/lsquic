@@ -1207,6 +1207,85 @@ count_hq_frames (const struct lsquic_stream *stream)
 }
 
 
+static unsigned
+count_dynamic_hq_frames (const struct lsquic_stream *stream)
+{
+    const struct stream_hq_frame *shf;
+    unsigned i, n_frames = 0;
+    int found;
+
+    STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
+    {
+        found = 0;
+        for (i = 0; i < NUM_ALLOCED_HQ_FRAMES; ++i)
+            if (shf == &stream->sm_hq_frame_arr[i])
+            {
+                found = 1;
+                break;
+            }
+        n_frames += !found;
+    }
+
+    return n_frames;
+}
+
+
+static void
+test_multiple_header_blocks_need_dynamic_hq_frames (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_hq_frame *shf;
+    unsigned i;
+    const enum hq_frame_type expected_frame_types[] =
+        { HQFT_HEADERS, HQFT_HEADERS, HQFT_HEADERS, HQFT_DATA, };
+    unsigned char buf[16];
+    ssize_t nw;
+    int s;
+
+    struct lsxpack_header early_hint_a = { XHDR(":status", "103") };
+    struct lsxpack_header early_hint_b = { XHDR(":status", "103") };
+    struct lsxpack_header final = { XHDR(":status", "200") };
+    struct lsquic_http_headers early_headers_a = { 1, &early_hint_a, };
+    struct lsquic_http_headers early_headers_b = { 1, &early_hint_b, };
+    struct lsquic_http_headers final_headers = { 1, &final, };
+
+    init_buf(buf, sizeof(buf));
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
+    lsquic_send_ctl_set_max_bpq_count(10);
+    g_ctl_settings.tcs_can_send = INT_MAX;
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x1000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    s = lsquic_stream_send_headers(stream, &early_headers_a, 0);
+    assert(0 == s);
+    s = lsquic_stream_send_headers(stream, &early_headers_b, 0);
+    assert(0 == s);
+    s = lsquic_stream_send_headers(stream, &final_headers, 0);
+    assert(0 == s);
+    nw = lsquic_stream_write(stream, buf, sizeof(buf));
+    assert((ssize_t) sizeof(buf) == nw);
+
+    assert(sizeof(expected_frame_types) / sizeof(expected_frame_types[0])
+                                                    == count_hq_frames(stream));
+    assert(count_dynamic_hq_frames(stream) > 0);
+
+    i = 0;
+    STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
+        assert(expected_frame_types[i++] == shf->shf_frame_type);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
 static void
 test_frame_header_split (unsigned n_packets, unsigned extra_sz,
                                                         int add_one_more)
@@ -1753,6 +1832,7 @@ main (int argc, char **argv)
             break;
         case 10:  /* hq_framing tests */
             main_test_hq_framing();
+            test_multiple_header_blocks_need_dynamic_hq_frames();
             break;
         case 11:  /* frame header split tests */
             for (n_packets = 1; n_packets <= 2; ++n_packets)
@@ -1776,6 +1856,7 @@ main (int argc, char **argv)
     {
         main_test_pwritev();
         main_test_hq_framing();
+        test_multiple_header_blocks_need_dynamic_hq_frames();
         for (n_packets = 1; n_packets <= 2; ++n_packets)
             for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
                 for (add_one_more = 0; add_one_more <= 1; ++add_one_more)

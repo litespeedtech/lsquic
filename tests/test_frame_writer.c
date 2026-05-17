@@ -546,88 +546,6 @@ test_errors (void)
 }
 
 
-static void
-test_push_promise (void)
-{
-    struct lshpack_enc henc;
-    struct lsquic_frame_writer *fw;
-    int s;
-    struct lsquic_mm mm;
-
-    lshpack_enc_init(&henc);
-    lsquic_mm_init(&mm);
-    fw = lsquic_frame_writer_new(&mm, NULL, 0x200, &henc, output_write,
-#if LSQUIC_CONN_STATS
-                                     &s_conn_stats,
-#endif
-                                1);
-    reset_output(0);
-
-/*
-perl tools/hpack.pl :method GET :path /index.html :authority www.example.com :scheme https x-some-header some-value| hexdump -C
-00000000  82 85 41 8c f1 e3 c2 e5  f2 3a 6b a0 ab 90 f4 ff  |..A......:k.....|
-00000010  87 40 8a f2 b2 0f 49 56  9c a3 90 b6 7f 87 41 e9  |.@....IV......A.|
-00000020  2a dd c7 45 a5                                    |*..E.|
-*/
-
-	const unsigned char exp_headers[] = {
-        0x82, 0x85, 0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a,
-        0x6b, 0xa0, 0xab, 0x90, 0xf4, 0xff, 0x87, 0x40, 0x8a, 0xf2,
-        0xb2, 0x0f, 0x49, 0x56, 0x9c, 0xa3, 0x90, 0xb6, 0x7f, 0x87,
-        0x41, 0xe9, 0x2a, 0xdd, 0xc7, 0x45, 0xa5,
-	};
-
-    struct lsxpack_header header_arr[] =
-    {
-        { XHDR(":method", "GET") },
-        { XHDR(":path", "/index.html") },
-        { XHDR(":authority", "www.example.com") },
-        { XHDR(":scheme", "https") },
-        { XHDR("x-some-header", "some-value") },
-    };
-
-    struct lsquic_http_headers headers = {
-        .count = 5,
-        .headers = header_arr,
-    };
-
-    s = lsquic_frame_writer_write_promise(fw, 12345, 0xEEEE, &headers);
-    assert(0 == s);
-
-    struct http_frame_header fh;
-    struct http_push_promise_frame push_frame;
-
-    assert(sizeof(exp_headers) + sizeof(struct http_frame_header) +
-                    sizeof(struct http_push_promise_frame) == output.sz);
-
-    memcpy(&fh, output.buf, sizeof(fh));
-    assert(sizeof(exp_headers) + sizeof(struct http_push_promise_frame) == hfh_get_length(&fh));
-    assert(HTTP_FRAME_PUSH_PROMISE == fh.hfh_type);
-    assert(HFHF_END_HEADERS == fh.hfh_flags);
-    assert(fh.hfh_stream_id[0] == 0);
-    assert(fh.hfh_stream_id[1] == 0);
-    assert(fh.hfh_stream_id[2] == 0x30);
-    assert(fh.hfh_stream_id[3] == 0x39);
-
-    memcpy(&push_frame, output.buf + sizeof(struct http_frame_header),
-                                    sizeof(struct http_push_promise_frame));
-
-    assert(push_frame.hppf_promised_id[0] == 0);
-    assert(push_frame.hppf_promised_id[1] == 0);
-    assert(push_frame.hppf_promised_id[2] == 0xEE);
-    assert(push_frame.hppf_promised_id[3] == 0xEE);
-
-    assert(0 == memcmp(output.buf + sizeof(struct http_frame_header) +
-            sizeof(struct http_push_promise_frame), exp_headers,
-                                                sizeof(exp_headers)));
-
-    lsquic_frame_writer_destroy(fw);
-    lshpack_enc_cleanup(&henc);
-    lsquic_mm_cleanup(&mm);
-}
-
-
-
 int
 main (void)
 {
@@ -637,7 +555,6 @@ main (void)
     test_settings_normal();
     test_settings_short();
     test_priority();
-    test_push_promise();
     test_errors();
     test_max_frame_size();
     return 0;

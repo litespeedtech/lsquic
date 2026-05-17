@@ -110,7 +110,7 @@ enum full_conn_flags {
     FC_RECV_CLOSE     = (1 <<14),   /* Received CONNECTION_CLOSE frame */
     FC_GOING_AWAY     = (1 <<15),   /* Do not accept or create new streams */
     FC_GOAWAY_SENT    = (1 <<16),   /* Only send GOAWAY once */
-    FC_SUPPORT_PUSH   = (1 <<17),
+    FC_UNUSED_17      = (1 <<17),   /* Hole: reuse me! */
     FC_GOT_PRST       = (1 <<18),   /* Received public reset packet */
     FC_FIRST_TICK     = (1 <<19),
     FC_TICK_CLOSE     = (1 <<20),   /* We returned TICK_CLOSE */
@@ -495,7 +495,7 @@ maybe_send_settings (struct full_conn *conn)
                                                 settings[n_settings].value);
         ++n_settings;
     }
-    if (!(conn->fc_flags & FC_SERVER) && !conn->fc_settings->es_support_push)
+    if (!(conn->fc_flags & FC_SERVER))
     {
         settings[n_settings].id    = SETTINGS_ENABLE_PUSH;
         settings[n_settings].value = 0;
@@ -720,8 +720,6 @@ new_conn_common (lsquic_cid_t cid, struct lsquic_engine_public *enpub,
         conn->fc_stream_ifs[STREAM_IF_HDR].stream_if     = enpub->enp_stream_if;
         conn->fc_stream_ifs[STREAM_IF_HDR].stream_if_ctx = enpub->enp_stream_if_ctx;
     }
-    if (conn->fc_settings->es_support_push)
-        conn->fc_flags |= FC_SUPPORT_PUSH;
     conn->fc_conn.cn_n_cces = sizeof(conn->fc_cces) / sizeof(conn->fc_cces[0]);
     return conn;
 
@@ -3982,25 +3980,6 @@ headers_stream_on_stream_error (void *ctx, lsquic_stream_id_t stream_id)
 
 
 static void
-headers_stream_on_enable_push (void *ctx, int enable_push)
-{
-    struct full_conn *conn = ctx;
-    if (0 == enable_push)
-    {
-        LSQ_DEBUG("server push %d -> 0", !!(conn->fc_flags & FC_SUPPORT_PUSH));
-        conn->fc_flags &= ~FC_SUPPORT_PUSH;
-    }
-    else if (conn->fc_settings->es_support_push)
-    {
-        LSQ_DEBUG("server push %d -> 1", !!(conn->fc_flags & FC_SUPPORT_PUSH));
-        conn->fc_flags |= FC_SUPPORT_PUSH;
-    }
-    else
-        LSQ_INFO("not enabling server push that's disabled in engine settings");
-}
-
-
-static void
 headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 {
     struct full_conn *conn = ctx;
@@ -4039,61 +4018,6 @@ headers_stream_on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-headers_stream_on_push_promise (void *ctx, struct uncompressed_headers *uh)
-{
-    struct full_conn *conn = ctx;
-    lsquic_stream_t *stream;
-
-    assert(!(conn->fc_flags & FC_SERVER));
-
-    LSQ_DEBUG("push promise for stream %"PRIu64" in response to %"PRIu64,
-                                    uh->uh_oth_stream_id, uh->uh_stream_id);
-
-    if (0 == (uh->uh_stream_id & 1)     ||
-        0 != (uh->uh_oth_stream_id & 1))
-    {
-        ABORT_ERROR("invalid push promise stream IDs: %"PRIu64", %"PRIu64,
-                                    uh->uh_oth_stream_id, uh->uh_stream_id);
-        goto free_uh;
-    }
-
-    if (!(conn_is_stream_closed(conn, uh->uh_stream_id) ||
-          find_stream_by_id(conn, uh->uh_stream_id)))
-    {
-        ABORT_ERROR("invalid push promise original stream ID %"PRIu64" never "
-                    "initiated", uh->uh_stream_id);
-        goto free_uh;
-    }
-
-    if (conn_is_stream_closed(conn, uh->uh_oth_stream_id) ||
-        find_stream_by_id(conn, uh->uh_oth_stream_id))
-    {
-        ABORT_ERROR("invalid promised stream ID %"PRIu64" already used",
-                                                        uh->uh_oth_stream_id);
-        goto free_uh;
-    }
-
-    stream = new_stream_ext(conn, uh->uh_oth_stream_id, STREAM_IF_STD,
-                (conn->fc_enpub->enp_settings.es_delay_onclose?SCF_DELAY_ONCLOSE:0)|
-                SCF_DI_AUTOSWITCH|(conn->fc_enpub->enp_settings.es_rw_once ?
-                                                        SCF_DISP_RW_ONCE : 0));
-    if (!stream)
-    {
-        ABORT_ERROR("cannot create stream: %s", strerror(errno));
-        goto free_uh;
-    }
-    lsquic_stream_push_req(stream, uh);
-    lsquic_stream_call_on_new(stream);
-    return;
-
-  free_uh:
-    if (uh->uh_hset)
-        conn->fc_enpub->enp_hsi_if->hsi_discard_header_set(uh->uh_hset);
-    free(uh);
-}
-
-
-static void
 headers_stream_on_priority (void *ctx, lsquic_stream_id_t stream_id,
             int exclusive, lsquic_stream_id_t dep_stream_id, unsigned weight)
 {
@@ -4108,39 +4032,10 @@ headers_stream_on_priority (void *ctx, lsquic_stream_id_t stream_id,
 }
 
 
-#define STRLEN(s) (sizeof(s) - 1)
-
-static struct uncompressed_headers *
-synthesize_push_request (struct full_conn *conn, void *hset,
-         lsquic_stream_id_t pushed_stream_id, const lsquic_stream_t *dep_stream)
-{
-    struct uncompressed_headers *uh;
-
-    assert(hset);
-
-    uh = malloc(sizeof(*uh));
-    if (!uh)
-        return NULL;
-
-    uh->uh_stream_id     = pushed_stream_id;
-    uh->uh_oth_stream_id = 0;   /* We don't do dependencies */
-    uh->uh_weight        = lsquic_stream_priority(dep_stream) / 2 + 1;
-    uh->uh_exclusive     = 0;
-    uh->uh_flags         = UH_FIN;
-    if (lsquic_http1x_if == conn->fc_enpub->enp_hsi_if)
-        uh->uh_flags    |= UH_H1H;
-    uh->uh_hset          = hset;
-    uh->uh_next          = NULL;
-
-    return uh;
-}
-
-
 static int
 full_conn_ci_is_push_enabled (struct lsquic_conn *lconn)
 {
-    struct full_conn *const conn = (struct full_conn *) lconn;
-    return conn->fc_flags & FC_SUPPORT_PUSH;
+    return 0;
 }
 
 
@@ -4149,85 +4044,8 @@ full_conn_ci_push_stream (struct lsquic_conn *lconn, void *hset,
     struct lsquic_stream *dep_stream, const struct lsquic_http_headers *headers)
 {
     struct full_conn *const conn = (struct full_conn *) lconn;
-    lsquic_stream_t *pushed_stream;
-    struct uncompressed_headers *uh;    /* We synthesize the request */
-    lsquic_stream_id_t stream_id;
-    int hit_limit;
-
-    if ((conn->fc_flags & (FC_SERVER|FC_HTTP)) != (FC_SERVER|FC_HTTP))
-    {
-        LSQ_ERROR("must be server in HTTP mode to push streams");
-        return -1;
-    }
-
-    if (lsquic_stream_is_pushed(dep_stream))
-    {
-        LSQ_WARN("cannot push stream dependent on another pushed stream "
-                 "(%"PRIu64")", dep_stream->id);
-        return -1;
-    }
-
-    if (!(conn->fc_flags & FC_SUPPORT_PUSH))
-    {
-        LSQ_INFO("server push support is disabled");
-        return 1;
-    }
-
-    if (!hset)
-    {
-        LSQ_ERROR("header set must be specified when pushing");
-        return -1;
-    }
-
-    hit_limit = 0;
-    if (either_side_going_away(conn) ||
-        (hit_limit = 1, count_streams(conn, 0) >= conn->fc_cfg.max_streams_out))
-    {
-        LSQ_DEBUG("cannot create pushed stream: %s", hit_limit ?
-            "hit connection limit" : "connection is going away");
-        return 1;
-    }
-
-    stream_id = generate_stream_id(conn);
-    uh = synthesize_push_request(conn, hset, stream_id, dep_stream);
-    if (!uh)
-    {
-        ABORT_ERROR("memory allocation failure");
-        return -1;
-    }
-
-    pushed_stream = new_stream(conn, stream_id, 0);
-    if (!pushed_stream)
-    {
-        LSQ_WARN("cannot create stream: %s", strerror(errno));
-        free(uh);
-        return -1;
-    }
-
-    if (0 != lsquic_stream_uh_in(pushed_stream, uh))
-    {
-        LSQ_WARN("stream barfed when fed synthetic request");
-        free(uh);
-        return -1;
-    }
-
-    if (0 != lsquic_headers_stream_push_promise(conn->fc_pub.u.gquic.hs, dep_stream->id,
-                                        pushed_stream->id, headers))
-    {
-        /* If forget we ever had the hset pointer: */
-        lsquic_stream_drop_hset_ref(pushed_stream);
-        /* Now roll back stream creation and return stream ID: */
-        if (pushed_stream->sm_hash_el.qhe_flags & QHE_HASHED)
-            lsquic_hash_erase(conn->fc_pub.all_streams,
-                                                &pushed_stream->sm_hash_el);
-        lsquic_stream_destroy(pushed_stream);
-        conn->fc_last_stream_id -= 2;
-        LSQ_INFO("could not send push promise");
-        return -1;
-    }
-
-    lsquic_stream_call_on_new(pushed_stream);
-    return 0;
+    LSQ_INFO("push promises have been removed");
+    return 1;
 }
 
 
@@ -4556,11 +4374,9 @@ full_conn_ci_log_stats (struct lsquic_conn *lconn)
 static const struct headers_stream_callbacks headers_callbacks =
 {
     .hsc_on_headers      = headers_stream_on_incoming_headers,
-    .hsc_on_push_promise = headers_stream_on_push_promise,
     .hsc_on_priority     = headers_stream_on_priority,
     .hsc_on_stream_error = headers_stream_on_stream_error,
     .hsc_on_conn_error   = headers_stream_on_conn_error,
-    .hsc_on_enable_push  = headers_stream_on_enable_push,
 };
 
 static const struct headers_stream_callbacks *headers_callbacks_ptr = &headers_callbacks;

@@ -41,7 +41,6 @@ struct callback_value   /* What callback returns */
     enum {
         CV_HEADERS,
         CV_SETTINGS,
-        CV_PUSH_PROMISE,
         CV_PRIORITY,
         CV_ERROR,
     }                                   type;
@@ -61,7 +60,6 @@ struct callback_value   /* What callback returns */
             uint16_t                    id;
             uint32_t                    value;
         }                               setting;
-        void                           *push_promise;
         struct cv_error {
             enum frame_reader_error     code;
             lsquic_stream_id_t          stream_id;
@@ -83,19 +81,6 @@ compare_headers (const struct headers *got_h, const struct headers *exp_h)
     assert(got_h->oth_stream_id == exp_h->oth_stream_id);
     assert(got_h->weight == exp_h->weight);
     assert(got_h->exclusive == exp_h->exclusive);
-    assert(got_h->size == exp_h->size);
-    assert(strlen(got_h->buf) == got_h->size);
-    assert(got_h->off == exp_h->off);
-    assert(got_h->flags == exp_h->flags);
-    assert(0 == memcmp(got_h->buf, exp_h->buf, got_h->size));
-}
-
-
-void
-compare_push_promises (const struct headers *got_h, const struct headers *exp_h)
-{
-    assert(got_h->stream_id == exp_h->stream_id);
-    assert(got_h->oth_stream_id == exp_h->oth_stream_id);
     assert(got_h->size == exp_h->size);
     assert(strlen(got_h->buf) == got_h->size);
     assert(got_h->off == exp_h->off);
@@ -135,9 +120,6 @@ compare_cb_vals (const struct callback_value *got,
     {
     case CV_HEADERS:
         compare_headers(&got->u.headers, &exp->u.headers);
-        break;
-    case CV_PUSH_PROMISE:
-        compare_push_promises(&got->u.headers, &exp->u.headers);
         break;
     case CV_ERROR:
         compare_errors(&got->u.error, &exp->u.error);
@@ -208,22 +190,6 @@ on_incoming_headers (void *ctx, struct uncompressed_headers *uh)
 
 
 static void
-on_push_promise (void *ctx, struct uncompressed_headers *uh)
-{
-    struct cb_ctx *cb_ctx = ctx;
-    assert(cb_ctx == &g_cb_ctx);
-    unsigned i = cb_ctx->n_cb_vals++;
-    assert(i < sizeof(cb_ctx->cb_vals) / sizeof(cb_ctx->cb_vals[0]));
-    cb_ctx->cb_vals[i].type = CV_PUSH_PROMISE;
-    cb_ctx->cb_vals[i].stream_off = input.in_off;
-    copy_uh_to_headers(uh, &cb_ctx->cb_vals[i].u.headers);
-    assert(uh->uh_flags & UH_H1H);
-    lsquic_http1x_if->hsi_discard_header_set(uh->uh_hset);
-    free(uh);
-}
-
-
-static void
 on_error (void *ctx, lsquic_stream_id_t stream_id, enum frame_reader_error error)
 {
     struct cb_ctx *cb_ctx = ctx;
@@ -270,7 +236,6 @@ on_priority (void *ctx, lsquic_stream_id_t stream_id, int exclusive,
 
 static const struct frame_reader_callbacks frame_callbacks = {
     .frc_on_headers      = on_incoming_headers,
-    .frc_on_push_promise = on_push_promise,
     .frc_on_settings     = on_settings,
     .frc_on_priority     = on_priority,
     .frc_on_error        = on_error,
@@ -775,15 +740,15 @@ static const struct frame_reader_test tests[] = {
                                 0xff,
         },
         .frt_bufsz  = 9 + 0 + 0x15,
+        .frt_in_off = 9,
+        .frt_err    = 1,
         .frt_n_cb_vals = 1,
         .frt_cb_vals = {
             {
-                .type = CV_PUSH_PROMISE,
-                .u.headers = {
+                .type = CV_ERROR,
+                .u.error = {
                     .stream_id       = 12345,
-                    .oth_stream_id   = 0x123456,
-                    .flags           = UH_PP | UH_H1H,
-                    HEADERS("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n"),
+                    .code            = FR_ERR_UNEXPECTED_PUSH,
                 },
             },
         },

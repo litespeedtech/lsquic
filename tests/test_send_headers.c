@@ -60,11 +60,13 @@
 #include "lsquic_hq.h"
 #include "lsquic_data_in_if.h"
 #include "lsquic_headers.h"
-#include "lsquic_push_promise.h"
 
 static int s_call_wantwrite_in_ctor;
 static int s_wantwrite_arg;
 static int s_onwrite_called;
+static unsigned s_on_hset_in_count;
+static struct lsquic_stream *s_on_hset_in_stream;
+static lsquic_stream_ctx_t *s_on_hset_in_ctx;
 
 static lsquic_stream_ctx_t *
 on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
@@ -102,11 +104,29 @@ on_reset (lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how)
 }
 
 
+static void
+on_hset_in (lsquic_stream_t *stream, lsquic_stream_ctx_t *h)
+{
+    ++s_on_hset_in_count;
+    s_on_hset_in_stream = stream;
+    s_on_hset_in_ctx = h;
+}
+
+
 const struct lsquic_stream_if stream_if = {
     .on_new_stream          = on_new_stream,
     .on_write               = on_write,
     .on_close               = on_close,
     .on_reset               = on_reset,
+};
+
+
+const struct lsquic_stream_if stream_if_on_hset = {
+    .on_new_stream          = on_new_stream,
+    .on_write               = on_write,
+    .on_close               = on_close,
+    .on_reset               = on_reset,
+    .on_hset_in             = on_hset_in,
 };
 
 
@@ -392,6 +412,89 @@ test_flushes_and_closes (void)
 
 
 static void
+test_rejects_pending_header_overwrite (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    int s;
+    unsigned hblock_sz;
+    unsigned char *header_block;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+    test_vals.status = QWH_PARTIAL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 10;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(stream->sm_send_headers_state != SSHS_BEGIN);
+    assert(stream->sm_hblock_sz == test_vals.prefix_sz + test_vals.headers_sz);
+    assert(stream->sm_header_block);
+
+    hblock_sz = stream->sm_hblock_sz;
+    header_block = stream->sm_header_block;
+    errno = 0;
+    test_vals.prefix_sz = 3;
+    test_vals.headers_sz = 50;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(-1 == s);
+    assert(EAGAIN == errno);
+    assert(stream->sm_hblock_sz == hblock_sz);
+    assert(stream->sm_header_block == header_block);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_partially_flushed_header_is_not_writeable (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    const unsigned stream_window = 22;
+    unsigned hblock_sz, hblock_off;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, stream_window, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, stream_window);
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 0;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_HBLOCK_SENDING == stream->sm_send_headers_state);
+    assert(stream->sm_hblock_sz > 0);
+    assert(stream->sm_hblock_sz < test_vals.prefix_sz + test_vals.headers_sz);
+    assert(0 == lsquic_stream_write_avail(stream));
+    assert(stream->sm_qflags & SMQF_WANT_WRITE);
+
+    hblock_sz = stream->sm_hblock_sz;
+    hblock_off = stream->sm_hblock_off;
+    s_onwrite_called = 0;
+    lsquic_stream_dispatch_write_events(stream);
+    assert(0 == s_onwrite_called);
+    assert(stream->sm_hblock_sz == hblock_sz);
+    assert(stream->sm_hblock_off == hblock_off);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
 test_headers_wantwrite_restoration (const int want_write)
 {
     struct test_objs tobjs;
@@ -481,68 +584,6 @@ test_headers_wantwrite_restoration (const int want_write)
     assert(want_write == s_onwrite_called);
     lsquic_stream_destroy(stream);
 
-    deinit_test_objs(&tobjs);
-    s_call_wantwrite_in_ctor = 0;
-    s_wantwrite_arg = 0;
-    s_onwrite_called = 0;
-}
-
-
-static void
-test_pp_wantwrite_restoration (const int want_write)
-{
-    struct test_objs tobjs;
-    struct lsquic_stream *stream;
-    int s;
-    struct uncompressed_headers *uh;
-    struct push_promise *promise;
-    void *hset;
-
-    s_call_wantwrite_in_ctor = 1;
-    s_wantwrite_arg = want_write;
-
-    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
-
-    /* Mock server side stream cycle */
-
-    stream = new_stream(&tobjs, 4 * __LINE__, 10);
-    uh = calloc(1, sizeof(*uh));
-    *uh = (struct uncompressed_headers) {
-        .uh_stream_id   = stream->id,
-        .uh_weight      = 127,
-        .uh_hset        = (void *) 12345,
-    };
-    s = lsquic_stream_uh_in(stream, uh);
-    assert(s == 0);
-    hset = lsquic_stream_get_hset(stream);
-    assert(hset == (void *) 12345);
-    s = lsquic_stream_shutdown(stream, 0);
-    assert(0 == s);
-    promise = calloc(1, sizeof(*promise) + 20);
-    promise->pp_id = 0;
-    promise->pp_content_len = 20;
-    assert(want_write == !!(stream->sm_qflags & SMQF_WANT_WRITE));
-    s = lsquic_stream_push_promise(stream, promise);
-    assert(s == 0);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-                                        == (STREAM_NOPUSH|STREAM_PUSHING));
-    assert(stream->sm_qflags & SMQF_WANT_WRITE);    /* Want write is now set */
-    /* Dispatch: there should be no progress made */
-    lsquic_stream_dispatch_write_events(stream);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-                                        == (STREAM_NOPUSH|STREAM_PUSHING));
-    assert(stream->sm_qflags & SMQF_WANT_WRITE);
-    assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state != PPWS_DONE);
-    /* Now update window and dispatch again */
-    lsquic_stream_window_update(stream, 100);
-    lsquic_stream_dispatch_write_events(stream);
-    assert((stream->stream_flags & (STREAM_NOPUSH|STREAM_PUSHING))
-        /* After push promise was all written, STREAM_PUSHING is no longer set */
-                                        == STREAM_NOPUSH);
-    assert(SLIST_FIRST(&stream->sm_promises)->pp_write_state == PPWS_DONE); /* Done! */
-    assert(want_write == s_onwrite_called); /* Restored: and on_write called */
-
-    lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
     s_call_wantwrite_in_ctor = 0;
     s_wantwrite_arg = 0;
@@ -643,28 +684,81 @@ test_read_headers (int ietf, int use_hset)
 
 
 static void
-test_read_headers_http1x (void)
+test_multiple_hsets_fifo (int ietf)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct uncompressed_headers *uh;
+    char hsets[3];
+    void *hset;
+    unsigned i;
+    int s;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, ietf ? SCF_IETF : 0);
+    tobjs.stream_if = &stream_if_on_hset;
+
+    s_on_hset_in_count = 0;
+    s_on_hset_in_stream = NULL;
+    s_on_hset_in_ctx = NULL;
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    for (i = 0; i < sizeof(hsets); ++i)
+    {
+        uh = calloc(1, sizeof(*uh));
+        *uh = (struct uncompressed_headers) {
+            .uh_stream_id   = stream->id,
+            .uh_weight      = 127,
+            .uh_hset        = &hsets[i],
+        };
+        s = lsquic_stream_uh_in(stream, uh);
+        assert(s == 0);
+        assert(s_on_hset_in_count == i + 1);
+        assert(s_on_hset_in_stream == stream);
+        assert(s_on_hset_in_ctx == NULL);
+    }
+
+    for (i = 0; i < sizeof(hsets); ++i)
+    {
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset == &hsets[i]);
+    }
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset == NULL);
+
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_read_headers_http1x_case (const unsigned char *field_line,
+                                    size_t field_line_sz, const char *expected)
 {
     struct test_objs tobjs;
     struct lsquic_stream *stream;
     struct stream_frame *frame;
     int s;
-    const unsigned char headers_frame[5] = {
-        0x01,   /* Headers frame */
-        0x03,   /* Frame length */
-        0x00,
-        0x00,
-        0xC0 | 25   /* :status 200 */,
-    };
+    unsigned char headers_frame[0x10];
     ssize_t nr;
     unsigned char buf[0x100];
+
+    assert(2 + field_line_sz < 0x40);
+    assert(2 + 2 + field_line_sz <= sizeof(headers_frame));
+
+    headers_frame[0] = 0x01; /* Headers frame */
+    headers_frame[1] = 2 + field_line_sz; /* Frame length */
+    headers_frame[2] = 0x00;
+    headers_frame[3] = 0x00;
+    memcpy(headers_frame + 4, field_line, field_line_sz);
 
     init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
 
     stream = new_stream(&tobjs, 0, 0x1000);
-    frame = new_frame_in(&tobjs, 0, sizeof(headers_frame), 1);
+    frame = new_frame_in(&tobjs, 0, 4 + field_line_sz, 1);
     memcpy((unsigned char *) frame->data_frame.df_data, headers_frame,
-                                                    sizeof(headers_frame));
+                                                    4 + field_line_sz);
     s = lsquic_stream_frame_in(stream, frame);
     assert(s == 0);
 
@@ -673,12 +767,34 @@ test_read_headers_http1x (void)
 
     nr = lsquic_stream_read(stream, buf, sizeof(buf));
     assert(nr > 0);
-    assert(nr == 19);
-    assert(0 == memcmp(buf, "HTTP/1.1 200 OK\r\n\r\n", nr));
+    assert(nr == (ssize_t) strlen(expected));
+    assert(0 == memcmp(buf, expected, nr));
 
     lsquic_stream_destroy(stream);
 
     deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_read_headers_http1x (void)
+{
+    const unsigned char status_100[] = {
+        0xC0 | 63, 0x00,  /* :status 100 */
+    };
+    const unsigned char status_103[] = {
+        0xC0 | 24,        /* :status 103 */
+    };
+    const unsigned char status_200[] = {
+        0xC0 | 25,        /* :status 200 */
+    };
+
+    test_read_headers_http1x_case(status_100, sizeof(status_100),
+                                        "HTTP/1.1 100 Continue\r\n\r\n");
+    test_read_headers_http1x_case(status_103, sizeof(status_103),
+                                        "HTTP/1.1 103 Early Hints\r\n\r\n");
+    test_read_headers_http1x_case(status_200, sizeof(status_200),
+                                        "HTTP/1.1 200 OK\r\n\r\n");
 }
 
 
@@ -703,14 +819,16 @@ main (int argc, char **argv)
     }
 
     test_flushes_and_closes();
+    test_rejects_pending_header_overwrite();
+    test_partially_flushed_header_is_not_writeable();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
-    test_pp_wantwrite_restoration(0);
-    test_pp_wantwrite_restoration(1);
     test_read_headers(0, 0);
     test_read_headers(0, 1);
     test_read_headers(1, 0);
     test_read_headers(1, 1);
+    test_multiple_hsets_fifo(0);
+    test_multiple_hsets_fifo(1);
     test_read_headers_http1x();
 
     return 0;

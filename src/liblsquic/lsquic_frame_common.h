@@ -66,12 +66,6 @@ struct http_prio_frame          /* RFC 7540, Section 6.3 */
 };
 
 
-struct http_push_promise_frame  /* RFC 7540, Section 6.6 */
-{
-    unsigned char   hppf_promised_id[4];    /* High bit is reserved */
-};
-
-
 struct lsquic_http2_setting
 {
     uint16_t id;

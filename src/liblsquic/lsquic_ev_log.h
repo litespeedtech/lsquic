@@ -279,16 +279,6 @@ lsquic_ev_log_generated_http_headers (const lsquic_cid_t *, lsquic_stream_id_t,
 } while (0)
 
 void
-lsquic_ev_log_generated_http_push_promise (const lsquic_cid_t *,
-        lsquic_stream_id_t stream_id, lsquic_stream_id_t promised_stream_id,
-        const struct lsquic_http_headers *headers);
-
-#define EV_LOG_GENERATED_HTTP_PUSH_PROMISE(...) do {                        \
-    if (LSQ_LOG_ENABLED_EXT(LSQ_LOG_DEBUG, LSQLM_EVENT))                    \
-        lsquic_ev_log_generated_http_push_promise(__VA_ARGS__);             \
-} while (0)
-
-void
 lsquic_ev_log_create_connection (const lsquic_cid_t *, const struct sockaddr *,
                                                     const struct sockaddr *);
 
