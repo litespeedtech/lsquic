@@ -621,12 +621,12 @@ send_headers (lsquic_stream_ctx_t *st_h)
     if (randomly_reprioritize_streams)
     {
         char pfv[10];
-        sprintf(pfv, "u=%ld", random() & 7);
+        snprintf(pfv, sizeof(pfv), "u=%ld", random() & 7);
         header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V(pfv));
         if (random() & 1)
-            sprintf(pfv, "i");
+            snprintf(pfv, sizeof(pfv), "i");
         else
-            sprintf(pfv, "i=?0");
+            snprintf(pfv, sizeof(pfv), "i=?0");
         header_set_ptr(&headers_arr[h_idx++], &hbuf, V("priority"), V(pfv));
     }
     if (st_h->client_ctx->payload)
@@ -1739,7 +1739,7 @@ main (int argc, char **argv)
                 perror("stat");
                 exit(2);
             }
-            sprintf(client_ctx.payload_size, "%jd", (intmax_t) st.st_size);
+            snprintf(client_ctx.payload_size, sizeof(client_ctx.payload_size), "%jd", (intmax_t) st.st_size);
             break;
         case 'M':
             client_ctx.method = optarg;
