@@ -101,6 +101,10 @@ struct packets_in
 #if ECN_SUPPORTED
     int                     *ecn;
 #endif
+#if HAVE_RECVMMSG
+    struct mmsghdr          *mmsghdrs;
+    unsigned                 n_mmsghdrs;
+#endif
     struct sockaddr_storage *local_addresses,
                             *peer_addresses;
     unsigned                 n_alloc;
@@ -191,6 +195,11 @@ allocate_packets_in (SOCKET_TYPE fd)
 #if ECN_SUPPORTED
     packs_in->ecn = malloc(n_alloc * sizeof(packs_in->ecn[0]));
 #endif
+#if HAVE_RECVMMSG
+    packs_in->n_mmsghdrs = MIN(n_alloc, (unsigned) recvsz / MAX_PACKET_SZ);
+    packs_in->mmsghdrs = malloc(packs_in->n_mmsghdrs
+                                    * sizeof(packs_in->mmsghdrs[0]));
+#endif
 
     return packs_in;
 }
@@ -199,6 +208,9 @@ allocate_packets_in (SOCKET_TYPE fd)
 static void
 free_packets_in (struct packets_in *packs_in)
 {
+#if HAVE_RECVMMSG
+    free(packs_in->mmsghdrs);
+#endif
 #if ECN_SUPPORTED
     free(packs_in->ecn);
 #endif
@@ -515,7 +527,7 @@ struct read_iter
 };
 
 
-enum rop { ROP_OK, ROP_NOROOM, ROP_ERROR, };
+enum rop { ROP_OK, ROP_NOROOM, ROP_ERROR, ROP_DONE, };
 
 static enum rop
 read_one_packet (struct read_iter *iter)
@@ -662,32 +674,38 @@ read_using_recvmmsg (struct read_iter *iter)
     uint32_t n_dropped;
 #endif
     int s;
-    unsigned n;
+    unsigned n, count, start_idx, start_off;
     struct sockaddr_storage *local_addr;
     struct service_port *const sport = iter->ri_sport;
     struct packets_in *const packs_in = sport->packs_in;
-    /* XXX TODO We allocate this array on the stack and initialize the
-     * headers each time the function is invoked.  This is suboptimal.
-     * What we should really be doing is allocate mmsghdrs as part of
-     * packs_in and initialize it there.  While we are at it, we should
-     * make packs_in shared between all service ports.
-     */
-    struct mmsghdr mmsghdrs[ packs_in->n_alloc  ];
+    struct mmsghdr *const mmsghdrs = packs_in->mmsghdrs;
 
-    /* Sanity check: we assume that the iterator is reset */
-    assert(iter->ri_off == 0 && iter->ri_idx == 0);
+    if (iter->ri_idx >= packs_in->n_alloc ||
+        iter->ri_off + MAX_PACKET_SZ > packs_in->data_sz)
+    {
+        LSQ_DEBUG("out of room in packets_in");
+        return ROP_NOROOM;
+    }
+
+    start_idx = iter->ri_idx;
+    start_off = iter->ri_off;
+    count = MIN(packs_in->n_alloc - start_idx, packs_in->n_mmsghdrs);
+    count = MIN(count, (packs_in->data_sz - start_off) / MAX_PACKET_SZ);
+    assert(count > 0);
 
     /* Initialize mmsghdrs */
-    for (n = 0; n < sizeof(mmsghdrs) / sizeof(mmsghdrs[0]); ++n)
+    for (n = 0; n < count; ++n)
     {
-        packs_in->vecs[n].iov_base = packs_in->packet_data + MAX_PACKET_SZ * n;
-        packs_in->vecs[n].iov_len  = MAX_PACKET_SZ;
+        packs_in->vecs[start_idx + n].iov_base =
+                                packs_in->packet_data + start_off
+                                + MAX_PACKET_SZ * n;
+        packs_in->vecs[start_idx + n].iov_len  = MAX_PACKET_SZ;
         mmsghdrs[n].msg_hdr = (struct msghdr) {
-            .msg_name       = &packs_in->peer_addresses[n],
-            .msg_namelen    = sizeof(packs_in->peer_addresses[n]),
-            .msg_iov        = &packs_in->vecs[n],
+            .msg_name       = &packs_in->peer_addresses[start_idx + n],
+            .msg_namelen    = sizeof(packs_in->peer_addresses[start_idx + n]),
+            .msg_iov        = &packs_in->vecs[start_idx + n],
             .msg_iovlen     = 1,
-            .msg_control    = packs_in->ctlmsg_data + CTL_SZ * n,
+            .msg_control    = packs_in->ctlmsg_data + CTL_SZ * (start_idx + n),
             .msg_controllen = CTL_SZ,
         };
     }
@@ -704,20 +722,20 @@ read_using_recvmmsg (struct read_iter *iter)
     /* Process ancillary data and update vecs */
     for (n = 0; n < (unsigned) s; ++n)
     {
-        local_addr = &packs_in->local_addresses[n];
+        local_addr = &packs_in->local_addresses[start_idx + n];
         memcpy(local_addr, &sport->sp_local_addr, sizeof(*local_addr));
 #if __linux__
         n_dropped = 0;
 #endif
 #if ECN_SUPPORTED
-        packs_in->ecn[n] = 0;
+        packs_in->ecn[start_idx + n] = 0;
 #endif
         proc_ancillary(&mmsghdrs[n].msg_hdr, local_addr
 #if __linux__
             , &n_dropped
 #endif
 #if ECN_SUPPORTED
-            , &packs_in->ecn[n]
+            , &packs_in->ecn[start_idx + n]
 #endif
         );
 #if __linux__
@@ -730,12 +748,19 @@ read_using_recvmmsg (struct read_iter *iter)
             sport->drop_init = 1;
         sport->n_dropped = n_dropped;
 #endif
-        packs_in->vecs[n].iov_len = mmsghdrs[n].msg_len;
+        packs_in->vecs[start_idx + n].iov_len = mmsghdrs[n].msg_len;
     }
 
-    iter->ri_idx = n;
+    iter->ri_idx += n;
+    iter->ri_off += MAX_PACKET_SZ * n;
 
-    return n == sizeof(mmsghdrs) / sizeof(mmsghdrs[0]) ? ROP_NOROOM : ROP_OK;
+    if (n < count)
+        return ROP_DONE;
+    else if (iter->ri_idx >= packs_in->n_alloc ||
+             iter->ri_off + MAX_PACKET_SZ > packs_in->data_sz)
+        return ROP_NOROOM;
+    else
+        return ROP_OK;
 }
 
 
@@ -756,12 +781,12 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
     lsquic_engine_t *const engine = sport->engine;
     struct packets_in *packs_in = sport->packs_in;
     struct read_iter iter;
-    unsigned n, n_batches;
-    /* Save the value in case program is stopped packs_in is freed: */
-    const unsigned n_alloc = packs_in->n_alloc;
+    unsigned n, n_batches, n_total;
+    int drain_socket;
     enum rop rop;
 
     n_batches = 0;
+    n_total = 0;
     iter.ri_sport = sport;
 
     sport->sp_prog->prog_read_count += 1;
@@ -769,10 +794,16 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
     {
         iter.ri_off = 0;
         iter.ri_idx = 0;
+        drain_socket = 1;
 
 #if HAVE_RECVMMSG
         if (sport->sp_prog->prog_use_recvmmsg)
-            rop = read_using_recvmmsg(&iter);
+        {
+            drain_socket = 0;
+            do
+                rop = read_using_recvmmsg(&iter);
+            while (ROP_OK == rop);
+        }
         else
 #endif
             do
@@ -811,13 +842,12 @@ read_handler (evutil_socket_t fd, short flags, void *ctx)
 
         if (n > 0)
             prog_process_conns(sport->sp_prog);
+        n_total += n;
     }
-    while (ROP_NOROOM == rop && !prog_is_stopped());
+    while (drain_socket && ROP_NOROOM == rop && !prog_is_stopped());
 
-    if (n_batches)
-        n += n_alloc * (n_batches - 1);
-
-    LSQ_DEBUG("read %u packet%.*s in %u batch%s", n, n != 1, "s", n_batches, n_batches != 1 ? "es" : "");
+    LSQ_DEBUG("read %u packet%.*s in %u batch%s", n_total, n_total != 1, "s",
+                                n_batches, n_batches != 1 ? "es" : "");
 }
 
 
