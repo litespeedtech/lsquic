@@ -1,3 +1,11 @@
+2026-05-25
+    - 4.7.1
+    - [FIX] Content-length check in QPACK decoder handler.
+    - [FIX] HTTP/1.x module: stricter validation for field names and values.
+    - [FIX] Sample tools: fix recvmmsg receive batching (issue #434).
+    - [FIX] crypto object ownership on promotion failure.
+    - [IMPROVEMENT] Use ls-hpack v2.3.5.
+
 2026-05-16
     - 4.7.0
     - [IMPROVEMENT, API] Refactor: drop mini-conn promotion shortcut.

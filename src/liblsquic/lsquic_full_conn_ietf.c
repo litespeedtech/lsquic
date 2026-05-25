@@ -97,6 +97,7 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 
+
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER
  * and LSENG_HTTP.
  */
@@ -1448,6 +1449,18 @@ typedef char mini_conn_does_not_have_more_cces[
     sizeof(((struct ietf_mini_conn *)0)->imc_cces)
     <= sizeof(((struct ietf_full_conn *)0)->ifc_cces) ? 1 : -1];
 
+
+/* Promotion failed: give ownership of crypto object back to mini conn. */
+static void
+give_enc_session_back_to_mini (struct lsquic_conn *mini_conn,
+                                                struct ietf_full_conn *conn)
+{
+    mini_conn->cn_enc_session = conn->ifc_conn.cn_enc_session;
+    conn->ifc_conn.cn_enc_session = NULL;
+    mini_conn->cn_esf_c->esf_set_conn(mini_conn->cn_enc_session, mini_conn);
+}
+
+
 struct lsquic_conn *
 lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                unsigned flags, struct lsquic_conn *mini_conn)
@@ -1653,12 +1666,17 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err3:
+    assert(mini_conn->cn_enc_session == NULL);
+    give_enc_session_back_to_mini(mini_conn, conn);
     ietf_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 
   err2:
+    assert(mini_conn->cn_enc_session == NULL);
+    give_enc_session_back_to_mini(mini_conn, conn);
     lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
   err1:
+    assert(mini_conn->cn_enc_session != NULL);
     lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
     if (conn->ifc_pub.all_streams)
         lsquic_hash_destroy(conn->ifc_pub.all_streams);
@@ -9784,4 +9802,6 @@ lsquic_ietf_full_conn_test_push_disabled (unsigned results[5])
     free(conn.ifc_errmsg);
 }
 
+
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+
