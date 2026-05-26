@@ -65,8 +65,7 @@ add_request_pseudo_headers (void *hset)
 static void
 test_valid_request (void)
 {
-    static const char value[] = { 'a', 'l', 'p', 'h', 'a', '\t',
-                                                            (char) 0x80, };
+    static const char value[] = "alpha\t\x80";
     static const char expected[] =
         "GET / HTTP/1.1\r\n"
         "x-test: alpha\t\x80\r\n"
@@ -79,7 +78,7 @@ test_valid_request (void)
     hset = new_hset(1);
     assert(hset);
     add_request_pseudo_headers(hset);
-    assert(0 == process_header(hset, "x-test", 6, value, sizeof(value)));
+    assert(0 == process_header(hset, "x-test", 6, value, sizeof(value) - 1));
     assert(0 == process_header(hset, "cookie", 6, "a=b", 3));
     assert(0 == process_header(hset, "cookie", 6, "c=d", 3));
     assert(0 == lsquic_http1x_if->hsi_process_header(hset, NULL));
