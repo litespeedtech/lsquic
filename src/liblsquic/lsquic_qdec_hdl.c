@@ -509,7 +509,7 @@ is_content_length (const struct lsxpack_header *xhdr)
     return ((xhdr->flags & LSXPACK_QPACK_IDX)
                         && xhdr->qpack_index == LSQPACK_TNV_CONTENT_LENGTH_0)
         || (xhdr->name_len == 14 && 0 == memcmp(lsxpack_header_get_name(xhdr),
-                                                        "content-length", 13))
+                                                        "content-length", 14))
         ;
 }
 
