@@ -31,7 +31,8 @@
 #include "test_common.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "duck_client"
+#include "tool_log.h"
 
 /* Expected request and response of the siduck protocol */
 #define REQUEST "quack"

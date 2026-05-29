@@ -1,0 +1,226 @@
+LSQUIC WebTransport Follow-up Findings
+Date: 2026-04-11
+Base commit: a2e3c27
+
+1. WT uni-stream remap can orphan the stream on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_uni_on_read(), lsquic_stream_set_stream_if(), wt_on_new_stream()
+   Summary: The code frees the old pending-uni context before switching the
+   stream interface. The switch immediately invokes the new on_new_stream
+   callback. If that callback cannot allocate the WT stream context, the stream
+   is left switched with a NULL context and no longer has its old pending state.
+
+2. WT client-bidi remap has the same unchecked failure mode.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_on_client_bidi_stream(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: A failed WT on_new_stream allocation after interface switching can
+   leave a bidi stream attached to a session without a valid WT stream context.
+
+3. Pending WT uni replay can orphan streams on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_replay_pending_streams(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: Replay frees the old wt_uni_read_ctx before switching to the WT
+   stream interface. If the immediate on_new_stream call fails, the replayed
+   stream loses both the old and new context.
+
+4. Pending WT bidi replay can orphan streams on allocation failure.
+   Files: src/liblsquic/lsquic_wt.c, src/liblsquic/lsquic_stream.c
+   Sites: wt_replay_pending_streams(), lsquic_stream_set_stream_if(),
+   wt_on_new_stream()
+   Summary: Bidi replay has the same unchecked switch-to-WT failure mode as the
+   uni replay path.
+
+5. wt_copy_extra_resp_headers() lacks overflow checks and has a zero-buffer UB
+   path.
+   File: src/liblsquic/lsquic_wt.c
+   Site: wt_copy_extra_resp_headers()
+   Summary: The aggregate size and allocation math are unchecked, and the copy
+   loop can dereference buf + off even when bufsz is zero.
+
+6. wt_send_response() lacks checked allocation math for extra headers.
+   File: src/liblsquic/lsquic_wt.c
+   Site: wt_send_response()
+   Summary: The headers array allocation uses 1 + extra_count without overflow
+   protection and then copies extra headers blindly.
+
+7. devious_baton write_baton_message() lacks overflow checks.
+   File: bin/devious_baton.c
+   Site: write_baton_message()
+   Summary: The code computes varint_len + padding_len + 1 without guarding
+   against size_t overflow or absurdly large allocations from attacker-fed
+   configuration.
+
+8. devious_baton header decode growth can overflow.
+   File: bin/devious_baton.c
+   Site: hset_prepare_decode()
+   Summary: Doubling el->nalloc without overflow checks can wrap req_space
+   before reallocating the decode buffer.
+
+9. http_server interop header accumulation uses unchecked growth math and a
+   lossy realloc.
+   File: bin/http_server.c
+   Site: interop_server_hset_add_header()
+   Summary: req->qif_sz + name_len + value_len + 2 is unchecked for overflow,
+   and assigning realloc() directly to req->qif_str can lose the old buffer on
+   OOM.
+
+10. http_server verification HEAD path exits the whole process on allocation
+    failure.
+    File: bin/http_server.c
+    Site: idle_on_write()
+    Summary: malloc failure for req_body calls exit(1), making memory pressure a
+    remote process-kill DoS if the sample server is deployed.
+
+11. http_server verification-body reader over-advances on short reads.
+    File: bin/http_server.c
+    Site: http_server_interop_on_read()
+    Summary: The verification endpoint increments req_sz by the requested byte
+    count instead of the number of bytes actually read. A partial stream read
+    can therefore skip unread body bytes, compare uninitialized memory against
+    the header block, and desynchronize verification-state bookkeeping.
+
+12. http_server interop read failures still terminate the whole process.
+    File: bin/http_server.c
+    Site: http_server_interop_on_read()
+    Summary: The MD5 and verification-body handlers call exit(1) when a stream
+    read returns an error. A peer-induced per-stream failure can therefore kill
+    the entire sample server instead of being contained to the affected stream.
+
+13. WT datagram queue allocators can wrap their element size calculation.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_dgq_enqueue(), wt_in_dgq_enqueue()
+    Summary: Both outgoing and incoming WT datagram queues allocate elements as
+    sizeof(elem) + len without overflow checks. A very large datagram length on
+    the public send path, or an unexpectedly large queued incoming length, can
+    wrap the allocation size before memcpy and corrupt the heap.
+
+14. WT local stream opens can return broken streams after init failure.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_on_new_stream(), lsquic_wt_open_uni(), lsquic_wt_open_bidi()
+    Summary: If WT stream-context allocation fails during local stream creation,
+    the dynamic onnew context leaks and the open helper can still receive a
+    stream object whose WT initialization never completed. The caller can end up
+    with a half-initialized outgoing WT stream instead of a clean ENOMEM error.
+
+15. WT response-header helpers mishandle pathological header counts.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_copy_extra_resp_headers(), wt_send_response()
+    Summary: A negative copied-header count is currently treated as “no headers”
+    instead of invalid input, and `wt_send_response()` allows `extra->count ==
+    INT_MAX`, which overflows the one-added header total when cast back to the
+    `int` count field passed to stream header sending.
+
+16. WT datagram-write failures can leave stale write-interest state behind.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_send_datagram_ex(), lsquic_wt_want_datagram_write()
+    Summary: The code arms HTTP-datagram write interest before queueing or
+    before confirming the underlying stream accepted the request. If enqueue or
+    arm operations fail, the session can retain stale datagram-write flags or a
+    needless armed write callback, causing inconsistent WT datagram state.
+
+17. Incoming WT uni-stream classification does not recover from init failure.
+    Files: src/liblsquic/lsquic_full_conn_ietf.c, src/liblsquic/lsquic_wt.c
+    Sites: apply_uni_stream_class(), wt_uni_on_new()
+    Summary: The unidirectional stream classifier switches a peer-created
+    stream to the WT uni handler without checking whether the WT on_new
+    callback actually created a read context. An allocation failure leaves the
+    stream half-switched with a NULL WT context on a remote ingress path.
+
+18. WT readers ignore stream read failures and leave broken streams live.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_control_on_read(), wt_uni_on_read()
+    Summary: The CONNECT-stream wrapper and WT uni-stream reader return
+    immediately on negative `lsquic_stream_readf()` results. A read error does
+    not tear down the affected WT stream, which can strand the session or keep
+    a broken incoming WT stream around instead of closing it promptly.
+
+19. Truncated WT uni session IDs are misparsed as session 0.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_uni_readf(), wt_uni_on_read()
+    Summary: If a peer ends a WT uni stream in the middle of the session-id
+    varint, the parser marks the read context "done" without producing a valid
+    session ID. The zero-initialized `sess_id` is then treated as real input,
+    so the stream can be buffered or associated as if it belonged to session
+    0 instead of being rejected as malformed.
+
+20. Partial capsule-type varints at EOF are accepted as clean stream end.
+    File: src/liblsquic/lsquic_stream.c
+    Site: lsquic_http_dg_capsule_readf()
+    Summary: The HTTP Datagram capsule reader only reports a truncated capsule
+    at EOF after it has advanced past the capsule-type field. If the peer ends
+    the stream in the middle of the capsule-type varint, the parser treats the
+    bytes as a clean EOF instead of aborting with HEC_DATAGRAM_ERROR. WT
+    CONNECT streams in capsule mode inherit this malformed-input bypass.
+
+21. WT settings validation allows impossible multi-session capability.
+    Files: src/liblsquic/lsquic_engine.c, src/liblsquic/lsquic_hcso_writer.c,
+           src/liblsquic/lsquic_wt.c
+    Sites: lsquic_engine_check_settings(), wt_get_session_limit(),
+           lsquic_hcso_writer_write_settings()
+    Summary: Current WT support on this branch only implements a single
+    session per connection, but engine validation accepts
+    `es_max_webtransport_sessions > 1` and SETTINGS then advertises that
+    larger value to peers. The accept path still hard-limits the effective
+    session count to one, so the library can overstate WT capability and
+    reject a peer-visible second session that it previously advertised.
+
+22. WT accept allows non-2xx CONNECT responses to become opened sessions.
+    Files: include/lsquic_wt.h, src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_accept(), wt_open_session()
+    Summary: The public WT API documents `wtap_extra_resp_headers` as extra
+    headers for the CONNECT 2xx response and reserves `lsquic_wt_reject()`
+    for non-2xx outcomes, but `lsquic_wt_accept()` accepted any `wtap_status`
+    in the generic `100..999` range. The open path then sent that status on
+    the wire and still marked the WT session opened internally, creating a
+    protocol/state mismatch where a 3xx/4xx/5xx CONNECT response could still
+    trigger `wti_on_session_open()`.
+
+23. WT reject accepts 2xx status codes.
+    File: src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_reject()
+    Summary: The public WT API documents `lsquic_wt_reject()` as the
+    non-2xx path for rejecting a WebTransport CONNECT request, but the
+    implementation accepted any status code that `wt_send_response()`
+    would format. A caller could therefore "reject" a CONNECT stream
+    with a 2xx response, violating the API contract and emitting a
+    protocol-confusing success status from the explicit reject path.
+
+25. WT write handlers treat stream write errors as mere backpressure.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: wt_on_write(), wt_control_on_write()
+    Summary: The WT data-stream prefix writer and CONNECT close-capsule writer
+    both return immediately on `lsquic_stream_write() <= 0`. In core stream
+    code, a negative return indicates an actual write-side stream error, not
+    just blocked output. WT therefore leaves the affected stream/session live
+    after a write failure instead of aborting it, which can strand an outgoing
+    WT stream prefix or a closing control stream indefinitely.
+
+26. WT stream reset APIs accept the CONNECT control stream.
+    File: src/liblsquic/lsquic_wt.c
+    Sites: lsquic_wt_stream_reset(), lsquic_wt_stream_stop_sending()
+    Summary: Both public WT app-error stream helpers only check whether a
+    stream has a WT session attachment. The CONNECT control stream is attached
+    to its WT session too, so callers can currently send RESET_STREAM or
+    STOP_SENDING with WT application error codes on the control stream instead
+    of using the WT close-session path. That is the wrong protocol surface for
+    closing a WebTransport session and should be rejected at the API boundary.
+
+27. WT accept allows client-side streams.
+    Files: docs/webtransport.rst, src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_accept()
+    Summary: The public WT acceptance flow is documented as the server-side
+    handoff for an incoming Extended CONNECT request, but `lsquic_wt_accept()`
+    never checked that the supplied control stream was server-side. A caller
+    could therefore pass a client-side stream and start binding WT session
+    state to the wrong endpoint role instead of getting a clean `EINVAL`.
+
+29. WT accept does not reject streams whose response headers already started.
+    File: src/liblsquic/lsquic_wt.c
+    Site: lsquic_wt_accept()
+    Summary: `lsquic_wt_reject()` already refuses CONNECT streams once response
+    header emission has started, but `lsquic_wt_accept()` did not. A caller
+    could therefore hand a stream to WT after application code had already
+    started the HTTP response, and WT would still bind session state internally
+    even though it could no longer send its own CONNECT 2xx handshake cleanly.

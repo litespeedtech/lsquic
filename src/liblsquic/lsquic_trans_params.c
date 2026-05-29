@@ -65,12 +65,13 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0xDE1A:    return TPI_MIN_ACK_DELAY;
     case 0xFF02DE1A:return TPI_MIN_ACK_DELAY_02;
     case 0x7158:    return TPI_TIMESTAMPS;
+    case 0x17F7586D2CB571: return TPI_RESET_STREAM_AT;
     default:        return INT_MAX;
     }
 }
 
 
-static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
+static const uint64_t enum_2_tpi_val[LAST_TPI + 1] =
 {
     [TPI_ORIGINAL_DEST_CID]                 =  0x0,
     [TPI_MAX_IDLE_TIMEOUT]                  =  0x1,
@@ -99,6 +100,7 @@ static const unsigned enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_MIN_ACK_DELAY_02]                  =  0xFF02DE1A,
     [TPI_TIMESTAMPS]                        =  0x7158,
     [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
+    [TPI_RESET_STREAM_AT]                   =  0x17F7586D2CB571,
 };
 
 
@@ -130,6 +132,7 @@ const char * const lsquic_tpi2str[LAST_TPI + 1] =
     [TPI_MIN_ACK_DELAY_02]                  =  "min_ack_delay_02",
     [TPI_TIMESTAMPS]                        =  "timestamps",
     [TPI_GREASE_QUIC_BIT]                   =  "grease_quic_bit",
+    [TPI_RESET_STREAM_AT]                   =  "reset_stream_at",
 };
 #define tpi2str lsquic_tpi2str
 
@@ -462,6 +465,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
             case TPI_GREASE_QUIC_BIT:
+            case TPI_RESET_STREAM_AT:
                 *p++ = 0;
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -601,6 +605,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
         case TPI_GREASE_QUIC_BIT:
+        case TPI_RESET_STREAM_AT:
             EXPECT_LEN(0);
             break;
         case TPI_STATELESS_RESET_TOKEN:
@@ -1047,6 +1052,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
                 break;
             case TPI_DISABLE_ACTIVE_MIGRATION:
             case TPI_GREASE_QUIC_BIT:
+            case TPI_RESET_STREAM_AT:
                 *p++ = 0;
                 break;
 #if LSQUIC_TEST_QUANTUM_READINESS
@@ -1174,6 +1180,8 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
             }
             break;
         case TPI_DISABLE_ACTIVE_MIGRATION:
+        case TPI_GREASE_QUIC_BIT:
+        case TPI_RESET_STREAM_AT:
             EXPECT_LEN(0);
             break;
         case TPI_STATELESS_RESET_TOKEN:

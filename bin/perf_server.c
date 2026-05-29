@@ -30,7 +30,8 @@
 #include "prog.h"
 
 #include "../src/liblsquic/lsquic_byteswap.h"
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "perf_server"
+#include "tool_log.h"
 
 static uint64_t s_max_pacing_rate = 0;
 

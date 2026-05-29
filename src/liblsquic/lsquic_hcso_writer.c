@@ -16,11 +16,17 @@
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
 #include "lsquic_hash.h"
+#include "lsquic_malo.h"
+#include "lsquic_conn_flow.h"
+#include "lsquic_rtt.h"
 #include "lsquic_stream.h"
 #include "lsquic_frab_list.h"
 #include "lsquic_byteswap.h"
+#include "lsquic_mm.h"
 #include "lsquic_hcso_writer.h"
 #include "lsquic_conn.h"
+#include "lsquic_conn_public.h"
+#include "lsquic_engine_public.h"
 
 #define LSQUIC_LOGGER_MODULE LSQLM_HCSO_WRITER
 #define LSQUIC_LOG_CONN_ID \
@@ -121,39 +127,34 @@ int
 lsquic_hcso_write_settings (struct hcso_writer *writer,
                         unsigned max_header_list_size,
                         unsigned dyn_table_size, unsigned max_risked_streams,
-                        int is_server
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-                        , int webtransport_server,
-                        unsigned max_webtransport_server_streams
-#endif
-                        )
+                        int is_server,
+                        int wt_enabled)
 {
+    const struct lsquic_engine_public *enpub;
     unsigned char *p;
     unsigned bits;
     int was_empty;
-#ifdef NDEBUG
-#   define frame_size_len 1
-#else
-    /* Need to use two bytes for frame length, as randomization may require
-     * more than 63 bytes.
+    enum {
+        HCSO_SETTINGS_FRAME_SIZE_LEN = 2,
+        HCSO_MAX_SETTINGS = 10,
+        HCSO_MAX_VARINT_LEN = VINT_MAX_SIZE,
+    };
+    /* Use fixed worst-case sizing: WT setting IDs are larger than 1-byte
+     * varints, and fuzzing can randomize setting IDs to full varint width.
      */
-#   define frame_size_len 2
-#endif
-    unsigned char buf[1 /* Frame type */ + /* Frame size */ frame_size_len
-        /* There are maximum seven settings that need to be written out and
-         * each value can be encoded in maximum 8 bytes:
-         */
-        + 7 * (
-#ifdef NDEBUG
-            1   /* Each setting needs 1-byte varint number, */
-#else
-            8   /* but it can be up to 8 bytes when randomized */
-#endif
-              + 8) ];
+    unsigned char buf[1 /* frame type */
+        + HCSO_SETTINGS_FRAME_SIZE_LEN
+        + HCSO_MAX_SETTINGS * (HCSO_MAX_VARINT_LEN + HCSO_MAX_VARINT_LEN)];
+
+    assert(writer);
+    assert(writer->how_stream);
+    assert(writer->how_stream->conn_pub);
+    assert(writer->how_stream->conn_pub->enpub);
+    enpub = writer->how_stream->conn_pub->enpub;
 
     p = buf;
     *p++ = HQFT_SETTINGS;
-    p += frame_size_len;
+    p += HCSO_SETTINGS_FRAME_SIZE_LEN;
 
     if (max_header_list_size != HQ_DF_MAX_HEADER_LIST_SIZE)
     {
@@ -188,55 +189,81 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         p += 1 << bits;
     }
 
-#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
-    if (is_server && webtransport_server && max_webtransport_server_streams)
+    if (wt_enabled)
     {
-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
-#define SETTINGS_ENABLE_WEBTRANSPORT (0x2b603742)
-#define SETTINGS_ENABLE_WEBTRANSPORT_VALUE (1)
-        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_WEBTRANSPORT);
-        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT, bits, 1 << bits);
+        uint64_t wt_max_sessions;
+
+        wt_max_sessions = enpub->enp_settings.es_max_webtransport_sessions;
+        if (wt_max_sessions == 0)
+            wt_max_sessions = 1;
+
+        /* We currently map WT initial settings to connection-level engine
+         * limits.  This mapping is valid as long as we support exactly one
+         * WebTransport session per connection.
+         */
+        /* Write out SETTINGS_WT_ENABLED */
+        bits = hcso_setting_type2bits(writer, HQSID_WT_ENABLED);
+        vint_write(p, HQSID_WT_ENABLED, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(SETTINGS_ENABLE_WEBTRANSPORT_VALUE);
-        vint_write(p, SETTINGS_ENABLE_WEBTRANSPORT_VALUE, bits, 1 << bits);
+        bits = vint_val2bits(wt_max_sessions);
+        vint_write(p, wt_max_sessions, bits, 1 << bits);
         p += 1 << bits;
 
-        /* Write out SETTINGS_ENABLE_WEBTRANSPORT */
-#define WEBTRANSPORT_MAX_SESSIONS (0x2b603743)
-        bits = hcso_setting_type2bits(writer, WEBTRANSPORT_MAX_SESSIONS);
-        vint_write(p, WEBTRANSPORT_MAX_SESSIONS, bits, 1 << bits);
+        /* Write out draft-14 compatibility setting WT_MAX_SESSIONS. */
+        bits = hcso_setting_type2bits(writer, HQSID_WT_MAX_SESSIONS);
+        vint_write(p, HQSID_WT_MAX_SESSIONS, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(max_webtransport_server_streams);
-        vint_write(p, max_webtransport_server_streams, bits, 1 << bits);
+        bits = vint_val2bits(wt_max_sessions);
+        vint_write(p, wt_max_sessions, bits, 1 << bits);
         p += 1 << bits;
 
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_DATA);
+        vint_write(p, HQSID_WT_INITIAL_MAX_DATA, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_data);
+        vint_write(p, enpub->enp_settings.es_init_max_data, bits, 1 << bits);
+        p += 1 << bits;
+
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_STREAMS_UNI);
+        vint_write(p, HQSID_WT_INITIAL_MAX_STREAMS_UNI, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_streams_uni);
+        vint_write(p, enpub->enp_settings.es_init_max_streams_uni, bits, 1 << bits);
+        p += 1 << bits;
+
+        bits = hcso_setting_type2bits(writer, HQSID_WT_INITIAL_MAX_STREAMS_BIDI);
+        vint_write(p, HQSID_WT_INITIAL_MAX_STREAMS_BIDI, bits, 1 << bits);
+        p += 1 << bits;
+        bits = vint_val2bits(enpub->enp_settings.es_init_max_streams_bidi);
+        vint_write(p, enpub->enp_settings.es_init_max_streams_bidi, bits, 1 << bits);
+        p += 1 << bits;
+
+        if (is_server)
+        {
+            /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
+            bits = hcso_setting_type2bits(writer,
+                                                HQSID_ENABLE_CONNECT_PROTOCOL);
+            vint_write(p, HQSID_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
+            p += 1 << bits;
+            bits = vint_val2bits(1);
+            vint_write(p, 1, bits, 1 << bits);
+            p += 1 << bits;
+        }
+    }
+
+    if (enpub->enp_settings.es_http_datagrams)
+    {
         /* Write out H3_DATAGRAM_ENABLED */
-#define H3_DATAGRAM_ENABLED (0x33)
-#define H3_DATAGRAM_ENABLED_VALUE (1)
-        bits = hcso_setting_type2bits(writer, H3_DATAGRAM_ENABLED);
-        vint_write(p, H3_DATAGRAM_ENABLED, bits, 1 << bits);
+        bits = hcso_setting_type2bits(writer, HQSID_H3_DATAGRAM_ENABLED);
+        vint_write(p, HQSID_H3_DATAGRAM_ENABLED, bits, 1 << bits);
         p += 1 << bits;
-        bits = vint_val2bits(H3_DATAGRAM_ENABLED_VALUE);
-        vint_write(p, H3_DATAGRAM_ENABLED_VALUE, bits, 1 << bits);
-        p += 1 << bits;
-
-        /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */
-#define SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8)
-#define SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE (1)
-        bits = hcso_setting_type2bits(writer, SETTINGS_ENABLE_CONNECT_PROTOCOL);
-        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL, bits, 1 << bits);
-        p += 1 << bits;
-        bits = vint_val2bits(SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE);
-        vint_write(p, SETTINGS_ENABLE_CONNECT_PROTOCOL_VALUE, bits, 1 << bits);
+        bits = vint_val2bits(1);
+        vint_write(p, 1, bits, 1 << bits);
         p += 1 << bits;
     }
-#endif
 
-#ifdef NDEBUG
-    buf[1] = p - buf - 2;
-#else
-    vint_write(buf + 1, p - buf - 3, 1, 2);
-#endif
+    vint_write(buf + 1, p - buf - 1 - HCSO_SETTINGS_FRAME_SIZE_LEN, 1,
+                                                HCSO_SETTINGS_FRAME_SIZE_LEN);
 
     was_empty = lsquic_frab_list_empty(&writer->how_fral);
 

@@ -90,6 +90,7 @@ enum lsquic_logger_module {
     LSQLM_BW_SAMPLER,
     LSQLM_PACKET_RESIZE,
     LSQLM_CONN_STATS,
+    LSQLM_WT,
     N_LSQUIC_LOGGER_MODULES
 };
 
@@ -187,6 +188,9 @@ lsquic_logger_log0 (enum lsq_log_level, const char *format, ...)
             __attribute__((format(printf, 2, 3)))
 #endif
 ;
+
+void
+lsquic_logger_log0v (enum lsq_log_level, const char *format, va_list ap);
 #   define LSQ_LOG0(level, ...) do {                                         \
         if (LSQ_LOG_ENABLED(level))                                          \
             lsquic_logger_log0(level, __VA_ARGS__);                          \
