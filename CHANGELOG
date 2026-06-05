@@ -1,3 +1,10 @@
+2026-06-05
+    - 4.7.2
+    - [FIX] Only ignore Priority: header after PRIORITY_UPDATE and in
+      client mode.
+    - [FIX] Transport params: reject partial preferred address families.
+    - [IMPROVEMENT] PRIORITY_UPDATE frame handling.
+
 2026-05-25
     - 4.7.1
     - [FIX] Content-length check in QPACK decoder handler.

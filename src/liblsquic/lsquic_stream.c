@@ -5245,8 +5245,8 @@ lsquic_stream_get_http_prio (struct lsquic_stream *stream,
 
 
 int
-lsquic_stream_set_http_prio (struct lsquic_stream *stream,
-                                        const struct lsquic_ext_http_prio *ehp)
+lsquic_stream_set_http_prio_ext (struct lsquic_stream *stream,
+                const struct lsquic_ext_http_prio *ehp, int is_priority_update)
 {
     if (stream->sm_bflags & SMBF_HTTP_PRIO)
     {
@@ -5260,7 +5260,8 @@ lsquic_stream_set_http_prio (struct lsquic_stream *stream,
             stream->sm_bflags |= SMBF_INCREMENTAL;
         else
             stream->sm_bflags &= ~SMBF_INCREMENTAL;
-        stream->sm_bflags |= SMBF_HPRIO_SET;
+        if (is_priority_update)
+            stream->sm_bflags |= SMBF_HPRIO_SET;
         LSQ_DEBUG("set urgency to %hhu, incremental to %hhd", ehp->urgency,
                                                             ehp->incremental);
         if (!(stream->sm_bflags & SMBF_SERVER))
@@ -5270,6 +5271,14 @@ lsquic_stream_set_http_prio (struct lsquic_stream *stream,
     }
     else
         return -1;
+}
+
+
+int
+lsquic_stream_set_http_prio (struct lsquic_stream *stream,
+                                        const struct lsquic_ext_http_prio *ehp)
+{
+    return lsquic_stream_set_http_prio_ext(stream, ehp, 0);
 }
 
 

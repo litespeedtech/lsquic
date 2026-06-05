@@ -5252,7 +5252,7 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
                                                                 stream->id);
                 lsquic_hash_erase(conn->ifc_bpus, el);
                 bpu = lsquic_hashelem_getdata(el);
-                (void) lsquic_stream_set_http_prio(stream, &bpu->ehp);
+                (void) lsquic_stream_set_http_prio_ext(stream, &bpu->ehp, 1);
                 free(bpu);
             }
         }
@@ -9391,7 +9391,7 @@ on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
         { /* Empty PFV means "use defaults" */ }
 
     if (stream)
-        (void) lsquic_stream_set_http_prio(stream, &ehp);
+        (void) lsquic_stream_set_http_prio_ext(stream, &ehp, 1);
     else
     {
         assert(frame_type == HQFT_PRIORITY_UPDATE_STREAM);
