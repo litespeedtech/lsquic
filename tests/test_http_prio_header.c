@@ -429,8 +429,12 @@ test_priority_update_during_partial_header_decode_wins (void)
 int
 main (void)
 {
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
+
     test_split_priority_header_fields_are_one_dictionary();
     test_user_set_http_prio_does_not_block_priority_header();
     test_priority_update_during_partial_header_decode_wins();
+
+    lsquic_global_cleanup();
     return 0;
 }
