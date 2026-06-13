@@ -134,6 +134,7 @@ typedef struct lsquic_packet_out
         PO_LOST     = (1 <<29),         /* On lost queue */
 #define POSPIN_SHIFT 30
         PO_SPIN_BIT = (1 <<30),         /* Value of the spin bit */
+        PO_SEND_EXTRA = (1 <<31),       /* Extra data to improve bandwidth estimation accuracy */
     }                  po_flags;
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */

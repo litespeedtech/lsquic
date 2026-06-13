@@ -2042,6 +2042,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_max_plpmtu = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "send_extra", 10))
+        {
+            settings->es_send_extra_data_to_probe_bw = atoi(val);
+            return 0;
+        }
         break;
     case 11:
         if (0 == strncmp(name, "ping_period", 11))
