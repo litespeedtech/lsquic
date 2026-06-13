@@ -3668,6 +3668,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
 
     if (full_conn_need_send_extra_data_to_probe_bw(lconn))
         full_conn_send_extra_data_to_probe_bw(lconn);
+    else
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
 
   end_write:
 
@@ -3738,8 +3740,6 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
   close_end:
     lsquic_send_ctl_set_buffer_stream_packets(&conn->fc_send_ctl, 1);
     lsquic_send_ctl_tick_out(&conn->fc_send_ctl);
-    if (!full_conn_need_send_extra_data_to_probe_bw(lconn))
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
     return tick;
 }
 

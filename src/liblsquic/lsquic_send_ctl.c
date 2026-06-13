@@ -1991,12 +1991,6 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
         LSQ_DEBUG("app-limited (pacing capped)");
         ctl->sc_flags |= SC_APP_LIMITED;
     }
-
-    if ((ctl->sc_flags & SC_BW_SAMPLER_INIT) && (ctl->sc_flags & SC_APP_LIMITED)
-        && ctl->sc_pacer.pa_n_scheduled == 0)
-    {
-        lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
-    }
 }
 
 
