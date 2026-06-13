@@ -479,6 +479,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
 
+/* By default, sending extra data to probe BBR bandwidth is disabled. */
+#define LSQUIC_DF_SEND_EXTRA_DATA_TO_PROBE_BW 0
+
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 /** Turn off webtransport extension for server by default */
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
@@ -1169,6 +1172,15 @@ struct lsquic_engine_settings {
      * The default is all zero, which indicates perferred_address is not set
      */
     uint8_t         es_preferred_address[24];
+
+    /**
+     * If this value is set to 1, the connection will send padded packets
+     * while BBR is probing bandwidth (pacing_gain > 1.0) to improve bandwidth
+     * estimation accuracy.
+     *
+     * Default is @ref LSQUIC_DF_SEND_EXTRA_DATA_TO_PROBE_BW.
+     */
+    unsigned        es_send_extra_data_to_probe_bw;
 
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**

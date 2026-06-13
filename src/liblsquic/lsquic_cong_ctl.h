@@ -70,6 +70,9 @@ struct cong_ctl_if
 
     void
     (*cci_cleanup) (void *cong_ctl);
+
+    int
+    (*cci_need_send_extra_data_to_probe_bw) (void *cong_ctl);
 };
 
 #endif
