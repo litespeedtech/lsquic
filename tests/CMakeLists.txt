@@ -30,7 +30,6 @@ SET(TESTS
     arr
     attq
     blocked_gquic_be
-    bounds_helpers
     bw_sampler
     conn_close_gquic_be
     crypto_gen
@@ -86,6 +85,7 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 ENDIF()
 
 IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    SET(TESTS ${TESTS} bounds_helpers)
     # No regexes on Windows
     SET(TESTS ${TESTS} ack_merge)
     # No open_memstream() on Windows
