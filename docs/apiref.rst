@@ -28,23 +28,23 @@ has the form MAJOR.MINOR.PATCH, where
 QUIC Versions
 -------------
 
-LSQUIC supports two types of QUIC protocol: Google QUIC and IETF QUIC.  The
-former will at some point become obsolete, while the latter is still being
-developed by the IETF.  Both types are included in a single enum:
+LSQUIC supports two types of QUIC protocol: Google QUIC and IETF QUIC.
+Google QUIC versions are deprecated and are not enabled by default.  Both
+types are included in a single enum:
 
 .. type:: enum lsquic_version
 
     .. member:: LSQVER_043
 
-        Google QUIC version Q043
+        Google QUIC version Q043; this version is deprecated.
 
     .. member:: LSQVER_046
 
-        Google QUIC version Q046
+        Google QUIC version Q046; this version is deprecated.
 
     .. member:: LSQVER_050
 
-        Google QUIC version Q050
+        Google QUIC version Q050; this version is deprecated.
 
     .. member:: LSQVER_ID27
 
@@ -54,14 +54,13 @@ developed by the IETF.  Both types are included in a single enum:
 
         IETF QUIC version ID 29
 
-    .. member:: LSQVER_ID34
-
-        IETF QUIC version ID 34
-
     .. member:: LSQVER_I001
 
-        IETF QUIC version 1.  (This version is disabled by default until
-        the QUIC RFC is released).
+        IETF QUIC version 1.
+
+    .. member:: LSQVER_I002
+
+        IETF QUIC version 2.
 
     .. member:: N_LSQVER
 
@@ -84,7 +83,8 @@ Experimental versions.
 
 .. macro:: LSQUIC_DEPRECATED_VERSIONS
 
-Deprecated versions.
+Deprecated versions.  Deprecated versions are supported, but they are not
+enabled by default.
 
 .. macro:: LSQUIC_GQUIC_HEADER_VERSIONS
 
@@ -491,7 +491,7 @@ settings structure:
        this number of times in a row without making progress (that is,
        reading, writing, or changing stream state), loop break will occur.
 
-       The defaut value is :macro:`LSQUIC_DF_PROGRESS_CHECK`.
+       The default value is :macro:`LSQUIC_DF_PROGRESS_CHECK`.
 
     .. member:: int             es_rw_once
 
@@ -631,7 +631,7 @@ settings structure:
        send PING frames in the absence of other activity.
 
        By default, the server does not send PINGs and the period is set to zero.
-       The client's defaut value is :macro:`LSQUIC_DF_PING_PERIOD`.
+       The client's default value is :macro:`LSQUIC_DF_PING_PERIOD`.
 
        IETF QUIC only.
 

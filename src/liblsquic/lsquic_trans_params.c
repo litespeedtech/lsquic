@@ -535,7 +535,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         if (s < 0)
             return -1;
         p += s;
-        if ((ptrdiff_t) len > end - p)
+        if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
         if (tpi <= LAST_TPI)
@@ -1125,7 +1125,7 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         if (s < 0)
             return -1;
         p += s;
-        if ((ptrdiff_t) len > end - p)
+        if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
         if (tpi <= LAST_TPI)

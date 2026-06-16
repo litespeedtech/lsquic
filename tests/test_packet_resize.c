@@ -262,7 +262,9 @@ my_gsf_read (void *stream, void *buf, size_t len, int *fin)
 
     while (p < end)
     {
-        n = MIN(end - p, cursor->data_sz - cursor->off);
+        n = end - p;
+        if (n > (size_t) (cursor->data_sz - cursor->off))
+            n = cursor->data_sz - cursor->off;
         memcpy(p, cursor->data + cursor->off, n);
         cursor->off += n;
         if (cursor->off == cursor->data_sz)

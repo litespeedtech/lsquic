@@ -832,14 +832,15 @@ QUIC versions in LSQUIC are gathered in an enum, :type:`lsquic_version`, and hav
 
   enum lsquic_version {
       LSQVER_043, LSQVER_046, LSQVER_050,     /* Google QUIC */
-      LSQVER_ID27, LSQVER_ID28, LSQVER_ID29,  /* IETF QUIC */
+      LSQVER_ID27, LSQVER_ID29,               /* IETF QUIC drafts */
+      LSQVER_I001, LSQVER_I002,               /* IETF QUIC RFC versions */
       /* ...some special entries skipped */
       N_LSQVER    /* <====================== Special value */
   };
 
 The special value "N_LSQVER" is used to let the engine pick the QUIC version.
-It picks the latest non-experimental version, so in this case it picks ID-29.
-(Experimental from the point of view of the library.)
+It picks the latest version that is neither deprecated nor experimental.
+(Deprecated and experimental from the point of view of the library.)
 
 Because version enum values are small -- and that is by design -- a list of
 versions can be passed around as bitmasks.
@@ -847,7 +848,7 @@ versions can be passed around as bitmasks.
 ::
 
   /* This allows list of versions to be specified as bitmask: */
-  es_versions = (1 << LSQVER_ID28) | (1 << LSQVER_ID29);
+  es_versions = (1 << LSQVER_I001) | (1 << LSQVER_I002);
 
 This is done, for example, when
 specifying list of versions to enable in engine settings using :member:`lsquic_engine_api.ea_versions`.
@@ -932,7 +933,7 @@ is parsed to see which setting to alter.
 
   while (/* getopt */)
   {
-      case 'o':   /* For example: -o version=h3-27 -o cc_algo=2 */
+      case 'o':   /* For example: -o version=h3 -o cc_algo=2 */
         if (!settings_initialized) {
           lsquic_engine_init_settings(&settings,
                           cert_file || key_file ? LSENG_SERVER : 0);

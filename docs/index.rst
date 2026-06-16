@@ -16,8 +16,9 @@ Most of the code in this distribution has been  used in our own products
 -- `LiteSpeed Web Server`_, `LiteSpeed Web ADC`_, and OpenLiteSpeed_ --
 since 2017.
 
-Currently supported QUIC versions are v1, Internet-Draft versions 29, and 27;
-and the older "Google" QUIC versions Q043, Q046, an Q050.
+QUIC versions v1, v2, and Internet-Draft version 29 are enabled by default.
+Deprecated versions ID-27 and the older "Google" QUIC versions Q043, Q046,
+and Q050 are still supported, but are not enabled by default.
 
 LSQUIC is licensed under the `MIT License`_; see LICENSE in the source
 distribution for details.

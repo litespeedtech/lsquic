@@ -236,7 +236,7 @@ rechist_test_sanity (const struct lsquic_rechist *rechist)
 {
     const struct rechist_elem *el;
     ptrdiff_t idx;
-    uint64_t *masks;
+    uintptr_t *masks;
     unsigned n_elems;
 
     masks = calloc(rechist->rh_n_masks, sizeof(masks[0]));
@@ -250,9 +250,9 @@ rechist_test_sanity (const struct lsquic_rechist *rechist)
             ++n_elems;
             idx = el - rechist->rh_elems;
             if (n_elems > rechist->rh_n_alloced
-                || idx >=  rechist->rh_n_alloced)
+                || idx < 0 || (unsigned) idx >= rechist->rh_n_alloced)
                 break;
-            masks[idx >> LOG2_BITS] |= 1ull << (idx & ((1u << LOG2_BITS) - 1));
+            masks[idx >> LOG2_BITS] |= (uintptr_t) 1 << (idx & ((1u << LOG2_BITS) - 1));
             if (el->re_next != UINT_MAX)
                 el = &rechist->rh_elems[el->re_next];
             else

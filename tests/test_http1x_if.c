@@ -1,5 +1,4 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
-/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
@@ -41,15 +40,22 @@ process_header (void *hset, const char *name, size_t name_len,
 
 
 static void *
-new_hset (int is_server)
+new_hset_with_limit (int is_server, unsigned max_headers_sz)
 {
     struct http1x_ctor_ctx hcc = {
         .conn           = NULL,
-        .max_headers_sz = MAX_HTTP1X_HEADERS_SIZE,
+        .max_headers_sz = max_headers_sz,
         .is_server      = is_server,
     };
 
     return lsquic_http1x_if->hsi_create_header_set(&hcc, NULL, 0);
+}
+
+
+static void *
+new_hset (int is_server)
+{
+    return new_hset_with_limit(is_server, MAX_HTTP1X_HEADERS_SIZE);
 }
 
 
@@ -87,6 +93,20 @@ test_valid_request (void)
     h1h = hset;
     assert(h1h->h1h_size == sizeof(expected) - 1);
     assert(0 == memcmp(h1h->h1h_buf, expected, sizeof(expected) - 1));
+    lsquic_http1x_if->hsi_discard_header_set(hset);
+}
+
+
+static void
+test_cookie_size_limit (void)
+{
+    void *hset;
+
+    hset = new_hset_with_limit(1, 30);
+    assert(hset);
+    add_request_pseudo_headers(hset);
+    assert(0 == process_header(hset, "cookie", 6, "a=b", 3));
+    assert(1 == process_header(hset, "cookie", 6, "c=d", 3));
     lsquic_http1x_if->hsi_discard_header_set(hset);
 }
 
@@ -170,6 +190,7 @@ int
 main (void)
 {
     test_valid_request();
+    test_cookie_size_limit();
     test_invalid_values();
     test_invalid_names();
     test_bad_response_pseudo_value();
