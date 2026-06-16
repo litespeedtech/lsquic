@@ -1,6 +1,7 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <ctype.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -409,10 +410,31 @@ static int
 save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
 {
     char *cookie_val;
+    unsigned cookie_sz;
+
+    if (0 == hwc->cookie_sz)
+        cookie_sz = val_len;
+    else if (hwc->cookie_sz > UINT_MAX - 2
+                                    || val_len > UINT_MAX - hwc->cookie_sz - 2)
+    {
+        LSQ_INFO("headers too large");
+        return 1;
+    }
+    else
+        cookie_sz = hwc->cookie_sz + val_len + 2 /* "; " */;
+
+    if (hwc->max_headers_sz
+        && (size_t) hwc->w_off + 8 /* "Cookie: " */ + cookie_sz
+                                                + 2 /* "\r\n" */
+                                                > hwc->max_headers_sz)
+    {
+        LSQ_INFO("headers too large");
+        return 1;
+    }
 
     if (0 == hwc->cookie_sz)
     {
-        hwc->cookie_nalloc = hwc->cookie_sz = val_len;
+        hwc->cookie_nalloc = hwc->cookie_sz = cookie_sz;
         cookie_val = malloc(hwc->cookie_nalloc);
         if (!cookie_val)
             return -1;
@@ -421,10 +443,13 @@ save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
     }
     else
     {
-        hwc->cookie_sz += val_len + 2 /* "; " */;
+        hwc->cookie_sz = cookie_sz;
         if (hwc->cookie_sz > hwc->cookie_nalloc)
         {
-            hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + val_len + 2;
+            if (hwc->cookie_nalloc > (UINT_MAX - val_len - 2) / 2)
+                hwc->cookie_nalloc = hwc->cookie_sz;
+            else
+                hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + val_len + 2;
             cookie_val = realloc(hwc->cookie_val, hwc->cookie_nalloc);
             if (!cookie_val)
                 return -1;

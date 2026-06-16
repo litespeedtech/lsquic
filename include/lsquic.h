@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 7
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 8
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -107,8 +107,9 @@ enum lsquic_version
 };
 
 /**
- * We currently support versions 43, 46, 50, Draft-27, Draft-29,
- * and IETF QUIC v1.
+ * We currently support Google QUIC versions Q043, Q046, and Q050,
+ * IETF QUIC Draft-27 and Draft-29, and IETF QUIC v1 and v2.
+ * Deprecated and experimental versions are not enabled by default.
  * @see lsquic_version
  */
 #define LSQUIC_SUPPORTED_VERSIONS ((1 << N_LSQVER) - 1)
@@ -121,7 +122,8 @@ enum lsquic_version
 #define LSQUIC_EXPERIMENTAL_VERSIONS ( \
                             (1 << LSQVER_RESVED))
 
-#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_ID27))
+#define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_043) | (1 << LSQVER_046) | \
+                                    (1 << LSQVER_050) | (1 << LSQVER_ID27))
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
@@ -670,7 +672,7 @@ struct lsquic_engine_settings {
      * this number of times in a row without making progress (that is,
      * reading, writing, or changing stream state), loop break will occur.
      *
-     * The defaut value is @ref LSQUIC_DF_PROGRESS_CHECK.
+     * The default value is @ref LSQUIC_DF_PROGRESS_CHECK.
      */
     unsigned        es_progress_check;
 
@@ -864,7 +866,7 @@ struct lsquic_engine_settings {
      * send PING frames in the absence of other activity.
      *
      * By default, the server does not send PINGs and the period is set to zero.
-     * The client's defaut value is @ref LSQUIC_DF_PING_PERIOD.
+     * The client's default value is @ref LSQUIC_DF_PING_PERIOD.
      */
     unsigned        es_ping_period;
 

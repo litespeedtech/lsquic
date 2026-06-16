@@ -1,3 +1,12 @@
+2026-06-15
+    - 4.8.0
+    - [API] Deprecate all gQUIC versions.
+    - [FIX] http1x: check size of Cookie: header.
+    - [FIX] Add checks to gQUIC client session resume code.
+    - [FIX] 32-bit parser bounds checks.
+    - [FIX] Use ls-qpack v2.6.3 to pick up a bunch of fixes.
+    - [DOCS] FAQ: example programs do work with google.com etc.
+
 2026-06-05
     - 4.7.2
     - [FIX] Only ignore Priority: header after PRIORITY_UPDATE and in

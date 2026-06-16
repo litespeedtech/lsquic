@@ -398,7 +398,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
-    tobjs->send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd = ~0ull;
+    tobjs->send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd = ~0UL;
     tobjs->send_ctl.sc_cong_ctl = &tobjs->send_ctl.sc_adaptive_cc.acc_cubic;
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = &test_ctx;

@@ -30,6 +30,7 @@ SET(TESTS
     arr
     attq
     blocked_gquic_be
+    bounds_helpers
     bw_sampler
     conn_close_gquic_be
     crypto_gen
@@ -63,11 +64,13 @@ SET(TESTS
     send_headers
     send_ctl_bw_lifecycle
     senhist
+    sess_resume
     set
     sfcw
     shi
     spi
     stop_waiting_gquic_be
+    stk
     streamgen
     streamparse
     tokgen

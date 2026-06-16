@@ -278,6 +278,23 @@ decode_file (const char *name)
 }
 
 
+static void
+test_oversized_param_len (void)
+{
+    static const unsigned char buf[] =
+    {
+        /* Unknown transport parameter ID: */
+        0x21,
+        /* Length: 0x80000000 */
+        0xC0, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
+    };
+    struct transport_params params;
+
+    assert(lsquic_tp_decode(buf, sizeof(buf), 0, &params) < 0);
+    assert(lsquic_tp_decode_27(buf, sizeof(buf), 0, &params) < 0);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -302,6 +319,8 @@ main (int argc, char **argv)
 
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
         run_test(&tests[i]);
+
+    test_oversized_param_len();
 
     return 0;
 }

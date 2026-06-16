@@ -30,7 +30,7 @@
 #include "lsquic_logger.h"
 
 #define CHECK_SPACE(need, pstart, pend)  \
-    do { if ((intptr_t) (need) > ((pend) - (pstart))) { return -1; } } while (0)
+    do { if ((uint64_t) (need) > (uint64_t) ((pend) - (pstart))) { return -1; } } while (0)
 
 /* This partially parses `packet_in' and returns 0 if in case it succeeded and
  * -1 on failure.
