@@ -412,7 +412,10 @@ lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
 {
     packet->po_data_sz += delta;
     if (packet->po_flags & PO_SCHED)
+    {
         (ctl)->sc_bytes_scheduled += delta;
+        packet->po_acct_sz += delta;
+    }
     lsquic_send_ctl_sanity_check(ctl);
 }
 

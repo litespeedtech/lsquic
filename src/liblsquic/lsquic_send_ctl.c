@@ -728,7 +728,8 @@ send_ctl_sched_Xpend_common (struct lsquic_send_ctl *ctl,
 {
     packet_out->po_flags |= PO_SCHED;
     ++ctl->sc_n_scheduled;
-    ctl->sc_bytes_scheduled += packet_out_total_sz(packet_out);
+    packet_out->po_acct_sz = packet_out_total_sz(packet_out);   /* cache; subtract same at remove */
+    ctl->sc_bytes_scheduled += packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
 }
 
@@ -759,7 +760,7 @@ send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
     packet_out->po_flags &= ~PO_SCHED;
     assert(ctl->sc_n_scheduled);
     --ctl->sc_n_scheduled;
-    ctl->sc_bytes_scheduled -= packet_out_total_sz(packet_out);
+    ctl->sc_bytes_scheduled -= packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
 }
 
@@ -2097,7 +2098,7 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
     {
         assert(packet_out->po_flags & PO_SCHED);
-        bytes += packet_out_total_sz(packet_out);
+        bytes += packet_out->po_acct_sz;
         ++count;
     }
     assert(count == ctl->sc_n_scheduled);
@@ -2639,7 +2640,10 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     if (packet_out->po_regen_sz)
     {
         if (packet_out->po_flags & PO_SCHED)
+        {
             ctl->sc_bytes_scheduled -= packet_out->po_regen_sz;
+            packet_out->po_acct_sz -= packet_out->po_regen_sz;
+        }
         lsquic_packet_out_chop_regen(packet_out);
     }
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "schedule resend, repackage packet "
@@ -2725,6 +2729,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
             adj = lsquic_packet_out_elide_reset_stream_frames(packet_out,
                                                               stream_id);
             ctl->sc_bytes_scheduled -= adj;
+            packet_out->po_acct_sz -= adj;
             if (0 == packet_out->po_frame_types)
             {
                 LSQ_DEBUG("cancel packet #%"PRIu64" after eliding frames for "
@@ -4072,6 +4077,7 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
                                 unsigned orig_cid_len, unsigned new_cid_len)
 {
     unsigned diff;
+    struct lsquic_packet_out *p;
 
     assert(!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER));
     if (ctl->sc_n_scheduled)
@@ -4081,6 +4087,8 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
         if (new_cid_len > orig_cid_len)
         {
             diff = new_cid_len - orig_cid_len;
+            TAILQ_FOREACH(p, &ctl->sc_scheduled_packets, po_next)
+                p->po_acct_sz += diff;
             diff *= ctl->sc_n_scheduled;
             ctl->sc_bytes_scheduled += diff;
             LSQ_DEBUG("increased bytes scheduled by %u bytes to %u",
@@ -4089,6 +4097,8 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
         else if (new_cid_len < orig_cid_len)
         {
             diff = orig_cid_len - new_cid_len;
+            TAILQ_FOREACH(p, &ctl->sc_scheduled_packets, po_next)
+                p->po_acct_sz -= diff;
             diff *= ctl->sc_n_scheduled;
             ctl->sc_bytes_scheduled -= diff;
             LSQ_DEBUG("decreased bytes scheduled by %u bytes to %u",
@@ -4308,7 +4318,10 @@ lsquic_send_ctl_rollback (struct lsquic_send_ctl *ctl,
             packet_out->po_flags |= PO_STREAM_END;
         }
         if (!buffered)
+        {
             ctl->sc_bytes_scheduled -= prev_frec_len - frec->fe_len;
+            packet_out->po_acct_sz -= prev_frec_len - frec->fe_len;
+        }
     }
     else
         assert(stream_frame.data_frame.df_size
