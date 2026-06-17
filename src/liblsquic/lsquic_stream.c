@@ -3292,7 +3292,10 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
         lsquic_packet_out_zero_pad(packet_out);
         /* XXX: too hacky */
         if (before < packet_out->po_data_sz)
+        {
             send_ctl->sc_bytes_scheduled += packet_out->po_data_sz - before;
+            packet_out->po_acct_sz += packet_out->po_data_sz - before;
+        }
     }
 
     check_flush_threshold(stream);
