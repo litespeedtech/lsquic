@@ -13,6 +13,7 @@ OPTION(LSQUIC_TESTS "Compile library unit tests" ON)
 OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
 OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
 OPTION(LSQUIC_WEBTRANSPORT "Enable WebTransport support" OFF)
+OPTION(LSQUIC_ASAN "Enable AddressSanitizer in Debug builds" ON)
 
 INCLUDE(GNUInstallDirs)
 INCLUDE(CheckSymbolExists)
@@ -63,7 +64,7 @@ ENDIF()
 
 IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -O0 -g3")
-    IF(CMAKE_C_COMPILER MATCHES "clang" AND
+    IF(LSQUIC_ASAN AND CMAKE_C_COMPILER MATCHES "clang" AND
                         NOT CMAKE_SYSTEM_NAME STREQUAL "Android" AND
                         NOT "$ENV{TRAVIS}" MATCHES "^true$" AND
                         NOT "$ENV{EXTRA_CFLAGS}" MATCHES "-fsanitize")
