@@ -43,6 +43,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Harold Newman -- Bug fixes
     - Richard Ramos -- Windows fixes
     - youngseaz -- 32-bit transport param parser bug report
+    - X1AOxiang -- Bug fixes
 
 Thank you!
 

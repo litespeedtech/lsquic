@@ -5340,20 +5340,15 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
                                                                     stream_id);
             return 0;
         }
-
-        /* Enforce stream concurrency limit (RFC 9000 §4.6) */
+        const lsquic_stream_id_t max_allowed =
+            conn->ifc_max_allowed_stream_id[stream_id & SIT_MASK];
+        if (stream_id >= max_allowed)
         {
-            const lsquic_stream_id_t max_allowed =
-                conn->ifc_max_allowed_stream_id[stream_id & SIT_MASK];
-            if (stream_id >= max_allowed)
-            {
-                ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR, "incoming RST_STREAM "
-                    "for stream %"PRIu64" would exceed allowed max of %"PRIu64,
-                    stream_id, max_allowed);
-                return 0;
-            }
+            ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR, "incoming RST_STREAM "
+                "for stream %"PRIu64" would exceed allowed max of %"PRIu64,
+                stream_id, max_allowed);
+            return 0;
         }
-
         stream = new_stream(conn, stream_id, 0);
         if (!stream)
         {
