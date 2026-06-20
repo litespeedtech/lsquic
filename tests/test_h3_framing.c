@@ -181,6 +181,49 @@ const struct lsquic_stream_if stream_if = {
 };
 
 
+struct dummy_hset
+{
+    struct lsxpack_header xhdr;
+    char                  buf[0x100];
+};
+
+
+static void *
+dummy_create_header_set (void *hsi_ctx, lsquic_stream_t *stream,
+                                                            int is_push_promise)
+{
+    return calloc(1, sizeof(struct dummy_hset));
+}
+
+
+static struct lsxpack_header *
+dummy_prepare_decode (void *hdr_set, struct lsxpack_header *hdr, size_t space)
+{
+    struct dummy_hset *const dummy = hdr_set;
+
+    if (space > sizeof(dummy->buf))
+        return NULL;
+
+    lsxpack_header_prepare_decode(&dummy->xhdr, dummy->buf, 0,
+                                                        sizeof(dummy->buf));
+    return &dummy->xhdr;
+}
+
+
+static int
+dummy_process_header (void *hdr_set, struct lsxpack_header *hdr)
+{
+    return 0;
+}
+
+
+static void
+dummy_discard_header_set (void *hdr_set)
+{
+    free(hdr_set);
+}
+
+
 static size_t
 read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t stream_id,
     unsigned char *const begin, size_t bufsz, uint64_t first_offset, int *p_fin,
@@ -1756,6 +1799,78 @@ test_reading_zero_size_data_frame_scenario3 (void)
 
 
 static void
+expect_content_length_not_verified (struct lsxpack_header *header_arr,
+                                                            unsigned count)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct lsquic_http_headers headers = { count, header_arr, };
+    const unsigned char *p;
+    unsigned char buf[0x400];
+    const size_t prefix_cap = 32;
+    size_t prefix_sz = prefix_cap, headers_sz = sizeof(buf) - prefix_cap;
+    uint64_t compl_off;
+    enum qwh_status qwh;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.hsi_if = (struct lsquic_hset_if) {
+        .hsi_create_header_set  = dummy_create_header_set,
+        .hsi_prepare_decode     = dummy_prepare_decode,
+        .hsi_process_header     = dummy_process_header,
+        .hsi_discard_header_set = dummy_discard_header_set,
+    };
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    qwh = lsquic_qeh_write_headers(&tobjs.qeh, stream->id, 0, &headers,
+                    buf + prefix_cap, &prefix_sz, &headers_sz, &compl_off,
+                    NULL);
+    assert(qwh == QWH_FULL);
+
+    p = buf + prefix_cap - prefix_sz;
+    assert(LQRHS_DONE == lsquic_qdh_header_in_begin(&tobjs.qdh, stream,
+                            prefix_sz + headers_sz, &p,
+                            prefix_sz + headers_sz));
+
+    assert(!(stream->sm_bflags & SMBF_VERIFY_CL));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_invalid_content_length_syntax_is_rejected (void)
+{
+    struct lsxpack_header plus_arr[] = {
+        { XHDR(":status", "200") },
+        { XHDR("content-length", "+1") },
+    };
+    struct lsxpack_header space_arr[] = {
+        { XHDR(":status", "200") },
+        { XHDR("content-length", " 1") },
+    };
+    struct lsxpack_header empty_arr[] = {
+        { XHDR(":status", "200") },
+        { XHDR("content-length", "") },
+    };
+
+    expect_content_length_not_verified(plus_arr,
+                                sizeof(plus_arr) / sizeof(plus_arr[0]));
+    expect_content_length_not_verified(space_arr,
+                                sizeof(space_arr) / sizeof(space_arr[0]));
+    expect_content_length_not_verified(empty_arr,
+                                sizeof(empty_arr) / sizeof(empty_arr[0]));
+}
+
+
+static void
 test_content_length_overrun_blocks_payload_delivery (void)
 {
     struct test_objs tobjs;
@@ -1872,6 +1987,7 @@ main (int argc, char **argv)
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
             test_reading_zero_size_data_frame_scenario3();
+            test_invalid_content_length_syntax_is_rejected();
             test_content_length_overrun_blocks_payload_delivery();
             break;
         default:
@@ -1892,6 +2008,7 @@ main (int argc, char **argv)
         test_reading_zero_size_data_frame();
         test_reading_zero_size_data_frame_scenario2();
         test_reading_zero_size_data_frame_scenario3();
+        test_invalid_content_length_syntax_is_rejected();
         test_content_length_overrun_blocks_payload_delivery();
     }
 
