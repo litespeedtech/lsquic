@@ -421,6 +421,32 @@ deinit_test_objs (struct test_objs *tobjs)
 }
 
 
+static unsigned
+scheduled_acct_sum (const struct lsquic_send_ctl *send_ctl)
+{
+    const struct lsquic_packet_out *packet_out;
+    unsigned count, bytes;
+
+    count = 0;
+    bytes = 0;
+    TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
+    {
+        assert(packet_out->po_flags & PO_SCHED);
+        bytes += packet_out->po_acct_sz;
+        ++count;
+    }
+    assert(count == send_ctl->sc_n_scheduled);
+    return bytes;
+}
+
+
+static void
+assert_scheduled_accounting (const struct lsquic_send_ctl *send_ctl)
+{
+    assert(scheduled_acct_sum(send_ctl) == send_ctl->sc_bytes_scheduled);
+}
+
+
 /* Create a new stream frame.  Each stream frame has a real packet_in to
  * back it up, just like in real code.  The contents of the packet do
  * not matter.
@@ -1352,6 +1378,7 @@ test_gapless_elision_middle (struct test_objs *tobjs)
     else
         assert(s_onreset_called.how == 2);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    assert_scheduled_accounting(&tobjs->send_ctl);
     /* Verify A again: */
     n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
                                                     sizeof(buf), 0, &fin, 0);
@@ -1429,6 +1456,7 @@ test_gapless_elision_beginning (struct test_objs *tobjs)
     }
     assert(streamB->stream_flags & STREAM_FRAMES_ELIDED);
     assert(2 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+    assert_scheduled_accounting(&tobjs->send_ctl);
     /* Verify A again: */
     n = read_from_scheduled_packets(&tobjs->send_ctl, streamA->id, buf,
                                                     sizeof(buf), 0, &fin, 0);
@@ -3102,11 +3130,13 @@ test_resize_scheduled (void)
                                                 g_ctl_settings.tcs_bp_type);
     packet_counts[0] = lsquic_send_ctl_n_scheduled(&tobjs.send_ctl);
     assert(packet_counts[0] > 0);
+    assert_scheduled_accounting(&tobjs.send_ctl);
 
     network_path.np_pack_size = 1234;
     lsquic_send_ctl_resize(&tobjs.send_ctl);
     packet_counts[1] = lsquic_send_ctl_n_scheduled(&tobjs.send_ctl);
     assert(packet_counts[1] > packet_counts[0]);
+    assert_scheduled_accounting(&tobjs.send_ctl);
 
     /* Verify written data: */
     nw = read_from_scheduled_packets(&tobjs.send_ctl, streams[0]->id, buf_out,
@@ -3114,6 +3144,7 @@ test_resize_scheduled (void)
     assert(nw == sizeof(buf));
     assert(fin);
     assert(0 == memcmp(buf, buf_out, nw));
+    assert_scheduled_accounting(&tobjs.send_ctl);
 
     lsquic_stream_destroy(streams[0]);
     deinit_test_objs(&tobjs);
