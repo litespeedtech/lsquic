@@ -1773,7 +1773,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
-    //assert(0 == ctl->sc_bytes_scheduled);
+    assert(0 == ctl->sc_bytes_scheduled);
     for (pns = PNS_INIT; pns < N_PNS; ++pns)
         while ((packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns])))
         {
@@ -4076,8 +4076,8 @@ void
 lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
                                 unsigned orig_cid_len, unsigned new_cid_len)
 {
+    struct lsquic_packet_out *packet_out;
     unsigned diff;
-    struct lsquic_packet_out *p;
 
     assert(!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER));
     if (ctl->sc_n_scheduled)
@@ -4087,8 +4087,8 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
         if (new_cid_len > orig_cid_len)
         {
             diff = new_cid_len - orig_cid_len;
-            TAILQ_FOREACH(p, &ctl->sc_scheduled_packets, po_next)
-                p->po_acct_sz += diff;
+            TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+                packet_out->po_acct_sz += diff;
             diff *= ctl->sc_n_scheduled;
             ctl->sc_bytes_scheduled += diff;
             LSQ_DEBUG("increased bytes scheduled by %u bytes to %u",
@@ -4097,8 +4097,8 @@ lsquic_send_ctl_cidlen_change (struct lsquic_send_ctl *ctl,
         else if (new_cid_len < orig_cid_len)
         {
             diff = orig_cid_len - new_cid_len;
-            TAILQ_FOREACH(p, &ctl->sc_scheduled_packets, po_next)
-                p->po_acct_sz -= diff;
+            TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
+                packet_out->po_acct_sz -= diff;
             diff *= ctl->sc_n_scheduled;
             ctl->sc_bytes_scheduled -= diff;
             LSQ_DEBUG("decreased bytes scheduled by %u bytes to %u",
