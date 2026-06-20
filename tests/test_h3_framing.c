@@ -430,6 +430,32 @@ deinit_test_objs (struct test_objs *tobjs)
 }
 
 
+static unsigned
+scheduled_acct_sum (const struct lsquic_send_ctl *send_ctl)
+{
+    const struct lsquic_packet_out *packet_out;
+    unsigned count, bytes;
+
+    count = 0;
+    bytes = 0;
+    TAILQ_FOREACH(packet_out, &send_ctl->sc_scheduled_packets, po_next)
+    {
+        assert(packet_out->po_flags & PO_SCHED);
+        bytes += packet_out->po_acct_sz;
+        ++count;
+    }
+    assert(count == send_ctl->sc_n_scheduled);
+    return bytes;
+}
+
+
+static void
+assert_scheduled_accounting (const struct lsquic_send_ctl *send_ctl)
+{
+    assert(scheduled_acct_sum(send_ctl) == send_ctl->sc_bytes_scheduled);
+}
+
+
 static struct lsquic_stream *
 new_stream (struct test_objs *tobjs, unsigned stream_id, uint64_t send_off)
 {
@@ -972,6 +998,7 @@ test_pwritev (enum lsquic_version version, int http, int sched_immed,
         lsquic_send_ctl_schedule_buffered(&tobjs.send_ctl, BPT_OTHER_PRIO);
         g_ctl_settings.tcs_schedule_stream_packets_immediately = 0;
         lsquic_send_ctl_set_max_bpq_count(10);
+        assert_scheduled_accounting(&tobjs.send_ctl);
     }
 
     assert(pwritev_stream_ctx.nw >= 0);
