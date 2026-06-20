@@ -469,16 +469,25 @@ process_content_length (const struct qpack_dec_hdl *qdh /* for logging */,
                                                                 unsigned len)
 {
     char *endcl, cont_len_buf[30];
+    unsigned i;
 
     if (0 == cl->has)
     {
-        if (len >= sizeof(cont_len_buf))
+        if (0 == len || len >= sizeof(cont_len_buf))
         {
             LSQ_DEBUG("content-length has invalid value `%.*s'",
                                                             (int) len, val);
             cl->has = -1;
             return;
         }
+        for (i = 0; i < len; ++i)
+            if (val[i] < '0' || val[i] > '9')
+            {
+                LSQ_DEBUG("content-length has invalid value `%.*s'",
+                                                            (int) len, val);
+                cl->has = -1;
+                return;
+            }
         memcpy(cont_len_buf, val, len);
         cont_len_buf[len] = '\0';
         cl->value = strtoull(cont_len_buf, &endcl, 10);

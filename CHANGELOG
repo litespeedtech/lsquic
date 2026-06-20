@@ -1,3 +1,10 @@
+2026-06-20
+    - 4.8.1
+    - [FIX] Send controller: bytes-scheduled underflow (issue #652).
+    - [FIX] Enforce stream limit in RST_STREAM (issue #654).
+    - [FIX] Reject invalid Content-Length syntax.
+    - [IMPROVEMENT] Top-level cmake ASAN options.
+
 2026-06-15
     - 4.8.0
     - [API] Deprecate all gQUIC versions.
