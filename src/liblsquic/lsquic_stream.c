@@ -1718,8 +1718,18 @@ ssize_t
 lsquic_stream_readv (struct lsquic_stream *stream, const struct iovec *iov,
                      int iovcnt)
 {
-    struct readv_ctx ctx = { iov, iov + iovcnt, iov->iov_base, };
-    return lsquic_stream_readf(stream, readv_f, &ctx);
+    if (iovcnt > 0 && iov)
+    {
+        struct readv_ctx ctx = { iov, iov + iovcnt, iov->iov_base, };
+        return lsquic_stream_readf(stream, readv_f, &ctx);
+    }
+    else if (iovcnt == 0)
+        return 0;
+    else
+    {
+        errno = EINVAL;
+        return -1;
+    }
 }
 
 
@@ -3754,6 +3764,15 @@ ssize_t
 lsquic_stream_writev (lsquic_stream_t *stream, const struct iovec *iov,
                                                                     int iovcnt)
 {
+    if (iovcnt < 0 || (iovcnt > 0 && !iov))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (0 == iovcnt)
+        return 0;
+
     COMMON_WRITE_CHECKS();
     SM_HISTORY_APPEND(stream, SHE_USER_WRITE_DATA);
 
