@@ -720,10 +720,6 @@ internally:
 
    -  QPACK decoder stream
 
-In addition, HTTP/3 push promises use unidirectional streams. In the
-code, we make a unidirectional stream simply by closing one end in the
-constructor.
-
 All of the use cases above are handled by the single module,
 lsquic_stream. The differences in behavior -- gQUIC vs IETF QUIC, HTTP
 vs non-HTTP -- are handled either by explicit conditionals or via
@@ -752,7 +748,7 @@ size of 2\ :sup:`14` - 1 bytes. You will find literal ``2`` or ``3`` values
 in code that deals with writing HQ frames.
 
 If the HQ frame's size is known in advance (SHF_FIXED_SIZE) -- which is
-the case for HEADERS and PUSH_PROMISE frames -- then the HQ header
+the case for HEADERS frames -- then the HQ header
 contents are written immediately. Otherwise, ``shf_frame_ptr`` points to
 the bytes in the packet where the HQ header was written, to be filled in
 later.
@@ -1054,24 +1050,17 @@ This is done to minimize the goodput overhead incurred by the DATA frame header.
 
 .. image:: stream-http3-framing.png
 
-There are a couple of things that do not fit into this model:
+There is one thing that does not fit into this model:
 
-1. The HEADERS frame is fixed size [1]_. It is generated separately
-   (written by QPACK encoder into a buffer on the stack) and later
-   copied into the stream. (See the ``send_headers_ietf`` function.) It
-   can happen that the whole buffer cannot be written. In that case,
-   a rather complicated dance of buffering the unwritten HEADERS
-   frame bytes is performed. Here, the "on stream write" callback is
-   replaced with an internal callback (see the ``select_on_write``
-   function) and user interaction is prohibited until the whole of
-   the HEADERS frame is written to the stream.
-
-2. Push promise streams are even weirder. In addition to the HEADERS
-   handling above, the push promise stream must begin with a
-   variable-integer Push ID. To make this fit into the framed stream
-   model, the code makes up the concept of a "phantom" HTTP/3 frame.
-   This type of frame's header is not written. This allows us to
-   treat the Push ID as the payload of a regular HTTP/3 frame.
+The HEADERS frame is fixed size [1]_. It is generated separately
+(written by QPACK encoder into a buffer on the stack) and later
+copied into the stream. (See the ``send_headers_ietf`` function.) It
+can happen that the whole buffer cannot be written. In that case,
+a rather complicated dance of buffering the unwritten HEADERS
+frame bytes is performed. Here, the "on stream write" callback is
+replaced with an internal callback (see the ``select_on_write``
+function) and user interaction is prohibited until the whole of
+the HEADERS frame is written to the stream.
 
 The framing code has had its share of bugs. Because of that, there is a
 dedicated unit test program just for the framing code,
@@ -1675,8 +1664,8 @@ fc_last_stream_id
 ID of the last created stream.
 
 Used to assign ID to streams created by this side of the connection.
-Clients create odd-numbered streams, while servers initiate
-even-numbered streams (push promises).
+Clients create odd-numbered streams.  The server-created, even-numbered
+stream path was used by the now-removed push-promise support.
 
 fc_max_peer_stream_id
 ---------------------
@@ -2408,7 +2397,8 @@ stored; they are not in the ``ifc_pub.all_streams`` hash.
 ifc_u.ser
 ---------
 
-The server-specific state is only about push promises.
+The server-specific state tracks MAX_PUSH_ID for push-related HTTP/3
+error handling.  LSQUIC does not implement server push.
 
 ifc_idle_to
 -----------

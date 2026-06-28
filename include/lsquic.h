@@ -27,7 +27,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 8
-#define LSQUIC_PATCH_VERSION 1
+#define LSQUIC_PATCH_VERSION 2
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -1771,25 +1771,18 @@ void *
 lsquic_stream_get_hset (lsquic_stream_t *);
 
 /**
- * A server may push a stream.  This call creates a new stream in reference
- * to stream `s'.  It will behave as if the client made a request: it will
- * trigger on_new_stream() event and it can be used as a regular client-
- * initiated stream.
+ * Server push is not supported.  This function is retained for API
+ * compatibility.
  *
- * `hdr_set' must be set.  It is passed as-is to @lsquic_stream_get_hset.
- *
- * @retval  0   Stream pushed successfully.
- * @retval  1   Stream push failed because it is disabled or because we hit
- *                stream limit or connection is going away.
- * @retval -1   Stream push failed because of an internal error.
+ * @retval  1   Stream push failed because server push is not supported.
  */
 int
 lsquic_conn_push_stream (lsquic_conn_t *c, void *hdr_set, lsquic_stream_t *s,
     const lsquic_http_headers_t *headers);
 
 /**
- * Only makes sense in server mode: the client cannot push a stream and this
- * function always returns false in client mode.
+ * Server push is not supported.  This function is retained for API
+ * compatibility and always returns false.
  */
 int
 lsquic_conn_is_push_enabled (lsquic_conn_t *);
@@ -1832,7 +1825,10 @@ lsquic_stream_get_ctx (const lsquic_stream_t *s);
 void
 lsquic_stream_set_ctx (lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx);
 
-/** Returns true if this is a pushed stream */
+/**
+ * Retained for API compatibility with removed server push support.  Current
+ * LSQUIC versions do not create pushed streams.
+ */
 int
 lsquic_stream_is_pushed (const lsquic_stream_t *s);
 
@@ -1844,22 +1840,21 @@ int
 lsquic_stream_is_rejected (const lsquic_stream_t *s);
 
 /**
- * Refuse pushed stream.  Call it from @ref on_new_stream.
+ * Retained for API compatibility with removed server push support.  Current
+ * LSQUIC versions do not create pushed streams.
  *
- * No need to call lsquic_stream_close() after this.  on_close will be called.
- *
- * @see lsquic_stream_is_pushed
+ * @see lsquic_stream_is_pushed.
  */
 int
 lsquic_stream_refuse_push (lsquic_stream_t *s);
 
 /**
- * Get information associated with pushed stream:
+ * Retained for API compatibility with removed server push support.  Current
+ * LSQUIC versions do not create pushed streams.
  *
- * @param ref_stream_id   Stream ID in response to which push promise was
- *                            sent.
- * @param hdr_set         Header set.  This object was passed to or generated
- *                            by @ref lsquic_conn_push_stream().
+ * @param ref_stream_id   Legacy output parameter for stream ID in response
+ *                            to which a push promise would have been sent.
+ * @param hdr_set         Legacy output parameter for the push header set.
  *
  * @retval   0  Success.
  * @retval  -1  This is not a pushed stream.

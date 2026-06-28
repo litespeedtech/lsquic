@@ -2036,6 +2036,51 @@ test_reading_from_stream2 (void)
 }
 
 
+static void
+test_readv_zero_iovcnt (void)
+{
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    ssize_t nr;
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+    stream = new_stream(&tobjs, 123);
+
+    nr = lsquic_stream_readv(stream, NULL, 0);
+    assert(0 == nr);
+    assert(0 == stream->read_offset);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_invalid_iov_args (void)
+{
+    struct test_objs tobjs;
+    lsquic_stream_t *stream;
+    ssize_t nr, nw;
+
+    init_test_objs(&tobjs, 0x4000, 0x4000, NULL);
+    stream = new_stream(&tobjs, 123);
+
+    nr = lsquic_stream_readv(stream, NULL, 0);
+    assert(0 == nr);
+
+    nr = lsquic_stream_readv(stream, NULL, 1);
+    assert(-1 == nr);
+    assert(EINVAL == errno);
+
+    nw = lsquic_stream_writev(stream, NULL, 1);
+    assert(-1 == nw);
+    assert(EINVAL == errno);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
 /* This tests stream overlap support */
 static void
 test_overlaps (void)
@@ -3751,6 +3796,8 @@ main (int argc, char **argv)
     test_forced_flush_when_conn_blocked();
     test_blocked_flags();
     test_reading_from_stream2();
+    test_readv_zero_iovcnt();
+    test_invalid_iov_args();
     test_overlaps();
     test_insert_edge_cases();
     test_unexpected_http_close();
