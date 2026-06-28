@@ -3,21 +3,6 @@
 [![FreeBSD build status](https://api.cirrus-ci.com/github/litespeedtech/lsquic.svg)](https://cirrus-ci.com/github/litespeedtech/lsquic)
 [![Documentation Status](https://readthedocs.org/projects/lsquic/badge/?version=latest)](https://lsquic.readthedocs.io/en/latest/?badge=latest)
 
-About
-=============================================
-
-This repository contains the source code of BBR-Copilot, an implementation based on the open-source [LiteSpeed QUIC (LSQUIC) Library](https://github.com/litespeedtech/lsquic).
-
-BBR-Copilot is an auxiliary mechanism designed to enhance the performance of BBR in live-streaming scenarios. Unlike previous approaches that directly modify the congestion control algorithm itself, BBR-Copilot cooperates with BBR by helping it obtain accurate bandwidth measurement samples under on-off traffic patterns. Specifically, when BBR is probing bandwidth and the transport layer is about to enter an application-limited phase, BBR-Copilot generates padding packets to prevent inaccurate bandwidth estimation. By doing so, it enables BBR to exit the Startup phase more reliably and adapt its sending rate more accurately during the ProbeBW phase.
-
-Please cite this paper as follows:
-
-- Xu Yan, Tong Li*, Bo Wu, Cheng Luo, Jiuxiang Zhu, Laizhong Cui:
-When BBR Meets Live Streaming.
-Frontiers of Networking Technologies (CCF ChinaNet), pp. 11-27, 2026.5.1.
-
-The way to build BBR-Copilot is similar to LSQUIC. Please follow the instructions below (referred from the LiteSpeed Team [https://github.com/litespeedtech/lsquic](https://github.com/litespeedtech/lsquic)).
-
 LiteSpeed QUIC (LSQUIC) Library README
 =============================================
 
