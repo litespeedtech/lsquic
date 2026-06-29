@@ -83,6 +83,8 @@ struct lsquic_bbr
                                          = 1 << 15,
         // When true, disables packet conservation in STARTUP.
         BBR_FLAG_RATE_BASED_STARTUP      = 1 << 16,
+
+        BBR_BW_SAMPLE_INVALID_PROBE_RTT  = 1 << 17,
     }                           bbr_flags;
 
     // Number of round-trips in PROBE_BW mode, used for determining the current
@@ -202,6 +204,13 @@ struct lsquic_bbr
         uint64_t            in_flight;
         int                 has_losses;
     }                           bbr_ack_state;
+
+    /* Packets sent up to and including this packno (and later acked) will
+     * be marked app-limited in their po_bwp_state.  Used to mark ProbeRTT
+     * period packets as app-limited for bandwidth sampling purposes.
+     * When a packet with packno > this value is acked, the phase ends.
+     */
+    lsquic_packno_t             bbr_probe_rtt_app_limited_until;
 };
 
 extern const struct cong_ctl_if lsquic_cong_bbr_if;

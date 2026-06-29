@@ -506,6 +506,9 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *,
 void
 lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *);
 
+int
+lsquic_send_ctl_need_send_extra_data_to_probe_bw (struct lsquic_send_ctl *ctl);
+
 struct send_ctl_state
 {
     struct pacer        pacer;

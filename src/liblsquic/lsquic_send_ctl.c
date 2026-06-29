@@ -1201,7 +1201,8 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         lsquic_send_ctl_disable_ecn(ctl);
     }
 
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if ((packet_out->po_frame_types & ctl->sc_retx_frames) &&
+            (packet_out->po_flags & PO_SEND_EXTRA) == 0)
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
@@ -4424,4 +4425,13 @@ lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
 {
     lsquic_send_ctl_set_bw_sampler(ctl, 1);
     return lsquic_bw_sampler_get_bw(&ctl->sc_bw_sampler);
+}
+
+
+int
+lsquic_send_ctl_need_send_extra_data_to_probe_bw (struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_ci->cci_need_send_extra_data_to_probe_bw)
+        return ctl->sc_ci->cci_need_send_extra_data_to_probe_bw(CGP(ctl));
+    return 0;
 }
