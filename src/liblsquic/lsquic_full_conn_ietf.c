@@ -8196,6 +8196,64 @@ ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
+static int
+ietf_full_conn_need_send_extra_data_to_probe_bw(lsquic_conn_t *lconn)
+{
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+
+    if (!conn->ifc_settings->es_send_extra_data_to_probe_bw)
+        return 0;
+    if (!lsquic_send_ctl_need_send_extra_data_to_probe_bw(&conn->ifc_send_ctl))
+        return 0;
+    return 1;
+}
+
+
+static void
+ietf_full_conn_send_extra_data_to_probe_bw (lsquic_conn_t *lconn)
+{
+    struct lsquic_packet_out *packet_out;
+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
+    unsigned num_send_extra = 0;
+
+    LSQ_DEBUG("ietf_full_conn_send_extra_data_to_probe_bw");
+
+    while (lsquic_send_ctl_need_send_extra_data_to_probe_bw(&conn->ifc_send_ctl)
+            && lsquic_send_ctl_can_send(&conn->ifc_send_ctl))
+    {
+        packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl,
+                                                    1, PNS_APP, CUR_NPATH(conn));
+        if (!packet_out)
+        {
+            LSQ_DEBUG("cannot get new packet to improve "
+                        "bandwidth estimation accuracy");
+            return;
+        }
+        int sz = conn->ifc_conn.cn_pf->pf_gen_ping_frame(
+                    packet_out->po_data + packet_out->po_data_sz,
+                        lsquic_packet_out_avail(packet_out));
+        if (sz < 0) {
+            ABORT_ERROR("gen_ping_frame failed");
+            return;
+        }
+        packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+        LSQ_DEBUG("wrote PING frame");
+        if (!(conn->ifc_flags & IFC_SERVER))
+            log_conn_flow_control(conn);
+
+        lsquic_packet_out_set_pns(packet_out, PNS_APP);
+        lsquic_packet_out_zero_pad(packet_out);
+        packet_out->po_flags |= PO_SEND_EXTRA;
+        lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
+        ++num_send_extra;
+    }
+
+    LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
+        num_send_extra, num_send_extra != 1 ? "s" : "");
+    return;
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -8391,7 +8449,10 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
+    if (ietf_full_conn_need_send_extra_data_to_probe_bw(lconn))
+        ietf_full_conn_send_extra_data_to_probe_bw(lconn);
+    else
+        lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
 
   end_write:
     if ((conn->ifc_flags & IFC_CLOSING)
