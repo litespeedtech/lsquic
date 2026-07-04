@@ -201,6 +201,22 @@ adaptive_cc_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
 }
 
 
+static int
+adaptive_cc_bw_probe_fill_wanted (void *cong_ctl)
+{
+    struct adaptive_cc *const acc = cong_ctl;
+
+    if (acc->acc_flags & ACC_CUBIC)
+        return 0;
+    else
+    {
+        if (lsquic_cong_bbr_if.cci_bw_probe_fill_wanted)
+            return lsquic_cong_bbr_if.cci_bw_probe_fill_wanted(&acc->acc_bbr);
+        return 0;
+    }
+}
+
+
 const struct cong_ctl_if lsquic_cong_adaptive_if =
 {
     .cci_ack           = adaptive_cc_ack,
@@ -217,4 +233,5 @@ const struct cong_ctl_if lsquic_cong_adaptive_if =
     .cci_sent          = adaptive_cc_sent,
     .cci_process_bw_sample = adaptive_cc_process_bw_sample,
     .cci_was_quiet     = adaptive_cc_was_quiet,
+    .cci_bw_probe_fill_wanted = adaptive_cc_bw_probe_fill_wanted,
 };
