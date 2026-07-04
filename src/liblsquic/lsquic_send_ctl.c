@@ -1202,7 +1202,7 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
     }
 
     if ((packet_out->po_frame_types & ctl->sc_retx_frames) &&
-            (packet_out->po_flags & PO_SEND_EXTRA) == 0)
+            (packet_out->po_flags & PO_BW_PROBE_FILL) == 0)
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
@@ -1971,9 +1971,40 @@ send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
 
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
-                                            const struct network_path *path)
+                                   const struct network_path *path,
+                                   lsquic_bw_probe_fill_f bw_probe_fill_cb,
+                                   void *conn_ctx)
 {
     const struct lsquic_packet_out *packet_out;
+    struct lsquic_packet_out *probe_packet;
+    unsigned num_probing = 0;
+
+    if (ctl->sc_enpub->enp_settings.es_bw_probe_fill
+        && ctl->sc_ci->cci_bw_probe_fill_wanted
+        && ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl))
+        && bw_probe_fill_cb)
+    {
+        while (ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl))
+               && lsquic_send_ctl_can_send(ctl))
+        {
+            probe_packet = bw_probe_fill_cb(conn_ctx, path);
+            if (!probe_packet)
+            {
+                LSQ_DEBUG("cannot get new packet to improve bandwidth estimation accuracy");
+                break;
+            }
+            probe_packet->po_flags |= PO_BW_PROBE_FILL;
+            lsquic_send_ctl_scheduled_one(ctl, probe_packet);
+            ++num_probing;
+        }
+
+        if (num_probing > 0)
+        {
+            LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
+                      num_probing, num_probing != 1 ? "s" : "");
+            return;
+        }
+    }
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl, PNS_APP, path, 0);
     if ((packet_out && lsquic_packet_out_avail(packet_out) > 10)
@@ -4425,13 +4456,4 @@ lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
 {
     lsquic_send_ctl_set_bw_sampler(ctl, 1);
     return lsquic_bw_sampler_get_bw(&ctl->sc_bw_sampler);
-}
-
-
-int
-lsquic_send_ctl_need_send_extra_data_to_probe_bw (struct lsquic_send_ctl *ctl)
-{
-    if (ctl->sc_ci->cci_need_send_extra_data_to_probe_bw)
-        return ctl->sc_ci->cci_need_send_extra_data_to_probe_bw(CGP(ctl));
-    return 0;
 }

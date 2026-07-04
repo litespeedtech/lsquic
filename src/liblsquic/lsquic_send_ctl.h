@@ -460,9 +460,14 @@ lsquic_send_ctl_1rtt_acked (const struct lsquic_send_ctl *ctl)
     return (ctl)->sc_flags & SC_1RTT_ACKED;
 }
 
+typedef struct lsquic_packet_out *
+(*lsquic_bw_probe_fill_f)(void *conn_ctx, const struct network_path *path);
+
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
-                                            const struct network_path *);
+                                            const struct network_path *,
+                                            lsquic_bw_probe_fill_f bw_probe_fill_cb,
+                                            void *conn_ctx);
 
 static inline void
 lsquic_send_ctl_do_ql_bits (struct lsquic_send_ctl *ctl)
@@ -505,9 +510,6 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *,
 
 void
 lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *);
-
-int
-lsquic_send_ctl_need_send_extra_data_to_probe_bw (struct lsquic_send_ctl *ctl);
 
 struct send_ctl_state
 {
