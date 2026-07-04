@@ -3394,61 +3394,35 @@ full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
-static int
-full_conn_need_send_extra_data_to_probe_bw(lsquic_conn_t *lconn)
+static struct lsquic_packet_out *
+full_conn_bw_probe_fill (void *conn_ctx, const struct network_path *path)
 {
-    struct full_conn *conn = (struct full_conn *) lconn;
-
-    if (!conn->fc_settings->es_send_extra_data_to_probe_bw)
-        return 0;
-    if (!lsquic_send_ctl_need_send_extra_data_to_probe_bw(&conn->fc_send_ctl))
-        return 0;
-    return 1;
-}
-
-
-static void
-full_conn_send_extra_data_to_probe_bw (lsquic_conn_t *lconn)
-{
+    struct full_conn *const conn = conn_ctx;
     struct lsquic_packet_out *packet_out;
-    struct full_conn *conn = (struct full_conn *) lconn;
-    unsigned num_send_extra = 0;
+    int sz;
 
-    LSQ_DEBUG("full_conn_send_extra_data_to_probe_bw");
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl,
+                                                1, PNS_APP, path);
+    if (!packet_out)
+        return NULL;
 
-    while (lsquic_send_ctl_need_send_extra_data_to_probe_bw(&conn->fc_send_ctl)
-            && lsquic_send_ctl_can_send(&conn->fc_send_ctl))
-    {
-        packet_out = lsquic_send_ctl_new_packet_out(&conn->fc_send_ctl,
-                                                    1, PNS_APP, &conn->fc_path);
-        if (!packet_out)
-        {
-            LSQ_DEBUG("cannot get new packet to improve "
-                        "bandwidth estimation accuracy");
-            return;
-        }
-        int sz = conn->fc_conn.cn_pf->pf_gen_ping_frame(
-                    packet_out->po_data + packet_out->po_data_sz,
-                        lsquic_packet_out_avail(packet_out));
-        if (sz < 0) {
-            ABORT_ERROR("gen_ping_frame failed");
-            return;
-        }
-        packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
-        LSQ_DEBUG("wrote PING frame");
-        if (!(conn->fc_flags & FC_SERVER))
-            log_conn_flow_control(conn);
-
-        lsquic_packet_out_set_pns(packet_out, PNS_APP);
-        lsquic_packet_out_zero_pad(packet_out);
-        packet_out->po_flags |= PO_SEND_EXTRA;
-        lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
-        ++num_send_extra;
+    sz = conn->fc_conn.cn_pf->pf_gen_ping_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out));
+    if (sz < 0) {
+        ABORT_ERROR("gen_ping_frame failed");
+        return NULL;
     }
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+    LSQ_DEBUG("wrote PING frame");
+    if (!(conn->fc_flags & FC_SERVER))
+        log_conn_flow_control(conn);
 
-    LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
-        num_send_extra, num_send_extra != 1 ? "s" : "");
-    return;
+    lsquic_packet_out_set_pns(packet_out, PNS_APP);
+    lsquic_packet_out_zero_pad(packet_out);
+
+    return packet_out;
 }
 
 
@@ -3640,7 +3614,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!handshake_done_or_doing_sess_resume(conn))
     {
         process_hsk_stream_write_events(conn);
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path,
+                                            NULL, NULL);
         goto end_write;
     }
 
@@ -3666,10 +3641,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->fc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    if (full_conn_need_send_extra_data_to_probe_bw(lconn))
-        full_conn_send_extra_data_to_probe_bw(lconn);
-    else
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path);
+    lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path,
+                                        full_conn_bw_probe_fill, conn);
 
   end_write:
 
