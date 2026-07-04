@@ -408,7 +408,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
-    settings->es_send_extra_data_to_probe_bw = LSQUIC_DF_SEND_EXTRA_DATA_TO_PROBE_BW;
+    settings->es_bw_probe_fill   = LSQUIC_DF_BW_PROBE_FILL;
 }
 
 
@@ -517,10 +517,10 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_send_extra_data_to_probe_bw > 1)
+    if (settings->es_bw_probe_fill > 1)
     {
         if (err_buf)
-            snprintf(err_buf, err_buf_sz, "send_extra_data_to_probe_bw value "
+            snprintf(err_buf, err_buf_sz, "bw_probe_fill value "
                 "must be 0 or 1");
         return -1;
     }

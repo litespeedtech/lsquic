@@ -480,7 +480,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_CHECK_TP_SANITY 1
 
 /* By default, sending extra data to probe BBR bandwidth is disabled. */
-#define LSQUIC_DF_SEND_EXTRA_DATA_TO_PROBE_BW 0
+#define LSQUIC_DF_BW_PROBE_FILL 0
 
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 /** Turn off webtransport extension for server by default */
@@ -1178,9 +1178,9 @@ struct lsquic_engine_settings {
      * while BBR is probing bandwidth (pacing_gain > 1.0) to improve bandwidth
      * estimation accuracy.
      *
-     * Default is @ref LSQUIC_DF_SEND_EXTRA_DATA_TO_PROBE_BW.
+     * Default is @ref LSQUIC_DF_BW_PROBE_FILL.
      */
-    unsigned        es_send_extra_data_to_probe_bw;
+    unsigned        es_bw_probe_fill;
 
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**

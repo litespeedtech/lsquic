@@ -4,7 +4,7 @@
  *
  * Reads a file and sends it to the client at a constant bitrate, simulating
  * a live video stream.  Periodically logs BBR bandwidth estimation and
- * connection statistics for testing the send_extra_data_to_probe_bw feature.
+ * connection statistics for testing the bw_probe_fill feature.
  */
 
 #include <assert.h>
@@ -415,7 +415,7 @@ usage (const char *prog)
 "   -h          Print this help screen\n"
 "\n"
 "Example:\n"
-"   cbr_server -f video.bin -b 8000000 -I 50 -o send_extra=1\n"
+"   cbr_server -f video.bin -b 8000000 -I 50 -o bw_probe_fill=1\n"
 "\n",
         prog,
         CBR_DF_BITRATE, CBR_DF_BITRATE / 1000000.0,

@@ -72,7 +72,7 @@ struct cong_ctl_if
     (*cci_cleanup) (void *cong_ctl);
 
     int
-    (*cci_need_send_extra_data_to_probe_bw) (void *cong_ctl);
+    (*cci_bw_probe_fill_wanted) (void *cong_ctl);
 };
 
 #endif

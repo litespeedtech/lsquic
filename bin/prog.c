@@ -224,7 +224,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
         LSQUIC_DF_CLOCK_GRANULARITY
     );
     fprintf(out,
-"   -o name=val Set engine options, such as -o send_extra=1.\n"
+"   -o name=val Set engine options, such as -o bw_probe_fill=1.\n"
     );
     fprintf(out,
 "   -h          Print this help screen and exit\n"

@@ -1093,7 +1093,7 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
 
 
 static int
-lsquic_bbr_need_send_extra_data_to_probe_bw (void *cong_ctl)
+lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
@@ -1136,5 +1136,5 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,
-    .cci_need_send_extra_data_to_probe_bw = lsquic_bbr_need_send_extra_data_to_probe_bw,
+    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_wanted,
 };
