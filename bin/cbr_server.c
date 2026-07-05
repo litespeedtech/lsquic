@@ -21,6 +21,12 @@
 
 #ifndef WIN32
 #include <unistd.h>
+#else
+#include "vc_compat.h"
+#include "getopt.h"
+#include <io.h>
+#pragma warning(disable:4028)
+#pragma warning(disable:4996) /* POSIX name (open/read/close) deprecated */
 #endif
 
 #include <event2/event.h>
