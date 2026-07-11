@@ -539,7 +539,7 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         if (s < 0)
             return -1;
         p += s;
-        if ((ptrdiff_t) len > end - p)
+        if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
         if (tpi <= LAST_TPI)
@@ -674,6 +674,22 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
             q += sizeof(params->tp_preferred_address.srst);
             if (q != p + len)
                 return -1;
+            if ((0 != params->tp_preferred_address.ipv4_port)
+                != !lsquic_is_zero(params->tp_preferred_address.ipv4_addr,
+                        sizeof(params->tp_preferred_address.ipv4_addr)))
+            {
+                LSQ_DEBUG("preferred server IPv4 address is only partially "
+                    "specified");
+                return -1;
+            }
+            if ((0 != params->tp_preferred_address.ipv6_port)
+                != !lsquic_is_zero(params->tp_preferred_address.ipv6_addr,
+                        sizeof(params->tp_preferred_address.ipv6_addr)))
+            {
+                LSQ_DEBUG("preferred server IPv6 address is only partially "
+                    "specified");
+                return -1;
+            }
             break;
         case TPI_VERSION_INFORMATION:
             if (len & 0x3)
@@ -1115,7 +1131,7 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         if (s < 0)
             return -1;
         p += s;
-        if ((ptrdiff_t) len > end - p)
+        if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
         if (tpi <= LAST_TPI)
@@ -1245,6 +1261,22 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
             q += sizeof(params->tp_preferred_address.srst);
             if (q != p + len)
                 return -1;
+            if ((0 != params->tp_preferred_address.ipv4_port)
+                != !lsquic_is_zero(params->tp_preferred_address.ipv4_addr,
+                        sizeof(params->tp_preferred_address.ipv4_addr)))
+            {
+                LSQ_DEBUG("preferred server IPv4 address is only partially "
+                    "specified");
+                return -1;
+            }
+            if ((0 != params->tp_preferred_address.ipv6_port)
+                != !lsquic_is_zero(params->tp_preferred_address.ipv6_addr,
+                        sizeof(params->tp_preferred_address.ipv6_addr)))
+            {
+                LSQ_DEBUG("preferred server IPv6 address is only partially "
+                    "specified");
+                return -1;
+            }
             break;
         default:
             /* Do nothing: skip this transport parameter */

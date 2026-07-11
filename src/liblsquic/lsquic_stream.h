@@ -227,7 +227,7 @@ enum stream_b_flags
     SMBF_VERIFY_CL    = 1 << 9,  /* Verify content-length (stored in sm_cont_len) */
     SMBF_HTTP_PRIO    = 1 <<10,  /* Extensible HTTP Priorities are used */
     SMBF_INCREMENTAL  = 1 <<11,  /* Value of the "incremental" HTTP Priority parameter */
-    SMBF_HPRIO_SET    = 1 <<12,  /* Extensible HTTP Priorities have been set once */
+    SMBF_HPRIO_SET    = 1 <<12,  /* PRIORITY_UPDATE has been used to set ext. priority */
     SMBF_DELAY_ONCLOSE= 1 <<13,  /* Delay calling on_close() until peer ACKs everything */
     SMBF_HTTP_DG_CAPSULES        = 1 <<14,  /* HTTP Datagram capsules are enabled */
     SMBF_SESSION_STREAM          = 1 <<15,  /* Extension session stream */
@@ -783,5 +783,9 @@ lsquic_stream_headers_state_is_begin (const struct lsquic_stream *);
 
 const struct lsquic_stream_if *
 lsquic_stream_get_stream_if (const struct lsquic_stream *);
+
+int
+lsquic_stream_set_http_prio_ext (struct lsquic_stream *,
+            const struct lsquic_ext_http_prio *, int is_priority_update);
 
 #endif

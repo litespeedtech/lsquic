@@ -46,6 +46,8 @@ SET(TESTS
     goaway_gquic_be
     hkdf
     hpi
+    http_prio_header
+    http1x_if
     lsquic_hash
     mini_conn_delay
     packet_out
@@ -61,13 +63,16 @@ SET(TESTS
     reset_stream_at_ietf
     rtt
     send_headers
+    send_ctl_accounting
     send_ctl_bw_lifecycle
     senhist
+    sess_resume
     set
     sfcw
     shi
     spi
     stop_waiting_gquic_be
+    stk
     streamgen
     streamparse
     tokgen
@@ -84,6 +89,7 @@ IF (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 ENDIF()
 
 IF (NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    SET(TESTS ${TESTS} bounds_helpers)
     # No regexes on Windows
     SET(TESTS ${TESTS} ack_merge)
     # No open_memstream() on Windows

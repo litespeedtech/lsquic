@@ -469,16 +469,25 @@ process_content_length (const struct qpack_dec_hdl *qdh /* for logging */,
                                                                 unsigned len)
 {
     char *endcl, cont_len_buf[30];
+    unsigned i;
 
     if (0 == cl->has)
     {
-        if (len >= sizeof(cont_len_buf))
+        if (0 == len || len >= sizeof(cont_len_buf))
         {
             LSQ_DEBUG("content-length has invalid value `%.*s'",
                                                             (int) len, val);
             cl->has = -1;
             return;
         }
+        for (i = 0; i < len; ++i)
+            if (val[i] < '0' || val[i] > '9')
+            {
+                LSQ_DEBUG("content-length has invalid value `%.*s'",
+                                                            (int) len, val);
+                cl->has = -1;
+                return;
+            }
         memcpy(cont_len_buf, val, len);
         cont_len_buf[len] = '\0';
         cl->value = strtoull(cont_len_buf, &endcl, 10);
@@ -509,7 +518,7 @@ is_content_length (const struct lsxpack_header *xhdr)
     return ((xhdr->flags & LSXPACK_QPACK_IDX)
                         && xhdr->qpack_index == LSQPACK_TNV_CONTENT_LENGTH_0)
         || (xhdr->name_len == 14 && 0 == memcmp(lsxpack_header_get_name(xhdr),
-                                                        "content-length", 13))
+                                                        "content-length", 14))
         ;
 }
 
@@ -584,7 +593,13 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
         if (cl.has > 0)
             (void) lsquic_stream_verify_len(stream, cl.value);
     }
-    else if ((stream->sm_bflags & (SMBF_HTTP_PRIO|SMBF_HPRIO_SET))
+    else if ((qdh->qdh_flags & QDH_SERVER) &&
+            /* If PRIORITY_UPDATE has been used (SMBF_HPRIO_SET), then the
+             * Priority header should be ignored: this is because former is
+             * likely to have originated later and thus has more up-to-date
+             * priority information.
+             */
+             (stream->sm_bflags & (SMBF_HTTP_PRIO|SMBF_HPRIO_SET))
                                                             == SMBF_HTTP_PRIO
             && is_priority(xhdr))
     {
@@ -639,14 +654,18 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     {
         if (1)    //!lsquic_stream_header_is_trailer(stream))
         {
-            if (stream->sm_hblock_ctx->ctx.ppc_flags
+            if ((stream->sm_hblock_ctx->ctx.ppc_flags
                                                 & (PPC_INC_SET|PPC_URG_SET))
+                    /* If PRIORITY_UPDATE came in while we were parsing
+                     * headers, it should win, not Priority header.
+                     */
+                    && !(stream->sm_bflags & SMBF_HPRIO_SET))
             {
                 assert(stream->sm_bflags & SMBF_HTTP_PRIO);
                 LSQ_DEBUG("Apply Priority from headers to stream %"PRIu64,
                                                                 stream->id);
-                (void) lsquic_stream_set_http_prio(stream,
-                                            &stream->sm_hblock_ctx->ctx.ehp);
+                (void) lsquic_stream_set_http_prio_ext(stream,
+                                        &stream->sm_hblock_ctx->ctx.ehp, 0);
             }
             hset = stream->sm_hblock_ctx->ctx.hset;
             uh = (void *) stream->sm_hblock_ctx;

@@ -169,7 +169,18 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                 case HQFT_PRIORITY_UPDATE_PUSH:
                 case HQFT_PRIORITY_UPDATE_STREAM:
                     len = reader->hr_frame_length - reader->hr_nread;
-                    if (len <= (uintptr_t) (end - p))
+                    if (len > sizeof(reader->hr_u.prio_state.buf))
+                    {
+                        /* 16 bytes is more than enough for a PRIORITY_UPDATE
+                         * frame, anything larger than that is unreasonable.
+                         */
+                        LSQ_INFO("skip PRIORITY_UPDATE frame that's too "
+                                "long (%"PRIu64" bytes)", len);
+                        reader->hr_frame_length = len;
+                        reader->hr_state = HR_SKIPPING;
+                        goto continue_reading;
+                    }
+                    else if (len <= (uintptr_t) (end - p))
                     {
                         reader->hr_cb->on_priority_update(reader->hr_ctx,
                             reader->hr_frame_type, reader->hr_u.vint_state.val,
@@ -182,17 +193,6 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                         reader->hr_nread = 0;
                         reader->hr_state = HR_READ_PRIORITY_UPDATE;
                         goto continue_reading;
-                    }
-                    else
-                    {
-                        p += len;
-                        /* 16 bytes is more than enough for a PRIORITY_UPDATE
-                         * frame, anything larger than that is unreasonable.
-                         */
-                        if (reader->hr_frame_length
-                                        > sizeof(reader->hr_u.prio_state.buf))
-                            LSQ_INFO("skip PRIORITY_UPDATE frame that's too "
-                                    "long (%"PRIu64" bytes)", len);
                     }
                     break;
                 default:

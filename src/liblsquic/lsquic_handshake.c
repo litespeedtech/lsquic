@@ -329,6 +329,8 @@ enum hsk_failure_reason
 lsquic_verify_stk (enc_session_t *,
                const struct sockaddr *ip_addr, uint64_t tm, lsquic_str_t *stk);
 
+#endif
+#if defined(NDEBUG) && !LSQUIC_TEST
 static
 #endif
 void lsquic_gen_stk(lsquic_server_config_t *, const struct sockaddr *, uint64_t tm,
@@ -609,7 +611,8 @@ lsquic_enc_session_serialize_sess_resume(struct lsquic_sess_resume_storage *stor
 
 
 #define CHECK_SPACE(need, start, end) \
-    do { if ((intptr_t) (need) > ((intptr_t) (end) - (intptr_t) (start))) \
+    do { if ((uint64_t) (need) > (uint64_t) ((const unsigned char *) (end) \
+                                - (const unsigned char *) (start))) \
         { return RTT_DESERIALIZE_BAD_CERT_SIZE; } \
     } while (0) \
 
@@ -630,11 +633,19 @@ lsquic_enc_session_deserialize_sess_resume(
     /*
      * check versions
      */
+    if (storage_size < sizeof(*storage))
+        return RTT_DESERIALIZE_BAD_CERT_SIZE;
     ver = lsquic_tag2ver(storage->quic_version_tag);
     if ((int)ver == -1 || !((1 << ver) & settings->es_versions))
         return RTT_DESERIALIZE_BAD_QUIC_VER;
     if (storage->serializer_version != RTT_SERIALIZER_VERSION)
         return RTT_DESERIALIZE_BAD_SERIAL_VER;
+    if (storage->sstk_len > sizeof(storage->sstk)
+        || storage->scfg_len > sizeof(storage->scfg)
+        || storage->cert_count >
+                ((uint8_t *) storage_end - (uint8_t *) (storage + 1))
+                                                    / sizeof(uint32_t))
+        return RTT_DESERIALIZE_BAD_CERT_SIZE;
     /*
      * server config
      */
@@ -2882,7 +2893,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
  *  then stk first 48 byte will be encrypted with AES128-GCM
  *  when encrypting, the salt is the last 12 bytes
  */
-#ifdef NDEBUG
+#if defined(NDEBUG) && !LSQUIC_TEST
 static
 #endif
 void
@@ -2890,7 +2901,7 @@ lsquic_gen_stk (lsquic_server_config_t *server_config, const struct sockaddr *ip
          uint64_t tm, unsigned char stk_out[STK_LENGTH])
 {
     unsigned char stk[STK_LENGTH + 16];
-    size_t out_len = STK_LENGTH + 16;
+    size_t out_len = STK_LENGTH - 12;
 
     memset(stk, 0 , 24);
     if (AF_INET == ip_addr->sa_family)

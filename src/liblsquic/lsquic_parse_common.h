@@ -6,6 +6,9 @@
 #ifndef LSQUIC_PARSE_COMMON_H
 #define LSQUIC_PARSE_COMMON_H 1
 
+#include <limits.h>
+#include <stdint.h>
+
 #ifdef WIN32
 #include "vc_compat.h"
 #endif
@@ -91,8 +94,8 @@ lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
  * of bytes needed.
  */
 #define CHECK_STREAM_SPACE(need, pstart, pend) do {                 \
-    if ((intptr_t) (need) > ((pend) - (pstart))) {                  \
-        return -((int) (need));                                     \
+    if ((uint64_t) (need) > (uint64_t) ((pend) - (pstart))) {       \
+        return (uint64_t) (need) > INT_MAX ? -1 : -((int) (need));  \
     }                                                               \
 } while (0)
 

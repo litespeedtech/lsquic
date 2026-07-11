@@ -205,7 +205,7 @@ test6 (void)
 {
     lsquic_rechist_t rechist;
     char buf[256];
-    long int time = 12087061905875;
+    lsquic_time_t time = 12087061905875ULL;
     unsigned i;
 
     lsquic_rechist_init(&rechist, 0, 0);

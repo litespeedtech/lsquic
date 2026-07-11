@@ -114,6 +114,7 @@ static void update_peer_wt_support (struct ietf_full_conn *conn);
 
 
 
+
 /* IMPORTANT: Keep values of IFC_SERVER and IFC_HTTP same as LSENG_SERVER
  * and LSENG_HTTP.
  */
@@ -1742,6 +1743,18 @@ typedef char mini_conn_does_not_have_more_cces[
     sizeof(((struct ietf_mini_conn *)0)->imc_cces)
     <= sizeof(((struct ietf_full_conn *)0)->ifc_cces) ? 1 : -1];
 
+
+/* Promotion failed: give ownership of crypto object back to mini conn. */
+static void
+give_enc_session_back_to_mini (struct lsquic_conn *mini_conn,
+                                                struct ietf_full_conn *conn)
+{
+    mini_conn->cn_enc_session = conn->ifc_conn.cn_enc_session;
+    conn->ifc_conn.cn_enc_session = NULL;
+    mini_conn->cn_esf_c->esf_set_conn(mini_conn->cn_enc_session, mini_conn);
+}
+
+
 struct lsquic_conn *
 lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
                unsigned flags, struct lsquic_conn *mini_conn)
@@ -1947,12 +1960,17 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     return &conn->ifc_conn;
 
   err3:
+    assert(mini_conn->cn_enc_session == NULL);
+    give_enc_session_back_to_mini(mini_conn, conn);
     ietf_full_conn_ci_destroy(&conn->ifc_conn);
     return NULL;
 
   err2:
+    assert(mini_conn->cn_enc_session == NULL);
+    give_enc_session_back_to_mini(mini_conn, conn);
     lsquic_malo_destroy(conn->ifc_pub.packet_out_malo);
   err1:
+    assert(mini_conn->cn_enc_session != NULL);
     lsquic_send_ctl_cleanup(&conn->ifc_send_ctl);
     if (conn->ifc_pub.all_streams)
         lsquic_hash_destroy(conn->ifc_pub.all_streams);
@@ -5704,7 +5722,7 @@ new_stream (struct ietf_full_conn *conn, lsquic_stream_id_t stream_id,
                                                                 stream->id);
                 lsquic_hash_erase(conn->ifc_bpus, el);
                 bpu = lsquic_hashelem_getdata(el);
-                (void) lsquic_stream_set_http_prio(stream, &bpu->ehp);
+                (void) lsquic_stream_set_http_prio_ext(stream, &bpu->ehp, 1);
                 free(bpu);
             }
         }
@@ -5792,7 +5810,15 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
                                                                     stream_id);
             return 0;
         }
-
+        const lsquic_stream_id_t max_allowed =
+            conn->ifc_max_allowed_stream_id[stream_id & SIT_MASK];
+        if (stream_id >= max_allowed)
+        {
+            ABORT_QUIETLY(0, TEC_STREAM_LIMIT_ERROR, "incoming RST_STREAM "
+                "for stream %"PRIu64" would exceed allowed max of %"PRIu64,
+                stream_id, max_allowed);
+            return 0;
+        }
         stream = new_stream(conn, stream_id, 0);
         if (!stream)
         {
@@ -10879,7 +10905,7 @@ on_priority_update_server (void *ctx, enum hq_frame_type frame_type,
         { /* Empty PFV means "use defaults" */ }
 
     if (stream)
-        (void) lsquic_stream_set_http_prio(stream, &ehp);
+        (void) lsquic_stream_set_http_prio_ext(stream, &ehp, 1);
     else
     {
         assert(frame_type == HQFT_PRIORITY_UPDATE_STREAM);
@@ -11446,4 +11472,6 @@ lsquic_ietf_full_conn_test_push_disabled (unsigned results[5])
     free(conn.ifc_errmsg);
 }
 
+
 typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+

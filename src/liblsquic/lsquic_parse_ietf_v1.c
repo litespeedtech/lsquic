@@ -44,7 +44,7 @@
 #include "lsquic_logger.h"
 
 #define CHECK_SPACE(need, pstart, pend)  \
-    do { if ((intptr_t) (need) > ((pend) - (pstart))) { return -1; } } while (0)
+    do { if ((uint64_t) (need) > (uint64_t) ((pend) - (pstart))) { return -1; } } while (0)
 
 #define FRAME_TYPE_ACK_FREQUENCY    0xAF
 #define FRAME_TYPE_TIMESTAMP        0x2F5
@@ -953,7 +953,7 @@ ietf_v1_parse_new_token_frame (const unsigned char *buf, size_t buf_len,
         return r;
     p += r;
 
-    if (p + token_size > end)
+    if (token_size > (uint64_t) (end - p))
         return -1;
     *token = p;
     p += token_size;
@@ -1851,6 +1851,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
     int r;
     unsigned char first_byte;
     uint64_t payload_len, token_len;
+    size_t nread;
 
     if (length < 6)
         return -1;
@@ -1930,7 +1931,7 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
             if (token_len >=
                         1ull << (sizeof(packet_in->pi_token_size) * 8))
                 return -1;
-            if (p + token_len > end)
+            if (token_len > (uint64_t) (end - p))
                 return -1;
             packet_in->pi_token = p - packet_in->pi_data;
             packet_in->pi_token_size = token_len;
@@ -1945,9 +1946,10 @@ lsquic_ietf_v1_parse_packet_in_long_begin (struct lsquic_packet_in *packet_in,
         if (r < 0)
             return -1;
         p += r;
-        if (p - packet_in->pi_data + payload_len > length)
+        nread = p - packet_in->pi_data;
+        if (payload_len > (uint64_t) (length - nread))
             return -1;
-        length = p - packet_in->pi_data + payload_len;
+        length = nread + (size_t) payload_len;
         if (end - p < 4)
             return -1;
         state->pps_p      = p - r;
@@ -2017,6 +2019,7 @@ lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
     int r;
     unsigned char first_byte;
     uint64_t payload_len, token_len, packet_len;
+    size_t nread;
 
     if (length < 6)
         return 0;
@@ -2079,6 +2082,8 @@ lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
         if (r < 0)
             return 0;
         p += r;
+        if (token_len > (uint64_t) (end - p))
+            return 0;
         p += token_len;
         if (p >= end)
             return 0;
@@ -2086,7 +2091,8 @@ lsquic_is_valid_ietf_v1_or_Q046plus_hs_packet (const unsigned char *buf,
         if (r < 0)
             return 0;
         p += r;
-        if (p - buf + payload_len > length)
+        nread = p - buf;
+        if (payload_len > (uint64_t) (length - nread))
             return 0;
         if (end - p < 4)
             return 0;

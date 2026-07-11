@@ -157,6 +157,27 @@ static const struct trapa_test tests[] =
                             "\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2A"
                             "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F"
      /* Packet size */      "\x03\x02\x45\x55"
+     /* Trailer to make the end easily visible in gdb: */
+    "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
+    },
+
+    /* Preferred address with a partially specified IPv4 family is invalid. */
+    {
+        .line   = __LINE__,
+        .flags  = TEST_DECODE,
+        .is_server = 1,
+        .dec_len = 0x36,
+        .expect_decode_err = 1,
+        .encoded =
+     /* Preferred Address */"\x0D"
+                            "\x34"
+                            "\x01\x02\x03\x04"
+                            "\x00\x00"
+                            "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+                            "\x90\x01"
+                            "\x0B"
+                            "\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2A"
+                            "\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3A\x3B\x3C\x3D\x3E\x3F"
     /* Trailer to make the end easily visible in gdb: */
     "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
     },
@@ -257,6 +278,23 @@ decode_file (const char *name)
 }
 
 
+static void
+test_oversized_param_len (void)
+{
+    static const unsigned char buf[] =
+    {
+        /* Unknown transport parameter ID: */
+        0x21,
+        /* Length: 0x80000000 */
+        0xC0, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
+    };
+    struct transport_params params;
+
+    assert(lsquic_tp_decode(buf, sizeof(buf), 0, &params) < 0);
+    assert(lsquic_tp_decode_27(buf, sizeof(buf), 0, &params) < 0);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -281,6 +319,8 @@ main (int argc, char **argv)
 
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
         run_test(&tests[i]);
+
+    test_oversized_param_len();
 
     return 0;
 }

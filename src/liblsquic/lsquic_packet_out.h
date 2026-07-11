@@ -138,6 +138,7 @@ typedef struct lsquic_packet_out
     unsigned short     po_data_sz;      /* Number of usable bytes in data */
     unsigned short     po_enc_data_sz;  /* Number of usable bytes in data */
     unsigned short     po_sent_sz;      /* If PO_SENT_SZ is set, real size of sent buffer. */
+    unsigned short     po_acct_sz;      /* Size added to sc_bytes_scheduled at schedule time. */
     /* TODO Revisit po_regen_sz once gQUIC is dropped.  Now that all frames
      * are recorded, we have more flexibility where to place ACK frames; they
      * no longer really have to be at the beginning of the packet, since we

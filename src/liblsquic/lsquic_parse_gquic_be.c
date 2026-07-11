@@ -40,7 +40,6 @@
 #define LSQUIC_LOGGER_MODULE LSQLM_PARSE
 #include "lsquic_logger.h"
 
-
 /* read 16 bits(2 bytes) time, unit: us */
 uint64_t
 lsquic_gquic_be_read_float_time16 (const void *mem)

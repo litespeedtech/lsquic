@@ -1,6 +1,7 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <ctype.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +64,59 @@ struct header_writer_ctx
 
 /* flags for frames with request headers */
 #define HWC_REQUEST_HANDLING_FLAGS (HWC_SERVER|HWC_PUSH_PROMISE)
+
+
+/* Field name and value grammar: [RFC 9110] Sections 5.1 (Field Names),
+ * 5.5 (Field Values), and 5.6.2 (Tokens).
+ * Lowercase field names: [RFC 9113] Section 8.2 (HTTP Fields) and
+ * [RFC 9114] Section 4.1.2 (Malformed Requests and Responses).
+ */
+static const unsigned char is_tchar[0x100] =
+{
+    ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1, ['5'] = 1,
+    ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1, ['a'] = 1, ['b'] = 1,
+    ['c'] = 1, ['d'] = 1, ['e'] = 1, ['f'] = 1, ['g'] = 1, ['h'] = 1,
+    ['i'] = 1, ['j'] = 1, ['k'] = 1, ['l'] = 1, ['m'] = 1, ['n'] = 1,
+    ['o'] = 1, ['p'] = 1, ['q'] = 1, ['r'] = 1, ['s'] = 1, ['t'] = 1,
+    ['u'] = 1, ['v'] = 1, ['w'] = 1, ['x'] = 1, ['y'] = 1, ['z'] = 1,
+    ['!'] = 1, ['#'] = 1, ['$'] = 1, ['%'] = 1, ['&'] = 1, ['\''] = 1,
+    ['*'] = 1, ['+'] = 1, ['-'] = 1, ['.'] = 1, ['^'] = 1, ['_'] = 1,
+    ['`'] = 1, ['|'] = 1, ['~'] = 1,
+};
+
+
+static int
+valid_field_name (const char *name, unsigned name_len)
+{
+    unsigned i;
+
+    if (name_len == 0)
+        return 0;
+
+    for (i = 0; i < name_len; ++i)
+        if (!is_tchar[(unsigned char) name[i]])
+            return 0;
+
+    return 1;
+}
+
+
+static int
+valid_field_value (const char *val, unsigned val_len)
+{
+    unsigned i;
+
+    for (i = 0; i < val_len; ++i)
+        if (!((unsigned char) val[i] == '\t' ||
+             ((unsigned char) val[i] >= 0x20 && (unsigned char) val[i] <= 0x7E) ||
+              (unsigned char) val[i] >= 0x80))
+        {
+            return 0;
+        }
+
+    return 1;
+}
+
 
 static void *
 h1h_create_header_set (void *ctx, lsquic_stream_t *stream, int is_push_promise)
@@ -146,6 +200,13 @@ add_pseudo_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
     val = lsxpack_header_get_value(xhdr);
     name_len = xhdr->name_len;
     val_len = xhdr->val_len;
+
+    if (!valid_field_value(val, val_len))
+    {
+        LSQ_INFO("pseudo-header `%.*s' contains invalid characters",
+            name_len, name);
+        return 1;
+    }
 
     switch (name_len)
     {
@@ -349,10 +410,31 @@ static int
 save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
 {
     char *cookie_val;
+    unsigned cookie_sz;
+
+    if (0 == hwc->cookie_sz)
+        cookie_sz = val_len;
+    else if (hwc->cookie_sz > UINT_MAX - 2
+                                    || val_len > UINT_MAX - hwc->cookie_sz - 2)
+    {
+        LSQ_INFO("headers too large");
+        return 1;
+    }
+    else
+        cookie_sz = hwc->cookie_sz + val_len + 2 /* "; " */;
+
+    if (hwc->max_headers_sz
+        && (size_t) hwc->w_off + 8 /* "Cookie: " */ + cookie_sz
+                                                + 2 /* "\r\n" */
+                                                > hwc->max_headers_sz)
+    {
+        LSQ_INFO("headers too large");
+        return 1;
+    }
 
     if (0 == hwc->cookie_sz)
     {
-        hwc->cookie_nalloc = hwc->cookie_sz = val_len;
+        hwc->cookie_nalloc = hwc->cookie_sz = cookie_sz;
         cookie_val = malloc(hwc->cookie_nalloc);
         if (!cookie_val)
             return -1;
@@ -361,10 +443,13 @@ save_cookie (struct header_writer_ctx *hwc, const char *val, unsigned val_len)
     }
     else
     {
-        hwc->cookie_sz += val_len + 2 /* "; " */;
+        hwc->cookie_sz = cookie_sz;
         if (hwc->cookie_sz > hwc->cookie_nalloc)
         {
-            hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + val_len + 2;
+            if (hwc->cookie_nalloc > (UINT_MAX - val_len - 2) / 2)
+                hwc->cookie_nalloc = hwc->cookie_sz;
+            else
+                hwc->cookie_nalloc = hwc->cookie_nalloc * 2 + val_len + 2;
             cookie_val = realloc(hwc->cookie_val, hwc->cookie_nalloc);
             if (!cookie_val)
                 return -1;
@@ -382,8 +467,6 @@ static int
 add_real_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
 {
     int err;
-    unsigned i;
-    int n_upper;
     const char *name, *val;
     unsigned name_len, val_len;
 
@@ -399,6 +482,19 @@ add_real_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
     name_len = xhdr->name_len;
     val_len = xhdr->val_len;
 
+    if (!valid_field_name(name, name_len))
+    {
+        LSQ_INFO("invalid header name `%.*s'", name_len, name);
+        return 1;
+    }
+
+    if (!valid_field_value(val, val_len))
+    {
+        LSQ_INFO("header `%.*s' contains invalid value characters",
+            name_len, name);
+        return 1;
+    }
+
     if (4 == name_len && 0 == memcmp(name, "host", 4))
     {
         if(hwc->pseh_mask & BIT(PSEH_AUTHORITY))
@@ -408,16 +504,6 @@ add_real_header (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
         }
 
         hwc->hwc_flags |= HWC_SEEN_HOST;
-    }
-
-    n_upper = 0;
-    for (i = 0; i < name_len; ++i)
-        n_upper += isupper(name[i]);
-    if (n_upper > 0)
-    {
-        LSQ_INFO("Header name `%.*s' contains uppercase letters",
-            name_len, name);
-        return 1;
     }
 
     if (6 == name_len && memcmp(name, "cookie", 6) == 0)
@@ -453,6 +539,11 @@ add_header_to_uh (struct header_writer_ctx *hwc, struct lsxpack_header *xhdr)
     const char *name;
 
     name = lsxpack_header_get_name(xhdr);
+    if (xhdr->name_len == 0)
+    {
+        LSQ_INFO("empty header name");
+        return 1;
+    }
     LSQ_DEBUG("Got header '%.*s': '%.*s'", (int) xhdr->name_len, name,
                         (int) xhdr->val_len, lsxpack_header_get_value(xhdr));
     if (':' == name[0])

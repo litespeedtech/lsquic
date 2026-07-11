@@ -44,7 +44,7 @@ test_min_heap (void)
 
     heap.mh_nelem = 0;
     for (i = 0; i < MAX_ELEMS; ++i)
-        lsquic_mh_insert(&heap, (void *) i, i);
+        lsquic_mh_insert(&heap, (void *) (uintptr_t) i, i);
     verify_min_heap(&heap);
 #ifdef _MSC_VER
     prev_val = 0;
@@ -59,7 +59,7 @@ test_min_heap (void)
 
     heap.mh_nelem = 0;
     for (i = MAX_ELEMS; i > 0; --i)
-        lsquic_mh_insert(&heap, (void *) i, i);
+        lsquic_mh_insert(&heap, (void *) (uintptr_t) i, i);
     verify_min_heap(&heap);
     for (i = 0; i < MAX_ELEMS; ++i)
     {
