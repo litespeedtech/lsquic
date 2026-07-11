@@ -1,3 +1,11 @@
+2026-06-28
+    - 4.8.2
+    - [FIX] Reject HTTP messages with multiple conflicting content-length
+      fields.
+    - [FIX] Use ls-qpack v2.6.5 to pick up a fix for a latent use-after-free.
+    - [IMPROVEMENT] Handle unexpected stream readv/writev args correctly.
+    - [DOCS] Update docs about the now-defunct push promises.
+
 2026-06-20
     - 4.8.1
     - [FIX] Send controller: bytes-scheduled underflow (issue #652).
