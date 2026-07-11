@@ -83,9 +83,6 @@ IF (LSQUIC_DEVEL)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_DEVEL=1")
 ENDIF()
 
-IF (LSQUIC_WEBTRANSPORT)
-    SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_WEBTRANSPORT_SERVER_SUPPORT=1")
-ENDIF()
 
 IF(LSQUIC_PROFILE EQUAL 1)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -g -pg")
@@ -439,6 +436,7 @@ ENDIF()
 
 INSTALL(FILES
     include/lsquic.h
+    include/lsquic_wt.h
     include/lsquic_types.h
     include/lsxpack_header.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/lsquic

@@ -11,7 +11,8 @@
 
 #include "lsquic_types.h"
 #include "lsquic.h"
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "test_cert"
+#include "tool_log.h"
 #include "../src/liblsquic/lsquic_hash.h"
 
 #include "test_cert.h"

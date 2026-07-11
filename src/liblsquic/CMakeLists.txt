@@ -82,6 +82,7 @@ SET(lsquic_STAT_SRCS
     lsquic_util.c
     lsquic_varint.c
     lsquic_version.c
+    lsquic_wt.c
 )
 
 IF(NOT MSVC)
@@ -161,4 +162,3 @@ install(
     DESTINATION share/lsquic
     NAMESPACE lsquic::
     FILE lsquic-targets.cmake)
-

@@ -963,6 +963,12 @@ buffer is used to log a configuration error.
 Finally, the settings struct is pointed to by the engine API struct before
 the engine constructor is called.
 
+The example programs also expose write scheduler settings via ``-o``:
+
+- ``-o write_sched_strategy=0|1`` (0=fixed, 1=DRR)
+- ``-o write_datagram_prio=0..4`` (fixed mode)
+- ``-o write_datagram_share=0.0..1.0`` (DRR mode)
+
 Logging
 =======
 

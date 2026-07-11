@@ -23,7 +23,8 @@
 #include "test_cert.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "md5_server"
+#include "tool_log.h"
 
 
 static int g_really_calculate_md5 = 1;

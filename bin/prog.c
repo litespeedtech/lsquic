@@ -30,7 +30,8 @@
 #include "../src/liblsquic/lsquic_hash.h"
 #include "../src/liblsquic/lsquic_int_types.h"
 #include "../src/liblsquic/lsquic_util.h"
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "prog"
+#include "tool_log.h"
 
 #include "test_config.h"
 #include "test_cert.h"
@@ -220,6 +221,11 @@ prog_print_common_options (const struct prog *prog, FILE *out)
     fprintf(out,
 "   -k          Connect UDP socket.  Only meant to be used with clients\n"
 "                 to pick up ICMP errors.\n"
+"   -o NAME=VAL Set engine option.  Can be specified more than once.\n"
+"                 Write scheduler options:\n"
+"                   write_sched_strategy=0|1    # 0=fixed, 1=DRR\n"
+"                   write_datagram_prio=0..4\n"
+"                   write_datagram_share=0.0..1.0\n"
 "   -i USECS    Clock granularity in microseconds.  Defaults to %u.\n",
         LSQUIC_DF_CLOCK_GRANULARITY
     );
