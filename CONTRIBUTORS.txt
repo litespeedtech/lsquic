@@ -45,6 +45,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - youngseaz -- 32-bit transport param parser bug report
     - X1AOxiang -- Bug fixes
     - Alexey Mamontov -- Long-standing scheduled bytes underflow bug fix
+    - Amrit Kahlon -- Bug fixes
 
 Thank you!
 

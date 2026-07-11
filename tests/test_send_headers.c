@@ -236,6 +236,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.conn_stats = &s_conn_stats;
 #endif
     tobjs->initial_stream_window = initial_stream_window;
+    tobjs->eng_pub.enp_settings.es_max_header_sets =
+                                         LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
     tobjs->stream_if = &stream_if;
@@ -250,10 +252,9 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
         tobjs->conn_pub.enpub->enp_hsi_if  = lsquic_http1x_if;
         tobjs->conn_pub.enpub->enp_hsi_ctx = &ctor_ctx;
-        s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
+        lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
                                     tobjs->conn_pub.enpub, 0, 0);
         tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
-        assert(0 == s);
     }
 }
 
@@ -287,6 +288,7 @@ static struct test_vals {
     size_t              prefix_sz;
     size_t              headers_sz;
     uint64_t            completion_offset;
+    int                 skip_fill;
 } test_vals;
 
 
@@ -297,7 +299,8 @@ lsquic_qeh_write_headers (struct qpack_enc_hdl *qeh,
     size_t *prefix_sz, size_t *headers_sz, uint64_t *completion_offset,
     enum lsqpack_enc_header_flags *hflags)
 {
-    memset(buf - *prefix_sz, 0xC5, *prefix_sz + *headers_sz);
+    if (!test_vals.skip_fill)
+        memset(buf - *prefix_sz, 0xC5, *prefix_sz + *headers_sz);
     *prefix_sz = test_vals.prefix_sz;
     *headers_sz = test_vals.headers_sz;
     *completion_offset = test_vals.completion_offset;
@@ -490,6 +493,79 @@ test_partially_flushed_header_is_not_writeable (void)
 
     lsquic_stream_destroy(stream);
 
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_failed_header_stash_rolls_back_state (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    test_vals.status = QWH_PARTIAL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = SIZE_MAX / 2;
+    test_vals.completion_offset = 10;
+    test_vals.skip_fill = 1;
+
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(-1 == s);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+    assert(NULL == stream->sm_header_block);
+    assert(STAILQ_EMPTY(&stream->sm_hq_frames));
+
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 0;
+    test_vals.skip_fill = 0;
+
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_failed_partial_header_stash_resets_stream (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    const unsigned stream_window = 22;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, stream_window, SCF_IETF);
+
+    stream = new_stream(&tobjs, 0, stream_window);
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = SIZE_MAX / 2 - 1024;
+    test_vals.completion_offset = 0;
+    test_vals.skip_fill = 1;
+
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(-1 == s);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+    assert(NULL == stream->sm_header_block);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(stream->stream_flags & STREAM_U_WRITE_DONE);
+    assert(HEC_INTERNAL_ERROR == stream->error_code);
+
+    test_vals.skip_fill = 0;
+    lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
 }
 
@@ -696,6 +772,7 @@ test_multiple_hsets_fifo (int ietf)
 
     init_test_objs(&tobjs, 0x1000, 0x1000, ietf ? SCF_IETF : 0);
     tobjs.stream_if = &stream_if_on_hset;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = sizeof(hsets);
 
     s_on_hset_in_count = 0;
     s_on_hset_in_stream = NULL;
@@ -729,6 +806,64 @@ test_multiple_hsets_fifo (int ietf)
     lsquic_stream_destroy(stream);
 
     deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_gquic_hset_limit_at (unsigned limit)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct uncompressed_headers *uh;
+    char hsets[4];
+    void *hset;
+    unsigned i;
+    int s;
+
+    assert(limit < sizeof(hsets));
+    init_test_objs(&tobjs, 0x1000, 0x1000, 0);
+    tobjs.stream_if = &stream_if_on_hset;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = limit;
+
+    s_on_hset_in_count = 0;
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    for (i = 0; i <= limit; ++i)
+    {
+        uh = calloc(1, sizeof(*uh));
+        *uh = (struct uncompressed_headers) {
+            .uh_stream_id   = stream->id,
+            .uh_hset        = &hsets[i],
+        };
+        s = lsquic_stream_uh_in(stream, uh);
+        if (i < limit)
+            assert(s == 0);
+        else
+        {
+            assert(s == -1);
+            free(uh);
+        }
+        assert(s_on_hset_in_count == i + (i < limit));
+    }
+
+    for (i = 0; i < limit; ++i)
+    {
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset == &hsets[i]);
+    }
+    assert(lsquic_stream_get_hset(stream) == NULL);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_gquic_hset_limit (void)
+{
+    test_gquic_hset_limit_at(1);
+    test_gquic_hset_limit_at(2);
+    test_gquic_hset_limit_at(3);
 }
 
 
@@ -798,6 +933,39 @@ test_read_headers_http1x (void)
 }
 
 
+static void
+test_hq_filter_error_is_readable (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    const unsigned char empty_headers_frame[2] = {
+        0x01,   /* HEADERS frame type */
+        0x00,   /* Invalid zero-length payload */
+    };
+    unsigned char buf[1];
+    ssize_t nr;
+    int s;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in(&tobjs, 0, sizeof(empty_headers_frame), 0);
+    memcpy((unsigned char *) frame->data_frame.df_data, empty_headers_frame,
+                                                        sizeof(empty_headers_frame));
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(0 == s);
+
+    assert(lsquic_stream_readable(stream));
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(-1 == nr);
+    assert(EBADMSG == errno);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -821,6 +989,8 @@ main (int argc, char **argv)
     test_flushes_and_closes();
     test_rejects_pending_header_overwrite();
     test_partially_flushed_header_is_not_writeable();
+    test_failed_header_stash_rolls_back_state();
+    test_failed_partial_header_stash_resets_stream();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
     test_read_headers(0, 0);
@@ -829,7 +999,9 @@ main (int argc, char **argv)
     test_read_headers(1, 1);
     test_multiple_hsets_fifo(0);
     test_multiple_hsets_fifo(1);
+    test_gquic_hset_limit();
     test_read_headers_http1x();
+    test_hq_filter_error_is_readable();
 
     return 0;
 }

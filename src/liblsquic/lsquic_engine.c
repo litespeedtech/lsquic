@@ -309,6 +309,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
+        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_SERVER;
@@ -323,6 +324,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = 0;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
+        settings->es_max_header_sets = LSQUIC_DF_MAX_HEADER_SETS_SERVER;
         settings->es_webtransport = LSQUIC_DF_WEBTRANSPORT_SERVER;
         settings->es_max_webtransport_sessions
                          = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
@@ -331,6 +333,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
+        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
@@ -345,6 +348,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = LSQUIC_DF_PING_PERIOD;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT;
+        settings->es_max_header_sets = LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     }
     settings->es_max_streams_in  = LSQUIC_DF_MAX_STREAMS_IN;
     settings->es_idle_conn_to    = LSQUIC_DF_IDLE_CONN_TO;
@@ -513,6 +517,21 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "max batch size is greater than "
                 "the allowed maximum of %u", (unsigned) MAX_OUT_BATCH_SIZE);
+        return -1;
+    }
+    if (settings->es_max_delayed_0rtt_packets > UCHAR_MAX)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "max delayed 0-RTT packet count "
+                "is greater than the allowed maximum of %u",
+                (unsigned) UCHAR_MAX);
+        return -1;
+    }
+    if (settings->es_max_header_sets == 0)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "%s",
+                                "maximum number of header sets cannot be zero");
         return -1;
     }
     if(settings->es_webtransport)
@@ -1658,9 +1677,7 @@ lsquic_engine_find_conn (const struct lsquic_engine_public *engine,
 }
 
 
-#if !defined(NDEBUG) && __GNUC__
-__attribute__((weak))
-#endif
+LSQUIC_TEST_WEAK
 void
 lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
                                     lsquic_conn_t *conn)
@@ -3336,9 +3353,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
 }
 
 
-#if __GNUC__ && !defined(NDEBUG)
-__attribute__((weak))
-#endif
+LSQUIC_TEST_WEAK
 unsigned
 lsquic_engine_quic_versions (const lsquic_engine_t *engine)
 {

@@ -33,7 +33,6 @@ LSQUIC supports nearly all QUIC and HTTP/3 features, including
 - Spin bits (allowing network observer to calculate a connection's RTT)
 - Path migration
 - NAT rebinding
-- Push promises
 - TLS Key updates
 - Extensions:
 

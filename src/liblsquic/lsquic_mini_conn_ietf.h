@@ -113,7 +113,6 @@ struct ietf_mini_conn
 #define IMICO_MAX_DELAYED_PACKETS_UNVALIDATED 1u
 #define IMICO_MAX_DELAYED_PACKETS_VALIDATED 2u
     unsigned char                   imc_delayed_packets_count;
-#define IMICO_MAX_STASHED_FRAMES 10u
     unsigned char                   imc_n_crypto_frames;
     unsigned short                  imc_hello_pkt_remain;
     unsigned char                   imc_long_header_sz;

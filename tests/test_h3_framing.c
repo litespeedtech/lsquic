@@ -30,6 +30,7 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
+#include "lsquic_headers.h"
 #include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_types.h"
@@ -181,49 +182,6 @@ const struct lsquic_stream_if stream_if = {
 };
 
 
-struct dummy_hset
-{
-    struct lsxpack_header xhdr;
-    char                  buf[0x100];
-};
-
-
-static void *
-dummy_create_header_set (void *hsi_ctx, lsquic_stream_t *stream,
-                                                            int is_push_promise)
-{
-    return calloc(1, sizeof(struct dummy_hset));
-}
-
-
-static struct lsxpack_header *
-dummy_prepare_decode (void *hdr_set, struct lsxpack_header *hdr, size_t space)
-{
-    struct dummy_hset *const dummy = hdr_set;
-
-    if (space > sizeof(dummy->buf))
-        return NULL;
-
-    lsxpack_header_prepare_decode(&dummy->xhdr, dummy->buf, 0,
-                                                        sizeof(dummy->buf));
-    return &dummy->xhdr;
-}
-
-
-static int
-dummy_process_header (void *hdr_set, struct lsxpack_header *hdr)
-{
-    return 0;
-}
-
-
-static void
-dummy_discard_header_set (void *hdr_set)
-{
-    free(hdr_set);
-}
-
-
 static size_t
 read_from_scheduled_packets (lsquic_send_ctl_t *send_ctl, lsquic_stream_id_t stream_id,
     unsigned char *const begin, size_t bufsz, uint64_t first_offset, int *p_fin,
@@ -317,6 +275,17 @@ struct test_objs {
     struct qpack_dec_hdl      qdh;
     struct lsquic_hset_if     hsi_if;
 };
+
+struct test_dec_hset
+{
+    struct lsxpack_header xhdr;
+    char                 *buf;
+    size_t                nalloc;
+    unsigned              count;
+    unsigned              finalized;
+};
+
+static int s_test_hset_header_error;
 
 static int s_ack_written;
 
@@ -438,6 +407,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
 #endif
     tobjs->initial_stream_window = initial_stream_window;
     tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
+    tobjs->eng_pub.enp_settings.es_max_header_sets =
+                                         LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
@@ -470,6 +441,103 @@ deinit_test_objs (struct test_objs *tobjs)
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
     //if ((1 << tobjs->lconn.cn_version) & LSQUIC_IETF_VERSIONS)
         lsquic_qeh_cleanup(&tobjs->qeh);
+}
+
+
+static void *
+test_create_hset (void *ctx, lsquic_stream_t *stream, int is_push_promise)
+{
+    struct test_dec_hset *hset;
+
+    hset = calloc(1, sizeof(*hset));
+    assert(hset);
+    return hset;
+}
+
+
+static struct lsxpack_header *
+test_prepare_hset_decode (void *hset_p, struct lsxpack_header *xhdr,
+                                                            size_t req_space)
+{
+    struct test_dec_hset *const hset = hset_p;
+    char *buf;
+
+    if (req_space < 0x100)
+        req_space = 0x100;
+
+    if (!xhdr)
+    {
+        if (req_space > hset->nalloc)
+        {
+            buf = realloc(hset->buf, req_space);
+            assert(buf);
+            hset->buf = buf;
+            hset->nalloc = req_space;
+        }
+        lsxpack_header_prepare_decode(&hset->xhdr, hset->buf, 0, req_space);
+    }
+    else
+    {
+        if (req_space > hset->nalloc)
+        {
+            buf = realloc(hset->buf, req_space);
+            assert(buf);
+            hset->buf = buf;
+            hset->nalloc = req_space;
+            hset->xhdr.buf = buf;
+        }
+        hset->xhdr.val_len = req_space;
+    }
+
+    return &hset->xhdr;
+}
+
+
+static int
+test_process_hset_header (void *hset_p, struct lsxpack_header *xhdr)
+{
+    struct test_dec_hset *const hset = hset_p;
+
+    if (xhdr)
+    {
+        if (s_test_hset_header_error)
+            return 1;
+        ++hset->count;
+    }
+    else
+        hset->finalized = 1;
+
+    return 0;
+}
+
+
+static void
+test_discard_hset (void *hset_p)
+{
+    struct test_dec_hset *const hset = hset_p;
+
+    free(hset->buf);
+    free(hset);
+}
+
+
+static const struct lsquic_hset_if test_hset_if =
+{
+    .hsi_create_header_set  = test_create_hset,
+    .hsi_prepare_decode     = test_prepare_hset_decode,
+    .hsi_process_header     = test_process_hset_header,
+    .hsi_discard_header_set = test_discard_hset,
+};
+
+
+static void
+use_test_hset_if (struct test_objs *tobjs)
+{
+    lsquic_qdh_cleanup(&tobjs->qdh);
+    tobjs->eng_pub.enp_hsi_if = &test_hset_if;
+    tobjs->eng_pub.enp_hsi_ctx = NULL;
+    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub, 0, 0);
+    tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
 }
 
 
@@ -1631,6 +1699,282 @@ new_frame_in_ext (struct test_objs *tobjs, size_t off, size_t sz, int fin,
 }
 
 
+static unsigned
+count_hsets (const struct lsquic_stream *stream)
+{
+    const struct uncompressed_headers *uh;
+    unsigned count;
+
+    count = 0;
+    STAILQ_FOREACH(uh, &stream->uh, uh_next)
+        ++count;
+    return count;
+}
+
+
+static void
+assert_hset_status (const struct test_dec_hset *hset, const char *status)
+{
+    assert(hset->count == 1);
+    assert(hset->finalized);
+    assert(hset->xhdr.val_len == 3);
+    assert(0 == memcmp(lsxpack_header_get_value(&hset->xhdr), status, 3));
+}
+
+
+static const char *const coalesced_statuses[] = { "103", "200", "404", };
+static unsigned n_synchronously_claimed;
+
+
+static void
+claim_hset_synchronously (lsquic_stream_t *stream, lsquic_stream_ctx_t *h)
+{
+    struct test_dec_hset *hset;
+
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert(n_synchronously_claimed
+                < sizeof(coalesced_statuses) / sizeof(coalesced_statuses[0]));
+    assert_hset_status(hset, coalesced_statuses[n_synchronously_claimed++]);
+    test_discard_hset(hset);
+}
+
+
+static const struct lsquic_stream_if synchronous_hset_stream_if =
+{
+    .on_new_stream = on_new_stream,
+    .on_close      = on_close,
+    .on_hset_in    = claim_hset_synchronously,
+};
+
+
+static void
+test_coalesced_hsets_at_limit (unsigned limit)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 27,  /* :status 404 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    unsigned i;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = limit;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    assert(lsquic_stream_readable(stream));
+    assert(count_hsets(stream) == limit);
+    assert(stream->read_offset == limit * 5);
+
+    for (i = 0; i < sizeof(coalesced_statuses)
+                                / sizeof(coalesced_statuses[0]); ++i)
+    {
+        if (STAILQ_EMPTY(&stream->uh))
+            assert(lsquic_stream_readable(stream));
+        assert(count_hsets(stream) <= limit);
+
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset);
+        assert_hset_status(hset, coalesced_statuses[i]);
+        assert(count_hsets(stream) < limit);
+        test_discard_hset(hset);
+    }
+
+    assert(stream->read_offset == sizeof(input));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_synchronous_hset_claims_continue (void)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 27,  /* :status 404 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    tobjs.stream_if = &synchronous_hset_stream_if;
+    use_test_hset_if(&tobjs);
+
+    n_synchronously_claimed = 0;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    (void) lsquic_stream_readable(stream);
+    assert(n_synchronously_claimed
+                == sizeof(coalesced_statuses) / sizeof(coalesced_statuses[0]));
+    assert(STAILQ_EMPTY(&stream->uh));
+    assert(stream->read_offset == sizeof(input));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_last_frame_hset_is_readable (void)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    assert(lsquic_stream_readable(stream));
+    assert(stream->read_offset == sizeof(input));
+    assert(count_hsets(stream) == 1);
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_coalesced_hsets_are_throttled (void)
+{
+    test_coalesced_hsets_at_limit(1);
+    test_coalesced_hsets_at_limit(2);
+    test_coalesced_hsets_at_limit(3);
+    test_synchronous_hset_claims_continue();
+    test_last_frame_hset_is_readable();
+}
+
+
+static void
+test_data_waits_for_hset_claim_layout (int split_before_data)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_DATA,    1, 'x',
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    unsigned char buf[1] = { 0xFF, };
+    ssize_t nr;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0,
+                split_before_data ? sizeof(input) - 3 : sizeof(input),
+                !split_before_data, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+    if (split_before_data)
+    {
+        frame = new_frame_in_ext(&tobjs, sizeof(input) - 3, 3, 1,
+                                                    input + sizeof(input) - 3);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+    }
+
+    assert(lsquic_stream_readable(stream));
+    assert(count_hsets(stream) == 1);
+    assert(stream->read_offset == 5);
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert_hset_status(hset, "103");
+    test_discard_hset(hset);
+
+    /* The final response headers become available during this read.  DATA
+     * following them in the same buffered frame must not be returned yet.
+     */
+    errno = 0;
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+    assert(errno == EWOULDBLOCK);
+    assert(buf[0] == 0xFF);
+    assert(count_hsets(stream) == 1);
+    assert(stream->read_offset == sizeof(input) - 3);
+    assert(!(stream->stream_flags & STREAM_FIN_REACHED));
+
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+
+    assert(lsquic_stream_readable(stream));
+
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 1);
+    assert(buf[0] == 'x');
+    assert(stream->read_offset == sizeof(input));
+    assert(stream->stream_flags & STREAM_FIN_REACHED);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_data_waits_for_hset_claim (void)
+{
+    test_data_waits_for_hset_claim_layout(0);
+    test_data_waits_for_hset_claim_layout(1);
+}
+
+
 /* Receiving DATA frame with zero payload should result in lsquic_stream_read()
  * returning -1.
  */
@@ -1799,49 +2143,143 @@ test_reading_zero_size_data_frame_scenario3 (void)
 
 
 static void
-expect_content_length_not_verified (struct lsxpack_header *header_arr,
-                                                            unsigned count)
+expect_header_block_result (struct lsxpack_header *hdrs, unsigned count,
+                            int expect_abort,
+                            unsigned long long content_len, int initial_errno)
 {
-    struct test_objs tobjs;
-    struct lsquic_stream *stream;
-    struct lsquic_http_headers headers = { count, header_arr, };
-    const unsigned char *p;
-    unsigned char buf[0x400];
-    const size_t prefix_cap = 32;
-    size_t prefix_sz = prefix_cap, headers_sz = sizeof(buf) - prefix_cap;
-    uint64_t compl_off;
-    enum qwh_status qwh;
+    struct test_objs sender, receiver;
+    struct lsquic_stream *send_stream, *recv_stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    struct lsquic_http_headers headers = {
+        .count = count,
+        .headers = hdrs,
+    };
+    size_t nw;
+    int fin, s;
+    unsigned char buf[0x1000];
 
     init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
 
     stream_ctor_flags |= SCF_IETF;
-    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
-    tobjs.hsi_if = (struct lsquic_hset_if) {
-        .hsi_create_header_set  = dummy_create_header_set,
-        .hsi_prepare_decode     = dummy_prepare_decode,
-        .hsi_process_header     = dummy_process_header,
-        .hsi_discard_header_set = dummy_discard_header_set,
-    };
-    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
 
-    stream = new_stream(&tobjs, 0, 0x1000);
+    init_test_objs(&sender, 0x1000, 0x2000, 1252);
+    sender.ctor_flags |= SCF_HTTP|SCF_IETF;
+    send_stream = new_stream(&sender, 0, 0x1000);
+    s = lsquic_stream_send_headers(send_stream, &headers, 0);
+    assert(0 == s);
+    lsquic_stream_flush(send_stream);
 
-    qwh = lsquic_qeh_write_headers(&tobjs.qeh, stream->id, 0, &headers,
-                    buf + prefix_cap, &prefix_sz, &headers_sz, &compl_off,
-                    NULL);
-    assert(qwh == QWH_FULL);
+    nw = read_from_scheduled_packets(&sender.send_ctl, 0, buf, sizeof(buf),
+                                                                    0, &fin, 0);
+    assert(nw > 0);
 
-    p = buf + prefix_cap - prefix_sz;
-    assert(LQRHS_DONE == lsquic_qdh_header_in_begin(&tobjs.qdh, stream,
-                            prefix_sz + headers_sz, &p,
-                            prefix_sz + headers_sz));
+    init_test_objs(&receiver, 0x1000, 0x2000, 1252);
+    receiver.ctor_flags |= SCF_HTTP|SCF_IETF;
+    receiver.lconn.cn_flags |= LSCONN_SERVER;
+    use_test_hset_if(&receiver);
+    recv_stream = new_stream(&receiver, 0, 0x1000);
 
-    assert(!(stream->sm_bflags & SMBF_VERIFY_CL));
+    frame = new_frame_in_ext(&receiver, 0, nw, fin, buf);
+    errno = initial_errno;
+    s = lsquic_stream_frame_in(recv_stream, frame);
+    assert(0 == s);
 
-    lsquic_stream_destroy(stream);
-    deinit_test_objs(&tobjs);
+    if (expect_abort)
+    {
+        assert(lsquic_stream_readable(recv_stream));
+        assert(s_abort_error.count == 1);
+        assert(s_abort_error.is_app == 1);
+        assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+
+        hset = lsquic_stream_get_hset(recv_stream);
+        assert(hset == NULL);
+    }
+    else
+    {
+        assert(s_abort_error.count == 0);
+        assert(recv_stream->sm_bflags & SMBF_VERIFY_CL);
+        assert(recv_stream->sm_cont_len == content_len);
+
+        hset = lsquic_stream_get_hset(recv_stream);
+        assert(hset != NULL);
+        assert(hset->count == count);
+        assert(hset->finalized);
+        test_discard_hset(hset);
+    }
+
+    lsquic_stream_destroy(recv_stream);
+    deinit_test_objs(&receiver);
+    lsquic_stream_destroy(send_stream);
+    deinit_test_objs(&sender);
 
     stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+expect_header_block_abort (struct lsxpack_header *hdrs, unsigned count)
+{
+    expect_header_block_result(hdrs, count, 1, 0, 0);
+}
+
+
+static void
+expect_header_block_accept (struct lsxpack_header *hdrs, unsigned count,
+                                                unsigned long long content_len)
+{
+    expect_header_block_result(hdrs, count, 0, content_len, 0);
+}
+
+
+static void
+test_invalid_content_length_is_rejected (void)
+{
+    struct lsxpack_header req_hdrs_arr[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "xyz") },
+    };
+
+    expect_header_block_abort(req_hdrs_arr,
+                sizeof(req_hdrs_arr) / sizeof(req_hdrs_arr[0]));
+}
+
+
+static void
+test_duplicate_content_length_is_accepted (void)
+{
+    struct lsxpack_header req_hdrs_arr[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "42") },
+        { XHDR("content-length", "42") },
+    };
+
+    expect_header_block_accept(req_hdrs_arr,
+                sizeof(req_hdrs_arr) / sizeof(req_hdrs_arr[0]), 42);
+}
+
+
+static void
+test_conflicting_content_length_is_rejected (void)
+{
+    struct lsxpack_header req_hdrs_arr[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "1") },
+        { XHDR("content-length", "2") },
+    };
+
+    expect_header_block_abort(req_hdrs_arr,
+                sizeof(req_hdrs_arr) / sizeof(req_hdrs_arr[0]));
 }
 
 
@@ -1861,11 +2299,11 @@ test_invalid_content_length_syntax_is_rejected (void)
         { XHDR("content-length", "") },
     };
 
-    expect_content_length_not_verified(plus_arr,
+    expect_header_block_abort(plus_arr,
                                 sizeof(plus_arr) / sizeof(plus_arr[0]));
-    expect_content_length_not_verified(space_arr,
+    expect_header_block_abort(space_arr,
                                 sizeof(space_arr) / sizeof(space_arr[0]));
-    expect_content_length_not_verified(empty_arr,
+    expect_header_block_abort(empty_arr,
                                 sizeof(empty_arr) / sizeof(empty_arr[0]));
 }
 
@@ -1906,6 +2344,99 @@ test_content_length_overrun_blocks_payload_delivery (void)
 
     lsquic_stream_destroy(stream);
     deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_content_length_max_value_ignores_stale_errno (void)
+{
+    struct lsxpack_header hdrs[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "18446744073709551615") },
+    };
+
+    expect_header_block_result(hdrs, sizeof(hdrs) / sizeof(hdrs[0]), 0,
+                                                    ULLONG_MAX, ERANGE);
+}
+
+
+static void
+test_content_length_overflow_is_rejected (void)
+{
+    struct lsxpack_header hdrs[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "18446744073709551616") },
+    };
+
+    expect_header_block_abort(hdrs, sizeof(hdrs) / sizeof(hdrs[0]));
+}
+
+
+static void
+test_header_processing_error_stays_message_error (void)
+{
+    struct test_objs sender, receiver;
+    struct lsquic_stream *send_stream, *recv_stream;
+    struct stream_frame *frame;
+    size_t nw;
+    int fin, s;
+    unsigned char buf[0x1000];
+    struct lsxpack_header req_hdrs_arr[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+    };
+    struct lsquic_http_headers req_hdrs = {
+        .count = sizeof(req_hdrs_arr) / sizeof(req_hdrs_arr[0]),
+        .headers = req_hdrs_arr,
+    };
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+
+    stream_ctor_flags |= SCF_IETF;
+
+    init_test_objs(&sender, 0x1000, 0x2000, 1252);
+    sender.ctor_flags |= SCF_HTTP|SCF_IETF;
+    send_stream = new_stream(&sender, 0, 0x1000);
+    s = lsquic_stream_send_headers(send_stream, &req_hdrs, 0);
+    assert(0 == s);
+    lsquic_stream_flush(send_stream);
+
+    nw = read_from_scheduled_packets(&sender.send_ctl, 0, buf, sizeof(buf),
+                                                                    0, &fin, 0);
+    assert(nw > 0);
+
+    init_test_objs(&receiver, 0x1000, 0x2000, 1252);
+    receiver.ctor_flags |= SCF_HTTP|SCF_IETF;
+    receiver.lconn.cn_flags |= LSCONN_SERVER;
+    use_test_hset_if(&receiver);
+    recv_stream = new_stream(&receiver, 0, 0x1000);
+
+    s_test_hset_header_error = 1;
+    frame = new_frame_in_ext(&receiver, 0, nw, fin, buf);
+    s = lsquic_stream_frame_in(recv_stream, frame);
+    assert(0 == s);
+
+    assert(lsquic_stream_readable(recv_stream));
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.is_app == 1);
+    assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+    s_test_hset_header_error = 0;
+
+    lsquic_stream_destroy(recv_stream);
+    deinit_test_objs(&receiver);
+    lsquic_stream_destroy(send_stream);
+    deinit_test_objs(&sender);
 
     stream_ctor_flags &= ~SCF_IETF;
 }
@@ -1982,13 +2513,21 @@ main (int argc, char **argv)
                     for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                         test_frame_header_split(n_packets, extra_sz, add_one_more);
             break;
-        case 12:  /* zero size frame tests */
+        case 12:  /* fast framing regression tests */
             test_zero_size_frame();
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
             test_reading_zero_size_data_frame_scenario3();
+            test_invalid_content_length_is_rejected();
+            test_duplicate_content_length_is_accepted();
+            test_conflicting_content_length_is_rejected();
             test_invalid_content_length_syntax_is_rejected();
             test_content_length_overrun_blocks_payload_delivery();
+            test_coalesced_hsets_are_throttled();
+            test_data_waits_for_hset_claim();
+            test_content_length_max_value_ignores_stale_errno();
+            test_content_length_overflow_is_rejected();
+            test_header_processing_error_stays_message_error();
             break;
         default:
             fprintf(stderr, "Unknown test subset: %d\n", test_subset);
@@ -2004,12 +2543,20 @@ main (int argc, char **argv)
             for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
                 for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                     test_frame_header_split(n_packets, extra_sz, add_one_more);
+        test_coalesced_hsets_are_throttled();
+        test_data_waits_for_hset_claim();
         test_zero_size_frame();
         test_reading_zero_size_data_frame();
         test_reading_zero_size_data_frame_scenario2();
         test_reading_zero_size_data_frame_scenario3();
+        test_invalid_content_length_is_rejected();
+        test_duplicate_content_length_is_accepted();
+        test_conflicting_content_length_is_rejected();
         test_invalid_content_length_syntax_is_rejected();
         test_content_length_overrun_blocks_payload_delivery();
+        test_content_length_max_value_ignores_stale_errno();
+        test_content_length_overflow_is_rejected();
+        test_header_processing_error_stays_message_error();
     }
 
     return 0;

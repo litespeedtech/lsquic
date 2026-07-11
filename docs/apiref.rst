@@ -402,6 +402,18 @@ settings structure:
        (:rfc:`7540#section-6.5.2`).  0 means no limit.  Defaults
        to :func:`LSQUIC_DF_MAX_HEADER_LIST_SIZE`.
 
+    .. member:: unsigned        es_max_header_sets
+
+       Maximum number of completed header sets that may be buffered on an HTTP
+       stream while awaiting application processing.  When the limit is
+       reached, HTTP/3 parsing on the stream is suspended until the application
+       claims enough header sets to bring the queue below the limit.  Receiving
+       an additional gQUIC header set is treated as a connection error.  This
+       limit is local to the receiving endpoint and has no corresponding peer
+       setting.  The value must be greater than zero.  Defaults to
+       :macro:`LSQUIC_DF_MAX_HEADER_SETS_SERVER` in server mode and
+       :macro:`LSQUIC_DF_MAX_HEADER_SETS_CLIENT` in client mode.
+
     .. member:: const char     *es_ua
 
         UAID -- User-Agent ID.  Defaults to :macro:`LSQUIC_DF_UA`.
@@ -422,19 +434,9 @@ settings structure:
 
     .. member:: int             es_support_push
 
-       Setting this value to 0 means that
-
-       For client:
-
-       1. we send a SETTINGS frame to indicate that we do not support server
-          push; and
-       2. all incoming pushed streams get reset immediately.
-
-       (For maximum effect, set es_max_streams_in to 0.)
-
-       For server:
-
-       1. :func:`lsquic_conn_push_stream()` will return -1.
+       Server push is not supported.  This setting is retained for API
+       compatibility.  :func:`lsquic_conn_is_push_enabled()` returns false and
+       :func:`lsquic_conn_push_stream()` returns 1.
 
     .. member:: int             es_support_tcid0
 
@@ -1081,6 +1083,16 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
     SETTINGS_MAX_HEADER_LIST_SIZE will be sent to peer after handshake is
     completed (assuming the peer supports this setting frame type).
 
+.. macro:: LSQUIC_DF_MAX_HEADER_SETS_SERVER
+
+    Default maximum number of completed header sets buffered per HTTP stream
+    in server mode while awaiting application processing.  The value is 1.
+
+.. macro:: LSQUIC_DF_MAX_HEADER_SETS_CLIENT
+
+    Default maximum number of completed header sets buffered per HTTP stream
+    in client mode while awaiting application processing.  The value is 2.
+
 .. macro:: LSQUIC_DF_UA
 
     Default value of UAID (user-agent ID).
@@ -1095,7 +1107,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_SUPPORT_PUSH
 
-    Push promises are supported by default.
+    Server push is not supported.
 
 .. macro:: LSQUIC_DF_SUPPORT_TCID0
 
@@ -1656,7 +1668,9 @@ Closing Connections
 .. function:: void lsquic_conn_close (lsquic_conn_t *conn)
 
     This closes the connection.  :member:`lsquic_stream_if.on_conn_closed`
-    and :member:`lsquic_stream_if.on_close` callbacks will be called.
+    and :member:`lsquic_stream_if.on_close` callbacks will be called.  Closing
+    an established IETF QUIC connection sends a transport-level
+    ``CONNECTION_CLOSE`` frame with the ``NO_ERROR`` code.
 
 .. function:: void lsquic_conn_abort (lsquic_conn_t *conn)
 
@@ -2015,7 +2029,8 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
         :param stream: Stream with which the header set is associated.  May be set
                        to NULL in server mode.
         :param is_push_promise: Boolean value indicating whether this header set is
-                                for a push promise.
+                                for a push promise.  Server push is not supported;
+                                this parameter is retained for API compatibility.
         :return: Pointer to user-defined header set object.
 
         Create a new header set.  This object is (and must be) fetched from a
@@ -2093,45 +2108,51 @@ fields yourself.  In that case, the header set must be "read" from the stream vi
 Push Promises
 -------------
 
+Server push is not supported.  The following functions remain in the API for
+compatibility.
+
 .. function:: int lsquic_conn_push_stream (lsquic_conn_t *conn, void *hdr_set, lsquic_stream_t *stream, const lsquic_http_headers_t *headers)
 
     :return:
 
-        - 0: Stream pushed successfully.
-        - 1: Stream push failed because it is disabled or because we hit
-             stream limit or connection is going away.
-        - -1: Stream push failed because of an internal error.
+        - 1: Stream push failed because server push is not supported.
 
-    A server may push a stream.  This call creates a new stream in reference
-    to stream ``stream``.  It will behave as if the client made a request: it will
-    trigger ``on_new_stream()`` event and it can be used as a regular client-initiated stream.
-
-    ``hdr_set`` must be set.  It is passed as-is to :func:`lsquic_stream_get_hset()`.
+    This function is retained for API compatibility.
 
 .. function:: int lsquic_conn_is_push_enabled (lsquic_conn_t *conn)
 
-    :return: Boolean value indicating whether push promises are enabled.
+    :return: 0.
 
-    Only makes sense in server mode: the client cannot push a stream and this
-    function always returns false in client mode.
+    This function is retained for API compatibility.
 
 .. function:: int lsquic_stream_is_pushed (const lsquic_stream_t *stream)
 
-    :return: Boolean value indicating whether this is a pushed stream.
+    :return: Boolean value indicating whether this is a legacy pushed stream.
+
+    This function is retained for API compatibility.  Current LSQUIC versions
+    do not create pushed streams.
 
 .. function:: int lsquic_stream_refuse_push (lsquic_stream_t *stream)
 
-    Refuse pushed stream.  Call it from ``on_new_stream()``.  No need to
-    call :func:`lsquic_stream_close()` after this.  ``on_close()`` will be called.
+    Refuse a legacy pushed stream.
+
+    This function is retained for API compatibility.  Current LSQUIC versions
+    do not create pushed streams.
 
 .. function:: int lsquic_stream_push_info (const lsquic_stream_t *stream, lsquic_stream_id_t *ref_stream_id, void **hdr_set)
 
-    Get information associated with pushed stream
+    Get information associated with a legacy pushed stream.
 
-    :param ref_stream_id: Stream ID in response to which push promise was sent.
-    :param hdr_set: Header set. This object was passed to or generated by :func:`lsquic_conn_push_stream()`.
+    :param ref_stream_id: Stream ID in response to which a push promise would
+                          have been sent.
+    :param hdr_set: Header set.  In legacy push-enabled versions, this object
+                    was passed to or generated by
+                    :func:`lsquic_conn_push_stream()`.
 
     :return: 0 on success and -1 if this is not a pushed stream.
+
+    This function is retained for API compatibility.  Current LSQUIC versions
+    do not create pushed streams.
 
 Stream Priorities
 -----------------
