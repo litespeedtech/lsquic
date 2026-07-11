@@ -421,7 +421,7 @@ usage (const char *prog)
 "   -h          Print this help screen\n"
 "\n"
 "Example:\n"
-"   cbr_server -f video.bin -b 8000000 -I 50 -o bw_probe_fill=1\n"
+"   cbr_server -f video.bin -b 8000000 -I 50 -A 4\n"
 "\n",
         prog,
         CBR_DF_BITRATE, CBR_DF_BITRATE / 1000000.0,

@@ -71,7 +71,7 @@ init_test (struct accounting_test *t)
     t->lconn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
 
     lsquic_engine_init_settings(&t->enpub.enp_settings, 0);
-    t->enpub.enp_settings.es_cc_algo = 1;  /* Cubic */
+    t->enpub.enp_settings.es_cc_algo = LSQUIC_CC_CUBIC;
     lsquic_mm_init(&t->enpub.enp_mm);
     lsquic_alarmset_init(&t->alset, 0);
 

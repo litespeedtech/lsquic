@@ -419,8 +419,20 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** default anti-amplification factor is 3 */
 #define LSQUIC_DF_AMP_FACTOR 3
 
+enum lsquic_cc
+{
+    /* This enum has explicit values so that "es_cc_algo" is backwards-
+     * compatible.
+     */
+    LSQUIC_CC_DEFAULT     = 0,  LSQUIC_CC_FIRST = LSQUIC_CC_DEFAULT,
+    LSQUIC_CC_CUBIC       = 1,
+    LSQUIC_CC_BBR         = 2,
+    LSQUIC_CC_ADAPTIVE    = 3,
+    LSQUIC_CC_BBR_COPILOT = 4,  LSQUIC_CC_LAST = LSQUIC_CC_BBR_COPILOT,
+};
+
 /* Use Adaptive CC by default */
-#define LSQUIC_DF_CC_ALGO 3
+#define LSQUIC_DF_CC_ALGO LSQUIC_CC_ADAPTIVE
 
 /* Default value of the CC RTT threshold is 1.5 ms */
 #define LSQUIC_DF_CC_RTT_THRESH 1500
@@ -478,9 +490,6 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
-
-/* By default, sending extra data to probe BBR bandwidth is disabled. */
-#define LSQUIC_DF_BW_PROBE_FILL 0
 
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 /** Turn off webtransport extension for server by default */
@@ -733,8 +742,9 @@ struct lsquic_engine_settings {
      *  1:  Cubic
      *  2:  BBRv1
      *  3:  Adaptive (Cubic or BBRv1)
+     *  4:  BBRv1-Copilot
      */
-    unsigned        es_cc_algo;
+    enum lsquic_cc  es_cc_algo;
 
     /**
      * Congestion controller RTT threshold in microseconds.
@@ -1172,15 +1182,6 @@ struct lsquic_engine_settings {
      * The default is all zero, which indicates perferred_address is not set
      */
     uint8_t         es_preferred_address[24];
-
-    /**
-     * If this value is set to 1, the connection will send padded packets
-     * while BBR is probing bandwidth (pacing_gain > 1.0) to improve bandwidth
-     * estimation accuracy.
-     *
-     * Default is @ref LSQUIC_DF_BW_PROBE_FILL.
-     */
-    unsigned        es_bw_probe_fill;
 
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     /**
@@ -2196,6 +2197,15 @@ enum lsquic_conn_param
      * lsquic_conn_get_info() enables sampling if needed for functionality.
      */
     LSQCP_ENABLE_BW_SAMPLER = 2,
+    /**
+     * Congestion control algorithm to use for this connection.
+     *
+     * Type: enum lsquic_cc
+     * Default: inherited from es_cc_algo.
+     *
+     * Values are the same as for es_cc_algo.
+     */
+    LSQCP_CC_ALGO = 3,
 };
 
 struct lsquic_conn_info

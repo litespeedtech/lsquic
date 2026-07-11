@@ -8860,6 +8860,7 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_cc cc_algo;
     int enable_bw_sampler;
 
     switch (param)
@@ -8879,6 +8880,11 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         LSQ_INFO("bw sampler %s",
                  enable_bw_sampler ? "enabled" : "disabled");
         return 0;
+    case LSQCP_CC_ALGO:
+        if (value_len != sizeof(enum lsquic_cc))
+            return -1;
+        memcpy(&cc_algo, value, sizeof(cc_algo));
+        return lsquic_send_ctl_set_cc_algo(&conn->ifc_send_ctl, cc_algo);
     default:
         return -1;
     }
@@ -8891,6 +8897,7 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_cc cc_algo;
     int enable_bw_sampler;
 
     switch (param)
@@ -8909,6 +8916,13 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                 lsquic_send_ctl_bw_sampler_enabled(&conn->ifc_send_ctl);
         memcpy(value, &enable_bw_sampler, sizeof(enable_bw_sampler));
         *value_len = sizeof(enable_bw_sampler);
+        return 0;
+    case LSQCP_CC_ALGO:
+        if (*value_len < sizeof(enum lsquic_cc))
+            return -1;
+        cc_algo = lsquic_send_ctl_get_cc_algo(&conn->ifc_send_ctl);
+        memcpy(value, &cc_algo, sizeof(cc_algo));
+        *value_len = sizeof(cc_algo);
         return 0;
     default:
         return -1;

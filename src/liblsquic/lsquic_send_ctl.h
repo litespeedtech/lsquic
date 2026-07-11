@@ -4,6 +4,7 @@
 
 #include <sys/queue.h>
 
+#include "lsquic.h"
 #include "lsquic_types.h"
 #include "lsquic_packet_out.h"
 
@@ -155,6 +156,12 @@ void
 lsquic_send_ctl_init (lsquic_send_ctl_t *, struct lsquic_alarmset *,
           struct lsquic_engine_public *, const struct ver_neg *,
           struct lsquic_conn_public *, enum send_ctl_flags);
+
+int
+lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *, enum lsquic_cc cc_algo);
+
+enum lsquic_cc
+lsquic_send_ctl_get_cc_algo (const lsquic_send_ctl_t *);
 
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *, struct lsquic_packet_out *);

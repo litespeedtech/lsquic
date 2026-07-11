@@ -1103,6 +1103,13 @@ lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
 }
 
 
+static int
+lsquic_bbr_bw_probe_fill_not_wanted (void *cong_ctl)
+{
+    return 0;
+}
+
+
 static void
 lsquic_bbr_cleanup (void *cong_ctl)
 {
@@ -1121,6 +1128,26 @@ lsquic_bbr_timeout (void *cong_ctl) {   /* Noop */   }
 
 
 const struct cong_ctl_if lsquic_cong_bbr_if =
+{
+    .cci_ack           = lsquic_bbr_ack,
+    .cci_begin_ack     = lsquic_bbr_begin_ack,
+    .cci_end_ack       = lsquic_bbr_end_ack,
+    .cci_cleanup       = lsquic_bbr_cleanup,
+    .cci_get_cwnd      = lsquic_bbr_get_cwnd,
+    .cci_init          = lsquic_bbr_init,
+    .cci_pacing_rate   = lsquic_bbr_pacing_rate,
+    .cci_loss          = lsquic_bbr_loss,
+    .cci_lost          = lsquic_bbr_lost,
+    .cci_process_bw_sample = lsquic_bbr_process_bw_sample,
+    .cci_reinit        = lsquic_bbr_reinit,
+    .cci_timeout       = lsquic_bbr_timeout,
+    .cci_sent          = lsquic_bbr_sent,
+    .cci_was_quiet     = lsquic_bbr_was_quiet,
+    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_not_wanted,
+};
+
+
+const struct cong_ctl_if lsquic_cong_bbr_copilot_if =
 {
     .cci_ack           = lsquic_bbr_ack,
     .cci_begin_ack     = lsquic_bbr_begin_ack,

@@ -437,7 +437,7 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.conn_stats = &s_conn_stats;
 #endif
     tobjs->initial_stream_window = initial_stream_window;
-    tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
+    tobjs->eng_pub.enp_settings.es_cc_algo = LSQUIC_CC_CUBIC;
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
