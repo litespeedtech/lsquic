@@ -408,7 +408,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
-    settings->es_bw_probe_fill   = LSQUIC_DF_BW_PROBE_FILL;
 }
 
 
@@ -468,11 +467,12 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_cc_algo > 3)
+    if (settings->es_cc_algo < LSQUIC_CC_FIRST
+                                    || settings->es_cc_algo > LSQUIC_CC_LAST)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
-                "algorithm value %u", settings->es_cc_algo);
+                "algorithm value %d", (int) settings->es_cc_algo);
         return -1;
     }
 
@@ -517,13 +517,6 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_bw_probe_fill > 1)
-    {
-        if (err_buf)
-            snprintf(err_buf, err_buf_sz, "bw_probe_fill value "
-                "must be 0 or 1");
-        return -1;
-    }
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     if(settings->es_webtransport_server)
     {
