@@ -214,5 +214,6 @@ struct lsquic_bbr
 };
 
 extern const struct cong_ctl_if lsquic_cong_bbr_if;
+extern const struct cong_ctl_if lsquic_cong_bbr_copilot_if;
 
 #endif

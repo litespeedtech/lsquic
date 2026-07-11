@@ -1988,7 +1988,7 @@ set_engine_option (struct lsquic_engine_settings *settings,
         }
         else if (0 == strncmp(name, "cc_algo", 7))
         {
-            settings->es_cc_algo = atoi(val);
+            settings->es_cc_algo = (enum lsquic_cc) atoi(val);
             return 0;
         }
         else if (0 == strncmp(name, "ql_bits", 7))
@@ -2122,11 +2122,6 @@ set_engine_option (struct lsquic_engine_settings *settings,
 
         break;
     case 13:
-        if (0 == strncmp(name, "bw_probe_fill", 13))
-        {
-            settings->es_bw_probe_fill = atoi(val);
-            return 0;
-        }
         if (0 == strncmp(name, "support_tcid0", 13))
         {
             settings->es_support_tcid0 = atoi(val);

@@ -941,7 +941,7 @@ is parsed to see which setting to alter.
         }
         /* ... */
         else if (0 == strncmp(optarg, "cc_algo=", val - optarg))
-          settings.es_cc_algo = atoi(val);
+          settings.es_cc_algo = (enum lsquic_cc) atoi(val);
       /* ... */
   }
 

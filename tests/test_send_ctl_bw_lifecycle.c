@@ -21,6 +21,7 @@
 #include "lsquic_stream.h"
 #include "lsquic_mm.h"
 #include "lsquic_conn_public.h"
+#include "lsquic_cong_ctl.h"
 #include "lsquic_parse.h"
 #include "lsquic_conn.h"
 #include "lsquic_engine_public.h"
@@ -52,7 +53,7 @@ struct bw_lifecycle_test
 
 
 static void
-init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
+init_test (struct bw_lifecycle_test *t, enum lsquic_cc cc_algo,
            unsigned cc_rtt_thresh, int enable_bw_sampler)
 {
     /* Build a minimal send_ctl environment with configurable CC policy. */
@@ -141,7 +142,7 @@ test_cubic_lazy_enable (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 1, 100000, 0);
+    init_test(&t, LSQUIC_CC_CUBIC, 100000, 0);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
@@ -169,7 +170,7 @@ test_adaptive_switch_without_info_drops_sampler (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
@@ -182,6 +183,7 @@ test_adaptive_switch_without_info_drops_sampler (void)
     ack_one(&t, 1, 2000, 2000, 1);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+    assert(LSQUIC_CC_CUBIC == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
     assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
 
     cleanup_test(&t);
@@ -195,7 +197,7 @@ test_adaptive_switch_with_info_keeps_sampler (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
 
     (void) lsquic_send_ctl_get_bw(&t.send_ctl);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
@@ -225,7 +227,7 @@ test_drop_clears_inflight_packet_states (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out_1, *packet_out_2;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
 
     packet_out_1 = new_packet(&t, 1, 1000);
     packet_out_2 = new_packet(&t, 2, 1200);
@@ -250,7 +252,7 @@ test_reinit_after_drop_via_get_bw (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
 
     packet_out = new_packet(&t, 1, 1000);
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
@@ -271,7 +273,7 @@ test_engine_setting_enables_sampler (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 1, 100000, 1);
+    init_test(&t, LSQUIC_CC_CUBIC, 100000, 1);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
@@ -292,7 +294,7 @@ test_engine_setting_keeps_sampler_across_adaptive_to_cubic (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 1);
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 1);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
@@ -316,6 +318,140 @@ test_engine_setting_keeps_sampler_across_adaptive_to_cubic (void)
 }
 
 
+static void
+test_cc_algo_selection (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test(&t, LSQUIC_CC_CUBIC, 100000, 0);
+    assert(LSQUIC_CC_CUBIC == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+    assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+    cleanup_test(&t);
+
+    init_test(&t, LSQUIC_CC_BBR, 100000, 0);
+    assert(LSQUIC_CC_BBR == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
+    assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+    cleanup_test(&t);
+
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
+    assert(LSQUIC_CC_ADAPTIVE == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
+    assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+    cleanup_test(&t);
+
+    init_test(&t, LSQUIC_CC_BBR_COPILOT, 100000, 0);
+    assert(LSQUIC_CC_BBR_COPILOT
+                        == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_copilot_if);
+    assert(1 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+    cleanup_test(&t);
+}
+
+
+static void
+test_bbr_copilot_switch_preserves_state (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test(&t, LSQUIC_CC_BBR, 100000, 0);
+    t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_pacing_gain = 1.25;
+
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    assert(LSQUIC_CC_BBR_COPILOT
+                        == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_copilot_if);
+    assert(1.25 == t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_pacing_gain);
+    assert(1 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, LSQUIC_CC_BBR));
+    assert(LSQUIC_CC_BBR == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
+    assert(1.25 == t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_pacing_gain);
+    assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+                                              t.send_ctl.sc_cong_ctl));
+
+    cleanup_test(&t);
+}
+
+
+static void
+test_adaptive_switch_preserves_state (void)
+{
+    struct bw_lifecycle_test t;
+    uint64_t cwnd;
+
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
+    cwnd = t.send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd + 1234;
+    t.send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd = cwnd;
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_CUBIC));
+    assert(cwnd == t.send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd);
+    assert(t.send_ctl.sc_cong_ctl
+                        == &t.send_ctl.sc_adaptive_cc.acc_cubic);
+    assert(t.send_ctl.sc_flags & SC_CLEANUP_BBR);
+    cleanup_test(&t);
+
+    init_test(&t, LSQUIC_CC_ADAPTIVE, 100000, 0);
+    t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_pacing_gain = 1.25;
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    assert(1.25 == t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_pacing_gain);
+    assert(t.send_ctl.sc_cong_ctl == &t.send_ctl.sc_adaptive_cc.acc_bbr);
+    assert(0 == (t.send_ctl.sc_flags & SC_CLEANUP_BBR));
+    cleanup_test(&t);
+}
+
+
+static void
+test_cc_algo_family_switch (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test(&t, LSQUIC_CC_CUBIC, 100000, 0);
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_copilot_if);
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+
+    t.send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd = 1;
+    t.send_ctl.sc_adaptive_cc.acc_flags |= ACC_CUBIC;
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_ADAPTIVE));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
+    assert(0 == t.send_ctl.sc_adaptive_cc.acc_flags);
+    assert(t.send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd > 1);
+
+    assert(-1 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                             (enum lsquic_cc) 5));
+    assert(LSQUIC_CC_ADAPTIVE == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
+
+    cleanup_test(&t);
+}
+
+
+static void
+test_cc_algo_default (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test(&t, LSQUIC_CC_CUBIC, 100000, 0);
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_DEFAULT));
+    assert(LSQUIC_DF_CC_ALGO
+                        == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -327,5 +463,10 @@ main (void)
     test_reinit_after_drop_via_get_bw();
     test_engine_setting_enables_sampler();
     test_engine_setting_keeps_sampler_across_adaptive_to_cubic();
+    test_cc_algo_selection();
+    test_bbr_copilot_switch_preserves_state();
+    test_adaptive_switch_preserves_state();
+    test_cc_algo_family_switch();
+    test_cc_algo_default();
     return EXIT_SUCCESS;
 }
