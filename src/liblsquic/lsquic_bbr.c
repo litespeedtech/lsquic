@@ -358,8 +358,7 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
 static void
 bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
-                  unsigned packet_sz, lsquic_time_t UNUSED_now_time,
-                  int UNUSED_app_limited)
+                      unsigned packet_sz, lsquic_time_t now, int app_limited)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
@@ -374,8 +373,7 @@ bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
         bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
     }
 
-    lsquic_bbr_ack(cong_ctl, packet_out, packet_sz, UNUSED_now_time,
-                                                        UNUSED_app_limited);
+    lsquic_bbr_ack(cong_ctl, packet_out, packet_sz, now, app_limited);
 }
 
 
@@ -838,6 +836,7 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
         // Do not decide on the time to exit PROBE_RTT until the
         // |bytes_in_flight| is at the target small value.
         bbr->bbr_exit_probe_rtt_at = 0;
+        /* Used by BBR-Copilot: */
         bbr->bbr_flags |= BBR_BW_SAMPLE_INVALID_PROBE_RTT;
         bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
     }
