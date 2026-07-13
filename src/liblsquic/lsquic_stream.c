@@ -1384,17 +1384,20 @@ stream_reset_in_ietf (struct lsquic_stream *stream, uint64_t final_size,
 
     if (lsquic_sfcw_get_max_recv_off(&stream->fc) > final_size)
     {
-        LSQ_INFO("%s invalid: its final size %"PRIu64" is "
-            "smaller than that of byte following the last byte we have seen: "
-            "%"PRIu64, frame_name, final_size,
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FINAL_SIZE_ERROR,
+            "%s final size %"PRIu64" is below received offset %"PRIu64,
+            frame_name, final_size,
             lsquic_sfcw_get_max_recv_off(&stream->fc));
         return -1;
     }
 
     if (!lsquic_sfcw_set_max_recv_off(&stream->fc, final_size))
     {
-        LSQ_INFO("%s invalid: its final size %"PRIu64
-            " violates flow control", frame_name, final_size);
+        lconn = stream->conn_pub->lconn;
+        lconn->cn_if->ci_abort_error(lconn, 0, TEC_FLOW_CONTROL_ERROR,
+            "%s final size %"PRIu64" violates flow control",
+            frame_name, final_size);
         return -1;
     }
 
@@ -1551,7 +1554,12 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
 
     if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
                                     && !(stream->sm_qflags & SMQF_SEND_RST))
+    {
+        /* draft-09 recommends an ordinary RESET_STREAM response to
+         * STOP_SENDING, even on streams otherwise using RESET_STREAM_AT. */
+        stream->sm_reset_stream_at_sz = 0;
         stream_reset(stream, 0, 0);
+    }
 
     if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
                              | SMQF_SEND_STOP_SENDING))
@@ -5012,8 +5020,14 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
         stream->sm_qflags &= ~SMQF_QPACK_DEC;
     }
 
-    drop_buffered_data(stream);
-    maybe_elide_stream_frames(stream);
+    if (stream->tosend_off >= stream->sm_reset_stream_at_sz)
+    {
+        drop_buffered_data(stream);
+        maybe_elide_stream_frames(stream);
+    }
+    else
+        LSQ_DEBUG("preserve buffered reliable prefix while RESET_STREAM_AT "
+                  "waits for flow-control credit");
     maybe_schedule_call_on_close(stream);
 
     if (do_close)
@@ -5173,6 +5187,13 @@ lsquic_stream_acked (struct lsquic_stream *stream,
     }
     if (0 == stream->n_unacked)
     {
+        if (!(stream->stream_flags & STREAM_WT_COMMITTED)
+            && (stream->stream_flags & (STREAM_FIN_SENT | STREAM_RST_ACKED))
+            && stream->conn_pub->cp_on_stream_committed)
+        {
+            stream->stream_flags |= STREAM_WT_COMMITTED;
+            stream->conn_pub->cp_on_stream_committed(stream);
+        }
         maybe_schedule_call_on_close(stream);
         maybe_finish_stream(stream);
     }

@@ -271,7 +271,7 @@ enum stream_flags {
     STREAM_FRAMES_ELIDED= 1 << 15,
     STREAM_FORCE_FINISH = 1 << 16,  /* Replaces FIN sent and received */
     STREAM_ONNEW_DONE   = 1 << 17,  /* on_new_stream has been called */
-    STREAM_UNUSED18     = 1 << 18,  /* Unused */
+    STREAM_WT_COMMITTED = 1 << 18,
     STREAM_UNUSED19     = 1 << 19,  /* Unused */
     STREAM_GOAWAY_IN    = 1 << 20,  /* Incoming GOAWAY has been processed */
     STREAM_SS_SENT      = 1 << 21,  /* STOP_SENDING sent */

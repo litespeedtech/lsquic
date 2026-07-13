@@ -326,6 +326,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
         settings->es_max_header_sets = LSQUIC_DF_MAX_HEADER_SETS_SERVER;
         settings->es_webtransport = LSQUIC_DF_WEBTRANSPORT_SERVER;
+        settings->es_webtransport_compat = LSQUIC_DF_WEBTRANSPORT_COMPAT;
         settings->es_max_webtransport_sessions
                          = LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS;
     }
@@ -390,6 +391,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_delayed_acks    = LSQUIC_DF_DELAYED_ACKS;
     settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
     settings->es_reset_stream_at = LSQUIC_DF_RESET_STREAM_AT;
+    settings->es_webtransport_compat = LSQUIC_DF_WEBTRANSPORT_COMPAT;
     settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
@@ -534,6 +536,15 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                                 "maximum number of header sets cannot be zero");
         return -1;
     }
+    if (settings->es_webtransport_compat != 0
+        && settings->es_webtransport_compat != LSQUIC_WT_COMPAT_DRAFT_14)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "invalid WebTransport compatibility "
+                     "profile %u", settings->es_webtransport_compat);
+        return -1;
+    }
+
     if(settings->es_webtransport)
     {
         if (!settings->es_http_datagrams)

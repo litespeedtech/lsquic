@@ -1420,6 +1420,14 @@ full_conn_ci_n_avail_streams (const lsquic_conn_t *lconn)
 }
 
 
+static unsigned
+full_conn_ci_n_avail_streams_uni (const lsquic_conn_t *lconn)
+{
+    (void) lconn;
+    return 0;
+}
+
+
 static int
 handshake_done_or_doing_sess_resume (const struct full_conn *conn)
 {
@@ -4471,6 +4479,7 @@ static const struct conn_iface full_conn_iface = {
     .ci_make_bidi_stream_with_if = full_conn_ci_make_bidi_stream_with_if,
     .ci_make_uni_stream_with_if  = full_conn_ci_make_uni_stream_with_if,
     .ci_n_avail_streams      =  full_conn_ci_n_avail_streams,
+    .ci_n_avail_streams_uni  =  full_conn_ci_n_avail_streams_uni,
     .ci_n_pending_streams    =  full_conn_ci_n_pending_streams,
     .ci_next_packet_to_send  =  full_conn_ci_next_packet_to_send,
     .ci_next_tick_time       =  full_conn_ci_next_tick_time,

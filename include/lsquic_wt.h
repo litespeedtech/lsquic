@@ -31,6 +31,26 @@ enum lsquic_wt_stream_initiator
     LSQWT_SERVER,
 };
 
+enum lsquic_wt_stream_error_kind
+{
+    LSQWT_STREAM_ERROR_APPLICATION,
+    LSQWT_STREAM_ERROR_SESSION_TERMINATED,
+    LSQWT_STREAM_ERROR_PROTOCOL,
+};
+
+struct lsquic_wt_stream_error
+{
+    enum lsquic_wt_stream_error_kind  kind;
+    uint64_t                           wire_code;
+    uint32_t                           application_code;
+};
+
+enum lsquic_wt_drain_source
+{
+    LSQWT_DRAIN_SESSION,
+    LSQWT_DRAIN_GOAWAY,
+};
+
 enum lsquic_wt_dg_drop_policy
 {
     LSQWT_DG_FAIL_EAGAIN,
@@ -105,8 +125,23 @@ struct lsquic_webtransport_if
     /* Session closed (normal or error path). */
     void
     (*wti_on_session_close) (lsquic_wt_session_t *, lsquic_wt_session_ctx_t *,
-                             uint64_t code, const char *reason,
+                             uint32_t code, const char *reason,
                              size_t reason_len);
+
+    /* Peer requested graceful draining, either per-session or by GOAWAY. */
+    void
+    (*wti_on_session_drain) (lsquic_wt_session_t *, lsquic_wt_session_ctx_t *,
+                             enum lsquic_wt_drain_source source);
+
+    /* New connection-level stream credit became available. */
+    void
+    (*wti_on_stream_credit) (lsquic_wt_session_t *, lsquic_wt_session_ctx_t *,
+                             enum lsquic_wt_stream_dir direction,
+                             unsigned available);
+
+    /* Local FIN/reset is committed and can no longer be changed. */
+    void
+    (*wti_on_stream_committed) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* New peer-initiated WT unidirectional stream. */
     lsquic_stream_ctx_t *
@@ -129,7 +164,7 @@ struct lsquic_webtransport_if
     (*wti_on_stream_close) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Supplies STOP_SENDING code for outgoing STOP_SENDING frame. */
-    uint64_t
+    uint32_t
     (*wti_on_stream_ss_code) (lsquic_stream_t *, lsquic_stream_ctx_t *);
 
     /* Received WT datagram payload. */
@@ -149,12 +184,12 @@ struct lsquic_webtransport_if
     /* RESET_STREAM observed on stream. */
     void
     (*wti_on_stream_reset) (lsquic_stream_t *, lsquic_stream_ctx_t *,
-                            uint64_t error_code);
+                            const struct lsquic_wt_stream_error *error);
 
     /* STOP_SENDING observed on stream. */
     void
     (*wti_on_stop_sending) (lsquic_stream_t *, lsquic_stream_ctx_t *,
-                            uint64_t error_code);
+                            const struct lsquic_wt_stream_error *error);
 };
 
 /**
@@ -177,8 +212,22 @@ lsquic_wt_reject (lsquic_stream_t *connect_stream,
 
 /** Close a WebTransport session with an application error code. */
 int
-lsquic_wt_close (lsquic_wt_session_t *sess, uint64_t code,
+lsquic_wt_close (lsquic_wt_session_t *sess, uint32_t code,
                 const char *reason, size_t reason_len);
+
+/** Send WT_DRAIN_SESSION.  Repeated calls are idempotent. */
+int
+lsquic_wt_drain (lsquic_wt_session_t *sess);
+
+/**
+ * Export session-bound TLS keying material.  Application label and context
+ * are limited to 255 bytes by the WebTransport exporter-context format.
+ */
+int
+lsquic_wt_export_keying_material (lsquic_wt_session_t *sess,
+    const void *application_label, size_t application_label_len,
+    const void *application_context, size_t application_context_len,
+    void *out, size_t out_len);
 
 /** Query the QUIC connection that owns this session. */
 lsquic_conn_t *
@@ -218,6 +267,11 @@ lsquic_wt_open_uni (lsquic_wt_session_t *sess);
 /** Open a WebTransport bidirectional stream. */
 lsquic_stream_t *
 lsquic_wt_open_bidi (lsquic_wt_session_t *sess);
+
+/** Return direction-specific locally available stream credit. */
+unsigned
+lsquic_wt_n_avail_streams (lsquic_wt_session_t *sess,
+                           enum lsquic_wt_stream_dir direction);
 
 /** Map a WT stream back to its session. */
 lsquic_wt_session_t *
@@ -270,11 +324,11 @@ lsquic_wt_max_datagram_size (const lsquic_wt_session_t *sess);
 
 /** Reset a WT stream with an application error code. */
 int
-lsquic_wt_stream_reset (lsquic_stream_t *stream, uint64_t error_code);
+lsquic_wt_stream_reset (lsquic_stream_t *stream, uint32_t error_code);
 
 /** Send STOP_SENDING on a WT stream with an application error code. */
 int
-lsquic_wt_stream_stop_sending (lsquic_stream_t *stream, uint64_t error_code);
+lsquic_wt_stream_stop_sending (lsquic_stream_t *stream, uint32_t error_code);
 
 #ifdef __cplusplus
 }

@@ -556,6 +556,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
 {
     int s;
     memset(tobjs, 0, sizeof(*tobjs));
+    tobjs->eng_pub.enp_settings.es_max_header_sets =
+                                        LSQUIC_DF_MAX_HEADER_SETS_SERVER;
     LSCONN_INITIALIZE(&tobjs->lconn);
     tobjs->lconn.cn_pf = pf ? pf : g_pf;
     tobjs->lconn.cn_version = tobjs->lconn.cn_pf == &lsquic_parse_funcs_ietf_v1 ?

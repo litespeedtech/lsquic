@@ -54,6 +54,8 @@ int lsquic_wt_test_closing_rejects (unsigned *mask);
 int lsquic_wt_test_local_close (uint64_t code, const char *reason,
                                 size_t reason_len, int *queued_capsule,
                                 unsigned *dgq_count);
+int lsquic_wt_test_close_reason_utf8 (const char *reason, size_t reason_len,
+                                      size_t *wire_len);
 int lsquic_wt_test_finalize (uint64_t code, const char *reason,
                              size_t reason_len, unsigned *called,
                              uint64_t *close_code,
@@ -579,6 +581,24 @@ test_close_capsule_and_close_state (void)
 
 
 static void
+test_close_reason_utf8 (void)
+{
+    char reason[WT_CLOSE_REASON_MAX + 2];
+    static const char invalid[] = { (char) 0xC0, (char) 0xAF };
+    size_t wire_len;
+
+    memset(reason, 'x', WT_CLOSE_REASON_MAX - 1);
+    reason[WT_CLOSE_REASON_MAX - 1] = (char) 0xC2;
+    reason[WT_CLOSE_REASON_MAX] = (char) 0xA2;
+    assert(0 == lsquic_wt_test_close_reason_utf8(reason,
+                            WT_CLOSE_REASON_MAX + 1, &wire_len));
+    assert(wire_len == WT_CLOSE_REASON_MAX - 1);
+    assert(0 != lsquic_wt_test_close_reason_utf8(invalid, sizeof(invalid),
+                                                 &wire_len));
+}
+
+
+static void
 test_reset_dispatch (void)
 {
     uint64_t h3_rst, h3_ss;
@@ -604,7 +624,7 @@ test_reset_dispatch (void)
                             &called, &reset_code, &stop_code));
     assert(2 == called);
     assert(0 == reset_code);
-    assert(0x11 == stop_code);
+    assert(0x22 == stop_code);
 
     called = 0;
     reset_code = 0;
@@ -796,13 +816,13 @@ test_compatibility_mode_behavior (void)
                     1, 1, 1, 1,
                     1,  /* CONNECT protocol required and present */
                     0, 0,  /* no WT_MAX_SESSIONS */
-                    1, 1,  /* draft-15 WT enabled */
+                    1, 1,  /* draft-16 WT enabled */
                     0, 0, 0,  /* missing WT initial settings */
                     0,  /* no reset_stream_at TP */
-                    15,
+                    16,
                     &supports, &draft));
-    assert(supports == 1);
-    assert(draft == 15);
+    assert(supports == 0);
+    assert(draft == 16);
 
     supports = draft = UINT_MAX;
     assert(0 == lsquic_ietf_test_wt_support(
@@ -812,10 +832,10 @@ test_compatibility_mode_behavior (void)
                     1, 1,
                     1, 1, 1,
                     1,
-                    15,
+                    16,
                     &supports, &draft));
     assert(supports == 0);
-    assert(draft == 15);
+    assert(draft == 16);
 }
 
 
@@ -1064,6 +1084,7 @@ main (void)
     test_incoming_session_id_validation();
     test_dgq_policies();
     test_close_capsule_and_close_state();
+    test_close_reason_utf8();
     test_deferred_accept_resolution();
     test_accept_status_validation();
     test_reject_status_validation();

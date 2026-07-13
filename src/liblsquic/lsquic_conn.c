@@ -169,6 +169,14 @@ lsquic_conn_n_avail_streams (const struct lsquic_conn *lconn)
 
 
 unsigned
+lsquic_conn_n_avail_streams_uni (const struct lsquic_conn *lconn)
+{
+    return lconn->cn_if->ci_n_avail_streams_uni
+         ? lconn->cn_if->ci_n_avail_streams_uni(lconn) : 0;
+}
+
+
+unsigned
 lsquic_conn_cancel_pending_streams (struct lsquic_conn *lconn, unsigned count)
 {
     return lconn->cn_if->ci_cancel_pending_streams(lconn, count);

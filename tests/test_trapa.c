@@ -295,6 +295,31 @@ test_oversized_param_len (void)
 }
 
 
+static void
+test_reset_stream_at_profiles (void)
+{
+    struct transport_params params, decoded;
+    unsigned char buf[32];
+    int n;
+
+    memset(&params, 0, sizeof(params));
+    params.tp_set = 1u << TPI_RESET_STREAM_AT;
+    n = lsquic_tp_encode(&params, 0, buf, sizeof(buf));
+    assert(n == 2);
+    assert(buf[0] == 0x1D && buf[1] == 0);
+    assert(n == lsquic_tp_decode(buf, n, 0, &decoded));
+    assert(decoded.tp_set & (1u << TPI_RESET_STREAM_AT));
+    assert(!decoded.tp_reset_stream_at_legacy);
+
+    params.tp_reset_stream_at_legacy = 1;
+    n = lsquic_tp_encode(&params, 0, buf, sizeof(buf));
+    assert(n > 2);
+    assert(n == lsquic_tp_decode(buf, n, 0, &decoded));
+    assert(decoded.tp_set & (1u << TPI_RESET_STREAM_AT));
+    assert(decoded.tp_reset_stream_at_legacy);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -321,6 +346,7 @@ main (int argc, char **argv)
         run_test(&tests[i]);
 
     test_oversized_param_len();
+    test_reset_stream_at_profiles();
 
     return 0;
 }

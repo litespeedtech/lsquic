@@ -579,6 +579,12 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** Default allowed WebTransport sessions count per connection. */
 #define LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS 1
 
+/** Enable draft-14 WebTransport wire compatibility. */
+#define LSQUIC_WT_COMPAT_DRAFT_14 1
+
+/** Strict draft-16 WebTransport is the default. */
+#define LSQUIC_DF_WEBTRANSPORT_COMPAT 0
+
 /** Default write scheduler strategy. */
 #define LSQUIC_DF_WRITE_SCHED_STRATEGY LSQWSS_FIXED
 
@@ -1324,6 +1330,15 @@ struct lsquic_engine_settings {
     int             es_webtransport;
 
     /**
+     * Select a legacy WebTransport wire profile.  Zero selects strict
+     * draft-16 behavior.  LSQUIC_WT_COMPAT_DRAFT_14 enables the draft-14
+     * setting and provisional RESET_STREAM_AT transport parameter.
+     *
+     * Default value is @ref LSQUIC_DF_WEBTRANSPORT_COMPAT.
+     */
+    unsigned        es_webtransport_compat;
+
+    /**
      * Maximum number of WebTransport sessions allowed for a connection.
      *
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SESSIONS.
@@ -1751,6 +1766,10 @@ lsquic_engine_destroy (lsquic_engine_t *);
 /** Return max allowed outbound streams less current outbound streams. */
 unsigned
 lsquic_conn_n_avail_streams (const lsquic_conn_t *);
+
+/** Number of locally creatable unidirectional streams. */
+unsigned
+lsquic_conn_n_avail_streams_uni (const lsquic_conn_t *);
 
 /**
  * Create a new request stream.  This causes @ref on_new_stream() callback

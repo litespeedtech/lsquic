@@ -2937,6 +2937,15 @@ generate_stream_reset_frame (struct ietf_full_conn *conn,
     frame_type = lsquic_stream_get_reset_frame_type(stream, &reliable_size);
     if (frame_type == QUIC_FRAME_RST_STREAM)
         return generate_rst_stream_frame(conn, stream);
+    else if (reliable_size > stream->tosend_off)
+    {
+        /* draft-09: RESET_STREAM_AT cannot commit to a reliable prefix that
+         * has not passed stream and connection flow control yet. */
+        LSQ_DEBUG("defer RESET_STREAM_AT on stream %"PRIu64
+                  ": reliable %"PRIu64", sent %"PRIu64,
+                  stream->id, reliable_size, stream->tosend_off);
+        return 0;
+    }
     else if (conn->ifc_mflags & MF_PEER_RESET_STREAM_AT)
         return generate_reset_stream_at_frame(conn, stream, reliable_size);
     else
@@ -3913,6 +3922,16 @@ apply_trans_params (struct ietf_full_conn *conn,
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
     }
 
+    if ((params->tp_set & (1 << TPI_RESET_STREAM_AT))
+        && params->tp_reset_stream_at_legacy
+        && conn->ifc_settings->es_webtransport_compat
+                                        != LSQUIC_WT_COMPAT_DRAFT_14)
+    {
+        ABORT_QUIETLY(0, TEC_TRANSPORT_PARAMETER_ERROR,
+            "peer used provisional reset_stream_at transport parameter");
+        return -1;
+    }
+
     if (params->tp_set & (1 << TPI_RESET_STREAM_AT))
         conn->ifc_mflags |= MF_PEER_RESET_STREAM_AT;
 
@@ -4146,7 +4165,8 @@ init_http (struct ietf_full_conn *conn)
                 conn->ifc_settings->es_max_header_list_size, dyn_table_size,
                 max_risked_streams, conn->ifc_flags & IFC_SERVER
                 ,
-                conn->ifc_settings->es_webtransport))
+                conn->ifc_settings->es_webtransport
+                    && (conn->ifc_flags & IFC_SERVER)))
     {
         ABORT_WARN("cannot write SETTINGS");
         return -1;
@@ -5915,7 +5935,6 @@ process_reset_stream_at_frame (struct ietf_full_conn *conn,
     if (0 != lsquic_stream_reset_stream_at_in(stream, final_size,
                                                 reliable_size, error_code))
     {
-        ABORT_ERROR("received invalid RESET_STREAM_AT");
         return 0;
     }
     if (call_on_new)
@@ -6634,6 +6653,10 @@ process_max_streams_frame (struct ietf_full_conn *conn,
             sd == SD_BIDI ? "bidi" : "uni",
             conn->ifc_max_allowed_stream_id[sit], max_stream_id);
         conn->ifc_max_allowed_stream_id[sit] = max_stream_id;
+        if (conn->ifc_pub.cp_on_stream_credit)
+            conn->ifc_pub.cp_on_stream_credit(&conn->ifc_pub,
+                sd == SD_UNI ? 0 : 1,
+                avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, sd));
     }
     else
         LSQ_DEBUG("ignore old max %s streams value of %"PRIu64,
@@ -9779,6 +9802,14 @@ ietf_full_conn_ci_n_avail_streams (const struct lsquic_conn *lconn)
 }
 
 
+static unsigned
+ietf_full_conn_ci_n_avail_streams_uni (const struct lsquic_conn *lconn)
+{
+    struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
+    return avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI);
+}
+
+
 static int
 handshake_done_or_doing_sess_resume (const struct ietf_full_conn *conn)
 {
@@ -10282,6 +10313,7 @@ ietf_full_conn_ci_log_stats (struct lsquic_conn *lconn)
     .ci_make_uni_stream_with_if =  ietf_full_conn_ci_make_uni_stream_with_if, \
     .ci_mtu_probe_acked      =  ietf_full_conn_ci_mtu_probe_acked, \
     .ci_n_avail_streams      =  ietf_full_conn_ci_n_avail_streams, \
+    .ci_n_avail_streams_uni  =  ietf_full_conn_ci_n_avail_streams_uni, \
     .ci_n_pending_streams    =  ietf_full_conn_ci_n_pending_streams, \
     .ci_next_tick_time       =  ietf_full_conn_ci_next_tick_time, \
     .ci_packet_in            =  ietf_full_conn_ci_packet_in, \
@@ -10402,6 +10434,10 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     int peer_wt_enabled;
     int peer_quic_datagrams;
     int peer_reset_stream_at;
+    int legacy;
+
+    legacy = conn->ifc_settings->es_webtransport_compat
+                                        == LSQUIC_WT_COMPAT_DRAFT_14;
 
     peer_settings_received = !!(conn->ifc_flags & IFC_HAVE_PEER_SET);
     if (peer_settings_received)
@@ -10418,11 +10454,16 @@ update_peer_wt_support (struct ietf_full_conn *conn)
         conn->ifc_pub.cp_flags &= ~CP_CONNECT_PROTOCOL;
 
     conn->ifc_pub.cp_wt_peer_draft = conn->ifc_peer_hq_settings.wt_draft;
-    peer_wt_enabled =
-            (conn->ifc_peer_hq_settings.wt_max_sessions_seen
-             && conn->ifc_peer_hq_settings.wt_max_sessions > 0)
-        ||  (conn->ifc_peer_hq_settings.wt_enabled_seen
-             && conn->ifc_peer_hq_settings.wt_enabled);
+    peer_wt_enabled = conn->ifc_peer_hq_settings.wt_enabled_seen
+                   && conn->ifc_peer_hq_settings.wt_enabled;
+    if (legacy)
+        peer_wt_enabled = peer_wt_enabled
+            || (conn->ifc_peer_hq_settings.wt_max_sessions_seen
+                && conn->ifc_peer_hq_settings.wt_max_sessions > 0);
+    /* SETTINGS_WT_ENABLED is sent by servers.  Clients signal their use of
+     * WebTransport in the extended CONNECT request instead. */
+    if (conn->ifc_flags & IFC_SERVER)
+        peer_wt_enabled = 1;
     peer_quic_datagrams = !!(conn->ifc_flags & IFC_DATAGRAMS);
     peer_reset_stream_at = !!(conn->ifc_mflags & MF_PEER_RESET_STREAM_AT);
     had_support = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
@@ -10446,7 +10487,8 @@ update_peer_wt_support (struct ietf_full_conn *conn)
             && local_webtransport_enabled(conn)
             && peer_wt_enabled
             && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
-            && peer_quic_datagrams;
+            && peer_quic_datagrams
+            && (legacy || peer_reset_stream_at);
     if (!(conn->ifc_flags & IFC_SERVER))
         supports = supports && peer_connect_protocol;
 
@@ -10455,16 +10497,12 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     else
         conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
 
-    if (supports && !had_support)
+    if (supports && !had_support && legacy)
     {
         if (!peer_reset_stream_at)
             LSQ_WARN("peer missing reset_stream_at TP: enabling WT in "
                      "compatibility mode");
-        if (!conn->ifc_peer_hq_settings.wt_initial_max_data_seen
-            || !conn->ifc_peer_hq_settings.wt_initial_max_streams_uni_seen
-            || !conn->ifc_peer_hq_settings.wt_initial_max_streams_bidi_seen)
-            LSQ_WARN("peer missing one or more WT initial settings: "
-                     "enabling WT in compatibility mode");
+        LSQ_WARN("draft-14 WebTransport compatibility profile active");
     }
 
     LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_max_seen=%d, wt_max=%"PRIu64
@@ -10628,7 +10666,9 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
             conn->ifc_peer_hq_settings.wt_draft = 14;
         if (!local_webtransport_enabled(conn) && value > 0)
             LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
-        update_peer_wt_support(conn);
+        if (conn->ifc_settings->es_webtransport_compat
+                                        == LSQUIC_WT_COMPAT_DRAFT_14)
+            update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_WT_MAX_SESSIONS=%"PRIu64, value);
         break;
     case HQSID_WT_INITIAL_MAX_DATA:
@@ -10650,9 +10690,15 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         LSQ_DEBUG("Peer's SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI=%"PRIu64, value);
         break;
     case HQSID_WT_ENABLED:
+        if (value > 1)
+        {
+            ABORT_QUIETLY(1, HEC_SETTINGS_ERROR,
+                "invalid SETTINGS_WT_ENABLED value %"PRIu64, value);
+            return;
+        }
         conn->ifc_peer_hq_settings.wt_enabled_seen = 1;
-        conn->ifc_peer_hq_settings.wt_enabled = value > 0;
-        conn->ifc_peer_hq_settings.wt_draft = 15;
+        conn->ifc_peer_hq_settings.wt_enabled = value == 1;
+        conn->ifc_peer_hq_settings.wt_draft = 16;
         if (!local_webtransport_enabled(conn) && value > 0)
             LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
         update_peer_wt_support(conn);
@@ -10709,6 +10755,8 @@ on_goaway_client_27 (void *ctx, uint64_t stream_id)
     LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64, stream_id);
     if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
         conn->ifc_enpub->enp_stream_if->on_goaway_received(&conn->ifc_conn);
+    if (conn->ifc_pub.cp_on_goaway)
+        conn->ifc_pub.cp_on_goaway(&conn->ifc_pub);
 
     for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
                              el = lsquic_hash_next(conn->ifc_pub.all_streams))
@@ -10763,6 +10811,8 @@ on_goaway_client (void *ctx, uint64_t stream_id)
         conn->ifc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
         if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
             conn->ifc_enpub->enp_stream_if->on_goaway_received(&conn->ifc_conn);
+        if (conn->ifc_pub.cp_on_goaway)
+            conn->ifc_pub.cp_on_goaway(&conn->ifc_pub);
     }
 
     for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
@@ -10786,6 +10836,8 @@ on_goaway_server (void *ctx, uint64_t max_push_id)
     /* TODO: validate push ID? */
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "Received GOAWAY(%"PRIu64")",
                                                                 max_push_id);
+    if (conn->ifc_pub.cp_on_goaway)
+        conn->ifc_pub.cp_on_goaway(&conn->ifc_pub);
 }
 
 
@@ -11385,6 +11437,8 @@ lsquic_ietf_test_wt_support (unsigned is_server,
     memset(&settings, 0, sizeof(settings));
 
     settings.es_webtransport = local_webtransport != 0;
+    settings.es_webtransport_compat = draft == 14
+                                   ? LSQUIC_WT_COMPAT_DRAFT_14 : 0;
     conn.ifc_settings = &settings;
 
     if (is_server)
@@ -11497,7 +11551,6 @@ lsquic_ietf_full_conn_test_push_disabled (unsigned results[5])
     results[PUSH_STREAM_SERVER] = conn.ifc_error.u.err;
     free(conn.ifc_errmsg);
 }
-
 
 void
 lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])

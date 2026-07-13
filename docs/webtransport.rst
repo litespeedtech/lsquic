@@ -19,8 +19,8 @@ important limits:
 - HTTP/3 only.
 - One WebTransport session per QUIC connection.
 - Per-session WebTransport flow control is deferred.
-- Compatibility mode may accept some draft-14 peers and some partial
-  draft-15 peers.
+- Strict draft-16 and reliable-reset draft-09 wire behavior is the default.
+- Draft-14 compatibility is available only by explicit opt-in.
 
 If your application needs WebTransport datagrams, enable both
 WebTransport and HTTP Datagrams in engine settings.
@@ -51,10 +51,18 @@ Applications using WebTransport must also use:
     settings.es_http_datagrams = 1;
     settings.es_reset_stream_at = 1;
     settings.es_max_webtransport_sessions = 1;
+    settings.es_webtransport_compat = 0;  /* strict draft-16 */
 
 ``es_http_datagrams`` is required for WebTransport datagrams.
 ``es_reset_stream_at`` is required by the current WebTransport support.
 ``es_max_webtransport_sessions`` must be set to 1.
+
+For a known draft-14 peer, opt into the legacy setting and provisional
+RESET_STREAM_AT transport parameter with::
+
+    settings.es_webtransport_compat = LSQUIC_WT_COMPAT_DRAFT_14;
+
+Do not enable this profile for draft-16 peers.
 
 WebTransport Model In LSQUIC
 ============================
@@ -91,6 +99,9 @@ WebTransport uses a separate callback table:
         .wti_on_session_open      = on_wt_session_open,
         .wti_on_session_rejected  = on_wt_session_rejected,
         .wti_on_session_close     = on_wt_session_close,
+        .wti_on_session_drain     = on_wt_session_drain,
+        .wti_on_stream_credit     = on_wt_stream_credit,
+        .wti_on_stream_committed  = on_wt_stream_committed,
         .wti_on_uni_stream        = on_wt_uni_stream,
         .wti_on_bidi_stream       = on_wt_bidi_stream,
         .wti_on_stream_read       = on_wt_stream_read,
@@ -282,6 +293,21 @@ or:
 The close callback runs when the session is actually finished, not when close
 starts.
 
+Close reasons must be valid UTF-8.  Outgoing valid reasons longer than 1024
+bytes are truncated at a character boundary; invalid UTF-8 is rejected.
+
+Drain and exporter
+------------------
+
+``lsquic_wt_drain()`` sends an idempotent ``WT_DRAIN_SESSION`` indication.
+Draining is advisory and does not disable streams or datagrams.  The
+``wti_on_session_drain()`` callback distinguishes a session capsule from an
+HTTP/3 GOAWAY using ``LSQWT_DRAIN_SESSION`` and ``LSQWT_DRAIN_GOAWAY``.
+
+Use ``lsquic_wt_export_keying_material()`` for session-bound TLS exporter
+output.  The application label and context are each limited to 255 bytes;
+the call returns ``EAGAIN`` until the TLS handshake is complete.
+
 Working With WT Streams
 =======================
 
@@ -309,6 +335,15 @@ Optional stream lifecycle callbacks are also available:
 - ``wti_on_stream_fin()``
 - ``wti_on_stream_reset()``
 - ``wti_on_stop_sending()``
+- ``wti_on_stream_credit()``
+- ``wti_on_stream_committed()``
+
+Reset and STOP_SENDING callbacks receive a ``lsquic_wt_stream_error``.  Its
+kind distinguishes mapped 32-bit application errors, ``WT_SESSION_GONE``,
+and other protocol wire errors while always preserving the raw HTTP/3 code.
+Use ``lsquic_wt_n_avail_streams()`` to query current unidirectional or
+bidirectional credit.  The committed callback fires once after a local FIN
+or reset can no longer be changed.
 
 WT stream metadata helpers are available when the application needs them:
 

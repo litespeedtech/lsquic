@@ -67,6 +67,10 @@ struct lsquic_conn_public {
     void    (*cp_on_hq_switch_stream) (struct lsquic_stream *,
                                                     lsquic_stream_id_t);
     void    (*cp_on_http_caps_change) (struct lsquic_conn_public *);
+    void    (*cp_on_goaway) (struct lsquic_conn_public *);
+    void    (*cp_on_stream_credit) (struct lsquic_conn_public *, int,
+                                    unsigned);
+    void    (*cp_on_stream_committed) (struct lsquic_stream *);
     struct lsquic_send_ctl         *send_ctl;
 #if LSQUIC_CONN_STATS
     struct conn_stats              *conn_stats;

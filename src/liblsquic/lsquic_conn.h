@@ -171,6 +171,9 @@ struct conn_iface
     (*ci_n_avail_streams) (const struct lsquic_conn *);
 
     unsigned
+    (*ci_n_avail_streams_uni) (const struct lsquic_conn *);
+
+    unsigned
     (*ci_n_pending_streams) (const struct lsquic_conn *);
 
     unsigned

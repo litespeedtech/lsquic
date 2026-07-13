@@ -1317,7 +1317,7 @@ db_wti_on_session_rejected (void *ctx,
 static void
 db_wti_on_session_close (struct lsquic_wt_session *sess,
                                 struct lsquic_wt_session_ctx *sctx,
-                                uint64_t UNUSED_code,
+                                uint32_t UNUSED_code,
                                 const char *UNUSED_reason,
                                 size_t UNUSED_reason_len)
 {
@@ -1457,7 +1457,7 @@ db_on_wt_stream_fin (struct lsquic_stream *stream,
 static void
 db_wti_on_stream_reset (struct lsquic_stream *stream,
                                             struct lsquic_stream_ctx *sctx,
-                                            uint64_t error_code)
+                            const struct lsquic_wt_stream_error *error)
 {
     struct devious_baton_stream *st;
 
@@ -1468,7 +1468,7 @@ db_wti_on_stream_reset (struct lsquic_stream *stream,
     st->dbs_flags |= DBSF_PEER_RESET_SEEN;
     LSQ_INFO("%s got RESET_STREAM on %s stream %"PRIu64" with code %"PRIu64,
             db_role(st->dbs_session), db_dir(st->dbs_dir),
-            (uint64_t) lsquic_stream_id(stream), error_code);
+            (uint64_t) lsquic_stream_id(stream), error->wire_code);
     if (st->dbs_dir == LSQWT_BIDI)
         db_maybe_reset_stream(st, DEVIOUS_BATON_STREAM_ERR_WHATEVER,
                 "WHATEVER", "received RESET_STREAM on bidirectional stream");
@@ -1483,7 +1483,7 @@ db_wti_on_stream_reset (struct lsquic_stream *stream,
 static void
 db_wti_on_stop_sending (struct lsquic_stream *stream,
                                             struct lsquic_stream_ctx *sctx,
-                                            uint64_t error_code)
+                            const struct lsquic_wt_stream_error *error)
 {
     struct devious_baton_stream *st;
 
@@ -1495,7 +1495,7 @@ db_wti_on_stop_sending (struct lsquic_stream *stream,
     LSQ_INFO("%s got STOP_SENDING on %s stream %"PRIu64
             " with code %"PRIu64,
             db_role(st->dbs_session), db_dir(st->dbs_dir),
-            (uint64_t) lsquic_stream_id(stream), error_code);
+            (uint64_t) lsquic_stream_id(stream), error->wire_code);
     db_maybe_reset_stream(st, DEVIOUS_BATON_STREAM_ERR_WHATEVER,
                                 "WHATEVER", "received STOP_SENDING");
     if (stream_is_readable_by_us(st->dbs_session, st))
@@ -1512,7 +1512,7 @@ static void on_close (struct lsquic_stream *stream,
                       struct lsquic_stream_ctx *st_h);
 
 
-static uint64_t
+static uint32_t
 db_ss_code (struct lsquic_stream *UNUSED_stream,
                                             struct lsquic_stream_ctx *UNUSED_sctx)
 {

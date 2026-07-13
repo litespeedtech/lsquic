@@ -80,6 +80,9 @@ struct transport_params
     /* Which transport parameters were present (set by the decoder): */
     unsigned                tp_decoded;
 
+    /* Select/record the draft-07 provisional RESET_STREAM_AT codepoint. */
+    unsigned                tp_reset_stream_at_legacy:1;
+
     uint64_t                tp_numerics[MAX_NUMERIC_TPI + 1];
 
 #define tp_init_max_stream_data_bidi_local  tp_numerics[TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]
@@ -225,7 +228,7 @@ lsquic_tp_get_quantum_sz (void);
     | (1 << TPI_MIN_ACK_DELAY_02)                                       \
     /* [draft-huitema-quic-ts-08] does not specify, store:           */ \
     | (1 << TPI_TIMESTAMPS)                                             \
-    /* [draft-ietf-quic-reliable-stream-reset-07] Section 3:         */ \
+    /* [draft-ietf-quic-reliable-stream-reset-09] Section 3:         */ \
     | (1 << TPI_RESET_STREAM_AT)                                        \
 )
 

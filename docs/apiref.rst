@@ -972,6 +972,14 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_WEBTRANSPORT_SERVER`
 
+    .. member:: unsigned        es_webtransport_compat
+
+       WebTransport wire compatibility profile.  Zero selects strict
+       draft-16 behavior.  :macro:`LSQUIC_WT_COMPAT_DRAFT_14` enables the
+       draft-14 setting and provisional RESET_STREAM_AT parameter.
+
+       Default value is :macro:`LSQUIC_DF_WEBTRANSPORT_COMPAT`
+
     .. member:: unsigned        es_max_webtransport_sessions
 
        Maximum number of concurrent WebTransport sessions per connection.
