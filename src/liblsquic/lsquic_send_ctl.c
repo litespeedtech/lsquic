@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -451,6 +452,63 @@ send_ctl_pick_initial_packno (struct lsquic_send_ctl *ctl)
 }
 
 
+static const struct
+{
+    const struct cong_ctl_if    *ccd_if;
+    size_t                       ccd_off;
+    const char                  *ccd_name;
+} cong_ctl_descs[] =
+{
+    [LSQUIC_CC_CUBIC] = {
+        &lsquic_cong_cubic_if,
+        offsetof(struct adaptive_cc, acc_cubic),
+        "Cubic",
+    },
+    [LSQUIC_CC_BBR] = {
+        &lsquic_cong_bbr_if,
+        offsetof(struct adaptive_cc, acc_bbr),
+        "BBRv1",
+    },
+    [LSQUIC_CC_ADAPTIVE] = {
+        &lsquic_cong_adaptive_if,
+        0,
+        "Adaptive",
+    },
+    [LSQUIC_CC_BBR_COPILOT] = {
+        &lsquic_cong_bbr_copilot_if,
+        offsetof(struct adaptive_cc, acc_bbr),
+        "BBRv1-Copilot",
+    },
+};
+
+
+static void
+send_ctl_use_cc_algo (struct lsquic_send_ctl *ctl, enum lsquic_cc cc_algo)
+{
+    if (cc_algo == LSQUIC_CC_DEFAULT)
+        cc_algo = LSQUIC_DF_CC_ALGO;
+
+    ctl->sc_ci = cong_ctl_descs[cc_algo].ccd_if;
+    ctl->sc_cong_ctl = (char *) &ctl->sc_adaptive_cc
+                                          + cong_ctl_descs[cc_algo].ccd_off;
+}
+
+
+enum lsquic_cc
+lsquic_send_ctl_get_cc_algo (const lsquic_send_ctl_t *ctl)
+{
+    enum lsquic_cc cc_algo;
+
+    for (cc_algo = LSQUIC_CC_CUBIC; cc_algo < sizeof(cong_ctl_descs)
+                                        / sizeof(cong_ctl_descs[0]); ++cc_algo)
+        if (cong_ctl_descs[cc_algo].ccd_if == ctl->sc_ci)
+            return cc_algo;
+
+    assert(0);
+    return LSQUIC_CC_DEFAULT;
+}
+
+
 void
 lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
           struct lsquic_engine_public *enpub, const struct ver_neg *ver_neg,
@@ -492,22 +550,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     if (!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER))
         ctl->sc_senhist.sh_last_sent = ctl->sc_cur_packno;
 #endif
-    switch (enpub->enp_settings.es_cc_algo)
-    {
-    case 1:
-        ctl->sc_ci = &lsquic_cong_cubic_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
-        break;
-    case 2:
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
-        break;
-    case 3:
-    default:
-        ctl->sc_ci = &lsquic_cong_adaptive_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
-        break;
-    }
+    send_ctl_use_cc_algo(ctl, enpub->enp_settings.es_cc_algo);
     if (enpub->enp_settings.es_enable_bw_sampler)
         ctl->sc_flags |= SC_KEEP_BW_SAMPLER;
     send_ctl_apply_bw_sampler_policy(ctl);
@@ -538,6 +581,66 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     if (s == NULL || atoi(s))
         ctl->sc_flags |= SC_DYN_PTHRESH;
 #endif
+}
+
+
+static int
+is_cc_bbr (enum lsquic_cc cc)
+{
+    return cc == LSQUIC_CC_BBR || cc == LSQUIC_CC_BBR_COPILOT;
+}
+
+
+int
+lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
+{
+    enum lsquic_cc old_cc_algo;
+
+    if (cc_algo == LSQUIC_CC_DEFAULT)
+        cc_algo = LSQUIC_DF_CC_ALGO;
+    else if (cc_algo < LSQUIC_CC_CUBIC || cc_algo > LSQUIC_CC_LAST)
+        return -1;
+
+    old_cc_algo = lsquic_send_ctl_get_cc_algo(ctl);
+    if (old_cc_algo == cc_algo)
+    {
+        LSQ_INFO("cc is already %s: the switch is a noop",
+                                    cong_ctl_descs[cc_algo].ccd_name);
+        return 0;
+    }
+
+    if (is_cc_bbr(old_cc_algo) && is_cc_bbr(cc_algo))
+        send_ctl_use_cc_algo(ctl, cc_algo);
+    else if (old_cc_algo == LSQUIC_CC_ADAPTIVE)
+    {
+        if (cc_algo == LSQUIC_CC_CUBIC)
+            ctl->sc_flags |= SC_CLEANUP_BBR;
+        else
+        {
+            lsquic_cong_cubic_if.cci_cleanup(
+                                        &ctl->sc_adaptive_cc.acc_cubic);
+            ctl->sc_flags &= ~SC_CLEANUP_BBR;
+        }
+        send_ctl_use_cc_algo(ctl, cc_algo);
+        send_ctl_apply_bw_sampler_policy(ctl);
+    }
+    else
+    {
+        ctl->sc_ci->cci_cleanup(CGP(ctl));
+        if (ctl->sc_flags & SC_CLEANUP_BBR)
+            lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
+
+        ctl->sc_flags &= ~SC_CLEANUP_BBR;
+        memset(&ctl->sc_adaptive_cc, 0, sizeof(ctl->sc_adaptive_cc));
+        send_ctl_use_cc_algo(ctl, cc_algo);
+        send_ctl_apply_bw_sampler_policy(ctl);
+        ctl->sc_ci->cci_init(CGP(ctl), ctl->sc_conn_pub);
+    }
+
+    LSQ_INFO("switched congestion controller from %s to %s",
+                         cong_ctl_descs[old_cc_algo].ccd_name,
+                         cong_ctl_descs[cc_algo].ccd_name);
+    return 0;
 }
 
 
@@ -637,7 +740,8 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, now + delay);
 
     if (PNS_APP == pns
-            && ctl->sc_ci == &lsquic_cong_bbr_if
+            && (ctl->sc_ci == &lsquic_cong_bbr_if
+                || ctl->sc_ci == &lsquic_cong_bbr_copilot_if)
             && lsquic_alarmset_is_inited(ctl->sc_alset, AL_PACK_TOL)
             && !lsquic_alarmset_is_set(ctl->sc_alset, AL_PACK_TOL))
         lsquic_alarmset_set(ctl->sc_alset, AL_PACK_TOL, now + delay);
@@ -1201,7 +1305,8 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         lsquic_send_ctl_disable_ecn(ctl);
     }
 
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if ((packet_out->po_frame_types & ctl->sc_retx_frames) &&
+            (packet_out->po_flags & PO_BW_PROBE_FILL) == 0)
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
@@ -1970,9 +2075,37 @@ send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
 
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
-                                            const struct network_path *path)
+                                   const struct network_path *path,
+                                   lsquic_bw_probe_fill_f bw_probe_fill_cb,
+                                   void *conn_ctx)
 {
     const struct lsquic_packet_out *packet_out;
+    struct lsquic_packet_out *probe_packet;
+    unsigned num_probing = 0;
+
+    if (ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl)) && bw_probe_fill_cb)
+    {
+        while (ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl))
+               && lsquic_send_ctl_can_send(ctl))
+        {
+            probe_packet = bw_probe_fill_cb(conn_ctx, path);
+            if (!probe_packet)
+            {
+                LSQ_DEBUG("cannot get new packet to improve bandwidth estimation accuracy");
+                break;
+            }
+            probe_packet->po_flags |= PO_BW_PROBE_FILL;
+            lsquic_send_ctl_scheduled_one(ctl, probe_packet);
+            ++num_probing;
+        }
+
+        if (num_probing > 0)
+        {
+            LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
+                      num_probing, num_probing != 1 ? "s" : "");
+            return;
+        }
+    }
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl, PNS_APP, path, 0);
     if ((packet_out && lsquic_packet_out_avail(packet_out) > 10)

@@ -467,11 +467,12 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_cc_algo > 3)
+    if (settings->es_cc_algo < LSQUIC_CC_FIRST
+                                    || settings->es_cc_algo > LSQUIC_CC_LAST)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
-                "algorithm value %u", settings->es_cc_algo);
+                "algorithm value %d", (int) settings->es_cc_algo);
         return -1;
     }
 
@@ -515,6 +516,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                 (unsigned) UCHAR_MAX);
         return -1;
     }
+
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     if(settings->es_webtransport_server)
     {

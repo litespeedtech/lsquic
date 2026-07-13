@@ -8196,6 +8196,38 @@ ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
+static struct lsquic_packet_out *
+ietf_full_conn_bw_probe_fill (void *conn_ctx, const struct network_path *path)
+{
+    struct ietf_full_conn *const conn = conn_ctx;
+    struct lsquic_packet_out *packet_out;
+    int sz;
+
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl,
+                                                1, PNS_APP, path);
+    if (!packet_out)
+        return NULL;
+
+    sz = conn->ifc_conn.cn_pf->pf_gen_ping_frame(
+                packet_out->po_data + packet_out->po_data_sz,
+                lsquic_packet_out_avail(packet_out));
+    if (sz < 0) {
+        ABORT_ERROR("gen_ping_frame failed");
+        return NULL;
+    }
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+    LSQ_DEBUG("wrote PING frame");
+    if (!(conn->ifc_flags & IFC_SERVER))
+        log_conn_flow_control(conn);
+
+    lsquic_packet_out_set_pns(packet_out, PNS_APP);
+    lsquic_packet_out_zero_pad(packet_out);
+
+    return packet_out;
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -8360,7 +8392,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         if (!(conn->ifc_mflags & MF_DOING_0RTT))
         {
             lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl,
-                                                            CUR_NPATH(conn));
+                                              CUR_NPATH(conn), NULL, NULL);
             goto end_write;
         }
     }
@@ -8391,7 +8423,8 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn));
+    lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn),
+                                      ietf_full_conn_bw_probe_fill, conn);
 
   end_write:
     if ((conn->ifc_flags & IFC_CLOSING)
@@ -8827,6 +8860,7 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_cc cc_algo;
     int enable_bw_sampler;
 
     switch (param)
@@ -8846,6 +8880,11 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         LSQ_INFO("bw sampler %s",
                  enable_bw_sampler ? "enabled" : "disabled");
         return 0;
+    case LSQCP_CC_ALGO:
+        if (value_len != sizeof(enum lsquic_cc))
+            return -1;
+        memcpy(&cc_algo, value, sizeof(cc_algo));
+        return lsquic_send_ctl_set_cc_algo(&conn->ifc_send_ctl, cc_algo);
     default:
         return -1;
     }
@@ -8858,6 +8897,7 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_cc cc_algo;
     int enable_bw_sampler;
 
     switch (param)
@@ -8876,6 +8916,13 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                 lsquic_send_ctl_bw_sampler_enabled(&conn->ifc_send_ctl);
         memcpy(value, &enable_bw_sampler, sizeof(enable_bw_sampler));
         *value_len = sizeof(enable_bw_sampler);
+        return 0;
+    case LSQCP_CC_ALGO:
+        if (*value_len < sizeof(enum lsquic_cc))
+            return -1;
+        cc_algo = lsquic_send_ctl_get_cc_algo(&conn->ifc_send_ctl);
+        memcpy(value, &cc_algo, sizeof(cc_algo));
+        *value_len = sizeof(cc_algo);
         return 0;
     default:
         return -1;

@@ -204,6 +204,7 @@ init_bbr (struct lsquic_bbr *bbr)
     bbr->bbr_flags &= ~BBR_FLAG_LAST_SAMPLE_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_HAS_NON_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_FLEXIBLE_APP_LIMITED;
+    bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
     bbr->bbr_total_acked = 0;
     set_startup_values(bbr);
 }
@@ -354,6 +355,28 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
     bbr->bbr_total_acked += packet_sz;
 }
 
+
+static void
+bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                      unsigned packet_sz, lsquic_time_t now, int app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
+
+    if (bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT
+            && bbr->bbr_mode != BBR_MODE_PROBE_RTT
+            && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until)
+    {
+        LSQ_DEBUG("exit probe_rtt app-limited at packno %"PRIu64,
+            packet_out->po_packno);
+        bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
+    }
+
+    lsquic_bbr_ack(cong_ctl, packet_out, packet_sz, now, app_limited);
+}
+
+
 static void
 lsquic_bbr_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
 {
@@ -376,6 +399,23 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
     if (app_limited)
         bbr_app_limited(bbr, in_flight);
+}
+
+
+static void
+bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                                        uint64_t in_flight, int app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    lsquic_bbr_sent(cong_ctl, packet_out, in_flight, app_limited);
+
+    if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
+        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
+
+    if ((bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT)
+             && (packet_out->po_bwp_state))
+        packet_out->po_bwp_state->bwps_send_state.is_app_limited = 1;
 }
 
 
@@ -796,6 +836,9 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
         // Do not decide on the time to exit PROBE_RTT until the
         // |bytes_in_flight| is at the target small value.
         bbr->bbr_exit_probe_rtt_at = 0;
+        /* Used by BBR-Copilot: */
+        bbr->bbr_flags |= BBR_BW_SAMPLE_INVALID_PROBE_RTT;
+        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
     }
 
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
@@ -1049,6 +1092,45 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
     calculate_pacing_rate(bbr);
     calculate_cwnd(bbr, bytes_acked, excess_acked);
     calculate_recovery_window(bbr, bytes_acked, bytes_lost, in_flight);
+
+    LSQ_DEBUG("BBR: mode=%s pacing_rate=%"PRIu64" bps bw=%"PRIu64" bps"
+              " pacing_gain=%.3f cwnd=%"PRIu64" cwnd_gain=%.3f"
+              " srtt=%"PRIu64" us min_rtt=%"PRIu64" us"
+              " round=%"PRIu64" cycle_off=%u in_flight=%"PRIu64
+              " acked=%"PRIu64" lost=%"PRIu64" recovery=%d full_bw=%s",
+        mode2str[bbr->bbr_mode],
+        BW_VALUE(&bbr->bbr_pacing_rate),
+        minmax_get(&bbr->bbr_max_bandwidth),
+        bbr->bbr_pacing_gain,
+        lsquic_bbr_get_cwnd(cong_ctl),
+        bbr->bbr_cwnd_gain,
+        lsquic_rtt_stats_get_srtt(bbr->bbr_rtt_stats),
+        bbr->bbr_min_rtt,
+        bbr->bbr_round_count,
+        bbr->bbr_cycle_current_offset,
+        in_flight,
+        bytes_acked,
+        bytes_lost,
+        (int) bbr->bbr_recovery_state,
+        (bbr->bbr_flags & BBR_FLAG_IS_AT_FULL_BANDWIDTH) ? "yes" : "no");
+}
+
+
+static int
+bbr_copilot_bw_probe_fill_wanted (void *cong_ctl)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    if (bbr->bbr_pacing_gain <= 1.0)
+        return 0;
+    return 1;
+}
+
+
+static int
+lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
+{
+    return 0;
 }
 
 
@@ -1085,4 +1167,25 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,
+    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_wanted,
+};
+
+
+const struct cong_ctl_if lsquic_cong_bbr_copilot_if =
+{
+    .cci_ack           = bbr_copilot_ack,
+    .cci_begin_ack     = lsquic_bbr_begin_ack,
+    .cci_end_ack       = lsquic_bbr_end_ack,
+    .cci_cleanup       = lsquic_bbr_cleanup,
+    .cci_get_cwnd      = lsquic_bbr_get_cwnd,
+    .cci_init          = lsquic_bbr_init,
+    .cci_pacing_rate   = lsquic_bbr_pacing_rate,
+    .cci_loss          = lsquic_bbr_loss,
+    .cci_lost          = lsquic_bbr_lost,
+    .cci_process_bw_sample = lsquic_bbr_process_bw_sample,
+    .cci_reinit        = lsquic_bbr_reinit,
+    .cci_timeout       = lsquic_bbr_timeout,
+    .cci_sent          = bbr_copilot_sent,
+    .cci_was_quiet     = lsquic_bbr_was_quiet,
+    .cci_bw_probe_fill_wanted = bbr_copilot_bw_probe_fill_wanted,
 };
