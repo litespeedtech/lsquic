@@ -345,15 +345,6 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
     assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
 
-    if (bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT
-            && bbr->bbr_mode != BBR_MODE_PROBE_RTT
-                    && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until)
-    {
-        LSQ_DEBUG("exit probe_rtt app-limited at packno %"PRIu64,
-            packet_out->po_packno);
-        bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
-    }
-
     if (!is_valid_packno(bbr->bbr_ack_state.max_packno)
                 /* Packet ordering is checked for, and warned about, in
                  * lsquic_senhist_add().
@@ -363,6 +354,30 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
     bbr->bbr_ack_state.acked_bytes += packet_sz;
     bbr->bbr_total_acked += packet_sz;
 }
+
+
+static void
+bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                  unsigned packet_sz, lsquic_time_t UNUSED_now_time,
+                  int UNUSED_app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
+
+    if (bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT
+            && bbr->bbr_mode != BBR_MODE_PROBE_RTT
+            && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until)
+    {
+        LSQ_DEBUG("exit probe_rtt app-limited at packno %"PRIu64,
+            packet_out->po_packno);
+        bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
+    }
+
+    lsquic_bbr_ack(cong_ctl, packet_out, packet_sz, UNUSED_now_time,
+                                                        UNUSED_app_limited);
+}
+
 
 static void
 lsquic_bbr_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
@@ -386,6 +401,16 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
     if (app_limited)
         bbr_app_limited(bbr, in_flight);
+}
+
+
+static void
+bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                                        uint64_t in_flight, int app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    lsquic_bbr_sent(cong_ctl, packet_out, in_flight, app_limited);
 
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
         bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
@@ -1093,7 +1118,7 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
 
 
 static int
-lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
+bbr_copilot_bw_probe_fill_wanted (void *cong_ctl)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
@@ -1104,7 +1129,7 @@ lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
 
 
 static int
-lsquic_bbr_bw_probe_fill_not_wanted (void *cong_ctl)
+lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
 {
     return 0;
 }
@@ -1143,13 +1168,13 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,
-    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_not_wanted,
+    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_wanted,
 };
 
 
 const struct cong_ctl_if lsquic_cong_bbr_copilot_if =
 {
-    .cci_ack           = lsquic_bbr_ack,
+    .cci_ack           = bbr_copilot_ack,
     .cci_begin_ack     = lsquic_bbr_begin_ack,
     .cci_end_ack       = lsquic_bbr_end_ack,
     .cci_cleanup       = lsquic_bbr_cleanup,
@@ -1161,7 +1186,7 @@ const struct cong_ctl_if lsquic_cong_bbr_copilot_if =
     .cci_process_bw_sample = lsquic_bbr_process_bw_sample,
     .cci_reinit        = lsquic_bbr_reinit,
     .cci_timeout       = lsquic_bbr_timeout,
-    .cci_sent          = lsquic_bbr_sent,
+    .cci_sent          = bbr_copilot_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,
-    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_wanted,
+    .cci_bw_probe_fill_wanted = bbr_copilot_bw_probe_fill_wanted,
 };
