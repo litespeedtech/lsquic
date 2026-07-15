@@ -27,6 +27,7 @@
 #include <event2/event.h>
 
 #include <openssl/md5.h>
+#include <openssl/x509.h>
 
 #include "lsquic.h"
 #include "../src/liblsquic/lsquic_hash.h"
@@ -358,6 +359,38 @@ http_server_on_goaway (lsquic_conn_t *conn)
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
     conn_h->flags |= RECEIVED_GOAWAY;
     LSQ_INFO("received GOAWAY");
+}
+
+
+static void
+http_server_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
+{
+    STACK_OF(X509) *chain;
+    X509_NAME *name;
+    X509 *cert;
+    unsigned i;
+    char buf[100];
+
+    if (status != LSQ_HSK_OK && status != LSQ_HSK_RESUMED_OK)
+        return;
+
+    chain = lsquic_conn_get_full_cert_chain(conn);
+    if (!chain)
+    {
+        LSQ_DEBUG("peer did not provide full certificate chain");
+        return;
+    }
+
+    for (i = 0; i < sk_X509_num(chain); ++i)
+    {
+        cert = sk_X509_value(chain, i);
+        name = X509_get_subject_name(cert);
+        LSQ_INFO("full cert #%u: name: %s", i,
+                            X509_NAME_oneline(name, buf, sizeof(buf)));
+        X509_free(cert);
+    }
+
+    sk_X509_free(chain);
 }
 
 
@@ -1086,6 +1119,7 @@ const struct lsquic_stream_if http_server_if = {
     .on_write               = http_server_on_write,
     .on_close               = http_server_on_close,
     .on_goaway_received     = http_server_on_goaway,
+    .on_hsk_done            = http_server_on_hsk_done,
 };
 
 
@@ -1202,6 +1236,7 @@ const struct lsquic_stream_if hq_server_if = {
     .on_read                = hq_server_on_read,
     .on_write               = hq_server_on_write,
     .on_close               = http_server_on_close,
+    .on_hsk_done            = http_server_on_hsk_done,
 };
 #endif
 
@@ -1771,6 +1806,7 @@ const struct lsquic_stream_if interop_http_server_if = {
     .on_read                = http_server_interop_on_read,
     .on_write               = http_server_interop_on_write,
     .on_close               = http_server_on_close,
+    .on_hsk_done            = http_server_on_hsk_done,
 };
 #endif /* HAVE_REGEX */
 
