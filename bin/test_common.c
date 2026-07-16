@@ -2181,6 +2181,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_allow_migration = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "max_header_sets", 15))
+        {
+            settings->es_max_header_sets = atoi(val);
+            return 0;
+        }
         if (0 == strncmp(name, "grease_quic_bit", 15))
         {
             settings->es_grease_quic_bit = atoi(val);

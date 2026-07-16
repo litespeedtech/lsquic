@@ -323,6 +323,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = 0;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_SERVER;
+        settings->es_max_header_sets = LSQUIC_DF_MAX_HEADER_SETS_SERVER;
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
         settings->es_webtransport_server = LSQUIC_DF_WEBTRANSPORT_SERVER;
         settings->es_max_webtransport_server_streams = LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS;
@@ -346,6 +347,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
         settings->es_ping_period = LSQUIC_DF_PING_PERIOD;
         settings->es_noprogress_timeout
                          = LSQUIC_DF_NOPROGRESS_TIMEOUT_CLIENT;
+        settings->es_max_header_sets = LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     }
     settings->es_max_streams_in  = LSQUIC_DF_MAX_STREAMS_IN;
     settings->es_idle_conn_to    = LSQUIC_DF_IDLE_CONN_TO;
@@ -513,6 +515,13 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
             snprintf(err_buf, err_buf_sz, "max delayed 0-RTT packet count "
                 "is greater than the allowed maximum of %u",
                 (unsigned) UCHAR_MAX);
+        return -1;
+    }
+    if (settings->es_max_header_sets == 0)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "%s",
+                                "maximum number of header sets cannot be zero");
         return -1;
     }
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT

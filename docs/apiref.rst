@@ -400,6 +400,18 @@ settings structure:
        (:rfc:`7540#section-6.5.2`).  0 means no limit.  Defaults
        to :func:`LSQUIC_DF_MAX_HEADER_LIST_SIZE`.
 
+    .. member:: unsigned        es_max_header_sets
+
+       Maximum number of completed header sets that may be buffered on an HTTP
+       stream while awaiting application processing.  When the limit is
+       reached, HTTP/3 parsing on the stream is suspended until the application
+       claims enough header sets to bring the queue below the limit.  Receiving
+       an additional gQUIC header set is treated as a connection error.  This
+       limit is local to the receiving endpoint and has no corresponding peer
+       setting.  The value must be greater than zero.  Defaults to
+       :macro:`LSQUIC_DF_MAX_HEADER_SETS_SERVER` in server mode and
+       :macro:`LSQUIC_DF_MAX_HEADER_SETS_CLIENT` in client mode.
+
     .. member:: const char     *es_ua
 
         UAID -- User-Agent ID.  Defaults to :macro:`LSQUIC_DF_UA`.
@@ -984,6 +996,16 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
     Default value of maximum header list size.  If set to non-zero value,
     SETTINGS_MAX_HEADER_LIST_SIZE will be sent to peer after handshake is
     completed (assuming the peer supports this setting frame type).
+
+.. macro:: LSQUIC_DF_MAX_HEADER_SETS_SERVER
+
+    Default maximum number of completed header sets buffered per HTTP stream
+    in server mode while awaiting application processing.  The value is 1.
+
+.. macro:: LSQUIC_DF_MAX_HEADER_SETS_CLIENT
+
+    Default maximum number of completed header sets buffered per HTTP stream
+    in client mode while awaiting application processing.  The value is 2.
 
 .. macro:: LSQUIC_DF_UA
 

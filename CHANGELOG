@@ -1,3 +1,12 @@
+2026-07-15
+    - 4.9.0
+    - [API, IMPROVEMENT] Limit number of buffered header sets to cap
+      memory use.
+    - [FIX] Client: return correct error on bad transport parameters
+      (issue #616).
+    - [FIX] Don't abort on receipt of STOP_SENDING in Ready state (issue #658).
+    - [FIX] Fix FIU linking.
+
 2026-06-28
     - 4.8.2
     - [FIX] Reject HTTP messages with multiple conflicting content-length

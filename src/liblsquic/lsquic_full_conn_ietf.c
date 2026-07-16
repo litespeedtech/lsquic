@@ -500,6 +500,7 @@ struct ietf_full_conn
             uint64_t    ifcli_min_goaway_stream_id;
             enum {
                 IFCLI_HSK_SENT_OR_DEL = 1 << 0,
+                IFCLI_HSK_CRYPTO_SENT = 1 << 1,
             }           ifcli_flags;
             unsigned    ifcli_packets_out;
         }                           cli;
@@ -4048,6 +4049,7 @@ immediate_close (struct ietf_full_conn *conn)
     struct lsquic_packet_out *packet_out;
     const char *error_reason;
     struct conn_err conn_err;
+    enum packnum_space pns;
     int sz;
 
     if (conn->ifc_flags & (IFC_TICK_CLOSE|IFC_GOT_PRST))
@@ -4069,8 +4071,17 @@ immediate_close (struct ietf_full_conn *conn)
                                     && conn->ifc_settings->es_silent_close)
         return TICK_CLOSE;
 
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
+            /* Only use PNS_APP if client sent enough crypto output for the
+             * server to be able to decrypt it.
+             */
+                    (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+        pns = PNS_APP;
+    else
+        pns = PNS_HSK;
+
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
-                                                    PNS_APP, CUR_NPATH(conn));
+                                                    pns, CUR_NPATH(conn));
     if (!packet_out)
     {
         LSQ_WARN("cannot allocate packet: %s", strerror(errno));
@@ -4078,7 +4089,13 @@ immediate_close (struct ietf_full_conn *conn)
     }
 
     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
-    if (conn->ifc_error.u.err != 0)
+    if (pns == PNS_HSK && conn->ifc_error.app_error)
+    {
+        /* [RFC 9000] Section 10.2.3: clear app code and reason: */
+        conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
+        error_reason = NULL;
+    }
+    else if (conn->ifc_error.u.err != 0)
     {
         conn_err = conn->ifc_error;
         error_reason = conn->ifc_errmsg;
@@ -5377,7 +5394,6 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
     lsquic_stream_id_t stream_id, max_allowed;
     uint64_t error_code;
     int parsed_len, our_stream;
-    enum stream_state_sending sss;
 
     parsed_len = conn->ifc_conn.cn_pf->pf_parse_stop_sending_frame(p, len,
                                                     &stream_id, &error_code);
@@ -5398,17 +5414,7 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
     our_stream = !is_peer_initiated(conn, stream_id);
     stream = find_stream_by_id(conn, stream_id);
     if (stream)
-    {
-        if (our_stream &&
-                    SSS_READY == (sss = lsquic_stream_sending_state(stream)))
-        {
-            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "stream %"PRIu64" is in "
-                "%s state: receipt of STOP_SENDING frame is a violation",
-                stream_id, lsquic_sss2str[sss]);
-            return 0;
-        }
         lsquic_stream_stop_sending_in(stream, error_code);
-    }
     else if (conn_is_stream_closed(conn, stream_id))
         LSQ_DEBUG("stream %"PRIu64" is closed: ignore STOP_SENDING frame",
             stream_id);
@@ -7819,6 +7825,9 @@ ietf_full_conn_ci_packet_sent_pre_hsk (struct lsquic_conn *lconn,
     struct ietf_full_conn *const conn = (struct ietf_full_conn *) lconn;
     ietf_full_conn_ci_packet_sent(lconn, packet_out);
     pre_hsk_packet_sent_or_delayed(conn, packet_out);
+    if (PNS_HSK == lsquic_packet_out_pns(packet_out) &&
+                        (packet_out->po_frame_types & QUIC_FTBIT_CRYPTO))
+        conn->ifc_u.cli.ifcli_flags |= IFCLI_HSK_CRYPTO_SENT;
 }
 
 

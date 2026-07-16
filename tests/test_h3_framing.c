@@ -30,6 +30,7 @@
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
 #include "lsquic_hq.h"
+#include "lsquic_headers.h"
 #include "lsquic_hash.h"
 #include "lsquic_stream.h"
 #include "lsquic_types.h"
@@ -404,6 +405,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
 #endif
     tobjs->initial_stream_window = initial_stream_window;
     tobjs->eng_pub.enp_settings.es_cc_algo = 1;  /* Cubic */
+    tobjs->eng_pub.enp_settings.es_max_header_sets =
+                                         LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
@@ -1694,6 +1697,282 @@ new_frame_in_ext (struct test_objs *tobjs, size_t off, size_t sz, int fin,
 }
 
 
+static unsigned
+count_hsets (const struct lsquic_stream *stream)
+{
+    const struct uncompressed_headers *uh;
+    unsigned count;
+
+    count = 0;
+    STAILQ_FOREACH(uh, &stream->uh, uh_next)
+        ++count;
+    return count;
+}
+
+
+static void
+assert_hset_status (const struct test_dec_hset *hset, const char *status)
+{
+    assert(hset->count == 1);
+    assert(hset->finalized);
+    assert(hset->xhdr.val_len == 3);
+    assert(0 == memcmp(lsxpack_header_get_value(&hset->xhdr), status, 3));
+}
+
+
+static const char *const coalesced_statuses[] = { "103", "200", "404", };
+static unsigned n_synchronously_claimed;
+
+
+static void
+claim_hset_synchronously (lsquic_stream_t *stream, lsquic_stream_ctx_t *h)
+{
+    struct test_dec_hset *hset;
+
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert(n_synchronously_claimed
+                < sizeof(coalesced_statuses) / sizeof(coalesced_statuses[0]));
+    assert_hset_status(hset, coalesced_statuses[n_synchronously_claimed++]);
+    test_discard_hset(hset);
+}
+
+
+static const struct lsquic_stream_if synchronous_hset_stream_if =
+{
+    .on_new_stream = on_new_stream,
+    .on_close      = on_close,
+    .on_hset_in    = claim_hset_synchronously,
+};
+
+
+static void
+test_coalesced_hsets_at_limit (unsigned limit)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 27,  /* :status 404 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    unsigned i;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = limit;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    assert(lsquic_stream_readable(stream));
+    assert(count_hsets(stream) == limit);
+    assert(stream->read_offset == limit * 5);
+
+    for (i = 0; i < sizeof(coalesced_statuses)
+                                / sizeof(coalesced_statuses[0]); ++i)
+    {
+        if (STAILQ_EMPTY(&stream->uh))
+            assert(lsquic_stream_readable(stream));
+        assert(count_hsets(stream) <= limit);
+
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset);
+        assert_hset_status(hset, coalesced_statuses[i]);
+        assert(count_hsets(stream) < limit);
+        test_discard_hset(hset);
+    }
+
+    assert(stream->read_offset == sizeof(input));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_synchronous_hset_claims_continue (void)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 27,  /* :status 404 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    tobjs.stream_if = &synchronous_hset_stream_if;
+    use_test_hset_if(&tobjs);
+
+    n_synchronously_claimed = 0;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    (void) lsquic_stream_readable(stream);
+    assert(n_synchronously_claimed
+                == sizeof(coalesced_statuses) / sizeof(coalesced_statuses[0]));
+    assert(STAILQ_EMPTY(&stream->uh));
+    assert(stream->read_offset == sizeof(input));
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_last_frame_hset_is_readable (void)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    assert(lsquic_stream_readable(stream));
+    assert(stream->read_offset == sizeof(input));
+    assert(count_hsets(stream) == 1);
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_coalesced_hsets_are_throttled (void)
+{
+    test_coalesced_hsets_at_limit(1);
+    test_coalesced_hsets_at_limit(2);
+    test_coalesced_hsets_at_limit(3);
+    test_synchronous_hset_claims_continue();
+    test_last_frame_hset_is_readable();
+}
+
+
+static void
+test_data_waits_for_hset_claim_layout (int split_before_data)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 24,  /* :status 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xC0 | 25,  /* :status 200 */
+        HQFT_DATA,    1, 'x',
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    unsigned char buf[1] = { 0xFF, };
+    ssize_t nr;
+    int s;
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    use_test_hset_if(&tobjs);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0,
+                split_before_data ? sizeof(input) - 3 : sizeof(input),
+                !split_before_data, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+    if (split_before_data)
+    {
+        frame = new_frame_in_ext(&tobjs, sizeof(input) - 3, 3, 1,
+                                                    input + sizeof(input) - 3);
+        s = lsquic_stream_frame_in(stream, frame);
+        assert(s == 0);
+    }
+
+    assert(lsquic_stream_readable(stream));
+    assert(count_hsets(stream) == 1);
+    assert(stream->read_offset == 5);
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert_hset_status(hset, "103");
+    test_discard_hset(hset);
+
+    /* The final response headers become available during this read.  DATA
+     * following them in the same buffered frame must not be returned yet.
+     */
+    errno = 0;
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == -1);
+    assert(errno == EWOULDBLOCK);
+    assert(buf[0] == 0xFF);
+    assert(count_hsets(stream) == 1);
+    assert(stream->read_offset == sizeof(input) - 3);
+    assert(!(stream->stream_flags & STREAM_FIN_REACHED));
+
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+
+    assert(lsquic_stream_readable(stream));
+
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 1);
+    assert(buf[0] == 'x');
+    assert(stream->read_offset == sizeof(input));
+    assert(stream->stream_flags & STREAM_FIN_REACHED);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
+test_data_waits_for_hset_claim (void)
+{
+    test_data_waits_for_hset_claim_layout(0);
+    test_data_waits_for_hset_claim_layout(1);
+}
+
+
 /* Receiving DATA frame with zero payload should result in lsquic_stream_read()
  * returning -1.
  */
@@ -2136,7 +2415,7 @@ main (int argc, char **argv)
                     for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                         test_frame_header_split(n_packets, extra_sz, add_one_more);
             break;
-        case 12:  /* zero size frame tests */
+        case 12:  /* fast framing regression tests */
             test_zero_size_frame();
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
@@ -2146,6 +2425,8 @@ main (int argc, char **argv)
             test_conflicting_content_length_is_rejected();
             test_invalid_content_length_syntax_is_rejected();
             test_content_length_overrun_blocks_payload_delivery();
+            test_coalesced_hsets_are_throttled();
+            test_data_waits_for_hset_claim();
             break;
         default:
             fprintf(stderr, "Unknown test subset: %d\n", test_subset);
@@ -2161,6 +2442,8 @@ main (int argc, char **argv)
             for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
                 for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
                     test_frame_header_split(n_packets, extra_sz, add_one_more);
+        test_coalesced_hsets_are_throttled();
+        test_data_waits_for_hset_claim();
         test_zero_size_frame();
         test_reading_zero_size_data_frame();
         test_reading_zero_size_data_frame_scenario2();

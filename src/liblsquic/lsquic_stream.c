@@ -140,6 +140,15 @@ stream_readable_http_gquic (struct lsquic_stream *stream);
 static int
 stream_readable_http_ietf (struct lsquic_stream *stream);
 
+static int
+hset_queue_is_full_1 (const struct lsquic_stream *stream);
+
+static int
+hset_queue_is_full_2 (const struct lsquic_stream *stream);
+
+static int
+hset_queue_is_full_n (const struct lsquic_stream *stream);
+
 static ssize_t
 stream_write_buf (struct lsquic_stream *stream, const void *buf, size_t sz);
 
@@ -410,6 +419,18 @@ stream_new_common (lsquic_stream_id_t id, struct lsquic_conn_public *conn_pub,
     stream->conn_pub  = conn_pub;
     stream->sm_onnew_arg = stream_if_ctx;
     stream->sm_write_avail = stream_write_avail_no_frames;
+    switch (conn_pub->enpub->enp_settings.es_max_header_sets)
+    {
+    case 1:
+        stream->sm_hset_queue_is_full = hset_queue_is_full_1;
+        break;
+    case 2:
+        stream->sm_hset_queue_is_full = hset_queue_is_full_2;
+        break;
+    default:
+        stream->sm_hset_queue_is_full = hset_queue_is_full_n;
+        break;
+    }
 
     STAILQ_INIT(&stream->sm_hq_frames);
     STAILQ_INIT(&stream->uh);
@@ -805,6 +826,8 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
         (stream->sm_sfi->sfi_readable(stream)
             && (/* Running the filter may result in hitting FIN: */
                 (stream->stream_flags & STREAM_FIN_REACHED)
+                /* Or in decoding the last buffered frame into a header set: */
+                || !STAILQ_EMPTY(&stream->uh)
                 || stream_has_frame_at_read_offset(stream)));
 }
 
@@ -1491,7 +1514,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 {
     struct data_frame *data_frame;
     size_t nread, toread, total_nread;
-    int short_read, processed_frames;
+    int short_read, processed_frames, read_fin;
 
     processed_frames = 0;
     total_nread = 0;
@@ -1505,14 +1528,25 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
         do
         {
             if (do_filtering && stream->sm_sfi)
+            {
                 toread = stream->sm_sfi->sfi_filter_df(stream, data_frame);
+                /* The filter may suspend with part of the input frame
+                 * unconsumed.
+                 */
+                if (toread == 0
+                            && data_frame->df_read_off < data_frame->df_size)
+                    goto end_while;
+            }
             else
                 toread = data_frame->df_size - data_frame->df_read_off;
 
-            if (toread || data_frame->df_fin)
+            read_fin = data_frame->df_fin
+                && data_frame->df_read_off + toread == data_frame->df_size;
+
+            if (toread || read_fin)
             {
                 nread = readf(ctx, data_frame->df_data + data_frame->df_read_off,
-                                                     toread, data_frame->df_fin);
+                                                            toread, read_fin);
                 if (do_filtering && stream->sm_sfi)
                     stream->sm_sfi->sfi_decr_left(stream, nread);
                 data_frame->df_read_off += nread;
@@ -4438,6 +4472,12 @@ stream_uh_in_gquic (struct lsquic_stream *stream,
 {
     if ((stream->sm_bflags & SMBF_USE_HEADERS))
     {
+        if (stream->sm_hset_queue_is_full(stream))
+        {
+            LSQ_INFO("refuse header set: maximum of %u already buffered",
+                stream->conn_pub->enpub->enp_settings.es_max_header_sets);
+            return -1;
+        }
         SM_HISTORY_APPEND(stream, SHE_HEADERS_IN);
         LSQ_DEBUG("received uncompressed headers");
         stream->stream_flags |= STREAM_HAVE_UH;
@@ -4838,6 +4878,40 @@ verify_cl_on_new_data_frame (struct lsquic_stream *stream,
 }
 
 
+static int
+hset_queue_is_full_1 (const struct lsquic_stream *stream)
+{
+    return !STAILQ_EMPTY(&stream->uh);
+}
+
+
+static int
+hset_queue_is_full_2 (const struct lsquic_stream *stream)
+{
+    const struct uncompressed_headers *uh;
+
+    uh = STAILQ_FIRST(&stream->uh);
+    return uh && STAILQ_NEXT(uh, uh_next);
+}
+
+
+static int
+hset_queue_is_full_n (const struct lsquic_stream *stream)
+{
+    const struct uncompressed_headers *uh;
+    const unsigned limit =
+                    stream->conn_pub->enpub->enp_settings.es_max_header_sets;
+    unsigned count;
+
+    assert(limit > 2);
+    count = 0;
+    STAILQ_FOREACH(uh, &stream->uh, uh_next)
+        if (++count == limit)
+            return 1;
+    return 0;
+}
+
+
 static size_t
 hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
 {
@@ -4849,6 +4923,12 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
     enum lsqpack_read_header_status rhs;
     enum http_error_code hq_err;
     int s;
+
+    if (stream->sm_hset_queue_is_full(stream))
+    {
+        LSQ_DEBUG("wait for user to process existing hsets");
+        goto end;
+    }
 
     while (p < end)
     {
@@ -4968,6 +5048,11 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 case LQRHS_DONE:
                     assert(filter->hqfi_left == 0);
                     stream->sm_qflags &= ~SMQF_QPACK_DEC;
+                    if (stream->sm_hset_queue_is_full(stream))
+                    {
+                        LSQ_DEBUG("wait for user to process existing hsets");
+                        goto end;
+                    }
                     break;
                 case LQRHS_NEED:
                     stream->sm_qflags |= SMQF_QPACK_DEC;
@@ -5070,6 +5155,9 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
     struct hq_filter *const filter = &stream->sm_hq_filter;
     size_t nr;
 
+    if (stream->sm_hset_queue_is_full(stream))
+        return 0;
+
     if (!(filter->hqfi_state == HQFI_STATE_READING_PAYLOAD
                                             && filter->hqfi_type == HQFT_DATA))
     {
@@ -5095,8 +5183,9 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
         else
         {
             if (!((filter->hqfi_type == HQFT_HEADERS
-                   || filter->hqfi_type == HQFT_PUSH_PROMISE)
-                    && (filter->hqfi_flags & HQFI_FLAG_BLOCKED)))
+                        || filter->hqfi_type == HQFT_PUSH_PROMISE)
+                    && ((filter->hqfi_flags & HQFI_FLAG_BLOCKED)
+                        || stream->sm_hset_queue_is_full(stream))))
                 assert(data_frame->df_read_off == data_frame->df_size);
             return 0;
         }

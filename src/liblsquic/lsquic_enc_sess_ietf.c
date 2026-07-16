@@ -2009,6 +2009,8 @@ iquic_esfi_handshake (struct enc_sess_iquic *enc_sess)
 
     if (0 != maybe_get_peer_transport_params(enc_sess))
     {
+        enc_sess->esi_conn->cn_if->ci_abort_error(enc_sess->esi_conn, 0,
+                TEC_TRANSPORT_PARAMETER_ERROR, "invalid transport parameters");
         hsk_status = LSQ_HSK_FAIL;
         goto err;
     }

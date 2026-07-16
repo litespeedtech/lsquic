@@ -236,6 +236,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->conn_pub.conn_stats = &s_conn_stats;
 #endif
     tobjs->initial_stream_window = initial_stream_window;
+    tobjs->eng_pub.enp_settings.es_max_header_sets =
+                                         LSQUIC_DF_MAX_HEADER_SETS_CLIENT;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
     tobjs->stream_if = &stream_if;
@@ -696,6 +698,7 @@ test_multiple_hsets_fifo (int ietf)
 
     init_test_objs(&tobjs, 0x1000, 0x1000, ietf ? SCF_IETF : 0);
     tobjs.stream_if = &stream_if_on_hset;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = sizeof(hsets);
 
     s_on_hset_in_count = 0;
     s_on_hset_in_stream = NULL;
@@ -729,6 +732,64 @@ test_multiple_hsets_fifo (int ietf)
     lsquic_stream_destroy(stream);
 
     deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_gquic_hset_limit_at (unsigned limit)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct uncompressed_headers *uh;
+    char hsets[4];
+    void *hset;
+    unsigned i;
+    int s;
+
+    assert(limit < sizeof(hsets));
+    init_test_objs(&tobjs, 0x1000, 0x1000, 0);
+    tobjs.stream_if = &stream_if_on_hset;
+    tobjs.eng_pub.enp_settings.es_max_header_sets = limit;
+
+    s_on_hset_in_count = 0;
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    for (i = 0; i <= limit; ++i)
+    {
+        uh = calloc(1, sizeof(*uh));
+        *uh = (struct uncompressed_headers) {
+            .uh_stream_id   = stream->id,
+            .uh_hset        = &hsets[i],
+        };
+        s = lsquic_stream_uh_in(stream, uh);
+        if (i < limit)
+            assert(s == 0);
+        else
+        {
+            assert(s == -1);
+            free(uh);
+        }
+        assert(s_on_hset_in_count == i + (i < limit));
+    }
+
+    for (i = 0; i < limit; ++i)
+    {
+        hset = lsquic_stream_get_hset(stream);
+        assert(hset == &hsets[i]);
+    }
+    assert(lsquic_stream_get_hset(stream) == NULL);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_gquic_hset_limit (void)
+{
+    test_gquic_hset_limit_at(1);
+    test_gquic_hset_limit_at(2);
+    test_gquic_hset_limit_at(3);
 }
 
 
@@ -829,6 +890,7 @@ main (int argc, char **argv)
     test_read_headers(1, 1);
     test_multiple_hsets_fifo(0);
     test_multiple_hsets_fifo(1);
+    test_gquic_hset_limit();
     test_read_headers_http1x();
 
     return 0;

@@ -127,6 +127,10 @@ struct hq_filter
 struct stream_filter_if
 {
     int         (*sfi_readable)(struct lsquic_stream *);
+    /* Consume framing bytes by advancing df_read_off and return the number
+     * of payload bytes available to the application.  Returning zero with
+     * part of the data frame unconsumed suspends processing of the frame.
+     */
     size_t      (*sfi_filter_df)(struct lsquic_stream *, struct data_frame *);
     void        (*sfi_decr_left)(struct lsquic_stream *, size_t);
 };
@@ -328,6 +332,8 @@ struct lsquic_stream
                                                 const size_t);
     size_t                        (*sm_write_avail)(struct lsquic_stream *);
     int                           (*sm_readable)(struct lsquic_stream *);
+    int                           (*sm_hset_queue_is_full)(
+                                        const struct lsquic_stream *);
 
     struct lsquic_packet_out *    (*sm_get_packet_for_stream)(
                                         struct lsquic_send_ctl *,
