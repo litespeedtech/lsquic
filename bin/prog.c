@@ -151,6 +151,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "               Can be specified more than once.\n"
 "   -m MAX      Maximum number of outgoing packet buffers that can be\n"
 "                 assigned at any one time.  By default, there is no max.\n"
+"   -o OPT=VAL  Set an engine option.  For example, max_header_sets=N\n"
+"                 limits completed header sets buffered per HTTP stream.\n"
 "   -y style    Timestamp style used in log messages.  The following styles\n"
 "                 are supported:\n"
 "                   0   No timestamp\n"

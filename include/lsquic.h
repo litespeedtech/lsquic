@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 8
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 9
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -323,6 +323,16 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  *  completed (assuming the peer supports this setting frame type).
  */
 #define LSQUIC_DF_MAX_HEADER_LIST_SIZE 0
+
+/** Server default for the maximum number of completed header sets buffered
+ *  on an HTTP stream while awaiting application processing.
+ */
+#define LSQUIC_DF_MAX_HEADER_SETS_SERVER 1
+
+/** Client default for the maximum number of completed header sets buffered
+ *  on an HTTP stream while awaiting application processing.
+ */
+#define LSQUIC_DF_MAX_HEADER_SETS_CLIENT 2
 
 /** Default value of UAID (user-agent ID). */
 #define LSQUIC_DF_UA               "LSQUIC"
@@ -1184,7 +1194,21 @@ struct lsquic_engine_settings {
      * Default value is @ref LSQUIC_DF_MAX_WEBTRANSPORT_SERVER_STREAMS.
      */
     unsigned        es_max_webtransport_server_streams;
-#endif    
+#endif
+
+    /**
+     * Maximum number of completed header sets that may be buffered on an
+     * HTTP stream while awaiting application processing.  When the limit is
+     * reached, HTTP/3 parsing on the stream is suspended until the application
+     * claims enough header sets to bring the queue below the limit.  Receiving
+     * an additional gQUIC header set is treated as a connection error.  This is
+     * a local receive limit and has no corresponding peer setting.  It must be
+     * greater than zero.
+     *
+     * Default value is @ref LSQUIC_DF_MAX_HEADER_SETS_SERVER in server mode
+     * and @ref LSQUIC_DF_MAX_HEADER_SETS_CLIENT in client mode.
+     */
+    unsigned        es_max_header_sets;
 };
 
 /* Initialize `settings' to default values */
