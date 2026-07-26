@@ -69,6 +69,21 @@ struct test_xhdr
 
 static struct network_path network_path;
 static struct http1x_ctor_ctx hsi_ctx = { .is_server = 1, };
+static unsigned n_header_sets_discarded;
+
+
+static void
+discard_header_set (void *hset)
+{
+    ++n_header_sets_discarded;
+    lsquic_http1x_if->hsi_discard_header_set(hset);
+}
+
+
+static const struct lsquic_hset_if discard_count_hset_if =
+{
+    .hsi_discard_header_set = discard_header_set,
+};
 
 
 static int
@@ -143,7 +158,8 @@ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
 
 
 static void
-init_test_objs (struct test_objs *tobjs)
+init_test_objs_with_qpack_capacity (struct test_objs *tobjs,
+                                                    unsigned qpack_capacity)
 {
     int s;
 
@@ -179,8 +195,16 @@ init_test_objs (struct test_objs *tobjs)
     lsquic_qeh_init(&tobjs->qeh, &tobjs->lconn);
     s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
     assert(0 == s);
-    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 1, tobjs->conn_pub.enpub, 0, 0);
+    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 1, tobjs->conn_pub.enpub,
+                                                        qpack_capacity, 0);
     tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
+}
+
+
+static void
+init_test_objs (struct test_objs *tobjs)
+{
+    init_test_objs_with_qpack_capacity(tobjs, 0);
 }
 
 
@@ -424,6 +448,51 @@ test_priority_update_during_partial_header_decode_wins (void)
 }
 
 
+static void
+test_destroy_unfinished_stream_without_qpack_decoder_stream (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+
+    init_test_objs_with_qpack_capacity(&tobjs, 0x100);
+    assert(NULL == tobjs.qdh.qdh_dec_sm_out);
+
+    stream = new_http_prio_stream(&tobjs);
+    lsquic_stream_destroy(stream);
+
+    deinit_test_objs(&tobjs);
+}
+
+
+static void
+test_destroy_partial_header_without_qpack_decoder_stream (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    const unsigned char header_block[] = { 0, 0, };
+    const unsigned char *buf;
+    enum lsqpack_read_header_status rhs;
+
+    init_test_objs_with_qpack_capacity(&tobjs, 0x100);
+    assert(NULL == tobjs.qdh.qdh_dec_sm_out);
+    stream = new_http_prio_stream(&tobjs);
+
+    buf = header_block;
+    rhs = lsquic_qdh_header_in_begin(&tobjs.qdh, stream,
+                                sizeof(header_block), &buf, 1);
+    assert(LQRHS_NEED == rhs);
+    assert(stream->sm_hblock_ctx);
+    stream->sm_qflags |= SMQF_QPACK_DEC;
+
+    n_header_sets_discarded = 0;
+    tobjs.eng_pub.enp_hsi_if = &discard_count_hset_if;
+    lsquic_stream_destroy(stream);
+    assert(1 == n_header_sets_discarded);
+
+    deinit_test_objs(&tobjs);
+}
+
+
 int
 main (void)
 {
@@ -432,6 +501,8 @@ main (void)
     test_split_priority_header_fields_are_one_dictionary();
     test_user_set_http_prio_does_not_block_priority_header();
     test_priority_update_during_partial_header_decode_wins();
+    test_destroy_unfinished_stream_without_qpack_decoder_stream();
+    test_destroy_partial_header_without_qpack_decoder_stream();
 
     lsquic_global_cleanup();
     return 0;

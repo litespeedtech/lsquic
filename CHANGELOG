@@ -1,5 +1,5 @@
 2026-07-26
-    - 4.9.1
+    - 4.9.2
     - [FIX, SPEC] Require 3 uni streams for HTTP/3 connections
     - [FIX] Abort connection when STOP_SENDING comes in for a critical stream
     - [FIX] Fix unreadable HQ filter error state
