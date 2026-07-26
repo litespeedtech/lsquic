@@ -844,6 +844,9 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
 
     qdh_maybe_destroy_hblock_ctx(qdh, stream);
 
+    if (!qdh->qdh_dec_sm_out)
+        return;
+
     nw = lsqpack_dec_cancel_stream(&qdh->qdh_decoder, stream, buf, sizeof(buf));
     if (nw > 0)
     {
@@ -871,6 +874,9 @@ lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *qdh,
 {
     ssize_t nw;
     unsigned char buf[LSQPACK_LONGEST_CANCEL];
+
+    if (!qdh->qdh_dec_sm_out)
+        return;
 
     nw = lsqpack_dec_cancel_stream_id(&qdh->qdh_decoder, stream_id, buf,
                                                                 sizeof(buf));
