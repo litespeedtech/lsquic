@@ -40,7 +40,7 @@ struct qpack_dec_hdl
     char                    *qdh_ua;
 };
 
-int
+void
 lsquic_qdh_init (struct qpack_dec_hdl *, struct lsquic_conn *,
                     int is_server, const struct lsquic_engine_public *,
                     unsigned dyn_table_size, unsigned max_risked_streams);

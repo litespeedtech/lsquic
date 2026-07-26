@@ -1,3 +1,12 @@
+2026-07-26
+    - 4.9.1
+    - [FIX, SPEC] Require 3 uni streams for HTTP/3 connections
+    - [FIX] Abort connection when STOP_SENDING comes in for a critical stream
+    - [FIX] Fix unreadable HQ filter error state
+    - [FIX] Reset errno before parsing content length
+    - [FIX] Use ls-qpack 2.6.6 to pick up latest fix
+    - [FIX] Abort if QDEC handler cannot write to fral-backed stream
+
 2026-07-15
     - 4.9.0
     - [API, IMPROVEMENT] Limit number of buffered header sets to cap

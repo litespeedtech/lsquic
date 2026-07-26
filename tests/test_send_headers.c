@@ -252,10 +252,9 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
         tobjs->conn_pub.u.ietf.qeh = &tobjs->qeh;
         tobjs->conn_pub.enpub->enp_hsi_if  = lsquic_http1x_if;
         tobjs->conn_pub.enpub->enp_hsi_ctx = &ctor_ctx;
-        s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
+        lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0,
                                     tobjs->conn_pub.enpub, 0, 0);
         tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
-        assert(0 == s);
     }
 }
 
@@ -859,6 +858,39 @@ test_read_headers_http1x (void)
 }
 
 
+static void
+test_hq_filter_error_is_readable (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    const unsigned char empty_headers_frame[2] = {
+        0x01,   /* HEADERS frame type */
+        0x00,   /* Invalid zero-length payload */
+    };
+    unsigned char buf[1];
+    ssize_t nr;
+    int s;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in(&tobjs, 0, sizeof(empty_headers_frame), 0);
+    memcpy((unsigned char *) frame->data_frame.df_data, empty_headers_frame,
+                                                        sizeof(empty_headers_frame));
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(0 == s);
+
+    assert(lsquic_stream_readable(stream));
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(-1 == nr);
+    assert(EBADMSG == errno);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -892,6 +924,7 @@ main (int argc, char **argv)
     test_multiple_hsets_fifo(1);
     test_gquic_hset_limit();
     test_read_headers_http1x();
+    test_hq_filter_error_is_readable();
 
     return 0;
 }

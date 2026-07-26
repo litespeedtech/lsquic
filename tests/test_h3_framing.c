@@ -527,14 +527,10 @@ static const struct lsquic_hset_if test_hset_if =
 static void
 use_test_hset_if (struct test_objs *tobjs)
 {
-    int s;
-
     lsquic_qdh_cleanup(&tobjs->qdh);
     tobjs->eng_pub.enp_hsi_if = &test_hset_if;
     tobjs->eng_pub.enp_hsi_ctx = NULL;
-    s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub,
-                                                                    0, 0);
-    assert(0 == s);
+    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub, 0, 0);
     tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
 }
 
@@ -2143,7 +2139,7 @@ test_reading_zero_size_data_frame_scenario3 (void)
 static void
 expect_header_block_result (struct lsxpack_header *hdrs, unsigned count,
                             int expect_abort,
-                            unsigned long long content_len)
+                            unsigned long long content_len, int initial_errno)
 {
     struct test_objs sender, receiver;
     struct lsquic_stream *send_stream, *recv_stream;
@@ -2180,6 +2176,7 @@ expect_header_block_result (struct lsxpack_header *hdrs, unsigned count,
     recv_stream = new_stream(&receiver, 0, 0x1000);
 
     frame = new_frame_in_ext(&receiver, 0, nw, fin, buf);
+    errno = initial_errno;
     s = lsquic_stream_frame_in(recv_stream, frame);
     assert(0 == s);
 
@@ -2216,7 +2213,7 @@ expect_header_block_result (struct lsxpack_header *hdrs, unsigned count,
 static void
 expect_header_block_abort (struct lsxpack_header *hdrs, unsigned count)
 {
-    expect_header_block_result(hdrs, count, 1, 0);
+    expect_header_block_result(hdrs, count, 1, 0, 0);
 }
 
 
@@ -2224,7 +2221,7 @@ static void
 expect_header_block_accept (struct lsxpack_header *hdrs, unsigned count,
                                                 unsigned long long content_len)
 {
-    expect_header_block_result(hdrs, count, 0, content_len);
+    expect_header_block_result(hdrs, count, 0, content_len, 0);
 }
 
 
@@ -2344,6 +2341,37 @@ test_content_length_overrun_blocks_payload_delivery (void)
 }
 
 
+static void
+test_content_length_max_value_ignores_stale_errno (void)
+{
+    struct lsxpack_header hdrs[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "18446744073709551615") },
+    };
+
+    expect_header_block_result(hdrs, sizeof(hdrs) / sizeof(hdrs[0]), 0,
+                                                    ULLONG_MAX, ERANGE);
+}
+
+
+static void
+test_content_length_overflow_is_rejected (void)
+{
+    struct lsxpack_header hdrs[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+        { XHDR("content-length", "18446744073709551616") },
+    };
+
+    expect_header_block_abort(hdrs, sizeof(hdrs) / sizeof(hdrs[0]));
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -2427,6 +2455,8 @@ main (int argc, char **argv)
             test_content_length_overrun_blocks_payload_delivery();
             test_coalesced_hsets_are_throttled();
             test_data_waits_for_hset_claim();
+            test_content_length_max_value_ignores_stale_errno();
+            test_content_length_overflow_is_rejected();
             break;
         default:
             fprintf(stderr, "Unknown test subset: %d\n", test_subset);
@@ -2453,6 +2483,8 @@ main (int argc, char **argv)
         test_conflicting_content_length_is_rejected();
         test_invalid_content_length_syntax_is_rejected();
         test_content_length_overrun_blocks_payload_delivery();
+        test_content_length_max_value_ignores_stale_errno();
+        test_content_length_overflow_is_rejected();
     }
 
     return 0;
