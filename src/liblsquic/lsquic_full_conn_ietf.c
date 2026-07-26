@@ -3706,11 +3706,10 @@ init_http (struct ietf_full_conn *conn)
             conn->ifc_qeh.qeh_exp_rec->qer_flags |= QER_ENCODER;
         }
     }
-    if (0 == avail_streams_count(conn, conn->ifc_flags & IFC_SERVER,
-                                                                SD_UNI))
+    if (avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI) < 3)
     {
         ABORT_QUIETLY(1, HEC_GENERAL_PROTOCOL_ERROR, "cannot create "
-                            "control stream due to peer-imposed limit");
+                    "control and QPACK streams due to peer-imposed limit");
         conn->ifc_error = CONN_ERR(1, HEC_GENERAL_PROTOCOL_ERROR);
         return -1;
     }
@@ -3737,27 +3736,19 @@ init_http (struct ietf_full_conn *conn)
         ABORT_WARN("cannot write SETTINGS");
         return -1;
     }
-    if (0 != lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
-                            conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
-                            dyn_table_size, max_risked_streams))
+
+    /* QDH initialization must precede outgoing decoder stream creation:
+     * create_qdec_stream_out() synchronously invokes qdh_out_on_new().
+     */
+    lsquic_qdh_init(&conn->ifc_qdh, &conn->ifc_conn,
+                        conn->ifc_flags & IFC_SERVER, conn->ifc_enpub,
+                        dyn_table_size, max_risked_streams);
+    if (0 != create_qdec_stream_out(conn))
     {
-        ABORT_WARN("cannot initialize QPACK decoder");
+        ABORT_WARN("cannot create outgoing QPACK decoder stream");
         return -1;
     }
-    if (avail_streams_count(conn, conn->ifc_flags & IFC_SERVER, SD_UNI) > 0)
-    {
-        if (0 != create_qdec_stream_out(conn))
-        {
-            ABORT_WARN("cannot create outgoing QPACK decoder stream");
-            return -1;
-        }
-    }
-    else
-    {
-        queue_streams_blocked_frame(conn, SD_UNI);
-        LSQ_DEBUG("cannot create outgoing QPACK decoder stream due to "
-            "unidir limits");
-    }
+
     conn->ifc_flags |= IFC_HTTP_INITED;
     return 0;
 }
@@ -5414,7 +5405,15 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
     our_stream = !is_peer_initiated(conn, stream_id);
     stream = find_stream_by_id(conn, stream_id);
     if (stream)
+    {
+        if (lsquic_stream_is_critical(stream))
+        {
+            ABORT_QUIETLY(1, HEC_CLOSED_CRITICAL_STREAM,
+                "received STOP_SENDING on critical stream %"PRIu64, stream_id);
+            return 0;
+        }
         lsquic_stream_stop_sending_in(stream, error_code);
+    }
     else if (conn_is_stream_closed(conn, stream_id))
         LSQ_DEBUG("stream %"PRIu64" is closed: ignore STOP_SENDING frame",
             stream_id);
@@ -9609,6 +9608,8 @@ static void
 apply_uni_stream_class (struct ietf_full_conn *conn,
                             struct lsquic_stream *stream, uint64_t stream_type)
 {
+    assert(conn->ifc_flags & IFC_HTTP_INITED);
+
     switch (stream_type)
     {
     case HQUST_CONTROL:
@@ -9816,6 +9817,38 @@ lsquic_ietf_full_conn_test_push_disabled (unsigned results[5])
     conn.ifc_flags = IFC_SERVER;
     abort_push_stream(&conn);
     results[PUSH_STREAM_SERVER] = conn.ifc_error.u.err;
+    free(conn.ifc_errmsg);
+}
+
+
+void
+lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
+{
+    struct ietf_full_conn conn;
+    struct lsquic_stream stream;
+    unsigned char frame[32];
+    int len;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&stream, 0, sizeof(stream));
+    conn.ifc_flags = IFC_HTTP;
+    conn.ifc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    conn.ifc_pub.all_streams = lsquic_hash_create();
+    assert(conn.ifc_pub.all_streams);
+    stream.id = 2;  /* Client-initiated unidirectional stream */
+    stream.sm_bflags = SMBF_CRITICAL;
+    assert(lsquic_hash_insert(conn.ifc_pub.all_streams, &stream.id,
+                    sizeof(stream.id), &stream, &stream.sm_hash_el));
+
+    len = conn.ifc_conn.cn_pf->pf_gen_stop_sending_frame(frame, sizeof(frame),
+                                                            stream.id, 0);
+    assert(len > 0);
+    results[0] = process_stop_sending_frame(&conn, NULL, frame, len);
+    results[1] = conn.ifc_error.app_error;
+    results[2] = conn.ifc_error.u.err;
+    results[3] = !!(stream.stream_flags & STREAM_SS_RECVD);
+
+    lsquic_hash_destroy(conn.ifc_pub.all_streams);
     free(conn.ifc_errmsg);
 }
 

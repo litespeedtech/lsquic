@@ -179,9 +179,7 @@ init_test_objs (struct test_objs *tobjs)
     lsquic_qeh_init(&tobjs->qeh, &tobjs->lconn);
     s = lsquic_qeh_settings(&tobjs->qeh, 0, 0, 0, 0);
     assert(0 == s);
-    s = lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 1,
-                        tobjs->conn_pub.enpub, 0, 0);
-    assert(0 == s);
+    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 1, tobjs->conn_pub.enpub, 0, 0);
     tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
 }
 

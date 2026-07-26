@@ -74,7 +74,7 @@ qdh_write_decoder (struct qpack_dec_hdl *qdh, const unsigned char *buf,
 {
     ssize_t nw;
 
-    if (!(qdh->qdh_dec_sm_out && lsquic_frab_list_empty(&qdh->qdh_fral)))
+    if (!lsquic_frab_list_empty(&qdh->qdh_fral))
     {
   write_to_frab:
         if (0 == lsquic_frab_list_write(&qdh->qdh_fral,
@@ -156,7 +156,7 @@ qdh_begin_out (struct qpack_dec_hdl *qdh)
 }
 
 
-int
+void
 lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
                     int is_server, const struct lsquic_engine_public *enpub,
                     unsigned dyn_table_size, unsigned max_risked_streams)
@@ -204,12 +204,10 @@ lsquic_qdh_init (struct qpack_dec_hdl *qdh, struct lsquic_conn *conn,
     }
     else
         qdh->qdh_hsi_ctx = qdh->qdh_enpub->enp_hsi_ctx;
-    if (qdh->qdh_dec_sm_out)
-        qdh_begin_out(qdh);
+    assert(!qdh->qdh_dec_sm_out);   /* Expect init before stream creation */
     if (qdh->qdh_enc_sm_in)
         lsquic_stream_wantread(qdh->qdh_enc_sm_in, 1);
     LSQ_DEBUG("initialized");
-    return 0;
 }
 
 
@@ -252,8 +250,8 @@ qdh_out_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 {
     struct qpack_dec_hdl *const qdh = stream_if_ctx;
     qdh->qdh_dec_sm_out = stream;
-    if (qdh->qdh_flags & QDH_INITIALIZED)
-        qdh_begin_out(qdh);
+    assert(qdh->qdh_flags & QDH_INITIALIZED);
+    qdh_begin_out(qdh);
     LSQ_DEBUG("initialized outgoing decoder stream");
     return (void *) qdh;
 }
@@ -356,9 +354,10 @@ static lsquic_stream_ctx_t *
 qdh_in_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 {
     struct qpack_dec_hdl *const qdh = stream_if_ctx;
+    assert(qdh->qdh_dec_sm_out);
+    assert(qdh->qdh_flags & QDH_INITIALIZED);
     qdh->qdh_enc_sm_in = stream;
-    if (qdh->qdh_flags & QDH_INITIALIZED)
-        lsquic_stream_wantread(qdh->qdh_enc_sm_in, 1);
+    lsquic_stream_wantread(qdh->qdh_enc_sm_in, 1);
     LSQ_DEBUG("initialized incoming encoder stream");
     return (void *) qdh;
 }
@@ -390,8 +389,7 @@ qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
             "stream; offset %"PRIu64", line %d", qerr->off, qerr->line);
         goto end;
     }
-    if (qdh->qdh_dec_sm_out
-                    && lsqpack_dec_ici_pending(&qdh->qdh_decoder))
+    if (lsqpack_dec_ici_pending(&qdh->qdh_decoder))
         lsquic_stream_wantwrite(qdh->qdh_dec_sm_out, 1);
 
     LSQ_DEBUG("successfully fed %zu bytes to QPACK decoder", sz);
@@ -487,6 +485,7 @@ process_content_length (const struct qpack_dec_hdl *qdh /* for logging */,
         }
     memcpy(cont_len_buf, val, len);
     cont_len_buf[len] = '\0';
+    errno = 0;
     value = strtoull(cont_len_buf, &endcl, 10);
 
     if (*endcl == '\0' && !(ULLONG_MAX == value && ERANGE == errno))
@@ -708,16 +707,13 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
             LSQ_DEBUG("discard trailer header set");
             qdh_maybe_destroy_hblock_ctx(qdh, stream);
         }
-        if (qdh->qdh_dec_sm_out)
+        if (dec_buf_sz
+            && 0 != qdh_write_decoder(qdh, dec_buf, dec_buf_sz))
         {
-            if (dec_buf_sz
-                && 0 != qdh_write_decoder(qdh, dec_buf, dec_buf_sz))
-            {
-                return LQRHS_ERROR;
-            }
-            if (dec_buf_sz || lsqpack_dec_ici_pending(&qdh->qdh_decoder))
-                lsquic_stream_wantwrite(qdh->qdh_dec_sm_out, 1);
+            return LQRHS_ERROR;
         }
+        if (dec_buf_sz || lsqpack_dec_ici_pending(&qdh->qdh_decoder))
+            lsquic_stream_wantwrite(qdh->qdh_dec_sm_out, 1);
     }
     else if (rhs == LQRHS_ERROR)
     {
@@ -848,15 +844,15 @@ lsquic_qdh_cancel_stream (struct qpack_dec_hdl *qdh,
 
     qdh_maybe_destroy_hblock_ctx(qdh, stream);
 
-    if (!qdh->qdh_dec_sm_out)
-        return;
-
     nw = lsqpack_dec_cancel_stream(&qdh->qdh_decoder, stream, buf, sizeof(buf));
     if (nw > 0)
     {
         if (0 == qdh_write_decoder(qdh, buf, nw))
             LSQ_DEBUG("cancelled stream %"PRIu64" and wrote %zd-byte Cancel "
                 "Stream instruction to the decoder stream", stream->id, nw);
+        else
+            qdh->qdh_conn->cn_if->ci_internal_error(qdh->qdh_conn,
+                                            "cannot write to stream");
     }
     else if (nw == 0)
         LSQ_WARN("cannot cancel stream %"PRIu64" -- not found", stream->id);
@@ -876,9 +872,6 @@ lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *qdh,
     ssize_t nw;
     unsigned char buf[LSQPACK_LONGEST_CANCEL];
 
-    if (!qdh->qdh_dec_sm_out)
-        return;
-
     nw = lsqpack_dec_cancel_stream_id(&qdh->qdh_decoder, stream_id, buf,
                                                                 sizeof(buf));
     if (nw > 0)
@@ -886,6 +879,9 @@ lsquic_qdh_cancel_stream_id (struct qpack_dec_hdl *qdh,
         if (0 == qdh_write_decoder(qdh, buf, nw))
             LSQ_DEBUG("wrote %zd-byte Cancel Stream instruction for "
                 "stream %"PRIu64" to the decoder stream", nw, stream_id);
+        else
+            qdh->qdh_conn->cn_if->ci_internal_error(qdh->qdh_conn,
+                                            "cannot write to stream");
     }
     else if (nw == 0)
         LSQ_DEBUG("not generating Cancel Stream instruction for "

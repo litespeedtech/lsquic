@@ -826,6 +826,8 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
         (stream->sm_sfi->sfi_readable(stream)
             && (/* Running the filter may result in hitting FIN: */
                 (stream->stream_flags & STREAM_FIN_REACHED)
+                /* Or in HTTP/3 error */
+                || (stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR)
                 /* Or in decoding the last buffered frame into a header set: */
                 || !STAILQ_EMPTY(&stream->uh)
                 || stream_has_frame_at_read_offset(stream)));
