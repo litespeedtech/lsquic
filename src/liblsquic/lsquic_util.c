@@ -317,7 +317,7 @@ lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz)
 }
 
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
 char *
 lsquic_strndup (const char *s, size_t n)
 {

@@ -4362,9 +4362,7 @@ lsquic_stream_id (const lsquic_stream_t *stream)
 }
 
 
-#if !defined(NDEBUG) && __GNUC__
-__attribute__((weak))
-#endif
+LSQUIC_TEST_WEAK
 struct lsquic_conn *
 lsquic_stream_conn (const lsquic_stream_t *stream)
 {
@@ -4425,11 +4423,7 @@ lsquic_stream_close (lsquic_stream_t *stream)
 }
 
 
-#ifndef NDEBUG
-#if __GNUC__
-__attribute__((weak))
-#endif
-#endif
+LSQUIC_TEST_WEAK
 void
 lsquic_stream_acked (struct lsquic_stream *stream,
                                             enum quic_frame_type frame_type)

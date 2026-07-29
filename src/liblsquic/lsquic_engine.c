@@ -1648,9 +1648,7 @@ lsquic_engine_find_conn (const struct lsquic_engine_public *engine,
 }
 
 
-#if !defined(NDEBUG) && __GNUC__
-__attribute__((weak))
-#endif
+LSQUIC_TEST_WEAK
 void
 lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
                                     lsquic_conn_t *conn)
@@ -3332,9 +3330,7 @@ lsquic_engine_packet_in (lsquic_engine_t *engine,
 }
 
 
-#if __GNUC__ && !defined(NDEBUG)
-__attribute__((weak))
-#endif
+LSQUIC_TEST_WEAK
 unsigned
 lsquic_engine_quic_versions (const lsquic_engine_t *engine)
 {
