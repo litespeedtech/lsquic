@@ -118,6 +118,18 @@ FOREACH(TEST_NAME ${TESTS})
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
 ENDFOREACH()
 
+IF(HAVE_GSO)
+    ADD_EXECUTABLE(test_gso test_gso.c ../bin/test_common.c)
+    TARGET_INCLUDE_DIRECTORIES(test_gso PRIVATE
+        ../bin
+        ${PROJECT_BINARY_DIR}/bin
+    )
+    TARGET_COMPILE_DEFINITIONS(test_gso PRIVATE HAVE_GSO=1)
+    TARGET_LINK_LIBRARIES(test_gso ${LIBS} ${EVENT_LIB} ${LIB_FLAGS})
+    ADD_TEST(gso test_gso)
+    SET_TESTS_PROPERTIES(gso PROPERTIES SKIP_RETURN_CODE 77)
+ENDIF()
+
 ADD_EXECUTABLE(test_stream test_stream.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(test_stream ${LIBS} ${LIB_FLAGS})
 IF(MSVC)

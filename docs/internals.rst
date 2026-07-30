@@ -476,6 +476,31 @@ Also see the description of the batch in `out_batch`_.
 Note that packet coalescing is only done during the handshake of an IETF
 QUIC connection. Non-handshake and gQUIC packets cannot be coalesced.
 
+Generic Segmentation Offload
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+An application can opt into Generic Segmentation Offload (GSO) batching
+through the optional ``pmi_gso_on()`` and ``pmi_gso_off()`` packet-memory
+callbacks. The engine only offers GSO mode when the Outgoing queue contains
+one connection and the Packet Request queue has no pending stateless replies.
+This keeps all candidate datagrams associated with one connection. The
+application must still verify that their socket, addresses, ECN value, and
+sizes are compatible with a single segmented send.
+
+While GSO mode is active, the engine caps the batch at 64 datagrams and does
+not adapt the normal batch size. A NULL return from ``pmi_allocate()`` flushes
+the datagrams already accumulated in the batch. If a send fails, encrypted
+buffers are returned through ``pmi_return()`` before the packets are
+rescheduled; a GSO allocator cannot retain an arbitrary subset of a shared
+batch buffer.
+
+The example programs allocate candidate packets consecutively and use Linux
+``UDP_SEGMENT`` when every datagram has one iov, all but possibly the last
+datagram have the same size, and the whole payload fits in 65,535 bytes.
+Coalesced QUIC packets and other incompatible batches fall back to the normal
+``sendmmsg()`` or ``sendmsg()`` path. If the socket rejects ``UDP_SEGMENT`` as
+unsupported, the examples disable GSO and retry through the normal path.
+
 Sending and Refilling the Batch
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

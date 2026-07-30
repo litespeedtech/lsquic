@@ -1328,6 +1328,21 @@ struct lsquic_packout_mem_if
      */
     void    (*pmi_return)  (void *pmi_ctx, void *peer_ctx, void *buf,
                                                                 char is_ipv6);
+    /**
+     * Attempt to enter GSO mode.  In this mode, packet buffers allocated by
+     * @ref pmi_allocate() are expected to be suitable for assembling a single
+     * UDP_SEGMENT send.
+     *
+     * This callback is optional.  It is only called when the engine can batch
+     * packets from a single connection and there are no stateless packets
+     * pending.  Return true to enter GSO mode and false to use normal
+     * batching.
+     */
+    int     (*pmi_gso_on)  (void *pmi_ctx);
+    /**
+     * Exit GSO mode.  This callback must be set when @ref pmi_gso_on is set.
+     */
+    void    (*pmi_gso_off) (void *pmi_ctx);
 };
 
 typedef void (*lsquic_cids_update_f)(void *ctx, void **peer_ctx,

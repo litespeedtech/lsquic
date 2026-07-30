@@ -108,6 +108,7 @@
 #define MAX_OUT_BATCH_SIZE 1024
 #define MIN_OUT_BATCH_SIZE 4
 #define INITIAL_OUT_BATCH_SIZE 32
+#define MAX_GSO_BATCH_SIZE 64
 
 struct out_batch
 {
@@ -564,7 +565,9 @@ malloc_buf (void *ctx, void *peer_ctx, lsquic_conn_ctx_t *conn_ctx, unsigned sho
 
 static const struct lsquic_packout_mem_if stock_pmi =
 {
-    malloc_buf, free_packet, free_packet,
+    .pmi_allocate = malloc_buf,
+    .pmi_release  = free_packet,
+    .pmi_return   = free_packet,
 };
 
 
@@ -2355,7 +2358,8 @@ struct conns_out_iter
 };
 
 
-static void
+/* Return true if the iterator contains one connection and no packet requests. */
+static int
 coi_init (struct conns_out_iter *iter, struct lsquic_engine *engine)
 {
     iter->coi_heap = &engine->conns_out;
@@ -2366,6 +2370,8 @@ coi_init (struct conns_out_iter *iter, struct lsquic_engine *engine)
 #ifndef NDEBUG
     iter->coi_last_sent = 0;
 #endif
+    return lsquic_mh_count(iter->coi_heap) == 1
+        && !(iter->coi_prq && lsquic_prq_have_pending(iter->coi_prq));
 }
 
 
@@ -2578,7 +2584,7 @@ update_batch_size_stats (struct lsquic_engine *engine, unsigned batch_size)
 
 static unsigned
 send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
-            unsigned n_to_send)
+            unsigned n_to_send, int gso)
 {
     int n_sent, i, e_val;
     lsquic_time_t now;
@@ -2712,8 +2718,12 @@ send_batch (lsquic_engine_t *engine, const struct send_batch_ctx *sb_ctx,
         packet_out = &batch->packets[off + count - 1];
         end = &batch->packets[off - 1];
         do
+        {
+            if (gso && ((*packet_out)->po_flags & PO_ENCRYPTED))
+                return_enc_data(engine, batch->conns[i], *packet_out);
             batch->conns[i]->cn_if->ci_packet_not_sent(batch->conns[i],
                                                                 *packet_out);
+        }
         while (--packet_out > end);
         if (!(batch->conns[i]->cn_flags & (LSCONN_COI_ACTIVE|LSCONN_EVANESCENT)))
             coi_reactivate(sb_ctx->conns_iter, batch->conns[i]);
@@ -2760,14 +2770,14 @@ send_packets_out (struct lsquic_engine *engine,
                   struct conns_tailq *ticked_conns,
                   struct conns_stailq *closed_conns)
 {
-    unsigned n, w, n_sent, n_batches_sent;
+    unsigned n, w, batch_count, n_sent, n_batches_sent, saved_batch_size;
     lsquic_packet_out_t *packet_out;
     struct lsquic_packet_out **packet;
     lsquic_conn_t *conn;
     struct out_batch *const batch = &engine->out_batch;
     struct iovec *iov, *packet_iov;
     struct conns_out_iter conns_iter;
-    int shrink, deadline_exceeded;
+    int shrink, deadline_exceeded, gso;
     const struct send_batch_ctx sb_ctx = {
         closed_conns,
         ticked_conns,
@@ -2775,7 +2785,15 @@ send_packets_out (struct lsquic_engine *engine,
         &engine->out_batch,
     };
 
-    coi_init(&conns_iter, engine);
+    gso = coi_init(&conns_iter, engine)
+        && engine->pub.enp_pmi->pmi_gso_on
+        && engine->pub.enp_pmi->pmi_gso_off
+        && engine->pub.enp_pmi->pmi_gso_on(engine->pub.enp_pmi_ctx);
+    if (gso)
+    {
+        saved_batch_size = engine->batch_size;
+        engine->batch_size = MIN(engine->max_batch_size, MAX_GSO_BATCH_SIZE);
+    }
     n_batches_sent = 0;
     n_sent = 0, n = 0;
     shrink = 0;
@@ -2805,6 +2823,8 @@ send_packets_out (struct lsquic_engine *engine,
             case ENCPA_NOMEM:
                 /* Send what we have and wait for a more opportune moment */
                 conn->cn_if->ci_packet_not_sent(conn, packet_out);
+                if (gso && n > 0)
+                    goto send_batch;
                 goto end_for;
             case ENCPA_BADCRYPT:
                 /* This is pretty bad: close connection immediately */
@@ -2877,13 +2897,15 @@ send_packets_out (struct lsquic_engine *engine,
         if (n == engine->batch_size
             || iov >= batch->iov + sizeof(batch->iov) / sizeof(batch->iov[0]))
         {
-            w = send_batch(engine, &sb_ctx, n);
+  send_batch:
+            batch_count = n;
+            w = send_batch(engine, &sb_ctx, n, gso);
             n = 0;
             iov = batch->iov;
             packet = batch->packets;
             ++n_batches_sent;
             n_sent += w;
-            if (w < engine->batch_size)
+            if (w < (gso ? batch_count : engine->batch_size))
             {
                 shrink = 1;
                 break;
@@ -2891,19 +2913,22 @@ send_packets_out (struct lsquic_engine *engine,
             deadline_exceeded = check_deadline(engine);
             if (deadline_exceeded)
                 break;
-            grow_batch_size(engine);
+            if (!gso)
+                grow_batch_size(engine);
         }
     }
   end_for:
 
     if (n > 0) {
-        w = send_batch(engine, &sb_ctx, n);
+        w = send_batch(engine, &sb_ctx, n, gso);
         n_sent += w;
         shrink = w < n;
         ++n_batches_sent;
     }
 
-    if (shrink)
+    if (gso)
+        engine->batch_size = saved_batch_size;
+    else if (shrink)
         shrink_batch_size(engine);
     else if (n_batches_sent > 1)
     {
@@ -2914,6 +2939,8 @@ send_packets_out (struct lsquic_engine *engine,
 
     coi_reheap(&conns_iter, engine);
 
+    if (gso)
+        engine->pub.enp_pmi->pmi_gso_off(engine->pub.enp_pmi_ctx);
     LSQ_DEBUG("%s: sent %u packet%.*s", __func__, n_sent, n_sent != 1, "s");
 }
 

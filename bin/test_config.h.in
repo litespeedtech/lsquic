@@ -20,4 +20,11 @@
 #define ECN_SUPPORTED 0
 #endif
 
+/* UDP_SEGMENT is a Linux facility. */
+#if __linux__
+#cmakedefine HAVE_GSO 1
+#else
+#define HAVE_GSO 0
+#endif
+
 #endif

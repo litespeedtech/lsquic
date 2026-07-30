@@ -2412,6 +2412,19 @@ Miscellaneous Types
         If allocated buffer is not going to be sent, return it to the
         caller using this function.
 
+    .. member:: int     (*pmi_gso_on)  (void *pmi_ctx)
+
+        Optional callback to enter GSO mode.  It is called only when the
+        engine can batch packets from one connection and has no stateless
+        replies pending.  Return true if subsequent packet allocations should
+        be assembled for a single ``UDP_SEGMENT`` send, or false to use normal
+        batching.
+
+    .. member:: void    (*pmi_gso_off) (void *pmi_ctx)
+
+        Exit GSO mode.  This callback must be specified when ``pmi_gso_on`` is
+        specified.
+
 .. type:: typedef void (*lsquic_cids_update_f)(void *ctx, void **peer_ctx, const lsquic_cid_t *cids, unsigned n_cids)
 
     :param ctx:

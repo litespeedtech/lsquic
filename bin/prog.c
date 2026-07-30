@@ -45,6 +45,8 @@ static SSL_CTX * get_ssl_ctx (void *, const struct sockaddr *);
 static void keylog_log_line (const SSL *, const char *);
 
 static const struct lsquic_packout_mem_if pmi = {
+    .pmi_gso_on   = pba_gso_on,
+    .pmi_gso_off  = pba_gso_off,
     .pmi_allocate = pba_allocate,
     .pmi_release  = pba_release,
     .pmi_return   = pba_release,
@@ -74,6 +76,9 @@ prog_init (struct prog *prog, unsigned flags,
     prog->prog_settings.es_ecn      = LSQUIC_DF_ECN;
 #else
     prog->prog_settings.es_ecn      = 0;
+#endif
+#if HAVE_GSO
+    prog->prog_use_gso              = 1;
 #endif
 
     prog->prog_api.ea_settings      = &prog->prog_settings;
@@ -187,6 +192,11 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "   -j          Use recvmmsg() to receive packets.\n"
     );
 #endif
+#if HAVE_GSO
+    fprintf(out,
+"   -O          Turn off UDP GSO packet sending.\n"
+    );
+#endif
 
     if (prog->prog_engine_flags & LSENG_SERVER)
         fprintf(out,
@@ -259,6 +269,11 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
 #if HAVE_RECVMMSG
     case 'j':
         prog->prog_use_recvmmsg = 1;
+        return 0;
+#endif
+#if HAVE_GSO
+    case 'O':
+        prog->prog_use_gso = 0;
         return 0;
 #endif
     case 'm':
@@ -742,7 +757,11 @@ prog_prep (struct prog *prog)
     }
 
     if (!prog->prog_use_stock_pmi)
-        pba_init(&prog->prog_pba, prog->prog_packout_max);
+        pba_init(&prog->prog_pba, prog->prog_packout_max
+#if HAVE_GSO
+            , prog->prog_use_gso
+#endif
+            );
     else
     {
         prog->prog_api.ea_pmi = NULL;
