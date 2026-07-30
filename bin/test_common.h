@@ -6,6 +6,8 @@
 #ifndef TEST_COMMON_H
 #define TEST_COMMON_H 1
 
+#include "test_config.h"
+
 #if __linux__
 #   include <net/if.h>  /* For IFNAMSIZ */
 #endif
@@ -104,15 +106,48 @@ set_engine_option (struct lsquic_engine_settings *,
 
 struct packout_buf;
 
+#if HAVE_GSO
+#define PBA_GSO_MAX_ALLOCS 128
+
+struct pba_gso_alloc
+{
+    unsigned short  pga_off;
+    unsigned short  pga_size;
+    signed char     pga_released;
+};
+#endif
+
 struct packout_buf_allocator
 {
     unsigned                    n_out,      /* Number of buffers outstanding */
                                 max;        /* Maximum outstanding.  Zero mean no limit */
     SLIST_HEAD(, packout_buf)   free_packout_bufs;
+#if HAVE_GSO
+    unsigned char              *gso_buf;
+    size_t                      gso_off;
+    size_t                      gso_segment_size;
+    unsigned                    n_gso_allocs;
+    unsigned                    n_gso_out;
+    signed char                 gso_allowed;
+    signed char                 gso_on;
+    signed char                 gso_valid;
+    signed char                 gso_smaller_seen;
+    struct pba_gso_alloc        gso_allocs[PBA_GSO_MAX_ALLOCS];
+#endif
 };
 
 void
-pba_init (struct packout_buf_allocator *, unsigned max);
+pba_init (struct packout_buf_allocator *, unsigned max
+#if HAVE_GSO
+    , int gso_allowed
+#endif
+);
+
+int
+pba_gso_on (void *);
+
+void
+pba_gso_off (void *);
 
 void *
 pba_allocate (void *packout_buf_allocator, void*, lsquic_conn_ctx_t *, unsigned short, char);

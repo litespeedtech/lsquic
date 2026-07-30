@@ -28,8 +28,16 @@
 #include <sys/stat.h>
 #include <sys/queue.h>
 #include <fcntl.h>
+#include <limits.h>
 
 #include "test_config.h"
+
+#if HAVE_GSO
+#include <linux/udp.h>
+#ifndef SOL_UDP
+#define SOL_UDP IPPROTO_UDP
+#endif
+#endif
 
 #if HAVE_REGEX
 #ifndef WIN32
@@ -1375,6 +1383,9 @@ enum ctl_what
 #if ECN_SUPPORTED
     CW_ECN          = 1 << 1,
 #endif
+#if HAVE_GSO
+    CW_SEG          = 1 << 2,
+#endif
 };
 
 static void
@@ -1385,7 +1396,11 @@ setup_control_msg (
                    WSAMSG
 #endif
                                  *msg, enum ctl_what cw,
-        const struct lsquic_out_spec *spec, unsigned char *buf, size_t bufsz)
+        const struct lsquic_out_spec *spec, unsigned char *buf, size_t bufsz
+#if HAVE_GSO
+        , unsigned short segment_size
+#endif
+        )
 {
     struct cmsghdr *cmsg;
     struct sockaddr_in *local_sa;
@@ -1489,6 +1504,17 @@ setup_control_msg (
             cw &= ~CW_ECN;
         }
 #endif
+#if HAVE_GSO
+        else if (cw & CW_SEG)
+        {
+            cmsg->cmsg_level = SOL_UDP;
+            cmsg->cmsg_type  = UDP_SEGMENT;
+            cmsg->cmsg_len   = CMSG_LEN(sizeof(segment_size));
+            memcpy(CMSG_DATA(cmsg), &segment_size, sizeof(segment_size));
+            ctl_len += CMSG_SPACE(sizeof(segment_size));
+            cw &= ~CW_SEG;
+        }
+#endif
         else
             assert(0);
     }
@@ -1590,7 +1616,11 @@ send_packets_using_sendmmsg (const struct lsquic_out_spec *specs,
         {
             prev_ancil_key = ancil_key;
             setup_control_msg(&mmsgs[i].msg_hdr, cw, &specs[i], ancil[i].buf,
-                                                    sizeof(ancil[i].buf));
+                                                    sizeof(ancil[i].buf)
+#if HAVE_GSO
+                                                    , 0
+#endif
+                                                    );
         }
         else
         {
@@ -1783,7 +1813,11 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
         else if (cw)
         {
             prev_ancil_key = ancil_key;
-            setup_control_msg(&msg, cw, &specs[n], ancil.buf, sizeof(ancil.buf));
+            setup_control_msg(&msg, cw, &specs[n], ancil.buf, sizeof(ancil.buf)
+#if HAVE_GSO
+                                                    , 0
+#endif
+                                                    );
         }
         else
         {
@@ -1849,12 +1883,147 @@ send_packets_one_by_one (const struct lsquic_out_spec *specs, unsigned count)
 }
 
 
+#if HAVE_GSO
+static int
+sockaddr_equal (const struct sockaddr *a, const struct sockaddr *b)
+{
+    if (a == b)
+        return 1;
+    else if (!a || !b || a->sa_family != b->sa_family)
+        return 0;
+    else if (a->sa_family == AF_INET)
+        return 0 == memcmp(a, b, sizeof(struct sockaddr_in));
+    else if (a->sa_family == AF_INET6)
+        return 0 == memcmp(a, b, sizeof(struct sockaddr_in6));
+    else
+        return 0 == memcmp(a, b, sizeof(struct sockaddr));
+}
+
+
+static int
+can_send_using_gso (const struct prog *prog,
+                    const struct lsquic_out_spec *specs, unsigned count)
+{
+    const struct packout_buf_allocator *const pba = &prog->prog_pba;
+    const struct lsquic_out_spec *const first = &specs[0];
+    const unsigned char *next;
+    size_t segment_size;
+    unsigned i;
+
+    if (!pba->gso_on || !pba->gso_valid || count < 2
+        || pba->n_gso_out != count || packet_out_limit())
+        return 0;
+
+    segment_size = first->iov[0].iov_len;
+    next = pba->gso_buf;
+    for (i = 0; i < count; ++i)
+    {
+        if (specs[i].iovlen != 1
+            || specs[i].iov[0].iov_base != next
+            || specs[i].iov[0].iov_len > segment_size
+            || (i + 1 < count && specs[i].iov[0].iov_len != segment_size)
+            || specs[i].peer_ctx != first->peer_ctx
+            || specs[i].conn_ctx != first->conn_ctx
+            || specs[i].ecn != first->ecn
+            || !sockaddr_equal(specs[i].local_sa, first->local_sa)
+            || !sockaddr_equal(specs[i].dest_sa, first->dest_sa)
+            )
+            return 0;
+        next += specs[i].iov[0].iov_len;
+    }
+
+    return next == pba->gso_buf + pba->gso_off
+        && segment_size == pba->gso_segment_size;
+}
+
+
+static int
+send_packets_using_gso (struct prog *prog,
+                    const struct lsquic_out_spec *specs, unsigned count)
+{
+    const struct lsquic_out_spec *const spec = &specs[0];
+    const struct service_port *const sport = spec->peer_ctx;
+    const struct packout_buf_allocator *const pba = &prog->prog_pba;
+    enum ctl_what cw;
+    int s, saved_errno;
+    struct msghdr msg;
+    struct iovec iov = { pba->gso_buf, pba->gso_off, };
+    union {
+        /* cmsg(3) recommends a union for proper alignment. */
+        unsigned char buf[
+            CMSG_SPACE(MAX(sizeof(struct in_pktinfo),
+                           sizeof(struct in6_pktinfo)))
+#if ECN_SUPPORTED
+            + CMSG_SPACE(sizeof(int))
+#endif
+            + CMSG_SPACE(sizeof(unsigned short))
+        ];
+        struct cmsghdr cmsg;
+    } ancil;
+
+    msg.msg_name       = (void *) spec->dest_sa;
+    msg.msg_namelen    = spec->dest_sa->sa_family == AF_INET
+                      ? sizeof(struct sockaddr_in)
+                      : sizeof(struct sockaddr_in6);
+    msg.msg_iov        = &iov;
+    msg.msg_iovlen     = 1;
+    msg.msg_flags      = 0;
+
+    cw = CW_SEG;
+    if ((sport->sp_flags & SPORT_SERVER) && spec->local_sa->sa_family)
+        cw |= CW_SENDADDR;
+#if ECN_SUPPORTED
+    if (prog->prog_api.ea_settings->es_ecn && spec->ecn)
+        cw |= CW_ECN;
+#endif
+    setup_control_msg(&msg, cw, spec, ancil.buf, sizeof(ancil.buf),
+                                        (unsigned short) pba->gso_segment_size);
+
+    s = sendmsg(sport->fd, &msg, 0);
+    if (s == (int) pba->gso_off)
+    {
+        LSQ_DEBUG("sent %u packets using UDP GSO", count);
+        return count;
+    }
+
+    if (s >= 0)
+        errno = EIO;
+    saved_errno = errno;
+    if (saved_errno == EINVAL || saved_errno == ENOPROTOOPT
+                                    || saved_errno == EOPNOTSUPP)
+    {
+        LSQ_NOTICE("UDP GSO is not supported by this socket; disabling it");
+        prog->prog_pba.gso_allowed = 0;
+        return -2;
+    }
+    prog_sport_cant_send(sport->sp_prog, sport->fd);
+    LSQ_WARN("GSO sendmsg failed: %s", strerror(saved_errno));
+    errno = saved_errno;
+    return -1;
+}
+
+
+#endif
+
+
 int
 sport_packets_out (void *ctx, const struct lsquic_out_spec *specs,
                    unsigned count)
 {
+#if HAVE_GSO || HAVE_SENDMMSG
+    struct prog *prog = ctx;
+#endif
+#if HAVE_GSO
+    if (can_send_using_gso(prog, specs, count))
+    {
+        int s;
+
+        s = send_packets_using_gso(prog, specs, count);
+        if (s != -2)
+            return s;
+    }
+#endif
 #if HAVE_SENDMMSG
-    const struct prog *prog = ctx;
     if (prog->prog_use_sendmmsg)
         return send_packets_using_sendmmsg(specs, count);
     else
@@ -2325,19 +2494,161 @@ struct packout_buf
 
 
 void
-pba_init (struct packout_buf_allocator *pba, unsigned max)
+pba_init (struct packout_buf_allocator *pba, unsigned max
+#if HAVE_GSO
+    , int gso_allowed
+#endif
+    )
 {
+    memset(pba, 0, sizeof(*pba));
     SLIST_INIT(&pba->free_packout_bufs);
     pba->max   = max;
-    pba->n_out = 0;
+#if HAVE_GSO
+    if (gso_allowed)
+    {
+        pba->gso_buf = malloc(USHRT_MAX);
+        if (pba->gso_buf)
+            pba->gso_allowed = 1;
+        else
+            LSQ_WARN("could not allocate UDP GSO buffer");
+    }
+#endif
 }
 
 
-void *
-pba_allocate (void *packout_buf_allocator, void *peer_ctx,
-                lsquic_conn_ctx_t *conn_ctx, unsigned short size, char is_ipv6)
+int
+pba_gso_on (void *ctx)
 {
-    struct packout_buf_allocator *const pba = packout_buf_allocator;
+#if HAVE_GSO
+    struct packout_buf_allocator *const pba = ctx;
+
+    if (pba->gso_allowed)
+    {
+        assert(pba->n_gso_out == 0);
+        pba->gso_off = 0;
+        pba->gso_segment_size = 0;
+        pba->n_gso_allocs = 0;
+        pba->gso_valid = 0;
+        pba->gso_smaller_seen = 0;
+        pba->gso_on = 1;
+    }
+    return pba->gso_allowed;
+#else
+    return 0;
+#endif
+}
+
+
+void
+pba_gso_off (void *ctx)
+{
+#if HAVE_GSO
+    struct packout_buf_allocator *const pba = ctx;
+
+    if (pba->n_gso_out != 0)
+        LSQ_WARN("exiting GSO mode with %u buffers outstanding",
+                                                        pba->n_gso_out);
+    pba->gso_on = 0;
+#endif
+}
+
+
+#if HAVE_GSO
+static void
+pba_revalidate_gso (struct packout_buf_allocator *pba)
+{
+    unsigned i;
+
+    pba->gso_valid = pba->n_gso_allocs > 0;
+    pba->gso_smaller_seen = 0;
+    if (pba->n_gso_allocs > 0)
+        pba->gso_segment_size = pba->gso_allocs[0].pga_size;
+    else
+        pba->gso_segment_size = 0;
+
+    for (i = 1; pba->gso_valid && i < pba->n_gso_allocs; ++i)
+    {
+        if (pba->gso_smaller_seen
+            || pba->gso_allocs[i].pga_size > pba->gso_segment_size)
+            pba->gso_valid = 0;
+        else if (pba->gso_allocs[i].pga_size < pba->gso_segment_size)
+            pba->gso_smaller_seen = 1;
+    }
+}
+
+
+static void *
+pba_allocate_gso (struct packout_buf_allocator *pba, unsigned short size)
+{
+    struct pba_gso_alloc *alloc;
+    unsigned char *buf;
+
+    if (pba->n_gso_allocs == PBA_GSO_MAX_ALLOCS
+        || size > USHRT_MAX - pba->gso_off
+        || (pba->max && pba->n_gso_out >= pba->max))
+        return NULL;
+
+    buf = pba->gso_buf + pba->gso_off;
+    alloc = &pba->gso_allocs[pba->n_gso_allocs++];
+    alloc->pga_off = pba->gso_off;
+    alloc->pga_size = size;
+    alloc->pga_released = 0;
+    pba->gso_off += size;
+    ++pba->n_gso_out;
+    pba_revalidate_gso(pba);
+    return buf;
+}
+
+
+static int
+pba_is_gso_buf (const struct packout_buf_allocator *pba, const void *obj)
+{
+    uintptr_t off;
+
+    if (!pba->gso_buf)
+        return 0;
+    off = (uintptr_t) obj - (uintptr_t) pba->gso_buf;
+    return off < USHRT_MAX;
+}
+
+
+static void
+pba_release_gso (struct packout_buf_allocator *pba, void *obj)
+{
+    unsigned i;
+
+    for (i = 0; i < pba->n_gso_allocs; ++i)
+        if (pba->gso_buf + pba->gso_allocs[i].pga_off == obj)
+            break;
+    assert(i < pba->n_gso_allocs);
+    assert(!pba->gso_allocs[i].pga_released);
+
+    pba->gso_allocs[i].pga_released = 1;
+    assert(pba->n_gso_out > 0);
+    --pba->n_gso_out;
+    while (pba->n_gso_allocs > 0
+        && pba->gso_allocs[pba->n_gso_allocs - 1].pga_released)
+    {
+        pba->gso_off =
+            pba->gso_allocs[pba->n_gso_allocs - 1].pga_off;
+        --pba->n_gso_allocs;
+    }
+
+    if (pba->n_gso_out == 0)
+    {
+        assert(pba->n_gso_allocs == 0);
+        pba->gso_off = 0;
+    }
+    pba_revalidate_gso(pba);
+}
+
+
+#endif
+
+
+static void *
+pba_allocate_std (struct packout_buf_allocator *pba, unsigned short size)
+{
     struct packout_buf *pb;
 
     if (pba->max && pba->n_out >= pba->max)
@@ -2370,10 +2681,33 @@ pba_allocate (void *packout_buf_allocator, void *peer_ctx,
 }
 
 
-void
-pba_release (void *packout_buf_allocator, void *peer_ctx, void *obj, char ipv6)
+void *
+pba_allocate (void *packout_buf_allocator, void *UNUSED_peer_ctx,
+              lsquic_conn_ctx_t *UNUSED_conn_ctx, unsigned short size,
+              char UNUSED_is_ipv6)
 {
     struct packout_buf_allocator *const pba = packout_buf_allocator;
+#if HAVE_GSO
+    if (pba->gso_on)
+        return pba_allocate_gso(pba, size);
+    else
+#endif
+        return pba_allocate_std(pba, size);
+}
+
+
+void
+pba_release (void *packout_buf_allocator, void *UNUSED_peer_ctx, void *obj,
+            char UNUSED_is_ipv6)
+{
+    struct packout_buf_allocator *const pba = packout_buf_allocator;
+#if HAVE_GSO
+    if (pba_is_gso_buf(pba, obj))
+    {
+        pba_release_gso(pba, obj);
+        return;
+    }
+#endif
     obj = (uintptr_t *) obj - 1;
 #if LSQUIC_USE_POOLS
     if (* (uintptr_t *) obj <= PBA_SIZE_THRESH)
@@ -2408,6 +2742,11 @@ pba_cleanup (struct packout_buf_allocator *pba)
     }
 
     LSQ_INFO("pba deinitialized, freed %u packout bufs", n);
+#endif
+#if HAVE_GSO
+    if (pba->n_gso_out)
+        LSQ_WARN("%u UDP GSO buffers outstanding at deinit", pba->n_gso_out);
+    free(pba->gso_buf);
 #endif
 }
 

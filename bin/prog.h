@@ -31,6 +31,9 @@ struct prog
 #if HAVE_RECVMMSG
     int                             prog_use_recvmmsg;
 #endif
+#if HAVE_GSO
+    int                             prog_use_gso;
+#endif
     int                             prog_use_stock_pmi;
     struct event_base              *prog_eb;
     struct event                   *prog_timer,
@@ -65,6 +68,11 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #else
 #   define RECVMMSG_FLAG ""
 #endif
+#if HAVE_GSO
+#   define GSO_FLAG "O"
+#else
+#   define GSO_FLAG ""
+#endif
 
 #if LSQUIC_DONTFRAG_SUPPORTED
 #   define IP_DONTFRAG_FLAG "D"
@@ -73,7 +81,7 @@ prog_init (struct prog *, unsigned lsquic_engine_flags, struct sport_head *,
 #endif
 
 #define PROG_OPTS "i:km:c:y:L:l:o:H:s:S:Y:z:G:WA:" RECVMMSG_FLAG SENDMMSG_FLAG \
-                                                            IP_DONTFRAG_FLAG
+                                                   IP_DONTFRAG_FLAG GSO_FLAG
 
 /* Returns:
  *  0   Applied
