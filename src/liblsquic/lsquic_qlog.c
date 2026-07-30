@@ -6,7 +6,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #ifdef WIN32
-#include <Ws2tcpip.h>
+#include <ws2tcpip.h>
 #else
 #include <sys/types.h>
 #include <sys/socket.h>

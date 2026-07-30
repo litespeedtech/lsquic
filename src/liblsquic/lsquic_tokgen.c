@@ -12,7 +12,7 @@
 #include <sys/socket.h>
 #else
 #include "vc_compat.h"
-#include <Ws2tcpip.h>
+#include <ws2tcpip.h>
 #endif
 
 #include <openssl/aead.h>
