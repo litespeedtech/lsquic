@@ -123,7 +123,7 @@ SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4706")	# assignment within conditional 
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4090")	# different 'const' qualifier (TODO: debug ls-sfparser.c)
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4305")	# truncation from double to float
 SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} /wd4201") # Allow nameless structs
-SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS -I${CMAKE_CURRENT_SOURCE_DIR}/wincompat")
+SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -W4 -WX -Zi -D_CRT_SECURE_NO_WARNINGS")
 IF(LSQUIC_SHARED_LIB)
     SET(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DLSQUIC_SHARED_LIB")
 ENDIF()
@@ -138,6 +138,13 @@ ELSE()
 ENDIF()
 
 ENDIF() #MSVC
+
+# WIN32_LEAN_AND_MEAN implies NOCRYPT, which keeps <windows.h> from including
+# <wincrypt.h>, whose X509_NAME macro collides with the TLS library type.
+IF (WIN32)
+    INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}/wincompat)
+    ADD_DEFINITIONS(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+ENDIF()
 
 find_package(Perl)
 IF(NOT PERL_FOUND)
@@ -386,10 +393,10 @@ IF (LSQUIC_BIN)
 ENDIF()
 
 
-IF (NOT MSVC)
-    LIST(APPEND LIBS pthread m)
-ELSE()
+IF (WIN32)
     LIST(APPEND LIBS ws2_32)
+ELSE()
+    LIST(APPEND LIBS pthread m)
 ENDIF()
 
 IF (LSQUIC_BIN)

@@ -6,6 +6,13 @@
 #ifndef LSQUIC_UTIL_H
 #define LSQUIC_UTIL_H 1
 
+#if !defined(NDEBUG) && defined(__GNUC__) && !defined(_WIN32) \
+                                            && !defined(WIN32)
+#define LSQUIC_TEST_WEAK __attribute__((weak))
+#else
+#define LSQUIC_TEST_WEAK
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,7 +56,7 @@ lsquic_sockaddr2str (const struct sockaddr *addr, char *buf, size_t sz);
 
 #define SA2STR(sa_, buf_) (lsquic_sockaddr2str(sa_, buf_, sizeof(buf_)), buf_)
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
 char *
 lsquic_strndup(const char *s, size_t n);
 #define strndup lsquic_strndup
