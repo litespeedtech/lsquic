@@ -1,3 +1,10 @@
+2026-07-31
+    - 4.9.3
+    - [FIX] Cancel failed QPACK header transactions
+    - Update to ls-qpack 2.7.0 to allow all header cancellations
+    - [FIX] MinGW compatibility (#670)
+    - [FIX] Preserve HTTP header errors in QPACK decode handler
+
 2026-07-26
     - 4.9.2
     - [FIX, SPEC] Require 3 uni streams for HTTP/3 connections

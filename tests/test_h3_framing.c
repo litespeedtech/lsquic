@@ -285,6 +285,8 @@ struct test_dec_hset
     unsigned              finalized;
 };
 
+static int s_test_hset_header_error;
+
 static int s_ack_written;
 
 static void
@@ -497,7 +499,11 @@ test_process_hset_header (void *hset_p, struct lsxpack_header *xhdr)
     struct test_dec_hset *const hset = hset_p;
 
     if (xhdr)
+    {
+        if (s_test_hset_header_error)
+            return 1;
         ++hset->count;
+    }
     else
         hset->finalized = 1;
 
@@ -2183,7 +2189,9 @@ expect_header_block_result (struct lsxpack_header *hdrs, unsigned count,
     if (expect_abort)
     {
         assert(lsquic_stream_readable(recv_stream));
-        assert(s_abort_error.count >= 1);
+        assert(s_abort_error.count == 1);
+        assert(s_abort_error.is_app == 1);
+        assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
 
         hset = lsquic_stream_get_hset(recv_stream);
         assert(hset == NULL);
@@ -2372,6 +2380,68 @@ test_content_length_overflow_is_rejected (void)
 }
 
 
+static void
+test_header_processing_error_stays_message_error (void)
+{
+    struct test_objs sender, receiver;
+    struct lsquic_stream *send_stream, *recv_stream;
+    struct stream_frame *frame;
+    size_t nw;
+    int fin, s;
+    unsigned char buf[0x1000];
+    struct lsxpack_header req_hdrs_arr[] = {
+        { XHDR(":method", "GET") },
+        { XHDR(":scheme", "https") },
+        { XHDR(":path", "/") },
+        { XHDR(":authority", "example.com") },
+    };
+    struct lsquic_http_headers req_hdrs = {
+        .count = sizeof(req_hdrs_arr) / sizeof(req_hdrs_arr[0]),
+        .headers = req_hdrs_arr,
+    };
+
+    init_test_ctl_settings(&g_ctl_settings);
+    g_ctl_settings.tcs_schedule_stream_packets_immediately = 1;
+
+    stream_ctor_flags |= SCF_IETF;
+
+    init_test_objs(&sender, 0x1000, 0x2000, 1252);
+    sender.ctor_flags |= SCF_HTTP|SCF_IETF;
+    send_stream = new_stream(&sender, 0, 0x1000);
+    s = lsquic_stream_send_headers(send_stream, &req_hdrs, 0);
+    assert(0 == s);
+    lsquic_stream_flush(send_stream);
+
+    nw = read_from_scheduled_packets(&sender.send_ctl, 0, buf, sizeof(buf),
+                                                                    0, &fin, 0);
+    assert(nw > 0);
+
+    init_test_objs(&receiver, 0x1000, 0x2000, 1252);
+    receiver.ctor_flags |= SCF_HTTP|SCF_IETF;
+    receiver.lconn.cn_flags |= LSCONN_SERVER;
+    use_test_hset_if(&receiver);
+    recv_stream = new_stream(&receiver, 0, 0x1000);
+
+    s_test_hset_header_error = 1;
+    frame = new_frame_in_ext(&receiver, 0, nw, fin, buf);
+    s = lsquic_stream_frame_in(recv_stream, frame);
+    assert(0 == s);
+
+    assert(lsquic_stream_readable(recv_stream));
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.is_app == 1);
+    assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+    s_test_hset_header_error = 0;
+
+    lsquic_stream_destroy(recv_stream);
+    deinit_test_objs(&receiver);
+    lsquic_stream_destroy(send_stream);
+    deinit_test_objs(&sender);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
 int
 main (int argc, char **argv)
 {
@@ -2457,6 +2527,7 @@ main (int argc, char **argv)
             test_data_waits_for_hset_claim();
             test_content_length_max_value_ignores_stale_errno();
             test_content_length_overflow_is_rejected();
+            test_header_processing_error_stays_message_error();
             break;
         default:
             fprintf(stderr, "Unknown test subset: %d\n", test_subset);
@@ -2485,6 +2556,7 @@ main (int argc, char **argv)
         test_content_length_overrun_blocks_payload_delivery();
         test_content_length_max_value_ignores_stale_errno();
         test_content_length_overflow_is_rejected();
+        test_header_processing_error_stays_message_error();
     }
 
     return 0;
