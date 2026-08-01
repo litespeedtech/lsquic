@@ -578,6 +578,69 @@ test_app_limited (void)
 }
 
 
+static void
+test_limited_causes_overlap (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packets[6];
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+
+    packets[1] = sampler_test_send_packet(&stest, 1, true);
+    assert(packets[1]->po_bwp_state->bwps_send_state.is_app_limited);
+    assert(packets[1]->po_bwp_state->bwps_send_state.is_application_limited);
+    assert(!packets[1]->po_bwp_state->bwps_send_state.is_pacing_limited);
+    stest.time += ms(1);
+    packets[2] = sampler_test_send_packet(&stest, 2, true);
+    sample = sampler_test_ack_packet(&stest, packets[1]);
+    assert(sample);
+    lsquic_malo_put(sample);
+
+    lsquic_bw_sampler_pacing_limited(&stest.sampler);
+    stest.time += ms(1);
+    packets[3] = sampler_test_send_packet(&stest, 3, true);
+    assert(packets[3]->po_bwp_state->bwps_send_state.is_app_limited);
+    assert(!packets[3]->po_bwp_state->bwps_send_state.is_application_limited);
+    assert(packets[3]->po_bwp_state->bwps_send_state.is_pacing_limited);
+
+    lsquic_bw_sampler_app_limited(&stest.sampler);
+    stest.time += ms(1);
+    packets[4] = sampler_test_send_packet(&stest, 4, true);
+    assert(packets[4]->po_bwp_state->bwps_send_state.is_app_limited);
+    assert(packets[4]->po_bwp_state->bwps_send_state.is_application_limited);
+    assert(packets[4]->po_bwp_state->bwps_send_state.is_pacing_limited);
+
+    sample = sampler_test_ack_packet(&stest, packets[3]);
+    assert(sample);
+    assert(sample->is_app_limited);
+    assert(!sample->is_application_limited);
+    assert(sample->is_pacing_limited);
+    lsquic_malo_put(sample);
+    stest.time += ms(1);
+    packets[5] = sampler_test_send_packet(&stest, 5, true);
+    assert(packets[5]->po_bwp_state->bwps_send_state.is_app_limited);
+    assert(packets[5]->po_bwp_state->bwps_send_state.is_application_limited);
+    assert(!packets[5]->po_bwp_state->bwps_send_state.is_pacing_limited);
+
+    sample = sampler_test_ack_packet(&stest, packets[4]);
+    assert(sample);
+    assert(sample->is_app_limited);
+    assert(sample->is_application_limited);
+    assert(sample->is_pacing_limited);
+    lsquic_malo_put(sample);
+    stest.time += ms(1);
+    sample = sampler_test_ack_packet(&stest, packets[5]);
+    assert(sample);
+    assert(sample->is_app_limited);
+    assert(sample->is_application_limited);
+    assert(!sample->is_pacing_limited);
+    lsquic_malo_put(sample);
+
+    sampler_test_cleanup(&stest);
+}
+
+
 // Test the samples taken at the first flight of packets sent.
 static void
 test_first_round_trip (void)
@@ -638,6 +701,7 @@ main (void)
     test_compressed_ack();
     test_reordered_ack();
     test_app_limited();
+    test_limited_causes_overlap();
     test_first_round_trip();
 
     return 0;

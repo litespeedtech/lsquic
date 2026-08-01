@@ -47,13 +47,15 @@ struct bw_sampler
     lsquic_time_t       bws_bw_calc_time;
     uint64_t            bws_last_bw;        /* Last calculated bandwidth */
     lsquic_packno_t     bws_last_sent_packno;
-    lsquic_packno_t     bws_end_of_app_limited_phase;
+    lsquic_packno_t     bws_end_of_app_limited_phase,
+                        bws_end_of_pacing_limited_phase;
     struct malo        *bws_malo;   /* For struct osp_state objects */
     enum quic_ft_bit    bws_retx_frames;
     enum {
         BWS_CONN_ABORTED    = 1 << 0,
         BWS_WARNED          = 1 << 1,
         BWS_APP_LIMITED     = 1 << 2,
+        BWS_PACING_LIMITED  = 1 << 3,
     }                   bws_flags;
 };
 
@@ -63,6 +65,8 @@ struct bw_sample
     struct bandwidth            bandwidth;
     lsquic_time_t               rtt;
     int                         is_app_limited;
+    int                         is_application_limited;
+    int                         is_pacing_limited;
 };
 
 int
@@ -85,6 +89,9 @@ void
 lsquic_bw_sampler_app_limited (struct bw_sampler *);
 
 void
+lsquic_bw_sampler_pacing_limited (struct bw_sampler *);
+
+void
 lsquic_bw_sampler_cleanup (struct bw_sampler *);
 
 uint64_t
@@ -104,6 +111,8 @@ struct bwps_send_state
                 total_bytes_acked,
                 total_bytes_lost;
     int         is_app_limited;
+    int         is_application_limited;
+    int         is_pacing_limited;
 };
 
 struct bwp_state    /* BWP State stands for Bandwidth Packet State */

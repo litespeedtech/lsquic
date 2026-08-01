@@ -48,6 +48,8 @@ while (<TMPFILE>)
     if (
         s/^(mini|full|ietf_full|ietf_mini|evanescent)_conn_ci_/ci_/
      or s/^(nocopy|hash|error)_di_/di_/
+     or s/^(fixed_rate|unpaced|burst)_pmi_/pmi_/
+     or s/^(grow|noop|shape|shrink|pause)_ppi_/ppi_/
      or s/^(gquic)_(be|Q046|Q050)_/pf_/
      or s/^ietf_v[0-9][0-9]*_/pf_/
      or s/^stock_shi_/shi_/

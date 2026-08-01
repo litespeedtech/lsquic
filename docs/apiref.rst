@@ -527,13 +527,37 @@ settings structure:
 
     .. member:: int             es_pace_packets
 
-       If set to true, packet pacing is implemented per connection.
+       If set to true, packet pacing is implemented per connection. If set to
+       false, packets are not shaped by a pacing mechanism, but a rate set
+       using :member:`LSQCP_MAX_PACING_RATE` is still enforced.
 
        The default value is :func:`LSQUIC_DF_PACE_PACKETS`.
 
-       When pacing is enabled, you can also set per-connection maximum pacing
-       rates using :func:`lsquic_conn_set_param()` with
+       You can independently set per-connection maximum rates using
+       :func:`lsquic_conn_set_param()` with
        :member:`LSQCP_MAX_PACING_RATE`. See `Connection Parameters`_.
+
+    .. member:: enum lsquic_pacing_policy es_pacing_policy
+
+       Selects a per-connection policy that compares regular paced sending
+       with an unpaced probe and may choose another pacing mechanism.  The
+       engine default is inactive when
+       :member:`lsquic_engine_settings.es_pace_packets` is false. An
+       individual connection can override it using
+       :member:`LSQCP_PACING_POLICY`.
+
+       Supported values are members of :type:`lsquic_pacing_policy`.
+
+       The default value is :macro:`LSQUIC_DF_PACING_POLICY`.
+
+    .. member:: unsigned        es_pacing_retest_period
+
+       Number of seconds between periodic retests of settled fixed-rate and
+       burst-limited adaptive pacing decisions. Zero disables periodic
+       retests. The deadline is checked only while the connection is already
+       active, so it does not wake an idle connection.
+
+       The default value is :macro:`LSQUIC_DF_PACING_RETEST_PERIOD`.
 
     .. member:: unsigned        es_clock_granularity
 
@@ -857,8 +881,8 @@ settings structure:
     .. member:: int             es_optimistic_nat
 
        If set to true, changes in peer port are assumed to be due to a
-       benign NAT rebinding and path characteristics -- MTU, RTT, and
-       CC state -- are not reset.
+       benign NAT rebinding and path characteristics -- MTU, RTT, CC, and
+       pacing-policy state -- are not reset.
 
        Default value is :macro:`LSQUIC_DF_OPTIMISTIC_NAT`
 
@@ -1051,6 +1075,40 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_PACE_PACKETS
 
     By default, packets are paced
+
+.. macro:: LSQUIC_DF_PACING_POLICY
+
+    By default, pacing policy selection is disabled.
+
+.. macro:: LSQUIC_DF_PACING_RETEST_PERIOD
+
+    By default, settled adaptive pacing decisions are retested after 60
+    seconds of connection activity.
+
+.. type:: enum lsquic_pacing_policy
+
+    .. member:: LSQUIC_PACING_POLICY_OFF
+
+        Keep the pacing mechanism selected by ``es_pace_packets``.
+
+    .. member:: LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG
+
+        Probe unpaced sending and retain it while loss, RTT, and socket
+        backpressure remain acceptable.
+
+    .. member:: LSQUIC_PACING_POLICY_PROBE_BURST_SHRINK
+
+        Probe unpaced sending and use burst-limited scheduling whose burst cap
+        responds to socket backpressure.
+
+    .. member:: LSQUIC_PACING_POLICY_PROBE_BURST_ACK_SHAPE
+
+        Probe unpaced sending and size burst-limited scheduling from observed
+        ACK batch shape.
+
+    .. member:: N_LSQUIC_PACING_POLICIES
+
+        Number of pacing policies.  This is not a selectable policy.
 
 .. macro:: LSQUIC_DF_CLOCK_GRANULARITY
 
@@ -2171,13 +2229,15 @@ available through engine settings.
 
         **Default:** 0 (no limit, controlled by congestion control)
 
-        When set to a non-zero value, limits the connection's send rate regardless
-        of what the congestion control algorithm calculates. This allows applications
-        to enforce bandwidth limits on individual connections.
+        When set to a non-zero value, limits the connection's long-term average
+        send rate regardless of what the congestion control algorithm calculates.
+        This allows applications to enforce bandwidth limits on individual
+        connections. The limiter may permit a bounded burst when it is first
+        enabled or when sending resumes after an idle period.
 
-        **Important:** This parameter only takes effect when packet pacing is enabled
-        via :member:`lsquic_engine_settings.es_pace_packets`. If pacing is disabled,
-        setting this parameter has no effect.
+        This limit is independent of
+        :member:`lsquic_engine_settings.es_pace_packets`. When packet pacing is
+        disabled, the limiter throttles the otherwise unpaced packet stream.
 
         Setting this value to 0 removes the limit, allowing the congestion control
         algorithm to determine the send rate.
@@ -2200,6 +2260,36 @@ available through engine settings.
         call.
 
         **Note:** :func:`lsquic_conn_get_info()` enables the sampler if needed.
+
+    .. member:: LSQCP_PACING_POLICY
+
+        Select the pacing policy for this connection.
+
+        **Type:** :type:`lsquic_pacing_policy`
+
+        **Default:** inherited from
+        :member:`lsquic_engine_settings.es_pacing_policy` when
+        :member:`lsquic_engine_settings.es_pace_packets` is true, and
+        :member:`LSQUIC_PACING_POLICY_OFF` otherwise.
+
+        Setting a non-``OFF`` policy starts a new fixed-rate baseline and
+        enables adaptive pacing for this connection even when packet pacing
+        is disabled in the engine settings. Setting the policy to ``OFF``
+        restores the mechanism selected by ``es_pace_packets``. Any maximum
+        pacing rate remains active.
+
+    .. c:enumerator:: LSQCP_PACING_RETEST_PERIOD
+
+        Set the periodic adaptive-pacing retest interval in seconds. Zero
+        disables periodic retests. Changing a nonzero value restarts the
+        interval for a settled fixed-rate or burst-limited decision. It does
+        not interrupt a baseline or probe already in progress, and it does
+        not wake an idle connection.
+
+        **Type:** ``unsigned``
+
+        **Default:** inherited from
+        :member:`lsquic_engine_settings.es_pacing_retest_period`
 
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
@@ -2241,9 +2331,22 @@ available through engine settings.
         lsquic_conn_set_param(conn, LSQCP_ENABLE_BW_SAMPLER,
                               &on, sizeof(on));
 
-    **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
-    via :member:`lsquic_engine_settings.es_pace_packets` for this parameter
-    to have any effect.
+    **Example - Selecting a pacing policy for this connection:**
+
+    ::
+
+        enum lsquic_pacing_policy policy =
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG;
+        lsquic_conn_set_param(conn, LSQCP_PACING_POLICY,
+                              &policy, sizeof(policy));
+
+    **Example - Retesting an adaptive pacing decision every two minutes:**
+
+    ::
+
+        unsigned retest_period = 120;
+        lsquic_conn_set_param(conn, LSQCP_PACING_RETEST_PERIOD,
+                              &retest_period, sizeof(retest_period));
 
 .. function:: int lsquic_conn_get_param (lsquic_conn_t *conn, enum lsquic_conn_param param, void *value, size_t *value_len)
 

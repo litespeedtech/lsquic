@@ -4,8 +4,6 @@ cmake_minimum_required(VERSION 3.0...3.23)
 
 PROJECT(lsquic C CXX)
 
-SET(LIBS "-lstdc++")
-
 SET(LSQUIC_LIBSSL "" CACHE STRING "Specify SSL library used, can be BORINGSSL or OPENSSL")
 OPTION(LSQUIC_FIU "Use Fault Injection in Userspace (FIU)" OFF)
 OPTION(LSQUIC_BIN "Compile example binaries that use the library" ON)
@@ -14,6 +12,21 @@ OPTION(LSQUIC_SHARED_LIB "Compile as shared librarry" OFF)
 OPTION(LSQUIC_DEVEL "Compile in development mode" OFF)
 OPTION(LSQUIC_WEBTRANSPORT "Enable WebTransport support" OFF)
 OPTION(LSQUIC_ASAN "Enable AddressSanitizer in Debug builds" ON)
+OPTION(LSQUIC_STATIC_CXX_RUNTIME "Link GCC C++ runtime statically" OFF)
+
+IF(LSQUIC_STATIC_CXX_RUNTIME)
+    EXECUTE_PROCESS(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libstdc++.a
+        OUTPUT_VARIABLE LSQUIC_LIBSTDCXX_STATIC
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    IF(NOT EXISTS "${LSQUIC_LIBSTDCXX_STATIC}")
+        MESSAGE(FATAL_ERROR "Could not find static libstdc++")
+    ENDIF()
+    SET(LIBS "${LSQUIC_LIBSTDCXX_STATIC}")
+    SET(CMAKE_EXE_LINKER_FLAGS
+        "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc")
+ELSE()
+    SET(LIBS "-lstdc++")
+ENDIF()
 
 INCLUDE(GNUInstallDirs)
 INCLUDE(CheckSymbolExists)

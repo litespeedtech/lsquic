@@ -370,6 +370,8 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_rw_once         = LSQUIC_DF_RW_ONCE;
     settings->es_proc_time_thresh= LSQUIC_DF_PROC_TIME_THRESH;
     settings->es_pace_packets    = LSQUIC_DF_PACE_PACKETS;
+    settings->es_pacing_policy   = LSQUIC_DF_PACING_POLICY;
+    settings->es_pacing_retest_period = LSQUIC_DF_PACING_RETEST_PERIOD;
     settings->es_clock_granularity = LSQUIC_DF_CLOCK_GRANULARITY;
     settings->es_max_inchoate    = LSQUIC_DF_MAX_INCHOATE;
     settings->es_send_prst       = LSQUIC_DF_SEND_PRST;
@@ -474,6 +476,14 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
                 "algorithm value %u", settings->es_cc_algo);
+        return -1;
+    }
+
+    if ((unsigned) settings->es_pacing_policy >= N_LSQUIC_PACING_POLICIES)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "Invalid pacing policy value %d",
+                                      (int) settings->es_pacing_policy);
         return -1;
     }
 

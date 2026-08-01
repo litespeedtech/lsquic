@@ -26,6 +26,9 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
+#include "lsquic_pacer_burst.h"
+#include "lsquic_pacing_policy.h"
+#include "lsquic_send_pacer.h"
 #include "lsquic_senhist.h"
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
@@ -52,8 +55,9 @@ struct bw_lifecycle_test
 
 
 static void
-init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
-           unsigned cc_rtt_thresh, int enable_bw_sampler)
+init_test_pacing (struct bw_lifecycle_test *t, unsigned cc_algo,
+        unsigned cc_rtt_thresh, int enable_bw_sampler, int pace_packets,
+        unsigned pacing_policy)
 {
     /* Build a minimal send_ctl environment with configurable CC policy. */
     memset(t, 0, sizeof(*t));
@@ -66,6 +70,8 @@ init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
     t->enpub.enp_settings.es_cc_algo = cc_algo;
     t->enpub.enp_settings.es_cc_rtt_thresh = cc_rtt_thresh;
     t->enpub.enp_settings.es_enable_bw_sampler = !!enable_bw_sampler;
+    t->enpub.enp_settings.es_pace_packets = !!pace_packets;
+    t->enpub.enp_settings.es_pacing_policy = pacing_policy;
     lsquic_mm_init(&t->enpub.enp_mm);
     lsquic_alarmset_init(&t->alset, 0);
     TAILQ_INIT(&t->conn_pub.sending_streams);
@@ -83,6 +89,24 @@ init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
     assert(t->conn_pub.packet_out_malo);
     lsquic_send_ctl_init(&t->send_ctl, &t->alset, &t->enpub, &t->ver_neg,
                                                      &t->conn_pub, 0);
+}
+
+
+static void
+init_test_policy (struct bw_lifecycle_test *t, unsigned cc_algo,
+        unsigned cc_rtt_thresh, int enable_bw_sampler, unsigned pacing_policy)
+{
+    init_test_pacing(t, cc_algo, cc_rtt_thresh, enable_bw_sampler, 1,
+                                                            pacing_policy);
+}
+
+
+static void
+init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
+           unsigned cc_rtt_thresh, int enable_bw_sampler)
+{
+    init_test_policy(t, cc_algo, cc_rtt_thresh, enable_bw_sampler,
+                                            LSQUIC_PACING_POLICY_OFF);
 }
 
 
@@ -316,6 +340,154 @@ test_engine_setting_keeps_sampler_across_adaptive_to_cubic (void)
 }
 
 
+static void
+test_pacing_policy_owns_sampler (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test_policy(&t, 1, 100000, 0,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG);
+    assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    assert(!lsquic_send_ctl_bw_sampler_enabled(&t.send_ctl));
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    assert(lsquic_send_pacer_needs_bw_sampler(&t.send_ctl.sc_spacer));
+    cleanup_test(&t);
+}
+
+
+static void
+test_runtime_pacing_policy (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test_pacing(&t, 1, 100000, 0, 0,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG);
+    assert(lsquic_send_ctl_pacing_policy(&t.send_ctl)
+                                            == LSQUIC_PACING_POLICY_OFF);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer) == PM_UNPACED);
+    assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+
+    assert(-1 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                            N_LSQUIC_PACING_POLICIES));
+    assert(-1 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                    (enum lsquic_pacing_policy) -1));
+    assert(lsquic_send_ctl_pacing_policy(&t.send_ctl)
+                                            == LSQUIC_PACING_POLICY_OFF);
+
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(lsquic_send_ctl_pacing_policy(&t.send_ctl)
+                    == LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_BASELINE);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer)
+                                                        == PM_FIXED_RATE);
+    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+
+    t.send_ctl.sc_spacer.spa_policy.pp_state = PPS_PROBE;
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_PROBE);
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                LSQUIC_PACING_POLICY_OFF));
+    assert(lsquic_send_ctl_pacing_policy(&t.send_ctl)
+                                            == LSQUIC_PACING_POLICY_OFF);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer) == PM_UNPACED);
+    assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+    cleanup_test(&t);
+
+    init_test_pacing(&t, 1, 100000, 0, 1, LSQUIC_PACING_POLICY_OFF);
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                LSQUIC_PACING_POLICY_OFF));
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer)
+                                                        == PM_FIXED_RATE);
+    cleanup_test(&t);
+}
+
+
+static void
+test_policy_sampler_overlaps (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test_pacing(&t, 1, 100000, 1, 0, LSQUIC_PACING_POLICY_OFF);
+    assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
+    assert(lsquic_send_ctl_bw_sampler_enabled(&t.send_ctl));
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                LSQUIC_PACING_POLICY_OFF));
+    assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    cleanup_test(&t);
+
+    init_test_pacing(&t, 2, 100000, 0, 0, LSQUIC_PACING_POLICY_OFF);
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
+    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                                LSQUIC_PACING_POLICY_OFF));
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    cleanup_test(&t);
+}
+
+
+static void
+test_unpaced_rate_cap (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test_pacing(&t, 1, 100000, 0, 0,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer) == PM_UNPACED);
+    assert(!lsquic_pacing_policy_enabled(&t.send_ctl.sc_spacer.spa_policy));
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, 1000);
+    lsquic_send_ctl_set_max_pacing_rate(&t.send_ctl, 1000);
+    assert(t.send_ctl.sc_max_pacing_rate == 1000);
+    assert(t.send_ctl.sc_spacer.spa_rate_limit.prl_rate == 1000);
+    assert(lsquic_send_ctl_can_send(&t.send_ctl));
+    lsquic_send_pacer_packet_scheduled(&t.send_ctl.sc_spacer, 0, 0, 1,
+                                    t.path.np_pack_size, NULL, NULL);
+    assert(lsquic_send_ctl_pacer_blocked(&t.send_ctl));
+    assert(lsquic_send_pacer_cap_delayed(&t.send_ctl.sc_spacer));
+    assert(lsquic_send_ctl_next_pacer_time(&t.send_ctl) == 1371000);
+
+    lsquic_send_ctl_set_max_pacing_rate(&t.send_ctl, 0);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer) == PM_UNPACED);
+    assert(lsquic_send_ctl_can_send(&t.send_ctl));
+    cleanup_test(&t);
+}
+
+
+static void
+test_pacing_retest_period (void)
+{
+    struct bw_lifecycle_test t;
+
+    init_test_pacing(&t, 1, 100000, 0, 0, LSQUIC_PACING_POLICY_OFF);
+    assert(lsquic_send_ctl_pacing_retest_period(&t.send_ctl)
+                                    == LSQUIC_DF_PACING_RETEST_PERIOD);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_OFF);
+    lsquic_send_ctl_set_pacing_retest_period(&t.send_ctl, 0);
+    assert(lsquic_send_ctl_pacing_retest_period(&t.send_ctl) == 0);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_OFF);
+    lsquic_send_ctl_set_pacing_retest_period(&t.send_ctl, 123);
+    assert(lsquic_send_ctl_pacing_retest_period(&t.send_ctl) == 123);
+
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    assert(lsquic_send_ctl_pacing_retest_period(&t.send_ctl) == 123);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_BASELINE);
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -327,5 +499,10 @@ main (void)
     test_reinit_after_drop_via_get_bw();
     test_engine_setting_enables_sampler();
     test_engine_setting_keeps_sampler_across_adaptive_to_cubic();
+    test_pacing_policy_owns_sampler();
+    test_runtime_pacing_policy();
+    test_policy_sampler_overlaps();
+    test_unpaced_rate_cap();
+    test_pacing_retest_period();
     return EXIT_SUCCESS;
 }

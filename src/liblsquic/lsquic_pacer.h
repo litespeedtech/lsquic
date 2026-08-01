@@ -6,15 +6,11 @@ struct lsquic_conn;
 
 struct pacer
 {
-    const struct lsquic_conn
-                   *pa_conn;             /* Used for logging */
     lsquic_time_t   pa_next_sched;
     lsquic_time_t   pa_last_delayed;
     lsquic_time_t   pa_now;
 
     /* All tick times are in microseconds */
-
-    unsigned        pa_clock_granularity;
 
     unsigned        pa_burst_tokens;
     unsigned        pa_n_scheduled;     /* Within single tick */
@@ -29,49 +25,6 @@ struct pacer
 #endif
 };
 
-
-typedef lsquic_time_t (*tx_time_f)(void *ctx);
-
-void
-lsquic_pacer_init (struct pacer *, const struct lsquic_conn *,
-                                            unsigned clock_granularity);
-
-void
-lsquic_pacer_cleanup (struct pacer *);
-
-void
-lsquic_pacer_tick_in (struct pacer *, lsquic_time_t);
-
-void
-lsquic_pacer_tick_out (struct pacer *);
-
-int
-lsquic_pacer_can_schedule (struct pacer *, unsigned n_in_flight);
-
-void
-lsquic_pacer_packet_scheduled (struct pacer *pacer, unsigned n_in_flight,
-                        int in_recovery, tx_time_f tx_time, void *tx_ctx);
-
-void
-lsquic_pacer_loss_event (struct pacer *);
-
-void
-lsquic_pacer_disable_burst_tokens (struct pacer *);
-
-static inline int
-lsquic_pacer_delayed (const struct pacer *pacer)
-{
-    return pacer->pa_flags & PA_LAST_SCHED_DELAYED;
-}
-
-static inline lsquic_time_t 
-lsquic_pacer_next_sched (struct pacer *pacer)
-{
-    return +pacer->pa_next_sched;
-}
-
-int
-lsquic_pacer_can_schedule_probe (const struct pacer *,
-                                unsigned n_in_flight, lsquic_time_t tx_time);
+extern const struct pacer_mechanism_if lsquic_pacer_fixed_rate_funcs;
 
 #endif

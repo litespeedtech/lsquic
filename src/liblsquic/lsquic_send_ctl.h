@@ -33,7 +33,6 @@ struct buf_packet_q
 enum send_ctl_flags {
     SC_TCID0        = (1 << 0),
     SC_NSTP         = (1 << 2),
-    SC_PACE         = (1 << 3),
     SC_SCHED_TICK   = (1 << 4),
     SC_BUFFER_STREAM= (1 << 5),
     SC_WAS_QUIET    = (1 << 6),
@@ -56,6 +55,7 @@ enum send_ctl_flags {
     SC_ROUGH_RTT    =  1 << 22,
     SC_BW_SAMPLER_INIT = 1 << 23, /* bw_sampler is initialized */
     SC_KEEP_BW_SAMPLER = 1 << 24, /* keep bw sampler for conn lifetime */
+    SC_PACING_LIMITED  = 1 << 25,
 #if LSQUIC_DEVEL
     SC_DYN_PTHRESH  =  1 << 31u,    /* dynamic packet threshold enabled */
 #endif
@@ -98,7 +98,7 @@ typedef struct lsquic_send_ctl {
     struct buf_packet_q             sc_buffered_packets[BPT_OTHER_PRIO + 1];
     const struct ver_neg           *sc_ver_neg;
     struct lsquic_conn_public      *sc_conn_pub;
-    struct pacer                    sc_pacer;
+    struct send_pacer               sc_spacer;
     struct bw_sampler               sc_bw_sampler;
     lsquic_packno_t                 sc_cur_packno;
     lsquic_packno_t                 sc_largest_sent_at_cutback;
@@ -318,32 +318,14 @@ lsquic_send_ctl_n_stop_waiting_reset (lsquic_send_ctl_t *ctl)
 void
 lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
 
-static inline void
-lsquic_send_ctl_tick_in (lsquic_send_ctl_t *ctl, lsquic_time_t now)
-{
-    if ((ctl)->sc_flags & SC_PACE)
-    {
-        (ctl)->sc_flags |= SC_SCHED_TICK;
-        lsquic_pacer_tick_in(&(ctl)->sc_pacer, now);
-    }
-    (ctl)->sc_flags &= ~SC_APP_LIMITED;
-}
+void
+lsquic_send_ctl_tick_in (lsquic_send_ctl_t *, lsquic_time_t);
 
-static inline void
-lsquic_send_ctl_tick_out (lsquic_send_ctl_t *ctl)
-{
-    if ((ctl)->sc_flags & SC_PACE)
-        lsquic_pacer_tick_out(&(ctl)->sc_pacer);
-}
+void
+lsquic_send_ctl_tick_out (lsquic_send_ctl_t *);
 
-static inline lsquic_time_t
-lsquic_send_ctl_next_pacer_time (lsquic_send_ctl_t *ctl)
-{
-    return ((ctl)->sc_flags & SC_PACE)
-            && lsquic_pacer_delayed(&(ctl)->sc_pacer)
-            ? lsquic_pacer_next_sched(&(ctl)->sc_pacer)
-            : 0;
-}
+lsquic_time_t
+lsquic_send_ctl_next_pacer_time (lsquic_send_ctl_t *);
 
 enum packno_bits
 lsquic_send_ctl_packno_bits (struct lsquic_send_ctl *, enum packnum_space);
@@ -508,7 +490,7 @@ lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *);
 
 struct send_ctl_state
 {
-    struct pacer        pacer;
+    struct spacer_state spacer_state;
     struct ack_state    ack_state;
     unsigned            buf_counts[BPT_OTHER_PRIO + 1];
 };
@@ -534,5 +516,21 @@ lsquic_send_ctl_bw_sampler_enabled (const struct lsquic_send_ctl *);
 
 uint64_t
 lsquic_send_ctl_get_bw (struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_set_max_pacing_rate (struct lsquic_send_ctl *, uint64_t);
+
+int
+lsquic_send_ctl_set_pacing_policy (struct lsquic_send_ctl *,
+                                    enum lsquic_pacing_policy);
+
+enum lsquic_pacing_policy
+lsquic_send_ctl_pacing_policy (const struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_set_pacing_retest_period (struct lsquic_send_ctl *, unsigned);
+
+unsigned
+lsquic_send_ctl_pacing_retest_period (const struct lsquic_send_ctl *);
 
 #endif

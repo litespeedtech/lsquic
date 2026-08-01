@@ -2122,6 +2122,12 @@ set_engine_option (struct lsquic_engine_settings *settings,
 
         break;
     case 13:
+        if (0 == strncmp(name, "pacing_policy", 13))
+        {
+            settings->es_pacing_policy =
+                                (enum lsquic_pacing_policy) atoi(val);
+            return 0;
+        }
         if (0 == strncmp(name, "support_tcid0", 13))
         {
             settings->es_support_tcid0 = atoi(val);
