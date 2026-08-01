@@ -377,7 +377,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     size_t enc_sz, hea_sz, total_enc_sz;
     ssize_t nw;
     enum lsqpack_enc_status st;
-    int i, s, write_to_stream;
+    int i, s, write_to_stream, header_started;
     enum lsqpack_enc_flags enc_flags;
     enum qwh_status retval;
 #ifndef WIN32
@@ -389,6 +389,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         return QWH_ERR;
 #endif
 
+    header_started = 0;
     if (qeh->qeh_exp_rec)
     {
         const lsquic_time_t now = lsquic_time_now();
@@ -407,6 +408,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         retval = QWH_ERR;
         goto end;
     }
+    header_started = 1;
     LSQ_DEBUG("begin encoding headers for stream %"PRIu64, stream_id);
 
     if (qeh->qeh_enc_sm_out)
@@ -489,6 +491,7 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
         retval = QWH_ERR;
         goto end;
     }
+    header_started = 0;
 
     if ((size_t) nw < *prefix_sz)
     {
@@ -520,6 +523,15 @@ qeh_write_headers (struct qpack_enc_hdl *qeh, lsquic_stream_id_t stream_id,
     }
 
   end:
+    if (header_started)
+    {
+        s = lsqpack_enc_cancel_header(&qeh->qeh_encoder);
+        if (s != 0)
+        {
+            LSQ_WARN("could not cancel header");
+            retval = QWH_ERR;
+        }
+    }
 #ifdef WIN32
     _freea(enc_buf);
 #endif

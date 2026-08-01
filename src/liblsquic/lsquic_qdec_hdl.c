@@ -363,6 +363,17 @@ qdh_in_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 }
 
 
+#define QDH_ABORT_CONN_ONCE(qdh_, ...) do                                   \
+{                                                                           \
+    if (!((qdh_)->qdh_flags & QDH_CONN_ABORTED))                            \
+    {                                                                       \
+        (qdh_)->qdh_flags |= QDH_CONN_ABORTED;                              \
+        (qdh_)->qdh_conn->cn_if->ci_abort_error((qdh_)->qdh_conn,           \
+                                                            __VA_ARGS__);   \
+    }                                                                       \
+} while (0)
+
+
 static size_t
 qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
                                                                     int fin)
@@ -374,7 +385,7 @@ qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
     if (fin)
     {
         LSQ_INFO("encoder stream is closed");
-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+        QDH_ABORT_CONN_ONCE(qdh, 1,
             HEC_CLOSED_CRITICAL_STREAM, "Peer closed QPACK encoder stream");
         goto end;
     }
@@ -384,7 +395,7 @@ qdh_read_encoder_stream (void *ctx, const unsigned char *buf, size_t sz,
     {
         LSQ_INFO("error reading encoder stream");
         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+        QDH_ABORT_CONN_ONCE(qdh, 1,
             HEC_QPACK_ENCODER_STREAM_ERROR, "Error interpreting QPACK encoder "
             "stream; offset %"PRIu64", line %d", qerr->off, qerr->line);
         goto end;
@@ -417,7 +428,7 @@ qdh_in_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *ctx)
         else
         {
             LSQ_INFO("encoder stream closed by peer: abort connection");
-            qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+            QDH_ABORT_CONN_ONCE(qdh, 1,
                 HEC_CLOSED_CRITICAL_STREAM, "encoder stream closed");
         }
         lsquic_stream_wantread(stream, 0);
@@ -571,9 +582,8 @@ qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
 
     retval = qdh->qdh_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
     if (0 != retval)
-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
-            HEC_MESSAGE_ERROR,
-            "error processing headers");
+        QDH_ABORT_CONN_ONCE(qdh, 1, HEC_MESSAGE_ERROR,
+                                            "error processing headers");
 
     return retval;
 }
@@ -593,7 +603,7 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
                                                             xhdr->val_len);
         if (u->ctx.cont_len.has < 0)
         {
-            qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+            QDH_ABORT_CONN_ONCE(qdh, 1,
                 HEC_MESSAGE_ERROR, "invalid or ambiguous content-length");
             return 1;
         }
@@ -719,7 +729,7 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     {
         qdh_maybe_destroy_hblock_ctx(qdh, stream);
         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+        QDH_ABORT_CONN_ONCE(qdh, 1,
             HEC_QPACK_DECOMPRESSION_FAILED, "QPACK decompression error; "
             "stream %"PRIu64", offset %"PRIu64", line %d", qerr->stream_id,
             qerr->off, qerr->line);

@@ -22,7 +22,7 @@ struct qpack_dec_hdl
     struct lsquic_conn      *qdh_conn;
     enum {
         QDH_INITIALIZED     = 1 << 0,
-        QDH_PUSH_PROMISE    = 1 << 1,
+        QDH_CONN_ABORTED    = 1 << 1,
         QDH_SAVE_UA         = 1 << 2,
         QDH_SERVER          = 1 << 3,
     }                        qdh_flags;
