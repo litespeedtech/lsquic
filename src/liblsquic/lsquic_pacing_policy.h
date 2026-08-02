@@ -27,16 +27,21 @@ struct pacing_policy_action
     unsigned                        ppa_burst_max;
 };
 
+
+enum pacing_policy_state
+{
+    PPS_OFF,
+    PPS_BASELINE,
+    PPS_PROBE,
+    PPS_DECIDED_FIXED_RATE,
+    PPS_DECIDED_BURST_LIMITED,
+    PPS_DECIDED_UNPACED,
+};
+
+
 struct pacing_policy
 {
-    enum {
-        PPS_OFF,
-        PPS_BASELINE,
-        PPS_PROBE,
-        PPS_DECIDED_FIXED_RATE,
-        PPS_DECIDED_BURST_LIMITED,
-        PPS_DECIDED_UNPACED,
-    }                               pp_state;
+    enum pacing_policy_state        pp_state;
     uint64_t                        pp_start_acked,
                                     pp_start_lost,
                                     pp_baseline_bw,

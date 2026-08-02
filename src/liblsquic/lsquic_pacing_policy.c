@@ -155,7 +155,7 @@ static const enum pacer_hist_event policy_state_events[] =
 
 
 static void
-policy_set_state (struct pacing_policy *policy, unsigned state)
+policy_set_state (struct pacing_policy *policy, enum pacing_policy_state state)
 {
     if (policy->pp_state != state)
     {
