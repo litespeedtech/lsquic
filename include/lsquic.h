@@ -375,6 +375,29 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** By default, packets are paced */
 #define LSQUIC_DF_PACE_PACKETS      1
 
+enum lsquic_pacing_policy
+{
+    /** Do not adapt the configured pacing mechanism. */
+    LSQUIC_PACING_POLICY_OFF,
+
+    /** Probe unpaced sending and retain it with a safety watchdog. */
+    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG,
+
+    /** Probe unpaced sending and select a backpressure-sized burst mechanism. */
+    LSQUIC_PACING_POLICY_PROBE_BURST_SHRINK,
+
+    /** Probe unpaced sending and size bursts from observed ACK batches. */
+    LSQUIC_PACING_POLICY_PROBE_BURST_ACK_SHAPE,
+
+    N_LSQUIC_PACING_POLICIES,
+};
+
+/** By default, pacing mechanism selection is not changed automatically. */
+#define LSQUIC_DF_PACING_POLICY LSQUIC_PACING_POLICY_OFF
+
+/** By default, settled adaptive pacing decisions are retested every minute. */
+#define LSQUIC_DF_PACING_RETEST_PERIOD 60
+
 /** Default clock granularity is 1000 microseconds */
 #define LSQUIC_DF_CLOCK_GRANULARITY      1000
 
@@ -721,11 +744,33 @@ struct lsquic_engine_settings {
     unsigned        es_proc_time_thresh;
 
     /**
-     * If set to true, packet pacing is implemented per connection.
+     * If set to true, packet pacing is implemented per connection.  If set
+     * to false, packets are not shaped by a pacing mechanism, but a rate set
+     * using LSQCP_MAX_PACING_RATE is still enforced.
      *
      * The default value is @ref LSQUIC_DF_PACE_PACKETS.
      */
     int             es_pace_packets;
+
+    /**
+     * Select a per-connection pacing policy.  Policies begin with regular
+     * pacing, measure an unpaced probe, and may select another mechanism.
+     * This engine default is inactive when es_pace_packets is false.  An
+     * individual connection can override it using LSQCP_PACING_POLICY.
+     *
+     * The default value is @ref LSQUIC_DF_PACING_POLICY.
+     */
+    enum lsquic_pacing_policy
+                    es_pacing_policy;
+
+    /**
+     * Number of seconds between adaptive pacing retests.  Zero disables
+     * periodic retests.  Retests occur only while the connection is active;
+     * this setting does not create a connection wake-up timer.
+     *
+     * The default value is @ref LSQUIC_DF_PACING_RETEST_PERIOD.
+     */
+    unsigned        es_pacing_retest_period;
 
     /**
      * Clock granularity information is used by the pacer.  The value
@@ -1055,8 +1100,8 @@ struct lsquic_engine_settings {
 
     /**
      * If set to true, changes in peer port are assumed to be due to a
-     * benign NAT rebinding and path characteristics -- MTU, RTT, and
-     * CC state -- are not reset.
+     * benign NAT rebinding and path characteristics -- MTU, RTT, CC, and
+     * pacing-policy state -- are not reset.
      *
      * Default value is @ref LSQUIC_DF_OPTIMISTIC_NAT.
      */
@@ -2180,11 +2225,13 @@ enum lsquic_conn_param
      * Type: uint64_t
      * Default: 0 (no limit, controlled by congestion control)
      *
-     * When set to non-zero, limits the connection's send rate regardless
-     * of what the congestion control algorithm calculates.
+     * When set to non-zero, limits the connection's long-term average send
+     * rate regardless of what the congestion control algorithm calculates.
+     * A bounded burst may be sent when the limit is first enabled or after
+     * the connection has been idle.
      *
-     * Important: This parameter only works when packet pacing is enabled.
-     * Pacing must be turned on via es_pace_packets in lsquic_engine_settings.
+     * This limit is independent of the packet-pacing mechanism selected by
+     * es_pace_packets in lsquic_engine_settings.
      */
     LSQCP_MAX_PACING_RATE = 1,
     /**
@@ -2203,6 +2250,27 @@ enum lsquic_conn_param
      * lsquic_conn_get_info() enables sampling if needed for functionality.
      */
     LSQCP_ENABLE_BW_SAMPLER = 2,
+    /**
+     * Select the pacing policy for this connection.
+     * Type: enum lsquic_pacing_policy
+     * Default: inherited from es_pacing_policy when es_pace_packets is true;
+     *          LSQUIC_PACING_POLICY_OFF otherwise.
+     *
+     * Setting a non-OFF policy starts a new fixed-rate baseline and enables
+     * adaptive pacing for this connection even when es_pace_packets is false.
+     * Setting the policy to OFF restores the mechanism selected by
+     * es_pace_packets.  The maximum pacing rate, if any, remains active.
+     */
+    LSQCP_PACING_POLICY = 3,
+    /**
+     * Set the period between adaptive pacing retests, in seconds.  Zero
+     * disables periodic retests.  The timer is checked when the connection
+     * is already active and does not wake an idle connection.
+     *
+     * Type: unsigned
+     * Default: inherited from es_pacing_retest_period.
+     */
+    LSQCP_PACING_RETEST_PERIOD = 4,
 };
 
 struct lsquic_conn_info

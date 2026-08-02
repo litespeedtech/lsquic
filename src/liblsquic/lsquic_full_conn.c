@@ -39,6 +39,10 @@
 #include "lsquic_rtt.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
+#include "lsquic_pacer.h"
+#include "lsquic_pacer_burst.h"
+#include "lsquic_pacing_policy.h"
+#include "lsquic_send_pacer.h"
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
@@ -4366,6 +4370,8 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_pacing_policy pacing_policy;
+    unsigned pacing_retest_period;
     int enable_bw_sampler;
 
     switch (param)
@@ -4374,8 +4380,7 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         if (value_len != sizeof(uint64_t))
             return -1;
         memcpy(&rate, value, sizeof(rate));
-        conn->fc_send_ctl.sc_max_pacing_rate = rate;
-        LSQ_INFO("max pacing rate set to %"PRIu64" bps", rate);
+        lsquic_send_ctl_set_max_pacing_rate(&conn->fc_send_ctl, rate);
         return 0;
     case LSQCP_ENABLE_BW_SAMPLER:
         if (value_len != sizeof(int))
@@ -4384,6 +4389,21 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         lsquic_send_ctl_set_bw_sampler(&conn->fc_send_ctl, enable_bw_sampler);
         LSQ_INFO("bw sampler %s",
                  enable_bw_sampler ? "enabled" : "disabled");
+        return 0;
+    case LSQCP_PACING_POLICY:
+        if (value_len != sizeof(pacing_policy))
+            return -1;
+        memcpy(&pacing_policy, value, sizeof(pacing_policy));
+        if (0 != lsquic_send_ctl_set_pacing_policy(&conn->fc_send_ctl,
+                                                        pacing_policy))
+            return -1;
+        return 0;
+    case LSQCP_PACING_RETEST_PERIOD:
+        if (value_len != sizeof(pacing_retest_period))
+            return -1;
+        memcpy(&pacing_retest_period, value, sizeof(pacing_retest_period));
+        lsquic_send_ctl_set_pacing_retest_period(&conn->fc_send_ctl,
+                                                pacing_retest_period);
         return 0;
     default:
         return -1;
@@ -4397,6 +4417,8 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
 {
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
+    enum lsquic_pacing_policy pacing_policy;
+    unsigned pacing_retest_period;
     int enable_bw_sampler;
 
     switch (param)
@@ -4415,6 +4437,21 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
                 lsquic_send_ctl_bw_sampler_enabled(&conn->fc_send_ctl);
         memcpy(value, &enable_bw_sampler, sizeof(enable_bw_sampler));
         *value_len = sizeof(enable_bw_sampler);
+        return 0;
+    case LSQCP_PACING_POLICY:
+        if (*value_len < sizeof(pacing_policy))
+            return -1;
+        pacing_policy = lsquic_send_ctl_pacing_policy(&conn->fc_send_ctl);
+        memcpy(value, &pacing_policy, sizeof(pacing_policy));
+        *value_len = sizeof(pacing_policy);
+        return 0;
+    case LSQCP_PACING_RETEST_PERIOD:
+        if (*value_len < sizeof(pacing_retest_period))
+            return -1;
+        pacing_retest_period = lsquic_send_ctl_pacing_retest_period(
+                                                    &conn->fc_send_ctl);
+        memcpy(value, &pacing_retest_period, sizeof(pacing_retest_period));
+        *value_len = sizeof(pacing_retest_period);
         return 0;
     default:
         return -1;

@@ -55,6 +55,16 @@ lsquic_bw_sampler_app_limited (struct bw_sampler *sampler)
 
 
 void
+lsquic_bw_sampler_pacing_limited (struct bw_sampler *sampler)
+{
+    sampler->bws_flags |= BWS_PACING_LIMITED;
+    sampler->bws_end_of_pacing_limited_phase = sampler->bws_last_sent_packno;
+    LSQ_DEBUG("pacing limited, end of limited phase is %"PRIu64,
+                                sampler->bws_end_of_pacing_limited_phase);
+}
+
+
+void
 lsquic_bw_sampler_cleanup (struct bw_sampler *sampler)
 {
     if (sampler->bws_conn)
@@ -141,7 +151,10 @@ lsquic_bw_sampler_packet_sent (struct bw_sampler *sampler,
         .total_bytes_sent   = sampler->bws_total_sent,
         .total_bytes_acked  = sampler->bws_total_acked,
         .total_bytes_lost   = sampler->bws_total_lost,
-        .is_app_limited     = !!(sampler->bws_flags & BWS_APP_LIMITED),
+        .is_app_limited     = !!(sampler->bws_flags
+                                & (BWS_APP_LIMITED|BWS_PACING_LIMITED)),
+        .is_application_limited = !!(sampler->bws_flags & BWS_APP_LIMITED),
+        .is_pacing_limited  = !!(sampler->bws_flags & BWS_PACING_LIMITED),
     };
     state->bwps_sent_at_last_ack = sampler->bws_last_acked_total_sent;
     state->bwps_last_ack_sent_time = sampler->bws_last_acked_sent_time;
@@ -178,7 +191,7 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
     struct bandwidth send_rate, ack_rate;
     lsquic_time_t rtt;
     unsigned short sent_sz;
-    int is_app_limited;
+    int is_app_limited, is_application_limited, is_pacing_limited;
 
     if (!packet_out->po_bwp_state)
         return 0;
@@ -207,6 +220,14 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
         sampler->bws_flags &= ~BWS_APP_LIMITED;
         LSQ_DEBUG("exit app-limited phase due to packet %"PRIu64" being acked",
                                                         packet_out->po_packno);
+    }
+    if ((sampler->bws_flags & BWS_PACING_LIMITED)
+            && packet_out->po_packno
+                        > sampler->bws_end_of_pacing_limited_phase)
+    {
+        sampler->bws_flags &= ~BWS_PACING_LIMITED;
+        LSQ_DEBUG("exit pacing-limited phase due to packet %"PRIu64
+            " being acked", packet_out->po_packno);
     }
 
     // There might have been no packets acknowledged at the moment when the
@@ -247,6 +268,9 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
     // especially on low bandwidth connections.
     rtt = ack_time - packet_out->po_sent;
     is_app_limited = state->bwps_send_state.is_app_limited;
+    is_application_limited =
+                            state->bwps_send_state.is_application_limited;
+    is_pacing_limited = state->bwps_send_state.is_pacing_limited;
 
     /* After this point, we switch `sample' to point to `state' and don't
      * reference `state' anymore.
@@ -259,6 +283,8 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
         sample->bandwidth = ack_rate;
     sample->rtt = rtt;
     sample->is_app_limited = is_app_limited;
+    sample->is_application_limited = is_application_limited;
+    sample->is_pacing_limited = is_pacing_limited;
 
     LSQ_DEBUG("packet %"PRIu64" acked, bandwidth: %"PRIu64" bps",
                         packet_out->po_packno, BW_VALUE(&sample->bandwidth));

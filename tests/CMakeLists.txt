@@ -54,6 +54,7 @@ SET(TESTS
     mini_conn_delay
     packet_out
     packet_resize
+    pacing_policy
     packno_len
     parse_packet_in
     purga
@@ -121,6 +122,17 @@ FOREACH(TEST_NAME ${TESTS})
     ENDIF()
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
 ENDFOREACH()
+
+ADD_EXECUTABLE(test_pacing_history_disabled test_pacing_history_disabled.c
+                            ../src/liblsquic/lsquic_pacer_hist.c
+                            ../src/liblsquic/lsquic_send_pacer.c)
+TARGET_COMPILE_DEFINITIONS(test_pacing_history_disabled PRIVATE
+                            LSQUIC_KEEP_PACING_HISTORY=0)
+TARGET_LINK_LIBRARIES(test_pacing_history_disabled ${LIBS} ${LIB_FLAGS})
+IF(MSVC)
+    TARGET_LINK_LIBRARIES(test_pacing_history_disabled ${GETOPT_LIB})
+ENDIF()
+ADD_TEST(pacing_history_disabled test_pacing_history_disabled)
 
 ADD_EXECUTABLE(test_stream test_stream.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(test_stream ${LIBS} ${LIB_FLAGS})

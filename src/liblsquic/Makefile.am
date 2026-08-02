@@ -53,6 +53,10 @@ liblsquic_a_SOURCES = \
 	lsquic_minmax.c \
 	lsquic_mm.c \
 	lsquic_pacer.c \
+	lsquic_pacer_burst.c \
+	lsquic_pacer_hist.c \
+	lsquic_pacer_unpaced.c \
+	lsquic_pacing_policy.c \
 	lsquic_packet_common.c \
 	lsquic_packet_gquic.c \
 	lsquic_packet_in.c \
@@ -74,6 +78,7 @@ liblsquic_a_SOURCES = \
 	lsquic_rechist.c \
 	lsquic_rtt.c \
 	lsquic_send_ctl.c \
+	lsquic_send_pacer.c \
 	lsquic_senhist.c \
 	lsquic_set.c \
 	lsquic_sfcw.c \

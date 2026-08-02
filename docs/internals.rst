@@ -2628,6 +2628,12 @@ not taken into account.  This is by design: see
 `Section 8.2.2 of the Transport I-D
 <https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-8.2.2>`__.
 
+When a new current path causes RTT and congestion-control state to be reset,
+the pacing mechanism is reinitialized and an enabled adaptive pacing policy
+restarts its fixed-rate baseline.  Peer-port-only NAT rebinding preserves
+pacing state when ``es_optimistic_nat`` preserves the other path properties.
+Path discovery and validation alone do not restart pacing.
+
 Stream Priority Iterators
 =========================
 
@@ -2874,6 +2880,63 @@ The send controller services two modules:
 
 -  Stream. The stream uses the stream controller as the source of
    outgoing packets to write STREAM frames to.
+
+Pacing and Rate Limits
+======================
+
+The send pacer composes two independent decisions.  The selected pacing
+mechanism controls packet timing or burst shape, while the optional
+maximum-pacing-rate limiter controls the long-term average byte rate.  When
+``es_pace_packets`` is false, the unpaced mechanism is selected, but the rate
+limiter remains available.  A packet may be scheduled only when both
+components allow it.  If both components provide wake-up times, the later time
+is used.
+
+The rate limiter is a token bucket charged by estimated packet wire size.  Its
+credit is bounded by both elapsed sending time and a fixed number of path-MTU
+byte equivalents, with at least one path MTU available even at very low rates.
+Changing pacing mechanisms does not reset this credit or any accumulated debt;
+changing the configured cap does.  Send-pacer snapshots include both the
+mechanism and limiter state.
+
+On a committed path switch, the limiter updates its path-MTU-dependent
+capacity without granting new credit or forgiving debt.  A materially new
+path also resets the mechanism and restarts an enabled policy from its
+fixed-rate baseline.  Optimistic peer-port-only NAT rebinding retains the
+existing pacing decision, matching the RTT and congestion-control behavior.
+
+The engine settings choose each connection's initial mechanism and policy.
+``LSQCP_PACING_POLICY`` may change the policy at runtime.  A non-off policy
+begins a new fixed-rate baseline, while disabling the policy restores the
+mechanism selected by ``es_pace_packets``.  Policy changes preserve rate-limit
+credit and debt.  An active policy retains the bandwidth sampler independently
+of application requests and congestion-controller requirements.
+
+Settled fixed-rate and burst-limited policy decisions share a periodic
+reevaluation scheduler.  Its connection-level period defaults from
+``es_pacing_retest_period`` and may be changed using
+``LSQCP_PACING_RETEST_PERIOD``; zero disables it.  The deadline is checked on
+an ordinary send-controller tick and never installs an engine alarm, so an
+idle connection is not awakened just to retest pacing.  Expiry makes the
+policy eligible to collect another fixed-rate baseline once the existing
+full-tilt gates are satisfied.  A fixed-rate retest preserves the current
+pacer state, while a burst-limited retest changes to fixed-rate for baseline
+measurement.  Rate-limiter credit and debt are preserved in either case.
+
+When a periodic retest selects the same result, the next interval doubles up
+to ten minutes (or the configured base period, if longer).  A changed result,
+a watchdog demotion, or a genuine policy, cap, or material path change resets
+the backoff.  The unpaced decision retains its separate safety watchdog and
+does not use the periodic deadline.  If every eligible sample in both a
+baseline and its probe was limited by the maximum pacing rate, a rejected
+probe is considered cap-dominated and further periodic retries are suppressed
+until relevant configuration or path state changes.
+
+Application starvation and stalls caused by the pacing-rate cap are recorded
+as separate bandwidth-sampler limitations.  Congestion control treats either
+cause as sender-limited.  The adaptive pacing policy only excludes samples
+limited by application starvation, so samples shaped by the independent rate
+limiter remain usable for baseline and probe decisions.
 
 Packet Life Cycle
 =================

@@ -24,6 +24,9 @@
 #include "lsquic_engine_public.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
+#include "lsquic_pacer_burst.h"
+#include "lsquic_pacing_policy.h"
+#include "lsquic_send_pacer.h"
 #include "lsquic_senhist.h"
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
@@ -310,6 +313,30 @@ test_repackno_chops_regen_bytes (void)
 }
 
 
+static void
+test_repath_pacing_policy (void)
+{
+    struct network_path new_path;
+    struct accounting_test t;
+
+    init_test(&t);
+    assert(0 == lsquic_send_ctl_set_pacing_policy(&t.send_ctl,
+                    LSQUIC_PACING_POLICY_PROBE_UNPACED_WATCHDOG));
+    t.send_ctl.sc_spacer.spa_policy.pp_state = PPS_PROBE;
+
+    new_path = t.path;
+    new_path.np_path_id = 1;
+    lsquic_send_ctl_repath(&t.send_ctl, &t.path, &new_path, 1);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_PROBE);
+
+    lsquic_send_ctl_repath(&t.send_ctl, &t.path, &new_path, 0);
+    assert(t.send_ctl.sc_spacer.spa_policy.pp_state == PPS_BASELINE);
+    assert(lsquic_send_pacer_mechanism(&t.send_ctl.sc_spacer)
+                                                        == PM_FIXED_RATE);
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -319,5 +346,6 @@ main (void)
     test_incr_pack_sz();
     test_cidlen_change_adjusts_cached_sizes();
     test_repackno_chops_regen_bytes();
+    test_repath_pacing_policy();
     return 0;
 }

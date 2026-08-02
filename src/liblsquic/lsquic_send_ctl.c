@@ -27,6 +27,9 @@
 #include "lsquic_rtt.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
+#include "lsquic_pacer_burst.h"
+#include "lsquic_pacing_policy.h"
+#include "lsquic_send_pacer.h"
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
@@ -145,7 +148,8 @@ static int
 send_ctl_need_bw_sampler (const struct lsquic_send_ctl *ctl)
 {
     return (ctl->sc_flags & SC_KEEP_BW_SAMPLER)
-                                || ctl->sc_ci != &lsquic_cong_cubic_if;
+        || lsquic_send_pacer_needs_bw_sampler(&ctl->sc_spacer)
+        || ctl->sc_ci != &lsquic_cong_cubic_if;
 }
 
 
@@ -456,6 +460,8 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
           struct lsquic_engine_public *enpub, const struct ver_neg *ver_neg,
           struct lsquic_conn_public *conn_pub, enum send_ctl_flags flags)
 {
+    enum pacing_mechanism pacing_mechanism;
+    int is_cubic;
     unsigned i;
     memset(ctl, 0, sizeof(*ctl));
     TAILQ_INIT(&ctl->sc_scheduled_packets);
@@ -471,8 +477,6 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     assert(!(flags & ~(SC_IETF|SC_NSTP|SC_ECN)));
     ctl->sc_flags = flags;
     send_ctl_pick_initial_packno(ctl);
-    if (enpub->enp_settings.es_pace_packets)
-        ctl->sc_flags |= SC_PACE;
     if (flags & SC_ECN)
         ctl->sc_ecn = ECN_ECT0;
     else
@@ -508,14 +512,24 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
         break;
     }
+    if (enpub->enp_settings.es_pace_packets)
+        pacing_mechanism = PM_FIXED_RATE;
+    else
+        pacing_mechanism = PM_UNPACED;
+    is_cubic = ctl->sc_ci == &lsquic_cong_cubic_if;
+    lsquic_send_pacer_init(&ctl->sc_spacer, conn_pub->lconn,
+        pacing_mechanism,
+        enpub->enp_settings.es_pace_packets
+                            ? enpub->enp_settings.es_pacing_policy
+                            : LSQUIC_PACING_POLICY_OFF,
+        is_cubic,
+        enpub->enp_settings.es_clock_granularity,
+        conn_pub->path->np_pack_size,
+        enpub->enp_settings.es_pacing_retest_period);
     if (enpub->enp_settings.es_enable_bw_sampler)
         ctl->sc_flags |= SC_KEEP_BW_SAMPLER;
     send_ctl_apply_bw_sampler_policy(ctl);
     ctl->sc_ci->cci_init(CGP(ctl), conn_pub);
-    if (ctl->sc_flags & SC_PACE)
-        lsquic_pacer_init(&ctl->sc_pacer, conn_pub->lconn,
-        /* TODO: conn_pub has a pointer to enpub: drop third argument */
-                                    enpub->enp_settings.es_clock_granularity);
     for (i = 0; i < sizeof(ctl->sc_buffered_packets) /
                                 sizeof(ctl->sc_buffered_packets[0]); ++i)
         TAILQ_INIT(&ctl->sc_buffered_packets[i].bpq_packets);
@@ -660,23 +674,9 @@ send_ctl_transfer_time (void *ctx)
     in_recovery = send_ctl_in_recovery(ctl);
     pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), in_recovery);
 
-    if (ctl->sc_max_pacing_rate && pacing_rate > ctl->sc_max_pacing_rate)
-    {
-        LSQ_DEBUG("pacing rate limited: %"PRIu64" -> %"PRIu64" bps (user "
-                                "limit)", pacing_rate, ctl->sc_max_pacing_rate);
-        pacing_rate = ctl->sc_max_pacing_rate;
-    }
-    else if (ctl->sc_max_pacing_rate)
-        LSQ_DEBUG("pacing rate NOT limited: CC=%"PRIu64" bps, "
-                "user_max=%"PRIu64" bps", pacing_rate, ctl->sc_max_pacing_rate);
-
     if (!pacing_rate)
         pacing_rate = 1;
     tx_time = (uint64_t) SC_PACK_SIZE(ctl) * 1000000 / pacing_rate;
-
-    if (ctl->sc_max_pacing_rate)
-        LSQ_DEBUG("tx_time calculation: packet_size=%u, pacing_rate=%"PRIu64", "
-            "tx_time=%"PRIu64" usec", SC_PACK_SIZE(ctl), pacing_rate, tx_time);
 
     return tx_time;
 }
@@ -875,11 +875,15 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
                                           ctl->sc_bytes_unacked_all);
         if (ctl->sc_flags & SC_APP_LIMITED)
             lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
+        if (ctl->sc_flags & SC_PACING_LIMITED)
+            lsquic_bw_sampler_pacing_limited(&ctl->sc_bw_sampler);
     }
 
     if (ctl->sc_ci->cci_sent)
         ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_bytes_unacked_all,
-                                            ctl->sc_flags & SC_APP_LIMITED);
+            ctl->sc_flags & (SC_APP_LIMITED|SC_PACING_LIMITED));
+    lsquic_send_pacer_packet_sent(&ctl->sc_spacer,
+                    !!(packet_out->po_frame_types & QUIC_FTBIT_STREAM));
     send_ctl_unacked_append(ctl, packet_out);
     if (packet_out->po_frame_types & ctl->sc_retx_frames)
     {
@@ -956,23 +960,62 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
 
 
 static void
+send_ctl_generate_policy_sample (struct pacing_policy_sample *papos,
+        struct lsquic_send_ctl *ctl, const struct bw_sample *sample,
+        lsquic_time_t ack_recv_time, uint64_t total_acked,
+        uint64_t packet_size)
+{
+    *papos = (struct pacing_policy_sample) {
+        .pps_is_app_limited       = sample->is_application_limited,
+        .pps_is_pacing_limited    = sample->is_pacing_limited,
+        .pps_is_cubic             = ctl->sc_ci == &lsquic_cong_cubic_if,
+        .pps_mechanism            =
+                            lsquic_send_pacer_mechanism(&ctl->sc_spacer),
+        .pps_cwnd                 = ctl->sc_ci->cci_get_cwnd(CGP(ctl)),
+        .pps_bytes_out            = send_ctl_all_bytes_out(ctl),
+        .pps_packet_size          = packet_size,
+        .pps_total_acked          = total_acked,
+        .pps_total_lost           = ctl->sc_bw_sampler.bws_total_lost,
+        .pps_srtt                 = lsquic_rtt_stats_get_srtt(
+                                            &ctl->sc_conn_pub->rtt_stats),
+        .pps_now                  = ack_recv_time,
+    };
+}
+
+
+static void
 send_ctl_process_bw_sample (struct lsquic_send_ctl *ctl,
             struct lsquic_packet_out *packet_out, lsquic_time_t ack_recv_time)
 {
+    struct pacing_policy_sample papos_buf, *papos;
+    uint64_t total_acked, packet_size;
     struct bw_sample *sample;
 
-    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+    if (!(ctl->sc_flags & SC_BW_SAMPLER_INIT))
+        return;
+
+    sample = lsquic_bw_sampler_packet_acked(&ctl->sc_bw_sampler, packet_out,
+                                                                ack_recv_time);
+    if (!sample)
+        return;
+
+    total_acked = ctl->sc_bw_sampler.bws_total_acked;
+    packet_size = SC_PACK_SIZE(ctl);
+    if (lsquic_send_pacer_needs_policy_sample(&ctl->sc_spacer))
     {
-        sample = lsquic_bw_sampler_packet_acked(&ctl->sc_bw_sampler,
-                                                packet_out, ack_recv_time);
-        if (sample)
-        {
-            if (ctl->sc_ci->cci_process_bw_sample)
-                ctl->sc_ci->cci_process_bw_sample(CGP(ctl), sample);
-            else
-                lsquic_malo_put(sample);
-        }
+        send_ctl_generate_policy_sample(&papos_buf, ctl, sample,
+                                    ack_recv_time, total_acked, packet_size);
+        papos = &papos_buf;
     }
+    else
+        papos = NULL;
+    lsquic_send_pacer_packet_acked(&ctl->sc_spacer, papos, total_acked,
+                                                                packet_size);
+
+    if (ctl->sc_ci->cci_process_bw_sample)
+        ctl->sc_ci->cci_process_bw_sample(CGP(ctl), sample);
+    else
+        lsquic_malo_put(sample);
 }
 
 
@@ -1272,8 +1315,7 @@ static void
 send_ctl_loss_event (struct lsquic_send_ctl *ctl)
 {
     ctl->sc_ci->cci_loss(CGP(ctl));
-    if (ctl->sc_flags & SC_PACE)
-        lsquic_pacer_loss_event(&ctl->sc_pacer);
+    lsquic_send_pacer_loss_event(&ctl->sc_spacer);
     ctl->sc_largest_sent_at_cutback =
                             lsquic_senhist_largest(&ctl->sc_senhist);
 }
@@ -1417,6 +1459,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     signed char do_rtt, skip_checks;
     enum packnum_space pns;
     unsigned ecn_total_acked, ecn_ce_cnt, one_rtt_cnt;
+    struct pacing_policy_ack_batch ack_batch;
 
     pns = acki->pns;
     ctl->sc_flags |= SC_ACK_RECV_INIT << pns;
@@ -1447,6 +1490,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     ecn_total_acked = 0;
     ecn_ce_cnt = 0;
     one_rtt_cnt = 0;
+    ack_batch.ppab_stream_packets = 0;
 
     if (UNLIKELY(ctl->sc_flags & SC_WAS_QUIET))
     {
@@ -1537,6 +1581,8 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             }
             ack2ed[!!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))]
                 = packet_out->po_ack2ed;
+            ack_batch.ppab_stream_packets +=
+                                packet_out->po_frame_types & QUIC_FTBIT_STREAM;
             do_rtt |= packet_out->po_packno == largest_acked(acki);
             send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
             ctl->sc_ci->cci_ack(CGP(ctl), packet_out, packet_sz, now,
@@ -1556,6 +1602,11 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         ctl->sc_n_consec_rtos = 0;
         ctl->sc_n_hsk = 0;
         ctl->sc_n_tlp = 0;
+    }
+    if (ack_batch.ppab_stream_packets)
+    {
+        ack_batch.ppab_stream_packets /= QUIC_FTBIT_STREAM;
+        lsquic_send_pacer_on_ack_batch(&ctl->sc_spacer, &ack_batch);
     }
 
   detect_losses:
@@ -1811,8 +1862,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
             send_ctl_destroy_packet(ctl, packet_out);
         }
     }
-    if (ctl->sc_flags & SC_PACE)
-        lsquic_pacer_cleanup(&ctl->sc_pacer);
+    lsquic_send_pacer_cleanup(&ctl->sc_spacer);
     ctl->sc_ci->cci_cleanup(CGP(ctl));
     if (ctl->sc_flags & SC_CLEANUP_BBR)
     {
@@ -1850,22 +1900,8 @@ send_ctl_all_bytes_out (const struct lsquic_send_ctl *ctl)
 int
 lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *ctl)
 {
-#ifdef NDEBUG
-    return (ctl->sc_flags & SC_PACE)
-        && !lsquic_pacer_can_schedule(&ctl->sc_pacer,
-                                               ctl->sc_n_in_flight_all);
-#else
-    if (ctl->sc_flags & SC_PACE)
-    {
-        const int blocked = !lsquic_pacer_can_schedule(&ctl->sc_pacer,
-                                               ctl->sc_n_in_flight_all);
-        LSQ_DEBUG("pacer blocked: %d, in_flight_all: %u", blocked,
-                                                ctl->sc_n_in_flight_all);
-        return blocked;
-    }
-    else
-        return 0;
-#endif
+    return !lsquic_send_pacer_can_schedule(&ctl->sc_spacer,
+                        ctl->sc_n_in_flight_all, SC_PACK_SIZE(ctl));
 }
 
 
@@ -1874,36 +1910,31 @@ send_ctl_can_send (struct lsquic_send_ctl *ctl)
 {
     uint64_t cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
     const unsigned n_out = send_ctl_all_bytes_out(ctl);
+
     LSQ_DEBUG("%s: sc_flags: 0x%X, b_out: %u = (%u + %u); b_retx: %u; cwnd: %"PRIu64
         "; ccfc: %"PRIu64"/%"PRIu64"; n_scheduled: %d, n_in_flight_all: %d"
-        "; pa_burst: %d; pa_next: %"PRIu64"; pa_now: %"PRIu64
         , __func__, ctl->sc_flags,
         n_out, ctl->sc_bytes_unacked_all, ctl->sc_bytes_scheduled,
         ctl->sc_bytes_unacked_retx, cwnd,
         ctl->sc_conn_pub->conn_cap.cc_sent,
         ctl->sc_conn_pub->conn_cap.cc_max,
-        ctl->sc_n_scheduled, ctl->sc_n_in_flight_all,
-        ctl->sc_pacer.pa_burst_tokens,
-        ctl->sc_pacer.pa_next_sched, ctl->sc_pacer.pa_now);
+        ctl->sc_n_scheduled, ctl->sc_n_in_flight_all);
 
-    if (ctl->sc_flags & SC_PACE)
-    {
-        if (n_out >= cwnd)
-            return 0;
-        if (lsquic_pacer_can_schedule(&ctl->sc_pacer,
-                               ctl->sc_n_scheduled + ctl->sc_n_in_flight_all))
-            return 1;
-        if (ctl->sc_flags & SC_SCHED_TICK)
-        {
-            ctl->sc_flags &= ~SC_SCHED_TICK;
-            lsquic_engine_add_conn_to_attq(ctl->sc_enpub,
-                    ctl->sc_conn_pub->lconn, lsquic_pacer_next_sched(&ctl->sc_pacer),
-                    AEW_PACER);
-        }
+    if (n_out >= cwnd)
         return 0;
+    if (lsquic_send_pacer_can_schedule(&ctl->sc_spacer,
+            ctl->sc_n_scheduled + ctl->sc_n_in_flight_all,
+            SC_PACK_SIZE(ctl)))
+        return 1;
+    if (lsquic_send_pacer_delayed(&ctl->sc_spacer)
+                                    && (ctl->sc_flags & SC_SCHED_TICK))
+    {
+        ctl->sc_flags &= ~SC_SCHED_TICK;
+        lsquic_engine_add_conn_to_attq(ctl->sc_enpub,
+                ctl->sc_conn_pub->lconn, lsquic_send_pacer_next_sched(&ctl->sc_spacer),
+                AEW_PACER);
     }
-    else
-        return n_out < cwnd;
+    return 0;
 }
 
 
@@ -1941,26 +1972,14 @@ send_ctl_could_send (const struct lsquic_send_ctl *ctl)
     uint64_t cwnd;
     unsigned n_out;
 
-    if ((ctl->sc_flags & SC_PACE) && lsquic_pacer_delayed(&ctl->sc_pacer))
+    if (!lsquic_send_pacer_could_schedule(&ctl->sc_spacer,
+            ctl->sc_n_scheduled + ctl->sc_n_in_flight_all,
+            SC_PACK_SIZE(ctl)))
         return 0;
 
     cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
     n_out = send_ctl_all_bytes_out(ctl);
     return n_out < cwnd;
-}
-
-
-static int
-send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
-{
-    uint64_t pacing_rate;
-
-    if (!ctl->sc_max_pacing_rate)
-        return 0;
-
-    pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl),
-                                                send_ctl_in_recovery(ctl));
-    return pacing_rate > ctl->sc_max_pacing_rate;
 }
 
 
@@ -1977,14 +1996,11 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
         LSQ_DEBUG("app-limited");
         ctl->sc_flags |= SC_APP_LIMITED;
     }
-    else if ((ctl->sc_flags & SC_PACE)
-            && lsquic_pacer_delayed(&ctl->sc_pacer)
+    if (lsquic_send_pacer_cap_delayed(&ctl->sc_spacer)
             && send_ctl_all_bytes_out(ctl)
-                    < ctl->sc_ci->cci_get_cwnd(CGP(ctl))
-            && send_ctl_pacing_capped(ctl))
+                    < ctl->sc_ci->cci_get_cwnd(CGP(ctl)))
     {
-        LSQ_DEBUG("app-limited (pacing capped)");
-        ctl->sc_flags |= SC_APP_LIMITED;
+        ctl->sc_flags |= SC_PACING_LIMITED;
     }
 }
 
@@ -2109,6 +2125,8 @@ void
 lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
                                             lsquic_packet_out_t *packet_out)
 {
+    unsigned n_out;
+
 #ifndef NDEBUG
     const lsquic_packet_out_t *last;
     last = TAILQ_LAST(&ctl->sc_scheduled_packets, lsquic_packets_tailq);
@@ -2116,19 +2134,12 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
         assert((last->po_flags & PO_REPACKNO) ||
                 last->po_packno < packet_out->po_packno);
 #endif
-    if (ctl->sc_flags & SC_PACE)
-    {
-        unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
-        if (ctl->sc_max_pacing_rate)
-        {
-            /* Avoid burst token replenishment when user caps pacing rate. */
-            lsquic_pacer_disable_burst_tokens(&ctl->sc_pacer);
-            if (n_out == 0)
-                n_out = 1;
-        }
-        lsquic_pacer_packet_scheduled(&ctl->sc_pacer, n_out,
-            send_ctl_in_recovery(ctl), send_ctl_transfer_time, ctl);
-    }
+    n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
+    lsquic_send_pacer_packet_scheduled(&ctl->sc_spacer, n_out,
+        send_ctl_in_recovery(ctl),
+        !!(packet_out->po_frame_types & QUIC_FTBIT_STREAM),
+        SC_PACK_SIZE(ctl),
+        send_ctl_transfer_time, ctl);
     send_ctl_sched_append(ctl, packet_out);
 }
 
@@ -2371,6 +2382,7 @@ void
 lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
                                             lsquic_packet_out_t *packet_out)
 {
+    lsquic_send_pacer_packet_not_sent(&ctl->sc_spacer);
     send_ctl_sched_prepend(ctl, packet_out);
     if (packet_out->po_lflags & POL_LIMITED)
         ++ctl->sc_next_limit;
@@ -3963,7 +3975,7 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
     LSQ_DEBUG("repathed %u packet%.*s", count, count != 1, "s");
 
     if (keep_path_properties)
-        LSQ_DEBUG("keeping path properties: MTU, RTT, and CC state");
+        LSQ_DEBUG("keeping path properties: MTU, RTT, CC, and pacing state");
     else
     {
         lsquic_send_ctl_resize(ctl);
@@ -3971,6 +3983,8 @@ lsquic_send_ctl_repath (struct lsquic_send_ctl *ctl,
                                         sizeof(ctl->sc_conn_pub->rtt_stats));
         ctl->sc_ci->cci_reinit(CGP(ctl));
     }
+    lsquic_send_pacer_repath(&ctl->sc_spacer, new->np_pack_size,
+                                                keep_path_properties);
 }
 
 
@@ -4125,21 +4139,15 @@ lsquic_send_ctl_can_send_probe (const struct lsquic_send_ctl *ctl,
 
     n_out = send_ctl_all_bytes_out(ctl);
     cwnd = ctl->sc_ci->cci_get_cwnd(CGP(ctl));
-    if (ctl->sc_flags & SC_PACE)
-    {
-        if (n_out + path->np_pack_size >= cwnd)
-            return 0;
-        pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), 0);
-        if (ctl->sc_max_pacing_rate && pacing_rate > ctl->sc_max_pacing_rate)
-            pacing_rate = ctl->sc_max_pacing_rate;
-        if (!pacing_rate)
-            pacing_rate = 1;
-        tx_time = (uint64_t) path->np_pack_size * 1000000 / pacing_rate;
-        return lsquic_pacer_can_schedule_probe(&ctl->sc_pacer,
-                   ctl->sc_n_scheduled + ctl->sc_n_in_flight_all, tx_time);
-    }
-    else
-        return n_out + path->np_pack_size < cwnd;
+    if (n_out + path->np_pack_size >= cwnd)
+        return 0;
+    pacing_rate = ctl->sc_ci->cci_pacing_rate(CGP(ctl), 0);
+    if (!pacing_rate)
+        pacing_rate = 1;
+    tx_time = (uint64_t) path->np_pack_size * 1000000 / pacing_rate;
+    return lsquic_send_pacer_can_schedule_probe(&ctl->sc_spacer,
+        ctl->sc_n_scheduled + ctl->sc_n_in_flight_all, tx_time,
+        path->np_pack_size);
 }
 
 
@@ -4163,10 +4171,10 @@ lsquic_send_ctl_snapshot (struct lsquic_send_ctl *ctl,
     int buffered, repace;
 
     buffered = !lsquic_send_ctl_schedule_stream_packets_immediately(ctl);
-    repace = !buffered && (ctl->sc_flags & SC_PACE);
+    repace = !buffered;
 
     if (repace)
-        ctl_state->pacer = ctl->sc_pacer;
+        lsquic_send_pacer_snapshot(&ctl->sc_spacer, &ctl_state->spacer_state);
 
     if (buffered)
     {
@@ -4180,20 +4188,20 @@ lsquic_send_ctl_snapshot (struct lsquic_send_ctl *ctl,
 
 
 static void
-send_ctl_repace (struct lsquic_send_ctl *ctl, const struct pacer *pacer,
-                                                                unsigned count)
+send_ctl_repace (struct lsquic_send_ctl *ctl,
+                    const struct spacer_state *spacer_state, unsigned count)
 {
     unsigned n;
     int in_rec;
 
     LSQ_DEBUG("repace, count: %u", count);
-    ctl->sc_pacer = *pacer;
+    lsquic_send_pacer_restore(&ctl->sc_spacer, spacer_state);
 
     in_rec = send_ctl_in_recovery(ctl);
     for (n = 0; n < count; ++n)
-        lsquic_pacer_packet_scheduled(&ctl->sc_pacer,
-            ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled + n, in_rec,
-            send_ctl_transfer_time, ctl);
+        lsquic_send_pacer_packet_scheduled(&ctl->sc_spacer,
+            ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled + n, in_rec, 1,
+            SC_PACK_SIZE(ctl), send_ctl_transfer_time, ctl);
 }
 
 
@@ -4215,7 +4223,7 @@ lsquic_send_ctl_rollback (struct lsquic_send_ctl *ctl,
     struct frame_rec *frec;
 
     buffered = !lsquic_send_ctl_schedule_stream_packets_immediately(ctl);
-    repace = !buffered && (ctl->sc_flags & SC_PACE);
+    repace = !buffered;
 
     if (!buffered)
     {
@@ -4335,7 +4343,7 @@ lsquic_send_ctl_rollback (struct lsquic_send_ctl *ctl,
     }
 
     if (new_count < orig_count && repace)
-        send_ctl_repace(ctl, &ctl_state->pacer, new_count);
+        send_ctl_repace(ctl, &ctl_state->spacer_state, new_count);
     if (buffered && (lost_types & QUIC_FTBIT_ACK))
         lconn->cn_if->ci_ack_rollback(lconn, &ctl_state->ack_state);
 }
@@ -4416,4 +4424,85 @@ lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
 {
     lsquic_send_ctl_set_bw_sampler(ctl, 1);
     return lsquic_bw_sampler_get_bw(&ctl->sc_bw_sampler);
+}
+
+
+void
+lsquic_send_ctl_set_max_pacing_rate (struct lsquic_send_ctl *ctl,
+                                                        uint64_t rate)
+{
+    if (rate == ctl->sc_max_pacing_rate)
+        return;
+    ctl->sc_max_pacing_rate = rate;
+    lsquic_send_pacer_rate_cap_changed(&ctl->sc_spacer, rate,
+                                                    SC_PACK_SIZE(ctl));
+}
+
+
+int
+lsquic_send_ctl_set_pacing_policy (struct lsquic_send_ctl *ctl,
+                                    enum lsquic_pacing_policy policy_id)
+{
+    enum pacing_mechanism default_mechanism;
+    int changed;
+
+    if (ctl->sc_enpub->enp_settings.es_pace_packets)
+        default_mechanism = PM_FIXED_RATE;
+    else
+        default_mechanism = PM_UNPACED;
+    changed = lsquic_send_pacer_set_policy(&ctl->sc_spacer, policy_id,
+                                                    default_mechanism);
+    if (changed < 0)
+        return -1;
+    else if (changed > 0)
+        send_ctl_apply_bw_sampler_policy(ctl);
+    return 0;
+}
+
+
+enum lsquic_pacing_policy
+lsquic_send_ctl_pacing_policy (const struct lsquic_send_ctl *ctl)
+{
+    return lsquic_send_pacer_policy(&ctl->sc_spacer);
+}
+
+
+void
+lsquic_send_ctl_set_pacing_retest_period (struct lsquic_send_ctl *ctl,
+                                          unsigned period)
+{
+    lsquic_send_pacer_set_retest_period(&ctl->sc_spacer, period);
+}
+
+
+unsigned
+lsquic_send_ctl_pacing_retest_period (const struct lsquic_send_ctl *ctl)
+{
+    return lsquic_send_pacer_retest_period(&ctl->sc_spacer);
+}
+
+
+void
+lsquic_send_ctl_tick_in (lsquic_send_ctl_t *ctl, lsquic_time_t now)
+{
+    ctl->sc_flags |= SC_SCHED_TICK;
+    lsquic_send_pacer_tick_in(&ctl->sc_spacer, now);
+    ctl->sc_flags &= ~(SC_APP_LIMITED|SC_PACING_LIMITED);
+}
+
+
+void
+lsquic_send_ctl_tick_out (lsquic_send_ctl_t *ctl)
+{
+    lsquic_send_pacer_tick_out(&ctl->sc_spacer);
+}
+
+
+lsquic_time_t
+lsquic_send_ctl_next_pacer_time (lsquic_send_ctl_t *ctl)
+{
+    if (lsquic_send_pacer_delayed(&ctl->sc_spacer))
+        return lsquic_send_pacer_next_sched(&ctl->sc_spacer);
+    else
+        return 0;
 }
