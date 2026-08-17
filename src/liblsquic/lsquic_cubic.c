@@ -278,6 +278,12 @@ lsquic_cubic_pacing_rate (void *cong_ctl, int in_recovery)
 }
 
 
+static int
+lsquic_cubic_bw_probe_fill_wanted (void *cong_ctl)
+{
+    return 0;
+}
+
 
 const struct cong_ctl_if lsquic_cong_cubic_if =
 {
@@ -290,4 +296,5 @@ const struct cong_ctl_if lsquic_cong_cubic_if =
     .cci_reinit        = lsquic_cubic_reinit,
     .cci_timeout       = lsquic_cubic_timeout,
     .cci_was_quiet     = lsquic_cubic_was_quiet,
+    .cci_bw_probe_fill_wanted = lsquic_cubic_bw_probe_fill_wanted,
 };
