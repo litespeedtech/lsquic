@@ -4098,12 +4098,15 @@ static int
 send_headers_ietf (struct lsquic_stream *stream,
                             const struct lsquic_http_headers *headers, int eos)
 {
+    struct stream_hq_frame *sfh = NULL;
     enum qwh_status qwh;
     const size_t max_prefix_size =
                     lsquic_qeh_max_prefix_size(stream->conn_pub->u.ietf.qeh);
     const size_t max_push_size = 1 /* Stream type */ + 8 /* Push ID */;
     size_t prefix_sz, headers_sz, hblock_sz, push_sz;
-    ssize_t nw;
+    ssize_t nw = 0;
+    const uint64_t tosend_off = stream->tosend_off;
+    const unsigned short n_buffered = stream->sm_n_buffered;
     unsigned char *header_block;
     enum lsqpack_enc_header_flags hflags;
     int rv;
@@ -4149,9 +4152,10 @@ send_headers_ietf (struct lsquic_stream *stream,
     /* Construct contiguous header block buffer including HQ framing */
     header_block = buf + max_push_size + max_prefix_size - prefix_sz - push_sz;
     hblock_sz = push_sz + prefix_sz + headers_sz;
-    if (!stream_activate_hq_frame(stream,
+    sfh = stream_activate_hq_frame(stream,
                 stream->sm_payload + stream->sm_n_buffered + push_sz,
-                HQFT_HEADERS, SHF_FIXED_SIZE, hblock_sz - push_sz))
+                HQFT_HEADERS, SHF_FIXED_SIZE, hblock_sz - push_sz);
+    if (!sfh)
         goto err;
 
     if (qwh == QWH_FULL)
@@ -4212,6 +4216,21 @@ send_headers_ietf (struct lsquic_stream *stream,
     return rv;
 
   err:
+    if (tosend_off == stream->tosend_off && n_buffered == stream->sm_n_buffered)
+    {
+        /* No bytes have been written: user can retry */
+        stream->sm_send_headers_state = SSHS_BEGIN;
+        if (sfh)
+            stream_hq_frame_put(stream, sfh);
+    }
+    else if (!(stream->sm_qflags & SMQF_ABORT_CONN))
+    {
+        /* The header block has been partially written.  It cannot be retried
+         * without corrupting the HTTP/3 stream, so reset the stream.
+         */
+        stream->sm_send_headers_state = SSHS_BEGIN;
+        stream_reset(stream, HEC_INTERNAL_ERROR, 1);
+    }
     rv = -1;
     goto clean;
 }

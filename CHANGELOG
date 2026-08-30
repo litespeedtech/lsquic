@@ -1,3 +1,9 @@
+2026-08-30
+    - 4.9.4
+    - [FIX] Notify peer on explicit IETF connection close (#675)
+    - [FIX] WebTransport flag corruption (#674)
+    - [FIX] Roll back header send state on stash failure.
+
 2026-07-31
     - 4.9.3
     - [FIX] Cancel failed QPACK header transactions
