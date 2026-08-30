@@ -35,6 +35,7 @@ SET(TESTS
     blocked_gquic_be
     bw_sampler
     conn_close_gquic_be
+    conn_close_ietf
     crypto_gen
     cubic
     dec

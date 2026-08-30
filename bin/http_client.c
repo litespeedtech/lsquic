@@ -224,6 +224,7 @@ struct lsquic_conn_ctx {
                                              */
     enum {
         CH_SESSION_RESUME_SAVED   = 1 << 0,
+        CH_RECV_NO_ERROR_CLOSE    = 1 << 1,
     }                    ch_flags;
 };
 
@@ -340,6 +341,29 @@ create_another_conn_or_stop (evutil_socket_t sock, short events, void *ctx)
 }
 
 
+static int
+wait_for_close_mode (const struct http_client_ctx *client_ctx)
+{
+    return client_ctx->hcc_test_type
+        && 0 == strcasecmp(client_ctx->hcc_test_type, "wait-for-close");
+}
+
+
+static void
+http_client_on_conncloseframe_received (lsquic_conn_t *conn, int app_error,
+        uint64_t error_code, const char *UNUSED_reason, int UNUSED_reason_len)
+{
+    lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
+
+    if (wait_for_close_mode(conn_h->client_ctx)
+                                    && app_error == 0 && error_code == 0)
+    {
+        conn_h->ch_flags |= CH_RECV_NO_ERROR_CLOSE;
+        LSQ_NOTICE("TEST: received transport CONNECTION_CLOSE(NO_ERROR)");
+    }
+}
+
+
 static void
 http_client_on_conn_closed (lsquic_conn_t *conn)
 {
@@ -352,6 +376,13 @@ http_client_on_conn_closed (lsquic_conn_t *conn)
     status = lsquic_conn_status(conn, errmsg, sizeof(errmsg));
     LSQ_INFO("Connection closed.  Status: %d.  Message: %s", status,
         errmsg[0] ? errmsg : "<not set>");
+    if (wait_for_close_mode(conn_h->client_ctx)
+                            && !(conn_h->ch_flags & CH_RECV_NO_ERROR_CLOSE))
+    {
+        LSQ_ERROR("TEST: connection terminated without transport "
+                                        "CONNECTION_CLOSE(NO_ERROR)");
+        exit(EXIT_FAILURE);
+    }
     if (conn_h->client_ctx->hcc_flags & HCC_ABORT_ON_INCOMPLETE)
     {
         if (!(conn_h->client_ctx->hcc_flags & HCC_SEEN_FIN))
@@ -439,8 +470,6 @@ http_client_on_hsk_done (lsquic_conn_t *conn, enum lsquic_hsk_status status)
                 LSQ_NOTICE("TEST: calling lsquic_conn_going_away() on client connection");
                 lsquic_conn_going_away(conn);
             }
-            else
-                LSQ_WARN("unknown test type: %s", client_ctx->hcc_test_type);
         }
     }
     else
@@ -944,8 +973,13 @@ http_client_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
     --conn_h->ch_n_cc_streams;
     if (0 == conn_h->ch_n_reqs)
     {
-        LSQ_INFO("all requests completed, closing connection");
-        lsquic_conn_close(conn_h->conn);
+        if (wait_for_close_mode(client_ctx))
+            LSQ_INFO("all requests completed, waiting for peer close");
+        else
+        {
+            LSQ_INFO("all requests completed, closing connection");
+            lsquic_conn_close(conn_h->conn);
+        }
     }
     else
     {
@@ -972,6 +1006,7 @@ static struct lsquic_stream_if http_client_if = {
     .on_write               = http_client_on_write,
     .on_close               = http_client_on_close,
     .on_hsk_done            = http_client_on_hsk_done,
+    .on_conncloseframe_received = http_client_on_conncloseframe_received,
     .on_hset_in             = http_client_on_hset_in,
 };
 
@@ -1032,6 +1067,7 @@ static struct lsquic_stream_if hq_client_if = {
     .on_read                = hq_client_on_read,
     .on_write               = hq_client_on_write,
     .on_close               = http_client_on_close,
+    .on_conncloseframe_received = http_client_on_conncloseframe_received,
 };
 
 
@@ -1085,6 +1121,8 @@ usage (const char *prog)
 "   -Q ALPN     Use hq ALPN.  Specify, for example, \"h3-29\".\n"
 "   -J TEST     Run test. Available tests:\n"
 "                 goaway - call lsquic_conn_going_away() after handshake\n"
+"                 wait-for-close - keep the connection open after the last\n"
+"                    request and require CONNECTION_CLOSE(NO_ERROR) from peer\n"
             , prog);
 }
 
@@ -1706,6 +1744,12 @@ main (int argc, char **argv)
             ++s_discard_response;
             break;
         case 'J':
+            if (0 != strcasecmp(optarg, "goaway")
+                        && 0 != strcasecmp(optarg, "wait-for-close"))
+            {
+                LSQ_ERROR("unknown -J test: %s", optarg);
+                exit(EXIT_FAILURE);
+            }
             client_ctx.hcc_test_type = optarg;
             break;
         case 'u':   /* Accept p<U>sh promise */

@@ -295,6 +295,13 @@ struct lsquic_conn_ctx;
 static void interop_server_hset_destroy (void *);
 
 
+enum server_test_mode {
+    SERVER_TEST_NONE,
+    SERVER_TEST_CLOSE,
+    SERVER_TEST_ABORT,
+};
+
+
 struct server_ctx {
     struct lsquic_conn_ctx  *conn_h;
     lsquic_engine_t             *engine;
@@ -307,15 +314,66 @@ struct server_ctx {
     unsigned                     n_current_conns;
     unsigned                     delay_resp_sec;
     uint64_t                     max_pacing_rate;
+    enum server_test_mode        test_mode;
 };
 
 struct lsquic_conn_ctx {
     lsquic_conn_t       *conn;
     struct server_ctx   *server_ctx;
+    struct event        *close_event;
     enum {
         RECEIVED_GOAWAY = 1 << 0,
+        TEST_CLOSE_SCHEDULED = 1 << 1,
     }                    flags;
 };
+
+
+static void
+close_conn (evutil_socket_t UNUSED_fd, short UNUSED_events, void *arg)
+{
+    struct lsquic_conn_ctx *conn_h = arg;
+    struct server_ctx *server_ctx = conn_h->server_ctx;
+
+    event_del(conn_h->close_event);
+    event_free(conn_h->close_event);
+    conn_h->close_event = NULL;
+
+    LSQ_NOTICE("TEST: calling lsquic_conn_%s()",
+        server_ctx->test_mode == SERVER_TEST_ABORT ? "abort" : "close");
+    if (server_ctx->test_mode == SERVER_TEST_ABORT)
+        lsquic_conn_abort(conn_h->conn);
+    else
+        lsquic_conn_close(conn_h->conn);
+    prog_process_conns(server_ctx->prog);
+}
+
+
+static void
+maybe_schedule_test_close (lsquic_stream_t *stream)
+{
+    lsquic_conn_ctx_t *conn_h;
+    struct server_ctx *server_ctx;
+    const struct timeval delay = { .tv_sec = 1, };
+
+    conn_h = lsquic_conn_get_ctx(lsquic_stream_conn(stream));
+    server_ctx = conn_h->server_ctx;
+    if (server_ctx->test_mode == SERVER_TEST_NONE
+            || lsquic_stream_is_pushed(stream)
+            || (conn_h->flags & TEST_CLOSE_SCHEDULED))
+        return;
+
+    conn_h->close_event = evtimer_new(prog_eb(server_ctx->prog), close_conn,
+                                                                    conn_h);
+    if (!conn_h->close_event
+                        || event_add(conn_h->close_event, &delay) != 0)
+    {
+        LSQ_ERROR("cannot schedule test connection close");
+        exit(EXIT_FAILURE);
+    }
+    conn_h->flags |= TEST_CLOSE_SCHEDULED;
+    LSQ_NOTICE("TEST: scheduled lsquic_conn_%s() in one second",
+        server_ctx->test_mode == SERVER_TEST_ABORT ? "abort" : "close");
+}
 
 
 static lsquic_conn_ctx_t *
@@ -343,7 +401,12 @@ http_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
         }
     }
 
-    lsquic_conn_ctx_t *conn_h = malloc(sizeof(*conn_h));
+    lsquic_conn_ctx_t *conn_h = calloc(1, sizeof(*conn_h));
+    if (!conn_h)
+    {
+        LSQ_ERROR("cannot allocate connection context");
+        exit(EXIT_FAILURE);
+    }
     conn_h->conn = conn;
     conn_h->server_ctx = server_ctx;
     server_ctx->conn_h = conn_h;
@@ -367,6 +430,12 @@ http_server_on_conn_closed (lsquic_conn_t *conn)
     static int stopped;
     lsquic_conn_ctx_t *conn_h = lsquic_conn_get_ctx(conn);
     LSQ_INFO("Connection closed");
+    if (conn_h->close_event)
+    {
+        event_del(conn_h->close_event);
+        event_free(conn_h->close_event);
+        conn_h->close_event = NULL;
+    }
     --conn_h->server_ctx->n_current_conns;
     if ((conn_h->server_ctx->prog->prog_flags & PROG_FLAG_COOLDOWN)
                                 && 0 == conn_h->server_ctx->n_current_conns)
@@ -1062,6 +1131,7 @@ http_server_on_read (struct lsquic_stream *stream, lsquic_stream_ctx_t *st_h)
 static void
 http_server_on_close (lsquic_stream_t *stream, lsquic_stream_ctx_t *st_h)
 {
+    maybe_schedule_test_close(stream);
     free(st_h->req_filename);
     free(st_h->req_path);
     if (st_h->reader.lsqr_ctx)
@@ -1800,6 +1870,9 @@ usage (const char *prog)
 "   -x RATE     Maximum pacing rate in bytes per second (throttle bandwidth)\n"
 "   -Y DELAY    Delay response for this many seconds -- use for debugging\n"
 "   -Q ALPN     Use hq mode; ALPN could be \"hq-29\", for example.\n"
+"   -J TEST     Run test after the first non-pushed request stream closes:\n"
+"                 close - call lsquic_conn_close() after one second\n"
+"                 abort - call lsquic_conn_abort() after one second\n"
             , prog);
 }
 
@@ -1968,7 +2041,7 @@ main (int argc, char **argv)
     prog_init(&prog, LSENG_SERVER|LSENG_HTTP, &server_ctx.sports,
                                             &http_server_if, &server_ctx);
 
-    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:h"
+    while (-1 != (opt = getopt(argc, argv, PROG_OPTS "y:Y:n:p:r:w:P:x:J:h"
 #if HAVE_OPEN_MEMSTREAM
                                                     "Q:"
 #endif
@@ -2013,6 +2086,17 @@ main (int argc, char **argv)
             break;
         case 'x':
             server_ctx.max_pacing_rate = strtoull(optarg, NULL, 10);
+            break;
+        case 'J':
+            if (0 == strcasecmp(optarg, "close"))
+                server_ctx.test_mode = SERVER_TEST_CLOSE;
+            else if (0 == strcasecmp(optarg, "abort"))
+                server_ctx.test_mode = SERVER_TEST_ABORT;
+            else
+            {
+                LSQ_ERROR("unknown -J test: %s", optarg);
+                exit(EXIT_FAILURE);
+            }
             break;
         case 'h':
             usage(argv[0]);

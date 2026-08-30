@@ -53,6 +53,18 @@ HTTP/non-HTTP, and mini/full connections.
   current task.
 - Do not commit generated build files or test artifacts.
 
+## Commit messages
+
+- Keep summary and body lines to at most 72 characters.
+- For a bug fix, begin the summary with `Fix: `.
+- Follow the summary with a blank line and one or two human-readable,
+  ASCII-only paragraphs that describe what was fixed and why.  Describe
+  how only when it is not obvious from the code.
+- Use two spaces after a sentence-ending period when another sentence
+  follows on the same line.
+- When a commit fixes a GitHub issue, identify it in a final paragraph
+  using `Fixes #NNN.`.
+
 ## C style
 
 Follow the surrounding file and these project conventions:
@@ -81,6 +93,9 @@ Follow the surrounding file and these project conventions:
 - Use snake_case.  Non-static functions begin with `lsquic_`.  Function names
   normally consist of a module name followed by a verb; otherwise begin with
   a verb.  Do not begin static function names with an underscore.
+- Prefix a function with `maybe_` when it checks whether the requested action
+  is applicable and may return without performing it.  Reserve an unqualified
+  action name for a function that performs the action whenever it is called.
 - Prefix structure members with an abbreviation derived from the structure
   name, matching nearby members.
 - Outside the user-facing API, use `struct foo *` rather than `foo_t *` and do

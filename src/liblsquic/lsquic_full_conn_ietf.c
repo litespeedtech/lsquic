@@ -145,7 +145,7 @@ enum ifull_conn_flags
 enum more_flags
 {
     MF_VALIDATE_PATH    = 1 << 0,
-    /* HOLE */                      /* <- Hole!  Reuse me! */
+    MF_USER_CLOSE       = 1 << 1,   /* User requested connection close */
     MF_CHECK_MTU_PROBE  = 1 << 2,
     MF_IGNORE_MISSING   = 1 << 3,
     MF_CONN_CLOSE_PACK  = 1 << 4,   /* CONNECTION_CLOSE has been packetized */
@@ -2948,6 +2948,7 @@ ietf_full_conn_ci_close (struct lsquic_conn *lconn)
     struct lsquic_hash_elem *el;
     enum stream_dir sd;
 
+    conn->ifc_mflags |= MF_USER_CLOSE;
     if (!(conn->ifc_flags & IFC_CLOSING))
     {
         for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
@@ -8204,6 +8205,40 @@ ietf_full_conn_ci_user_stream_progress (struct lsquic_conn *lconn)
 }
 
 
+static int
+should_generate_connection_close (const struct ietf_full_conn *conn)
+{
+    if (conn->ifc_mflags & MF_CONN_CLOSE_PACK)
+        return 0;
+    /* Generate CONNECTION_CLOSE frame if:
+     *     ... user explicitly requested connection close;
+     */
+    else if (conn->ifc_mflags & MF_USER_CLOSE)
+        return 1;
+    /* or: this is a client and handshake was successful;
+     */
+    else if (!(conn->ifc_flags & (IFC_SERVER|IFC_HSK_FAILED)))
+        return 1;
+    /* or: sent a GOAWAY frame;
+     */
+    else if (conn->ifc_flags & IFC_GOAWAY_CLOSE)
+        return 1;
+    /* or: we received CONNECTION_CLOSE and we are not a server that chooses
+     * not to send CONNECTION_CLOSE responses.  From [RFC 9000, Section 10.2]:
+     " An endpoint that receives a CONNECTION_CLOSE frame MAY send a single
+     " packet containing a CONNECTION_CLOSE frame before entering the
+     " draining state
+     */
+    else if ((conn->ifc_flags & IFC_RECV_CLOSE)
+            && !((conn->ifc_flags & IFC_SERVER)
+                                    && conn->ifc_settings->es_silent_close))
+        return 1;
+    /* or: we have packets to send. */
+    else
+        return 0 != lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl);
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -8410,27 +8445,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         conn->ifc_flags |= IFC_TICK_CLOSE;
         if (conn->ifc_flags & IFC_RECV_CLOSE)
             tick |= TICK_CLOSE;
-        if (!(conn->ifc_mflags & MF_CONN_CLOSE_PACK)
-            /* Generate CONNECTION_CLOSE frame if:
-             *     ... this is a client and handshake was successful;
-             */
-            && (!(conn->ifc_flags & (IFC_SERVER|IFC_HSK_FAILED))
-                /* or: sent a GOAWAY frame;
-                 */
-                    || (conn->ifc_flags & IFC_GOAWAY_CLOSE)
-                /* or: we received CONNECTION_CLOSE and we are not a server
-                 * that chooses not to send CONNECTION_CLOSE responses.
-                 * From [draft-ietf-quic-transport-29]:
-                 " An endpoint that receives a CONNECTION_CLOSE frame MAY send
-                 " a single packet containing a CONNECTION_CLOSE frame before
-                 " entering the draining state
-                 */
-                    || ((conn->ifc_flags & IFC_RECV_CLOSE)
-                            && !((conn->ifc_flags & IFC_SERVER)
-                                    && conn->ifc_settings->es_silent_close))
-                /* or: we have packets to send. */
-                    || 0 != lsquic_send_ctl_n_scheduled(&conn->ifc_send_ctl))
-                )
+        if (should_generate_connection_close(conn))
         {
             /* CONNECTION_CLOSE frame should not be congestion controlled.
             RETURN_IF_OUT_OF_PACKETS(); */
@@ -9853,5 +9868,90 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 }
 
 
-typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];
+#ifndef NDEBUG
+void
+lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
+{
+    enum {
+        IDLE_SERVER_USER_CLOSE,
+        IDLE_SERVER_USER_CLOSE_SILENT,
+        USER_CLOSE_MARKED,
+        USER_CLOSE_GENERATED_LATER,
+        CLIENT_CLOSE,
+        GOAWAY_CLOSE,
+        RECV_CLOSE,
+        RECV_CLOSE_SILENT,
+        SCHEDULED_PACKETS,
+        CLOSE_ALREADY_PACKETIZED,
+        IDLE_SERVER,
+        IDLE_SERVER_SILENT,
+        CLIENT_HSK_FAILED,
+    };
+    struct lsquic_engine_settings settings;
+    struct ietf_full_conn conn;
 
+    memset(&settings, 0, sizeof(settings));
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER;
+    conn.ifc_mflags = MF_USER_CLOSE;
+    conn.ifc_settings = &settings;
+    results[IDLE_SERVER_USER_CLOSE] =
+                            should_generate_connection_close(&conn);
+    settings.es_silent_close = 1;
+    results[IDLE_SERVER_USER_CLOSE_SILENT] =
+                            should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER|IFC_CLOSING;
+    conn.ifc_settings = &settings;
+    ietf_full_conn_ci_close(&conn.ifc_conn);
+    results[USER_CLOSE_MARKED] = !!(conn.ifc_mflags & MF_USER_CLOSE);
+    results[USER_CLOSE_GENERATED_LATER] =
+                            should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_settings = &settings;
+    results[CLIENT_CLOSE] = should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER|IFC_GOAWAY_CLOSE;
+    conn.ifc_settings = &settings;
+    results[GOAWAY_CLOSE] = should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER|IFC_RECV_CLOSE;
+    conn.ifc_settings = &settings;
+    settings.es_silent_close = 0;
+    results[RECV_CLOSE] = should_generate_connection_close(&conn);
+    settings.es_silent_close = 1;
+    results[RECV_CLOSE_SILENT] =
+                            should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_SERVER;
+    conn.ifc_settings = &settings;
+    conn.ifc_send_ctl.sc_n_scheduled = 1;
+    results[SCHEDULED_PACKETS] = should_generate_connection_close(&conn);
+
+    conn.ifc_mflags = MF_USER_CLOSE|MF_CONN_CLOSE_PACK;
+    results[CLOSE_ALREADY_PACKETIZED] =
+                            should_generate_connection_close(&conn);
+
+    conn.ifc_mflags = 0;
+    conn.ifc_send_ctl.sc_n_scheduled = 0;
+    settings.es_silent_close = 0;
+    results[IDLE_SERVER] = should_generate_connection_close(&conn);
+    settings.es_silent_close = 1;
+    results[IDLE_SERVER_SILENT] =
+                            should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_HSK_FAILED;
+    conn.ifc_settings = &settings;
+    results[CLIENT_HSK_FAILED] = should_generate_connection_close(&conn);
+}
+#endif
+
+
+typedef char dcid_elem_fits_in_128_bytes[sizeof(struct dcid_elem) <= 128 ? 1 : - 1];

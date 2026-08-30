@@ -1521,7 +1521,9 @@ Closing Connections
 .. function:: void lsquic_conn_close (lsquic_conn_t *conn)
 
     This closes the connection.  :member:`lsquic_stream_if.on_conn_closed`
-    and :member:`lsquic_stream_if.on_close` callbacks will be called.
+    and :member:`lsquic_stream_if.on_close` callbacks will be called.  Closing
+    an established IETF QUIC connection sends a transport-level
+    ``CONNECTION_CLOSE`` frame with the ``NO_ERROR`` code.
 
 .. function:: void lsquic_conn_abort (lsquic_conn_t *conn)
 

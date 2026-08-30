@@ -1632,7 +1632,8 @@ lsquic_conn_going_away (lsquic_conn_t *);
 
 /**
  * This forces connection close.  on_conn_closed and on_close callbacks
- * will be called.
+ * will be called.  Closing an established IETF QUIC connection sends a
+ * transport-level CONNECTION_CLOSE frame with the NO_ERROR code.
  */
 void
 lsquic_conn_close (lsquic_conn_t *);
