@@ -2263,8 +2263,8 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
             return;
         sz = conn->imc_conn.cn_pf->pf_gen_connect_close_frame(
                  packet_out->po_data + packet_out->po_data_sz,
-                 lsquic_packet_out_avail(packet_out), is_app, error_code, reason,
-                 rlen);
+                 lsquic_packet_out_avail(packet_out), is_app, error_code, 0,
+                 reason, rlen);
         if (sz >= 0)
         {
             packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
