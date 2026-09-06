@@ -340,6 +340,7 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_STTL               86400
 #define LSQUIC_DF_MAX_INCHOATE     (1 * 1000 * 1000)
 
+#define LSQUIC_DF_MAX_CRYPTO_STASH    20
 #define LSQUIC_DF_SUPPORT_SREJ_SERVER  1
 #define LSQUIC_DF_SUPPORT_SREJ_CLIENT  0
 
@@ -616,6 +617,16 @@ struct lsquic_engine_settings {
      * handle them.
      */
     int             es_support_srej;
+
+    /**
+     * The maximum number of out-of-order CRYPTO frames the mini connection
+     * stashes while waiting for the missing predecessor frames.  When the
+     * limit is hit, the connection is aborted.  Client implementations such
+     * as ngtcp2 (since its "chaos protection") shuffle the ClientHello into
+     * ~20 out-of-order frames; the historical limit of 10 fails such
+     * handshakes.
+     */
+    unsigned char   es_max_crypto_stash;
 
     /**
      * Server push is not supported.  lsquic_conn_is_push_enabled() returns
