@@ -90,7 +90,7 @@ static struct stack_st_X509 *
 iquic_esf_get_server_cert_chain (enc_session_t *);
 
 static struct stack_st_X509 *
-iquic_esf_get_full_cert_chain (enc_session_t *);
+iquic_esf_get_full_peer_cert_chain (enc_session_t *);
 
 static void
 maybe_drop_SSL (struct enc_sess_iquic *);
@@ -2618,7 +2618,7 @@ iquic_esf_get_server_cert_chain (enc_session_t *enc_session_p)
 
 
 static struct stack_st_X509 *
-iquic_esf_get_full_cert_chain (enc_session_t *enc_session_p)
+iquic_esf_get_full_peer_cert_chain (enc_session_t *enc_session_p)
 {
     struct enc_sess_iquic *const enc_sess = enc_session_p;
     STACK_OF(X509) *chain;
@@ -2885,8 +2885,8 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1 =
     .esf_tag_len         = IQUIC_TAG_LEN,
     .esf_get_server_cert_chain
                          = iquic_esf_get_server_cert_chain,
-    .esf_get_full_cert_chain
-                         = iquic_esf_get_full_cert_chain,
+    .esf_get_full_peer_cert_chain
+                         = iquic_esf_get_full_peer_cert_chain,
     .esf_get_sni         = iquic_esf_get_sni,
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,
@@ -2906,8 +2906,8 @@ const struct enc_session_funcs_common lsquic_enc_session_common_ietf_v1_no_flush
     .esf_tag_len         = IQUIC_TAG_LEN,
     .esf_get_server_cert_chain
                          = iquic_esf_get_server_cert_chain,
-    .esf_get_full_cert_chain
-                         = iquic_esf_get_full_cert_chain,
+    .esf_get_full_peer_cert_chain
+                         = iquic_esf_get_full_peer_cert_chain,
     .esf_get_sni         = iquic_esf_get_sni,
     .esf_cipher          = iquic_esf_cipher,
     .esf_keysize         = iquic_esf_keysize,

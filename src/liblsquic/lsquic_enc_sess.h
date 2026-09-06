@@ -119,7 +119,7 @@ struct enc_session_funcs_common
     (*esf_get_server_cert_chain) (enc_session_t *);
 
     struct stack_st_X509 *
-    (*esf_get_full_cert_chain) (enc_session_t *);
+    (*esf_get_full_peer_cert_chain) (enc_session_t *);
 
     int
     (*esf_verify_reset_token) (enc_session_t *, const unsigned char *, size_t);
