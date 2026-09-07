@@ -252,13 +252,23 @@ enum send_flags
     ABORT_WITH_FLAG(conn, LSQ_LOG_WARN, IFC_ERROR, __VA_ARGS__)
 
 #define CONN_ERR(app_error_, code_) (struct conn_err) { \
-                            .app_error = (app_error_), .u.err = (code_), }
+                            .app_error = (app_error_), .frame_type = 0, \
+                            .u.err = (code_), }
+
+#define CONN_ERR_FT(app_error_, code_, ft_) (struct conn_err) { \
+                            .app_error = (app_error_), .frame_type = (ft_), \
+                            .u.err = (code_), }
 
 /* Use this for protocol errors; they do not need to be as loud as our own
  * internal errors.
  */
 #define ABORT_QUIETLY(app_error, code, ...) do {                            \
     conn->ifc_error = CONN_ERR(app_error, code);                            \
+    ABORT_WITH_FLAG(conn, LSQ_LOG_INFO, IFC_ERROR, __VA_ARGS__);            \
+} while (0)
+
+#define ABORT_QUIETLY_FT(app_error, code, ft, ...) do {                     \
+    conn->ifc_error = CONN_ERR_FT(app_error, code, ft);                     \
     ABORT_WITH_FLAG(conn, LSQ_LOG_INFO, IFC_ERROR, __VA_ARGS__);            \
 } while (0)
 
@@ -285,6 +295,7 @@ struct http_ctl_stream_in
 struct conn_err
 {
     int                         app_error;
+    uint64_t                    frame_type;
     union
     {
         enum trans_error_code   tec;
@@ -4117,7 +4128,7 @@ immediate_close (struct ietf_full_conn *conn)
     sz = conn->ifc_conn.cn_pf->pf_gen_connect_close_frame(
                      packet_out->po_data + packet_out->po_data_sz,
                      lsquic_packet_out_avail(packet_out), conn_err.app_error,
-                     conn_err.u.err, error_reason,
+                     conn_err.u.err, conn_err.frame_type, error_reason,
                      error_reason ? strlen(error_reason) : 0);
     if (sz < 0) {
         LSQ_WARN("%s failed", __func__);
@@ -4283,7 +4294,8 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
     lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
     sz = conn->ifc_conn.cn_pf->pf_gen_connect_close_frame(
                 packet_out->po_data + packet_out->po_data_sz,
-                lsquic_packet_out_avail(packet_out), 0, TEC_NO_ERROR, NULL, 0);
+                lsquic_packet_out_avail(packet_out), 0, TEC_NO_ERROR, 0,
+                NULL, 0);
     if (sz < 0) {
         ABORT_ERROR("generate_connection_close_packet failed");
         return;
@@ -5329,7 +5341,7 @@ process_rst_stream_frame (struct ietf_full_conn *conn,
 
     if (conn_is_send_only_stream(conn, stream_id))
     {
-        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
+        ABORT_QUIETLY_FT(0, TEC_STREAM_STATE_ERROR, 0x04,
             "received RESET_STREAM on send-only stream %"PRIu64, stream_id);
         return 0;
     }
@@ -5398,7 +5410,7 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
 
     if (conn_is_receive_only_stream(conn, stream_id))
     {
-        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR,
+        ABORT_QUIETLY_FT(0, TEC_STREAM_STATE_ERROR, 0x05,
             "received STOP_SENDING on receive-only stream %"PRIu64, stream_id);
         return 0;
     }
@@ -5420,7 +5432,7 @@ process_stop_sending_frame (struct ietf_full_conn *conn,
             stream_id);
     else if (our_stream)
     {
-        ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received STOP_SENDING frame "
+        ABORT_QUIETLY_FT(0, TEC_STREAM_STATE_ERROR, 0x05, "received STOP_SENDING frame "
             "on locally initiated stream that has not yet been opened");
         return 0;
     }
@@ -6038,7 +6050,7 @@ process_max_stream_data_frame (struct ietf_full_conn *conn,
         }
         else
         {
-            ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received MAX_STREAM_DATA "
+            ABORT_QUIETLY_FT(0, TEC_STREAM_STATE_ERROR, 0x11, "received MAX_STREAM_DATA "
                                                      "frame on never-opened stream %"PRIu64, stream_id);
             return 0;
         }
@@ -6311,7 +6323,7 @@ process_retire_connection_id_frame (struct ietf_full_conn *conn,
      */
     if (conn->ifc_settings->es_scid_len == 0)
     {
-        ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "cannot retire zero-length CID");
+        ABORT_QUIETLY_FT(0, TEC_PROTOCOL_VIOLATION, 0x19, "cannot retire zero-length CID");
         return 0;
     }
 

@@ -89,7 +89,7 @@ lsquic_gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
 
 int
 lsquic_gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
-    int app_error, unsigned error_code, const char *reason, int reason_len);
+    int app_error, unsigned error_code, unsigned frame_type, const char *reason, int reason_len);
 
 int
 lsquic_gquic_be_parse_connect_close_frame (const unsigned char *buf, size_t buf_len,
