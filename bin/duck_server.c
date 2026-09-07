@@ -25,7 +25,8 @@
 #include "test_cert.h"
 #include "prog.h"
 
-#include "../src/liblsquic/lsquic_logger.h"
+#define TOOL_LOG_PREFIX "duck_server"
+#include "tool_log.h"
 
 
 static lsquic_conn_ctx_t *

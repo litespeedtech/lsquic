@@ -163,6 +163,17 @@ struct parse_funcs
     int
     (*pf_parse_rst_frame) (const unsigned char *buf, size_t buf_len,
         lsquic_stream_id_t *stream_id, uint64_t *offset, uint64_t *error_code);
+    unsigned
+    (*pf_reset_stream_at_frame_size) (lsquic_stream_id_t stream_id,
+        uint64_t error_code, uint64_t final_size, uint64_t reliable_size);
+    int
+    (*pf_gen_reset_stream_at_frame) (unsigned char *buf, size_t buf_len,
+        lsquic_stream_id_t stream_id, uint64_t error_code, uint64_t final_size,
+        uint64_t reliable_size);
+    int
+    (*pf_parse_reset_stream_at_frame) (const unsigned char *buf, size_t buf_len,
+        lsquic_stream_id_t *stream_id, uint64_t *error_code,
+        uint64_t *final_size, uint64_t *reliable_size);
     int
     (*pf_parse_stop_sending_frame) (const unsigned char *buf, size_t buf_len,
         lsquic_stream_id_t *stream_id, uint64_t *error_code);

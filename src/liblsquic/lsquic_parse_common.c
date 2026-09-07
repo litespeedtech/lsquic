@@ -344,6 +344,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_0RTT] = QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -357,6 +358,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -374,6 +376,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_0RTT] = QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -387,6 +390,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -404,6 +408,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_0RTT] = QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -417,6 +422,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -434,6 +440,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_0RTT] = QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
@@ -448,6 +455,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK | QUIC_FTBIT_CONNECTION_CLOSE
                     | QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                    | QUIC_FTBIT_RESET_STREAM_AT
                     | QUIC_FTBIT_BLOCKED
                     | QUIC_FTBIT_MAX_DATA | QUIC_FTBIT_MAX_STREAM_DATA
                     | QUIC_FTBIT_MAX_STREAMS | QUIC_FTBIT_STREAM_BLOCKED
