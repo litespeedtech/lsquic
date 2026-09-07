@@ -199,20 +199,6 @@ lsquic_hcso_write_settings (struct hcso_writer *writer,
         vint_write(p, 1, bits, 1 << bits);
         p += 1 << bits;
 
-        if (enpub->enp_settings.es_webtransport_compat
-                                        == LSQUIC_WT_COMPAT_DRAFT_14)
-        {
-            /* Draft-14 used WT_MAX_SESSIONS.  Do not send draft-16 session
-             * flow-control SETTINGS: this implementation deliberately does
-             * not participate in session-level flow control. */
-            bits = hcso_setting_type2bits(writer, HQSID_WT_MAX_SESSIONS);
-            vint_write(p, HQSID_WT_MAX_SESSIONS, bits, 1 << bits);
-            p += 1 << bits;
-            bits = vint_val2bits(1);
-            vint_write(p, 1, bits, 1 << bits);
-            p += 1 << bits;
-        }
-
         if (is_server)
         {
             /* Write out SETTINGS_ENABLE_CONNECT_PROTOCOL */

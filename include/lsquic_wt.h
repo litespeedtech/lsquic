@@ -244,10 +244,9 @@ lsquic_wt_peer_settings_received (lsquic_conn_t *conn);
 /**
  * Return whether peer currently supports WebTransport on this connection.
  *
- * This is a best-effort capability check.  On this branch it may become
- * true in compatibility mode for draft-14 peers, or for peers that
- * negotiate the core transport pieces but omit reset_stream_at or WT
- * initial flow-control settings.
+ * This is a best-effort capability check.  It becomes true when the peer
+ * satisfies the draft-16 HTTP/3 settings, HTTP Datagram, QUIC DATAGRAM, and
+ * reset_stream_at requirements used by this implementation.
  */
 int
 lsquic_wt_peer_supports (lsquic_conn_t *conn);

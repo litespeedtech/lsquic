@@ -511,12 +511,10 @@ struct ietf_full_conn
     struct {
         uint64_t    header_table_size,
                     qpack_blocked_streams;
-        uint64_t    wt_max_sessions;
         uint64_t    wt_initial_max_data;
         uint64_t    wt_initial_max_streams_uni;
         uint64_t    wt_initial_max_streams_bidi;
         unsigned    wt_draft;
-        signed char wt_max_sessions_seen;
         signed char wt_enabled;
         signed char wt_enabled_seen;
         signed char wt_initial_max_data_seen;
@@ -1548,8 +1546,6 @@ ietf_full_conn_init (struct ietf_full_conn *conn,
 
     conn->ifc_peer_hq_settings.header_table_size     = HQ_DF_QPACK_MAX_TABLE_CAPACITY;
     conn->ifc_peer_hq_settings.qpack_blocked_streams = HQ_DF_QPACK_BLOCKED_STREAMS;
-    conn->ifc_peer_hq_settings.wt_max_sessions = 0;
-    conn->ifc_peer_hq_settings.wt_max_sessions_seen = 0;
     conn->ifc_peer_hq_settings.wt_draft = 0;
     conn->ifc_peer_hq_settings.wt_enabled = 0;
     conn->ifc_peer_hq_settings.wt_enabled_seen = 0;
@@ -3920,16 +3916,6 @@ apply_trans_params (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("turn on QL loss bits");
         lsquic_send_ctl_do_ql_bits(&conn->ifc_send_ctl);
-    }
-
-    if ((params->tp_set & (1 << TPI_RESET_STREAM_AT))
-        && params->tp_reset_stream_at_legacy
-        && conn->ifc_settings->es_webtransport_compat
-                                        != LSQUIC_WT_COMPAT_DRAFT_14)
-    {
-        ABORT_QUIETLY(0, TEC_TRANSPORT_PARAMETER_ERROR,
-            "peer used provisional reset_stream_at transport parameter");
-        return -1;
     }
 
     if (params->tp_set & (1 << TPI_RESET_STREAM_AT))
@@ -10427,17 +10413,12 @@ local_webtransport_enabled (const struct ietf_full_conn *conn)
 static void
 update_peer_wt_support (struct ietf_full_conn *conn)
 {
-    int had_support;
     int supports;
     int peer_settings_received;
     int peer_connect_protocol;
     int peer_wt_enabled;
     int peer_quic_datagrams;
     int peer_reset_stream_at;
-    int legacy;
-
-    legacy = conn->ifc_settings->es_webtransport_compat
-                                        == LSQUIC_WT_COMPAT_DRAFT_14;
 
     peer_settings_received = !!(conn->ifc_flags & IFC_HAVE_PEER_SET);
     if (peer_settings_received)
@@ -10456,39 +10437,24 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     conn->ifc_pub.cp_wt_peer_draft = conn->ifc_peer_hq_settings.wt_draft;
     peer_wt_enabled = conn->ifc_peer_hq_settings.wt_enabled_seen
                    && conn->ifc_peer_hq_settings.wt_enabled;
-    if (legacy)
-        peer_wt_enabled = peer_wt_enabled
-            || (conn->ifc_peer_hq_settings.wt_max_sessions_seen
-                && conn->ifc_peer_hq_settings.wt_max_sessions > 0);
     /* SETTINGS_WT_ENABLED is sent by servers.  Clients signal their use of
      * WebTransport in the extended CONNECT request instead. */
     if (conn->ifc_flags & IFC_SERVER)
         peer_wt_enabled = 1;
     peer_quic_datagrams = !!(conn->ifc_flags & IFC_DATAGRAMS);
     peer_reset_stream_at = !!(conn->ifc_mflags & MF_PEER_RESET_STREAM_AT);
-    had_support = !!(conn->ifc_pub.cp_flags & CP_WEBTRANSPORT);
 
     /*
-     * Strict draft-15 support requires peer SETTINGS, negotiated HTTP
+     * Draft-16 support requires peer SETTINGS, negotiated HTTP
      * Datagrams and QUIC DATAGRAM, plus peer WT advertisement.  Client-side
      * CONNECT also requires SETTINGS_ENABLE_CONNECT_PROTOCOL=1.
-     *
-     * Compatibility policy on this branch:
-     *  - still enable WT for draft-14 peers that advertise WT via
-     *    WT_MAX_SESSIONS and negotiate the transport pieces above;
-     *  - still enable WT when peers omit reset_stream_at TP or WT initial
-     *    settings, but warn and treat this as compatibility mode.
-     *
-     * This keeps draft-14 / partial draft-15 interop working while WT flow
-     * control remains deferred and the implementation supports one WT
-     * session per connection.
      */
     supports = peer_settings_received
             && local_webtransport_enabled(conn)
             && peer_wt_enabled
             && (conn->ifc_pub.cp_flags & CP_HTTP_DATAGRAMS)
             && peer_quic_datagrams
-            && (legacy || peer_reset_stream_at);
+            && peer_reset_stream_at;
     if (!(conn->ifc_flags & IFC_SERVER))
         supports = supports && peer_connect_protocol;
 
@@ -10497,23 +10463,13 @@ update_peer_wt_support (struct ietf_full_conn *conn)
     else
         conn->ifc_pub.cp_flags &= ~CP_WEBTRANSPORT;
 
-    if (supports && !had_support && legacy)
-    {
-        if (!peer_reset_stream_at)
-            LSQ_WARN("peer missing reset_stream_at TP: enabling WT in "
-                     "compatibility mode");
-        LSQ_WARN("draft-14 WebTransport compatibility profile active");
-    }
-
-    LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_max_seen=%d, wt_max=%"PRIu64
-              ", wt_enabled_seen=%d, wt_enabled=%d, wt_max_data_seen=%d, wt_max_uni_seen=%d, "
+    LSQ_DEBUG("peer WT: settings=%d, local=%d, wt_enabled_seen=%d, "
+              "wt_enabled=%d, wt_max_data_seen=%d, wt_max_uni_seen=%d, "
               "wt_max_bidi_seen=%d, draft=%u, connect_seen=%d, connect=%d, "
               "h3_dgram=%d, quic_dgram=%d, reset_at=%d "
               "=> support=%d",
         peer_settings_received,
         local_webtransport_enabled(conn),
-        conn->ifc_peer_hq_settings.wt_max_sessions_seen,
-        conn->ifc_peer_hq_settings.wt_max_sessions,
         conn->ifc_peer_hq_settings.wt_enabled_seen,
         conn->ifc_peer_hq_settings.wt_enabled,
         conn->ifc_peer_hq_settings.wt_initial_max_data_seen,
@@ -10658,18 +10614,6 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
         conn->ifc_peer_hq_settings.enable_connect_protocol = value == 1;
         update_peer_wt_support(conn);
         LSQ_DEBUG("Peer's SETTINGS_ENABLE_CONNECT_PROTOCOL=%"PRIu64, value);
-        break;
-    case HQSID_WT_MAX_SESSIONS:
-        conn->ifc_peer_hq_settings.wt_max_sessions_seen = 1;
-        conn->ifc_peer_hq_settings.wt_max_sessions = value;
-        if (conn->ifc_peer_hq_settings.wt_draft < 14)
-            conn->ifc_peer_hq_settings.wt_draft = 14;
-        if (!local_webtransport_enabled(conn) && value > 0)
-            LSQ_DEBUG("peer enabled WT while local endpoint has WT disabled");
-        if (conn->ifc_settings->es_webtransport_compat
-                                        == LSQUIC_WT_COMPAT_DRAFT_14)
-            update_peer_wt_support(conn);
-        LSQ_DEBUG("Peer's SETTINGS_WT_MAX_SESSIONS=%"PRIu64, value);
         break;
     case HQSID_WT_INITIAL_MAX_DATA:
         conn->ifc_peer_hq_settings.wt_initial_max_data_seen = 1;
@@ -11418,8 +11362,6 @@ lsquic_ietf_test_wt_support (unsigned is_server,
                              unsigned http_datagrams,
                              unsigned quic_datagrams,
                              unsigned connect_protocol,
-                             unsigned wt_max_sessions_seen,
-                             uint64_t wt_max_sessions,
                              unsigned wt_enabled_seen,
                              unsigned wt_enabled,
                              unsigned wt_initial_max_data_seen,
@@ -11437,8 +11379,6 @@ lsquic_ietf_test_wt_support (unsigned is_server,
     memset(&settings, 0, sizeof(settings));
 
     settings.es_webtransport = local_webtransport != 0;
-    settings.es_webtransport_compat = draft == 14
-                                   ? LSQUIC_WT_COMPAT_DRAFT_14 : 0;
     conn.ifc_settings = &settings;
 
     if (is_server)
@@ -11456,8 +11396,6 @@ lsquic_ietf_test_wt_support (unsigned is_server,
                                                         connect_protocol != 0;
     conn.ifc_peer_hq_settings.enable_connect_protocol =
                                                         connect_protocol != 0;
-    conn.ifc_peer_hq_settings.wt_max_sessions_seen = wt_max_sessions_seen != 0;
-    conn.ifc_peer_hq_settings.wt_max_sessions = wt_max_sessions;
     conn.ifc_peer_hq_settings.wt_enabled_seen = wt_enabled_seen != 0;
     conn.ifc_peer_hq_settings.wt_enabled = wt_enabled != 0;
     conn.ifc_peer_hq_settings.wt_initial_max_data_seen =

@@ -972,14 +972,6 @@ settings structure:
 
        Default value is :macro:`LSQUIC_DF_WEBTRANSPORT_SERVER`
 
-    .. member:: unsigned        es_webtransport_compat
-
-       WebTransport wire compatibility profile.  Zero selects strict
-       draft-16 behavior.  :macro:`LSQUIC_WT_COMPAT_DRAFT_14` enables the
-       draft-14 setting and provisional RESET_STREAM_AT parameter.
-
-       Default value is :macro:`LSQUIC_DF_WEBTRANSPORT_COMPAT`
-
     .. member:: unsigned        es_max_webtransport_sessions
 
        Maximum number of concurrent WebTransport sessions per connection.
@@ -1440,10 +1432,9 @@ the engine to communicate with the user code:
 
         WebTransport is negotiated and usable.
 
-        This is a best-effort capability bit.  It can be set in
-        compatibility mode for draft-14 peers, or for peers that negotiate
-        the transport pieces needed by the current implementation while
-        omitting ``reset_stream_at`` or WT initial flow-control settings.
+        This is a best-effort capability bit.  It is set when the peer
+        satisfies the draft-16 HTTP/3 settings, HTTP Datagram, QUIC DATAGRAM,
+        and ``reset_stream_at`` requirements used by this implementation.
 
 .. type:: struct lsquic_http_caps
 
@@ -2380,8 +2371,7 @@ available through engine settings.
 
         Whether peer currently satisfies WebTransport requirements.
 
-        This reflects the implementation's effective policy, including the
-        compatibility mode described above.
+        This reflects the implementation's effective draft-16 policy.
 
         **Type:** ``uint64_t`` (0 or 1, get-only)
 

@@ -80,9 +80,6 @@ struct transport_params
     /* Which transport parameters were present (set by the decoder): */
     unsigned                tp_decoded;
 
-    /* Select/record the draft-07 provisional RESET_STREAM_AT codepoint. */
-    unsigned                tp_reset_stream_at_legacy:1;
-
     uint64_t                tp_numerics[MAX_NUMERIC_TPI + 1];
 
 #define tp_init_max_stream_data_bidi_local  tp_numerics[TPI_INIT_MAX_STREAM_DATA_BIDI_LOCAL]

@@ -122,8 +122,6 @@ int lsquic_ietf_test_wt_support (unsigned is_server,
                                  unsigned http_datagrams,
                                  unsigned quic_datagrams,
                                  unsigned connect_protocol,
-                                 unsigned wt_max_sessions_seen,
-                                 uint64_t wt_max_sessions,
                                  unsigned wt_enabled_seen,
                                  unsigned wt_enabled,
                                  unsigned wt_initial_max_data_seen,
@@ -789,33 +787,31 @@ test_control_stream_ops_rejected (void)
 
 
 static void
-test_compatibility_mode_behavior (void)
+test_strict_negotiation_behavior (void)
 {
     unsigned supports, draft;
 
     supports = draft = UINT_MAX;
     assert(0 == lsquic_ietf_test_wt_support(
-                    1,  /* server side */
+                    0,  /* client side */
                     1,  /* peer SETTINGS received */
                     1,  /* local WT enabled */
                     1,  /* HTTP datagrams */
                     1,  /* QUIC datagrams */
-                    0,  /* CONNECT protocol not needed server-side */
-                    1, 1,  /* draft-14 WT_MAX_SESSIONS */
-                    0, 0,  /* no WT_ENABLED setting */
+                    1,  /* CONNECT protocol required and present */
+                    1, 1,  /* draft-16 WT enabled */
                     0, 0, 0,  /* no WT initial settings */
-                    0,  /* no reset_stream_at TP */
-                    14,
+                    1,  /* reset_stream_at TP */
+                    16,
                     &supports, &draft));
     assert(supports == 1);
-    assert(draft == 14);
+    assert(draft == 16);
 
     supports = draft = UINT_MAX;
     assert(0 == lsquic_ietf_test_wt_support(
                     0,  /* client side */
                     1, 1, 1, 1,
                     1,  /* CONNECT protocol required and present */
-                    0, 0,  /* no WT_MAX_SESSIONS */
                     1, 1,  /* draft-16 WT enabled */
                     0, 0, 0,  /* missing WT initial settings */
                     0,  /* no reset_stream_at TP */
@@ -828,7 +824,6 @@ test_compatibility_mode_behavior (void)
     assert(0 == lsquic_ietf_test_wt_support(
                     0, 1, 1, 1, 1,
                     0,  /* missing CONNECT protocol */
-                    0, 0,
                     1, 1,
                     1, 1, 1,
                     1,
@@ -1090,7 +1085,7 @@ main (void)
     test_reject_status_validation();
     test_write_error_closes_stream();
     test_control_stream_ops_rejected();
-    test_compatibility_mode_behavior();
+    test_strict_negotiation_behavior();
     test_reset_dispatch();
     test_pending_replay_stops_on_close();
     test_destroy_while_closing();

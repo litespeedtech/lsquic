@@ -66,7 +66,6 @@ tpi_val_2_enum (uint64_t tpi_val)
     case 0xFF02DE1A:return TPI_MIN_ACK_DELAY_02;
     case 0x7158:    return TPI_TIMESTAMPS;
     case 0x1D:      return TPI_RESET_STREAM_AT;
-    case 0x17F7586D2CB571: return TPI_RESET_STREAM_AT;
     default:        return INT_MAX;
     }
 }
@@ -103,17 +102,6 @@ static const uint64_t enum_2_tpi_val[LAST_TPI + 1] =
     [TPI_GREASE_QUIC_BIT]                   =  0x2AB2,
     [TPI_RESET_STREAM_AT]                   =  0x1D,
 };
-
-#define RESET_STREAM_AT_DRAFT_07 0x17F7586D2CB571ULL
-
-static uint64_t
-tpi_wire_value (const struct transport_params *params,
-                enum transport_param_id tpi)
-{
-    if (tpi == TPI_RESET_STREAM_AT && params->tp_reset_stream_at_legacy)
-        return RESET_STREAM_AT_DRAFT_07;
-    return enum_2_tpi_val[tpi];
-}
 
 
 const char * const lsquic_tpi2str[LAST_TPI + 1] =
@@ -373,7 +361,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
     for (; tpi <= MAX_EMPTY_TPI; ++tpi)
         if (set & (1 << tpi))
         {
-            bits[tpi][0] = vint_val2bits(tpi_wire_value(params, tpi));
+            bits[tpi][0] = vint_val2bits(enum_2_tpi_val[tpi]);
             need += (1 << bits[tpi][0]) + 1 /* Zero length byte */;
         }
 
@@ -415,7 +403,7 @@ lsquic_tp_encode (const struct transport_params *params, int is_server,
     for (tpi = 0; tpi <= LAST_TPI; ++tpi)
         if (set & (1 << tpi))
         {
-            vint_write(p, tpi_wire_value(params, tpi), bits[tpi][0],
+            vint_write(p, enum_2_tpi_val[tpi], bits[tpi][0],
                                                         1 << bits[tpi][0]);
             p += 1 << bits[tpi][0];
             switch (tpi)
@@ -554,9 +542,6 @@ lsquic_tp_decode (const unsigned char *const buf, size_t bufsz,
         if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
-        if (tpi == TPI_RESET_STREAM_AT
-                            && param_id == RESET_STREAM_AT_DRAFT_07)
-            params->tp_reset_stream_at_legacy = 1;
         if (tpi <= LAST_TPI)
         {
             if (set_of_ids & (1 << tpi))
@@ -987,7 +972,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
     for (; tpi <= MAX_EMPTY_TPI; ++tpi)
         if (set & (1 << tpi))
         {
-            bits[tpi][0] = vint_val2bits(tpi_wire_value(params, tpi));
+            bits[tpi][0] = vint_val2bits(enum_2_tpi_val[tpi]);
             need += (1 << bits[tpi][0]) + 1 /* Zero length byte */;
         }
 
@@ -1019,7 +1004,7 @@ lsquic_tp_encode_27 (const struct transport_params *params, int is_server,
     for (tpi = 0; tpi <= LAST_TPI; ++tpi)
         if (set & (1 << tpi))
         {
-            vint_write(p, tpi_wire_value(params, tpi), bits[tpi][0],
+            vint_write(p, enum_2_tpi_val[tpi], bits[tpi][0],
                                                         1 << bits[tpi][0]);
             p += 1 << bits[tpi][0];
             switch (tpi)
@@ -1149,9 +1134,6 @@ lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
         if (len > (uint64_t) (end - p))
             return -1;
         tpi = tpi_val_2_enum(param_id);
-        if (tpi == TPI_RESET_STREAM_AT
-                            && param_id == RESET_STREAM_AT_DRAFT_07)
-            params->tp_reset_stream_at_legacy = 1;
         if (tpi <= LAST_TPI)
         {
             if (set_of_ids & (1 << tpi))

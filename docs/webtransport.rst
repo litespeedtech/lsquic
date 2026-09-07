@@ -51,18 +51,10 @@ Applications using WebTransport must also use:
     settings.es_http_datagrams = 1;
     settings.es_reset_stream_at = 1;
     settings.es_max_webtransport_sessions = 1;
-    settings.es_webtransport_compat = 0;  /* strict draft-16 */
 
 ``es_http_datagrams`` is required for WebTransport datagrams.
 ``es_reset_stream_at`` is required by the current WebTransport support.
 ``es_max_webtransport_sessions`` must be set to 1.
-
-For a known draft-14 peer, opt into the legacy setting and provisional
-RESET_STREAM_AT transport parameter with::
-
-    settings.es_webtransport_compat = LSQUIC_WT_COMPAT_DRAFT_14;
-
-Do not enable this profile for draft-16 peers.
 
 WebTransport Model In LSQUIC
 ============================
@@ -410,7 +402,7 @@ not need to pre-check them before calling ``lsquic_wt_accept()``.
 If you want notification when effective HTTP capabilities become known, use
 the ordinary stream callback table's ``on_http_caps`` callback.  The
 ``LSQUIC_HTTP_CAP_WEBTRANSPORT`` bit is best-effort on this branch and may be
-set in compatibility mode.
+set once the draft-16 transport and HTTP/3 requirements are satisfied.
 
 Practical Rules
 ===============
