@@ -27,6 +27,7 @@
 #include <event2/event.h>
 
 #include <openssl/md5.h>
+#include <openssl/x509.h>
 
 #include "lsquic.h"
 #include "../src/liblsquic/lsquic_hash.h"
@@ -376,6 +377,35 @@ maybe_schedule_test_close (lsquic_stream_t *stream)
 }
 
 
+static void
+log_peer_cert_chain (lsquic_conn_t *conn)
+{
+    STACK_OF(X509) *chain;
+    X509_NAME *name;
+    X509 *cert;
+    unsigned i;
+    char buf[100];
+
+    chain = lsquic_conn_get_full_peer_cert_chain(conn);
+    if (!chain)
+    {
+        LSQ_DEBUG("peer certificate chain is unavailable");
+        return;
+    }
+
+    for (i = 0; i < sk_X509_num(chain); ++i)
+    {
+        cert = sk_X509_value(chain, i);
+        name = X509_get_subject_name(cert);
+        LSQ_INFO("peer cert #%u: name: %s", i,
+                            X509_NAME_oneline(name, buf, sizeof(buf)));
+        X509_free(cert);
+    }
+
+    sk_X509_free(chain);
+}
+
+
 static lsquic_conn_ctx_t *
 http_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 {
@@ -384,6 +414,8 @@ http_server_on_new_conn (void *stream_if_ctx, lsquic_conn_t *conn)
 
     sni = lsquic_conn_get_sni(conn);
     LSQ_DEBUG("new connection, SNI: %s", sni ? sni : "<not set>");
+
+    log_peer_cert_chain(conn);
 
     if (server_ctx->max_pacing_rate > 0)
     {

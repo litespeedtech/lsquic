@@ -165,6 +165,9 @@ enum lsquic_hsk_status
 struct lsquic_stream_if {
 
     /**
+     * Called when a new connection is created.  In server mode, the handshake
+     * has succeeded.  In client mode, the handshake has not yet completed.
+     *
      * Use @ref lsquic_conn_get_ctx to get back the context.  It is
      * OK for this function to return NULL.
      */
@@ -197,9 +200,10 @@ struct lsquic_stream_if {
      * is called during lsquic_engine_packet_in().
      */
     void (*on_datagram)(lsquic_conn_t *, const void *buf, size_t);
-    /* This callback in only called in client mode */
     /**
-     * When handshake is completed, this optional callback is called.
+     * This optional callback is called only in client mode when the handshake
+     * completes, successfully or unsuccessfully.  In server mode, on_new_conn
+     * indicates a successful handshake.
      */
     void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s);
     /**
@@ -1843,6 +1847,23 @@ lsquic_stream_has_unacked_data (lsquic_stream_t *s);
  */
 struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
+
+/**
+ * Get the peer's certificate chain, including the leaf certificate: the
+ * client's chain in server mode, or the server's chain in client mode.
+ * The chain does not necessarily include the root certificate.
+ *
+ * Call this from on_new_conn in server mode, or from a successful on_hsk_done
+ * callback in client mode.  The TLS state may be released later.
+ * Returns NULL if the chain is unavailable.  gQUIC does not support client
+ * certificates and always returns NULL in server mode.
+ *
+ * The caller owns the returned stack and certificate references and releases
+ * them using sk_X509_pop_free(chain, X509_free).
+ */
+struct stack_st_X509 *
+lsquic_conn_get_full_peer_cert_chain (lsquic_conn_t *);
+
 
 /** Returns ID of the stream */
 lsquic_stream_id_t

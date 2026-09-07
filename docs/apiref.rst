@@ -1379,7 +1379,9 @@ the engine to communicate with the user code:
 
     .. member:: void (*on_hsk_done)(lsquic_conn_t *c, enum lsquic_hsk_status s)
 
-        When handshake is completed, this callback is called.
+        Called only in client mode when the handshake completes, successfully
+        or unsuccessfully.  In server mode,
+        :member:`lsquic_stream_if.on_new_conn` indicates a successful handshake.
 
         This callback is optional.
 
@@ -2062,6 +2064,22 @@ Miscellaneous Connection Functions
     server certificate verification.
 
     The caller releases the stack using sk_X509_free().
+
+.. function:: struct stack_st_X509 * lsquic_conn_get_full_peer_cert_chain (lsquic_conn_t *conn)
+
+    Get the peer's certificate chain, including the leaf certificate: the
+    client's chain in server mode, or the server's chain in client mode.
+    The chain does not necessarily include the root certificate.
+
+    Call this from :member:`lsquic_stream_if.on_new_conn` in server mode, or
+    from a successful :member:`lsquic_stream_if.on_hsk_done` callback in client
+    mode.  The TLS state may be released later.
+
+    Returns NULL if the chain is unavailable.  gQUIC does not support client
+    certificates and always returns NULL in server mode.
+
+    The caller owns the returned stack and certificate references and releases
+    them using ``sk_X509_pop_free(chain, X509_free)``.
 
 .. function:: lsquic_conn_ctx_t * lsquic_conn_get_ctx (const lsquic_conn_t *conn)
 
