@@ -868,8 +868,11 @@ lsquic_enc_session_create_client (struct lsquic_conn *lconn, const char *domain,
     enc_session->enpub = enpub;
     enc_session->cid   = cid;
     enc_session->info  = info;
-    /* FIXME: allocation may fail */
-    lsquic_str_append(&enc_session->hs_ctx.sni, domain, strlen(domain));
+    if (0 != lsquic_str_append(&enc_session->hs_ctx.sni, domain, strlen(domain)))
+    {
+        lsquic_enc_session_destroy(enc_session);
+        return NULL;
+    }
     maybe_log_secrets(enc_session);
     if (lconn->cn_version >= LSQVER_050)
     {
