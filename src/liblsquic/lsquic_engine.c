@@ -309,6 +309,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
+        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_SERVER;
@@ -333,6 +334,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     {
         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
+        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
         settings->es_init_max_data
                                  = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
