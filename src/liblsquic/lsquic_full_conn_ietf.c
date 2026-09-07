@@ -4268,11 +4268,15 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     int sz;
+    enum packno_space pns;
 
-    /* FIXME Select PNS based on handshake status (possible on the client): if
-     * appropriate keys are not available, encryption will fail.
-     */
-    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
+            (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+        pns = PNS_APP;
+    else
+        pns = PNS_HSK;
+
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
                                                                 CUR_NPATH(conn));
     if (!packet_out)
     {
