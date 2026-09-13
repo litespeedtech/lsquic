@@ -1475,11 +1475,13 @@ verify_cl_on_fin (struct lsquic_stream *stream)
 {
     struct lsquic_conn *lconn;
 
-    /* The rules in RFC7230, Section 3.3.2 are a bit too intricate.  We take
-     * a simple approach and verify content-length only when there was any
-     * payload at all.
+    /* HTTP/3 permits some responses that never have content to carry a
+     * non-zero Content-Length.  This stream layer does not track those
+     * response semantics, so tighten the zero-payload check only for
+     * server-side request streams.
      */
-    if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
+    if ((stream->sm_data_in != 0 || (stream->sm_bflags & SMBF_SERVER))
+                                    && stream->sm_cont_len != stream->sm_data_in)
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,

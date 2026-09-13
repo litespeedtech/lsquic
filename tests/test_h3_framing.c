@@ -2350,6 +2350,47 @@ test_content_length_overrun_blocks_payload_delivery (void)
 
 
 static void
+test_request_content_length_without_data (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    struct stream_frame *frame;
+    ssize_t nr;
+    int s;
+    unsigned char buf[1];
+
+    init_test_ctl_settings(&g_ctl_settings);
+
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x2000, 1252);
+    tobjs.ctor_flags |= SCF_HTTP|SCF_IETF;
+    tobjs.lconn.cn_flags |= LSCONN_SERVER;
+
+    stream = new_stream(&tobjs, 0, 0x1000);
+
+    /* Fake out completed headers and a parsed Content-Length: 1. */
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    assert(0 == lsquic_stream_verify_len(stream, 1));
+
+    frame = new_frame_in_ext(&tobjs, 0, 0, 1, (unsigned char []){ 0, });
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 0);
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.is_app == 1);
+    assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
+static void
 test_content_length_max_value_ignores_stale_errno (void)
 {
     struct lsxpack_header hdrs[] = {
@@ -2523,6 +2564,7 @@ main (int argc, char **argv)
             test_conflicting_content_length_is_rejected();
             test_invalid_content_length_syntax_is_rejected();
             test_content_length_overrun_blocks_payload_delivery();
+            test_request_content_length_without_data();
             test_coalesced_hsets_are_throttled();
             test_data_waits_for_hset_claim();
             test_content_length_max_value_ignores_stale_errno();
@@ -2554,6 +2596,7 @@ main (int argc, char **argv)
         test_conflicting_content_length_is_rejected();
         test_invalid_content_length_syntax_is_rejected();
         test_content_length_overrun_blocks_payload_delivery();
+        test_request_content_length_without_data();
         test_content_length_max_value_ignores_stale_errno();
         test_content_length_overflow_is_rejected();
         test_header_processing_error_stays_message_error();
