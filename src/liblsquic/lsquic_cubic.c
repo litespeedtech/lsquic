@@ -205,10 +205,10 @@ lsquic_cubic_loss (void *cong_ctl)
     LSQ_DEBUG("%s(cubic)", __func__);
     cubic->cu_epoch_start = 0;
     if (FAST_CONVERGENCE && cubic->cu_cwnd < cubic->cu_last_max_cwnd)
-        cubic->cu_last_max_cwnd = cubic->cu_cwnd * TWO_MINUS_BETA_OVER_TWO / 1024;
+        cubic->cu_last_max_cwnd = (uint64_t) cubic->cu_cwnd * TWO_MINUS_BETA_OVER_TWO / 1024;
     else
         cubic->cu_last_max_cwnd = cubic->cu_cwnd;
-    cubic->cu_cwnd = cubic->cu_cwnd * ONE_MINUS_BETA / 1024;
+    cubic->cu_cwnd = (uint64_t) cubic->cu_cwnd * ONE_MINUS_BETA / 1024;
     cubic->cu_tcp_cwnd = cubic->cu_cwnd;
     cubic->cu_ssthresh = cubic->cu_cwnd;
     LSQ_INFO("loss detected, last_max_cwnd: %lu, cwnd: %lu",
@@ -266,7 +266,7 @@ lsquic_cubic_pacing_rate (void *cong_ctl, int in_recovery)
     srtt = lsquic_rtt_stats_get_srtt(cubic->cu_rtt_stats);
     if (srtt == 0)
         srtt = 50000;
-    bandwidth = cubic->cu_cwnd * 1000000 / srtt;
+    bandwidth = (uint64_t) cubic->cu_cwnd * 1000000 / srtt;
     if (in_slow_start(cubic))
         pacing_rate = bandwidth * 2;
     else if (in_recovery)
