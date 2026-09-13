@@ -942,16 +942,16 @@ cce_iter_first (struct cce_cid_iter *citer, const struct lsquic_conn *conn)
 void
 update_stats_sum (struct lsquic_engine *engine, struct lsquic_conn *conn)
 {
-    unsigned long *const dst = (unsigned long *) &engine->conn_stats_sum;
-    const unsigned long *src;
+    uint64_t *const dst = (uint64_t *) &engine->conn_stats_sum;
+    const uint64_t *src;
     const struct conn_stats *stats;
     unsigned i;
 
     if (conn->cn_if->ci_get_stats && (stats = conn->cn_if->ci_get_stats(conn)))
     {
         ++engine->stats.conns;
-        src = (unsigned long *) stats;
-        for (i = 0; i < sizeof(*stats) / sizeof(unsigned long); ++i)
+        src = (const uint64_t *) stats;
+        for (i = 0; i < sizeof(*stats) / sizeof(uint64_t); ++i)
             dst[i] += src[i];
     }
 }
@@ -1848,37 +1848,37 @@ lsquic_engine_destroy (lsquic_engine_t *engine)
         const struct conn_stats *const stats = &engine->conn_stats_sum;
         fprintf(engine->stats_fh, "Aggregate connection stats collected by engine:\n");
         fprintf(engine->stats_fh, "Connections: %u\n", engine->stats.conns);
-        fprintf(engine->stats_fh, "Ticks: %lu\n", stats->n_ticks);
+        fprintf(engine->stats_fh, "Ticks: %"PRIu64"\n", stats->n_ticks);
         fprintf(engine->stats_fh, "In:\n");
-        fprintf(engine->stats_fh, "    Total bytes: %lu\n", stats->in.bytes);
-        fprintf(engine->stats_fh, "    packets: %lu\n", stats->in.packets);
-        fprintf(engine->stats_fh, "    undecryptable packets: %lu\n", stats->in.undec_packets);
-        fprintf(engine->stats_fh, "    duplicate packets: %lu\n", stats->in.dup_packets);
-        fprintf(engine->stats_fh, "    error packets: %lu\n", stats->in.err_packets);
-        fprintf(engine->stats_fh, "    STREAM frame count: %lu\n", stats->in.stream_frames);
-        fprintf(engine->stats_fh, "    STREAM payload size: %lu\n", stats->in.stream_data_sz);
-        fprintf(engine->stats_fh, "    Header bytes: %lu; uncompressed: %lu; ratio %.3lf\n",
+        fprintf(engine->stats_fh, "    Total bytes: %"PRIu64"\n", stats->in.bytes);
+        fprintf(engine->stats_fh, "    packets: %"PRIu64"\n", stats->in.packets);
+        fprintf(engine->stats_fh, "    undecryptable packets: %"PRIu64"\n", stats->in.undec_packets);
+        fprintf(engine->stats_fh, "    duplicate packets: %"PRIu64"\n", stats->in.dup_packets);
+        fprintf(engine->stats_fh, "    error packets: %"PRIu64"\n", stats->in.err_packets);
+        fprintf(engine->stats_fh, "    STREAM frame count: %"PRIu64"\n", stats->in.stream_frames);
+        fprintf(engine->stats_fh, "    STREAM payload size: %"PRIu64"\n", stats->in.stream_data_sz);
+        fprintf(engine->stats_fh, "    Header bytes: %"PRIu64"; uncompressed: %"PRIu64"; ratio %.3lf\n",
             stats->in.headers_comp, stats->in.headers_uncomp,
             stats->in.headers_uncomp ?
             (double) stats->in.headers_comp / (double) stats->in.headers_uncomp
             : 0);
-        fprintf(engine->stats_fh, "    ACK frames: %lu\n", stats->in.n_acks);
-        fprintf(engine->stats_fh, "    ACK frames processed: %lu\n", stats->in.n_acks_proc);
-        fprintf(engine->stats_fh, "    ACK frames merged: %lu\n", stats->in.n_acks_merged);
+        fprintf(engine->stats_fh, "    ACK frames: %"PRIu64"\n", stats->in.n_acks);
+        fprintf(engine->stats_fh, "    ACK frames processed: %"PRIu64"\n", stats->in.n_acks_proc);
+        fprintf(engine->stats_fh, "    ACK frames merged: %"PRIu64"\n", stats->in.n_acks_merged);
         fprintf(engine->stats_fh, "Out:\n");
-        fprintf(engine->stats_fh, "    Total bytes: %lu\n", stats->out.bytes);
-        fprintf(engine->stats_fh, "    packets: %lu\n", stats->out.packets);
-        fprintf(engine->stats_fh, "    acked via loss record: %lu\n", stats->out.acked_via_loss);
-        fprintf(engine->stats_fh, "    acks: %lu\n", stats->out.acks);
-        fprintf(engine->stats_fh, "    retx packets: %lu\n", stats->out.retx_packets);
-        fprintf(engine->stats_fh, "    STREAM frame count: %lu\n", stats->out.stream_frames);
-        fprintf(engine->stats_fh, "    STREAM payload size: %lu\n", stats->out.stream_data_sz);
-        fprintf(engine->stats_fh, "    Header bytes: %lu; uncompressed: %lu; ratio %.3lf\n",
+        fprintf(engine->stats_fh, "    Total bytes: %"PRIu64"\n", stats->out.bytes);
+        fprintf(engine->stats_fh, "    packets: %"PRIu64"\n", stats->out.packets);
+        fprintf(engine->stats_fh, "    acked via loss record: %"PRIu64"\n", stats->out.acked_via_loss);
+        fprintf(engine->stats_fh, "    acks: %"PRIu64"\n", stats->out.acks);
+        fprintf(engine->stats_fh, "    retx packets: %"PRIu64"\n", stats->out.retx_packets);
+        fprintf(engine->stats_fh, "    STREAM frame count: %"PRIu64"\n", stats->out.stream_frames);
+        fprintf(engine->stats_fh, "    STREAM payload size: %"PRIu64"\n", stats->out.stream_data_sz);
+        fprintf(engine->stats_fh, "    Header bytes: %"PRIu64"; uncompressed: %"PRIu64"; ratio %.3lf\n",
             stats->out.headers_comp, stats->out.headers_uncomp,
             stats->out.headers_uncomp ?
             (double) stats->out.headers_comp / (double) stats->out.headers_uncomp
             : 0);
-        fprintf(engine->stats_fh, "    ACKs: %lu\n", stats->out.acks);
+        fprintf(engine->stats_fh, "    ACKs: %"PRIu64"\n", stats->out.acks);
     }
 #endif
     if (engine->pub.enp_srst_hash)
@@ -3591,5 +3591,4 @@ lsquic_engine_retire_cid (struct lsquic_engine_public *enpub,
     conn->cn_cces_mask &= ~(1u << cce_idx);
     LSQ_DEBUGC("retire CID %"CID_FMT, CID_BITS(&cce->cce_cid));
 }
-
 

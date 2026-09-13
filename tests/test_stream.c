@@ -7,6 +7,7 @@
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <limits.h>
 #ifndef WIN32
 #include <unistd.h>
@@ -75,6 +76,9 @@ static struct test_ctl_settings g_ctl_settings;
 
 static void
 init_buf (void *buf, size_t sz);
+
+static void
+test_conn_stats_over_4g (void);
 
 
 /* Set values to default */
@@ -3786,6 +3790,7 @@ main (int argc, char **argv)
 
     init_test_ctl_settings(&g_ctl_settings);
 
+    test_conn_stats_over_4g();
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
     test_stealing_ack();
@@ -3938,4 +3943,23 @@ init_buf (void *buf, size_t sz)
     }
 
     assert(p == end);
+}
+
+
+static void
+test_conn_stats_over_4g (void)
+{
+#if LSQUIC_CONN_STATS
+    struct conn_stats cumulative = {
+        .out.stream_data_sz = UINT64_C(0x100000008),
+    };
+    struct conn_stats previous = {
+        .out.stream_data_sz = UINT64_C(1) << 32,
+    };
+    struct conn_stats diff;
+
+    lsquic_conn_stats_diff(&cumulative, &previous, &diff);
+    assert(diff.out.stream_data_sz == 8);
+    assert(cumulative.out.stream_data_sz == UINT64_C(0x100000008));
+#endif
 }

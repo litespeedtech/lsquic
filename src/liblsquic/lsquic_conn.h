@@ -12,6 +12,7 @@
 #define LSQUIC_CONN_H
 
 #include <sys/queue.h>
+#include <stdint.h>
 #ifndef WIN32
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -424,35 +425,35 @@ lsquic_conn_retire_cid (lsquic_conn_t *lconn);
 
 #if LSQUIC_CONN_STATS
 struct conn_stats {
-    /* All counters are of the same type, unsigned long, because we cast the
+    /* All counters are of the same type, uint64_t, because we cast the
      * struct to an array to update the aggregate.
      */
-    unsigned long           n_ticks;            /* How many time connection was ticked */
+    uint64_t                n_ticks;            /* How many time connection was ticked */
     struct {
-        unsigned long       stream_data_sz;     /* Sum of all STREAM frames payload */
-        unsigned long       stream_frames;      /* Number of STREAM frames */
-        unsigned long       packets,            /* Incoming packets */
+        uint64_t            stream_data_sz;     /* Sum of all STREAM frames payload */
+        uint64_t            stream_frames;      /* Number of STREAM frames */
+        uint64_t            packets,            /* Incoming packets */
                             undec_packets,      /* Undecryptable packets */
                             dup_packets,        /* Duplicate packets */
                             err_packets;        /* Error packets(?) */
-        unsigned long       n_acks,
+        uint64_t            n_acks,
                             n_acks_proc,
                             n_acks_merged;
-        unsigned long       bytes;              /* Overall bytes in */
-        unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
-        unsigned long       headers_comp;       /* Sum of compressed header bytes */
+        uint64_t            bytes;              /* Overall bytes in */
+        uint64_t            headers_uncomp;     /* Sum of uncompressed header bytes */
+        uint64_t            headers_comp;       /* Sum of compressed header bytes */
     }                   in;
     struct {
-        unsigned long       stream_data_sz;
-        unsigned long       stream_frames;
-        unsigned long       acks;
-        unsigned long       packets;            /* Number of sent packets */
-        unsigned long       acked_via_loss;     /* Number of packets acked via loss record */
-        unsigned long       lost_packets;
-        unsigned long       retx_packets;       /* Number of retransmitted packets */
-        unsigned long       bytes;              /* Overall bytes out */
-        unsigned long       headers_uncomp;     /* Sum of uncompressed header bytes */
-        unsigned long       headers_comp;       /* Sum of compressed header bytes */
+        uint64_t            stream_data_sz;
+        uint64_t            stream_frames;
+        uint64_t            acks;
+        uint64_t            packets;            /* Number of sent packets */
+        uint64_t            acked_via_loss;     /* Number of packets acked via loss record */
+        uint64_t            lost_packets;
+        uint64_t            retx_packets;       /* Number of retransmitted packets */
+        uint64_t            bytes;              /* Overall bytes out */
+        uint64_t            headers_uncomp;     /* Sum of uncompressed header bytes */
+        uint64_t            headers_comp;       /* Sum of compressed header bytes */
     }                   out;
 };
 

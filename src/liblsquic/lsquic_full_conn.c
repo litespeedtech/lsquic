@@ -1142,16 +1142,16 @@ full_conn_ci_destroy (lsquic_conn_t *lconn)
         conn->fc_conn.cn_esf.g->esf_destroy(conn->fc_conn.cn_enc_session);
     lsquic_malo_destroy(conn->fc_pub.packet_out_malo);
 #if LSQUIC_CONN_STATS
-    LSQ_NOTICE("# ticks: %lu", conn->fc_stats.n_ticks);
-    LSQ_NOTICE("received %lu packets, of which %lu were not decryptable, %lu were "
-        "dups and %lu were errors; sent %lu packets, avg stream data per outgoing"
-        " packet is %lu bytes",
+    LSQ_NOTICE("# ticks: %"PRIu64, conn->fc_stats.n_ticks);
+    LSQ_NOTICE("received %"PRIu64" packets, of which %"PRIu64" were not decryptable, %"PRIu64" were "
+        "dups and %"PRIu64" were errors; sent %"PRIu64" packets, avg stream data per outgoing"
+        " packet is %"PRIu64" bytes",
         conn->fc_stats.in.packets, conn->fc_stats.in.undec_packets,
         conn->fc_stats.in.dup_packets, conn->fc_stats.in.err_packets,
         conn->fc_stats.out.packets,
         conn->fc_stats.out.stream_data_sz /
             (conn->fc_stats.out.packets ? conn->fc_stats.out.packets : 1));
-    LSQ_NOTICE("ACKs: in: %lu; processed: %lu; merged: %lu",
+    LSQ_NOTICE("ACKs: in: %"PRIu64"; processed: %"PRIu64"; merged: %"PRIu64,
         conn->fc_stats.in.n_acks, conn->fc_stats.in.n_acks_proc,
         conn->fc_stats.in.n_acks_merged);
     free(conn->fc_last_stats);
@@ -4330,8 +4330,8 @@ full_conn_ci_log_stats (struct lsquic_conn *lconn)
                                             conn->fc_send_ctl.sc_cong_ctl);
     lsquic_conn_stats_diff(&conn->fc_stats, conn->fc_last_stats, &diff_stats);
     lsquic_logger_log1(LSQ_LOG_NOTICE, LSQLM_CONN_STATS,
-        "%s: ticks: %lu; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
-        ", avail: %"PRIu64"; packets: sent: %lu, lost: %lu, retx: %lu, rcvd: %lu"
+        "%s: ticks: %"PRIu64"; cwnd: %"PRIu64"; conn flow: max: %"PRIu64
+        ", avail: %"PRIu64"; packets: sent: %"PRIu64", lost: %"PRIu64", retx: %"PRIu64", rcvd: %"PRIu64
         "; batch: count: %u; min: %u; max: %u; avg: %.2f",
         (lsquic_cid2str(LSQUIC_LOG_CONN_ID, cidstr), cidstr),
         diff_stats.n_ticks, cwnd,
