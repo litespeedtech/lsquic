@@ -3747,7 +3747,7 @@ lsquic_enc_session_get_server_cert_chain (enc_session_t *enc_session_p)
     item = enc_session->cert_item;
     if (!item)
     {
-        LSQ_WARN("could not find certificates for `%.*s'",
+        LSQ_DEBUG("could not find certificates for `%.*s'",
                             (int) lsquic_str_len(&enc_session->hs_ctx.sni),
                             lsquic_str_cstr(&enc_session->hs_ctx.sni));
         return NULL;

@@ -386,6 +386,7 @@ log_peer_cert_chain (lsquic_conn_t *conn)
     unsigned i;
     char buf[100];
 
+    /* ea_get_ssl_ctx() must request client certificates for this to log one. */
     chain = lsquic_conn_get_full_peer_cert_chain(conn);
     if (!chain)
     {

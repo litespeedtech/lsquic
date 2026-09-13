@@ -1832,7 +1832,8 @@ lsquic_stream_has_unacked_data (lsquic_stream_t *s);
  * Get certificate chain returned by the server.  This can be used for
  * server certificate verification.
  *
- * The caller releases the stack using sk_X509_free().
+ * The caller owns the returned stack and certificate references and releases
+ * them using sk_X509_pop_free(chain, X509_free).
  */
 struct stack_st_X509 *
 lsquic_conn_get_server_cert_chain (lsquic_conn_t *);

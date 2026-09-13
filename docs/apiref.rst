@@ -2063,7 +2063,8 @@ Miscellaneous Connection Functions
     Get certificate chain returned by the server.  This can be used for
     server certificate verification.
 
-    The caller releases the stack using sk_X509_free().
+    The caller owns the returned stack and certificate references and releases
+    them using ``sk_X509_pop_free(chain, X509_free)``.
 
 .. function:: struct stack_st_X509 * lsquic_conn_get_full_peer_cert_chain (lsquic_conn_t *conn)
 
