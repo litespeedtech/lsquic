@@ -264,6 +264,8 @@ perf_client_on_write (struct lsquic_stream *stream,
         lsquic_stream_shutdown(stream, 1);
         lsquic_stream_wantread(stream, 1);
     }
+    else
+        lsquic_stream_wantwrite(stream, 1);
 }
 
 
