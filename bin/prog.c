@@ -637,6 +637,16 @@ prog_stop (struct prog *prog)
 
     prog_stopped = 1;
 
+    /* A blocked output batch may still own a writable event.  Remove it
+     * before closing its socket so it cannot keep the event loop alive.
+     */
+    if (prog->prog_send)
+    {
+        event_del(prog->prog_send);
+        event_free(prog->prog_send);
+        prog->prog_send = NULL;
+    }
+
     while ((sport = TAILQ_FIRST(prog->prog_sports)))
     {
         TAILQ_REMOVE(prog->prog_sports, sport, next_sport);
