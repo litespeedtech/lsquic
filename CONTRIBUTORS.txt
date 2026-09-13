@@ -41,11 +41,12 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Timo Voelker -- Testing and bug reports
     - Kirill Sabitov -- Bug fixes
     - Harold Newman -- Bug fixes
-    - Richard Ramos -- Windows fixes
+    - Richard Ramos -- Windows fixes, full peer certificate chain API
     - youngseaz -- 32-bit transport param parser bug report
     - X1AOxiang -- Bug fixes
     - Alexey Mamontov -- Long-standing scheduled bytes underflow bug fix
     - Amrit Kahlon -- Bug fixes
+    - Hongrui Zhu -- Configurable CRYPTO-frame stash limit
 
 Thank you!
 
