@@ -5569,6 +5569,7 @@ process_crypto_frame_client (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("handshake complete: ignore CRYPTO frames in "
             "non-forward-secure packets");
+        lsquic_malo_put(stream_frame);
         return parsed_len;
     }
 
@@ -5660,6 +5661,7 @@ process_stream_frame (struct ietf_full_conn *conn,
 
     if (conn_is_send_only_stream(conn, stream_frame->stream_id))
     {
+        lsquic_malo_put(stream_frame);
         ABORT_QUIETLY(0, TEC_STREAM_STATE_ERROR, "received STREAM frame "
             "on send-only stream %"PRIu64, stream_frame->stream_id);
         return 0;
@@ -5668,6 +5670,7 @@ process_stream_frame (struct ietf_full_conn *conn,
     if ((conn->ifc_flags & (IFC_SERVER|IFC_HTTP)) == IFC_HTTP
                     && SIT_BIDI_SERVER == (stream_frame->stream_id & SIT_MASK))
     {
+        lsquic_malo_put(stream_frame);
         ABORT_QUIETLY(1, HEC_STREAM_CREATION_ERROR, "HTTP/3 server "
             "is not allowed to initiate bidirectional streams (got "
             "STREAM frame for stream %"PRIu64, stream_frame->stream_id);
