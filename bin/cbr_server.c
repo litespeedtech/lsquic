@@ -390,13 +390,17 @@ cbr_stream_timer_cb (evutil_socket_t fd, short what, void *arg)
                 stream_ctx->frame_pending = max_pending;
         }
         lsquic_stream_wantwrite(stream_ctx->stream, 1);
-        prog_process_conns(stream_ctx->server_ctx->prog);
+        {
+            struct prog *const prog = stream_ctx->server_ctx->prog;
+            struct timeval tv = {
+                .tv_sec  = stream_ctx->interval_ms / 1000,
+                .tv_usec = (stream_ctx->interval_ms % 1000) * 1000,
+            };
 
-        struct timeval tv = {
-            .tv_sec  = stream_ctx->interval_ms / 1000,
-            .tv_usec = (stream_ctx->interval_ms % 1000) * 1000,
-        };
-        event_add(stream_ctx->timer, &tv);
+            /* Processing may close the stream and free stream_ctx. */
+            event_add(stream_ctx->timer, &tv);
+            prog_process_conns(prog);
+        }
     }
 }
 
