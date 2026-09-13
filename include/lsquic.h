@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 9
-#define LSQUIC_PATCH_VERSION 4
+#define LSQUIC_MINOR_VERSION 10
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -1863,7 +1863,6 @@ lsquic_conn_get_server_cert_chain (lsquic_conn_t *);
  */
 struct stack_st_X509 *
 lsquic_conn_get_full_peer_cert_chain (lsquic_conn_t *);
-
 
 /** Returns ID of the stream */
 lsquic_stream_id_t

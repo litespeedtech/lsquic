@@ -1,3 +1,13 @@
+2026-09-13
+    - 4.10.0
+    - [API] Add full peer certificate chain API.
+    - [API, IMPROVEMENT] Make the CRYPTO-frame stash limit configurable (#680).
+    - [FIX] Check request content-length when DATA ends with an empty FIN.
+    - [FIX] Release STREAM frames on packet-processing errors.
+    - [FIX] Avoid 32-bit Cubic arithmetic overflow.
+    - [IMPROVEMENT] Use 64-bit connection statistics counters.
+    - [FIX] Sample programs: fix large perf transfers and shutdown cleanup.
+
 2026-08-30
     - 4.9.4
     - [FIX] Notify peer on explicit IETF connection close (#675)
