@@ -3747,7 +3747,7 @@ lsquic_enc_session_get_server_cert_chain (enc_session_t *enc_session_p)
     item = enc_session->cert_item;
     if (!item)
     {
-        LSQ_WARN("could not find certificates for `%.*s'",
+        LSQ_DEBUG("could not find certificates for `%.*s'",
                             (int) lsquic_str_len(&enc_session->hs_ctx.sni),
                             lsquic_str_cstr(&enc_session->hs_ctx.sni));
         return NULL;
@@ -3882,6 +3882,7 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_1 =
     .esf_decrypt_packet = gquic_decrypt_packet,
     .esf_tag_len = GQUIC_PACKET_HASH_SZ,
     .esf_get_server_cert_chain = lsquic_enc_session_get_server_cert_chain,
+    .esf_get_full_peer_cert_chain = lsquic_enc_session_get_server_cert_chain,
     .esf_verify_reset_token = lsquic_enc_session_verify_reset_token,
     .esf_did_sess_resume_succeed = lsquic_enc_session_did_sess_resume_succeed,
     .esf_is_sess_resume_enabled = lsquic_enc_session_is_sess_resume_enabled,
@@ -4311,6 +4312,7 @@ struct enc_session_funcs_common lsquic_enc_session_common_gquic_2 =
     .esf_keysize                =  lsquic_enc_session_keysize,
     .esf_alg_keysize            =  lsquic_enc_session_alg_keysize,
     .esf_get_server_cert_chain  =  lsquic_enc_session_get_server_cert_chain,
+    .esf_get_full_peer_cert_chain = lsquic_enc_session_get_server_cert_chain,
     .esf_verify_reset_token     =  lsquic_enc_session_verify_reset_token,
     .esf_did_sess_resume_succeed   =  lsquic_enc_session_did_sess_resume_succeed,
     .esf_is_sess_resume_enabled    =  lsquic_enc_session_is_sess_resume_enabled,
