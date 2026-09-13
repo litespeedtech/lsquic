@@ -205,10 +205,11 @@ struct lsquic_bbr
         int                 has_losses;
     }                           bbr_ack_state;
 
-    /* Packets sent up to and including this packno (and later acked) will
-     * be marked app-limited in their po_bwp_state.  Used to mark ProbeRTT
-     * period packets as app-limited for bandwidth sampling purposes.
-     * When a packet with packno > this value is acked, the phase ends.
+    /* Last packet sent in ProbeRTT.  Samples remain app-limited until a later
+     * packet is acknowledged.  Packets sent after ProbeRTT but before that
+     * acknowledgement are marked app-limited too: their sampling intervals
+     * may overlap the low-rate ProbeRTT period.  This matches the bandwidth
+     * sampler's app-limited phase semantics.
      */
     lsquic_packno_t             bbr_probe_rtt_app_limited_until;
 };
