@@ -19,6 +19,7 @@
 #include "lsquic_stream.h"
 #include "lsquic_mm.h"
 #include "lsquic_conn_public.h"
+#include "lsquic_cong_ctl.h"
 #include "lsquic_parse.h"
 #include "lsquic_conn.h"
 #include "lsquic_engine_public.h"
@@ -45,6 +46,7 @@ struct accounting_test
     struct lsquic_alarmset       alset;
     struct ver_neg               ver_neg;
     struct network_path          path;
+    struct conn_stats            stats;
 };
 
 
@@ -87,6 +89,7 @@ init_test (struct accounting_test *t)
     t->conn_pub.enpub = &t->enpub;
     t->conn_pub.send_ctl = &t->send_ctl;
     t->conn_pub.path = &t->path;
+    t->conn_pub.conn_stats = &t->stats;
     t->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     assert(t->conn_pub.packet_out_malo);
@@ -156,6 +159,26 @@ schedule_ping_packet (struct accounting_test *t, unsigned short data_sz)
     lsquic_send_ctl_scheduled_one(&t->send_ctl, packet_out);
     assert(packet_out->po_acct_sz > data_sz);
     assert_scheduled_accounting(t);
+    return packet_out;
+}
+
+
+static struct lsquic_packet_out *
+generate_bw_probe_fill (void *ctx, const struct network_path *path)
+{
+    struct accounting_test *const t = ctx;
+    struct lsquic_packet_out *packet_out;
+    int sz;
+
+    packet_out = lsquic_send_ctl_new_packet_out(&t->send_ctl, 1, PNS_APP,
+                                                                        path);
+    assert(packet_out);
+    sz = t->lconn.cn_pf->pf_gen_ping_frame(packet_out->po_data,
+                                    lsquic_packet_out_avail(packet_out));
+    assert(sz > 0);
+    lsquic_send_ctl_incr_pack_sz(&t->send_ctl, packet_out, sz);
+    packet_out->po_frame_types |= QUIC_FTBIT_PING;
+    lsquic_packet_out_zero_pad(packet_out);
     return packet_out;
 }
 
@@ -310,6 +333,82 @@ test_repackno_chops_regen_bytes (void)
 }
 
 
+static void
+test_bw_probe_fill_scheduling (void)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet_out;
+    struct lsquic_bbr *bbr;
+    uint64_t cwnd;
+    unsigned count;
+
+    init_test(&t);
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    bbr = &t.send_ctl.sc_adaptive_cc.acc_bbr;
+
+    bbr->bbr_pacing_gain = 1.0;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 1000);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(0 == t.send_ctl.sc_n_scheduled);
+    assert(t.send_ctl.sc_flags & SC_APP_LIMITED);
+
+    bbr->bbr_pacing_gain = 1.25;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 2000);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+                                            generate_bw_probe_fill, &t);
+    count = t.send_ctl.sc_n_scheduled;
+    assert(count > 0);
+    assert(!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    cwnd = t.send_ctl.sc_ci->cci_get_cwnd(t.send_ctl.sc_cong_ctl);
+    assert(t.send_ctl.sc_bytes_scheduled >= cwnd);
+    assert(t.send_ctl.sc_bytes_scheduled < cwnd + t.path.np_pack_size);
+    assert_scheduled_accounting(&t);
+
+    TAILQ_FOREACH(packet_out, &t.send_ctl.sc_scheduled_packets, po_next)
+    {
+        assert(packet_out->po_flags & PO_BW_PROBE_FILL);
+        assert(packet_out->po_frame_types & QUIC_FTBIT_PING);
+        assert(packet_out->po_data[0] == 1);
+        assert(0 == lsquic_packet_out_avail(packet_out));
+    }
+
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(count == t.send_ctl.sc_n_scheduled);
+    cleanup_test(&t);
+}
+
+
+static void
+test_lost_bw_probe_fill_is_not_rescheduled (void)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet_out;
+
+    init_test(&t);
+    packet_out = generate_bw_probe_fill(&t, &t.path);
+    packet_out->po_flags |= PO_BW_PROBE_FILL;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    packet_out = lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL);
+    assert(packet_out);
+    packet_out->po_sent = 1000;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(1 == t.send_ctl.sc_n_in_flight_all);
+
+    lsquic_send_ctl_expire_all(&t.send_ctl);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_scheduled_packets));
+    assert(0 == t.send_ctl.sc_n_in_flight_all);
+    assert(0 == t.send_ctl.sc_bytes_unacked_all);
+    assert(1 == t.stats.out.lost_packets);
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -319,5 +418,7 @@ main (void)
     test_incr_pack_sz();
     test_cidlen_change_adjusts_cached_sizes();
     test_repackno_chops_regen_bytes();
+    test_bw_probe_fill_scheduling();
+    test_lost_bw_probe_fill_is_not_rescheduled();
     return 0;
 }
