@@ -621,10 +621,9 @@ struct lsquic_engine_settings {
     /**
      * The maximum number of out-of-order CRYPTO frames the mini connection
      * stashes while waiting for the missing predecessor frames.  When the
-     * limit is hit, the connection is aborted.  Client implementations such
-     * as ngtcp2 (since its "chaos protection") shuffle the ClientHello into
-     * ~20 out-of-order frames; the historical limit of 10 fails such
-     * handshakes.
+     * limit is hit, the connection is aborted.
+     *
+     * The default value is @ref LSQUIC_DF_MAX_CRYPTO_STASH.
      */
     unsigned char   es_max_crypto_stash;
 

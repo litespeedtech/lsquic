@@ -1076,7 +1076,7 @@ imico_stash_stream_frame (struct ietf_mini_conn *conn,
                               conn->imc_enpub->enp_settings.es_max_crypto_stash)
     {
         LSQ_INFO("cannot stash more CRYPTO frames, at %hhu already, while max "
-            "is %u", conn->imc_n_crypto_frames,
+            "is %hhu", conn->imc_n_crypto_frames,
             conn->imc_enpub->enp_settings.es_max_crypto_stash);
         return -1;
     }

@@ -436,6 +436,14 @@ settings structure:
        compatibility.  :func:`lsquic_conn_is_push_enabled()` returns false and
        :func:`lsquic_conn_push_stream()` returns 1.
 
+    .. member:: unsigned char   es_max_crypto_stash
+
+       Maximum number of out-of-order CRYPTO frames that a mini connection
+       stashes while waiting for missing predecessor frames.  The connection
+       is aborted when the limit is reached.
+
+       The default value is :macro:`LSQUIC_DF_MAX_CRYPTO_STASH`.
+
     .. member:: int             es_support_tcid0
 
        If set to true value, the server will not include connection ID in
