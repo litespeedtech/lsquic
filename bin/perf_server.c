@@ -163,7 +163,10 @@ static size_t
 buffer_size (void *lsqr_ctx)
 {
     struct lsquic_stream_ctx *const stream_ctx = lsqr_ctx;
-    return stream_ctx->u.left;
+    if (stream_ctx->u.left > SIZE_MAX)
+        return SIZE_MAX;
+    else
+        return stream_ctx->u.left;
 }
 
 

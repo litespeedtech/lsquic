@@ -48,6 +48,8 @@ static STAILQ_HEAD(, scenario) s_scenarios
 static unsigned s_n_scenarios;
 static unsigned s_n_conns;
 
+#define MAX_SEND_CHUNK (1024 * 1024)
+
 struct prog s_prog;
 
 struct lsquic_conn_ctx
@@ -163,8 +165,12 @@ static size_t
 buffer_size (void *lsqr_ctx)
 {
     struct lsquic_stream_ctx *const stream_ctx = lsqr_ctx;
-    return stream_ctx->scenario->bytes_to_send
+    const uint64_t left = stream_ctx->scenario->bytes_to_send
                                         - stream_ctx->write_state.n_written;
+    if (left > MAX_SEND_CHUNK)
+        return MAX_SEND_CHUNK;
+    else
+        return (size_t) left;
 }
 
 
@@ -199,7 +205,7 @@ header_read (void *lsqr_ctx, void *buf, size_t count)
     size_t left;
 
     left = header_size(stream_ctx);
-    if (count < left)
+    if (count > left)
         count = left;
     src = (unsigned char *) &stream_ctx->write_state.header
                 + sizeof(uint64_t) - left;
