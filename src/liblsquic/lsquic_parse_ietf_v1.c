@@ -894,19 +894,21 @@ ietf_v1_connect_close_frame_size (int app_error, unsigned error_code,
 
 static int
 ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
-    int app_error, unsigned error_code, const char *reason, int reason_len)
+    int app_error, unsigned error_code, unsigned frame_type,
+    const char *reason, int reason_len)
 {
     size_t needed;
-    unsigned bits_error, bits_reason;
+    unsigned bits_error, bits_reason, bits_frame_type;
     unsigned char *p;
 
     assert(!!reason == !!reason_len);
 
     bits_reason = vint_val2bits(reason_len);
     bits_error = vint_val2bits(error_code);
+    bits_frame_type = app_error ? 0 : vint_val2bits(frame_type);
+
     needed = 1 /* Type */ + (1 << bits_error)
-           + (app_error ? 0 : 1) /* Frame type */
-        /* TODO: frame type instead of just zero */
+           + (app_error ? 0 : (1 << bits_frame_type)) /* Frame type */
            + (1 << bits_reason) + reason_len;
 
     if (buf_len < needed)
@@ -918,7 +920,10 @@ ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     vint_write(p, error_code, bits_error, 1 << bits_error);
     p += 1 << bits_error;
     if (!app_error)
-        *p++ = 0;   /* Frame type */ /* TODO */
+    {
+        vint_write(p, frame_type, bits_frame_type, 1 << bits_frame_type);   /* Frame type */
+        p += 1 << bits_frame_type;
+    }
     vint_write(p, reason_len, bits_reason, 1 << bits_reason);
     p += 1 << bits_reason;
     if (reason_len)

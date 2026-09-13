@@ -2711,7 +2711,7 @@ generate_connection_close_packet (struct full_conn *conn)
     lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
     int sz = conn->fc_conn.cn_pf->pf_gen_connect_close_frame(packet_out->po_data + packet_out->po_data_sz,
                      lsquic_packet_out_avail(packet_out), 0, 16 /* PEER_GOING_AWAY */,
-                     NULL, 0);
+                     0, NULL, 0);
     if (sz < 0) {
         ABORT_ERROR("generate_connection_close_packet failed");
         return;
@@ -3283,7 +3283,7 @@ immediate_close (struct full_conn *conn)
     lsquic_send_ctl_scheduled_one(&conn->fc_send_ctl, packet_out);
     sz = conn->fc_conn.cn_pf->pf_gen_connect_close_frame(
                      packet_out->po_data + packet_out->po_data_sz,
-                     lsquic_packet_out_avail(packet_out), 0, error_code,
+                     lsquic_packet_out_avail(packet_out), 0, error_code, 0,
                      error_reason, error_reason ? strlen(error_reason) : 0);
     if (sz < 0) {
         LSQ_WARN("%s failed", __func__);
