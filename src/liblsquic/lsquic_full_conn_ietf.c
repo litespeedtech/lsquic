@@ -4069,8 +4069,11 @@ immediate_close (struct ietf_full_conn *conn)
              */
                     (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
         pns = PNS_APP;
-    else
+    else if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
+                                                            ENC_LEV_HSK))
         pns = PNS_HSK;
+    else
+        pns = PNS_INIT;
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
                                                     pns, CUR_NPATH(conn));
