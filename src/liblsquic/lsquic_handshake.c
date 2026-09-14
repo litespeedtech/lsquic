@@ -2775,7 +2775,7 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
 
     /* FIXME get the number first */
     lsquic_str_t **out_certs = NULL;
-    size_t out_certs_count = 0, i;
+    size_t out_certs_count = 0, i, j;
 
     ret = parse_hs(enc_session, data, len, &head_tag);
     if (ret)
@@ -2843,7 +2843,20 @@ lsquic_enc_session_handle_chlo_reply (enc_session_t *enc_session_p,
                 }
 
                 for (i=0; i<out_certs_count; ++i)
+                {
                     out_certs[i] = lsquic_str_new(NULL, 0);
+                    if (out_certs[i] == NULL)
+                    {
+                        for (j=0; j<i; ++j)
+                        {
+                            if(out_certs[j] != NULL)
+                                lsquic_str_delete(out_certs[j]);
+                        }
+                        free(out_certs);
+                        ret = -1;
+                        goto end;
+                    }
+                }
 
                 ret = handle_chlo_reply_verify_prof(enc_session, out_certs,
                                             &out_certs_count,
