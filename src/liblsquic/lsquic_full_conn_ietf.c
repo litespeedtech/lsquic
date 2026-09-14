@@ -4035,6 +4035,20 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
 }
 
 
+static enum packnum_space
+select_conn_close_pns (const struct ietf_full_conn *conn)
+{
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
+            (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+        return PNS_APP;
+    else if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
+                                                            ENC_LEV_HSK))
+        return PNS_HSK;
+    else
+        return PNS_INIT;
+}
+
+
 static enum tick_st
 immediate_close (struct ietf_full_conn *conn)
 {
@@ -4063,14 +4077,7 @@ immediate_close (struct ietf_full_conn *conn)
                                     && conn->ifc_settings->es_silent_close)
         return TICK_CLOSE;
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
-            /* Only use PNS_APP if client sent enough crypto output for the
-             * server to be able to decrypt it.
-             */
-                    (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
-        pns = PNS_APP;
-    else
-        pns = PNS_HSK;
+    pns = select_conn_close_pns(conn);
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
                                                     pns, CUR_NPATH(conn));
@@ -4081,7 +4088,7 @@ immediate_close (struct ietf_full_conn *conn)
     }
 
     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
-    if (pns == PNS_HSK && conn->ifc_error.app_error)
+    if (pns != PNS_APP && conn->ifc_error.app_error)
     {
         /* [RFC 9000] Section 10.2.3: clear app code and reason: */
         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
@@ -4270,14 +4277,7 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
     int sz;
     enum packnum_space pns;
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
-            (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
-        pns = PNS_APP;
-    else if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
-                                                            ENC_LEV_HSK))
-        pns = PNS_HSK;
-    else
-        pns = PNS_INIT;
+    pns = select_conn_close_pns(conn);
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
                                                                 CUR_NPATH(conn));
