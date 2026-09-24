@@ -471,11 +471,17 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         return -1;
     }
 
-    if (settings->es_cc_algo > 3)
+    /* Subtracting the lower bound turns out-of-range values, including
+     * negative ones, into large unsigned numbers: a single comparison
+     * covers both bounds and does not depend on the underlying type the
+     * compiler picks for the enum.
+     */
+    if ((unsigned) (settings->es_cc_algo - LSQUIC_CC_FIRST)
+            > (unsigned) (LSQUIC_CC_LAST - LSQUIC_CC_FIRST))
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
-                "algorithm value %u", settings->es_cc_algo);
+                "algorithm value %d", (int) settings->es_cc_algo);
         return -1;
     }
 
@@ -526,6 +532,7 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
                                 "maximum number of header sets cannot be zero");
         return -1;
     }
+
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
     if(settings->es_webtransport_server)
     {

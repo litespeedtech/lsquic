@@ -109,7 +109,8 @@ lsquic_bw_sampler_packet_sent (struct bw_sampler *sampler,
 
     sampler->bws_last_sent_packno = packet_out->po_packno;
 
-    if (!(packet_out->po_frame_types & sampler->bws_retx_frames))
+    if (!(packet_out->po_frame_types & sampler->bws_retx_frames)
+            && !(packet_out->po_flags & PO_BW_PROBE_FILL))
         return;
 
     sent_sz = lsquic_packet_out_sent_sz(sampler->bws_conn, packet_out);

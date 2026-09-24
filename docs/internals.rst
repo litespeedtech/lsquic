@@ -3071,9 +3071,9 @@ describing gQUIC, could be looked to for reference.
 Congestions Controllers
 =======================
 
-The Send Controller has a choice of two congestion controllers: Cubic
-and BBRv1. The latter was translated from Chromium into C. BBRv1 does
-not work well for very small RTTs.
+The Send Controller has a choice of three congestion controllers: Cubic,
+BBRv1, and BBR-Copilot.  BBRv1 was translated from Chromium into C.
+BBRv1 does not work well for very small RTTs.
 
 To cope with that, lsquic puts the Send Controller into the "adaptive CC"
 mode by default. The CC is selected after RTT is determined: below a
@@ -3081,6 +3081,17 @@ certain threshold (configurable; 1.5 ms by default), Cubic is used.
 Until Cubic or BBRv1 is selected, *both* CC controllers are used --
 because we won't have the necessary state to instantiate a controller
 when the decision is made.
+
+BBR-Copilot is a BBRv1 variant that must be selected explicitly; the
+adaptive mode never selects it.  When it probes for bandwidth but the
+application is idle, the Send Controller fills the congestion window
+with padded PING packets marked ``PO_BW_PROBE_FILL``.  At the end of a
+full connection tick, ``lsquic_send_ctl_maybe_app_limited()`` asks
+``cci_bw_probe_fill_wanted()`` and, while sending is allowed, obtains
+fill packets from a connection callback.  The callback is ``NULL``
+before the handshake is done or while the connection is closing.  Only
+BBR-Copilot wants fill, and only while its pacing gain is above 1.0 and
+STREAM or DATAGRAM data was sent within the last second.
 
 Buffered Packet Handling
 ========================

@@ -1,3 +1,12 @@
+2026-09-23
+    - Unreleased
+    - [API] Change the type of lsquic_engine_settings.es_cc_algo from
+      unsigned to enum lsquic_cc.  The ABI is unchanged, but the type
+      change is a source-level break for C++ callers: integer
+      assignments such as settings.es_cc_algo = 2; no longer compile and
+      must be rewritten using the named enumerator (e.g. LSQUIC_CC_BBR)
+      or an explicit cast.
+
 2026-09-13
     - 4.10.0
     - [API] Add full peer certificate chain API.
