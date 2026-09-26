@@ -2458,7 +2458,12 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
         LSQ_ERROR("wanted to allocate packet with at least %u bytes of "
             "payload, but only got %u bytes (mtu: %u bytes)", need_at_least,
             lsquic_packet_out_avail(packet_out), SC_PACK_SIZE(ctl));
-        send_ctl_destroy_packet(ctl, packet_out);
+        /* The packet has only just been allocated: it has no frames,
+         * encryption buffer, nonce, or bandwidth-sampler state to release.
+         * Return it directly instead of consulting its path while handling
+         * this invalid-capacity error.
+         */
+        lsquic_mm_put_packet_out(&ctl->sc_enpub->enp_mm, packet_out);
         return NULL;
     }
 
