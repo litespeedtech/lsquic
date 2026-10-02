@@ -310,6 +310,25 @@ test_repackno_chops_regen_bytes (void)
 }
 
 
+static void
+test_rejects_packet_with_insufficient_payload (void)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet_out;
+
+    init_test(&t);
+    packet_out = lsquic_send_ctl_new_packet_out(&t.send_ctl,
+                                t.path.np_pack_size, PNS_APP, &t.path);
+    assert(NULL == packet_out);
+
+    packet_out = lsquic_send_ctl_new_packet_out(&t.send_ctl, 1, PNS_APP,
+                                                                    &t.path);
+    assert(packet_out);
+    destroy_unscheduled_packet(&t, packet_out);
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -319,5 +338,6 @@ main (void)
     test_incr_pack_sz();
     test_cidlen_change_adjusts_cached_sizes();
     test_repackno_chops_regen_bytes();
+    test_rejects_packet_with_insufficient_payload();
     return 0;
 }
