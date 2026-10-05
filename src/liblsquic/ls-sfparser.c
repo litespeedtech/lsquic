@@ -3108,7 +3108,7 @@ ls_sfp_alloc (size_t bytes, void *yyscanner)
 
             // Align to 8 byte boundary
             parser->mem_off += 8 - parser->mem_off % 8;
-            
+
             return parser->last_malloced;
         }
         else
