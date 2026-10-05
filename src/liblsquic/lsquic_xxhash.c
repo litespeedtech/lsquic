@@ -241,7 +241,7 @@ FORCE_INLINE U64 XXH_readLE64_align(const void *ptr, XXH_endianess endian,
     if (align == XXH_unaligned) {
         U64 val;
         memcpy(&val, ptr, 8);
-        return endian == XXH_littleEndian ? val : XXH_swap64(val);   
+        return endian == XXH_littleEndian ? val : XXH_swap64(val);
     }
     else
         return endian == XXH_littleEndian ? *(U64 *)ptr : XXH_swap64(*(U64 *)ptr);
