@@ -58,6 +58,7 @@ SET(TESTS
     packet_resize
     packno_len
     parse_packet_in
+    ping_alarm
     purga
     push_disabled
     qenc_hdl

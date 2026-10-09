@@ -8249,6 +8249,27 @@ should_generate_connection_close (const struct ietf_full_conn *conn)
 }
 
 
+static void
+arm_ping_alarm (struct ietf_full_conn *conn, lsquic_time_t now)
+{
+    /* [RFC 9000] Section 19.2 (PING Frame):
+     *
+     *     The PING frame can be used to keep a connection alive when an
+     *     application or application protocol wishes to prevent the connection
+     *     from timing out.  An application protocol SHOULD provide guidance
+     *     about the conditions under which generating a PING is recommended.
+     *     This guidance SHOULD indicate whether it is the client or the server
+     *     that is expected to send the PING.  Having both endpoints send PING
+     *     frames without coordination can produce an excessive number of
+     *     packets and poor performance.
+     */
+    /* Ping even when no application streams are open. */
+    if (conn->ifc_ping_period)
+        lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
+                                                now + conn->ifc_ping_period);
+}
+
+
 static enum tick_st
 ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
 {
@@ -8491,22 +8512,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
         conn->ifc_send_flags &= ~SF_SEND_PING;   /* It may have rung */
     }
 
-    /* [RFC 9000] Section 19.2 (PING Frame):
-     *
-     *     The PING frame can be used to keep a connection alive when an
-     *     application or application protocol wishes to prevent the connection
-     *     from timing out.  An application protocol SHOULD provide guidance
-     *     about the conditions under which generating a PING is recommended.
-     *     This guidance SHOULD indicate whether it is the client or the server
-     *     that is expected to send the PING.  Having both endpoints send PING
-     *     frames without coordination can produce an excessive number of
-     *     packets and poor performance.
-     */
-    if (conn->ifc_ping_period
-                        && lsquic_hash_count(conn->ifc_pub.all_streams) >
-                           conn->ifc_pub.n_special_streams)
-        lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
-                                                now + conn->ifc_ping_period);
+    arm_ping_alarm(conn, now);
 
     tick |= TICK_SEND;
 
@@ -9879,6 +9885,52 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 
 #ifndef NDEBUG
+void
+lsquic_ietf_full_conn_test_ping_alarm (unsigned results[3])
+{
+    enum {
+        NO_STREAMS,
+        LAST_STREAM_CLOSED,
+        NO_PING_PERIOD,
+    };
+    struct ietf_full_conn conn;
+    struct lsquic_stream special, app;
+    struct lsquic_hash_elem *el;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&special, 0, sizeof(special));
+    memset(&app, 0, sizeof(app));
+    conn.ifc_pub.all_streams = lsquic_hash_create();
+    assert(conn.ifc_pub.all_streams);
+    conn.ifc_ping_period = 15000000;
+
+    arm_ping_alarm(&conn, 1);
+    results[NO_STREAMS] = !!lsquic_alarmset_is_set(&conn.ifc_alset, AL_PING);
+
+    lsquic_alarmset_unset(&conn.ifc_alset, AL_PING);
+    special.id = 2;
+    assert(lsquic_hash_insert(conn.ifc_pub.all_streams, &special.id,
+                    sizeof(special.id), &special, &special.sm_hash_el));
+    conn.ifc_pub.n_special_streams = 1;
+    app.id = 0;
+    el = lsquic_hash_insert(conn.ifc_pub.all_streams, &app.id,
+                                    sizeof(app.id), &app, &app.sm_hash_el);
+    assert(el);
+    lsquic_hash_erase(conn.ifc_pub.all_streams, el);
+    arm_ping_alarm(&conn, 1);
+    results[LAST_STREAM_CLOSED] =
+                        !!lsquic_alarmset_is_set(&conn.ifc_alset, AL_PING);
+
+    lsquic_alarmset_unset(&conn.ifc_alset, AL_PING);
+    conn.ifc_ping_period = 0;
+    arm_ping_alarm(&conn, 1);
+    results[NO_PING_PERIOD] =
+                        !!lsquic_alarmset_is_set(&conn.ifc_alset, AL_PING);
+
+    lsquic_hash_destroy(conn.ifc_pub.all_streams);
+}
+
+
 void
 lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
 {
