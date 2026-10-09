@@ -6729,7 +6729,12 @@ process_packet_frame (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
             type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
-        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
+        if (type == QUIC_FRAME_INVALID)
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
+        else
+            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "frame %s is not "
+                "allowed at encryption level %s", frame_type_2_str[type],
+                lsquic_enclev2str[enc_level]);
         return 0;
     }
 }
