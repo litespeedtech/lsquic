@@ -8503,8 +8503,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
      *     packets and poor performance.
      */
     if (conn->ifc_ping_period
-                        && lsquic_hash_count(conn->ifc_pub.all_streams) >
-                           conn->ifc_pub.n_special_streams)
+            && (conn->ifc_enpub->enp_settings.es_ping_without_streams
+                || lsquic_hash_count(conn->ifc_pub.all_streams) >
+                   conn->ifc_pub.n_special_streams))
         lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
                                                 now + conn->ifc_ping_period);
 

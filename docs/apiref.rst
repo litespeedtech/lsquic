@@ -645,6 +645,16 @@ settings structure:
 
        IETF QUIC only.
 
+    .. member:: int             es_ping_without_streams
+
+       If set to true and :member:`es_ping_period` is non-zero, the
+       connection sends PING frames even when no application stream is open.
+       Otherwise, PINGs are sent only while an application stream is open.
+
+       Default value is :macro:`LSQUIC_DF_PING_WITHOUT_STREAMS`.
+
+       IETF QUIC only.
+
     .. member:: unsigned        es_scid_len
 
        Source Connection ID length.  Valid values are 0 through 20, inclusive.
@@ -984,6 +994,10 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_PING_PERIOD
 
     Default ping period is 15 seconds.
+
+.. macro:: LSQUIC_DF_PING_WITHOUT_STREAMS
+
+    By default, PINGs are sent only while an application stream is open.
 
 .. macro:: LSQUIC_DF_HANDSHAKE_TO
 
