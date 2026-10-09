@@ -2882,7 +2882,7 @@ process_streams_ready_to_send (struct ietf_full_conn *conn)
 
     conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.sending_streams),
         TAILQ_LAST(&conn->ifc_pub.sending_streams, lsquic_streams_tailq),
-        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
+        offsetof(struct lsquic_stream, next_send_stream.tqe_next),
         &conn->ifc_pub, "send", NULL, NULL);
 
     for (stream = conn->ifc_pii->pii_first(&pi); stream;
@@ -4155,7 +4155,7 @@ process_streams_read_events (struct ietf_full_conn *conn)
     {
         conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.read_streams),
             TAILQ_LAST(&conn->ifc_pub.read_streams, lsquic_streams_tailq),
-            (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
+            offsetof(struct lsquic_stream, next_read_stream.tqe_next),
             &conn->ifc_pub, labels[iters], NULL, NULL);
 
         needs_service = 0;
@@ -4243,7 +4243,7 @@ process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 
     conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.write_streams),
         TAILQ_LAST(&conn->ifc_pub.write_streams, lsquic_streams_tailq),
-        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
+        offsetof(struct lsquic_stream, next_write_stream.tqe_next),
         &conn->ifc_pub,
         high_prio ? "write-high" : "write-low", NULL, NULL);
 
