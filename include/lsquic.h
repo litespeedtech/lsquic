@@ -27,7 +27,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -1708,7 +1708,9 @@ lsquic_stream_readf (lsquic_stream_t *s,
  * @ref on_write() will be called when it is possible to write data to
  * the stream.  If @param is false, @ref on_write() will not be called.
  *
- * Returns previous value of this flag.
+ * Disabling write interest is allowed even after the stream is closed for
+ * writing.  Returns the previous value of this flag, or -1 with errno set
+ * to EBADF if enabling write interest after the stream is closed for writing.
  */
 int
 lsquic_stream_wantwrite (lsquic_stream_t *s, int is_want);

@@ -1,3 +1,12 @@
+2026-10-12
+    - 4.10.1
+    - [FIX] Initialize gQUIC X25519 output lengths (#694).
+    - [FIX] Select available encryption keys for early IETF client connection
+      closes (#687, #693).
+    - [FIX] Allow disabling write interest after stream write closure.
+    - [IMPROVEMENT] Address compiler warnings.
+    - [TEST] Verify send controller cleanup on insufficient payload (#696).
+
 2026-09-13
     - 4.10.0
     - [API] Add full peer certificate chain API.

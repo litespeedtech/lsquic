@@ -1583,8 +1583,13 @@ following functions:
     :param stream: Stream to write to.
     :param want: Boolean value indicating whether the caller wants to write
                  to stream.
-    :return: Previous value of ``want`` or ``-1`` if the stream has already
+    :return: Previous value of ``want`` or ``-1`` with ``errno`` set to
+             ``EBADF`` if ``want`` is non-zero and the stream has already
              been closed for writing.
+
+    Disabling write interest is allowed even after the stream is closed for
+    writing.  Once disabled, the application's ``on_write()`` callback will
+    no longer be called.
 
 Reading From Streams
 --------------------

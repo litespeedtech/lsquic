@@ -339,8 +339,6 @@ static void get_certs_entries(lsquic_str_t **certs, size_t certs_count,
     const bool cached_valid = (lsquic_str_len(client_cached_cert_hashes) % sizeof(uint64_t) == 0)
                                 && (lsquic_str_len(client_cached_cert_hashes) > 0);
 
-    assert(&entries[certs_count - 1]);
-    
     for (i = 0; i<certs_count; ++i)
     {
         entry = &entries[i];

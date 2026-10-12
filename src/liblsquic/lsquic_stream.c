@@ -2155,6 +2155,11 @@ lsquic_stream_wantwrite (lsquic_stream_t *stream, int is_want)
         stream->sm_saved_want_write = is_want;
         return old_val;
     }
+    else if (!is_want)
+    {
+        stream->sm_saved_want_write = is_want;
+        return stream_wantwrite(stream, is_want);
+    }
     else
     {
         errno = EBADF;
