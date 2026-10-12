@@ -4039,7 +4039,10 @@ static enum packnum_space
 select_conn_close_pns (const struct ietf_full_conn *conn)
 {
     if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
-            (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+            /* Only use PNS_APP if client sent enough crypto output for the
+             * server to be able to decrypt it.
+             */
+                    (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
         return PNS_APP;
     else if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
                                                             ENC_LEV_HSK))
