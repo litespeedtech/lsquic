@@ -4088,7 +4088,7 @@ immediate_close (struct ietf_full_conn *conn)
     }
 
     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
-    if (pns != PNS_APP && conn->ifc_error.app_error)
+    if ((pns == PNS_HSK || pns == PNS_INIT) && conn->ifc_error.app_error)
     {
         /* [RFC 9000] Section 10.2.3: clear app code and reason: */
         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
