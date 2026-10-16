@@ -72,6 +72,7 @@ SET(TESTS
     senhist
     sess_resume
     set
+    sfparser
     sfcw
     shi
     spi
