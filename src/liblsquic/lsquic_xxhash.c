@@ -140,6 +140,10 @@ typedef struct _U64_S
 #  pragma pack(pop)
 #endif
 
+#define A32(x) (((U32_S *)(x))->v)
+#define A64(x) (((U64_S *)(x))->v)
+
+
 //***************************************
 // Compiler-specific Functions and Macros
 //***************************************
@@ -221,11 +225,8 @@ typedef enum { XXH_aligned, XXH_unaligned } XXH_alignment;
 FORCE_INLINE U32 XXH_readLE32_align(const void *ptr, XXH_endianess endian,
                                     XXH_alignment align)
 {
-    if (align == XXH_unaligned) {
-        U32 val;
-        memcpy(&val, ptr, 4);
-        return endian == XXH_littleEndian ? val : XXH_swap32(val);
-    }
+    if (align == XXH_unaligned)
+        return endian == XXH_littleEndian ? A32(ptr) : XXH_swap32(A32(ptr));
     else
         return endian == XXH_littleEndian ? *(U32 *)ptr : XXH_swap32(*(U32 *)ptr);
 }
@@ -238,11 +239,8 @@ FORCE_INLINE U32 XXH_readLE32(const void *ptr, XXH_endianess endian)
 FORCE_INLINE U64 XXH_readLE64_align(const void *ptr, XXH_endianess endian,
                                     XXH_alignment align)
 {
-    if (align == XXH_unaligned) {
-        U64 val;
-        memcpy(&val, ptr, 8);
-        return endian == XXH_littleEndian ? val : XXH_swap64(val);
-    }
+    if (align == XXH_unaligned)
+        return endian == XXH_littleEndian ? A64(ptr) : XXH_swap64(A64(ptr));
     else
         return endian == XXH_littleEndian ? *(U64 *)ptr : XXH_swap64(*(U64 *)ptr);
 }
