@@ -776,6 +776,7 @@ static yyconst flex_int16_t yy_chk[835] =
 
 #line 27 "ls-sfparser.l"
 #include <stddef.h>
+#include <stdint.h>
 #include "ls-sfparser.h"
 struct ls_sf_parser
 {
@@ -3098,11 +3099,19 @@ void *
 ls_sfp_alloc (size_t bytes, void *yyscanner)
 {
     struct ls_sf_parser *const parser = ls_sfp_get_extra(yyscanner);
+    size_t padding;
 
     if (parser->mem)
     {
-        if (bytes + parser->mem_off < parser->mem_sz)
+        /* Scanner objects contain pointers, size_t, and ints.  Align the
+         * address, since the caller's buffer need not itself be aligned.
+         */
+        padding = (sizeof(void *) - (uintptr_t)
+            (parser->mem + parser->mem_off) % sizeof(void *)) % sizeof(void *);
+        if (padding <= parser->mem_sz - parser->mem_off
+            && bytes <= parser->mem_sz - parser->mem_off - padding)
         {
+            parser->mem_off += padding;
             parser->last_malloced = parser->mem + parser->mem_off;
             parser->mem_off += bytes;
             return parser->last_malloced;
