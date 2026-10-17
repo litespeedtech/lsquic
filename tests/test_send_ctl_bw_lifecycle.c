@@ -514,6 +514,7 @@ test_bbr_copilot_fack_lost_probe_fill (void)
     }
     assert(8 == t.send_ctl.sc_n_in_flight_all);
     assert(8 == t.send_ctl.sc_n_in_flight_retx);
+    assert(1 == t.send_ctl.sc_n_in_flight_fill);
     assert(8 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(8 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
 
@@ -521,6 +522,7 @@ test_bbr_copilot_fack_lost_probe_fill (void)
     assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
     assert(7 == t.send_ctl.sc_n_in_flight_all);
     assert(7 == t.send_ctl.sc_n_in_flight_retx);
+    assert(1 == t.send_ctl.sc_n_in_flight_fill);
     assert(7 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(7 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
 
@@ -549,6 +551,7 @@ test_bbr_copilot_fack_lost_probe_fill (void)
 
     assert(4 == t.send_ctl.sc_n_in_flight_all);
     assert(4 == t.send_ctl.sc_n_in_flight_retx);
+    assert(0 == t.send_ctl.sc_n_in_flight_fill);
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
     assert(2 * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_lost);
