@@ -667,6 +667,92 @@ test_headers_wantwrite_restoration (const int want_write)
 }
 
 
+/* After the first header block (such as a 103 interim response) has been
+ * sent, the stream switches to the regular DATA write-readiness function.
+ * A later header block that is blocked on encoder stream output must
+ * restore the header-aware readiness check: the user must not be called
+ * back and must not be able to write DATA until the block is written.
+ */
+static void
+test_later_headers_wait_for_encoder (const int want_write)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    ssize_t nw;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    /* First block is written out in full: readiness switches to DATA */
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 0;
+    s_enc_off = 0;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+    assert(stream->stream_flags & STREAM_HEADERS_SENT);
+    assert(0 == stream->sm_hblock_sz);
+    assert(lsquic_stream_write_avail(stream) > 0);
+
+    /* Second block is blocked on the encoder stream */
+    test_vals.status = QWH_PARTIAL;
+    test_vals.completion_offset = 10;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_ENC_SENDING == stream->sm_send_headers_state);
+    assert(stream->sm_hblock_sz == test_vals.prefix_sz + test_vals.headers_sz);
+    assert(stream->sm_header_block);
+    assert(stream->sm_qflags & SMQF_WANT_WRITE);
+    assert(0 == lsquic_stream_write_avail(stream));
+    nw = lsquic_stream_write(stream, "hello", 5);
+    assert(0 == nw);
+
+    /* User's write interest is saved, not acted upon, while pending */
+    s = lsquic_stream_wantwrite(stream, want_write);
+    assert(s >= 0);
+    assert(stream->sm_qflags & SMQF_WANT_WRITE);
+    s_onwrite_called = 0;
+    lsquic_stream_dispatch_write_events(stream);
+    assert(0 == s_onwrite_called);
+    assert(SSHS_ENC_SENDING == stream->sm_send_headers_state);
+    assert(stream->sm_header_block);
+    assert(0 == stream->sm_hblock_off);
+
+    /* Encoder is done writing: the stream becomes writeable, but only
+     * the stashed header block may be written, not user DATA.
+     */
+    s_enc_off = 10;
+    assert(lsquic_stream_write_avail(stream) > 0);
+    assert(SSHS_HBLOCK_SENDING == stream->sm_send_headers_state);
+    nw = lsquic_stream_write(stream, "hello", 5);
+    assert(0 == nw);
+    assert(stream->sm_header_block);
+    assert(0 == stream->sm_hblock_off);
+
+    /* Header block is drained and saved write interest is restored */
+    lsquic_stream_dispatch_write_events(stream);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+    assert(NULL == stream->sm_header_block);
+    assert(0 == stream->sm_hblock_sz);
+    assert(want_write == s_onwrite_called);
+    assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+    nw = lsquic_stream_write(stream, "hello", 5);
+    assert(5 == nw);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    s_onwrite_called = 0;
+    s_enc_off = 0;
+}
+
+
 /* Create a new stream frame.  Each stream frame has a real packet_in to
  * back it up, just like in real code.  The contents of the packet do
  * not matter.
@@ -993,6 +1079,8 @@ main (int argc, char **argv)
     test_failed_partial_header_stash_resets_stream();
     test_headers_wantwrite_restoration(0);
     test_headers_wantwrite_restoration(1);
+    test_later_headers_wait_for_encoder(0);
+    test_later_headers_wait_for_encoder(1);
     test_read_headers(0, 0);
     test_read_headers(0, 1);
     test_read_headers(1, 0);

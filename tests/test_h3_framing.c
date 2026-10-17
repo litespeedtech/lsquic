@@ -1424,6 +1424,77 @@ test_multiple_header_blocks_need_dynamic_hq_frames (void)
 }
 
 
+static unsigned s_header_write_callbacks;
+
+
+static void
+headers_on_write (struct lsquic_stream *stream, lsquic_stream_ctx_t *UNUSED_ctx)
+{
+    ++s_header_write_callbacks;
+    lsquic_stream_wantwrite(stream, 0);
+}
+
+
+static void
+test_final_headers_wait_for_encoder (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream, *encoder;
+    struct lsquic_stream_if callbacks = stream_if;
+    struct lsxpack_header early = { XHDR(":status", "103") };
+    struct lsxpack_header final = { XHDR(":status", "200") };
+    struct lsquic_http_headers early_headers = { 1, &early, };
+    struct lsquic_http_headers final_headers = { 1, &final, };
+
+    init_test_ctl_settings(&g_ctl_settings);
+    stream_ctor_flags |= SCF_IETF;
+    init_test_objs(&tobjs, 0x1000, 0x1000, 1252);
+    tobjs.lconn.cn_flags |= LSCONN_SERVER;
+    encoder = new_stream(&tobjs, 3, 0x1000);
+    tobjs.ctor_flags |= SCF_HTTP;
+    callbacks.on_write = headers_on_write;
+    tobjs.stream_if = &callbacks;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    assert(0 == lsquic_stream_send_headers(stream, &early_headers, 0));
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+
+    /* Force QWH_PARTIAL for the next block by stashing an encoder byte. */
+    tobjs.qeh.qeh_enc_sm_out = encoder;
+    assert(0 == lsquic_frab_list_write(&tobjs.qeh.qeh_fral, "", 1));
+    assert(0 == lsquic_stream_send_headers(stream, &final_headers, 0));
+    assert(SSHS_ENC_SENDING == stream->sm_send_headers_state);
+    assert(0 == lsquic_stream_write_avail(stream));
+    assert(0 == lsquic_stream_write(stream, "body", 4));
+    s_header_write_callbacks = 0;
+    lsquic_stream_wantwrite(stream, 1);
+    lsquic_stream_dispatch_write_events(stream);
+    assert(0 == s_header_write_callbacks);
+    assert(stream->sm_header_block);
+
+    /* Once encoder output completes, the stream is writeable, but only the
+     * stashed header block may be written: user DATA is still rejected.
+     */
+    encoder->tosend_off = stream->sm_hb_compl;
+    assert(lsquic_stream_write_avail(stream) > 0);
+    assert(SSHS_HBLOCK_SENDING == stream->sm_send_headers_state);
+    assert(0 == lsquic_stream_write(stream, "body", 4));
+    assert(stream->sm_header_block);
+
+    /* Completing encoder output must drain HEADERS before the user callback. */
+    lsquic_stream_dispatch_write_events(stream);
+    assert(1 == s_header_write_callbacks);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+    assert(!stream->sm_header_block);
+    assert(4 == lsquic_stream_write(stream, "body", 4));
+
+    tobjs.qeh.qeh_enc_sm_out = NULL;
+    lsquic_stream_destroy(stream);
+    lsquic_stream_destroy(encoder);
+    deinit_test_objs(&tobjs);
+    stream_ctor_flags &= ~SCF_IETF;
+}
+
+
 static void
 test_frame_header_split (unsigned n_packets, unsigned extra_sz,
                                                         int add_one_more)
@@ -2555,6 +2626,7 @@ main (int argc, char **argv)
                         test_frame_header_split(n_packets, extra_sz, add_one_more);
             break;
         case 12:  /* fast framing regression tests */
+            test_final_headers_wait_for_encoder();
             test_zero_size_frame();
             test_reading_zero_size_data_frame();
             test_reading_zero_size_data_frame_scenario2();
@@ -2581,6 +2653,7 @@ main (int argc, char **argv)
         main_test_pwritev();
         main_test_hq_framing();
         test_multiple_header_blocks_need_dynamic_hq_frames();
+        test_final_headers_wait_for_encoder();
         for (n_packets = 1; n_packets <= 2; ++n_packets)
             for (extra_sz = 0; extra_sz <= 2; ++extra_sz)
                 for (add_one_more = 0; add_one_more <= 1; ++add_one_more)
