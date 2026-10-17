@@ -49,6 +49,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Hongrui Zhu -- Configurable CRYPTO-frame stash limit
     - Jiří Szkandera -- Bug fixes
     - 이윤진(Lee Yunjin) -- Bug fixes
+    - Lukas Kastern -- UB fixes
 
 Thank you!
 

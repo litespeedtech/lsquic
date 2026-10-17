@@ -664,8 +664,15 @@ lsquic_enc_session_deserialize_sess_resume(
      * certificate chain
      */
     cert_item->count = storage->cert_count;
-    cert_item->crts = malloc(cert_item->count * sizeof(lsquic_str_t));
+    cert_item->crts = calloc(cert_item->count, sizeof(*cert_item->crts));
+    if (cert_item->count && !cert_item->crts)
+    {
+        cert_item->count = 0;
+        return RTT_DESERIALIZE_BAD_CERT_SIZE;
+    }
     cert_item->hashs = lsquic_str_new(NULL, 0);
+    if (!cert_item->hashs)
+        return RTT_DESERIALIZE_BAD_CERT_SIZE;
     cert_len = (uint32_t *)(storage + 1);
     for (i = 0; i < storage->cert_count; i++)
     {
@@ -673,11 +680,13 @@ lsquic_enc_session_deserialize_sess_resume(
         cert_data = (uint8_t *)(cert_len + 1);
         memcpy(&len, cert_len, sizeof(len));
         CHECK_SPACE(len, cert_data, storage_end);
-        lsquic_str_prealloc(&cert_item->crts[i], len);
+        if (!lsquic_str_prealloc(&cert_item->crts[i], len))
+            return RTT_DESERIALIZE_BAD_CERT_SIZE;
         lsquic_str_setlen(&cert_item->crts[i], len);
         memcpy(lsquic_str_buf(&cert_item->crts[i]), cert_data, len);
         hash = lsquic_fnv1a_64((const uint8_t *)cert_data, len);
-        lsquic_str_append(cert_item->hashs, (char *)&hash, 8);
+        if (lsquic_str_append(cert_item->hashs, (char *)&hash, 8))
+            return RTT_DESERIALIZE_BAD_CERT_SIZE;
         cert_len = (uint32_t *)(cert_data + len);
     }
     return RTT_DESERIALIZE_OK;
@@ -1127,10 +1136,14 @@ static int parse_hs_data (struct lsquic_enc_session *enc_session, uint32_t tag,
         break;
 
     case QTAG_EXPY:
+        if (head_tag == QTAG_CHLO)
+            return -1;
         enc_session->info->expy = get_tag_value_i64(val, len);
         break;
 
     case QTAG_ORBT:
+        if (head_tag == QTAG_CHLO)
+            return -1;
         enc_session->info->orbt = get_tag_value_i64(val, len);
         break;
 
