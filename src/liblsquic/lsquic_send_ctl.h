@@ -86,6 +86,7 @@ typedef struct lsquic_send_ctl {
     unsigned                        sc_bytes_unacked_all;
     unsigned                        sc_n_in_flight_all;
     unsigned                        sc_n_in_flight_retx;
+    unsigned                        sc_n_in_flight_fill;
     unsigned                        sc_n_consec_rtos;
     unsigned                        sc_n_hsk;
     unsigned                        sc_n_tlp;

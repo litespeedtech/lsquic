@@ -412,12 +412,15 @@ retx_alarm_rings (enum alarm_id al_id, void *ctx, lsquic_time_t expiry, lsquic_t
      * occupying the congestion window forever.  They are not retransmittable,
      * however, and must not consume TLP attempts or cause an RTO.
      */
-    packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
-    if (!packet_out)
+    if (ctl->sc_n_in_flight_fill)
     {
-        send_ctl_expire_probe_fill(ctl, pns, now);
-        lsquic_send_ctl_sanity_check(ctl);
-        return;
+        packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
+        if (!packet_out)
+        {
+            send_ctl_expire_probe_fill(ctl, pns, now);
+            lsquic_send_ctl_sanity_check(ctl);
+            return;
+        }
     }
 
     rm = get_retx_mode(ctl);
@@ -844,6 +847,7 @@ send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
         ctl->sc_bytes_unacked_retx += packet_out_total_sz(packet_out);
         ++ctl->sc_n_in_flight_retx;
     }
+    ctl->sc_n_in_flight_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
 }
 
 
@@ -864,6 +868,7 @@ send_ctl_unacked_remove (struct lsquic_send_ctl *ctl,
         ctl->sc_bytes_unacked_retx -= packet_sz;
         --ctl->sc_n_in_flight_retx;
     }
+    ctl->sc_n_in_flight_fill -= !!(packet_out->po_flags & PO_BW_PROBE_FILL);
 }
 
 
@@ -2270,13 +2275,13 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
-    unsigned count, bytes;
+    unsigned count, bytes, n_fill;
     enum packnum_space pns;
 
 #if _MSC_VER
     prev_packno = 0;
 #endif
-    count = 0, bytes = 0;
+    count = 0, bytes = 0, n_fill = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
     {
         prev_packno_set = 0;
@@ -2293,11 +2298,13 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
             {
                 bytes += packet_out_sent_sz(packet_out);
                 ++count;
+                n_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
             }
         }
     }
     assert(count == ctl->sc_n_in_flight_all);
     assert(bytes == ctl->sc_bytes_unacked_all);
+    assert(n_fill == ctl->sc_n_in_flight_fill);
 
     count = 0, bytes = 0;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
