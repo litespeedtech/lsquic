@@ -37,6 +37,7 @@ SET(TESTS
     cert_chain
     conn_close_gquic_be
     conn_close_ietf
+    conn_close_gen_ietf
     crypto_gen
     cubic
     dec
