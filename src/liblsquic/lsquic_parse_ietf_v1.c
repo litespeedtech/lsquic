@@ -241,9 +241,8 @@ gen_long_pkt_header (const struct lsquic_conn *lconn,
         bits = vint_val2bits(token_len);
         vint_write(p, token_len, bits, 1 << bits);
         p += 1 << bits;
-        if(token_len > 0) {
+        if (token_len)
             memcpy(p, packet_out->po_token, token_len);
-        }
         p += token_len;
     }
 
