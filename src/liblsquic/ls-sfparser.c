@@ -48,6 +48,7 @@ SOFTWARE.
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 /* end standard C headers. */
 
@@ -776,7 +777,6 @@ static yyconst flex_int16_t yy_chk[835] =
 
 #line 27 "ls-sfparser.l"
 #include <stddef.h>
-#include <stdint.h>
 #include "ls-sfparser.h"
 struct ls_sf_parser
 {
