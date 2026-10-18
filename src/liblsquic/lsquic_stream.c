@@ -999,8 +999,13 @@ stream_write_avail_with_frames (struct lsquic_stream *stream)
 }
 
 
-/* To prevent deadlocks, ensure that when headers are sent, the bytes
- * sent on the encoder stream are written first.
+/* Prevent the flow-control deadlock described in RFC 9204 Section 2.1.3:
+ * do not write a header block to the request stream until the encoder stream
+ * instructions it depends on have been accepted by the encoder stream, so that
+ * they already hold their stream and connection credit.  This is about credit
+ * ordering on the sender, not arrival order at the peer; reordering and loss
+ * are handled by the blocked-streams mechanism.  See also:
+ * https://blog.litespeedtech.com/2018/01/22/quic-head-of-line-blocking-deadlock-hazard/
  *
  * XXX If the encoder is set up in non-risking mode, it is perfectly
  * fine to send the header block first.  TODO: update the logic to
@@ -2603,7 +2608,8 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
 
 #define COMMON_WRITE_CHECKS() do {                                          \
     if ((stream->sm_bflags & SMBF_USE_HEADERS)                              \
-            && !(stream->stream_flags & STREAM_HEADERS_SENT))               \
+            && (!(stream->stream_flags & STREAM_HEADERS_SENT)              \
+                || SSHS_BEGIN != stream->sm_send_headers_state))           \
     {                                                                       \
         if (SSHS_BEGIN != stream->sm_send_headers_state)                    \
         {                                                                   \
@@ -4212,6 +4218,10 @@ send_headers_ietf (struct lsquic_stream *stream,
                                                 hblock_sz - (size_t) nw);
     stream->sm_hblock_sz = hblock_sz - (size_t) nw;
     stream->sm_hblock_off = 0;
+    /* A previous header block switched to DATA readiness.  Restore encoder
+     * gating so later blocks cannot invoke user callbacks while pending.
+     */
+    stream->sm_write_avail = stream_write_avail_with_headers;
     LSQ_DEBUG("stashed %u bytes of header block", stream->sm_hblock_sz);
 
   end:

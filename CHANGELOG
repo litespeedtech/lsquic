@@ -1,3 +1,13 @@
+2026-10-17
+    - 4.10.2
+    - [FIX] Prevent HTTP/3 response stalls and DATA writes while headers are
+      pending after informational responses such as 103 Early Hints.
+    - [FIX] Reject response-only tags in gQUIC client hellos to prevent crashes.
+    - [FIX] Handle truncated gQUIC resumption certificates and allocation
+      failures safely.
+    - [FIX] Avoid undefined behavior in packet-header generation, stream queue
+      offsets, and structured-field parser allocations (#702).
+
 2026-10-12
     - 4.10.1
     - [FIX] Initialize gQUIC X25519 output lengths (#694).
