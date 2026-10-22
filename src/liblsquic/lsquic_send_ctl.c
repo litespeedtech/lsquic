@@ -2151,7 +2151,8 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
         {
             LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
                       num_probing, num_probing != 1 ? "s" : "");
-            return;
+            if (!send_ctl_pacing_capped(ctl))
+                return;
         }
     }
 
