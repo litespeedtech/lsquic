@@ -1062,6 +1062,12 @@ replaced with an internal callback (see the ``select_on_write``
 function) and user interaction is prohibited until the whole of
 the HEADERS frame is written to the stream.
 
+This gating applies to every header block, including final response headers
+after informational responses.  A buffered block restores the header-aware
+write-readiness function so it waits for QPACK encoder output before draining
+the HEADERS payload.  The fact that an earlier header block was sent does not
+permit application DATA writes while another block is pending.
+
 The framing code has had its share of bugs. Because of that, there is a
 dedicated unit test program just for the framing code,
 *tests/test_h3_framing.c*. In addition to manually-written tests, the

@@ -27,7 +27,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 2
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -313,6 +313,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
  * Default ping period in seconds.
  */
 #define LSQUIC_DF_PING_PERIOD 15
+
+/**
+ * By default, PINGs are sent only while an application stream is open.
+ */
+#define LSQUIC_DF_PING_WITHOUT_STREAMS 0
 
 /**
  * Default handshake timeout in microseconds.
@@ -1236,6 +1241,16 @@ struct lsquic_engine_settings {
      * and @ref LSQUIC_DF_MAX_HEADER_SETS_CLIENT in client mode.
      */
     unsigned        es_max_header_sets;
+
+    /**
+     * If set to true and @ref es_ping_period is non-zero, the connection
+     * sends PING frames even when no application stream is open.  Otherwise,
+     * PINGs are sent only while an application stream is open.  IETF QUIC
+     * only.
+     *
+     * Default value is @ref LSQUIC_DF_PING_WITHOUT_STREAMS.
+     */
+    int             es_ping_without_streams;
 };
 
 /* Initialize `settings' to default values */
@@ -1721,7 +1736,9 @@ lsquic_stream_readf (lsquic_stream_t *s,
  * @ref on_write() will be called when it is possible to write data to
  * the stream.  If @param is false, @ref on_write() will not be called.
  *
- * Returns previous value of this flag.
+ * Disabling write interest is allowed even after the stream is closed for
+ * writing.  Returns the previous value of this flag, or -1 with errno set
+ * to EBADF if enabling write interest after the stream is closed for writing.
  */
 int
 lsquic_stream_wantwrite (lsquic_stream_t *s, int is_want);

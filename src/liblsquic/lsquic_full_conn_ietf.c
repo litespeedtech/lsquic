@@ -2882,7 +2882,7 @@ process_streams_ready_to_send (struct ietf_full_conn *conn)
 
     conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.sending_streams),
         TAILQ_LAST(&conn->ifc_pub.sending_streams, lsquic_streams_tailq),
-        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_send_stream),
+        offsetof(struct lsquic_stream, next_send_stream.tqe_next),
         &conn->ifc_pub, "send", NULL, NULL);
 
     for (stream = conn->ifc_pii->pii_first(&pi); stream;
@@ -4035,6 +4035,23 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
 }
 
 
+static enum packnum_space
+select_conn_close_pns (const struct ietf_full_conn *conn)
+{
+    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
+            /* Only use PNS_APP if client sent enough crypto output for the
+             * server to be able to decrypt it.
+             */
+                    (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
+        return PNS_APP;
+    else if (iquic_esf_is_enc_level_ready(conn->ifc_conn.cn_enc_session,
+                                                            ENC_LEV_HSK))
+        return PNS_HSK;
+    else
+        return PNS_INIT;
+}
+
+
 static enum tick_st
 immediate_close (struct ietf_full_conn *conn)
 {
@@ -4063,14 +4080,7 @@ immediate_close (struct ietf_full_conn *conn)
                                     && conn->ifc_settings->es_silent_close)
         return TICK_CLOSE;
 
-    if ((conn->ifc_flags & (IFC_SERVER|IFC_IGNORE_HSK)) ||
-            /* Only use PNS_APP if client sent enough crypto output for the
-             * server to be able to decrypt it.
-             */
-                    (conn->ifc_u.cli.ifcli_flags & IFCLI_HSK_CRYPTO_SENT))
-        pns = PNS_APP;
-    else
-        pns = PNS_HSK;
+    pns = select_conn_close_pns(conn);
 
     packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0,
                                                     pns, CUR_NPATH(conn));
@@ -4081,7 +4091,7 @@ immediate_close (struct ietf_full_conn *conn)
     }
 
     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
-    if (pns == PNS_HSK && conn->ifc_error.app_error)
+    if ((pns == PNS_HSK || pns == PNS_INIT) && conn->ifc_error.app_error)
     {
         /* [RFC 9000] Section 10.2.3: clear app code and reason: */
         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
@@ -4155,7 +4165,7 @@ process_streams_read_events (struct ietf_full_conn *conn)
     {
         conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.read_streams),
             TAILQ_LAST(&conn->ifc_pub.read_streams, lsquic_streams_tailq),
-            (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_read_stream),
+            offsetof(struct lsquic_stream, next_read_stream.tqe_next),
             &conn->ifc_pub, labels[iters], NULL, NULL);
 
         needs_service = 0;
@@ -4243,7 +4253,7 @@ process_streams_write_events (struct ietf_full_conn *conn, int high_prio)
 
     conn->ifc_pii->pii_init(&pi, TAILQ_FIRST(&conn->ifc_pub.write_streams),
         TAILQ_LAST(&conn->ifc_pub.write_streams, lsquic_streams_tailq),
-        (uintptr_t) &TAILQ_NEXT((lsquic_stream_t *) NULL, next_write_stream),
+        offsetof(struct lsquic_stream, next_write_stream.tqe_next),
         &conn->ifc_pub,
         high_prio ? "write-high" : "write-low", NULL, NULL);
 
@@ -4268,11 +4278,11 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     int sz;
+    enum packnum_space pns;
 
-    /* FIXME Select PNS based on handshake status (possible on the client): if
-     * appropriate keys are not available, encryption will fail.
-     */
-    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
+    pns = select_conn_close_pns(conn);
+
+    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
                                                                 CUR_NPATH(conn));
     if (!packet_out)
     {
@@ -6722,7 +6732,12 @@ process_packet_frame (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
             type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
-        ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
+        if (type == QUIC_FRAME_INVALID)
+            ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
+        else
+            ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION, "frame %s is not "
+                "allowed at encryption level %s", frame_type_2_str[type],
+                lsquic_enclev2str[enc_level]);
         return 0;
     }
 }
@@ -8535,8 +8550,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
      *     packets and poor performance.
      */
     if (conn->ifc_ping_period
-                        && lsquic_hash_count(conn->ifc_pub.all_streams) >
-                           conn->ifc_pub.n_special_streams)
+            && (conn->ifc_enpub->enp_settings.es_ping_without_streams
+                || lsquic_hash_count(conn->ifc_pub.all_streams) >
+                   conn->ifc_pub.n_special_streams))
         lsquic_alarmset_set(&conn->ifc_alset, AL_PING,
                                                 now + conn->ifc_ping_period);
 

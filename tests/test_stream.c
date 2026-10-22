@@ -1237,6 +1237,103 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 }
 
 
+static void
+stop_writing_after_reset (lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx)
+{
+    unsigned *const n_calls = (void *) ctx;
+
+    ++*n_calls;
+    assert(stream->stream_flags & STREAM_U_WRITE_DONE);
+    assert(1 == lsquic_stream_wantwrite(stream, 0));
+}
+
+
+static void
+test_wantwrite_after_reset (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream_if reset_stream_if = stream_if;
+    struct lsquic_stream *stream;
+    unsigned server, once, n_calls;
+
+    reset_stream_if.on_write = stop_writing_after_reset;
+    for (server = 0; server < 2; ++server)
+        for (once = 0; once < 2; ++once)
+        {
+            init_test_ctl_settings(&g_ctl_settings);
+            init_test_objs(&tobjs, 0x4000, 0x4000,
+                                        select_pf_by_ver(LSQVER_I001));
+            if (server)
+                tobjs.lconn.cn_flags |= LSCONN_SERVER;
+            if (once)
+                tobjs.ctor_flags |= SCF_DISP_RW_ONCE;
+            tobjs.stream_if = &reset_stream_if;
+            stream = new_stream(&tobjs, 4);
+            assert(stream);
+            n_calls = 0;
+            stream->st_ctx = (void *) &n_calls;
+
+            assert(0 == lsquic_stream_wantwrite(stream, 1));
+            lsquic_stream_stop_sending_in(stream, 12345);
+            assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+            assert(TAILQ_EMPTY(&tobjs.conn_pub.write_streams));
+            assert(stream->sm_qflags & SMQF_SEND_RST);
+
+            /* Re-arm write interest while RESET_STREAM is pending. */
+            assert(0 == lsquic_stream_wantwrite(stream, 1));
+            lsquic_stream_rst_frame_sent(stream);
+            assert(stream->stream_flags & STREAM_U_WRITE_DONE);
+            assert(stream->sm_qflags & SMQF_WANT_WRITE);
+
+            errno = 0;
+            assert(-1 == lsquic_stream_wantwrite(stream, 1));
+            assert(EBADF == errno);
+            assert(stream->sm_qflags & SMQF_WANT_WRITE);
+
+            /* The callback can suspend writing after the reset. */
+            lsquic_stream_dispatch_write_events(stream);
+            assert(1 == n_calls);
+            assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+            assert(0 == stream->sm_saved_want_write);
+            assert(TAILQ_EMPTY(&tobjs.conn_pub.write_streams));
+            assert(0 == lsquic_stream_wantwrite(stream, 0));
+
+            lsquic_stream_dispatch_write_events(stream);
+            lsquic_stream_dispatch_write_events(stream);
+            assert(1 == n_calls);
+            errno = 0;
+            assert(-1 == lsquic_stream_wantwrite(stream, 1));
+            assert(EBADF == errno);
+            assert(TAILQ_EMPTY(&tobjs.conn_pub.write_streams));
+
+            lsquic_stream_destroy(stream);
+            deinit_test_objs(&tobjs);
+        }
+}
+
+
+static void
+test_wantwrite_after_shutdown (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    stream = new_stream(tobjs, 4);
+    assert(stream);
+    assert(0 == lsquic_stream_wantwrite(stream, 1));
+    assert(0 == lsquic_stream_shutdown(stream, 1));
+    assert(stream->stream_flags & STREAM_U_WRITE_DONE);
+    assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+    assert(0 == lsquic_stream_wantwrite(stream, 0));
+    assert(0 == lsquic_stream_wantwrite(stream, 0));
+    errno = 0;
+    assert(-1 == lsquic_stream_wantwrite(stream, 1));
+    assert(EBADF == errno);
+    assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
+
+    lsquic_stream_destroy(stream);
+}
+
+
 /* We send some data and RST, receive data and FIN
  */
 static void
@@ -1636,6 +1733,7 @@ test_termination (void)
         { 1, 1, test_loc_FIN_rem_RST, },
         { 1, 1, test_loc_data_rem_RST, },
         { 0, 1, test_loc_data_rem_SS, },
+        { 1, 1, test_wantwrite_after_shutdown, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG
         { 1, 1, test_gapless_elision_beginning, },
@@ -3790,6 +3888,7 @@ main (int argc, char **argv)
 
     init_test_ctl_settings(&g_ctl_settings);
 
+    test_wantwrite_after_reset();
     test_conn_stats_over_4g();
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
