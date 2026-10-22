@@ -171,6 +171,16 @@ imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 }
 
 
+/* Some, but not all, of the ClientHello has arrived (read or stashed) */
+static inline int
+imico_chlo_in_progress (const struct ietf_mini_conn *conn)
+{
+    return !imico_chlo_has_been_consumed(conn)
+        && (conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 0
+            || !TAILQ_EMPTY(&conn->imc_crypto_frames));
+}
+
+
 static int
 imico_process_version_negociation (struct ietf_mini_conn *conn,
                                    const struct transport_params *params)
@@ -2331,9 +2341,21 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     {
         if (conn->imc_flags & IMC_ERROR)
             goto close_on_error;
-        LSQ_DEBUG("Peer not validated and do not have transport parameters "
-            "on the first tick: retry");
-        return TICK_RETRY|TICK_CLOSE;
+        /* Wait for the rest of the ClientHello instead of sending a Retry.
+         * Send nothing yet: version negotiation may still change the version.
+         */
+        if (imico_chlo_in_progress(conn))
+        {
+            LSQ_DEBUG("Peer not validated and ClientHello not complete: "
+                "wait for the rest of it");
+            return 0;
+        }
+        else
+        {
+            LSQ_DEBUG("Peer not validated and do not have transport parameters "
+                "on the first tick: retry");
+            return TICK_RETRY|TICK_CLOSE;
+        }
     }
 
     if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
