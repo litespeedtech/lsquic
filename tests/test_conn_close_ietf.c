@@ -16,6 +16,10 @@ enum {
     IDLE_SERVER,
     IDLE_SERVER_SILENT,
     CLIENT_HSK_FAILED,
+    APP_ERROR_ZERO,
+    APP_ERROR_ZERO_LATCHED,
+    APP_ERROR_ZERO_HANDSHAKE,
+    GENERIC_INTERNAL_ERROR,
     N_RESULTS,
 };
 
@@ -44,6 +48,10 @@ main (void)
     assert(results[IDLE_SERVER] == 0);
     assert(results[IDLE_SERVER_SILENT] == 0);
     assert(results[CLIENT_HSK_FAILED] == 0);
+    assert(results[APP_ERROR_ZERO] == 1);
+    assert(results[APP_ERROR_ZERO_LATCHED] == 1);
+    assert(results[APP_ERROR_ZERO_HANDSHAKE] == 1);
+    assert(results[GENERIC_INTERNAL_ERROR] == 1);
 
     return 0;
 }

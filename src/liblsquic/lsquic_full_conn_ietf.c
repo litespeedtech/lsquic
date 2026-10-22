@@ -153,6 +153,7 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_ERROR_CODE_SET   = 1 << 9,   /* Connection error code is set */
 };
 
 
@@ -259,6 +260,7 @@ enum send_flags
  */
 #define ABORT_QUIETLY(app_error, code, ...) do {                            \
     conn->ifc_error = CONN_ERR(app_error, code);                            \
+    conn->ifc_mflags |= MF_ERROR_CODE_SET;                                  \
     ABORT_WITH_FLAG(conn, LSQ_LOG_INFO, IFC_ERROR, __VA_ARGS__);            \
 } while (0)
 
@@ -4035,6 +4037,45 @@ ietf_full_conn_ci_is_tickable (struct lsquic_conn *lconn)
 }
 
 
+static void
+select_close_error (const struct ietf_full_conn *conn,
+                    enum packnum_space pns, struct conn_err *conn_err,
+                    const char **error_reason)
+{
+    if (pns == PNS_HSK && conn->ifc_error.app_error)
+    {
+        /* [RFC 9000] Section 10.2.3: clear app code and reason: */
+        *conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
+        *error_reason = NULL;
+    }
+    else if (conn->ifc_mflags & MF_ERROR_CODE_SET)
+    {
+        *conn_err = conn->ifc_error;
+        *error_reason = conn->ifc_errmsg;
+    }
+    else if (conn->ifc_flags & IFC_ERROR)
+    {
+        *conn_err = CONN_ERR(0, TEC_INTERNAL_ERROR);
+        *error_reason = "connection error";
+    }
+    else if (conn->ifc_flags & IFC_ABORTED)
+    {
+        *conn_err = CONN_ERR(0, TEC_NO_ERROR);
+        *error_reason = "user aborted connection";
+    }
+    else if (conn->ifc_flags & IFC_HSK_FAILED)
+    {
+        *conn_err = CONN_ERR(0, TEC_NO_ERROR);
+        *error_reason = "handshake failed";
+    }
+    else
+    {
+        *conn_err = CONN_ERR(0, TEC_NO_ERROR);
+        *error_reason = NULL;
+    }
+}
+
+
 static enum tick_st
 immediate_close (struct ietf_full_conn *conn)
 {
@@ -4081,37 +4122,7 @@ immediate_close (struct ietf_full_conn *conn)
     }
 
     assert(conn->ifc_flags & (IFC_ERROR|IFC_ABORTED|IFC_HSK_FAILED));
-    if (pns == PNS_HSK && conn->ifc_error.app_error)
-    {
-        /* [RFC 9000] Section 10.2.3: clear app code and reason: */
-        conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
-        error_reason = NULL;
-    }
-    else if (conn->ifc_error.u.err != 0)
-    {
-        conn_err = conn->ifc_error;
-        error_reason = conn->ifc_errmsg;
-    }
-    else if (conn->ifc_flags & IFC_ERROR)
-    {
-        conn_err = CONN_ERR(0, TEC_INTERNAL_ERROR);
-        error_reason = "connection error";
-    }
-    else if (conn->ifc_flags & IFC_ABORTED)
-    {
-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
-        error_reason = "user aborted connection";
-    }
-    else if (conn->ifc_flags & IFC_HSK_FAILED)
-    {
-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
-        error_reason = "handshake failed";
-    }
-    else
-    {
-        conn_err = CONN_ERR(0, TEC_NO_ERROR);
-        error_reason = NULL;
-    }
+    select_close_error(conn, pns, &conn_err, &error_reason);
 
     lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
     sz = conn->ifc_conn.cn_pf->pf_gen_connect_close_frame(
@@ -8665,7 +8676,7 @@ ietf_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
     const char *err_str, *percent;
     char err_buf[0x100];
 
-    if (conn->ifc_error.u.err != 0)
+    if (conn->ifc_mflags & MF_ERROR_CODE_SET)
         return;
     percent = strchr(fmt, '%');
     if (percent)
@@ -9880,7 +9891,7 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 #ifndef NDEBUG
 void
-lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
+lsquic_ietf_full_conn_test_conn_close (unsigned results[])
 {
     enum {
         IDLE_SERVER_USER_CLOSE,
@@ -9896,9 +9907,15 @@ lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
         IDLE_SERVER,
         IDLE_SERVER_SILENT,
         CLIENT_HSK_FAILED,
+        APP_ERROR_ZERO,
+        APP_ERROR_ZERO_LATCHED,
+        APP_ERROR_ZERO_HANDSHAKE,
+        GENERIC_INTERNAL_ERROR,
     };
     struct lsquic_engine_settings settings;
     struct ietf_full_conn conn;
+    struct conn_err conn_err;
+    const char *error_reason;
 
     memset(&settings, 0, sizeof(settings));
 
@@ -9960,6 +9977,29 @@ lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
     conn.ifc_flags = IFC_HSK_FAILED;
     conn.ifc_settings = &settings;
     results[CLIENT_HSK_FAILED] = should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    ietf_full_conn_ci_abort_error(&conn.ifc_conn, 1, 0,
+                                                "zero application error");
+    select_close_error(&conn, PNS_APP, &conn_err, &error_reason);
+    results[APP_ERROR_ZERO] = conn_err.app_error && conn_err.u.err == 0
+                        && error_reason == conn.ifc_errmsg;
+    ietf_full_conn_ci_abort_error(&conn.ifc_conn, 1,
+                                                HEC_GENERAL_PROTOCOL_ERROR,
+                                                "later application error");
+    results[APP_ERROR_ZERO_LATCHED] = conn.ifc_error.app_error
+                                            && conn.ifc_error.u.err == 0;
+    select_close_error(&conn, PNS_HSK, &conn_err, &error_reason);
+    results[APP_ERROR_ZERO_HANDSHAKE] = !conn_err.app_error
+                    && conn_err.u.err == TEC_APPLICATION_ERROR
+                    && error_reason == NULL;
+    free(conn.ifc_errmsg);
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = IFC_ERROR;
+    select_close_error(&conn, PNS_APP, &conn_err, &error_reason);
+    results[GENERIC_INTERNAL_ERROR] = !conn_err.app_error
+                    && conn_err.u.err == TEC_INTERNAL_ERROR;
 }
 
 
