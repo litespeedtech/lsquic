@@ -153,6 +153,7 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_ERROR_CODE_SET   = 1 << 9,   /* Connection error code is set */
 };
 
 
@@ -259,6 +260,7 @@ enum send_flags
  */
 #define ABORT_QUIETLY(app_error, code, ...) do {                            \
     conn->ifc_error = CONN_ERR(app_error, code);                            \
+    conn->ifc_mflags |= MF_ERROR_CODE_SET;                                  \
     ABORT_WITH_FLAG(conn, LSQ_LOG_INFO, IFC_ERROR, __VA_ARGS__);            \
 } while (0)
 
@@ -4087,7 +4089,8 @@ immediate_close (struct ietf_full_conn *conn)
         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
         error_reason = NULL;
     }
-    else if (conn->ifc_error.u.err != 0)
+    else if (conn->ifc_error.u.err != 0
+                            || (conn->ifc_mflags & MF_ERROR_CODE_SET))
     {
         conn_err = conn->ifc_error;
         error_reason = conn->ifc_errmsg;
@@ -8665,7 +8668,7 @@ ietf_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
     const char *err_str, *percent;
     char err_buf[0x100];
 
-    if (conn->ifc_error.u.err != 0)
+    if (conn->ifc_mflags & MF_ERROR_CODE_SET)
         return;
     percent = strchr(fmt, '%');
     if (percent)
