@@ -412,6 +412,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
+    settings->es_ping_without_streams = LSQUIC_DF_PING_WITHOUT_STREAMS;
 }
 
 

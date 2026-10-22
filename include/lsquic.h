@@ -315,6 +315,11 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 #define LSQUIC_DF_PING_PERIOD 15
 
 /**
+ * By default, PINGs are sent only while an application stream is open.
+ */
+#define LSQUIC_DF_PING_WITHOUT_STREAMS 0
+
+/**
  * Default handshake timeout in microseconds.
  */
 #define LSQUIC_DF_HANDSHAKE_TO     (10 * 1000 * 1000)
@@ -1223,6 +1228,16 @@ struct lsquic_engine_settings {
      * and @ref LSQUIC_DF_MAX_HEADER_SETS_CLIENT in client mode.
      */
     unsigned        es_max_header_sets;
+
+    /**
+     * If set to true and @ref es_ping_period is non-zero, the connection
+     * sends PING frames even when no application stream is open.  Otherwise,
+     * PINGs are sent only while an application stream is open.  IETF QUIC
+     * only.
+     *
+     * Default value is @ref LSQUIC_DF_PING_WITHOUT_STREAMS.
+     */
+    int             es_ping_without_streams;
 };
 
 /* Initialize `settings' to default values */
