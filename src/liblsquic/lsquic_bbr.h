@@ -83,6 +83,8 @@ struct lsquic_bbr
                                          = 1 << 15,
         // When true, disables packet conservation in STARTUP.
         BBR_FLAG_RATE_BASED_STARTUP      = 1 << 16,
+
+        BBR_BW_SAMPLE_INVALID_PROBE_RTT  = 1 << 17,
     }                           bbr_flags;
 
     // Number of round-trips in PROBE_BW mode, used for determining the current
@@ -202,8 +204,23 @@ struct lsquic_bbr
         uint64_t            in_flight;
         int                 has_losses;
     }                           bbr_ack_state;
+
+    /* Last packet sent in ProbeRTT.  Samples remain app-limited until a later
+     * packet is acknowledged.  Packets sent after ProbeRTT but before that
+     * acknowledgement are marked app-limited too: their sampling intervals
+     * may overlap the low-rate ProbeRTT period.  This matches the bandwidth
+     * sampler's app-limited phase semantics.
+     */
+    lsquic_packno_t             bbr_probe_rtt_app_limited_until;
+
+    /* Time at which a packet carrying application data was last sent.  Zero
+     * means that the application has not sent any data yet.  Fill probes
+     * are only useful while the application is actually sending data.
+     */
+    lsquic_time_t               bbr_last_app_data_sent;
 };
 
 extern const struct cong_ctl_if lsquic_cong_bbr_if;
+extern const struct cong_ctl_if lsquic_cong_bbr_copilot_if;
 
 #endif
