@@ -4101,8 +4101,19 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
                                 && !(packet_out->po_flags & PO_MTU_PROBE))
             {
                 send_ctl_sched_remove(ctl, packet_out);
-                TAILQ_INSERT_TAIL(&many_ctx.input_q, packet_out, po_next);
-                ++count_src;
+                if (packet_out->po_flags & PO_BW_PROBE_FILL)
+                {
+                    /* Probe-fill packets have no frame records and carry
+                     * nothing worth keeping: drop them instead of resizing.
+                     */
+                    send_ctl_destroy_chain(ctl, packet_out, NULL);
+                    send_ctl_destroy_packet(ctl, packet_out);
+                }
+                else
+                {
+                    TAILQ_INSERT_TAIL(&many_ctx.input_q, packet_out, po_next);
+                    ++count_src;
+                }
             }
         }
     }
@@ -4125,6 +4136,13 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
             }
         }
     }
+
+    if (0 == count_src)
+    {
+        LSQ_DEBUG("no packets left to resize in %s queue", q_name);
+        return;
+    }
+
     lsquic_packet_resize_init(&prctx, ctl->sc_enpub, lconn, &many_ctx,
                                                         &resize_many_funcs);
 
