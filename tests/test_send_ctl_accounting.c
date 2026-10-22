@@ -48,7 +48,9 @@ struct accounting_test
     struct lsquic_alarmset       alset;
     struct ver_neg               ver_neg;
     struct network_path          path;
+#if LSQUIC_CONN_STATS
     struct conn_stats            stats;
+#endif
 };
 
 
@@ -95,7 +97,9 @@ init_test (struct accounting_test *t)
     t->conn_pub.enpub = &t->enpub;
     t->conn_pub.send_ctl = &t->send_ctl;
     t->conn_pub.path = &t->path;
+#if LSQUIC_CONN_STATS
     t->conn_pub.conn_stats = &t->stats;
+#endif
     t->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     assert(t->conn_pub.packet_out_malo);
@@ -440,7 +444,9 @@ test_lost_bw_probe_fill_is_not_rescheduled (void)
     assert(0 == t.send_ctl.sc_bytes_unacked_all);
     assert(0 == t.send_ctl.sc_bytes_unacked_retx);
     assert(!lsquic_alarmset_is_set(&t.alset, AL_RETX_APP));
+#if LSQUIC_CONN_STATS
     assert(1 == t.stats.out.lost_packets);
+#endif
     cleanup_test(&t);
 }
 
@@ -503,7 +509,9 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
     assert(1003 + (loss_alarm ? 1250 : 10000) == expiry);
     lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
     lost = with_data && !loss_alarm;
+#if LSQUIC_CONN_STATS
     assert(lost == t.stats.out.lost_packets);
+#endif
     assert(lost == t.send_ctl.sc_loss_count);
     assert(lost * data_bytes == t.send_ctl.sc_bw_sampler.bws_total_lost);
     assert(4 + with_data - lost == t.send_ctl.sc_n_in_flight_all);
@@ -533,7 +541,9 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
                                 == t.send_ctl.sc_bw_sampler.bws_total_acked);
     assert(minmax_get(&t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_max_bandwidth) > 0);
     assert(lost * data_bytes == t.send_ctl.sc_bw_sampler.bws_total_lost);
+#if LSQUIC_CONN_STATS
     assert(lost == t.stats.out.lost_packets);
+#endif
     assert(lost == t.send_ctl.sc_loss_count);
     assert(0 == t.send_ctl.sc_n_in_flight_all);
     assert(0 == t.send_ctl.sc_n_in_flight_retx);
@@ -584,7 +594,9 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
         lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
         assert(4 == t.send_ctl.sc_n_in_flight_all);
         assert(4 == t.send_ctl.sc_n_in_flight_fill);
+#if LSQUIC_CONN_STATS
         assert(0 == t.stats.out.lost_packets);
+#endif
         assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
 
         for (n = 0; n < 4; ++n)
@@ -595,7 +607,9 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
             lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
             assert(3 - n == t.send_ctl.sc_n_in_flight_all);
             assert(3 - n == t.send_ctl.sc_n_in_flight_fill);
+#if LSQUIC_CONN_STATS
             assert(n + 1 == t.stats.out.lost_packets);
+#endif
             assert(n + 1 == t.send_ctl.sc_loss_count);
         }
 
@@ -611,7 +625,9 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
         assert(0 == t.send_ctl.sc_n_consec_rtos);
         assert(0 == t.send_ctl.sc_next_limit);
         assert(!lsquic_alarmset_is_set(&t.alset, AL_RETX_APP));
+#if LSQUIC_CONN_STATS
         assert(4 == t.stats.out.lost_packets);
+#endif
         cleanup_test(&t);
     }
 }

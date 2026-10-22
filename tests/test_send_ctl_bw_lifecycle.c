@@ -50,7 +50,9 @@ struct bw_lifecycle_test
     struct lsquic_alarmset       alset;
     struct ver_neg               ver_neg;
     struct network_path          path;
+#if LSQUIC_CONN_STATS
     struct conn_stats            stats;
+#endif
 };
 
 
@@ -81,7 +83,9 @@ init_test (struct bw_lifecycle_test *t, enum lsquic_cc cc_algo,
     t->conn_pub.enpub = &t->enpub;
     t->conn_pub.send_ctl = &t->send_ctl;
     t->conn_pub.path = &t->path;
+#if LSQUIC_CONN_STATS
     t->conn_pub.conn_stats = &t->stats;
+#endif
     t->conn_pub.packet_out_malo =
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     assert(t->conn_pub.packet_out_malo);
@@ -555,7 +559,9 @@ test_bbr_copilot_fack_lost_probe_fill (void)
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
     assert(2 * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_lost);
+#if LSQUIC_CONN_STATS
     assert(2 == t.stats.out.lost_packets);
+#endif
 
     cleanup_test(&t);
 }
