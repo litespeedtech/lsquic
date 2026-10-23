@@ -126,6 +126,36 @@ test_chlo_partly_read (void)
 }
 
 
+/* Only the end of the ClientHello is missing: wait.  imc_ch_len does not
+ * count the four-byte handshake header.
+ */
+static void
+test_chlo_end_missing (void)
+{
+    struct test_ctx ctx;
+    struct ietf_mini_conn *conn;
+    enum tick_st tick_st;
+    unsigned missing;
+
+    for (missing = 1; missing <= 4; ++missing)
+    {
+        conn = new_mini_conn(&ctx);
+        conn->imc_streams[ENC_LEV_INIT].mcs_read_off = 1704 - missing;
+        conn->imc_ch_len = 1700;
+        tick_st = tick(conn);
+        assert(!(tick_st & (TICK_RETRY|TICK_CLOSE|TICK_SEND)));
+        destroy(&ctx, conn);
+    }
+
+    /* All of it read, but no transport parameters: Retry, as before */
+    conn = new_mini_conn(&ctx);
+    conn->imc_streams[ENC_LEV_INIT].mcs_read_off = 1704;
+    conn->imc_ch_len = 1700;
+    assert(tick(conn) & TICK_RETRY);
+    destroy(&ctx, conn);
+}
+
+
 /* A later piece of the ClientHello arrived first and is stashed: wait */
 static void
 test_chlo_stashed (void)
@@ -164,6 +194,7 @@ main (void)
 {
     test_no_chlo();
     test_chlo_partly_read();
+    test_chlo_end_missing();
     test_chlo_stashed();
     test_srej_off();
     return 0;

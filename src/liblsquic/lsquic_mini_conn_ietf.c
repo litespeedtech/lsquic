@@ -163,11 +163,12 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 }
 
 
+/* imc_ch_len does not count the four-byte handshake header */
 static inline int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
-    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= conn->imc_ch_len;
+    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off
+                                                >= conn->imc_ch_len + 4u;
 }
 
 
