@@ -166,8 +166,19 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 static inline int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
-    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= conn->imc_ch_len;
+    const unsigned tls_header_sz = 4;
+    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= tls_header_sz
+        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >=
+                                        tls_header_sz + conn->imc_ch_len;
+}
+
+
+static int
+imico_chlo_in_progress (const struct ietf_mini_conn *conn)
+{
+    return !imico_chlo_has_been_consumed(conn)
+        && (conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 0
+                                || !TAILQ_EMPTY(&conn->imc_crypto_frames));
 }
 
 
@@ -2326,14 +2337,26 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
 
     if (!(conn->imc_flags &
-                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS))
-                            && conn->imc_enpub->enp_settings.es_support_srej)
+                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS)))
     {
         if (conn->imc_flags & IMC_ERROR)
             goto close_on_error;
-        LSQ_DEBUG("Peer not validated and do not have transport parameters "
-            "on the first tick: retry");
-        return TICK_RETRY|TICK_CLOSE;
+        else if (imico_chlo_in_progress(conn))
+        {
+            /* Wait for the rest of the ClientHello instead of sending a Retry.
+             * Defer ACK generation too, so the first response uses the version
+             * selected after processing the client's transport parameters.
+             */
+            LSQ_DEBUG("Peer not validated and ClientHello not complete: "
+                "wait for the rest of it");
+            return 0;
+        }
+        else if (conn->imc_enpub->enp_settings.es_support_srej)
+        {
+            LSQ_DEBUG("Peer not validated and do not have transport parameters "
+                "on the first tick: retry");
+            return TICK_RETRY|TICK_CLOSE;
+        }
     }
 
     if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))
