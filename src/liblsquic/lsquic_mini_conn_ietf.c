@@ -173,13 +173,12 @@ imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 }
 
 
-/* Some, but not all, of the ClientHello has arrived (read or stashed) */
-static inline int
+static int
 imico_chlo_in_progress (const struct ietf_mini_conn *conn)
 {
     return !imico_chlo_has_been_consumed(conn)
         && (conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 0
-            || !TAILQ_EMPTY(&conn->imc_crypto_frames));
+                                || !TAILQ_EMPTY(&conn->imc_crypto_frames));
 }
 
 
