@@ -55,6 +55,7 @@ new_mini_conn (struct test_ctx *ctx)
     lsquic_cid_t dcid = { .len = 8, .idbuf = { 1, 2, 3, 4, 5, 6, 7, 8, }, };
     struct lsquic_packet_in *packet_in;
     struct lsquic_conn *conn;
+    struct ietf_mini_conn *mini_conn;
 
     memset(ctx, 0, sizeof(*ctx));
     lsquic_mm_init(&ctx->tc_enpub.enp_mm);
@@ -74,8 +75,20 @@ new_mini_conn (struct test_ctx *ctx)
                                     1, NULL, sizeof(ctx->tc_data));
     assert(conn);
     lsquic_mm_put_packet_in(&ctx->tc_enpub.enp_mm, packet_in);
-    assert(!(((struct ietf_mini_conn *) conn)->imc_flags & IMC_ADDR_VALIDATED));
-    return (struct ietf_mini_conn *) conn;
+    mini_conn = (struct ietf_mini_conn *) conn;
+    assert(!(mini_conn->imc_flags & IMC_ADDR_VALIDATED));
+
+    /* Model the pending ACK for the first received Initial packet. */
+    if (mini_conn->imc_flags & IMC_TRECHIST)
+        assert(0 == lsquic_trechist_insert(
+                    &mini_conn->imc_recvd_packnos.trechist.hist_masks[PNS_INIT],
+                    mini_conn->imc_recvd_packnos.trechist.hist_elems, 0));
+    else
+        mini_conn->imc_recvd_packnos.bitmasks[PNS_INIT] = 1;
+    mini_conn->imc_flags |= IMC_QUEUED_ACK_INIT;
+    mini_conn->imc_largest_recvd[PNS_INIT] = RECEIVED;
+    mini_conn->imc_bytes_in = sizeof(ctx->tc_data);
+    return mini_conn;
 }
 
 
@@ -111,24 +124,40 @@ test_no_chlo (void)
  * its length that more is due: wait for it, and send nothing meanwhile.
  */
 static void
-test_chlo_partly_read (void)
+test_chlo_partly_read (int srej)
 {
+    static const unsigned read_offsets[] = { 1100, 1700, 1701, 1702, 1703, };
     struct test_ctx ctx;
     struct ietf_mini_conn *conn;
     enum tick_st tick_st;
+    unsigned i;
 
     conn = new_mini_conn(&ctx);
-    conn->imc_streams[ENC_LEV_INIT].mcs_read_off = 1100;
+    ctx.tc_enpub.enp_settings.es_support_srej = srej;
     conn->imc_ch_len = 1700;
+    for (i = 0; i < sizeof(read_offsets) / sizeof(read_offsets[0]); ++i)
+    {
+        conn->imc_streams[ENC_LEV_INIT].mcs_read_off = read_offsets[i];
+        tick_st = tick(conn);
+        assert(!(tick_st & (TICK_RETRY|TICK_CLOSE|TICK_SEND)));
+        assert(conn->imc_flags & IMC_QUEUED_ACK_INIT);
+        assert(TAILQ_EMPTY(&conn->imc_packets_out));
+    }
+
+    /* The remaining bytes and transport parameters arrive on a later tick. */
+    conn->imc_streams[ENC_LEV_INIT].mcs_read_off = 1704;
+    conn->imc_flags |= IMC_HAVE_TP;
     tick_st = tick(conn);
-    assert(!(tick_st & (TICK_RETRY|TICK_CLOSE|TICK_SEND)));
+    assert(tick_st & TICK_SEND);
+    assert(!(tick_st & (TICK_RETRY|TICK_CLOSE)));
+    assert(!(conn->imc_flags & IMC_QUEUED_ACK_INIT));
     destroy(&ctx, conn);
 }
 
 
 /* A later piece of the ClientHello arrived first and is stashed: wait */
 static void
-test_chlo_stashed (void)
+test_chlo_stashed (int srej)
 {
     struct test_ctx ctx;
     struct ietf_mini_conn *conn;
@@ -136,11 +165,21 @@ test_chlo_stashed (void)
     enum tick_st tick_st;
 
     conn = new_mini_conn(&ctx);
+    ctx.tc_enpub.enp_settings.es_support_srej = srej;
     memset(&frame, 0, sizeof(frame));
     TAILQ_INSERT_TAIL(&conn->imc_crypto_frames, &frame, next_frame);
     tick_st = tick(conn);
     assert(!(tick_st & (TICK_RETRY|TICK_CLOSE|TICK_SEND)));
+    assert(conn->imc_flags & IMC_QUEUED_ACK_INIT);
+    assert(TAILQ_EMPTY(&conn->imc_packets_out));
     TAILQ_REMOVE(&conn->imc_crypto_frames, &frame, next_frame);
+
+    conn->imc_ch_len = 1700;
+    conn->imc_streams[ENC_LEV_INIT].mcs_read_off = 1704;
+    conn->imc_flags |= IMC_HAVE_TP;
+    tick_st = tick(conn);
+    assert(tick_st & TICK_SEND);
+    assert(!(tick_st & (TICK_RETRY|TICK_CLOSE)));
     destroy(&ctx, conn);
 }
 
@@ -151,10 +190,13 @@ test_srej_off (void)
 {
     struct test_ctx ctx;
     struct ietf_mini_conn *conn;
+    enum tick_st tick_st;
 
     conn = new_mini_conn(&ctx);
     ctx.tc_enpub.enp_settings.es_support_srej = 0;
-    assert(!(tick(conn) & TICK_RETRY));
+    tick_st = tick(conn);
+    assert(tick_st & TICK_SEND);
+    assert(!(tick_st & (TICK_RETRY|TICK_CLOSE)));
     destroy(&ctx, conn);
 }
 
@@ -162,9 +204,14 @@ test_srej_off (void)
 int
 main (void)
 {
+    int srej;
+
     test_no_chlo();
-    test_chlo_partly_read();
-    test_chlo_stashed();
+    for (srej = 0; srej <= 1; ++srej)
+    {
+        test_chlo_partly_read(srej);
+        test_chlo_stashed(srej);
+    }
     test_srej_off();
     return 0;
 }

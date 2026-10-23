@@ -2338,8 +2338,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
 
     if (!(conn->imc_flags &
-                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS))
-                            && conn->imc_enpub->enp_settings.es_support_srej)
+                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS)))
     {
         if (conn->imc_flags & IMC_ERROR)
             goto close_on_error;
@@ -2353,7 +2352,7 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
                 "wait for the rest of it");
             return 0;
         }
-        else
+        else if (conn->imc_enpub->enp_settings.es_support_srej)
         {
             LSQ_DEBUG("Peer not validated and do not have transport parameters "
                 "on the first tick: retry");

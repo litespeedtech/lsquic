@@ -1478,6 +1478,11 @@ first HANDSHAKE stream to figure out the size of ClientHello. The
 transport parameters will not be read until the full ClientHello is
 available.
 
+While an unvalidated peer's ClientHello is incomplete, the mini connection
+defers ACK generation until the remaining fragments arrive, regardless of
+``es_support_srej``. The setting controls whether to send a Retry when no
+ClientHello data has arrived.
+
 
 Duplicated Code
 ---------------
