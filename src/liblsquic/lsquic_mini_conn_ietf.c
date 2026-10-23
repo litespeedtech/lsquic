@@ -2342,12 +2342,12 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     {
         if (conn->imc_flags & IMC_ERROR)
             goto close_on_error;
-        /* Wait for the rest of the ClientHello instead of sending a Retry.
-         * Defer ACK generation too, so the first response uses the version
-         * selected after processing the client's transport parameters.
-         */
-        if (imico_chlo_in_progress(conn))
+        else if (imico_chlo_in_progress(conn))
         {
+            /* Wait for the rest of the ClientHello instead of sending a Retry.
+             * Defer ACK generation too, so the first response uses the version
+             * selected after processing the client's transport parameters.
+             */
             LSQ_DEBUG("Peer not validated and ClientHello not complete: "
                 "wait for the rest of it");
             return 0;
