@@ -166,8 +166,10 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 static inline int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
-    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= conn->imc_ch_len;
+    const unsigned tls_header_sz = 4;
+    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= tls_header_sz
+        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >=
+                                        tls_header_sz + conn->imc_ch_len;
 }
 
 
