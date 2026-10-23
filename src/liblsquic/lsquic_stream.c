@@ -2608,6 +2608,7 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
 
 #define COMMON_WRITE_CHECKS() do {                                          \
     if ((stream->sm_bflags & SMBF_USE_HEADERS)                              \
+            && !lsquic_stream_is_write_reset(stream)                        \
             && (!(stream->stream_flags & STREAM_HEADERS_SENT)              \
                 || SSHS_BEGIN != stream->sm_send_headers_state))           \
     {                                                                       \
