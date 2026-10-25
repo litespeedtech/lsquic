@@ -1,3 +1,4 @@
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Copyright (c) 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Test that a mini connection does not Retry a ClientHello in progress */
 

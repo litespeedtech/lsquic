@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 11
+#define LSQUIC_PATCH_VERSION 0
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -439,11 +439,8 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 /** default anti-amplification factor is 3 */
 #define LSQUIC_DF_AMP_FACTOR 3
 
-/* Use Adaptive CC by default */
-#define LSQUIC_DF_CC_ALGO 3
-
-/* Default value of the CC RTT threshold is 1.5 ms */
-#define LSQUIC_DF_CC_RTT_THRESH 1500
+/* Use BBRv1 by default */
+#define LSQUIC_DF_CC_ALGO 2
 
 /* By default, bandwidth sampler is not kept alive unless requested. */
 #define LSQUIC_DF_ENABLE_BW_SAMPLER 0
@@ -758,21 +755,8 @@ struct lsquic_engine_settings {
      *  0:  Use default (@ref LSQUIC_DF_CC_ALGO)
      *  1:  Cubic
      *  2:  BBRv1
-     *  3:  Adaptive (Cubic or BBRv1)
      */
     unsigned        es_cc_algo;
-
-    /**
-     * Congestion controller RTT threshold in microseconds.
-     *
-     * Adaptive congestion control uses BBRv1 until RTT is determined.  At
-     * that point a permanent choice of congestion controller is made. If
-     * RTT is smaller than or equal to es_cc_rtt_thresh, congestion
-     * controller is switched to Cubic; otherwise, BBRv1 is picked.
-     *
-     * The default value is @ref LSQUIC_DF_CC_RTT_THRESH.
-     */
-    unsigned        es_cc_rtt_thresh;
 
     /**
      * If you plan to call lsquic_conn_get_info(), set this to true.

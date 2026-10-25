@@ -183,7 +183,7 @@ imico_chlo_in_progress (const struct ietf_mini_conn *conn)
 
 
 static int
-imico_process_version_negociation (struct ietf_mini_conn *conn,
+imico_process_version_negotiation (struct ietf_mini_conn *conn,
                                    const struct transport_params *params)
 {
     unsigned common_versions;
@@ -215,7 +215,7 @@ imico_process_version_negociation (struct ietf_mini_conn *conn,
     ver = highest_bit_set(common_versions);
     if (conn->imc_conn.cn_version != (enum lsquic_version)ver)
     {
-        LSQ_DEBUG("version negociation: switch version from %s to %s",
+        LSQ_DEBUG("version negotiation: switch version from %s to %s",
                   lsquic_ver2str[conn->imc_conn.cn_version],
                   lsquic_ver2str[ver]);
         conn->imc_conn.cn_version = ver;
@@ -254,7 +254,7 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
                                                 conn->imc_path.np_pack_size);
             if (params->tp_set & (1 << TPI_VERSION_INFORMATION))
             {
-                if (imico_process_version_negociation(conn, params) == -1)
+                if (imico_process_version_negotiation(conn, params) == -1)
                 {
                     conn->imc_flags |= IMC_VER_NEG_FAILED;
                     return -1;
@@ -2192,7 +2192,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     {
         is_app = 0;
         error_code = TEC_VERSION_NEGOTIATION_ERROR;
-        reason = "version negociation failed";
+        reason = "version negotiation failed";
         rlen = 26;
     }
     else if (conn->imc_flags & IMC_HSK_FAILED)

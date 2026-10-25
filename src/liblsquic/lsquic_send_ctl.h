@@ -49,7 +49,6 @@ enum send_ctl_flags {
     SC_SANITY_CHECK =  1 << 15,
     SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
     SC_POISON       =  1 << 17,     /* poisoned packet exists */
-    SC_CLEANUP_BBR  =  1 << 18,
     SC_ACK_RECV_INIT=  1 << 19,
     SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
@@ -78,7 +77,10 @@ typedef struct lsquic_send_ctl {
     int                           (*sc_can_send)(struct lsquic_send_ctl *);
     unsigned                        sc_bytes_unacked_retx;
     unsigned                        sc_bytes_scheduled;
-    struct adaptive_cc              sc_adaptive_cc;
+    union {
+        struct lsquic_cubic         cubic;
+        struct lsquic_bbr           bbr;
+    }                               sc_cc;
     const struct cong_ctl_if       *sc_ci;
     void                           *sc_cong_ctl;
     struct lsquic_engine_public    *sc_enpub;

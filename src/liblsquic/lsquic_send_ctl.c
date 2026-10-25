@@ -30,7 +30,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_util.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -496,16 +495,13 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     {
     case 1:
         ctl->sc_ci = &lsquic_cong_cubic_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
+        ctl->sc_cong_ctl = &ctl->sc_cc.cubic;
         break;
+    case 0:
     case 2:
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
-        break;
-    case 3:
     default:
-        ctl->sc_ci = &lsquic_cong_adaptive_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc;
+        ctl->sc_ci = &lsquic_cong_bbr_if;
+        ctl->sc_cong_ctl = &ctl->sc_cc.bbr;
         break;
     }
     if (enpub->enp_settings.es_enable_bw_sampler)
@@ -901,35 +897,6 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
 
 
 static void
-send_ctl_select_cc (struct lsquic_send_ctl *ctl)
-{
-    lsquic_time_t srtt;
-
-    srtt = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
-
-    if (srtt <= ctl->sc_enpub->enp_settings.es_cc_rtt_thresh)
-    {
-        LSQ_INFO("srtt is %"PRIu64" usec, which is smaller than or equal to "
-            "the threshold of %u usec: select Cubic congestion controller",
-            srtt, ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
-        ctl->sc_ci = &lsquic_cong_cubic_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
-        send_ctl_apply_bw_sampler_policy(ctl);
-        ctl->sc_flags |= SC_CLEANUP_BBR;
-    }
-    else
-    {
-        LSQ_INFO("srtt is %"PRIu64" usec, which is greater than the threshold "
-            "of %u usec: select BBRv1 congestion controller", srtt,
-            ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
-        send_ctl_apply_bw_sampler_policy(ctl);
-    }
-}
-
-
-static void
 take_rtt_sample (lsquic_send_ctl_t *ctl,
                  lsquic_time_t now, lsquic_time_t lack_delta)
 {
@@ -949,8 +916,6 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
         LSQ_DEBUG("packno %"PRIu64"; rtt: %"PRIu64"; delta: %"PRIu64"; "
             "new srtt: %"PRIu64, packno, measured_rtt, lack_delta,
             lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats));
-        if (ctl->sc_ci == &lsquic_cong_adaptive_if)
-            send_ctl_select_cc(ctl);
     }
 }
 
@@ -1814,11 +1779,6 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_cleanup(&ctl->sc_pacer);
     ctl->sc_ci->cci_cleanup(CGP(ctl));
-    if (ctl->sc_flags & SC_CLEANUP_BBR)
-    {
-        assert(ctl->sc_ci == &lsquic_cong_cubic_if);
-        lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
-    }
     send_ctl_cleanup_bw_sampler(ctl);
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",

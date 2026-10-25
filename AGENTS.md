@@ -12,6 +12,8 @@ against the current source: the internal document describes an older code
 version, and the API reference itself warns that it may lag the public headers.
 The current source, public headers, and CMake files are authoritative.
 
+Load AGENTS-local.md if it exists.
+
 ## Repository map and architecture
 
 - `include/` contains the public API.  `include/lsquic.h` is its main entry

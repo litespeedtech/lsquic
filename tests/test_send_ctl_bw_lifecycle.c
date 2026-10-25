@@ -30,7 +30,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -53,18 +52,25 @@ struct bw_lifecycle_test
 
 static void
 init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
-           unsigned cc_rtt_thresh, int enable_bw_sampler)
+           int enable_bw_sampler, enum lsquic_version version, unsigned flags)
 {
     /* Build a minimal send_ctl environment with configurable CC policy. */
     memset(t, 0, sizeof(*t));
     LSCONN_INITIALIZE(&t->lconn);
     t->lconn.cn_flags |= LSCONN_HANDSHAKE_DONE;
-    t->lconn.cn_version = LSQVER_043;
-    t->lconn.cn_pf = select_pf_by_ver(LSQVER_043);
-    t->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
-    lsquic_engine_init_settings(&t->enpub.enp_settings, 0);
+    if (flags & LSENG_SERVER)
+        t->lconn.cn_flags |= LSCONN_SERVER;
+    t->lconn.cn_version = version;
+    t->lconn.cn_pf = select_pf_by_ver(version);
+    if ((1 << version) & LSQUIC_IETF_VERSIONS)
+    {
+        t->lconn.cn_flags |= LSCONN_IETF;
+        t->lconn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
+    }
+    else
+        t->lconn.cn_esf_c = &lsquic_enc_session_common_gquic_1;
+    lsquic_engine_init_settings(&t->enpub.enp_settings, flags);
     t->enpub.enp_settings.es_cc_algo = cc_algo;
-    t->enpub.enp_settings.es_cc_rtt_thresh = cc_rtt_thresh;
     t->enpub.enp_settings.es_enable_bw_sampler = !!enable_bw_sampler;
     lsquic_mm_init(&t->enpub.enp_mm);
     lsquic_alarmset_init(&t->alset, 0);
@@ -82,7 +88,7 @@ init_test (struct bw_lifecycle_test *t, unsigned cc_algo,
                         lsquic_malo_create(sizeof(struct lsquic_packet_out));
     assert(t->conn_pub.packet_out_malo);
     lsquic_send_ctl_init(&t->send_ctl, &t->alset, &t->enpub, &t->ver_neg,
-                                                     &t->conn_pub, 0);
+                 &t->conn_pub, (t->lconn.cn_flags & LSCONN_IETF) ? SC_IETF : 0);
 }
 
 
@@ -122,7 +128,7 @@ static void
 ack_one (struct bw_lifecycle_test *t, lsquic_packno_t packno,
          lsquic_time_t ack_time, lsquic_time_t now, lsquic_time_t lack_delta)
 {
-    /* ACK exactly one APP packet to drive loss/CC transitions deterministically. */
+    /* ACK exactly one APP packet to sample RTT and bandwidth. */
     struct ack_info acki;
     memset(&acki, 0, sizeof(acki));
     acki.pns = PNS_APP;
@@ -141,7 +147,7 @@ test_cubic_lazy_enable (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 1, 100000, 0);
+    init_test(&t, 1, 0, LSQVER_043, 0);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
@@ -150,7 +156,7 @@ test_cubic_lazy_enable (void)
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
     assert(NULL == packet_out->po_bwp_state);
 
-    (void) lsquic_send_ctl_get_bw(&t.send_ctl);
+    lsquic_send_ctl_get_bw(&t.send_ctl);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
 
@@ -163,41 +169,52 @@ test_cubic_lazy_enable (void)
 
 
 static void
-test_adaptive_switch_without_info_drops_sampler (void)
+test_cc_selection (enum lsquic_version version, unsigned flags,
+                   unsigned cc_algo, lsquic_time_t rtt)
 {
-    /* Adaptive->Cubic drops sampler unless explicitly kept for info collection. */
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
+    lsquic_packno_t packno;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, cc_algo, 0, version, flags);
+    packno = t.send_ctl.sc_cur_packno + 1;
 
-    assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
-    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
-    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    if (cc_algo == 1)
+    {
+        assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+        assert(t.send_ctl.sc_cong_ctl == &t.send_ctl.sc_cc.cubic);
+        assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+    }
+    else
+    {
+        assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
+        assert(t.send_ctl.sc_cong_ctl == &t.send_ctl.sc_cc.bbr);
+        assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    }
 
-    packet_out = new_packet(&t, 1, 1000);
+    packet_out = new_packet(&t, packno, 1000);
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
-    assert(NULL != packet_out->po_bwp_state);
+    ack_one(&t, packno, 1000 + rtt, 1000 + rtt, 0);
 
-    ack_one(&t, 1, 2000, 2000, 1);
-
-    assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
-    assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+    assert(lsquic_rtt_stats_get_srtt(&t.conn_pub.rtt_stats) == rtt);
+    if (cc_algo == 1)
+        assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+    else
+        assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
 
     cleanup_test(&t);
 }
 
 
 static void
-test_adaptive_switch_with_info_keeps_sampler (void)
+test_bbr_keeps_required_sampler (void)
 {
-    /* get_bw() marks sampler as keep-on; Adaptive->Cubic must preserve it. */
+    /* Disabling optional sampling must not disable BBR's required sampler. */
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, 2, 1, LSQVER_043, 0);
 
-    (void) lsquic_send_ctl_get_bw(&t.send_ctl);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
 
@@ -205,9 +222,13 @@ test_adaptive_switch_with_info_keeps_sampler (void)
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
     assert(NULL != packet_out->po_bwp_state);
 
+    lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 0);
+    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    assert(NULL != packet_out->po_bwp_state);
     ack_one(&t, 1, 2000, 2000, 1);
 
-    assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
+    assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
 
     packet_out = new_packet(&t, 2, 3000);
@@ -225,7 +246,7 @@ test_drop_clears_inflight_packet_states (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out_1, *packet_out_2;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, 1, 1, LSQVER_043, 0);
 
     packet_out_1 = new_packet(&t, 1, 1000);
     packet_out_2 = new_packet(&t, 2, 1200);
@@ -234,10 +255,13 @@ test_drop_clears_inflight_packet_states (void)
     assert(NULL != packet_out_1->po_bwp_state);
     assert(NULL != packet_out_2->po_bwp_state);
 
-    ack_one(&t, 1, 2000, 2000, 1);
+    lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 0);
 
     assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+    assert(!(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER));
+    assert(NULL == packet_out_1->po_bwp_state);
     assert(NULL == packet_out_2->po_bwp_state);
+    ack_one(&t, 1, 2000, 2000, 1);
 
     cleanup_test(&t);
 }
@@ -250,15 +274,20 @@ test_reinit_after_drop_via_get_bw (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 0);
+    init_test(&t, 1, 1, LSQVER_043, 0);
 
     packet_out = new_packet(&t, 1, 1000);
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 0);
     ack_one(&t, 1, 2000, 2000, 1);
     assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
 
-    (void) lsquic_send_ctl_get_bw(&t.send_ctl);
+    lsquic_send_ctl_get_bw(&t.send_ctl);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
+    packet_out = new_packet(&t, 2, 3000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(NULL != packet_out->po_bwp_state);
+    ack_one(&t, 2, 4000, 4000, 1);
 
     cleanup_test(&t);
 }
@@ -271,7 +300,7 @@ test_engine_setting_enables_sampler (void)
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 1, 100000, 1);
+    init_test(&t, 1, 1, LSQVER_043, 0);
 
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
@@ -286,15 +315,16 @@ test_engine_setting_enables_sampler (void)
 
 
 static void
-test_engine_setting_keeps_sampler_across_adaptive_to_cubic (void)
+test_cubic_runtime_enable (void)
 {
-    /* Engine default "keep" should survive Adaptive->Cubic transition. */
+    /* Runtime enable supplies bandwidth samples on Cubic connections. */
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out;
 
-    init_test(&t, 3, 100000, 1);
+    init_test(&t, 1, 0, LSQVER_043, 0);
 
-    assert(t.send_ctl.sc_ci == &lsquic_cong_adaptive_if);
+    lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 1);
+    assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(t.send_ctl.sc_flags & SC_KEEP_BW_SAMPLER);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
 
@@ -319,13 +349,22 @@ test_engine_setting_keeps_sampler_across_adaptive_to_cubic (void)
 int
 main (void)
 {
+    const enum lsquic_version versions[] = { LSQVER_043, LSQVER_I001, };
+    const unsigned flags[] = { 0, LSENG_SERVER, };
+    const lsquic_time_t rtts[] = { 1000, 100000, };
+    unsigned i, j, k, cc_algo;
+
     lsquic_log_to_fstream(stderr, LLTS_NONE);
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+        for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
+            for (k = 0; k < sizeof(rtts) / sizeof(rtts[0]); ++k)
+                for (cc_algo = 0; cc_algo <= 2; ++cc_algo)
+                    test_cc_selection(versions[i], flags[j], cc_algo, rtts[k]);
     test_cubic_lazy_enable();
-    test_adaptive_switch_without_info_drops_sampler();
-    test_adaptive_switch_with_info_keeps_sampler();
+    test_bbr_keeps_required_sampler();
     test_drop_clears_inflight_packet_states();
     test_reinit_after_drop_via_get_bw();
     test_engine_setting_enables_sampler();
-    test_engine_setting_keeps_sampler_across_adaptive_to_cubic();
+    test_cubic_runtime_enable();
     return EXIT_SUCCESS;
 }
