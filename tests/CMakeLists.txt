@@ -32,6 +32,7 @@ SET(TESTS
     alt_svc_ver
     arr
     attq
+    bbr
     blocked_gquic_be
     bw_sampler
     cert_chain

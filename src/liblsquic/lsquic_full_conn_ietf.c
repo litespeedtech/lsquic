@@ -45,7 +45,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_ver_neg.h"
@@ -3849,7 +3848,7 @@ handshake_ok (struct lsquic_conn *lconn)
         }
 //         if (conn->ifc_conn.cn_version != params->tp_chosen_version)
 //         {
-//             LSQ_DEBUG("version negociation: switch version from %s to %s",
+//             LSQ_DEBUG("version negotiation: switch version from %s to %s",
 //                   lsquic_ver2str[conn->ifc_conn.cn_version],
 //                   lsquic_ver2str[params->tp_chosen_version]);
 //             conn->ifc_conn.cn_version = params->tp_chosen_version;
@@ -7687,7 +7686,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
                         "supported: ignore");
             return 0;
         }
-        LSQ_DEBUG("version negociation: server switched version from %s to %s",
+        LSQ_DEBUG("version negotiation: server switched version from %s to %s",
         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver],
         lsquic_ver2str[packet_in->pi_version]);
         switch_version(conn, packet_in->pi_version);

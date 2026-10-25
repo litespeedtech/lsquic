@@ -7,7 +7,6 @@ liblsquic_a_METASOURCES = AUTO
 
 liblsquic_a_SOURCES = \
 	ls-qpack/lsqpack.c \
-	lsquic_adaptive_cc.c \
 	lsquic_alarmset.c \
 	lsquic_arr.c \
 	lsquic_attq.c \

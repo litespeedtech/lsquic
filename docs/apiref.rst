@@ -734,22 +734,9 @@ settings structure:
        - 0:  Use default (:macro:`LSQUIC_DF_CC_ALGO`)
        - 1:  Cubic
        - 2:  BBRv1
-       - 3:  Adaptive congestion control.
 
-       Adaptive congestion control adapts to the environment.  It figures
-       out whether to use Cubic or BBRv1 based on the RTT.
-
-    .. member:: unsigned        es_cc_rtt_thresh
-
-       Congestion controller RTT threshold in microseconds.
-
-       Adaptive congestion control uses BBRv1 until RTT is determined.  At
-       that point a permanent choice of congestion controller is made.  If
-       RTT is smaller than or equal to
-       :member:`lsquic_engine_settings.es_cc_rtt_thresh`, congestion
-       controller is switched to Cubic; otherwise, BBRv1 is picked.
-
-       The default value is :macro:`LSQUIC_DF_CC_RTT_THRESH`
+       The default is BBRv1.  The selected algorithm is used for the
+       lifetime of the connection.  Values greater than 2 are invalid.
 
     .. member:: int             es_enable_bw_sampler
 
@@ -1120,11 +1107,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_CC_ALGO
 
-    Use Adaptive Congestion Controller by default.
-
-.. macro:: LSQUIC_DF_CC_RTT_THRESH
-
-    Default value of the CC RTT threshold is 1500 microseconds
+    Use BBRv1 by default (value 2).
 
 .. macro:: LSQUIC_DF_DELAYED_ACKS
 

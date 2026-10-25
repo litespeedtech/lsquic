@@ -1,3 +1,18 @@
+2026-10-25
+    - 4.11.0
+    - [API] Remove adaptive congestion control and its public RTT threshold
+      setting.  BBRv1 is now the default congestion controller; Cubic remains
+      available when explicitly selected.
+    - [FIX] BBR: calculate ACK aggregation in bytes, restoring ACK aggregation
+      compensation and upload throughput.
+    - [FIX] Preserve a zero application close error code (#706).
+    - [FIX] Check for a stream write reset before pending HTTP/3 headers
+      (#711).
+    - [FIX] Support multi-tick, multi-packet ClientHellos (#710).
+    - [API] Permit keepalive PINGs when no streams are open (#699).
+    - [FIX] Use PROTOCOL_VIOLATION for frames illegal at their encryption
+      level (#697).
+
 2026-10-17
     - 4.10.2
     - [FIX] Prevent HTTP/3 response stalls and DATA writes while headers are

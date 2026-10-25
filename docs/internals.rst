@@ -3078,15 +3078,14 @@ Congestions Controllers
 =======================
 
 The Send Controller has a choice of two congestion controllers: Cubic
-and BBRv1. The latter was translated from Chromium into C. BBRv1 does
-not work well for very small RTTs.
+and BBRv1. The latter was translated from Chromium into C.
 
-To cope with that, lsquic puts the Send Controller into the "adaptive CC"
-mode by default. The CC is selected after RTT is determined: below a
-certain threshold (configurable; 1.5 ms by default), Cubic is used.
-Until Cubic or BBRv1 is selected, *both* CC controllers are used --
-because we won't have the necessary state to instantiate a controller
-when the decision is made.
+BBRv1 is the default.  The engine setting ``es_cc_algo`` selects the
+controller when the Send Controller is initialized: 0 uses the default,
+1 selects Cubic, and 2 selects BBRv1.  Only the selected controller is
+initialized, and its state occupies a union in the Send Controller.
+The controller remains selected for the lifetime of the connection,
+regardless of RTT.
 
 Buffered Packet Handling
 ========================

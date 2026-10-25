@@ -1,7 +1,6 @@
 # Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE.
 SET(lsquic_STAT_SRCS
     ls-qpack/lsqpack.c
-    lsquic_adaptive_cc.c
     lsquic_alarmset.c
     lsquic_arr.c
     lsquic_attq.c
