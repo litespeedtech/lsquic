@@ -108,6 +108,8 @@ Follow the surrounding file and these project conventions:
 - Use uppercase hexadecimal digits.
 - Avoid ternary expressions unless the whole expression fits clearly on one
   line.
+- Parenthesize bitwise subexpressions when used with logical operators or
+  comparisons, even when operator precedence makes them unambiguous.
 - Prefer an explicit `else` when both branches return.  This is the opposite
   of the convention commonly called `no-else-return`; the alternative without
   `else` is also described as an early-return or guard-clause style.  Write:
