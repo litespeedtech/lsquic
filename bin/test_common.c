@@ -1056,21 +1056,11 @@ sport_init_server (struct service_port *sport, struct lsquic_engine *engine,
 #if ECN_SUPPORTED
     on = 1;
     if (AF_INET == sa_local->sa_family)
-    {
         s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS,
-                       CHAR_CAST &on, sizeof(on));
-        if (!s)
-            s = setsockopt(sockfd, IPPROTO_IP, IP_TOS,
-                           CHAR_CAST &on, sizeof(on));
-    }
+                                               CHAR_CAST &on, sizeof(on));
     else
-    {
         s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS,
-                       CHAR_CAST &on, sizeof(on));
-        if (!s)
-            s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_TCLASS,
-                           CHAR_CAST &on, sizeof(on));
-    }
+                                               CHAR_CAST &on, sizeof(on));
     if (0 != s)
     {
         saved_errno = errno;
@@ -1270,21 +1260,11 @@ sport_init_client (struct service_port *sport, struct lsquic_engine *engine,
     {
         int on = 1;
         if (AF_INET == sa_local->sa_family)
-        {
             s = setsockopt(sockfd, IPPROTO_IP, IP_RECVTOS,
-                        CHAR_CAST &on, sizeof(on));
-            if (!s)
-                s = setsockopt(sockfd, IPPROTO_IP, IP_TOS,
-                            CHAR_CAST &on, sizeof(on));
-        }
+                                                CHAR_CAST &on, sizeof(on));
         else
-        {
             s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_RECVTCLASS,
-                        CHAR_CAST &on, sizeof(on));
-            if (!s)
-                s = setsockopt(sockfd, IPPROTO_IPV6, IPV6_TCLASS,
-                            CHAR_CAST &on, sizeof(on));
-        }
+                                                CHAR_CAST &on, sizeof(on));
         if (0 != s)
         {
             saved_errno = errno;
