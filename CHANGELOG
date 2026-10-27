@@ -1,3 +1,10 @@
+2026-10-27
+    - 4.11.1
+    - [FIX] Correct ACK-range merging and IETF ACK truncation, preventing
+      acknowledged packets from being lost or ECN validation from failing.
+    - [FIX] Sample client and server programs no longer mark Not-ECT packets
+      as ECT(1) when ECN reception is enabled.
+
 2026-10-25
     - 4.11.0
     - [API] Remove adaptive congestion control and its public RTT threshold

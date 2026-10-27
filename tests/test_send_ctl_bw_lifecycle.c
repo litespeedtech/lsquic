@@ -346,6 +346,51 @@ test_cubic_runtime_enable (void)
 }
 
 
+static void
+test_merged_ack_ecn (void)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out;
+    struct ack_info acki, new_acki;
+    unsigned i;
+
+    init_test(&t, 1, 0, LSQVER_I001, 0);
+    t.send_ctl.sc_ecn = ECN_ECT0;
+    for (i = 1; i <= 12; ++i)
+    {
+        packet_out = new_packet(&t, i, 1000 + i);
+        lsquic_packet_out_set_ecn(packet_out, ECN_ECT0);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    }
+
+    memset(&acki, 0, sizeof(acki));
+    acki.pns = PNS_APP;
+    acki.flags = AI_ECN;
+    acki.n_ranges = 2;
+    acki.ecn_counts[ECN_ECT0] = 9;
+    acki.ranges[0].high = 10;
+    acki.ranges[0].low = 10;
+    acki.ranges[1].high = 8;
+    acki.ranges[1].low = 1;
+
+    memset(&new_acki, 0, sizeof(new_acki));
+    new_acki.pns = PNS_APP;
+    new_acki.flags = AI_ECN;
+    new_acki.n_ranges = 1;
+    new_acki.ecn_counts[ECN_ECT0] = 12;
+    new_acki.ranges[0].high = 12;
+    new_acki.ranges[0].low = 1;
+
+    assert(0 == lsquic_merge_acks(&acki, &new_acki));
+    assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki, 2000, 2000));
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    assert(t.send_ctl.sc_ecn == ECN_ECT0);
+    assert(t.send_ctl.sc_ecn_total_acked[PNS_APP] == 12);
+
+    cleanup_test(&t);
+}
+
+
 int
 main (void)
 {
@@ -366,5 +411,6 @@ main (void)
     test_reinit_after_drop_via_get_bw();
     test_engine_setting_enables_sampler();
     test_cubic_runtime_enable();
+    test_merged_ack_ecn();
     return EXIT_SUCCESS;
 }
