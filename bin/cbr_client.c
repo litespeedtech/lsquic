@@ -26,6 +26,11 @@
 #pragma warning(disable:4996) /* POSIX name (open/write/close) deprecated */
 #endif
 
+/* Only Windows distinguishes between text and binary files */
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 #include <event2/event.h>
 
 #include "lsquic.h"
@@ -137,7 +142,7 @@ cbr_client_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
     if (client_ctx->output_path)
     {
         stream_ctx->out_fd = open(client_ctx->output_path,
-                                   O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                                O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0644);
         if (stream_ctx->out_fd < 0)
         {
             LSQ_ERROR("cannot open '%s': %s",

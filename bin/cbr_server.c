@@ -29,6 +29,11 @@
 #pragma warning(disable:4996) /* POSIX name (open/read/close) deprecated */
 #endif
 
+/* Only Windows distinguishes between text and binary files */
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 #include <event2/event.h>
 
 #include "lsquic.h"
@@ -144,7 +149,7 @@ cbr_server_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
 
     if (server_ctx->file_path)
     {
-        stream_ctx->fd = open(server_ctx->file_path, O_RDONLY);
+        stream_ctx->fd = open(server_ctx->file_path, O_RDONLY|O_BINARY);
         if (stream_ctx->fd < 0)
         {
             LSQ_ERROR("cannot open file '%s': %s",
@@ -244,6 +249,16 @@ cbr_server_do_write (struct lsquic_stream_ctx *stream_ctx)
             if (nread < 0)
             {
                 LSQ_ERROR("file read error: %s", strerror(errno));
+                return;
+            }
+            else if (nread == 0)
+            {
+                /* The file became shorter after fstat(): stop at its end
+                 * instead of waiting for bytes that will never come.
+                 */
+                LSQ_WARN("unexpected end of file after %"PRIu64" bytes",
+                                                    stream_ctx->bytes_sent);
+                stream_ctx->file_size = stream_ctx->bytes_sent;
                 return;
             }
             stream_ctx->buf_end = nread;
