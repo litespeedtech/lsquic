@@ -4102,19 +4102,8 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
                                 && !(packet_out->po_flags & PO_MTU_PROBE))
             {
                 send_ctl_sched_remove(ctl, packet_out);
-                if (packet_out->po_flags & PO_BW_PROBE_FILL)
-                {
-                    /* Probe-fill packets have no frame records and carry
-                     * nothing worth keeping: drop them instead of resizing.
-                     */
-                    send_ctl_destroy_chain(ctl, packet_out, NULL);
-                    send_ctl_destroy_packet(ctl, packet_out);
-                }
-                else
-                {
-                    TAILQ_INSERT_TAIL(&many_ctx.input_q, packet_out, po_next);
-                    ++count_src;
-                }
+                TAILQ_INSERT_TAIL(&many_ctx.input_q, packet_out, po_next);
+                ++count_src;
             }
         }
     }
@@ -4137,13 +4126,6 @@ send_ctl_resize_q (struct lsquic_send_ctl *ctl, struct lsquic_packets_tailq *q,
             }
         }
     }
-
-    if (0 == count_src)
-    {
-        LSQ_DEBUG("no packets left to resize in %s queue", q_name);
-        return;
-    }
-
     lsquic_packet_resize_init(&prctx, ctl->sc_enpub, lconn, &many_ctx,
                                                         &resize_many_funcs);
 
@@ -4270,6 +4252,36 @@ lsquic_send_ctl_cancel_path_verification (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Drop scheduled probe-fill packets and mark the packets scheduled after
+ * them to be renumbered before they are sent.
+ */
+static void
+send_ctl_cancel_probe_fill (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned n;
+
+    n = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_flags & PO_BW_PROBE_FILL)
+        {
+            send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
+            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_destroy_chain(ctl, packet_out, NULL);
+            send_ctl_destroy_packet(ctl, packet_out);
+            ++n;
+        }
+    }
+
+    if (n)
+        LSQ_DEBUG("cancelled %u scheduled probe-fill packet%s (%u left)", n,
+                                        n != 1 ? "s" : "", ctl->sc_n_scheduled);
+}
+
+
 /* Examine packets in scheduled and buffered queues and resize packets if
  * they exceed path MTU.
  */
@@ -4288,6 +4300,12 @@ lsquic_send_ctl_resize (struct lsquic_send_ctl *ctl)
     int path_ids /* assuming a reasonable number of paths */, q_idxs;
 
     assert(ctl->sc_flags & SC_IETF);
+
+    /* Probe-fill packets carry no frame records, so the resizer would only
+     * discard them.  Drop them up front: this way, a queue that has to be
+     * resized always contains at least one packet with frames to resize.
+     */
+    send_ctl_cancel_probe_fill(ctl);
 
     q_idxs = 0;
     for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
