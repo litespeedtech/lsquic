@@ -1411,7 +1411,8 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                                 lsquic_packets_tailq, po_next)
     {
-        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
+        if (0 == (packet_out->po_flags
+                            & (PO_LOSS_REC|PO_POISON|PO_BW_PROBE_FILL))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out->po_packno;
     }
@@ -1470,9 +1471,13 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             continue;
         }
 
+        /* Probe-fill packets are never retransmitted.  In gQUIC, their PING
+         * frame is retransmittable, so they have to be excluded explicitly
+         * here and below to make gQUIC behave like IETF QUIC.
+         */
         if (largest_retx_packno
             && (packet_out->po_frame_types & ctl->sc_retx_frames)
-            && 0 == (packet_out->po_flags & PO_MTU_PROBE)
+            && 0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL))
             && largest_retx_packno <= ctl->sc_largest_acked_packno)
         {
             LSQ_DEBUG("loss by early retransmit detected, packet #%"PRIu64,
@@ -1492,7 +1497,8 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             LSQ_DEBUG("loss by sent time detected: packet #%"PRIu64,
                                                     packet_out->po_packno);
             if ((packet_out->po_frame_types & ctl->sc_retx_frames)
-                            && 0 == (packet_out->po_flags & PO_MTU_PROBE))
+                    && 0 == (packet_out->po_flags
+                                        & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
                 largest_lost_packno = packet_out->po_packno;
             else { /* don't count it as a loss */; }
             (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
