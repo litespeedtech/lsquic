@@ -304,6 +304,14 @@ cbr_server_on_write (struct lsquic_stream *stream,
         return;
     if (stream_ctx->frame_pending > 0)
         lsquic_stream_wantwrite(stream, 1);
+    else
+    {
+        /* The whole frame has been written: send it now instead of waiting
+         * for the following frames to fill up the packet.
+         */
+        lsquic_stream_flush(stream);
+        lsquic_stream_wantwrite(stream, 0);
+    }
 }
 
 
