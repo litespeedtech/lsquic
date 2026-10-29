@@ -6,7 +6,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -31,7 +30,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_util.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -499,28 +497,19 @@ send_ctl_pick_initial_packno (struct lsquic_send_ctl *ctl)
 static const struct
 {
     const struct cong_ctl_if    *ccd_if;
-    size_t                       ccd_off;
     const char                  *ccd_name;
 } cong_ctl_descs[] =
 {
     [LSQUIC_CC_CUBIC] = {
         &lsquic_cong_cubic_if,
-        offsetof(struct adaptive_cc, acc_cubic),
         "Cubic",
     },
     [LSQUIC_CC_BBR] = {
         &lsquic_cong_bbr_if,
-        offsetof(struct adaptive_cc, acc_bbr),
         "BBRv1",
-    },
-    [LSQUIC_CC_ADAPTIVE] = {
-        &lsquic_cong_adaptive_if,
-        0,
-        "Adaptive",
     },
     [LSQUIC_CC_BBR_COPILOT] = {
         &lsquic_cong_bbr_copilot_if,
-        offsetof(struct adaptive_cc, acc_bbr),
         "BBRv1-Copilot",
     },
 };
@@ -532,9 +521,9 @@ send_ctl_use_cc_algo (struct lsquic_send_ctl *ctl, enum lsquic_cc cc_algo)
     if (cc_algo == LSQUIC_CC_DEFAULT)
         cc_algo = LSQUIC_DF_CC_ALGO;
 
+    /* All members of the sc_cc union share its address */
     ctl->sc_ci = cong_ctl_descs[cc_algo].ccd_if;
-    ctl->sc_cong_ctl = (char *) &ctl->sc_adaptive_cc
-                                          + cong_ctl_descs[cc_algo].ccd_off;
+    ctl->sc_cong_ctl = &ctl->sc_cc;
 }
 
 
@@ -642,7 +631,8 @@ lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
 
     if (cc_algo == LSQUIC_CC_DEFAULT)
         cc_algo = LSQUIC_DF_CC_ALGO;
-    else if (cc_algo < LSQUIC_CC_CUBIC || cc_algo > LSQUIC_CC_LAST)
+    else if (cc_algo < LSQUIC_CC_CUBIC || cc_algo > LSQUIC_CC_LAST
+                                        || !cong_ctl_descs[cc_algo].ccd_if)
         return -1;
 
     old_cc_algo = lsquic_send_ctl_get_cc_algo(ctl);
@@ -655,27 +645,10 @@ lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
 
     if (is_cc_bbr(old_cc_algo) && is_cc_bbr(cc_algo))
         send_ctl_use_cc_algo(ctl, cc_algo);
-    else if (old_cc_algo == LSQUIC_CC_ADAPTIVE)
-    {
-        if (cc_algo == LSQUIC_CC_CUBIC)
-            ctl->sc_flags |= SC_CLEANUP_BBR;
-        else
-        {
-            lsquic_cong_cubic_if.cci_cleanup(
-                                        &ctl->sc_adaptive_cc.acc_cubic);
-            ctl->sc_flags &= ~SC_CLEANUP_BBR;
-        }
-        send_ctl_use_cc_algo(ctl, cc_algo);
-        send_ctl_apply_bw_sampler_policy(ctl);
-    }
     else
     {
         ctl->sc_ci->cci_cleanup(CGP(ctl));
-        if (ctl->sc_flags & SC_CLEANUP_BBR)
-            lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
-
-        ctl->sc_flags &= ~SC_CLEANUP_BBR;
-        memset(&ctl->sc_adaptive_cc, 0, sizeof(ctl->sc_adaptive_cc));
+        memset(&ctl->sc_cc, 0, sizeof(ctl->sc_cc));
         send_ctl_use_cc_algo(ctl, cc_algo);
         send_ctl_apply_bw_sampler_policy(ctl);
         ctl->sc_ci->cci_init(CGP(ctl), ctl->sc_conn_pub);
@@ -1051,35 +1024,6 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
 
 
 static void
-send_ctl_select_cc (struct lsquic_send_ctl *ctl)
-{
-    lsquic_time_t srtt;
-
-    srtt = lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats);
-
-    if (srtt <= ctl->sc_enpub->enp_settings.es_cc_rtt_thresh)
-    {
-        LSQ_INFO("srtt is %"PRIu64" usec, which is smaller than or equal to "
-            "the threshold of %u usec: select Cubic congestion controller",
-            srtt, ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
-        ctl->sc_ci = &lsquic_cong_cubic_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_cubic;
-        send_ctl_apply_bw_sampler_policy(ctl);
-        ctl->sc_flags |= SC_CLEANUP_BBR;
-    }
-    else
-    {
-        LSQ_INFO("srtt is %"PRIu64" usec, which is greater than the threshold "
-            "of %u usec: select BBRv1 congestion controller", srtt,
-            ctl->sc_enpub->enp_settings.es_cc_rtt_thresh);
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-        ctl->sc_cong_ctl = &ctl->sc_adaptive_cc.acc_bbr;
-        send_ctl_apply_bw_sampler_policy(ctl);
-    }
-}
-
-
-static void
 take_rtt_sample (lsquic_send_ctl_t *ctl,
                  lsquic_time_t now, lsquic_time_t lack_delta)
 {
@@ -1099,8 +1043,6 @@ take_rtt_sample (lsquic_send_ctl_t *ctl,
         LSQ_DEBUG("packno %"PRIu64"; rtt: %"PRIu64"; delta: %"PRIu64"; "
             "new srtt: %"PRIu64, packno, measured_rtt, lack_delta,
             lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats));
-        if (ctl->sc_ci == &lsquic_cong_adaptive_if)
-            send_ctl_select_cc(ctl);
     }
 }
 
@@ -1975,11 +1917,6 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_cleanup(&ctl->sc_pacer);
     ctl->sc_ci->cci_cleanup(CGP(ctl));
-    if (ctl->sc_flags & SC_CLEANUP_BBR)
-    {
-        assert(ctl->sc_ci == &lsquic_cong_cubic_if);
-        lsquic_cong_bbr_if.cci_cleanup(&ctl->sc_adaptive_cc.acc_bbr);
-    }
     send_ctl_cleanup_bw_sampler(ctl);
 #if LSQUIC_SEND_STATS
     LSQ_NOTICE("stats: n_total_sent: %u; n_resent: %u; n_delayed: %u",

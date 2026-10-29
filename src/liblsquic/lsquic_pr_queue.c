@@ -679,6 +679,7 @@ const char *const lsquic_preqt2str[] =
 {
     [PACKET_REQ_VERNEG] = "version negotiation",
     [PACKET_REQ_PUBRES] = "stateless reset",
+    [PACKET_REQ_RETRY] = "stateless retry",
 };
 
 

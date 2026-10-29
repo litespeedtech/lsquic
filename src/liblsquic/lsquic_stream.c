@@ -47,7 +47,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_headers.h"
 #include "lsquic_ev_log.h"
@@ -2607,6 +2606,12 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
 
 
 #define COMMON_WRITE_CHECKS() do {                                          \
+    if (lsquic_stream_is_write_reset(stream))                               \
+    {                                                                       \
+        LSQ_INFO("Attempt to write to stream after it had been reset");     \
+        errno = ECONNRESET;                                                 \
+        return -1;                                                          \
+    }                                                                       \
     if ((stream->sm_bflags & SMBF_USE_HEADERS)                              \
             && (!(stream->stream_flags & STREAM_HEADERS_SENT)              \
                 || SSHS_BEGIN != stream->sm_send_headers_state))           \
@@ -2623,12 +2628,6 @@ lsquic_stream_flush_threshold (const struct lsquic_stream *stream,
             errno = EILSEQ;                                                 \
             return -1;                                                      \
         }                                                                   \
-    }                                                                       \
-    if (lsquic_stream_is_write_reset(stream))                               \
-    {                                                                       \
-        LSQ_INFO("Attempt to write to stream after it had been reset");     \
-        errno = ECONNRESET;                                                 \
-        return -1;                                                          \
     }                                                                       \
     if (stream->stream_flags & (STREAM_U_WRITE_DONE|STREAM_FIN_SENT))       \
     {                                                                       \

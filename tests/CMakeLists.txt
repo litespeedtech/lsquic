@@ -32,6 +32,7 @@ SET(TESTS
     alt_svc_ver
     arr
     attq
+    bbr
     blocked_gquic_be
     bw_sampler
     cert_chain
@@ -54,6 +55,7 @@ SET(TESTS
     http1x_if
     lsquic_hash
     mini_conn_delay
+    mini_conn_retry
     packet_out
     packet_resize
     packno_len

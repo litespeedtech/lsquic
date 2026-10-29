@@ -166,13 +166,24 @@ read_from_msg_ctx (void *ctx, void *buf, size_t len, int *fin)
 static inline int
 imico_chlo_has_been_consumed (const struct ietf_mini_conn *conn)
 {
-    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 3
-        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= conn->imc_ch_len;
+    const unsigned tls_header_sz = 4;
+    return conn->imc_streams[ENC_LEV_INIT].mcs_read_off >= tls_header_sz
+        && conn->imc_streams[ENC_LEV_INIT].mcs_read_off >=
+                                        tls_header_sz + conn->imc_ch_len;
 }
 
 
 static int
-imico_process_version_negociation (struct ietf_mini_conn *conn,
+imico_chlo_in_progress (const struct ietf_mini_conn *conn)
+{
+    return !imico_chlo_has_been_consumed(conn)
+        && (conn->imc_streams[ENC_LEV_INIT].mcs_read_off > 0
+                                || !TAILQ_EMPTY(&conn->imc_crypto_frames));
+}
+
+
+static int
+imico_process_version_negotiation (struct ietf_mini_conn *conn,
                                    const struct transport_params *params)
 {
     unsigned common_versions;
@@ -204,7 +215,7 @@ imico_process_version_negociation (struct ietf_mini_conn *conn,
     ver = highest_bit_set(common_versions);
     if (conn->imc_conn.cn_version != (enum lsquic_version)ver)
     {
-        LSQ_DEBUG("version negociation: switch version from %s to %s",
+        LSQ_DEBUG("version negotiation: switch version from %s to %s",
                   lsquic_ver2str[conn->imc_conn.cn_version],
                   lsquic_ver2str[ver]);
         conn->imc_conn.cn_version = ver;
@@ -243,7 +254,7 @@ imico_maybe_process_params (struct ietf_mini_conn *conn)
                                                 conn->imc_path.np_pack_size);
             if (params->tp_set & (1 << TPI_VERSION_INFORMATION))
             {
-                if (imico_process_version_negociation(conn, params) == -1)
+                if (imico_process_version_negotiation(conn, params) == -1)
                 {
                     conn->imc_flags |= IMC_VER_NEG_FAILED;
                     return -1;
@@ -2181,7 +2192,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
     {
         is_app = 0;
         error_code = TEC_VERSION_NEGOTIATION_ERROR;
-        reason = "version negociation failed";
+        reason = "version negotiation failed";
         rlen = 26;
     }
     else if (conn->imc_flags & IMC_HSK_FAILED)
@@ -2326,14 +2337,26 @@ ietf_mini_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     }
 
     if (!(conn->imc_flags &
-                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS))
-                            && conn->imc_enpub->enp_settings.es_support_srej)
+                    (IMC_HAVE_TP|IMC_ADDR_VALIDATED|IMC_BAD_TRANS_PARAMS)))
     {
         if (conn->imc_flags & IMC_ERROR)
             goto close_on_error;
-        LSQ_DEBUG("Peer not validated and do not have transport parameters "
-            "on the first tick: retry");
-        return TICK_RETRY|TICK_CLOSE;
+        else if (imico_chlo_in_progress(conn))
+        {
+            /* Wait for the rest of the ClientHello instead of sending a Retry.
+             * Defer ACK generation too, so the first response uses the version
+             * selected after processing the client's transport parameters.
+             */
+            LSQ_DEBUG("Peer not validated and ClientHello not complete: "
+                "wait for the rest of it");
+            return 0;
+        }
+        else if (conn->imc_enpub->enp_settings.es_support_srej)
+        {
+            LSQ_DEBUG("Peer not validated and do not have transport parameters "
+                "on the first tick: retry");
+            return TICK_RETRY|TICK_CLOSE;
+        }
     }
 
     if (conn->imc_flags & (IMC_QUEUED_ACK_INIT|IMC_QUEUED_ACK_HSK))

@@ -50,6 +50,10 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Jiří Szkandera -- Bug fixes
     - 이윤진(Lee Yunjin) -- Bug fixes
     - Lukas Kastern -- UB fixes
+    - Gabriel Cruz -- Knobs to change keepalive PING behavior
+    - Waqas Ahmed -- Spec compliance fix
+    - Nikolas Gauder -- Bug fixes
+    - Gaurav Jadhav -- Bug fixes
 
 Thank you!
 

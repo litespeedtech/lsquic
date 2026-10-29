@@ -26,8 +26,8 @@ extern "C" {
 #endif
 
 #define LSQUIC_MAJOR_VERSION 4
-#define LSQUIC_MINOR_VERSION 10
-#define LSQUIC_PATCH_VERSION 2
+#define LSQUIC_MINOR_VERSION 11
+#define LSQUIC_PATCH_VERSION 1
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -442,20 +442,18 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 enum lsquic_cc
 {
     /* This enum has explicit values so that "es_cc_algo" is backwards-
-     * compatible.
+     * compatible.  Value 3 used to select Adaptive congestion control,
+     * which has been removed; it is not reused so that settings that
+     * still use it are rejected rather than reinterpreted.
      */
     LSQUIC_CC_DEFAULT     = 0,  LSQUIC_CC_FIRST = LSQUIC_CC_DEFAULT,
     LSQUIC_CC_CUBIC       = 1,
     LSQUIC_CC_BBR         = 2,
-    LSQUIC_CC_ADAPTIVE    = 3,
     LSQUIC_CC_BBR_COPILOT = 4,  LSQUIC_CC_LAST = LSQUIC_CC_BBR_COPILOT,
 };
 
-/* Use Adaptive CC by default */
-#define LSQUIC_DF_CC_ALGO LSQUIC_CC_ADAPTIVE
-
-/* Default value of the CC RTT threshold is 1.5 ms */
-#define LSQUIC_DF_CC_RTT_THRESH 1500
+/* Use BBRv1 by default */
+#define LSQUIC_DF_CC_ALGO LSQUIC_CC_BBR
 
 /* By default, bandwidth sampler is not kept alive unless requested. */
 #define LSQUIC_DF_ENABLE_BW_SAMPLER 0
@@ -770,22 +768,9 @@ struct lsquic_engine_settings {
      *  0:  Use default (@ref LSQUIC_DF_CC_ALGO)
      *  1:  Cubic
      *  2:  BBRv1
-     *  3:  Adaptive (Cubic or BBRv1)
      *  4:  BBRv1-Copilot
      */
     enum lsquic_cc  es_cc_algo;
-
-    /**
-     * Congestion controller RTT threshold in microseconds.
-     *
-     * Adaptive congestion control uses BBRv1 until RTT is determined.  At
-     * that point a permanent choice of congestion controller is made. If
-     * RTT is smaller than or equal to es_cc_rtt_thresh, congestion
-     * controller is switched to Cubic; otherwise, BBRv1 is picked.
-     *
-     * The default value is @ref LSQUIC_DF_CC_RTT_THRESH.
-     */
-    unsigned        es_cc_rtt_thresh;
 
     /**
      * If you plan to call lsquic_conn_get_info(), set this to true.

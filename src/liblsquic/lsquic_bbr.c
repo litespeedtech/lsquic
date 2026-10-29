@@ -602,12 +602,13 @@ update_ack_aggregation_bytes (struct lsquic_bbr *bbr,
                                                 uint64_t newly_acked_bytes)
 {
     const lsquic_time_t ack_time = bbr->bbr_ack_state.ack_time;
+    const struct bandwidth bw = BW(minmax_get(&bbr->bbr_max_bandwidth));
     uint64_t expected_bytes_acked, diff;
 
     // Compute how many bytes are expected to be delivered, assuming max
     // bandwidth is correct.
-    expected_bytes_acked = minmax_get(&bbr->bbr_max_bandwidth)
-                        * (ack_time - bbr->bbr_aggregation_epoch_start_time);
+    expected_bytes_acked = BW_TO_BYTES_PER_SEC(&bw)
+            * (ack_time - bbr->bbr_aggregation_epoch_start_time) / 1000000;
 
     // Reset the current aggregation epoch as soon as the ack arrival rate is
     // less than or equal to the max bandwidth.

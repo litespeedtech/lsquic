@@ -60,7 +60,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_set.h"
 #include "lsquic_conn_flow.h"
 #include "lsquic_sfcw.h"
@@ -394,7 +393,6 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
-    settings->es_cc_rtt_thresh   = LSQUIC_DF_CC_RTT_THRESH;
     settings->es_enable_bw_sampler = LSQUIC_DF_ENABLE_BW_SAMPLER;
     settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
     settings->es_ext_http_prio   = LSQUIC_DF_EXT_HTTP_PRIO;
@@ -478,7 +476,8 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
      * compiler picks for the enum.
      */
     if ((unsigned) (settings->es_cc_algo - LSQUIC_CC_FIRST)
-            > (unsigned) (LSQUIC_CC_LAST - LSQUIC_CC_FIRST))
+            > (unsigned) (LSQUIC_CC_LAST - LSQUIC_CC_FIRST)
+                                            || settings->es_cc_algo == 3)
     {
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "

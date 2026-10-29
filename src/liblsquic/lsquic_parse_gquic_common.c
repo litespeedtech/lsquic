@@ -680,7 +680,11 @@ lsquic_merge_acks (struct ack_info *dst, const struct ack_info *src)
         }
 
         if ((*p)->high + 1 >= out->low)
-            out->low = (*p)->low;
+        {
+            /* A range may lie wholly inside the output range */
+            if ((*p)->low < out->low)
+                out->low = (*p)->low;
+        }
         else if (out + 1 < out_end)
             *++out = **p;
         else

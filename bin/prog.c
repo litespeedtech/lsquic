@@ -173,8 +173,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "   -A CC_ALGO  Congestion control algorithm.  The following algorithms are\n"
 "                 supported.\n"
 "                   1: Cubic\n"
-"                   2: BBRv1\n"
-"                   3: Adaptive congestion control (this is the default).\n"
+"                   2: BBRv1 (this is the default).\n"
 "                   4: BBRv1-Copilot.\n"
     );
 

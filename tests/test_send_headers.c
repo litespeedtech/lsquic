@@ -46,7 +46,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -753,6 +752,58 @@ test_later_headers_wait_for_encoder (const int want_write)
 }
 
 
+/* STOP_SENDING that arrives while a later header block (such as the final
+ * response after a 103) waits for encoder stream output must surface as a
+ * write error rather than as temporary backpressure.
+ */
+static void
+test_stop_sending_while_later_headers_pending (void)
+{
+    struct test_objs tobjs;
+    struct lsquic_stream *stream;
+    ssize_t nw;
+    int s;
+
+    /* For our tests purposes, we treat headers as an opaque object */
+    struct lsquic_http_headers *headers = (void *) 1;
+
+    init_test_objs(&tobjs, 0x1000, 0x1000, SCF_IETF);
+
+    stream = new_stream(&tobjs, 4 * __LINE__, 0x1000);
+
+    /* 103 response is written out in full */
+    test_vals.status = QWH_FULL;
+    test_vals.prefix_sz = 2;
+    test_vals.headers_sz = 40;
+    test_vals.completion_offset = 0;
+    s_enc_off = 0;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_BEGIN == stream->sm_send_headers_state);
+
+    /* Final headers are blocked on the encoder stream */
+    test_vals.status = QWH_PARTIAL;
+    test_vals.completion_offset = 10;
+    s = lsquic_stream_send_headers(stream, headers, 0);
+    assert(0 == s);
+    assert(SSHS_ENC_SENDING == stream->sm_send_headers_state);
+    errno = 0;
+    nw = lsquic_stream_write(stream, "hello", 5);
+    assert(0 == nw);
+
+    lsquic_stream_stop_sending_in(stream, 12345);
+
+    errno = 0;
+    nw = lsquic_stream_write(stream, "hello", 5);
+    assert(-1 == nw);
+    assert(ECONNRESET == errno);
+
+    lsquic_stream_destroy(stream);
+    deinit_test_objs(&tobjs);
+    s_enc_off = 0;
+}
+
+
 /* Create a new stream frame.  Each stream frame has a real packet_in to
  * back it up, just like in real code.  The contents of the packet do
  * not matter.
@@ -1081,6 +1132,7 @@ main (int argc, char **argv)
     test_headers_wantwrite_restoration(1);
     test_later_headers_wait_for_encoder(0);
     test_later_headers_wait_for_encoder(1);
+    test_stop_sending_while_later_headers_pending();
     test_read_headers(0, 0);
     test_read_headers(0, 1);
     test_read_headers(1, 0);

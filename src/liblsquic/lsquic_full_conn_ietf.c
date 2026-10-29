@@ -45,7 +45,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_ver_neg.h"
@@ -153,6 +152,7 @@ enum more_flags
     MF_WANT_DATAGRAM_WRITE  = 1 << 6,
     MF_DOING_0RTT       = 1 << 7,
     MF_HAVE_HCSI        = 1 << 8,   /* Have HTTP Control Stream Incoming */
+    MF_ERROR_CODE_SET   = 1 << 9,   /* Connection error code is set */
 };
 
 
@@ -259,6 +259,7 @@ enum send_flags
  */
 #define ABORT_QUIETLY(app_error, code, ...) do {                            \
     conn->ifc_error = CONN_ERR(app_error, code);                            \
+    conn->ifc_mflags |= MF_ERROR_CODE_SET;                                  \
     ABORT_WITH_FLAG(conn, LSQ_LOG_INFO, IFC_ERROR, __VA_ARGS__);            \
 } while (0)
 
@@ -3847,7 +3848,7 @@ handshake_ok (struct lsquic_conn *lconn)
         }
 //         if (conn->ifc_conn.cn_version != params->tp_chosen_version)
 //         {
-//             LSQ_DEBUG("version negociation: switch version from %s to %s",
+//             LSQ_DEBUG("version negotiation: switch version from %s to %s",
 //                   lsquic_ver2str[conn->ifc_conn.cn_version],
 //                   lsquic_ver2str[params->tp_chosen_version]);
 //             conn->ifc_conn.cn_version = params->tp_chosen_version;
@@ -4097,7 +4098,8 @@ immediate_close (struct ietf_full_conn *conn)
         conn_err = CONN_ERR(0, TEC_APPLICATION_ERROR);
         error_reason = NULL;
     }
-    else if (conn->ifc_error.u.err != 0)
+    else if (conn->ifc_error.u.err != 0
+                            || (conn->ifc_mflags & MF_ERROR_CODE_SET))
     {
         conn_err = conn->ifc_error;
         error_reason = conn->ifc_errmsg;
@@ -7684,7 +7686,7 @@ process_incoming_packet_verneg (struct ietf_full_conn *conn,
                         "supported: ignore");
             return 0;
         }
-        LSQ_DEBUG("version negociation: server switched version from %s to %s",
+        LSQ_DEBUG("version negotiation: server switched version from %s to %s",
         lsquic_ver2str[conn->ifc_u.cli.ifcli_ver_neg.vn_ver],
         lsquic_ver2str[packet_in->pi_version]);
         switch_version(conn, packet_in->pi_version);
@@ -8713,7 +8715,7 @@ ietf_full_conn_ci_abort_error (struct lsquic_conn *lconn, int is_app,
     const char *err_str, *percent;
     char err_buf[0x100];
 
-    if (conn->ifc_error.u.err != 0)
+    if (conn->ifc_mflags & MF_ERROR_CODE_SET)
         return;
     percent = strchr(fmt, '%');
     if (percent)

@@ -30,7 +30,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -375,7 +374,7 @@ test_bw_probe_fill_scheduling (void)
     t.send_ctl.sc_flags &= ~SC_PACE;
     assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
                                             LSQUIC_CC_BBR_COPILOT));
-    bbr = &t.send_ctl.sc_adaptive_cc.acc_bbr;
+    bbr = &t.send_ctl.sc_cc.bbr;
 
     bbr->bbr_pacing_gain = 1.0;
     bbr->bbr_last_app_data_sent = lsquic_time_now();
@@ -559,7 +558,7 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
     assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki, 31003, 31003));
     assert(probe_bytes + (with_data - lost) * data_bytes
                                 == t.send_ctl.sc_bw_sampler.bws_total_acked);
-    assert(minmax_get(&t.send_ctl.sc_adaptive_cc.acc_bbr.bbr_max_bandwidth) > 0);
+    assert(minmax_get(&t.send_ctl.sc_cc.bbr.bbr_max_bandwidth) > 0);
     assert(lost * data_bytes == t.send_ctl.sc_bw_sampler.bws_total_lost);
 #if LSQUIC_CONN_STATS
     assert(lost == t.stats.out.lost_packets);
@@ -663,7 +662,7 @@ test_bw_probe_fill_skipped_during_rto_recovery (void)
     assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
                                             LSQUIC_CC_BBR_COPILOT));
     t.send_ctl.sc_flags &= ~SC_PACE;
-    bbr = &t.send_ctl.sc_adaptive_cc.acc_bbr;
+    bbr = &t.send_ctl.sc_cc.bbr;
     bbr->bbr_pacing_gain = 1.25;
     bbr->bbr_last_app_data_sent = lsquic_time_now();
 

@@ -74,7 +74,6 @@ types are included in a single enum:
     .. member:: LSQUIC_CC_DEFAULT
     .. member:: LSQUIC_CC_CUBIC
     .. member:: LSQUIC_CC_BBR
-    .. member:: LSQUIC_CC_ADAPTIVE
     .. member:: LSQUIC_CC_BBR_COPILOT
 
 Several version lists (as bitmasks) are defined in :file:`lsquic.h`:
@@ -744,23 +743,11 @@ settings structure:
        - 0:  Use default (:macro:`LSQUIC_DF_CC_ALGO`)
        - 1:  Cubic
        - 2:  BBRv1
-       - 3:  Adaptive congestion control.
        - 4:  BBRv1-Copilot.
 
-       Adaptive congestion control adapts to the environment.  It figures
-       out whether to use Cubic or BBRv1 based on the RTT.
-
-    .. member:: unsigned        es_cc_rtt_thresh
-
-       Congestion controller RTT threshold in microseconds.
-
-       Adaptive congestion control uses BBRv1 until RTT is determined.  At
-       that point a permanent choice of congestion controller is made.  If
-       RTT is smaller than or equal to
-       :member:`lsquic_engine_settings.es_cc_rtt_thresh`, congestion
-       controller is switched to Cubic; otherwise, BBRv1 is picked.
-
-       The default value is :macro:`LSQUIC_DF_CC_RTT_THRESH`
+       The default is BBRv1.  The selected algorithm is used for the
+       lifetime of the connection, unless it is changed using
+       :member:`LSQCP_CC_ALGO`.  Other values are invalid.
 
     .. member:: int             es_enable_bw_sampler
 
@@ -1131,11 +1118,7 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 
 .. macro:: LSQUIC_DF_CC_ALGO
 
-    Use Adaptive Congestion Controller by default.
-
-.. macro:: LSQUIC_DF_CC_RTT_THRESH
-
-    Default value of the CC RTT threshold is 1500 microseconds
+    Use BBRv1 by default (value 2).
 
 .. macro:: LSQUIC_DF_DELAYED_ACKS
 
@@ -2271,12 +2254,7 @@ available through engine settings.
         The values are the same as for ``es_cc_algo``.
 
         When read with :func:`lsquic_conn_get_param()`, this parameter
-        reflects the congestion controller that is currently in use.  An
-        Adaptive connection does not stay on the Adaptive controller: once
-        the RTT has been measured, Adaptive selects Cubic or BBRv1 and the
-        read-back value is ``LSQUIC_CC_CUBIC`` or ``LSQUIC_CC_BBR``
-        accordingly.  ``LSQUIC_CC_ADAPTIVE`` is therefore not reported
-        after the selection has been made.
+        reflects the congestion controller that is currently in use.
 
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
@@ -2343,9 +2321,7 @@ available through engine settings.
     This function retrieves the current value of a connection parameter.
 
     **Note:** :member:`LSQCP_CC_ALGO` returns the congestion controller
-    that is currently in use.  An Adaptive connection reports the
-    controller that Adaptive selected (Cubic or BBRv1), not
-    ``LSQUIC_CC_ADAPTIVE``; see :member:`LSQCP_CC_ALGO`.
+    that is currently in use.
 
     **Example - Reading current pacing rate:**
 

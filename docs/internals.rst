@@ -3079,17 +3079,17 @@ Congestions Controllers
 
 The Send Controller has a choice of three congestion controllers: Cubic,
 BBRv1, and BBR-Copilot.  BBRv1 was translated from Chromium into C.
-BBRv1 does not work well for very small RTTs.
 
-To cope with that, lsquic puts the Send Controller into the "adaptive CC"
-mode by default. The CC is selected after RTT is determined: below a
-certain threshold (configurable; 1.5 ms by default), Cubic is used.
-Until Cubic or BBRv1 is selected, *both* CC controllers are used --
-because we won't have the necessary state to instantiate a controller
-when the decision is made.
+BBRv1 is the default.  The engine setting ``es_cc_algo`` selects the
+controller when the Send Controller is initialized: 0 uses the default,
+1 selects Cubic, 2 selects BBRv1, and 4 selects BBR-Copilot.  Only the
+selected controller is initialized, and its state occupies a union in
+the Send Controller.  The controller remains selected for the lifetime
+of the connection, regardless of RTT, unless it is changed using
+``LSQCP_CC_ALGO``.
 
-BBR-Copilot is a BBRv1 variant that must be selected explicitly; the
-adaptive mode never selects it.  When it probes for bandwidth but the
+BBR-Copilot is a BBRv1 variant that must be selected explicitly.  When
+it probes for bandwidth but the
 application is idle, the Send Controller fills the congestion window
 with padded PING packets marked ``PO_BW_PROBE_FILL``.  At the end of a
 full connection tick, ``lsquic_send_ctl_maybe_app_limited()`` asks

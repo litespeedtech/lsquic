@@ -19,15 +19,7 @@ BBRv1
 -----
 
 BBRv1 models bottleneck bandwidth and round-trip propagation time.  Select it
-using ``LSQUIC_CC_BBR``.
-
-Adaptive
---------
-
-Adaptive initializes both Cubic and BBRv1, measures the connection RTT, and
-then selects one of them.  The threshold is configured using
-:member:`lsquic_engine_settings.es_cc_rtt_thresh`.  Select Adaptive using
-``LSQUIC_CC_ADAPTIVE``.  It is the default controller.
+using ``LSQUIC_CC_BBR``.  It is the default controller.
 
 BBR-Copilot
 -----------
@@ -41,7 +33,7 @@ sample.
 This behavior can improve BBR's bandwidth estimate when application-limited
 periods would otherwise interrupt active probing.  It also deliberately sends
 data that the application did not request, so applications should account for
-the additional network traffic.  Adaptive never selects BBR-Copilot.
+the additional network traffic.
 
 Select BBR-Copilot using ``LSQUIC_CC_BBR_COPILOT``.
 
@@ -87,9 +79,7 @@ connection, typically from the ``on_new_conn`` callback:
 
 Passing ``LSQUIC_CC_DEFAULT`` selects the library default.  The current
 controller can be read using :func:`lsquic_conn_get_param()` with
-``LSQCP_CC_ALGO``.  A connection configured with ``LSQUIC_CC_ADAPTIVE``
-reports the controller that Adaptive selected (Cubic or BBRv1) once the
-RTT has been measured, not ``LSQUIC_CC_ADAPTIVE``.
+``LSQCP_CC_ALGO``.
 
 Reference
 =========

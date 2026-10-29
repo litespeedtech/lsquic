@@ -700,7 +700,7 @@ ietf_v1_parse_ack_frame (const unsigned char *const buf, size_t buf_len,
         }
     }
 
-    if (i < sizeof(ack->ranges) / sizeof(ack->ranges[0]))
+    if (block_count < sizeof(ack->ranges) / sizeof(ack->ranges[0]))
     {
         ack->flags = 0;
         ack->n_ranges = block_count + 1;

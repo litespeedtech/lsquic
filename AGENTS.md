@@ -12,6 +12,8 @@ against the current source: the internal document describes an older code
 version, and the API reference itself warns that it may lag the public headers.
 The current source, public headers, and CMake files are authoritative.
 
+Load AGENTS-local.md if it exists.
+
 ## Repository map and architecture
 
 - `include/` contains the public API.  `include/lsquic.h` is its main entry
@@ -108,6 +110,8 @@ Follow the surrounding file and these project conventions:
 - Use uppercase hexadecimal digits.
 - Avoid ternary expressions unless the whole expression fits clearly on one
   line.
+- Parenthesize bitwise subexpressions when used with logical operators or
+  comparisons, even when operator precedence makes them unambiguous.
 - Prefer an explicit `else` when both branches return.  This is the opposite
   of the convention commonly called `no-else-return`; the alternative without
   `else` is also described as an early-return or guard-clause style.  Write:

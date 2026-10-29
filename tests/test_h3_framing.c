@@ -47,7 +47,6 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
-#include "lsquic_adaptive_cc.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -412,8 +411,8 @@ init_test_objs (struct test_objs *tobjs, unsigned initial_conn_window,
     tobjs->eng_pub.enp_hsi_if = &tobjs->hsi_if;
     lsquic_send_ctl_init(&tobjs->send_ctl, &tobjs->alset, &tobjs->eng_pub,
         &tobjs->ver_neg, &tobjs->conn_pub, 0);
-    tobjs->send_ctl.sc_adaptive_cc.acc_cubic.cu_cwnd = ~0UL;
-    tobjs->send_ctl.sc_cong_ctl = &tobjs->send_ctl.sc_adaptive_cc.acc_cubic;
+    tobjs->send_ctl.sc_cc.cubic.cu_cwnd = ~0UL;
+    tobjs->send_ctl.sc_cong_ctl = &tobjs->send_ctl.sc_cc.cubic;
     tobjs->stream_if = &stream_if;
     tobjs->stream_if_ctx = &test_ctx;
     tobjs->ctor_flags = stream_ctor_flags;

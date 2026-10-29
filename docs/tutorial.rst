@@ -933,7 +933,7 @@ is parsed to see which setting to alter.
 
   while (/* getopt */)
   {
-      case 'o':   /* For example: -o version=h3 -o cc_algo=2 */
+      case 'o':   /* For example: -o version=h3 -o cc_algo=1 (Cubic) */
         if (!settings_initialized) {
           lsquic_engine_init_settings(&settings,
                           cert_file || key_file ? LSENG_SERVER : 0);
