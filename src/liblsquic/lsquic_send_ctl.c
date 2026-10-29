@@ -1695,9 +1695,13 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             ack2ed[!!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))]
                 = packet_out->po_ack2ed;
             do_rtt |= packet_out->po_packno == largest_acked(acki);
-            send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
+            /* BBR-Copilot's cci_ack checks po_bwp_state to tell whether
+             * this ACK advances the sampler's anchor, so cci_ack must be
+             * called before the sampler consumes it.
+             */
             ctl->sc_ci->cci_ack(CGP(ctl), packet_out, packet_sz, now,
                                                              app_limited);
+            send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
             send_ctl_acked_loss_chain(ctl, packet_out, &next,
                                       largest_acked(acki), &do_rtt);
             send_ctl_destroy_packet(ctl, packet_out);

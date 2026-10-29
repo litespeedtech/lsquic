@@ -370,9 +370,15 @@ bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
     assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
 
+    /* Only the ACK of a packet that carries sampler state moves the
+     * sampler's anchor forward.  ACKs of packets without that state, such
+     * as ACK-only packets and plain IETF PINGs, do not: new samples would
+     * still span ProbeRTT.
+     */
     if (bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT
             && bbr->bbr_mode != BBR_MODE_PROBE_RTT
-            && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until)
+            && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until
+            && packet_out->po_bwp_state)
     {
         LSQ_DEBUG("exit probe_rtt app-limited at packno %"PRIu64,
             packet_out->po_packno);

@@ -206,10 +206,10 @@ struct lsquic_bbr
     }                           bbr_ack_state;
 
     /* Last packet sent in ProbeRTT.  Samples remain app-limited until a later
-     * packet is acknowledged.  Packets sent after ProbeRTT but before that
-     * acknowledgement are marked app-limited too: their sampling intervals
-     * may overlap the low-rate ProbeRTT period.  This matches the bandwidth
-     * sampler's app-limited phase semantics.
+     * packet that carries sampler state is acknowledged.  Packets sent after
+     * ProbeRTT but before that acknowledgement are marked app-limited too:
+     * their sampling intervals may overlap the low-rate ProbeRTT period.
+     * This matches the bandwidth sampler's app-limited phase semantics.
      */
     lsquic_packno_t             bbr_probe_rtt_app_limited_until;
 
