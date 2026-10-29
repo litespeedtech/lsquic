@@ -176,7 +176,8 @@ struct parse_funcs
                                 unsigned frame_type, size_t reason_len);
     int
     (*pf_gen_connect_close_frame) (unsigned char *buf, size_t buf_len,
-        int app_error, unsigned error_code, const char *reason, int reason_len);
+                int app_error, unsigned error_code, unsigned frame_type,
+                const char *reason, int reason_len);
     int
     (*pf_parse_connect_close_frame) (const unsigned char *buf, size_t buf_len,
                 int *app_error, uint64_t *error_code, uint16_t *reason_length,
