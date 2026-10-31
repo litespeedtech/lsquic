@@ -2099,9 +2099,8 @@ send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
 
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
-                                   const struct network_path *path,
-                                   lsquic_bw_probe_fill_f bw_probe_fill_cb,
-                                   void *conn_ctx)
+                    lsquic_time_t now, const struct network_path *path,
+                    lsquic_bw_probe_fill_f bw_probe_fill_cb, void *conn_ctx)
 {
     const struct lsquic_packet_out *packet_out;
     struct lsquic_packet_out *probe_packet;
@@ -2113,10 +2112,9 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
      * allowance.
      */
     if (bw_probe_fill_cb && 0 == send_ctl_get_n_consec_rtos(ctl)
-                        && ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl)))
+                        && ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl), now))
     {
-        while (ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl))
-               && lsquic_send_ctl_can_send(ctl))
+        while (lsquic_send_ctl_can_send(ctl))
         {
             probe_packet = bw_probe_fill_cb(conn_ctx, path);
             if (!probe_packet)

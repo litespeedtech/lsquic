@@ -3612,8 +3612,8 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!handshake_done_or_doing_sess_resume(conn))
     {
         process_hsk_stream_write_events(conn);
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path,
-                                            NULL, NULL);
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, now,
+                                            &conn->fc_path, NULL, NULL);
         goto end_write;
     }
 
@@ -3643,11 +3643,11 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     // the connection is closing.
     if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && !(conn->fc_flags & (FC_CLOSING|FC_IMMEDIATE_CLOSE_FLAGS)))
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path,
-                        full_conn_bw_probe_fill, conn);
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, now,
+                        &conn->fc_path, full_conn_bw_probe_fill, conn);
     else
-        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, &conn->fc_path,
-                        NULL, NULL);
+        lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, now,
+                        &conn->fc_path, NULL, NULL);
 
   end_write:
 

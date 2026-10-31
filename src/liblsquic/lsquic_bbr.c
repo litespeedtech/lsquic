@@ -1121,13 +1121,14 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
 
 
 static int
-bbr_copilot_bw_probe_fill_wanted (void *cong_ctl)
+bbr_copilot_bw_probe_fill_wanted (void *cong_ctl, lsquic_time_t now)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
+    /* The cached tick time may precede the last application send. */
     if (0 == bbr->bbr_last_app_data_sent
-            || lsquic_time_now() - bbr->bbr_last_app_data_sent
-                                        > kBwProbeFillIdleTimeout)
+            || (now > bbr->bbr_last_app_data_sent
+                && now - bbr->bbr_last_app_data_sent > kBwProbeFillIdleTimeout))
         return 0;
     else
         return bbr->bbr_pacing_gain > 1.0;
@@ -1135,7 +1136,7 @@ bbr_copilot_bw_probe_fill_wanted (void *cong_ctl)
 
 
 static int
-lsquic_bbr_bw_probe_fill_wanted (void *cong_ctl)
+lsquic_bbr_bw_probe_fill_wanted (void *UNUSED_cong_ctl, lsquic_time_t UNUSED_now)
 {
     return 0;
 }

@@ -3093,8 +3093,9 @@ it probes for bandwidth but the
 application is idle, the Send Controller fills the congestion window
 with padded PING packets marked ``PO_BW_PROBE_FILL``.  At the end of a
 full connection tick, ``lsquic_send_ctl_maybe_app_limited()`` asks
-``cci_bw_probe_fill_wanted()`` and, while sending is allowed, obtains
-fill packets from a connection callback.  The callback is ``NULL``
+``cci_bw_probe_fill_wanted()`` once using the tick timestamp and, while
+sending is allowed, obtains fill packets from a connection callback.
+Send permission is checked for each packet.  The callback is ``NULL``
 before the handshake is done or while the connection is closing.  Only
 BBR-Copilot wants fill, and only while its pacing gain is above 1.0 and
 STREAM or DATAGRAM data was sent within the last second.

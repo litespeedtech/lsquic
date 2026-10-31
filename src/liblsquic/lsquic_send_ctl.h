@@ -474,7 +474,7 @@ typedef struct lsquic_packet_out *
 (*lsquic_bw_probe_fill_f)(void *conn_ctx, const struct network_path *path);
 
 void
-lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *,
+lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *, lsquic_time_t now,
                                             const struct network_path *,
                                             lsquic_bw_probe_fill_f bw_probe_fill_cb,
                                             void *conn_ctx);

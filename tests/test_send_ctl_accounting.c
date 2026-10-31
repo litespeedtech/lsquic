@@ -377,17 +377,17 @@ test_bw_probe_fill_scheduling (void)
     bbr = &t.send_ctl.sc_cc.bbr;
 
     bbr->bbr_pacing_gain = 1.0;
-    bbr->bbr_last_app_data_sent = lsquic_time_now();
+    bbr->bbr_last_app_data_sent = 1000;
     lsquic_send_ctl_tick_in(&t.send_ctl, 1000);
-    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 1000, &t.path,
                                             generate_bw_probe_fill, &t);
     assert(0 == t.send_ctl.sc_n_scheduled);
     assert(t.send_ctl.sc_flags & SC_APP_LIMITED);
 
     bbr->bbr_pacing_gain = 1.25;
-    bbr->bbr_last_app_data_sent = lsquic_time_now();
+    bbr->bbr_last_app_data_sent = 1000;
     lsquic_send_ctl_tick_in(&t.send_ctl, 2000);
-    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 2000, &t.path,
                                             generate_bw_probe_fill, &t);
     count = t.send_ctl.sc_n_scheduled;
     assert(count > 0);
@@ -405,7 +405,7 @@ test_bw_probe_fill_scheduling (void)
         assert(0 == lsquic_packet_out_avail(packet_out));
     }
 
-    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 2000, &t.path,
                                             generate_bw_probe_fill, &t);
     assert(count == t.send_ctl.sc_n_scheduled);
     cleanup_test(&t);
@@ -807,7 +807,7 @@ test_bw_probe_fill_skipped_during_rto_recovery (void)
     t.send_ctl.sc_flags &= ~SC_PACE;
     bbr = &t.send_ctl.sc_cc.bbr;
     bbr->bbr_pacing_gain = 1.25;
-    bbr->bbr_last_app_data_sent = lsquic_time_now();
+    bbr->bbr_last_app_data_sent = 1000;
 
     /* Pretend an RTO just fired: the two-packet allowance is in effect */
     t.send_ctl.sc_n_consec_rtos = 1;
@@ -816,7 +816,7 @@ test_bw_probe_fill_skipped_during_rto_recovery (void)
     t.send_ctl.sc_next_limit = 2;
 
     lsquic_send_ctl_tick_in(&t.send_ctl, 2000);
-    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 2000, &t.path,
                                             generate_bw_probe_fill, &t);
     assert(0 == t.send_ctl.sc_n_scheduled);
     assert(2 == t.send_ctl.sc_next_limit);
@@ -825,7 +825,7 @@ test_bw_probe_fill_skipped_during_rto_recovery (void)
      * once for the consecutive RTO), fill resumes as usual.
      */
     t.send_ctl.sc_last_sent_time = 1000 + 2 * 500000 + 1;
-    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, &t.path,
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 2000, &t.path,
                                             generate_bw_probe_fill, &t);
     assert(0 == t.send_ctl.sc_n_consec_rtos);
     assert(t.send_ctl.sc_n_scheduled > 0);

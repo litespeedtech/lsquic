@@ -8453,7 +8453,7 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
             process_crypto_stream_write_events(conn);
         if (!(conn->ifc_mflags & MF_DOING_0RTT))
         {
-            lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl,
+            lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, now,
                                               CUR_NPATH(conn), NULL, NULL);
             goto end_write;
         }
@@ -8489,11 +8489,11 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     // the connection is closing.
     if ((conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && !(conn->ifc_flags & (IFC_CLOSING|IFC_IMMEDIATE_CLOSE_FLAGS)))
-        lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn),
-                        ietf_full_conn_bw_probe_fill, conn);
+        lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, now,
+                        CUR_NPATH(conn), ietf_full_conn_bw_probe_fill, conn);
     else
-        lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, CUR_NPATH(conn),
-                        NULL, NULL);
+        lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, now,
+                        CUR_NPATH(conn), NULL, NULL);
 
   end_write:
     if ((conn->ifc_flags & IFC_CLOSING)

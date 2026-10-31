@@ -414,19 +414,20 @@ static void
 test_cc_algo_selection (void)
 {
     struct bw_lifecycle_test t;
+    const lsquic_time_t now = 3000000;
 
     init_test(&t, LSQUIC_CC_CUBIC, 0, LSQVER_043, 0);
     assert(LSQUIC_CC_CUBIC == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
     assert(t.send_ctl.sc_ci == &lsquic_cong_cubic_if);
     assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
     cleanup_test(&t);
 
     init_test(&t, LSQUIC_CC_BBR, 0, LSQVER_043, 0);
     assert(LSQUIC_CC_BBR == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
     assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
     assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
     cleanup_test(&t);
 
     init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, LSQVER_043, 0);
@@ -435,15 +436,15 @@ test_cc_algo_selection (void)
     assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_copilot_if);
     /* No application data sent yet: an idle connection must not fill. */
     assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
     t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent
-        = lsquic_time_now();
+        = now;
     assert(1 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
     /* Idle since long ago: fill must stop. */
     t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent -= 2 * 1000000;
     assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
     cleanup_test(&t);
 }
 
@@ -879,14 +880,14 @@ test_bbr_copilot_switch_preserves_state (enum lsquic_version version,
     assert(last_app_data_sent == t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent);
     assert((app_frames != 0 && !stale)
                 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
 
     assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, LSQUIC_CC_BBR));
     assert(LSQUIC_CC_BBR == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
     assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_if);
     assert(1.25 == t.send_ctl.sc_cc.bbr.bbr_pacing_gain);
     assert(0 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
-                                              t.send_ctl.sc_cong_ctl));
+                                              t.send_ctl.sc_cong_ctl, now));
 
     cleanup_test(&t);
 }

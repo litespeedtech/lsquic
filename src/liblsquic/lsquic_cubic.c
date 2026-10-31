@@ -279,7 +279,7 @@ lsquic_cubic_pacing_rate (void *cong_ctl, int in_recovery)
 
 
 static int
-lsquic_cubic_bw_probe_fill_wanted (void *cong_ctl)
+lsquic_cubic_bw_probe_fill_wanted (void *UNUSED_cong_ctl, lsquic_time_t UNUSED_now)
 {
     return 0;
 }
