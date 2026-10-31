@@ -2253,6 +2253,17 @@ available through engine settings.
 
         The values are the same as for ``es_cc_algo``.
 
+        The controller can be changed on a live connection.  Switching
+        between BBRv1 and BBR-Copilot preserves controller state, including
+        the shared application-activity and ProbeRTT bookkeeping.
+
+        Switching between Cubic and either BBR variant initializes fresh
+        controller state.  After switching from Cubic to BBR-Copilot,
+        fill probing waits until new application data is sent.
+
+        Leaving BBR-Copilot cancels scheduled fill probes.  Probes already
+        sent remain tracked until they are acknowledged or discarded.
+
         When read with :func:`lsquic_conn_get_param()`, this parameter
         reflects the congestion controller that is currently in use.
 
