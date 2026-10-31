@@ -493,6 +493,44 @@ test_bbr_copilot_app_data_timestamp (void)
 
 
 static void
+test_bbr_copilot_datagram_sampling (unsigned flags)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out;
+    struct bandwidth expected_bw;
+
+    init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, LSQVER_I001, flags);
+    assert(!(t.send_ctl.sc_retx_frames & QUIC_FTBIT_DATAGRAM));
+
+    packet_out = new_packet(&t, 1, 1000);
+    packet_out->po_frame_types = QUIC_FTBIT_DATAGRAM;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(packet_out->po_bwp_state);
+    assert(1000 == t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent);
+    assert(PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_sent);
+    assert(0 == t.send_ctl.sc_n_in_flight_retx);
+
+    packet_out = new_packet(&t, 2, 2000);
+    packet_out->po_frame_types = QUIC_FTBIT_PING | QUIC_FTBIT_PADDING;
+    packet_out->po_flags |= PO_BW_PROBE_FILL;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(packet_out->po_bwp_state);
+    assert(2 * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_sent);
+    assert(1 == t.send_ctl.sc_n_in_flight_retx);
+
+    ack_one(&t, 1, 3000, 3000, 1);
+    assert(PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_acked);
+    ack_one(&t, 2, 4000, 4000, 1);
+    assert(2 * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_acked);
+    expected_bw = BW_FROM_BYTES_AND_DELTA(2ULL * PACKET_SZ, 3000);
+    assert(BW_VALUE(&expected_bw)
+                == minmax_get(&t.send_ctl.sc_cc.bbr.bbr_max_bandwidth));
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+    cleanup_test(&t);
+}
+
+
+static void
 test_bbr_copilot_probe_rtt_app_limited (void)
 {
     /* Packets sent in PROBE_RTT, and until an ACK for a packet sent after
@@ -737,6 +775,8 @@ main (void)
     test_merged_ack_ecn();
     test_cc_algo_selection();
     test_bbr_copilot_app_data_timestamp();
+    test_bbr_copilot_datagram_sampling(0);
+    test_bbr_copilot_datagram_sampling(LSENG_SERVER);
     test_bbr_copilot_probe_rtt_app_limited();
     test_bbr_copilot_fack_lost_probe_fill();
     test_bbr_copilot_switch_preserves_state();
