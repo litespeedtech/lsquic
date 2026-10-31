@@ -212,6 +212,19 @@ static void
 send_ctl_expire (struct lsquic_send_ctl *, enum packnum_space,
                                                         enum expire_filter);
 
+
+static void
+send_ctl_expire_probe_fill (struct lsquic_send_ctl *, enum packnum_space,
+                                                        lsquic_time_t);
+
+
+static void
+send_ctl_drop_scheduled_probe_fill (struct lsquic_send_ctl *);
+
+
+static unsigned
+send_ctl_get_n_consec_rtos (struct lsquic_send_ctl *);
+
 static void
 set_retx_alarm (struct lsquic_send_ctl *, enum packnum_space, lsquic_time_t);
 
@@ -276,6 +289,19 @@ lsquic_send_ctl_have_unacked_stream_frames (const lsquic_send_ctl_t *ctl)
 }
 
 
+/*
+ * Probe-fill packets are never retransmitted, but they occupy the congestion
+ * window and must participate in pacing, PTO, and quiescence accounting.
+ */
+static int
+send_ctl_packet_needs_retx_tracking (const struct lsquic_send_ctl *ctl,
+                                     const struct lsquic_packet_out *packet_out)
+{
+    return (packet_out->po_frame_types & ctl->sc_retx_frames)
+                                || (packet_out->po_flags & PO_BW_PROBE_FILL);
+}
+
+
 static lsquic_packet_out_t *
 send_ctl_first_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
                                                         enum packnum_space pns)
@@ -284,7 +310,7 @@ send_ctl_first_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
 
     TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[pns], po_next)
         if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
-                && (packet_out->po_frame_types & ctl->sc_retx_frames))
+                && send_ctl_packet_needs_retx_tracking(ctl, packet_out))
             return packet_out;
 
     return NULL;
@@ -307,7 +333,8 @@ send_ctl_last_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                             lsquic_packets_tailq, po_next)
         if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
-                && (packet_out->po_frame_types & ctl->sc_retx_frames))
+                && (packet_out->po_frame_types & ctl->sc_retx_frames)
+                && !(packet_out->po_flags & PO_BW_PROBE_FILL))
             return packet_out;
     return NULL;
 }
@@ -378,6 +405,22 @@ retx_alarm_rings (enum alarm_id al_id, void *ctx, lsquic_time_t expiry, lsquic_t
     /* This is a callback -- before it is called, the alarm is unset */
     assert(!lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_INIT + pns));
 
+    /*
+     * Probe-fill packets need an alarm so that lost ACKs cannot leave them
+     * occupying the congestion window forever.  They are not retransmittable,
+     * however, and must not consume TLP attempts or cause an RTO.
+     */
+    if (ctl->sc_n_in_flight_fill)
+    {
+        packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
+        if (!packet_out)
+        {
+            send_ctl_expire_probe_fill(ctl, pns, now);
+            lsquic_send_ctl_sanity_check(ctl);
+            return;
+        }
+    }
+
     rm = get_retx_mode(ctl);
     LSQ_INFO("%s timeout, mode %s", lsquic_alid2str[al_id], retx2str[rm]);
 
@@ -402,6 +445,7 @@ retx_alarm_rings (enum alarm_id al_id, void *ctx, lsquic_time_t expiry, lsquic_t
             ctl->sc_last_rto_time = now;
             ++ctl->sc_n_consec_rtos;
             ctl->sc_next_limit = 2;
+            send_ctl_drop_scheduled_probe_fill(ctl);
             ctl->sc_ci->cci_timeout(CGP(ctl));
             if (lconn->cn_if->ci_retx_timeout)
                 lconn->cn_if->ci_retx_timeout(lconn);
@@ -450,6 +494,54 @@ send_ctl_pick_initial_packno (struct lsquic_send_ctl *ctl)
 }
 
 
+static const struct
+{
+    const struct cong_ctl_if    *ccd_if;
+    const char                  *ccd_name;
+} cong_ctl_descs[] =
+{
+    [LSQUIC_CC_CUBIC] = {
+        &lsquic_cong_cubic_if,
+        "Cubic",
+    },
+    [LSQUIC_CC_BBR] = {
+        &lsquic_cong_bbr_if,
+        "BBRv1",
+    },
+    [LSQUIC_CC_BBR_COPILOT] = {
+        &lsquic_cong_bbr_copilot_if,
+        "BBRv1-Copilot",
+    },
+};
+
+
+static void
+send_ctl_use_cc_algo (struct lsquic_send_ctl *ctl, enum lsquic_cc cc_algo)
+{
+    if (cc_algo == LSQUIC_CC_DEFAULT)
+        cc_algo = LSQUIC_DF_CC_ALGO;
+
+    /* All members of the sc_cc union share its address */
+    ctl->sc_ci = cong_ctl_descs[cc_algo].ccd_if;
+    ctl->sc_cong_ctl = &ctl->sc_cc;
+}
+
+
+enum lsquic_cc
+lsquic_send_ctl_get_cc_algo (const lsquic_send_ctl_t *ctl)
+{
+    enum lsquic_cc cc_algo;
+
+    for (cc_algo = LSQUIC_CC_CUBIC; cc_algo < sizeof(cong_ctl_descs)
+                                        / sizeof(cong_ctl_descs[0]); ++cc_algo)
+        if (cong_ctl_descs[cc_algo].ccd_if == ctl->sc_ci)
+            return cc_algo;
+
+    assert(0);
+    return LSQUIC_CC_DEFAULT;
+}
+
+
 void
 lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
           struct lsquic_engine_public *enpub, const struct ver_neg *ver_neg,
@@ -491,19 +583,7 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     if (!(ctl->sc_conn_pub->lconn->cn_flags & LSCONN_SERVER))
         ctl->sc_senhist.sh_last_sent = ctl->sc_cur_packno;
 #endif
-    switch (enpub->enp_settings.es_cc_algo)
-    {
-    case 1:
-        ctl->sc_ci = &lsquic_cong_cubic_if;
-        ctl->sc_cong_ctl = &ctl->sc_cc.cubic;
-        break;
-    case 0:
-    case 2:
-    default:
-        ctl->sc_ci = &lsquic_cong_bbr_if;
-        ctl->sc_cong_ctl = &ctl->sc_cc.bbr;
-        break;
-    }
+    send_ctl_use_cc_algo(ctl, enpub->enp_settings.es_cc_algo);
     if (enpub->enp_settings.es_enable_bw_sampler)
         ctl->sc_flags |= SC_KEEP_BW_SAMPLER;
     send_ctl_apply_bw_sampler_policy(ctl);
@@ -534,6 +614,50 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
     if (s == NULL || atoi(s))
         ctl->sc_flags |= SC_DYN_PTHRESH;
 #endif
+}
+
+
+static int
+is_cc_bbr (enum lsquic_cc cc)
+{
+    return cc == LSQUIC_CC_BBR || cc == LSQUIC_CC_BBR_COPILOT;
+}
+
+
+int
+lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
+{
+    enum lsquic_cc old_cc_algo;
+
+    if (cc_algo == LSQUIC_CC_DEFAULT)
+        cc_algo = LSQUIC_DF_CC_ALGO;
+    else if (cc_algo < LSQUIC_CC_CUBIC || cc_algo > LSQUIC_CC_LAST
+                                        || !cong_ctl_descs[cc_algo].ccd_if)
+        return -1;
+
+    old_cc_algo = lsquic_send_ctl_get_cc_algo(ctl);
+    if (old_cc_algo == cc_algo)
+    {
+        LSQ_INFO("cc is already %s: the switch is a noop",
+                                    cong_ctl_descs[cc_algo].ccd_name);
+        return 0;
+    }
+
+    if (is_cc_bbr(old_cc_algo) && is_cc_bbr(cc_algo))
+        send_ctl_use_cc_algo(ctl, cc_algo);
+    else
+    {
+        ctl->sc_ci->cci_cleanup(CGP(ctl));
+        memset(&ctl->sc_cc, 0, sizeof(ctl->sc_cc));
+        send_ctl_use_cc_algo(ctl, cc_algo);
+        send_ctl_apply_bw_sampler_policy(ctl);
+        ctl->sc_ci->cci_init(CGP(ctl), ctl->sc_conn_pub);
+    }
+
+    LSQ_INFO("switched congestion controller from %s to %s",
+                         cong_ctl_descs[old_cc_algo].ccd_name,
+                         cong_ctl_descs[cc_algo].ccd_name);
+    return 0;
 }
 
 
@@ -633,7 +757,8 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, now + delay);
 
     if (PNS_APP == pns
-            && ctl->sc_ci == &lsquic_cong_bbr_if
+            && (ctl->sc_ci == &lsquic_cong_bbr_if
+                || ctl->sc_ci == &lsquic_cong_bbr_copilot_if)
             && lsquic_alarmset_is_inited(ctl->sc_alset, AL_PACK_TOL)
             && !lsquic_alarmset_is_set(ctl->sc_alset, AL_PACK_TOL))
         lsquic_alarmset_set(ctl->sc_alset, AL_PACK_TOL, now + delay);
@@ -690,11 +815,12 @@ send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
     packet_out->po_flags |= PO_UNACKED;
     ctl->sc_bytes_unacked_all += packet_out_sent_sz(packet_out);
     ctl->sc_n_in_flight_all  += 1;
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if (send_ctl_packet_needs_retx_tracking(ctl, packet_out))
     {
         ctl->sc_bytes_unacked_retx += packet_out_total_sz(packet_out);
         ++ctl->sc_n_in_flight_retx;
     }
+    ctl->sc_n_in_flight_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
 }
 
 
@@ -710,11 +836,12 @@ send_ctl_unacked_remove (struct lsquic_send_ctl *ctl,
     assert(ctl->sc_bytes_unacked_all >= packet_sz);
     ctl->sc_bytes_unacked_all -= packet_sz;
     ctl->sc_n_in_flight_all  -= 1;
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if (send_ctl_packet_needs_retx_tracking(ctl, packet_out))
     {
         ctl->sc_bytes_unacked_retx -= packet_sz;
         --ctl->sc_n_in_flight_retx;
     }
+    ctl->sc_n_in_flight_fill -= !!(packet_out->po_flags & PO_BW_PROBE_FILL);
 }
 
 
@@ -877,7 +1004,7 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
         ctl->sc_ci->cci_sent(CGP(ctl), packet_out, ctl->sc_bytes_unacked_all,
                                             ctl->sc_flags & SC_APP_LIMITED);
     send_ctl_unacked_append(ctl, packet_out);
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if (send_ctl_packet_needs_retx_tracking(ctl, packet_out))
     {
         if (!lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_INIT + pns))
             set_retx_alarm(ctl, pns, packet_out->po_sent);
@@ -1166,7 +1293,8 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         lsquic_send_ctl_disable_ecn(ctl);
     }
 
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    if ((packet_out->po_frame_types & ctl->sc_retx_frames) &&
+            (packet_out->po_flags & PO_BW_PROBE_FILL) == 0)
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
@@ -1225,7 +1353,8 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                                 lsquic_packets_tailq, po_next)
     {
-        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
+        if (0 == (packet_out->po_flags
+                            & (PO_LOSS_REC|PO_POISON|PO_BW_PROBE_FILL))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out->po_packno;
     }
@@ -1284,9 +1413,13 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             continue;
         }
 
+        /* Probe-fill packets are never retransmitted.  In gQUIC, their PING
+         * frame is retransmittable, so they have to be excluded explicitly
+         * here and below to make gQUIC behave like IETF QUIC.
+         */
         if (largest_retx_packno
             && (packet_out->po_frame_types & ctl->sc_retx_frames)
-            && 0 == (packet_out->po_flags & PO_MTU_PROBE)
+            && 0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL))
             && largest_retx_packno <= ctl->sc_largest_acked_packno)
         {
             LSQ_DEBUG("loss by early retransmit detected, packet #%"PRIu64,
@@ -1306,7 +1439,8 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             LSQ_DEBUG("loss by sent time detected: packet #%"PRIu64,
                                                     packet_out->po_packno);
             if ((packet_out->po_frame_types & ctl->sc_retx_frames)
-                            && 0 == (packet_out->po_flags & PO_MTU_PROBE))
+                    && 0 == (packet_out->po_flags
+                                        & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
                 largest_lost_packno = packet_out->po_packno;
             else { /* don't count it as a loss */; }
             (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
@@ -1503,9 +1637,13 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             ack2ed[!!(packet_out->po_frame_types & (1 << QUIC_FRAME_ACK))]
                 = packet_out->po_ack2ed;
             do_rtt |= packet_out->po_packno == largest_acked(acki);
-            send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
+            /* BBR-Copilot's cci_ack checks po_bwp_state to tell whether
+             * this ACK advances the sampler's anchor, so cci_ack must be
+             * called before the sampler consumes it.
+             */
             ctl->sc_ci->cci_ack(CGP(ctl), packet_out, packet_sz, now,
                                                              app_limited);
+            send_ctl_process_bw_sample(ctl, packet_out, ack_recv_time);
             send_ctl_acked_loss_chain(ctl, packet_out, &next,
                                       largest_acked(acki), &do_rtt);
             send_ctl_destroy_packet(ctl, packet_out);
@@ -1926,9 +2064,44 @@ send_ctl_pacing_capped (const struct lsquic_send_ctl *ctl)
 
 void
 lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
-                                            const struct network_path *path)
+                                   const struct network_path *path,
+                                   lsquic_bw_probe_fill_f bw_probe_fill_cb,
+                                   void *conn_ctx)
 {
     const struct lsquic_packet_out *packet_out;
+    struct lsquic_packet_out *probe_packet;
+    unsigned num_probing = 0;
+
+    /*
+     * After an RTO, only a couple of packets may be sent until the peer
+     * acknowledges something.  Probe-fill packets must not use up that
+     * allowance.
+     */
+    if (bw_probe_fill_cb && 0 == send_ctl_get_n_consec_rtos(ctl)
+                        && ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl)))
+    {
+        while (ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl))
+               && lsquic_send_ctl_can_send(ctl))
+        {
+            probe_packet = bw_probe_fill_cb(conn_ctx, path);
+            if (!probe_packet)
+            {
+                LSQ_DEBUG("cannot get new packet to improve bandwidth estimation accuracy");
+                break;
+            }
+            probe_packet->po_flags |= PO_BW_PROBE_FILL;
+            lsquic_send_ctl_scheduled_one(ctl, probe_packet);
+            ++num_probing;
+        }
+
+        if (num_probing > 0)
+        {
+            LSQ_DEBUG("sent %u extra packet%s to probe bandwidth",
+                      num_probing, num_probing != 1 ? "s" : "");
+            if (!send_ctl_pacing_capped(ctl))
+                return;
+        }
+    }
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl, PNS_APP, path, 0);
     if ((packet_out && lsquic_packet_out_avail(packet_out) > 10)
@@ -1946,6 +2119,35 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
         LSQ_DEBUG("app-limited (pacing capped)");
         ctl->sc_flags |= SC_APP_LIMITED;
     }
+}
+
+
+static void
+send_ctl_expire_probe_fill (struct lsquic_send_ctl *ctl, enum packnum_space pns,
+                                                            lsquic_time_t now)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    lsquic_time_t delay, expiry, next_expiry;
+
+    delay = get_retx_delay(&ctl->sc_conn_pub->rtt_stats)
+                                + ctl->sc_conn_pub->max_peer_ack_usec;
+    next_expiry = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]);
+                                                packet_out; packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
+                && (packet_out->po_flags & PO_BW_PROBE_FILL))
+        {
+            expiry = packet_out->po_sent + delay;
+            if (expiry <= now)
+                send_ctl_handle_lost_packet(ctl, packet_out, &next);
+            else if (!next_expiry || expiry < next_expiry)
+                next_expiry = expiry;
+        }
+    }
+    if (next_expiry)
+        lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, next_expiry);
 }
 
 
@@ -2021,13 +2223,13 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
-    unsigned count, bytes;
+    unsigned count, bytes, n_fill;
     enum packnum_space pns;
 
 #if _MSC_VER
     prev_packno = 0;
 #endif
-    count = 0, bytes = 0;
+    count = 0, bytes = 0, n_fill = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
     {
         prev_packno_set = 0;
@@ -2044,11 +2246,13 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
             {
                 bytes += packet_out_sent_sz(packet_out);
                 ++count;
+                n_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
             }
         }
     }
     assert(count == ctl->sc_n_in_flight_all);
     assert(bytes == ctl->sc_bytes_unacked_all);
+    assert(n_fill == ctl->sc_n_in_flight_fill);
 
     count = 0, bytes = 0;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
@@ -2904,6 +3108,38 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *ctl)
 
     LSQ_DEBUG("dropped %u scheduled packet%s (%u left)", n, n != 1 ? "s" : "",
         ctl->sc_n_scheduled);
+}
+
+
+/* Probe-fill packets waiting in the scheduled queue are useless after an
+ * RTO: they carry no data and would eat into the post-RTO send allowance.
+ */
+static void
+send_ctl_drop_scheduled_probe_fill (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned n;
+
+    n = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_flags & PO_BW_PROBE_FILL)
+        {
+            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_destroy_chain(ctl, packet_out, NULL);
+            send_ctl_destroy_packet(ctl, packet_out);
+            ++n;
+        }
+    }
+
+    if (n)
+    {
+        lsquic_send_ctl_reset_packnos(ctl);
+        LSQ_DEBUG("dropped %u scheduled probe-fill packet%s (%u left)", n,
+                                        n != 1 ? "s" : "", ctl->sc_n_scheduled);
+    }
 }
 
 
@@ -3963,6 +4199,36 @@ lsquic_send_ctl_cancel_path_verification (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Drop scheduled probe-fill packets and mark the packets scheduled after
+ * them to be renumbered before they are sent.
+ */
+static void
+send_ctl_cancel_probe_fill (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out, *next;
+    unsigned n;
+
+    n = 0;
+    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets); packet_out;
+                                                            packet_out = next)
+    {
+        next = TAILQ_NEXT(packet_out, po_next);
+        if (packet_out->po_flags & PO_BW_PROBE_FILL)
+        {
+            send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
+            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_destroy_chain(ctl, packet_out, NULL);
+            send_ctl_destroy_packet(ctl, packet_out);
+            ++n;
+        }
+    }
+
+    if (n)
+        LSQ_DEBUG("cancelled %u scheduled probe-fill packet%s (%u left)", n,
+                                        n != 1 ? "s" : "", ctl->sc_n_scheduled);
+}
+
+
 /* Examine packets in scheduled and buffered queues and resize packets if
  * they exceed path MTU.
  */
@@ -3981,6 +4247,12 @@ lsquic_send_ctl_resize (struct lsquic_send_ctl *ctl)
     int path_ids /* assuming a reasonable number of paths */, q_idxs;
 
     assert(ctl->sc_flags & SC_IETF);
+
+    /* Probe-fill packets carry no frame records, so the resizer would only
+     * discard them.  Drop them up front: this way, a queue that has to be
+     * resized always contains at least one packet with frames to resize.
+     */
+    send_ctl_cancel_probe_fill(ctl);
 
     q_idxs = 0;
     for (q = queues; q < queues + sizeof(queues) / sizeof(queues[0]); ++q)
@@ -4321,6 +4593,15 @@ lsquic_send_ctl_0rtt_to_1rtt (struct lsquic_send_ctl *ctl)
     while (packet_out = TAILQ_FIRST(&ctl->sc_0rtt_stash), packet_out != NULL)
     {
         TAILQ_REMOVE(&ctl->sc_0rtt_stash, packet_out, po_next);
+        if (packet_out->po_flags & PO_BW_PROBE_FILL)
+        {
+            /* Probe fill packets carry nothing but PING and PADDING: putting
+             * them back on the wire has no value.
+             */
+            assert(packet_out->po_loss_chain == packet_out);
+            send_ctl_destroy_packet(ctl, packet_out);
+            continue;
+        }
         TAILQ_INSERT_TAIL(&ctl->sc_lost_packets, packet_out, po_next);
         packet_out->po_flags |= PO_LOST;
     }

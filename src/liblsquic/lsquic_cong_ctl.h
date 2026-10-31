@@ -70,6 +70,9 @@ struct cong_ctl_if
 
     void
     (*cci_cleanup) (void *cong_ctl);
+
+    int
+    (*cci_bw_probe_fill_wanted) (void *cong_ctl);
 };
 
 #endif
