@@ -54,6 +54,7 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Waqas Ahmed -- Spec compliance fix
     - Nikolas Gauder -- Bug fixes
     - Gaurav Jadhav -- Bug fixes
+    - litonglab -- BBR-Copilot congestion controller
 
 Thank you!
 
