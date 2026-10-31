@@ -1303,8 +1303,7 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         lsquic_send_ctl_disable_ecn(ctl);
     }
 
-    if ((packet_out->po_frame_types & ctl->sc_retx_frames) &&
-            (packet_out->po_flags & PO_BW_PROBE_FILL) == 0)
+    if (packet_out->po_frame_types & ctl->sc_retx_frames)
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
