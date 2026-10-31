@@ -445,6 +445,8 @@ enum lsquic_cc
      * compatible.  Value 3 used to select Adaptive congestion control,
      * which has been removed; it is not reused so that settings that
      * still use it are rejected rather than reinterpreted.
+     *
+     * TODO Convert to normal enum in next major release (5).
      */
     LSQUIC_CC_DEFAULT     = 0,  LSQUIC_CC_FIRST = LSQUIC_CC_DEFAULT,
     LSQUIC_CC_CUBIC       = 1,
