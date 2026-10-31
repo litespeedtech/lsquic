@@ -1648,6 +1648,7 @@ lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *enpub,
 }
 
 
+LSQUIC_TEST_WEAK
 void
 lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
                     lsquic_conn_t *conn, lsquic_time_t tick_time, unsigned why)

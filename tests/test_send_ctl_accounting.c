@@ -24,6 +24,7 @@
 #include "lsquic_parse.h"
 #include "lsquic_conn.h"
 #include "lsquic_engine_public.h"
+#include "lsquic_attq.h"
 #include "lsquic_cubic.h"
 #include "lsquic_pacer.h"
 #include "lsquic_senhist.h"
@@ -53,6 +54,30 @@ struct accounting_test
 };
 
 
+static struct
+{
+    struct lsquic_engine_public *ar_enpub;
+    struct lsquic_conn          *ar_conn;
+    lsquic_time_t               ar_time;
+    unsigned                    ar_why;
+    unsigned                    ar_count;
+} s_attq_request;
+
+
+/* Record the engine request without replacing send permission or pacing. */
+void
+lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
+                    struct lsquic_conn *conn, lsquic_time_t tick_time,
+                    unsigned why)
+{
+    s_attq_request.ar_enpub = enpub;
+    s_attq_request.ar_conn = conn;
+    s_attq_request.ar_time = tick_time;
+    s_attq_request.ar_why = why;
+    ++s_attq_request.ar_count;
+}
+
+
 static void
 set_dcid_len (struct network_path *path, unsigned len)
 {
@@ -72,6 +97,7 @@ static void
 init_test (struct accounting_test *t)
 {
     memset(t, 0, sizeof(*t));
+    memset(&s_attq_request, 0, sizeof(s_attq_request));
     LSCONN_INITIALIZE(&t->lconn);
     t->lconn.cn_flags |= LSCONN_IETF|LSCONN_HANDSHAKE_DONE;
     t->lconn.cn_version = LSQVER_I001;
@@ -408,6 +434,143 @@ test_bw_probe_fill_scheduling (void)
     lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 2000, &t.path,
                                             generate_bw_probe_fill, &t);
     assert(count == t.send_ctl.sc_n_scheduled);
+    cleanup_test(&t);
+}
+
+
+static void
+test_bw_probe_fill_paced (enum lsquic_cc cc_algo, int capped)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet_out;
+    const lsquic_time_t now = 3000000;
+    lsquic_time_t delay, wakeup;
+    unsigned data_bytes;
+    uint64_t cwnd;
+
+    init_test(&t);
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, cc_algo));
+    assert(t.send_ctl.sc_flags & SC_PACE);
+    /* Use exact deadlines, without the pacer's early-send tolerance. */
+    t.send_ctl.sc_pacer.pa_clock_granularity = 0;
+    if (cc_algo != LSQUIC_CC_CUBIC)
+    {
+        t.send_ctl.sc_cc.bbr.bbr_pacing_gain = 1.25;
+        t.send_ctl.sc_cc.bbr.bbr_pacing_rate =
+                BW_FROM_BYTES_AND_DELTA((uint64_t) t.path.np_pack_size, 1000);
+    }
+    if (capped)
+        t.send_ctl.sc_max_pacing_rate = t.path.np_pack_size * 500;
+    delay = capped ? 2000 : 1000;
+
+    /* Keep application data in flight so scheduling cannot replenish the
+     * burst tokens.  The congestion window has room for multiple probes.
+     */
+    packet_out = new_ping_packet(&t, 1);
+    packet_out->po_frame_types = QUIC_FTBIT_STREAM;
+    packet_out->po_sent = now;
+    data_bytes = lsquic_packet_out_total_sz(&t.lconn, packet_out);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    lsquic_pacer_disable_burst_tokens(&t.send_ctl.sc_pacer);
+    cwnd = t.send_ctl.sc_ci->cci_get_cwnd(t.send_ctl.sc_cong_ctl);
+    assert(data_bytes + 2 * t.path.np_pack_size < cwnd);
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, now);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, now, &t.path,
+                                            generate_bw_probe_fill, &t);
+    if (cc_algo != LSQUIC_CC_BBR_COPILOT)
+    {
+        assert(0 == t.send_ctl.sc_n_scheduled);
+        assert(0 == t.send_ctl.sc_bytes_scheduled);
+        assert(t.send_ctl.sc_flags & SC_APP_LIMITED);
+        assert(0 == s_attq_request.ar_count);
+        cleanup_test(&t);
+        return;
+    }
+
+    assert(1 == t.send_ctl.sc_n_scheduled);
+    assert(!!capped == !!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    assert(0 == t.send_ctl.sc_pacer.pa_burst_tokens);
+    assert(lsquic_send_ctl_pacer_blocked(&t.send_ctl));
+    assert(t.send_ctl.sc_bytes_scheduled + data_bytes < cwnd);
+    assert_scheduled_accounting(&t);
+    packet_out = TAILQ_FIRST(&t.send_ctl.sc_scheduled_packets);
+    assert((packet_out->po_flags & (PO_SCHED|PO_BW_PROBE_FILL))
+                                            == (PO_SCHED|PO_BW_PROBE_FILL));
+    assert((packet_out->po_frame_types & (QUIC_FTBIT_PING|QUIC_FTBIT_PADDING))
+                                    == (QUIC_FTBIT_PING|QUIC_FTBIT_PADDING));
+    assert(1 == packet_out->po_data[0]);
+    assert(0 == lsquic_packet_out_avail(packet_out));
+    assert(t.path.np_pack_size == packet_out->po_acct_sz);
+
+    wakeup = now + delay;
+    assert(1 == s_attq_request.ar_count);
+    assert(&t.enpub == s_attq_request.ar_enpub);
+    assert(&t.lconn == s_attq_request.ar_conn);
+    assert(AEW_PACER == s_attq_request.ar_why);
+    assert(wakeup == s_attq_request.ar_time);
+    assert(wakeup == lsquic_send_ctl_next_pacer_time(&t.send_ctl));
+
+    /* A second attempt in this tick neither fills nor requests another tick. */
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, now, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(1 == t.send_ctl.sc_n_scheduled);
+    assert(1 == s_attq_request.ar_count);
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    packet_out->po_sent = now;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(packet_out->po_bwp_state);
+    assert(0 == (packet_out->po_flags & PO_SCHED));
+    assert(1 == t.send_ctl.sc_n_in_flight_fill);
+    assert(2 == t.send_ctl.sc_n_in_flight_all);
+    assert(2 == t.send_ctl.sc_n_in_flight_retx);
+    assert(data_bytes + t.path.np_pack_size == t.send_ctl.sc_bytes_unacked_all);
+    assert(t.send_ctl.sc_bytes_unacked_all == t.send_ctl.sc_bytes_unacked_retx);
+    assert(0 == t.send_ctl.sc_bytes_scheduled);
+    lsquic_send_ctl_tick_out(&t.send_ctl);
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, wakeup - 1);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, wakeup - 1, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(0 == t.send_ctl.sc_n_scheduled);
+    assert(0 == t.send_ctl.sc_bytes_scheduled);
+    assert(2 == s_attq_request.ar_count);
+    assert(wakeup == s_attq_request.ar_time);
+    assert(!!capped == !!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    lsquic_send_ctl_tick_out(&t.send_ctl);
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, wakeup);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, wakeup, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(1 == t.send_ctl.sc_n_scheduled);
+    assert_scheduled_accounting(&t);
+    assert(!!capped == !!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    assert(3 == s_attq_request.ar_count);
+    assert(wakeup + delay == s_attq_request.ar_time);
+    assert(wakeup + delay == lsquic_send_ctl_next_pacer_time(&t.send_ctl));
+    lsquic_send_ctl_tick_out(&t.send_ctl);
+    cleanup_test(&t);
+}
+
+
+static void
+test_bw_probe_fill_idle (lsquic_time_t last_app_data_sent, int expect_fill)
+{
+    struct accounting_test t;
+    const lsquic_time_t now = 3000000;
+
+    init_test(&t);
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    t.send_ctl.sc_cc.bbr.bbr_pacing_gain = 1.25;
+    t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent = last_app_data_sent;
+    lsquic_send_ctl_tick_in(&t.send_ctl, now);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, now, &t.path,
+                                            generate_bw_probe_fill, &t);
+    assert(expect_fill == (t.send_ctl.sc_n_scheduled > 0));
+    assert(!expect_fill == !!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    assert_scheduled_accounting(&t);
     cleanup_test(&t);
 }
 
@@ -910,6 +1073,17 @@ main (void)
     test_repackno_chops_regen_bytes();
     test_rejects_packet_with_insufficient_payload();
     test_bw_probe_fill_scheduling();
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR_COPILOT, 0);
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR_COPILOT, 1);
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR, 0);
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR, 1);
+    test_bw_probe_fill_paced(LSQUIC_CC_CUBIC, 0);
+    test_bw_probe_fill_paced(LSQUIC_CC_CUBIC, 1);
+    test_bw_probe_fill_idle(0, 0);
+    test_bw_probe_fill_idle(1999999, 0);
+    test_bw_probe_fill_idle(2000000, 1);
+    test_bw_probe_fill_idle(3000000, 1);
+    test_bw_probe_fill_idle(3000001, 1);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR, 0);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR, 1);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_CUBIC, 0);
