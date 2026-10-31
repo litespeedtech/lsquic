@@ -171,11 +171,23 @@ cbr_client_on_read (struct lsquic_stream *stream,
         stream_ctx->bytes_read += nr;
         if (stream_ctx->out_fd >= 0)
         {
-            ssize_t nw = write(stream_ctx->out_fd, buf, nr);
-            if (nw < 0)
+            size_t off = 0;
+            ssize_t nw;
+
+            while (off < (size_t) nr)
             {
-                LSQ_ERROR("file write error: %s", strerror(errno));
-                exit(EXIT_FAILURE);
+                nw = write(stream_ctx->out_fd, buf + off, nr - off);
+                if (nw > 0)
+                    off += nw;
+                else if (nw < 0 && errno == EINTR)
+                    continue;
+                else
+                {
+                    if (nw == 0)
+                        errno = EIO;
+                    LSQ_ERROR("file write error: %s", strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
             }
         }
 

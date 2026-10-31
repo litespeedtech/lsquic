@@ -126,6 +126,16 @@ FOREACH(TEST_NAME ${TESTS})
     ADD_TEST(${TEST_NAME} test_${TEST_NAME})
 ENDFOREACH()
 
+IF(LSQUIC_BIN)
+    ADD_EXECUTABLE(test_cbr_client test_cbr_client.c ../bin/prog.c
+                                    ../bin/test_common.c ../bin/test_cert.c)
+    TARGET_INCLUDE_DIRECTORIES(test_cbr_client PRIVATE ${PROJECT_BINARY_DIR}/bin
+                                                    ${EVENT_INCLUDE_DIR})
+    GET_TARGET_PROPERTY(CBR_CLIENT_LIBRARIES cbr_client LINK_LIBRARIES)
+    TARGET_LINK_LIBRARIES(test_cbr_client ${CBR_CLIENT_LIBRARIES} ${LIB_FLAGS})
+    ADD_TEST(cbr_client test_cbr_client)
+ENDIF()
+
 ADD_EXECUTABLE(test_stream test_stream.c ${ADDL_SOURCES})
 TARGET_LINK_LIBRARIES(test_stream ${LIBS} ${LIB_FLAGS})
 IF(MSVC)
