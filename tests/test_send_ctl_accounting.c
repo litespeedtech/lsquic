@@ -413,6 +413,89 @@ test_bw_probe_fill_scheduling (void)
 
 
 static void
+test_switch_away_cancels_bw_probe_fill (enum lsquic_cc cc_algo, int with_data)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet_out, *in_flight, *before, *after;
+    lsquic_packno_t next_packno;
+    unsigned expected_bytes, n;
+
+    init_test(&t);
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    in_flight = generate_bw_probe_fill(&t, &t.path);
+    in_flight->po_flags |= PO_BW_PROBE_FILL;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, in_flight);
+    assert(in_flight == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    in_flight->po_sent = 1000;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, in_flight));
+    next_packno = in_flight->po_packno + 1;
+
+    before = NULL;
+    after = NULL;
+    expected_bytes = 0;
+    for (n = 0; n < 2; ++n)
+    {
+        if (with_data)
+        {
+            packet_out = schedule_ping_packet(&t, 1);
+            expected_bytes += packet_out->po_acct_sz;
+            if (n == 0)
+                before = packet_out;
+            else
+                after = packet_out;
+        }
+        packet_out = generate_bw_probe_fill(&t, &t.path);
+        packet_out->po_flags |= PO_BW_PROBE_FILL;
+        lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    }
+
+    /* Invalid selections and a no-op must leave scheduled probes alone. */
+    n = t.send_ctl.sc_n_scheduled;
+    assert(-1 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, (enum lsquic_cc) 3));
+    assert(n == t.send_ctl.sc_n_scheduled);
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                            LSQUIC_CC_BBR_COPILOT));
+    assert(n == t.send_ctl.sc_n_scheduled);
+
+    assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, cc_algo));
+    assert(2U * with_data == t.send_ctl.sc_n_scheduled);
+    assert(expected_bytes == t.send_ctl.sc_bytes_scheduled);
+    assert_scheduled_accounting(&t);
+    assert(in_flight == TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    assert(1 == t.send_ctl.sc_n_in_flight_fill);
+
+    if (with_data)
+    {
+        /* The packet after the removed probe must be renumbered, and both
+         * ordinary packets must still be sent in their original order.
+         */
+        assert(after->po_flags & PO_REPACKNO);
+        packet_out = lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL);
+        assert(packet_out == before);
+        assert(next_packno++ == packet_out->po_packno);
+        packet_out->po_sent = 2000;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        packet_out = lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL);
+        assert(packet_out == after);
+        assert(next_packno++ == packet_out->po_packno);
+        packet_out->po_sent = 3000;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    }
+    assert(NULL == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(0 == t.send_ctl.sc_bytes_scheduled);
+
+    /* Allocation after cancellation must continue the packet-number cursor,
+     * including when cancellation left the scheduled queue empty.
+     */
+    packet_out = schedule_ping_packet(&t, 1);
+    assert(next_packno == packet_out->po_packno);
+    cleanup_test(&t);
+}
+
+
+static void
 test_lost_bw_probe_fill_is_not_rescheduled (void)
 {
     struct accounting_test t;
@@ -827,6 +910,12 @@ main (void)
     test_repackno_chops_regen_bytes();
     test_rejects_packet_with_insufficient_payload();
     test_bw_probe_fill_scheduling();
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR, 0);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR, 1);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_CUBIC, 0);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_CUBIC, 1);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_DEFAULT, 0);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_DEFAULT, 1);
     test_lost_bw_probe_fill_is_not_rescheduled();
     test_bw_probe_fill_delayed_ack(IQUIC_FRAME_RETX_MASK, 0, 0);
     test_bw_probe_fill_delayed_ack(IQUIC_FRAME_RETX_MASK, 0, 1);

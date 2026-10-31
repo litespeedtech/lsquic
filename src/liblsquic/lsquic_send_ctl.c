@@ -222,6 +222,10 @@ static void
 send_ctl_drop_scheduled_probe_fill (struct lsquic_send_ctl *);
 
 
+static void
+send_ctl_cancel_probe_fill (struct lsquic_send_ctl *);
+
+
 static unsigned
 send_ctl_get_n_consec_rtos (struct lsquic_send_ctl *);
 
@@ -645,6 +649,9 @@ lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
                                     cong_ctl_descs[cc_algo].ccd_name);
         return 0;
     }
+
+    if (old_cc_algo == LSQUIC_CC_BBR_COPILOT)
+        send_ctl_cancel_probe_fill(ctl);
 
     if (is_cc_bbr(old_cc_algo) && is_cc_bbr(cc_algo))
         send_ctl_use_cc_algo(ctl, cc_algo);

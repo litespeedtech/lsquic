@@ -3103,6 +3103,9 @@ Lost fill probes are discarded like MTU probes: their in-flight accounting
 and sampler state are released without recording a congestion loss or
 triggering congestion recovery.  They are never retransmitted.
 
+Switching away from BBR-Copilot cancels any scheduled fill probes.  Probes
+already sent remain tracked until they are acknowledged or discarded.
+
 Buffered Packet Handling
 ========================
 
