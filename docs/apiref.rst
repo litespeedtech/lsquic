@@ -67,6 +67,15 @@ types are included in a single enum:
         Special value indicating the number of versions in the enum.  It
         may be used as argument to :func:`lsquic_engine_connect()`.
 
+.. type:: enum lsquic_cc
+
+    Congestion control algorithm.
+
+    .. member:: LSQUIC_CC_DEFAULT
+    .. member:: LSQUIC_CC_CUBIC
+    .. member:: LSQUIC_CC_BBR
+    .. member:: LSQUIC_CC_BBR_COPILOT
+
 Several version lists (as bitmasks) are defined in :file:`lsquic.h`:
 
 .. macro:: LSQUIC_SUPPORTED_VERSIONS
@@ -727,16 +736,18 @@ settings structure:
 
        IETF QUIC only.
 
-    .. member:: unsigned        es_cc_algo
+    .. member:: enum lsquic_cc  es_cc_algo
 
        Congestion control algorithm to use.
 
        - 0:  Use default (:macro:`LSQUIC_DF_CC_ALGO`)
        - 1:  Cubic
        - 2:  BBRv1
+       - 4:  BBRv1-Copilot.
 
        The default is BBRv1.  The selected algorithm is used for the
-       lifetime of the connection.  Values greater than 2 are invalid.
+       lifetime of the connection, unless it is changed using
+       :member:`LSQCP_CC_ALGO`.  Other values are invalid.
 
     .. member:: int             es_enable_bw_sampler
 
@@ -2232,6 +2243,19 @@ available through engine settings.
 
         **Note:** :func:`lsquic_conn_get_info()` enables the sampler if needed.
 
+    .. member:: LSQCP_CC_ALGO
+
+        Select the congestion control algorithm for this connection.
+
+        **Type:** ``enum lsquic_cc``
+
+        **Default:** inherited from :member:`lsquic_engine_settings.es_cc_algo`
+
+        The values are the same as for ``es_cc_algo``.
+
+        When read with :func:`lsquic_conn_get_param()`, this parameter
+        reflects the congestion controller that is currently in use.
+
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
     Set a connection parameter.
@@ -2272,6 +2296,14 @@ available through engine settings.
         lsquic_conn_set_param(conn, LSQCP_ENABLE_BW_SAMPLER,
                               &on, sizeof(on));
 
+    **Example - Selecting BBR-Copilot for this connection:**
+
+    ::
+
+        enum lsquic_cc cc_algo = LSQUIC_CC_BBR_COPILOT;
+        lsquic_conn_set_param(conn, LSQCP_CC_ALGO,
+                              &cc_algo, sizeof(cc_algo));
+
     **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
     via :member:`lsquic_engine_settings.es_pace_packets` for this parameter
     to have any effect.
@@ -2287,6 +2319,9 @@ available through engine settings.
     :return: 0 on success, -1 on error
 
     This function retrieves the current value of a connection parameter.
+
+    **Note:** :member:`LSQCP_CC_ALGO` returns the congestion controller
+    that is currently in use.
 
     **Example - Reading current pacing rate:**
 

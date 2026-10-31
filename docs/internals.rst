@@ -3077,15 +3077,34 @@ describing gQUIC, could be looked to for reference.
 Congestions Controllers
 =======================
 
-The Send Controller has a choice of two congestion controllers: Cubic
-and BBRv1. The latter was translated from Chromium into C.
+The Send Controller has a choice of three congestion controllers: Cubic,
+BBRv1, and BBR-Copilot.  BBRv1 was translated from Chromium into C.
 
 BBRv1 is the default.  The engine setting ``es_cc_algo`` selects the
 controller when the Send Controller is initialized: 0 uses the default,
-1 selects Cubic, and 2 selects BBRv1.  Only the selected controller is
-initialized, and its state occupies a union in the Send Controller.
-The controller remains selected for the lifetime of the connection,
-regardless of RTT.
+1 selects Cubic, 2 selects BBRv1, and 4 selects BBR-Copilot.  Only the
+selected controller is initialized, and its state occupies a union in
+the Send Controller.  The controller remains selected for the lifetime
+of the connection, regardless of RTT, unless it is changed using
+``LSQCP_CC_ALGO``.
+
+BBR-Copilot is a BBRv1 variant that must be selected explicitly.  When
+it probes for bandwidth but the
+application is idle, the Send Controller fills the congestion window
+with padded PING packets marked ``PO_BW_PROBE_FILL``.  At the end of a
+full connection tick, ``lsquic_send_ctl_maybe_app_limited()`` asks
+``cci_bw_probe_fill_wanted()`` and, while sending is allowed, obtains
+fill packets from a connection callback.  The callback is ``NULL``
+before the handshake is done or while the connection is closing.  Only
+BBR-Copilot wants fill, and only while its pacing gain is above 1.0 and
+STREAM or DATAGRAM data was sent within the last second.
+
+Lost fill probes are discarded like MTU probes: their in-flight accounting
+and sampler state are released without recording a congestion loss or
+triggering congestion recovery.  They are never retransmitted.
+
+Switching away from BBR-Copilot cancels any scheduled fill probes.  Probes
+already sent remain tracked until they are acknowledged or discarded.
 
 Buffered Packet Handling
 ========================
