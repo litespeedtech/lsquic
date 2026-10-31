@@ -30,6 +30,9 @@ bandwidth but the application has no data to send, BBR-Copilot sends padded,
 ack-eliciting packets to complete the probe and obtain a useful bandwidth
 sample.
 
+BBR-Copilot stops generating fill probes after one second without sending
+application data.  Padding and keepalives do not extend this interval.
+
 This behavior can improve BBR's bandwidth estimate when application-limited
 periods would otherwise interrupt active probing.  It also deliberately sends
 data that the application did not request, so applications should account for
