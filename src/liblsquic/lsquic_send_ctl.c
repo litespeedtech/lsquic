@@ -2149,8 +2149,7 @@ send_ctl_expire_probe_fill (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                 packet_out; packet_out = next)
     {
         next = TAILQ_NEXT(packet_out, po_next);
-        if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
-                && (packet_out->po_flags & PO_BW_PROBE_FILL))
+        if (packet_out->po_flags & PO_BW_PROBE_FILL)
         {
             expiry = packet_out->po_sent + delay;
             if (expiry <= now)
