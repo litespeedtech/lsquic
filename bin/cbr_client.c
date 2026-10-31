@@ -48,6 +48,10 @@ struct cbr_client_ctx
     struct prog        *prog;
     unsigned            log_interval;
     const char         *output_path;
+    enum {
+        CBR_FIN_RECEIVED = 1 << 0,
+        CBR_FAILED       = 1 << 1,
+    }                   ccc_flags;
 };
 
 
@@ -124,7 +128,9 @@ cbr_client_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
 
     if (!stream)
     {
-        LSQ_NOTICE("null stream");
+        LSQ_ERROR("could not create stream");
+        client_ctx->ccc_flags |= CBR_FAILED;
+        prog_stop(client_ctx->prog);
         return NULL;
     }
 
@@ -154,6 +160,21 @@ cbr_client_on_new_stream (void *stream_if_ctx, struct lsquic_stream *stream)
     lsquic_stream_wantread(stream, 1);
     lsquic_stream_wantwrite(stream, 1);
     return stream_ctx;
+}
+
+
+static void
+maybe_close_output (struct lsquic_stream_ctx *stream_ctx)
+{
+    if (stream_ctx->out_fd >= 0)
+    {
+        if (0 != close(stream_ctx->out_fd))
+        {
+            LSQ_ERROR("file close error: %s", strerror(errno));
+            stream_ctx->client_ctx->ccc_flags |= CBR_FAILED;
+        }
+        stream_ctx->out_fd = -1;
+    }
 }
 
 
@@ -210,20 +231,19 @@ cbr_client_on_read (struct lsquic_stream *stream,
         LSQ_NOTICE("stream FIN received, total bytes read: %"PRIu64,
                    stream_ctx->bytes_read);
 
-        if (stream_ctx->out_fd >= 0)
-        {
-            close(stream_ctx->out_fd);
-            stream_ctx->out_fd = -1;
-        }
+        maybe_close_output(stream_ctx);
+        stream_ctx->client_ctx->ccc_flags |= CBR_FIN_RECEIVED;
 
         lsquic_stream_shutdown(stream, 0);
         lsquic_stream_shutdown(stream, 1);
         lsquic_stream_wantread(stream, 0);
     }
-    else
+    else if (errno != EWOULDBLOCK && errno != EAGAIN)
     {
         LSQ_WARN("read error: %s", strerror(errno));
+        stream_ctx->client_ctx->ccc_flags |= CBR_FAILED;
         lsquic_stream_wantread(stream, 0);
+        lsquic_conn_close(lsquic_stream_conn(stream));
     }
 }
 
@@ -236,11 +256,20 @@ cbr_client_on_write (struct lsquic_stream *stream,
     ssize_t nw = lsquic_stream_write(stream, &announce_byte, 1);
     if (nw == 1)
     {
-        lsquic_stream_flush(stream);
+        if (0 != lsquic_stream_flush(stream))
+        {
+            LSQ_WARN("announce flush error: %s", strerror(errno));
+            stream_ctx->client_ctx->ccc_flags |= CBR_FAILED;
+            lsquic_conn_close(lsquic_stream_conn(stream));
+        }
         lsquic_stream_wantwrite(stream, 0);
     }
-    else if (nw < 0 && errno != EAGAIN)
+    else if (nw < 0 && errno != EWOULDBLOCK && errno != EAGAIN)
+    {
         LSQ_WARN("announce write error: %s", strerror(errno));
+        stream_ctx->client_ctx->ccc_flags |= CBR_FAILED;
+        lsquic_conn_close(lsquic_stream_conn(stream));
+    }
 }
 
 
@@ -250,8 +279,7 @@ cbr_client_on_close (struct lsquic_stream *stream,
 {
     LSQ_DEBUG("stream closed, total bytes: %"PRIu64, stream_ctx->bytes_read);
 
-    if (stream_ctx->out_fd >= 0)
-        close(stream_ctx->out_fd);
+    maybe_close_output(stream_ctx);
     lsquic_conn_close(lsquic_stream_conn(stream));
     free(stream_ctx);
 }
@@ -340,5 +368,12 @@ main (int argc, char **argv)
     s = prog_run(&prog);
     prog_cleanup(&prog);
 
-    exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
+    if (0 == s && (client_ctx.ccc_flags & CBR_FIN_RECEIVED)
+               && !(client_ctx.ccc_flags & CBR_FAILED))
+        exit(EXIT_SUCCESS);
+    else
+    {
+        LSQ_ERROR("transfer did not complete successfully");
+        exit(EXIT_FAILURE);
+    }
 }

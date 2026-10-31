@@ -94,6 +94,13 @@ receives it and can save the result.  Both use the ``cbr`` ALPN and a single
 QUIC stream.  These examples report connection statistics and aggregate
 transfer progress; they do not measure per-frame latency.
 
+The client exits successfully only after receiving the stream FIN without
+fatal I/O errors, including errors closing the output file.  A connection
+that closes before FIN results in a failure exit status.  Partial output
+is retained on failure.  The protocol does not communicate the expected
+file length, so a clean FIN alone cannot detect a server that sends less
+data than intended; use ``cmp`` to verify the complete file.
+
 Build and Loopback Transfer
 ---------------------------
 
