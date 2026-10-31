@@ -1112,27 +1112,6 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
     calculate_pacing_rate(bbr);
     calculate_cwnd(bbr, bytes_acked, excess_acked);
     calculate_recovery_window(bbr, bytes_acked, bytes_lost, in_flight);
-
-    LSQ_DEBUG("BBR: mode=%s pacing_rate=%"PRIu64" bps bw=%"PRIu64" bps"
-              " pacing_gain=%.3f cwnd=%"PRIu64" cwnd_gain=%.3f"
-              " srtt=%"PRIu64" us min_rtt=%"PRIu64" us"
-              " round=%"PRIu64" cycle_off=%u in_flight=%"PRIu64
-              " acked=%"PRIu64" lost=%"PRIu64" recovery=%d full_bw=%s",
-        mode2str[bbr->bbr_mode],
-        BW_VALUE(&bbr->bbr_pacing_rate),
-        minmax_get(&bbr->bbr_max_bandwidth),
-        bbr->bbr_pacing_gain,
-        lsquic_bbr_get_cwnd(cong_ctl),
-        bbr->bbr_cwnd_gain,
-        lsquic_rtt_stats_get_srtt(bbr->bbr_rtt_stats),
-        bbr->bbr_min_rtt,
-        bbr->bbr_round_count,
-        bbr->bbr_cycle_current_offset,
-        in_flight,
-        bytes_acked,
-        bytes_lost,
-        (int) bbr->bbr_recovery_state,
-        (bbr->bbr_flags & BBR_FLAG_IS_AT_FULL_BANDWIDTH) ? "yes" : "no");
 }
 
 
