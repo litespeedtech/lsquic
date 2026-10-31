@@ -412,8 +412,11 @@ retx_alarm_rings (enum alarm_id al_id, void *ctx, lsquic_time_t expiry, lsquic_t
      */
     if (ctl->sc_n_in_flight_fill)
     {
-        packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
-        if (!packet_out)
+        /* The counters cover all packet number spaces.  When ordinary
+         * retransmittable packets remain, check this space separately.
+         */
+        if (ctl->sc_n_in_flight_retx == ctl->sc_n_in_flight_fill
+                    || !send_ctl_last_unacked_retx_packet(ctl, pns))
         {
             send_ctl_expire_probe_fill(ctl, pns, now);
             lsquic_send_ctl_sanity_check(ctl);
@@ -2127,11 +2130,10 @@ send_ctl_expire_probe_fill (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                             lsquic_time_t now)
 {
     struct lsquic_packet_out *packet_out, *next;
-    lsquic_time_t delay, expiry, next_expiry;
+    lsquic_time_t delay, expiry;
 
     delay = get_retx_delay(&ctl->sc_conn_pub->rtt_stats)
                                 + ctl->sc_conn_pub->max_peer_ack_usec;
-    next_expiry = 0;
     for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns]);
                                                 packet_out; packet_out = next)
     {
@@ -2142,12 +2144,14 @@ send_ctl_expire_probe_fill (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             expiry = packet_out->po_sent + delay;
             if (expiry <= now)
                 send_ctl_handle_lost_packet(ctl, packet_out, &next);
-            else if (!next_expiry || expiry < next_expiry)
-                next_expiry = expiry;
+            else
+            {
+                /* Packets are in send order and use the same delay. */
+                lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, expiry);
+                break;
+            }
         }
     }
-    if (next_expiry)
-        lsquic_alarmset_set(ctl->sc_alset, AL_RETX_INIT + pns, next_expiry);
 }
 
 
