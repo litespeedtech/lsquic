@@ -84,6 +84,10 @@ Passing ``LSQUIC_CC_DEFAULT`` selects the library default.  The current
 controller can be read using :func:`lsquic_conn_get_param()` with
 ``LSQCP_CC_ALGO``.
 
+Switching between Cubic and either BBR variant initializes fresh controller
+state.  After switching from Cubic to BBR-Copilot, fill probing waits until
+new application data is sent.
+
 Reference
 =========
 
