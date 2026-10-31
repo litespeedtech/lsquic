@@ -594,27 +594,27 @@ test_bbr_copilot_probe_rtt_app_limited (void)
 
 
 static void
-test_bbr_copilot_fack_lost_probe_fill (void)
+test_bbr_copilot_fack_lost_probe_fill (enum lsquic_version version,
+                                      unsigned flags, unsigned with_data)
 {
     /* gQUIC PING is retransmittable, so only PO_BW_PROBE_FILL keeps a lost
      * probe-fill packet from being rescheduled.  A data packet lost in the
-     * same ACK must still be rescheduled, and both losses must be counted.
+     * same ACK must still be rescheduled and trigger congestion recovery.
      */
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out, *probe_out, *data_out;
     lsquic_packno_t packno;
-    int saw_data_loss_rec;
+    unsigned saw_data_loss_rec;
 
-    init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, LSQVER_043, 0);
+    init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, version, flags);
     assert(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT);
-    assert(t.send_ctl.sc_retx_frames & QUIC_FTBIT_PING);
 
     probe_out = NULL;
     data_out = NULL;
     for (packno = 1; packno <= 8; ++packno)
     {
         packet_out = new_packet(&t, packno, 1000 + packno * 10);
-        if (2 == packno)
+        if (2 == packno || (3 == packno && !with_data))
         {
             packet_out->po_frame_types = QUIC_FTBIT_PING|QUIC_FTBIT_PADDING;
             packet_out->po_flags |= PO_BW_PROBE_FILL;
@@ -627,7 +627,7 @@ test_bbr_copilot_fack_lost_probe_fill (void)
     }
     assert(8 == t.send_ctl.sc_n_in_flight_all);
     assert(8 == t.send_ctl.sc_n_in_flight_retx);
-    assert(1 == t.send_ctl.sc_n_in_flight_fill);
+    assert(2 - with_data == t.send_ctl.sc_n_in_flight_fill);
     assert(8 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(8 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
 
@@ -635,18 +635,36 @@ test_bbr_copilot_fack_lost_probe_fill (void)
     assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
     assert(7 == t.send_ctl.sc_n_in_flight_all);
     assert(7 == t.send_ctl.sc_n_in_flight_retx);
-    assert(1 == t.send_ctl.sc_n_in_flight_fill);
+    assert(2 - with_data == t.send_ctl.sc_n_in_flight_fill);
     assert(7 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(7 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
 
     /* Packets 2 and 3 fall behind the reordering threshold.  Packet 8 is
-     * still outstanding, so packets 4 through 6 are not lost early.
+     * still outstanding, so packets 4 through 6 are not lost early.  When
+     * with_data is false, both lost packets are fill probes.
      */
     ack_one(&t, 7, 2100, 2100, 1);
 
-    assert(TAILQ_FIRST(&t.send_ctl.sc_lost_packets) == data_out);
-    assert(NULL == TAILQ_NEXT(data_out, po_next));
-    assert(data_out->po_flags & PO_LOST);
+    if (with_data)
+    {
+        assert(TAILQ_FIRST(&t.send_ctl.sc_lost_packets) == data_out);
+        assert(NULL == TAILQ_NEXT(data_out, po_next));
+        assert(data_out->po_flags & PO_LOST);
+        assert(t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+        assert(PACKET_SZ == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
+        assert(BBR_RS_CONSERVATION
+                            == t.send_ctl.sc_cc.bbr.bbr_recovery_state);
+        assert(8 == t.send_ctl.sc_largest_sent_at_cutback);
+    }
+    else
+    {
+        assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+        assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+        assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
+        assert(BBR_RS_NOT_IN_RECOVERY
+                            == t.send_ctl.sc_cc.bbr.bbr_recovery_state);
+        assert(0 == t.send_ctl.sc_largest_sent_at_cutback);
+    }
 
     saw_data_loss_rec = 0;
     TAILQ_FOREACH(packet_out, &t.send_ctl.sc_unacked_packets[PNS_APP],
@@ -660,21 +678,69 @@ test_bbr_copilot_fack_lost_probe_fill (void)
             saw_data_loss_rec = 1;
         }
     }
-    assert(saw_data_loss_rec);
+    assert(with_data == saw_data_loss_rec);
 
     assert(4 == t.send_ctl.sc_n_in_flight_all);
     assert(4 == t.send_ctl.sc_n_in_flight_retx);
     assert(0 == t.send_ctl.sc_n_in_flight_fill);
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
     assert(4 * PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
-    assert(2 * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    assert(with_data * PACKET_SZ == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    assert(with_data == t.send_ctl.sc_loss_count);
+    assert(4 == lsquic_bw_sampler_entry_count(&t.send_ctl.sc_bw_sampler));
 #if LSQUIC_CONN_STATS
-    assert(2 == t.stats.out.lost_packets);
+    assert(with_data == t.stats.out.lost_packets);
 #endif
 
     cleanup_test(&t);
 }
 
+
+
+static void
+test_bbr_copilot_sent_time_lost_probe_fill (enum lsquic_version version,
+                                                           unsigned flags)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out;
+    lsquic_packno_t packno;
+
+    init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, version, flags);
+    for (packno = 1; packno <= 3; ++packno)
+    {
+        if (packno == 1)
+            packet_out = new_packet(&t, packno, 1000);
+        else
+            packet_out = new_packet(&t, packno, 20000 + packno * 10);
+        packet_out->po_frame_types = QUIC_FTBIT_PING|QUIC_FTBIT_PADDING;
+        packet_out->po_flags |= PO_BW_PROBE_FILL;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    }
+
+    /* The ACK is too close in packet number to cause FACK loss, but the
+     * first probe was sent more than an RTT before the acknowledged one.
+     */
+    ack_one(&t, 3, 21000, 21000, 1);
+    assert(2 == TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP])->po_packno);
+    assert(1 == t.send_ctl.sc_n_in_flight_all);
+    assert(1 == t.send_ctl.sc_n_in_flight_retx);
+    assert(1 == t.send_ctl.sc_n_in_flight_fill);
+    assert(PACKET_SZ == t.send_ctl.sc_bytes_unacked_all);
+    assert(PACKET_SZ == t.send_ctl.sc_bytes_unacked_retx);
+    assert(1 == lsquic_bw_sampler_entry_count(&t.send_ctl.sc_bw_sampler));
+    assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    assert(0 == t.send_ctl.sc_loss_count);
+    assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+    assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
+    assert(BBR_RS_NOT_IN_RECOVERY
+                            == t.send_ctl.sc_cc.bbr.bbr_recovery_state);
+    assert(0 == t.send_ctl.sc_largest_sent_at_cutback);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+#if LSQUIC_CONN_STATS
+    assert(0 == t.stats.out.lost_packets);
+#endif
+    cleanup_test(&t);
+}
 
 
 static void
@@ -778,7 +844,13 @@ main (void)
     test_bbr_copilot_datagram_sampling(0);
     test_bbr_copilot_datagram_sampling(LSENG_SERVER);
     test_bbr_copilot_probe_rtt_app_limited();
-    test_bbr_copilot_fack_lost_probe_fill();
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+        for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
+        {
+            test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 0);
+            test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 1);
+            test_bbr_copilot_sent_time_lost_probe_fill(versions[i], flags[j]);
+        }
     test_bbr_copilot_switch_preserves_state();
     test_cc_algo_family_switch();
     test_cc_algo_default();

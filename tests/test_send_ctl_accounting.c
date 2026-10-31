@@ -464,7 +464,7 @@ test_lost_bw_probe_fill_is_not_rescheduled (void)
     assert(0 == t.send_ctl.sc_bytes_unacked_retx);
     assert(!lsquic_alarmset_is_set(&t.alset, AL_RETX_APP));
 #if LSQUIC_CONN_STATS
-    assert(1 == t.stats.out.lost_packets);
+    assert(0 == t.stats.out.lost_packets);
 #endif
     cleanup_test(&t);
 }
@@ -628,9 +628,14 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
             assert(N_PROBES - n - 1 == t.send_ctl.sc_n_in_flight_all);
             assert(N_PROBES - n - 1 == t.send_ctl.sc_n_in_flight_fill);
 #if LSQUIC_CONN_STATS
-            assert(n + 1 == t.stats.out.lost_packets);
+            assert(0 == t.stats.out.lost_packets);
 #endif
-            assert(n + 1 == t.send_ctl.sc_loss_count);
+            assert(0 == t.send_ctl.sc_loss_count);
+            assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
+            assert(N_PROBES - n - 1
+                == lsquic_bw_sampler_entry_count(&t.send_ctl.sc_bw_sampler));
+            assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+            assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
         }
 
         assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
@@ -646,7 +651,7 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
         assert(0 == t.send_ctl.sc_next_limit);
         assert(!lsquic_alarmset_is_set(&t.alset, AL_RETX_APP));
 #if LSQUIC_CONN_STATS
-        assert(N_PROBES == t.stats.out.lost_packets);
+        assert(0 == t.stats.out.lost_packets);
 #endif
         cleanup_test(&t);
     }

@@ -1319,18 +1319,19 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
 }
 
 
-static int
-send_ctl_handle_lost_mtu_probe (struct lsquic_send_ctl *ctl,
+static void
+send_ctl_handle_lost_probe (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
     unsigned packet_sz;
 
-    LSQ_DEBUG("lost MTU probe in packet #%"PRIu64, packet_out->po_packno);
+    LSQ_DEBUG("lost %s probe in packet #%"PRIu64,
+                    packet_out->po_flags & PO_MTU_PROBE ? "MTU" : "BW fill",
+                    packet_out->po_packno);
     packet_sz = packet_out_sent_sz(packet_out);
     send_ctl_unacked_remove(ctl, packet_out, packet_sz);
     assert(packet_out->po_loss_chain == packet_out);
     send_ctl_destroy_packet(ctl, packet_out);
-    return 0;
 }
 
 
@@ -1341,10 +1342,13 @@ static int
 send_ctl_handle_lost_packet (struct lsquic_send_ctl *ctl,
         struct lsquic_packet_out *packet_out, struct lsquic_packet_out **next)
 {
-    if (0 == (packet_out->po_flags & PO_MTU_PROBE))
+    if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
         return send_ctl_handle_regular_lost_packet(ctl, packet_out, next) != NULL;
     else
-        return send_ctl_handle_lost_mtu_probe(ctl, packet_out);
+    {
+        send_ctl_handle_lost_probe(ctl, packet_out);
+        return 0;
+    }
 }
 
 
@@ -1403,7 +1407,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             LSQ_DEBUG("loss by FACK detected (dist: %"PRIu64"), packet #%"PRIu64,
                 ctl->sc_largest_acked_packno - packet_out->po_packno,
                                                     packet_out->po_packno);
-            if (0 == (packet_out->po_flags & PO_MTU_PROBE))
+            if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
             {
                 largest_lost_packno = packet_out->po_packno;
                 loss_record = send_ctl_handle_regular_lost_packet(ctl,
@@ -1412,7 +1416,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                     loss_record->po_lflags |= POL_FACKED;
             }
             else
-                send_ctl_handle_lost_mtu_probe(ctl, packet_out);
+                send_ctl_handle_lost_probe(ctl, packet_out);
             continue;
         }
 

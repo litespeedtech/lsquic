@@ -3099,6 +3099,10 @@ before the handshake is done or while the connection is closing.  Only
 BBR-Copilot wants fill, and only while its pacing gain is above 1.0 and
 STREAM or DATAGRAM data was sent within the last second.
 
+Lost fill probes are discarded like MTU probes: their in-flight accounting
+and sampler state are released without recording a congestion loss or
+triggering congestion recovery.  They are never retransmitted.
+
 Buffered Packet Handling
 ========================
 
