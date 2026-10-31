@@ -409,6 +409,13 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
      */
     bbr->bbr_last_sent_packno = packet_out->po_packno;
 
+    /* Remember when the application last sent data.  STREAM and DATAGRAM
+     * frames are application data; fill probes and keepalives carry only
+     * PING frames and thus do not refresh this timestamp.
+     */
+    if (packet_out->po_frame_types & (QUIC_FTBIT_STREAM | QUIC_FTBIT_DATAGRAM))
+        bbr->bbr_last_app_data_sent = packet_out->po_sent;
+
     if (app_limited)
         bbr_app_limited(bbr, in_flight);
 }
@@ -421,13 +428,6 @@ bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
     struct lsquic_bbr *const bbr = cong_ctl;
 
     lsquic_bbr_sent(cong_ctl, packet_out, in_flight, app_limited);
-
-    /* Remember when the application last sent data.  STREAM and DATAGRAM
-     * frames are application data; fill probes and keepalives carry only
-     * PING frames and thus do not refresh this timestamp.
-     */
-    if (packet_out->po_frame_types & (QUIC_FTBIT_STREAM | QUIC_FTBIT_DATAGRAM))
-        bbr->bbr_last_app_data_sent = packet_out->po_sent;
 
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
         bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;

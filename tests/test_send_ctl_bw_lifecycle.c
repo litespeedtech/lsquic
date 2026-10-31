@@ -744,11 +744,35 @@ test_bbr_copilot_sent_time_lost_probe_fill (enum lsquic_version version,
 
 
 static void
-test_bbr_copilot_switch_preserves_state (void)
+test_bbr_copilot_switch_preserves_state (enum lsquic_version version,
+                    unsigned flags, enum quic_ft_bit app_frames, int stale)
 {
     struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out;
+    lsquic_time_t now, last_app_data_sent;
 
-    init_test(&t, LSQUIC_CC_BBR, 0, LSQVER_043, 0);
+    init_test(&t, LSQUIC_CC_BBR, 0, version, flags);
+    now = lsquic_time_now();
+    last_app_data_sent = 0;
+    if (app_frames)
+    {
+        if (stale)
+            last_app_data_sent = now - 2000000;
+        else
+            last_app_data_sent = now - 1000;
+        packet_out = new_packet(&t, 1, last_app_data_sent);
+        packet_out->po_frame_types = app_frames;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        ack_one(&t, 1, now, now, 1);
+        assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    }
+
+    /* A recent keepalive must not make stale or absent application traffic
+     * look active when Copilot is selected.  The data may already be ACKed.
+     */
+    packet_out = new_packet(&t, 1 + !!app_frames, now);
+    packet_out->po_frame_types = QUIC_FTBIT_PING;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
     t.send_ctl.sc_cc.bbr.bbr_pacing_gain = 1.25;
 
     assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
@@ -757,9 +781,9 @@ test_bbr_copilot_switch_preserves_state (void)
                         == lsquic_send_ctl_get_cc_algo(&t.send_ctl));
     assert(t.send_ctl.sc_ci == &lsquic_cong_bbr_copilot_if);
     assert(1.25 == t.send_ctl.sc_cc.bbr.bbr_pacing_gain);
-    t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent
-        = lsquic_time_now();
-    assert(1 == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
+    assert(last_app_data_sent == t.send_ctl.sc_cc.bbr.bbr_last_app_data_sent);
+    assert((app_frames != 0 && !stale)
+                == t.send_ctl.sc_ci->cci_bw_probe_fill_wanted(
                                               t.send_ctl.sc_cong_ctl));
 
     assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, LSQUIC_CC_BBR));
@@ -850,8 +874,19 @@ main (void)
             test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 0);
             test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 1);
             test_bbr_copilot_sent_time_lost_probe_fill(versions[i], flags[j]);
+            test_bbr_copilot_switch_preserves_state(versions[i], flags[j], 0, 0);
+            test_bbr_copilot_switch_preserves_state(versions[i], flags[j],
+                                                    QUIC_FTBIT_STREAM, 0);
+            test_bbr_copilot_switch_preserves_state(versions[i], flags[j],
+                                                    QUIC_FTBIT_STREAM, 1);
+            if ((1 << versions[i]) & LSQUIC_IETF_VERSIONS)
+            {
+                test_bbr_copilot_switch_preserves_state(versions[i], flags[j],
+                                                    QUIC_FTBIT_DATAGRAM, 0);
+                test_bbr_copilot_switch_preserves_state(versions[i], flags[j],
+                                                    QUIC_FTBIT_DATAGRAM, 1);
+            }
         }
-    test_bbr_copilot_switch_preserves_state();
     test_cc_algo_family_switch();
     test_cc_algo_default();
     return EXIT_SUCCESS;
