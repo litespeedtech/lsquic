@@ -631,6 +631,23 @@ is_cc_bbr (enum lsquic_cc cc)
 }
 
 
+static void
+send_ctl_mark_bw_samples_app_limited (struct lsquic_send_ctl *ctl)
+{
+    struct lsquic_packet_out *packet_out;
+    enum packnum_space pns;
+
+    /* Samples created under plain BBR may still span ProbeRTT.  Mark them
+     * before enabling Copilot, including packets ACKed after protection
+     * has been lifted for newly sent packets.
+     */
+    for (pns = 0; pns < N_PNS; ++pns)
+        TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[pns], po_next)
+            if (packet_out->po_bwp_state)
+                packet_out->po_bwp_state->bwps_send_state.is_app_limited = 1;
+}
+
+
 int
 lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
 {
@@ -654,7 +671,12 @@ lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
         send_ctl_cancel_probe_fill(ctl);
 
     if (is_cc_bbr(old_cc_algo) && is_cc_bbr(cc_algo))
+    {
+        if (cc_algo == LSQUIC_CC_BBR_COPILOT
+                && (ctl->sc_cc.bbr.bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT))
+            send_ctl_mark_bw_samples_app_limited(ctl);
         send_ctl_use_cc_algo(ctl, cc_algo);
+    }
     else
     {
         ctl->sc_ci->cci_cleanup(CGP(ctl));

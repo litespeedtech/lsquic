@@ -3106,6 +3106,12 @@ triggering congestion recovery.  They are never retransmitted.
 Switching away from BBR-Copilot cancels any scheduled fill probes.  Probes
 already sent remain tracked until they are acknowledged or discarded.
 
+Both BBR variants track the last packet sent during ProbeRTT so that a
+switch to Copilot preserves the sampling boundary.  When Copilot is
+enabled with ProbeRTT protection pending, outstanding sampler entries are
+marked app-limited as well.  Plain BBR does not use this protection to
+classify its own samples.
+
 Buffered Packet Handling
 ========================
 

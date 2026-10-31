@@ -592,6 +592,102 @@ test_bbr_copilot_probe_rtt_app_limited (void)
 
 
 
+enum probe_rtt_switch
+{
+    PRS_NONE,
+    PRS_DURING,
+    PRS_AFTER,
+};
+
+
+static void
+test_bbr_copilot_probe_rtt_switch (enum lsquic_version version,
+                                         unsigned flags, unsigned switch_at)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out, *packets[3], *late_packet;
+    struct lsquic_bbr *bbr;
+    unsigned n;
+
+    if (switch_at == PRS_NONE)
+        init_test(&t, LSQUIC_CC_BBR_COPILOT, 0, version, flags);
+    else
+        init_test(&t, LSQUIC_CC_BBR, 0, version, flags);
+    bbr = &t.send_ctl.sc_cc.bbr;
+    packet_out = new_packet(&t, 1, 1000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    ack_one(&t, 1, 2000, 2000, 0);
+
+    /* Expire min RTT naturally, then send three packets during ProbeRTT. */
+    packet_out = new_packet(&t, 2, 10003000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    ack_one(&t, 2, 10004000, 10004000, 0);
+    assert(BBR_MODE_PROBE_RTT == bbr->bbr_mode);
+    for (n = 0; n < 3; ++n)
+    {
+        packets[n] = new_packet(&t, 3 + n, 10005000 + n * 1000);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packets[n]));
+        if (switch_at)
+            assert(!packets[n]->po_bwp_state->bwps_send_state.is_app_limited);
+    }
+    if (switch_at == PRS_DURING)
+        assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                                    LSQUIC_CC_BBR_COPILOT));
+
+    /* The first ACK after 200 ms ends ProbeRTT, leaving packets 4 and 5
+     * outstanding.  The last ProbeRTT packet must remain the boundary.
+     */
+    ack_one(&t, 3, 10210000, 10210000, 0);
+    assert(BBR_MODE_PROBE_RTT != bbr->bbr_mode);
+    late_packet = NULL;
+    if (switch_at == PRS_AFTER)
+    {
+        /* Also leave a post-ProbeRTT sample in flight before switching. */
+        packet_out = new_packet(&t, 6, 10210500);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        assert(!packet_out->po_bwp_state->bwps_send_state.is_app_limited);
+        late_packet = new_packet(&t, 7, 10210600);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, late_packet));
+        assert(!late_packet->po_bwp_state->bwps_send_state.is_app_limited);
+        assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl,
+                                                    LSQUIC_CC_BBR_COPILOT));
+        assert(packet_out->po_bwp_state->bwps_send_state.is_app_limited);
+        assert(late_packet->po_bwp_state->bwps_send_state.is_app_limited);
+    }
+    assert(5 == bbr->bbr_probe_rtt_app_limited_until);
+    assert(packets[1]->po_bwp_state->bwps_send_state.is_app_limited);
+    assert(packets[2]->po_bwp_state->bwps_send_state.is_app_limited);
+    ack_one(&t, 4, 10211000, 10211000, 0);
+    assert(bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT);
+    if (switch_at != PRS_AFTER)
+    {
+        packet_out = new_packet(&t, 6, 10212000);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        assert(10006000 == packet_out->po_bwp_state->bwps_last_ack_sent_time);
+        assert(packet_out->po_bwp_state->bwps_send_state.is_app_limited);
+    }
+
+    /* A sampled packet beyond the boundary lifts protection. */
+    ack_one(&t, 6, 10214000, 10214000, 0);
+    assert(!(bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT));
+    if (late_packet)
+    {
+        /* Pre-switch samples stay protected even when their ACK arrives
+         * after the ACK that lifted protection for new packets.
+         */
+        assert(late_packet->po_bwp_state->bwps_send_state.is_app_limited);
+        ack_one(&t, 7, 10214500, 10214500, 0);
+        assert(bbr->bbr_flags & BBR_FLAG_LAST_SAMPLE_APP_LIMITED);
+        packet_out = new_packet(&t, 8, 10215000);
+    }
+    else
+        packet_out = new_packet(&t, 7, 10215000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(!packet_out->po_bwp_state->bwps_send_state.is_app_limited);
+    cleanup_test(&t);
+}
+
+
 static void
 test_bbr_copilot_fack_lost_probe_fill (enum lsquic_version version,
                                       unsigned flags, unsigned with_data)
@@ -870,6 +966,8 @@ main (void)
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
         for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
         {
+            for (k = PRS_NONE; k <= PRS_AFTER; ++k)
+                test_bbr_copilot_probe_rtt_switch(versions[i], flags[j], k);
             test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 0);
             test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 1);
             test_bbr_copilot_sent_time_lost_probe_fill(versions[i], flags[j]);

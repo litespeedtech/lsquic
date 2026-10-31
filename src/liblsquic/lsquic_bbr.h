@@ -205,8 +205,9 @@ struct lsquic_bbr
         int                 has_losses;
     }                           bbr_ack_state;
 
-    /* Last packet sent in ProbeRTT.  Samples remain app-limited until a later
-     * packet that carries sampler state is acknowledged.  Packets sent after
+    /* Last packet sent in ProbeRTT, tracked by both BBR variants.  In Copilot,
+     * samples remain app-limited until a later packet that carries sampler
+     * state is acknowledged.  Packets sent after
      * ProbeRTT but before that acknowledgement are marked app-limited too:
      * their sampling intervals may overlap the low-rate ProbeRTT period.
      * This matches the bandwidth sampler's app-limited phase semantics.

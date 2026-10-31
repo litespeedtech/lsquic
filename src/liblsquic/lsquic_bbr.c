@@ -409,6 +409,12 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
      */
     bbr->bbr_last_sent_packno = packet_out->po_packno;
 
+    /* Keep the boundary current for a later switch to Copilot, even when
+     * plain BBR is selected.  Only Copilot marks samples app-limited.
+     */
+    if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
+        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
+
     /* Remember when the application last sent data.  STREAM and DATAGRAM
      * frames are application data; fill probes and keepalives carry only
      * PING frames and thus do not refresh this timestamp.
@@ -428,9 +434,6 @@ bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
     struct lsquic_bbr *const bbr = cong_ctl;
 
     lsquic_bbr_sent(cong_ctl, packet_out, in_flight, app_limited);
-
-    if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
-        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
 
     if ((bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT)
              && (packet_out->po_bwp_state))
@@ -856,7 +859,9 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
         // Do not decide on the time to exit PROBE_RTT until the
         // |bytes_in_flight| is at the target small value.
         bbr->bbr_exit_probe_rtt_at = 0;
-        /* Used by BBR-Copilot: */
+        /* Both variants prepare this state for Copilot, which may be
+         * enabled later through a state-preserving BBR-family switch.
+         */
         bbr->bbr_flags |= BBR_BW_SAMPLE_INVALID_PROBE_RTT;
         bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
     }
