@@ -2059,7 +2059,7 @@ test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
     struct bw_lifecycle_test t;
     struct lsquic_packet_out *packet_out, *loss_record;
     lsquic_time_t expiry;
-    lsquic_packno_t acked;
+    const lsquic_packno_t acked = confirmation == TLP_FACK ? 6 : 2;
 
     init_test(&t, cc_algo, sampling, version, flags, 0);
     packet_out = new_packet(&t, 1, 1000);
@@ -2079,7 +2079,6 @@ test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
         lsquic_send_ctl_expire_all(&t.send_ctl);
     else
     {
-        acked = confirmation == TLP_FACK ? 6 : 2;
         packet_out = new_packet(&t, acked, expiry + 10);
         packet_out->po_frame_types = QUIC_FTBIT_ACK;
         assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
