@@ -403,7 +403,7 @@ mock_prog_run (struct prog *prog)
 
     /* on_close frees the stream context before main() checks the result. */
     stream_if->on_close(NULL, stream_ctx);
-    assert((transfer_case != TC_DISCARD) == n_closes);
+    assert(n_closes == (transfer_case == TC_DISCARD ? 0U : 1U));
     stream_if->on_conn_closed(NULL);
     assert(NULL == conn_ctx);
     assert(n_stops > 0);
