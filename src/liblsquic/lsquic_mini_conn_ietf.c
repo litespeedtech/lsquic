@@ -2533,6 +2533,7 @@ lsquic_mini_conn_ietf_test_ecn (enum packnum_space pns,
     unsigned char buf[0x80];
     lsquic_packno_t ack2ed;
     unsigned i;
+    enum packnum_space other_pns;
     int len;
 
     assert(pns < IMICO_N_PNS);
@@ -2542,9 +2543,9 @@ lsquic_mini_conn_ietf_test_ecn (enum packnum_space pns,
     conn.imc_conn.cn_n_cces = sizeof(conn.imc_cces) / sizeof(conn.imc_cces[0]);
     conn.imc_conn.cn_cces_mask = 1;
     conn.imc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
-    for (i = 0; i < IMICO_N_PNS; ++i)
-        if (i != pns)
-            conn.imc_ecn_counts_in[i][ECN_ECT0] = 10 + i;
+    for (other_pns = PNS_INIT; other_pns < IMICO_N_PNS; ++other_pns)
+        if (other_pns != pns)
+            conn.imc_ecn_counts_in[other_pns][ECN_ECT0] = 10 + other_pns;
     for (i = 0; i < n_incoming; ++i)
     {
         imico_record_recvd_packno(&conn, pns, i);

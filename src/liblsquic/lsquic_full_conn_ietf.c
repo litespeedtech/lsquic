@@ -10068,6 +10068,7 @@ lsquic_ietf_full_conn_test_ecn (unsigned flags, enum packnum_space pns,
     struct lsquic_engine_public enpub;
     struct lsquic_packet_out *packet_out;
     unsigned i;
+    enum packnum_space other_pns;
 
     assert(n_incoming > 0);
     memset(&conn, 0, sizeof(conn));
@@ -10085,12 +10086,12 @@ lsquic_ietf_full_conn_test_ecn (unsigned flags, enum packnum_space pns,
     conn.ifc_ping_unretx_thresh = 10;
     conn.ifc_max_retx_since_last_ack = 2;
     conn.ifc_max_ack_delay = ACK_TIMEOUT;
-    for (i = 0; i < N_PNS; ++i)
-        if (i != pns)
+    for (other_pns = PNS_INIT; other_pns < N_PNS; ++other_pns)
+        if (other_pns != pns)
         {
-            conn.ifc_ecn_counts_in[i][ECN_ECT0] = 10 + i;
-            conn.ifc_ecn_counts_in[i][ECN_ECT1] = 20 + i;
-            conn.ifc_ecn_counts_in[i][ECN_CE] = 30 + i;
+            conn.ifc_ecn_counts_in[other_pns][ECN_ECT0] = 10 + other_pns;
+            conn.ifc_ecn_counts_in[other_pns][ECN_ECT1] = 20 + other_pns;
+            conn.ifc_ecn_counts_in[other_pns][ECN_CE] = 30 + other_pns;
         }
     lsquic_rechist_init(&conn.ifc_rechist[pns], 0, 0);
     for (i = 0; i < n_incoming; ++i)

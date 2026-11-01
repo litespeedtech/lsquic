@@ -2741,7 +2741,8 @@ test_bbr3_mixed_ack_app_limited (void)
     struct lsquic_bbr3 bbr3;
     struct bw_sample *sample;
     struct malo *malo;
-    unsigned i, last_app_limited;
+    unsigned i;
+    int last_app_limited;
 
     memset(&conn_pub, 0, sizeof(conn_pub));
     memset(&path, 0, sizeof(path));
@@ -2778,7 +2779,7 @@ test_bbr3_mixed_ack_app_limited (void)
             assert(bbr3.bbr3_last_sample_app_limited == last_app_limited);
             assert(bbr3.bbr3_max_bw == 1000000);
             if (states[i] == BBR3_STATE_PROBE_BW_DOWN)
-                assert(bbr3.bbr3_cycle_count == !last_app_limited);
+                assert(bbr3.bbr3_cycle_count == (last_app_limited ? 0u : 1u));
             else if (last_app_limited)
             {
                 assert(bbr3.bbr3_state == states[i]);
