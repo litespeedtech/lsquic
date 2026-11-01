@@ -143,6 +143,7 @@ begin_ack_rate_sample (struct lsquic_bbr3 *bbr3, struct malo *malo,
     packet_out.po_packno = packno;
     packet_out.po_sent_sz = BBR3_TEST_PACKET_SZ;
     packet_out.po_flags = PO_SENT_SZ;
+    packet_out.po_frame_types = QUIC_FTBIT_STREAM;
 
     sample = lsquic_malo_get(malo);
     assert(sample);
@@ -638,6 +639,7 @@ test_bbr3_probe_rtt_batched_ack (void)
             for (j = 0; j < 3; ++j)
             {
                 packets[j].po_packno = 100 + j;
+                packets[j].po_frame_types = QUIC_FTBIT_STREAM;
                 lsquic_cong_bbr3_if.cci_sent(&bbr3, &packets[j], 10000, 0);
             }
             lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, now, 10000);
@@ -2911,6 +2913,7 @@ test_bbr3_ecn_recovery_guard_and_release (void)
 
     packet_out.po_packno = 102;
     packet_out.po_sent_sz = BBR3_TEST_PACKET_SZ;
+    packet_out.po_frame_types = QUIC_FTBIT_STREAM;
     lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, 1030000, 0);
     lsquic_cong_bbr3_if.cci_sent(&bbr3, &packet_out, 0, 0);
     lsquic_cong_bbr3_if.cci_ack(&bbr3, &packet_out, BBR3_TEST_PACKET_SZ,
@@ -2979,6 +2982,7 @@ test_bbr3_loss_epoch_after_probe (void)
         for (i = 102; i <= 105; ++i)
         {
             packet_out.po_packno = i;
+            packet_out.po_frame_types = QUIC_FTBIT_STREAM;
             lsquic_cong_bbr3_if.cci_ack(&bbr3, &packet_out,
                                     BBR3_TEST_PACKET_SZ, 1101000, 0);
         }
@@ -3022,6 +3026,81 @@ test_bbr3_probe_rtt_marks_app_limited (void)
 
 
 static void
+test_bbr3_ack_packet_eligibility (int ietf)
+{
+    static const struct
+    {
+        enum quic_ft_bit frames;
+        enum packet_out_flags flags;
+        int gquic, ietf;
+    } cases[] = {
+        { 0,                                      0, 0, 0 },
+        { QUIC_FTBIT_ACK,                          0, 0, 0 },
+        { QUIC_FTBIT_ACK | QUIC_FTBIT_PADDING,      0, 0, 0 },
+        { QUIC_FTBIT_PADDING,                      0, 0, 0 },
+        { QUIC_FTBIT_PING,                         0, 1, 0 },
+        { QUIC_FTBIT_PATH_CHALLENGE,                0, 0, 0 },
+        { QUIC_FTBIT_PATH_RESPONSE,                 0, 0, 0 },
+        { QUIC_FTBIT_TIMESTAMP,                     0, 0, 0 },
+        { QUIC_FTBIT_STREAM,                        0, 1, 1 },
+        { QUIC_FTBIT_ACK | QUIC_FTBIT_STREAM,        0, 1, 1 },
+        { QUIC_FTBIT_CRYPTO,                        0, 1, 1 },
+        { QUIC_FTBIT_DATAGRAM,                      0, 1, 1 },
+        { QUIC_FTBIT_PING,           PO_BW_PROBE_FILL, 1, 1 },
+        { QUIC_FTBIT_STREAM,             PO_LOSS_REC, 1, 1 },
+    };
+    struct lsquic_bbr3 bbr3;
+    struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
+    struct network_path path;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_packet_out packet;
+    unsigned i;
+    uint64_t expected;
+
+    memset(&path, 0, sizeof(path));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    path.np_pack_size = BBR3_TEST_PACKET_SZ;
+    conn_pub.lconn = &lconn;
+    conn_pub.path = &path;
+    if (ietf)
+        lconn.cn_flags |= LSCONN_IETF;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        lsquic_cong_bbr3_if.cci_init(&bbr3, &conn_pub);
+        bbr3.bbr3_bw = 1000000;
+        bbr3.bbr3_max_bw = 1000000;
+        memset(&packet, 0, sizeof(packet));
+        packet.po_packno = 10;
+        packet.po_frame_types = cases[i].frames;
+        packet.po_flags = cases[i].flags;
+        if (ietf ? cases[i].ietf : cases[i].gquic)
+            expected = BBR3_TEST_PACKET_SZ;
+        else
+            expected = 0;
+
+        /* Loss records and data sent before sampling was enabled have no
+         * sampler state, but still represent newly acknowledged data.
+         */
+        lsquic_cong_bbr3_if.cci_sent(&bbr3, &packet, 0, 0);
+        lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, 1000000, 0);
+        lsquic_cong_bbr3_if.cci_ack(&bbr3, &packet,
+                                        BBR3_TEST_PACKET_SZ, 1000000, 0);
+        assert(bbr3.bbr3_ack_state.acked_bytes == expected);
+        assert(bbr3.bbr3_total_acked == expected);
+        if (expected)
+            assert(bbr3.bbr3_ack_state.max_packno == packet.po_packno);
+        else
+            assert(bbr3.bbr3_ack_state.max_packno == UINT64_MAX);
+        lsquic_cong_bbr3_if.cci_end_ack(&bbr3, 0);
+        assert(bbr3.bbr3_round_count == (expected ? 1u : 0u));
+        assert(bbr3.bbr3_extra_acked_delivered == expected);
+        lsquic_cong_bbr3_if.cci_cleanup(&bbr3);
+    }
+}
+
+
+static void
 test_bbr3_rto_cuts_and_restores_cwnd (void)
 {
     struct lsquic_bbr3 bbr3;
@@ -3029,6 +3108,7 @@ test_bbr3_rto_cuts_and_restores_cwnd (void)
     struct network_path path;
     struct lsquic_conn_public conn_pub;
     struct malo *malo;
+    struct lsquic_packet_out ack_packet = { 0 };
 
     memset(&bbr3, 0, sizeof(bbr3));
     memset(&path, 0, sizeof(path));
@@ -3064,6 +3144,15 @@ test_bbr3_rto_cuts_and_restores_cwnd (void)
 
     /* A duplicate ACK cannot establish recovery progress. */
     lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, 1050000, 5480);
+    lsquic_cong_bbr3_if.cci_end_ack(&bbr3, 5480);
+    assert(bbr3.bbr3_flags & BBR3_FLAG_RESTORE_CWND);
+    assert(bbr3.bbr3_cwnd == bbr3.bbr3_min_cwnd);
+
+    /* Newly acknowledging an ACK-only packet is not data delivery. */
+    ack_packet.po_frame_types = QUIC_FTBIT_ACK;
+    ack_packet.po_packno = 199;
+    lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, 1060000, 5480);
+    lsquic_cong_bbr3_if.cci_ack(&bbr3, &ack_packet, 32, 1060000, 0);
     lsquic_cong_bbr3_if.cci_end_ack(&bbr3, 5480);
     assert(bbr3.bbr3_flags & BBR3_FLAG_RESTORE_CWND);
     assert(bbr3.bbr3_cwnd == bbr3.bbr3_min_cwnd);
@@ -3363,6 +3452,8 @@ main (void)
 {
     lsquic_log_to_fstream(stderr, LLTS_NONE);
     test_bbr3_init();
+    test_bbr3_ack_packet_eligibility(0);
+    test_bbr3_ack_packet_eligibility(1);
     test_bbr3_loss_mode_params();
     test_bbr3_startup_drain();
     test_bbr3_startup_does_not_exit_on_loss(LSQUIC_BBR3_LOSS_REGULAR, 5000);

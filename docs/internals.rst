@@ -3213,7 +3213,11 @@ existing notification behavior.
 On RTO, BBRv3 saves the congestion window and reduces it to the minimum pipe.
 It restores that window when an ACK newly acknowledges data.  LSQUIC does not
 provide a reliable timeout-recovery exit notification, so duplicate ACKs keep
-the reduced window.
+the reduced window.  Delivery accounting uses the sampler's packet eligibility:
+retransmittable frames, DATAGRAM, or bandwidth-fill probes.  ACK-only packets
+do not advance delivery totals, packet rounds, or ACK-aggregation credit and
+cannot restore the RTO window.  Late acknowledgments of data still count even
+when the original packet's sampler state has already been released.
 
 During ProbeBW_UP, LSQUIC allows the measured ACK-aggregation budget, capped
 at one send quantum, above the long-term inflight cap. This extension lets

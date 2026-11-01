@@ -11,6 +11,7 @@
 #include "lsquic_int_types.h"
 #include "lsquic_cong_ctl.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_gquic.h"
 #include "lsquic_packet_out.h"
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
@@ -1690,13 +1691,26 @@ lsquic_bbr3_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
                  int UNUSED_app_limited)
 {
     struct lsquic_bbr3 *const bbr3 = cong_ctl;
+    enum quic_ft_bit retx_frames;
 
     assert(bbr3->bbr3_flags & BBR3_FLAG_IN_ACK);
-    if (bbr3->bbr3_ack_state.max_packno == UINT64_MAX
-            || packet_out->po_packno > bbr3->bbr3_ack_state.max_packno)
-        bbr3->bbr3_ack_state.max_packno = packet_out->po_packno;
-    bbr3->bbr3_ack_state.acked_bytes += packet_sz;
-    bbr3->bbr3_total_acked += packet_sz;
+    if (bbr3->bbr3_conn_pub->lconn->cn_flags & LSCONN_IETF)
+        retx_frames = IQUIC_FRAME_RETX_MASK;
+    else
+        retx_frames = GQUIC_FRAME_RETRANSMITTABLE_MASK;
+
+    /* Match sampler eligibility without requiring sampler state: a late
+     * ACK of a loss record still delivers data after that state is freed.
+     */
+    if ((packet_out->po_frame_types & (retx_frames | QUIC_FTBIT_DATAGRAM))
+            || (packet_out->po_flags & PO_BW_PROBE_FILL))
+    {
+        if (bbr3->bbr3_ack_state.max_packno == UINT64_MAX
+                || packet_out->po_packno > bbr3->bbr3_ack_state.max_packno)
+            bbr3->bbr3_ack_state.max_packno = packet_out->po_packno;
+        bbr3->bbr3_ack_state.acked_bytes += packet_sz;
+        bbr3->bbr3_total_acked += packet_sz;
+    }
 }
 
 
