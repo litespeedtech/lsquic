@@ -92,6 +92,11 @@ Follow the surrounding file and these project conventions:
   ```
 
 - Put a space between a function name and `(` in declarations and definitions.
+- At call sites, put no space between a function name and `(`.
+- Keep code and code comments ASCII-only.  Treat a non-ASCII exception as
+  unusual and document why it is necessary.
+- Cite Internet-Drafts as `[draft-name], Section N` and RFCs as `[RFC N],
+  Section N`; do not use a generic draft reference or a section symbol.
 - Use snake_case.  Non-static functions begin with `lsquic_`.  Function names
   normally consist of a module name followed by a verb; otherwise begin with
   a verb.  Do not begin static function names with an underscore.

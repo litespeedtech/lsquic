@@ -95,7 +95,8 @@ bw_sampler_abort_conn (struct bw_sampler *sampler)
 
 void
 lsquic_bw_sampler_packet_sent (struct bw_sampler *sampler,
-                    struct lsquic_packet_out *packet_out, uint64_t in_flight)
+                    struct lsquic_packet_out *packet_out, uint64_t in_flight,
+                    int is_cwnd_limited)
 {
     struct bwp_state *state;
     unsigned short sent_sz;
@@ -143,13 +144,14 @@ lsquic_bw_sampler_packet_sent (struct bw_sampler *sampler,
         .total_bytes_sent   = sampler->bws_total_sent,
         .total_bytes_acked  = sampler->bws_total_acked,
         .total_bytes_lost   = sampler->bws_total_lost,
+        .packet_size        = sent_sz,
         .is_app_limited     = !!(sampler->bws_flags & BWS_APP_LIMITED),
+        .is_cwnd_limited    = is_cwnd_limited,
     };
     state->bwps_sent_at_last_ack = sampler->bws_last_acked_total_sent;
+    state->bwps_tx_in_flight = in_flight + sent_sz;
     state->bwps_last_ack_sent_time = sampler->bws_last_acked_sent_time;
     state->bwps_last_ack_ack_time = sampler->bws_last_acked_packet_time;
-    state->bwps_packet_size = sent_sz;
-
     packet_out->po_bwp_state = state;
 
     LSQ_DEBUG("add info for packet %"PRIu64, packet_out->po_packno);
@@ -158,16 +160,19 @@ lsquic_bw_sampler_packet_sent (struct bw_sampler *sampler,
 
 void
 lsquic_bw_sampler_packet_lost (struct bw_sampler *sampler,
-                                    struct lsquic_packet_out *packet_out)
+                        struct lsquic_packet_out *packet_out, int count_loss)
 {
     if (!packet_out->po_bwp_state)
         return;
 
-    sampler->bws_total_lost += packet_out->po_bwp_state->bwps_packet_size;
+    if (count_loss)
+        sampler->bws_total_lost +=
+                    packet_out->po_bwp_state->bwps_send_state.packet_size;
     lsquic_malo_put(packet_out->po_bwp_state);
     packet_out->po_bwp_state = NULL;
-    LSQ_DEBUG("packet %"PRIu64" lost, total_lost goes to %"PRIu64,
-                            packet_out->po_packno, sampler->bws_total_lost);
+    LSQ_DEBUG("packet %"PRIu64" released (%s), total_lost: %"PRIu64,
+              packet_out->po_packno, count_loss ? "loss" : "probe",
+              sampler->bws_total_lost);
 }
 
 
@@ -179,8 +184,9 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
     struct bw_sample *sample;
     struct bandwidth send_rate, ack_rate;
     lsquic_time_t rtt;
+    uint64_t delivered, tx_in_flight, prior_lost;
     unsigned short sent_sz;
-    int is_app_limited;
+    int is_app_limited, is_cwnd_limited;
 
     if (!packet_out->po_bwp_state)
         return 0;
@@ -249,6 +255,14 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
     // especially on low bandwidth connections.
     rtt = ack_time - packet_out->po_sent;
     is_app_limited = state->bwps_send_state.is_app_limited;
+    is_cwnd_limited = state->bwps_send_state.is_cwnd_limited;
+    /* bws_total_acked already includes this packet, so this is the draft's
+     * RS.delivered = C.delivered - P.delivered.
+     */
+    delivered = sampler->bws_total_acked
+                                - state->bwps_send_state.total_bytes_acked;
+    tx_in_flight = state->bwps_tx_in_flight;
+    prior_lost = state->bwps_send_state.total_bytes_lost;
 
     /* After this point, we switch `sample' to point to `state' and don't
      * reference `state' anymore.
@@ -261,6 +275,10 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
         sample->bandwidth = ack_rate;
     sample->rtt = rtt;
     sample->is_app_limited = is_app_limited;
+    sample->delivered = delivered;
+    sample->tx_in_flight = tx_in_flight;
+    sample->prior_lost = prior_lost;
+    sample->is_cwnd_limited = is_cwnd_limited;
 
     LSQ_DEBUG("packet %"PRIu64" acked, bandwidth: %"PRIu64" bps",
                         packet_out->po_packno, BW_VALUE(&sample->bandwidth));
@@ -270,7 +288,7 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
   no_sample:
     lsquic_malo_put(packet_out->po_bwp_state);
     packet_out->po_bwp_state = NULL;
-    return NULL;;
+    return NULL;
 }
 
 

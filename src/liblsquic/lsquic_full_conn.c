@@ -65,6 +65,7 @@
 #include "lsquic_attq.h"
 
 #include "lsquic_conn.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_ver_neg.h"
@@ -1292,9 +1293,9 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     w = conn->fc_conn.cn_pf->pf_gen_ack_frame(
             packet_out->po_data + packet_out->po_data_sz,
             lsquic_packet_out_avail(packet_out),
-            (gaf_rechist_first_f)        lsquic_rechist_first,
-            (gaf_rechist_next_f)         lsquic_rechist_next,
-            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+            lsquic_rechist_first_cb,
+            lsquic_rechist_next_cb,
+            lsquic_rechist_largest_recv_cb,
             &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed,
             NULL);
     if (w < 0) {
@@ -3639,8 +3640,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->fc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    // Do not fill in extra packets before the handshake is complete or when
-    // the connection is closing.
+    /* Do not fill extra packets before handshake completion or while the
+     * connection is closing.
+     */
     if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && !(conn->fc_flags & (FC_CLOSING|FC_IMMEDIATE_CLOSE_FLAGS)))
         lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, now,
@@ -4406,7 +4408,7 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -4430,6 +4432,14 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
             return -1;
         memcpy(&cc_algo, value, sizeof(cc_algo));
         return lsquic_send_ctl_set_cc_algo(&conn->fc_send_ctl, cc_algo);
+    case LSQCP_BBR3_LOSS_MODE:
+        if (value_len != sizeof(int))
+            return -1;
+        memcpy(&bbr3_loss_mode, value, sizeof(bbr3_loss_mode));
+        if (bbr3_loss_mode < 0)
+            return -1;
+        return lsquic_send_ctl_set_bbr3_loss_mode(&conn->fc_send_ctl,
+                                                    bbr3_loss_mode);
     default:
         return -1;
     }
@@ -4443,7 +4453,7 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -4468,6 +4478,16 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         cc_algo = lsquic_send_ctl_get_cc_algo(&conn->fc_send_ctl);
         memcpy(value, &cc_algo, sizeof(cc_algo));
         *value_len = sizeof(cc_algo);
+        return 0;
+    case LSQCP_BBR3_LOSS_MODE:
+        if (*value_len < sizeof(int))
+            return -1;
+        bbr3_loss_mode =
+                lsquic_send_ctl_get_bbr3_loss_mode(&conn->fc_send_ctl);
+        if (bbr3_loss_mode < 0)
+            return -1;
+        memcpy(value, &bbr3_loss_mode, sizeof(bbr3_loss_mode));
+        *value_len = sizeof(bbr3_loss_mode);
         return 0;
     default:
         return -1;

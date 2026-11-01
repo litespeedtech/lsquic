@@ -1,4 +1,5 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * cbr_client.c -- Constant-bitrate client.
  *

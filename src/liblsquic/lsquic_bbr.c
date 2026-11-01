@@ -443,12 +443,16 @@ bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
 static void
 lsquic_bbr_lost (void *cong_ctl,
-             struct lsquic_packet_out *UNUSED_packet_out, unsigned packet_sz)
+             struct lsquic_packet_out *UNUSED_packet_out, unsigned packet_sz,
+             enum packet_loss_reason reason)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
-    bbr->bbr_ack_state.has_losses = 1;
-    bbr->bbr_ack_state.lost_bytes += packet_sz;
+    if (reason != PLR_PROBE)
+    {
+        bbr->bbr_ack_state.has_losses = 1;
+        bbr->bbr_ack_state.lost_bytes += packet_sz;
+    }
 }
 
 

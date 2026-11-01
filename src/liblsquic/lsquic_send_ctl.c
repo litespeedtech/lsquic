@@ -30,6 +30,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_util.h"
 #include "lsquic_sfcw.h"
 #include "lsquic_varint.h"
@@ -519,6 +520,10 @@ static const struct
         &lsquic_cong_bbr_copilot_if,
         "BBRv1-Copilot",
     },
+    [LSQUIC_CC_BBR3] = {
+        &lsquic_cong_bbr3_if,
+        "BBRv3",
+    },
 };
 
 
@@ -575,6 +580,8 @@ lsquic_send_ctl_init (lsquic_send_ctl_t *ctl, struct lsquic_alarmset *alset,
         ctl->sc_ecn = ECN_ECT0;
     else
         ctl->sc_ecn = ECN_NOT_ECT;
+    for (i = 0; i < N_PNS; ++i)
+        ctl->sc_ecn_largest_acked[i] = UINT64_MAX;
     if (flags & SC_IETF)
         ctl->sc_retx_frames = IQUIC_FRAME_RETX_MASK;
     else
@@ -684,6 +691,21 @@ lsquic_send_ctl_set_cc_algo (lsquic_send_ctl_t *ctl, enum lsquic_cc cc_algo)
         send_ctl_use_cc_algo(ctl, cc_algo);
         send_ctl_apply_bw_sampler_policy(ctl);
         ctl->sc_ci->cci_init(CGP(ctl), ctl->sc_conn_pub);
+        ctl->sc_flags &= ~(SC_IDLE_RESTARTED|SC_WAS_QUIET);
+        if (ctl->sc_n_in_flight_retx == 0)
+            ctl->sc_flags |= SC_WAS_QUIET;
+        if (cc_algo == LSQUIC_CC_BBR3)
+        {
+            /* Outstanding samples retain the previous controller's P.lost
+             * snapshots.  Start C.lost in the same cumulative domain.
+             */
+            ctl->sc_cc.bbr3.bbr3_lost = ctl->sc_bw_sampler.bws_total_lost;
+            ctl->sc_cc.bbr3.bbr3_lost_at_round_start =
+                                            ctl->sc_bw_sampler.bws_total_lost;
+            if (lsquic_senhist_largest(&ctl->sc_senhist) != UINT64_MAX)
+                ctl->sc_cc.bbr3.bbr3_last_sent_packno =
+                                    lsquic_senhist_largest(&ctl->sc_senhist);
+        }
     }
 
     LSQ_INFO("switched congestion controller from %s to %s",
@@ -799,6 +821,20 @@ set_retx_alarm (struct lsquic_send_ctl *ctl, enum packnum_space pns,
 
 #define SC_PACK_SIZE(ctl_) (+(ctl_)->sc_conn_pub->path->np_pack_size)
 
+static lsquic_time_t
+send_ctl_pacing_interval (unsigned pack_size, uint64_t pacing_rate,
+                                                        unsigned *fraction)
+{
+    uint64_t tx_time;
+
+    /* Carry Q16 fractional microseconds across intervals. */
+    tx_time = ((uint64_t) pack_size * 1000000 << 16) / pacing_rate;
+    tx_time += *fraction;
+    *fraction = tx_time & 0xFFFF;
+    return tx_time >> 16;
+}
+
+
 /* XXX can we optimize this by caching the value of this function?  It should
  * not change within one tick.
  */
@@ -825,7 +861,8 @@ send_ctl_transfer_time (void *ctx)
 
     if (!pacing_rate)
         pacing_rate = 1;
-    tx_time = (uint64_t) SC_PACK_SIZE(ctl) * 1000000 / pacing_rate;
+    tx_time = send_ctl_pacing_interval(SC_PACK_SIZE(ctl), pacing_rate,
+                                                &ctl->sc_pacer.pa_fraction);
 
     if (ctl->sc_max_pacing_rate)
         LSQ_DEBUG("tx_time calculation: packet_size=%u, pacing_rate=%"PRIu64", "
@@ -851,6 +888,8 @@ send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
     {
         ctl->sc_bytes_unacked_retx += packet_out_total_sz(packet_out);
         ++ctl->sc_n_in_flight_retx;
+        /* Re-arm idle restart after pipe refills. */
+        ctl->sc_flags &= ~SC_IDLE_RESTARTED;
     }
     ctl->sc_n_in_flight_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
 }
@@ -883,6 +922,11 @@ send_ctl_sched_Xpend_common (struct lsquic_send_ctl *ctl,
 {
     packet_out->po_flags |= PO_SCHED;
     ++ctl->sc_n_scheduled;
+    if (packet_out->po_frame_types & ctl->sc_retx_frames)
+    {
+        packet_out->po_lflags |= POL_SCHED_RETX;
+        ++ctl->sc_n_scheduled_retx;
+    }
     packet_out->po_acct_sz = packet_out_total_sz(packet_out);   /* cache; subtract same at remove */
     ctl->sc_bytes_scheduled += packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
@@ -915,8 +959,25 @@ send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
     packet_out->po_flags &= ~PO_SCHED;
     assert(ctl->sc_n_scheduled);
     --ctl->sc_n_scheduled;
+    if (packet_out->po_lflags & POL_SCHED_RETX)
+    {
+        assert(ctl->sc_n_scheduled_retx);
+        --ctl->sc_n_scheduled_retx;
+        packet_out->po_lflags &= ~POL_SCHED_RETX;
+    }
     ctl->sc_bytes_scheduled -= packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
+}
+
+
+/* A cancelled scheduled packet does not consume idle restart. */
+static void
+send_ctl_sched_cancel (struct lsquic_send_ctl *ctl,
+                       struct lsquic_packet_out *packet_out)
+{
+    send_ctl_sched_remove(ctl, packet_out);
+    if (ctl->sc_n_scheduled_retx == 0 && ctl->sc_n_in_flight_retx == 0)
+        ctl->sc_flags &= ~SC_IDLE_RESTARTED;
 }
 
 
@@ -1007,6 +1068,38 @@ lsquic_send_ctl_mtu_not_sent (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Latch one idle-restart notification per quiescent period. */
+static int
+send_ctl_restarting_from_idle (const struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_flags & SC_IDLE_RESTARTED)
+        return 0;
+    else
+    {
+        assert(ctl->sc_flags & SC_BW_SAMPLER_INIT);
+        return ctl->sc_n_in_flight_retx == 0
+            && lsquic_bw_sampler_is_app_limited(&ctl->sc_bw_sampler);
+    }
+}
+
+
+static void
+send_ctl_maybe_restart_from_idle (struct lsquic_send_ctl *ctl,
+                                  const struct lsquic_packet_out *packet_out)
+{
+    if (ctl->sc_ci->cci_restart_from_idle
+            && (packet_out->po_frame_types & ctl->sc_retx_frames)
+            && send_ctl_restarting_from_idle(ctl))
+    {
+        ctl->sc_flags &= ~SC_WAS_QUIET;
+        ctl->sc_flags |= SC_IDLE_RESTARTED;
+        LSQ_DEBUG("sending after a period of quiescence");
+        ctl->sc_ci->cci_restart_from_idle(CGP(ctl), ctl->sc_tick_time,
+                                                    ctl->sc_bytes_unacked_all);
+    }
+}
+
+
 int
 lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
                              struct lsquic_packet_out *packet_out)
@@ -1025,9 +1118,21 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     lsquic_senhist_add(&ctl->sc_senhist, packet_out->po_packno);
     if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
     {
+        /* Apply controller sampling policy before the snapshot, even when
+         * SC_APP_LIMITED is set: its marking below applies to later packets.
+         */
+        if (ctl->sc_ci->cci_should_mark_app_limited
+                && ctl->sc_ci->cci_should_mark_app_limited(CGP(ctl)))
+            lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
         if (!(packet_out->po_flags & PO_MINI))
+        {
+            const unsigned packet_sz = packet_out_sent_sz(packet_out);
+            const int is_cwnd_limited = ctl->sc_bytes_unacked_all + packet_sz
+                                    >= ctl->sc_ci->cci_get_cwnd(CGP(ctl));
+
             lsquic_bw_sampler_packet_sent(&ctl->sc_bw_sampler, packet_out,
-                                          ctl->sc_bytes_unacked_all);
+                ctl->sc_bytes_unacked_all, is_cwnd_limited);
+        }
         if (ctl->sc_flags & SC_APP_LIMITED)
             lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
     }
@@ -1040,7 +1145,7 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
     {
         if (!lsquic_alarmset_is_set(ctl->sc_alset, AL_RETX_INIT + pns))
             set_retx_alarm(ctl, pns, packet_out->po_sent);
-        if (ctl->sc_n_in_flight_retx == 1)
+        if (ctl->sc_ci->cci_was_quiet && ctl->sc_n_in_flight_retx == 1)
             ctl->sc_flags |= SC_WAS_QUIET;
     }
     /* TODO: Do we really want to use those for RTT info? Revisit this. */
@@ -1052,6 +1157,42 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
 #endif
     lsquic_send_ctl_sanity_check(ctl);
     return 0;
+}
+
+
+int
+lsquic_send_ctl_set_bbr3_loss_mode (struct lsquic_send_ctl *ctl,
+                                                            unsigned mode)
+{
+    if (ctl->sc_ci != &lsquic_cong_bbr3_if
+        || ctl->sc_cong_ctl != &ctl->sc_cc.bbr3)
+        return -1;
+    if (mode > LSQUIC_BBR3_LOSS_HIGH)
+        return -1;
+
+    lsquic_bbr3_set_loss_mode(&ctl->sc_cc.bbr3, mode);
+    LSQ_INFO("BBRv3 loss mode set to %u", mode);
+    return 0;
+}
+
+
+int
+lsquic_send_ctl_get_bbr3_loss_mode (const struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_ci != &lsquic_cong_bbr3_if
+        || ctl->sc_cong_ctl != &ctl->sc_cc.bbr3)
+        return -1;
+
+    return lsquic_bbr3_get_loss_mode(&ctl->sc_cc.bbr3);
+}
+
+
+/* Refresh SMSS-derived controller state after DPLPMTUD. */
+void
+lsquic_send_ctl_packet_size_changed (struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_ci->cci_pack_size_changed)
+        ctl->sc_ci->cci_pack_size_changed(CGP(ctl));
 }
 
 
@@ -1290,7 +1431,8 @@ send_ctl_record_loss (struct lsquic_send_ctl *ctl,
 
 static struct lsquic_packet_out *
 send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
-            lsquic_packet_out_t *packet_out, struct lsquic_packet_out **next)
+            lsquic_packet_out_t *packet_out, struct lsquic_packet_out **next,
+            enum packet_loss_reason reason)
 {
     struct lsquic_packet_out *loss_record;
     unsigned packet_sz;
@@ -1309,11 +1451,13 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         LSQ_DEBUG("lost ACK in packet #%"PRIu64, packet_out->po_packno);
     }
 
-    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
-        lsquic_bw_sampler_packet_lost(&ctl->sc_bw_sampler, packet_out);
-
+    /* BBRv3 reads sampler state before the sampler frees it. */
     if (ctl->sc_ci->cci_lost)
-        ctl->sc_ci->cci_lost(CGP(ctl), packet_out, packet_sz);
+        ctl->sc_ci->cci_lost(CGP(ctl), packet_out, packet_sz, reason);
+
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+        lsquic_bw_sampler_packet_lost(&ctl->sc_bw_sampler, packet_out,
+                                                        reason == PLR_LOSS);
 
     /* This is a client-only check, server check happens in mini conn */
     if (lsquic_send_ctl_ecn_turned_on(ctl)
@@ -1368,10 +1512,11 @@ send_ctl_handle_lost_probe (struct lsquic_send_ctl *ctl,
  */
 static int
 send_ctl_handle_lost_packet (struct lsquic_send_ctl *ctl,
-        struct lsquic_packet_out *packet_out, struct lsquic_packet_out **next)
+        struct lsquic_packet_out *packet_out, struct lsquic_packet_out **next,
+        enum packet_loss_reason reason)
 {
     if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
-        return send_ctl_handle_regular_lost_packet(ctl, packet_out, next) != NULL;
+        return send_ctl_handle_regular_lost_packet(ctl, packet_out, next, reason) != NULL;
     else
     {
         send_ctl_handle_lost_probe(ctl, packet_out);
@@ -1398,13 +1543,20 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
 
 
 static void
-send_ctl_loss_event (struct lsquic_send_ctl *ctl)
+send_ctl_record_cutback (struct lsquic_send_ctl *ctl)
 {
-    ctl->sc_ci->cci_loss(CGP(ctl));
     if (ctl->sc_flags & SC_PACE)
         lsquic_pacer_loss_event(&ctl->sc_pacer);
     ctl->sc_largest_sent_at_cutback =
                             lsquic_senhist_largest(&ctl->sc_senhist);
+}
+
+
+static void
+send_ctl_loss_event (struct lsquic_send_ctl *ctl)
+{
+    ctl->sc_ci->cci_loss(CGP(ctl));
+    send_ctl_record_cutback(ctl);
 }
 
 
@@ -1415,6 +1567,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
 {
     struct lsquic_packet_out *packet_out, *next, *loss_record;
     lsquic_packno_t largest_retx_packno, largest_lost_packno;
+    int new_loss;
 
     largest_retx_packno = largest_retx_packet_number(ctl, pns);
     largest_lost_packno = 0;
@@ -1439,7 +1592,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             {
                 largest_lost_packno = packet_out->po_packno;
                 loss_record = send_ctl_handle_regular_lost_packet(ctl,
-                                                        packet_out, &next);
+                                                        packet_out, &next, PLR_LOSS);
                 if (loss_record)
                     loss_record->po_lflags |= POL_FACKED;
             }
@@ -1464,7 +1617,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                 lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats) / 4;
             LSQ_DEBUG("set sc_loss_to to %"PRIu64", packet #%"PRIu64,
                                     ctl->sc_loss_to, packet_out->po_packno);
-            (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
+            (void) send_ctl_handle_lost_packet(ctl, packet_out, &next, PLR_LOSS);
             continue;
         }
 
@@ -1478,12 +1631,13 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                         & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
                 largest_lost_packno = packet_out->po_packno;
             else { /* don't count it as a loss */; }
-            (void) send_ctl_handle_lost_packet(ctl, packet_out, &next);
+            (void) send_ctl_handle_lost_packet(ctl, packet_out, &next, PLR_LOSS);
             continue;
         }
     }
 
-    if (largest_lost_packno > ctl->sc_largest_sent_at_cutback)
+    new_loss = largest_lost_packno > ctl->sc_largest_sent_at_cutback;
+    if (new_loss)
     {
         LSQ_DEBUG("detected new loss: packet #%"PRIu64"; new lsac: "
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
@@ -1497,7 +1651,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
         LSQ_DEBUG("ignore loss of packet #%"PRIu64" smaller than lsac "
             "%"PRIu64, largest_lost_packno, ctl->sc_largest_sent_at_cutback);
 
-    return largest_lost_packno > ctl->sc_largest_sent_at_cutback;
+    return new_loss;
 }
 
 
@@ -1548,7 +1702,7 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     lsquic_packno_t ack2ed[2];
     unsigned packet_sz;
     int app_limited, losses_detected;
-    signed char do_rtt, skip_checks;
+    signed char do_rtt, skip_checks, ecn_ack_advanced;
     enum packnum_space pns;
     unsigned ecn_total_acked, ecn_ce_cnt, one_rtt_cnt;
 
@@ -1574,6 +1728,12 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
         return -1;
     }
 
+    ecn_ack_advanced = lsquic_send_ctl_ecn_turned_on(ctl)
+        && (ctl->sc_ecn_largest_acked[pns] == UINT64_MAX
+            || largest_acked(acki) > ctl->sc_ecn_largest_acked[pns]);
+    if (ecn_ack_advanced)
+        ctl->sc_ecn_largest_acked[pns] = largest_acked(acki);
+
     if (ctl->sc_ci->cci_begin_ack)
         ctl->sc_ci->cci_begin_ack(CGP(ctl), ack_recv_time,
                                                     ctl->sc_bytes_unacked_all);
@@ -1582,10 +1742,9 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
     ecn_ce_cnt = 0;
     one_rtt_cnt = 0;
 
-    if (UNLIKELY(ctl->sc_flags & SC_WAS_QUIET))
+    if (ctl->sc_ci->cci_was_quiet && (ctl->sc_flags & SC_WAS_QUIET))
     {
         ctl->sc_flags &= ~SC_WAS_QUIET;
-        LSQ_DEBUG("ACK comes after a period of quiescence");
         ctl->sc_ci->cci_was_quiet(CGP(ctl), now, ctl->sc_bytes_unacked_all);
     }
 
@@ -1735,7 +1894,14 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
             if (acki->ecn_counts[ECN_CE] > ctl->sc_ecn_ce_cnt[pns])
             {
                 ctl->sc_ecn_ce_cnt[pns] = acki->ecn_counts[ECN_CE];
-                if (losses_detected)
+                if (ctl->sc_ci->cci_ecn)
+                {
+                    ctl->sc_ci->cci_ecn(CGP(ctl), largest_acked(acki),
+                                                                CC_ECN_CE);
+                    if (!losses_detected)
+                        send_ctl_record_cutback(ctl);
+                }
+                else if (losses_detected)
                     /* It's either-or.  From [draft-ietf-quic-recovery-29],
                      * Section 7.4:
                      " When a loss or ECN-CE marking is detected [...]
@@ -1748,6 +1914,9 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                     send_ctl_loss_event(ctl);
                 }
             }
+            else if (ctl->sc_ci->cci_ecn)
+                ctl->sc_ci->cci_ecn(CGP(ctl), largest_acked(acki),
+                                                                CC_ECN_NO_CE);
         }
         else
         {
@@ -1756,6 +1925,13 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                 ctl->sc_ecn_total_acked[pns], sum);
             lsquic_send_ctl_disable_ecn(ctl);
         }
+    }
+    else if (lsquic_send_ctl_ecn_turned_on(ctl)
+                && ecn_ack_advanced && ecn_total_acked > ecn_ce_cnt)
+    {
+        /* [RFC 9000], Section 13.4.2.1: fresh ECT ACKs require ECN counts. */
+        LSQ_INFO("ACK of ECT packets has no ECN counters: disable ECN");
+        lsquic_send_ctl_disable_ecn(ctl);
     }
 
   update_n_stop_waiting:
@@ -1911,6 +2087,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
+    assert(0 == ctl->sc_n_scheduled_retx);
     assert(0 == ctl->sc_bytes_scheduled);
     for (pns = PNS_INIT; pns < N_PNS; ++pns)
         while ((packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns])))
@@ -2111,7 +2288,8 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
      * acknowledges something.  Probe-fill packets must not use up that
      * allowance.
      */
-    if (bw_probe_fill_cb && 0 == send_ctl_get_n_consec_rtos(ctl)
+    if (bw_probe_fill_cb && ctl->sc_ci->cci_bw_probe_fill_wanted
+                        && 0 == send_ctl_get_n_consec_rtos(ctl)
                         && ctl->sc_ci->cci_bw_probe_fill_wanted(CGP(ctl), now))
     {
         while (lsquic_send_ctl_can_send(ctl))
@@ -2172,7 +2350,7 @@ send_ctl_expire_probe_fill (struct lsquic_send_ctl *ctl, enum packnum_space pns,
         {
             expiry = packet_out->po_sent + delay;
             if (expiry <= now)
-                send_ctl_handle_lost_packet(ctl, packet_out, &next);
+                send_ctl_handle_lost_packet(ctl, packet_out, &next, PLR_LOSS);
             else
             {
                 /* Packets are in send order and use the same delay. */
@@ -2206,7 +2384,7 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             next = TAILQ_NEXT(packet_out, po_next);
             if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
                 n_resubmitted += send_ctl_handle_lost_packet(ctl, packet_out,
-                                                                        &next);
+                                                                        &next, PLR_LOSS);
         }
         break;
     case EXFI_HSK:
@@ -2217,14 +2395,14 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             next = TAILQ_NEXT(packet_out, po_next);
             if (packet_out->po_flags & PO_HELLO)
                 n_resubmitted += send_ctl_handle_lost_packet(ctl, packet_out,
-                                                                        &next);
+                                                                        &next, PLR_LOSS);
         }
         break;
     default:
         assert(filter == EXFI_LAST);
         packet_out = send_ctl_last_unacked_retx_packet(ctl, pns);
         if (packet_out)
-            n_resubmitted = send_ctl_handle_lost_packet(ctl, packet_out, NULL);
+            n_resubmitted = send_ctl_handle_lost_packet(ctl, packet_out, NULL, PLR_PROBE);
         else
             n_resubmitted = 0;
         break;
@@ -2256,7 +2434,7 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
-    unsigned count, bytes, n_fill;
+    unsigned count, bytes, n_fill, n_scheduled_retx;
     enum packnum_space pns;
 
 #if _MSC_VER
@@ -2287,14 +2465,17 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     assert(bytes == ctl->sc_bytes_unacked_all);
     assert(n_fill == ctl->sc_n_in_flight_fill);
 
-    count = 0, bytes = 0;
+    count = 0, bytes = n_scheduled_retx = 0;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
     {
         assert(packet_out->po_flags & PO_SCHED);
         bytes += packet_out->po_acct_sz;
         ++count;
+        if (packet_out->po_lflags & POL_SCHED_RETX)
+            ++n_scheduled_retx;
     }
     assert(count == ctl->sc_n_scheduled);
+    assert(n_scheduled_retx == ctl->sc_n_scheduled_retx);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
 
@@ -2313,6 +2494,7 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
         assert((last->po_flags & PO_REPACKNO) ||
                 last->po_packno < packet_out->po_packno);
 #endif
+    send_ctl_maybe_restart_from_idle(ctl, packet_out);
     if (ctl->sc_flags & SC_PACE)
     {
         unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
@@ -2495,7 +2677,7 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
         {
             LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
                 packet_out->po_packno);
-            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_sched_cancel(ctl, packet_out);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
             send_ctl_destroy_packet(ctl, packet_out);
             goto get_packet;
@@ -2520,6 +2702,7 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
     }
     else
         size = 0;
+    send_ctl_maybe_restart_from_idle(ctl, packet_out);
     send_ctl_sched_remove(ctl, packet_out);
 
     if (dec_limit)
@@ -2927,7 +3110,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
             {
                 LSQ_DEBUG("cancel packet #%"PRIu64" after eliding frames for "
                     "stream %"PRIu64, packet_out->po_packno, stream_id);
-                send_ctl_sched_remove(ctl, packet_out);
+                send_ctl_sched_cancel(ctl, packet_out);
                 send_ctl_destroy_chain(ctl, packet_out, NULL);
                 send_ctl_destroy_packet(ctl, packet_out);
                 ++dropped;
@@ -3065,7 +3248,7 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
                 LOG_PACKET_Q(&ctl->sc_scheduled_packets,
                                         "scheduled packets before squeezing");
 #endif
-            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_sched_cancel(ctl, packet_out);
             LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
                 packet_out->po_packno);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
@@ -3130,7 +3313,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *ctl)
         next = TAILQ_NEXT(packet_out, po_next);
         if (0 == (packet_out->po_flags & PO_HELLO))
         {
-            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_sched_cancel(ctl, packet_out);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
             send_ctl_destroy_packet(ctl, packet_out);
             ++n;
@@ -3160,7 +3343,7 @@ send_ctl_drop_scheduled_probe_fill (struct lsquic_send_ctl *ctl)
         next = TAILQ_NEXT(packet_out, po_next);
         if (packet_out->po_flags & PO_BW_PROBE_FILL)
         {
-            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_sched_cancel(ctl, packet_out);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
             send_ctl_destroy_packet(ctl, packet_out);
             ++n;
@@ -4249,7 +4432,7 @@ send_ctl_cancel_probe_fill (struct lsquic_send_ctl *ctl)
         if (packet_out->po_flags & PO_BW_PROBE_FILL)
         {
             send_ctl_maybe_renumber_sched_to_right(ctl, packet_out);
-            send_ctl_sched_remove(ctl, packet_out);
+            send_ctl_sched_cancel(ctl, packet_out);
             send_ctl_destroy_chain(ctl, packet_out, NULL);
             send_ctl_destroy_packet(ctl, packet_out);
             ++n;
@@ -4414,6 +4597,9 @@ lsquic_send_ctl_disable_ecn (struct lsquic_send_ctl *ctl)
     struct lsquic_packet_out *packet_out;
 
     LSQ_INFO("disable ECN");
+    if (ctl->sc_ci->cci_ecn)
+        ctl->sc_ci->cci_ecn(CGP(ctl), lsquic_senhist_largest(&ctl->sc_senhist),
+                                                            CC_ECN_DISABLED);
     ctl->sc_ecn = ECN_NOT_ECT;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         lsquic_packet_out_set_ecn(packet_out, ECN_NOT_ECT);

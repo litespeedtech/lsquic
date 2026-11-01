@@ -4,6 +4,7 @@
 #cmakedefine HAVE_SENDMMSG 1
 #cmakedefine HAVE_RECVMMSG 1
 #cmakedefine HAVE_OPEN_MEMSTREAM 1
+#cmakedefine HAVE_EVENT_PRECISE_TIMER 1
 #cmakedefine HAVE_IP_DONTFRAG 1
 #cmakedefine HAVE_IP_MTU_DISCOVER 1
 #cmakedefine HAVE_REGEX 1

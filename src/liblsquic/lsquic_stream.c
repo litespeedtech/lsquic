@@ -47,6 +47,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_headers.h"
 #include "lsquic_ev_log.h"

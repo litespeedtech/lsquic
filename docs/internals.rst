@@ -2202,8 +2202,20 @@ value gets modified by peer's ACK_FREQUENCY frames.
 ifc_ecn_counts_in
 -----------------
 
-Incoming ECN counts in each of the Packet Number Spaces.  These counts
-are used to generate ACK frames.
+Incoming ECN counts in each of the Packet Number Spaces.  Once an ECN
+marking has been counted in a Packet Number Space, every subsequent ACK
+frame in that space includes these counts, even after the peer stops
+marking packets.  A peer may mark only a few packets until it validates
+ECN; it fails validation if an ACK that newly acknowledges them omits the
+counts.  The mini connection reports its counts the same way.
+
+Reporting is independent of whether this endpoint marks its outgoing
+packets.  Disabling outgoing ECN therefore does not suppress feedback for
+the peer's direction.  Received CE also requests an immediate ACK
+independently of outgoing ECN.  The RTO-specific forced report of wrong
+counts zeroes the application-space counts and is consumed once on an
+application-space ACK.  Later ACKs report the counts again after new
+markings arrive.
 
 ifc_max_req_id
 --------------
@@ -2273,11 +2285,6 @@ List of timestamps for the generated SCIDs.
 
 This list is used in the SCID rate-limiting mechanism.
 
-
-ifc_incoming_ecn
-----------------
-
-History indicating presence of ECN markings on most recent incoming packets.
 
 ifc_cur_path_id
 ---------------
@@ -2995,6 +3002,15 @@ sometimes by a significant factor (when lots of data is being sent).
 This makes some of the code-level optimizations, such as the use of
 ``__builtin_prefetch``, an overkill.
 
+When an ACK advances the largest acknowledged packet number and newly
+acknowledges ECT(0) or ECT(1) packets, omitting ECN counters fails ECN
+validation.  The Send Controller disables outgoing ECN marking and notifies
+the congestion controller through ``cci_ecn()`` when available.  The largest
+ACK is tracked separately for each packet number space, including ACKs of
+non-ECT packets, so duplicate and reordered ACKs cannot trigger this
+missing-counter failure.  An ACK of only non-ECT packets does not fail this
+check.  See RFC 9000, Section 13.4.2.1.
+
 Loss Records
 ============
 
@@ -3077,13 +3093,14 @@ describing gQUIC, could be looked to for reference.
 Congestions Controllers
 =======================
 
-The Send Controller has a choice of three congestion controllers: Cubic,
-BBRv1, and BBR-Copilot.  BBRv1 was translated from Chromium into C.
+The Send Controller has a choice of four congestion controllers: Cubic,
+BBRv1, BBR-Copilot, and BBRv3.  BBRv1 was translated from Chromium into C.
 
 BBRv1 is the default.  The engine setting ``es_cc_algo`` selects the
 controller when the Send Controller is initialized: 0 uses the default,
-1 selects Cubic, 2 selects BBRv1, and 4 selects BBR-Copilot.  Only the
-selected controller is initialized, and its state occupies a union in
+1 selects Cubic, 2 selects BBRv1, 4 selects BBR-Copilot, and 5 selects BBRv3.
+Value 3 is invalid.  Only the selected controller is initialized, and its
+state occupies a union in
 the Send Controller.  The controller remains selected for the lifetime
 of the connection, regardless of RTT, unless it is changed using
 ``LSQCP_CC_ALGO``.
@@ -3107,11 +3124,165 @@ triggering congestion recovery.  They are never retransmitted.
 Switching away from BBR-Copilot cancels any scheduled fill probes.  Probes
 already sent remain tracked until they are acknowledged or discarded.
 
-Both BBR variants track the last packet sent during ProbeRTT so that a
+BBRv1 and BBR-Copilot track the last packet sent during ProbeRTT so that a
 switch to Copilot preserves the sampling boundary.  When Copilot is
 enabled with ProbeRTT protection pending, outstanding sampler entries are
 marked app-limited as well.  Plain BBR does not use this protection to
 classify its own samples.
+
+Switches between BBRv1 and BBR-Copilot preserve controller state.  Other
+controller changes initialize fresh state and clear idle-notification
+bookkeeping.  On entry to BBRv3, its cumulative lost-byte counter and round
+baseline are seeded from the retained sampler, since outstanding packets
+keep their P.lost snapshots.  BBRv3 uses the engine's loss profile on entry;
+an override survives path-change reinitialization, but not switching away
+and back.  Selecting the current controller changes nothing.
+
+ACK callbacks run before the sampler consumes per-packet state, allowing
+Copilot to inspect its ProbeRTT sampling boundary.  Loss callbacks run
+before the sampler releases that state, allowing BBRv3 to inspect P.lost.
+Fill probes are sampled, as are DATAGRAM packets, but discarding fill
+does not increment either the sampler's or BBRv3's congestion-loss counter.
+
+Packet pacing uses microsecond scheduling timestamps, but the Send Controller
+retains the fractional part of each packet's transmission interval in Q16
+microseconds.  Discarding that fraction on every packet would bias the sending
+rate upward, consuming BBR's pacing margin or producing a zero interval at
+high rates.  The fractional remainder belongs to the pacer state, so scheduling
+rollback restores it together with the next-send timestamp.  Rate changes
+preserve the remainder, which represents time rather than bytes.
+
+BBRv3 is selected explicitly with ``es_cc_algo = LSQUIC_CC_BBR3``.  It consumes
+the bandwidth sampler's per-packet delivery signals.  RTT state is updated once
+per ACK using the minimum valid RTT sample, so additional samples in the
+same ACK cannot clear a
+ProbeRTT expiration. During active delivery, ProbeRTT waits for both its
+timer and a packet-timed round. An application-limited restart with an
+empty flight can exit after the timer expires, restoring the congestion
+window before transmission even if no round completed during the idle
+period.  BBRv3 implements the optional ``cci_restart_from_idle`` callback,
+which the Send Controller invokes before pacing or dequeuing a
+retransmittable packet when the flight is empty and the bandwidth sampler
+is application-limited.  The Send Controller latches this notification until
+a retransmittable packet is sent or all scheduled data is cancelled.  CUBIC
+and BBRv1 keep their existing
+ACK-time ``cci_was_quiet`` notifications, independent of optional bandwidth
+sampling; BBRv3 leaves that callback unset.
+
+The optional ``cci_should_mark_app_limited`` query supplies controller
+sampling policy.  BBRv3 uses it to mark ProbeRTT packets before the sampler
+records their state, including the first packet of that phase.  The Send
+Controller separately records whether each sampled packet fills or exceeds
+the selected controller's congestion window.  These sampling and idle
+notifications dispatch through the congestion-control interface without
+testing the controller's identity.
+
+BBRv3 bounds the data in flight by the loss rate each probe caused. A lost
+packet sent during ProbeBW_UP is judged by the data lost since it was sent,
+C.lost - P.lost, against the data in flight when it was sent. Unlike the
+draft, which also counts data sent during ProbeBW_REFILL, LSQUIC judges only
+the probe's own packets: BBRv3 records the range of packet numbers sent in
+ProbeBW_UP. At a random loss rate near the loss threshold, REFILL losses
+would otherwise end every probe before it measured capacity. P.lost is
+the bandwidth sampler's lost-bytes count, recorded in the packet's sampler
+state; BBRv3 keeps its own C.lost equal to that count by counting the same
+packets by the same size, and carries it across ``cci_reinit()``, since
+the sampler is not reset. This relies on the Send Controller calling
+``cci_lost()`` before ``lsquic_bw_sampler_packet_lost()``, which frees the
+per-packet state. The verdict is applied on the next ACK, so losses
+declared by RTO are handled the same way.  A TLP expiration carries the
+internal ``PLR_PROBE`` reason: existing retransmission queues are retained,
+but the sampler releases the old state without counting lost bytes, and
+BBRv3 does not treat the probe as congestion.  ACK- or loss-timer-confirmed
+losses and RTO use ``PLR_LOSS``.  Legacy controller callbacks keep their
+existing notification behavior.
+
+On RTO, BBRv3 saves the congestion window and reduces it to the minimum pipe.
+It restores that window when an ACK newly acknowledges data.  LSQUIC does not
+provide a reliable timeout-recovery exit notification, so duplicate ACKs keep
+the reduced window.
+
+During ProbeBW_UP, LSQUIC allows the measured ACK-aggregation budget, capped
+at one send quantum, above the long-term inflight cap. This extension lets
+a probe replace an ACK burst even when a previous loss established a small
+cap; otherwise, random loss can repeatedly stop probes before they recover
+capacity. The normal BDP-based window target still applies. The allowance
+itself is not granted in other phases: the ACK that moves UP to DOWN, on a
+loss verdict or a bandwidth plateau, removes it and clamps the window.
+
+After a loss-limited UP, the following UP is precautionary: it moves to DOWN
+as soon as current inflight reaches the loss-derived long-term cap, rather
+than holding that known-risky level for a full round trip.  If feedback for
+that short probe is clean, LSQUIC enters REFILL immediately instead of
+CRUISE, allowing a normal UP probe to follow.  Loss or CE during either probe
+prevents this acceleration path.
+
+The allowance has no lasting effect.  ACKs for flights sent under it do not
+raise the long-term inflight cap; only the dedicated ProbeBW_UP probing
+algorithm can do that.  The ACK that ends UP removes the allowance, and all
+following phases, including CRUISE and ProbeRTT, enforce the original or
+dedicated-probe-adjusted cap.  A window saved on entry to ProbeRTT from UP
+may include the allowance; if ProbeRTT ends while the connection is idle,
+that window is restored and then trimmed to the CRUISE cap by the next ACK.
+The loss threshold and short-term bandwidth and inflight bounds are
+unchanged.
+
+Outside bandwidth probing, the draft lowers the short-term bandwidth and
+inflight bounds after every round with a loss, to the larger of the
+round's latest delivery signal and beta times the bound. Under random
+loss, the latest signals fall a little short of the bounds that produced
+them: part of each flight is lost, and the bandwidth is measured at the
+bounded pacing rate. The bounds therefore ratchet down until the next
+probe resets them. The regular profile keeps this draft behavior. The
+medium- and high-loss profiles lower both bounds only when the round's
+loss rate, the bytes declared lost divided by the bytes lost or
+acknowledged since the round started, exceeds their LossThresh. BBRv3
+records C.lost and the total acknowledged bytes at each round start, and
+re-seeds the C.lost snapshot on ``cci_reinit()``. Resetting congestion
+signals on entry to DOWN also resets both snapshots, so losses from the
+preceding UP interval cannot inflate the new interval's loss rate.
+
+Below LossThresh, ML and HL still reduce the short-term inflight bound
+after a lossy round if smoothed RTT exceeds min_rtt by more than one
+eighth. This is a queueing heuristic: it preserves the bandwidth estimate
+while limiting excess flight, using the same latest-delivery floor and
+beta as the normal inflight reduction. Delay without loss does not lower
+either bound, and bandwidth-probing phases remain exempt. A congestion
+event signalled through ``cci_loss()`` follows this packet-loss policy.
+Validated ECN feedback has a separate ``cci_ecn()`` notification and is
+not subject to the random-loss thresholds.  New CE feedback can cut the
+current window and effective bandwidth by 30% once per recovery flight,
+respecting the minimum window and any stronger existing bounds.  The CE
+bandwidth bound is separate from the packet-loss bound; it does not include
+the current phase's pacing gain.  DOWN may pace below this bound while
+draining, without carrying that gain into later CE reductions or CRUISE.
+Feedback for packets sent beyond the saved cutback boundary permits another
+reduction.  Startup enters Drain, ProbeBW restarts DOWN, and ProbeRTT keeps
+its timer.
+
+Every new CE report also records the last sent packet, including reports
+that do not cause another cutback.  CE bounds are released when validated
+feedback with no new CE newly acknowledges a packet beyond this later
+boundary.  Duplicate ACKs, idle time, REFILL, and saved-window restoration
+cannot clear them.  Missing ECN counters are not evidence of clean recovery;
+when their absence fails ECN validation, the Send Controller disables ECN.
+The callback also reports ECN being disabled, possibly outside ACK processing:
+fresh delivery beyond the boundary may then end CE recovery without counters,
+including delivery on the ACK that disables ECN.
+A controller reset clears all CE state.  Releasing CE bounds preserves
+independent packet-loss bounds and lets normal window growth resume;
+it does not restore the pre-CE window.  On mixed feedback, packet-loss
+adaptation runs before DOWN resets its round signals.  The bandwidth model
+uses the minimum of the loss and CE bounds, so one ACK does not multiply
+their reductions together.  The measured maximum-bandwidth filter is not
+directly reduced by CE.  CUBIC and BBRv1 retain the loss-event fallback.
+
+Startup and ProbeBW_UP use the same bandwidth plateau target: three
+rounds for regular mode and ML, six for HL. The first UP round can still
+report pre-probe rates, so shortening the plateau to two rounds can end
+the probe before it observes enough growth to continue after a capacity
+increase. The existing exception for a sender limited by its long-term
+inflight cap still lets UP continue while it raises that cap.
 
 Buffered Packet Handling
 ========================

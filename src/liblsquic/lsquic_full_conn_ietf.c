@@ -45,6 +45,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_ver_neg.h"
@@ -466,8 +467,6 @@ struct ietf_full_conn
     unsigned                    ifc_n_to_retire;
     unsigned                    ifc_scid_seqno;
     lsquic_time_t               ifc_scid_timestamp[MAX_SCID];
-    /* Last 8 packets had ECN markings? */
-    uint8_t                     ifc_incoming_ecn;
     unsigned char               ifc_cur_path_id;    /* Indexes ifc_paths */
     unsigned char               ifc_used_paths;     /* Bitmask */
     unsigned char               ifc_mig_path_id;
@@ -1566,7 +1565,6 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
     conn->ifc_process_incoming_packet = process_incoming_packet_fast;
 
     conn->ifc_send_ctl.sc_cur_packno = imc->imc_next_packno - 1;
-    conn->ifc_incoming_ecn = imc->imc_incoming_ecn;
     conn->ifc_pub.rtt_stats = imc->imc_rtt_stats;
 
     conn->ifc_last_live_update = now;
@@ -1828,10 +1826,7 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
     const uint64_t *ecn_counts;
     int has_missing, w;
 
-    if (conn->ifc_incoming_ecn
-                        && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
-        ecn_counts = conn->ifc_ecn_counts_in[pns];
-    else if ((conn->ifc_mflags & MF_SEND_WRONG_COUNTS) && pns == PNS_APP)
+    if ((conn->ifc_mflags & MF_SEND_WRONG_COUNTS) && pns == PNS_APP)
     {
         /* We try once.  A more advanced version would wait until we get a
          * packet from peer and only then stop.
@@ -1839,15 +1834,20 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         conn->ifc_mflags &= ~MF_SEND_WRONG_COUNTS;
         ecn_counts = conn->ifc_ecn_counts_in[pns];
     }
+    else if (conn->ifc_ecn_counts_in[pns][ECN_ECT0]
+                || conn->ifc_ecn_counts_in[pns][ECN_ECT1]
+                || conn->ifc_ecn_counts_in[pns][ECN_CE])
+        /* [RFC 9000], Section 13.4.1: retain received ECN counts in later ACKs. */
+        ecn_counts = conn->ifc_ecn_counts_in[pns];
     else
         ecn_counts = NULL;
 
     w = conn->ifc_conn.cn_pf->pf_gen_ack_frame(
             packet_out->po_data + packet_out->po_data_sz,
             lsquic_packet_out_avail(packet_out),
-            (gaf_rechist_first_f)        lsquic_rechist_first,
-            (gaf_rechist_next_f)         lsquic_rechist_next,
-            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+            lsquic_rechist_first_cb,
+            lsquic_rechist_next_cb,
+            lsquic_rechist_largest_recv_cb,
             &conn->ifc_rechist[pns], now, &has_missing, &packet_out->po_ack2ed,
             ecn_counts);
     if (w < 0) {
@@ -3650,6 +3650,7 @@ apply_trans_params (struct ietf_full_conn *conn,
         CUR_NPATH(conn)->np_pack_size = conn->ifc_max_udp_payload;
         LSQ_DEBUG("decrease packet size to %hu bytes",
                                                 CUR_NPATH(conn)->np_pack_size);
+        lsquic_send_ctl_packet_size_changed(&conn->ifc_send_ctl);
     }
 
     if (params->tp_active_connection_id_limit > conn->ifc_conn.cn_n_cces)
@@ -6965,8 +6966,7 @@ try_queueing_ack_app (struct ietf_full_conn *conn,
  " codepoint in the IP header SHOULD be acknowledged immediately, to
  " reduce the peer's response time to congestion events.
  */
-            || (ecn == ECN_CE
-                    && lsquic_send_ctl_ecn_turned_on(&conn->ifc_send_ctl))
+            || ecn == ECN_CE
             || (was_missing == WM_MAX_GAP)
             || ((conn->ifc_flags & IFC_ACK_HAD_MISS)
                     && was_missing == WM_SMALLER
@@ -7516,9 +7516,6 @@ process_regular_packet (struct ietf_full_conn *conn,
             else
                 try_queueing_ack_init_or_hsk(conn, pns);
         }
-        conn->ifc_incoming_ecn <<= 1;
-        conn->ifc_incoming_ecn |=
-                            lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
         ++conn->ifc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
         if (PNS_APP == pns
                 && (cpath = &conn->ifc_paths[packet_in->pi_path_id],
@@ -8041,6 +8038,8 @@ ietf_full_conn_ci_mtu_probe_acked (struct lsquic_conn *lconn,
                                                                     packet_out);
     LSQ_INFO("update path %hhu MTU to %hu bytes", path_id,
                                                 cpath->cop_path.np_pack_size);
+    if (cpath == CUR_CPATH(conn))
+        lsquic_send_ctl_packet_size_changed(&conn->ifc_send_ctl);
     conn->ifc_mflags &= ~MF_CHECK_MTU_PROBE;
     lsquic_alarmset_set(&conn->ifc_alset, AL_MTU_PROBE,
                 packet_out->po_sent + conn->ifc_enpub->enp_mtu_probe_timer);
@@ -8086,7 +8085,10 @@ ietf_full_conn_ci_retx_timeout (struct lsquic_conn *lconn)
         }
 
     if (resize)
+    {
         lsquic_send_ctl_resize(&conn->ifc_send_ctl);
+        lsquic_send_ctl_packet_size_changed(&conn->ifc_send_ctl);
+    }
     else
         LSQ_DEBUG("RTO occurred, but no MTUs to reset");
 
@@ -8485,8 +8487,9 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->ifc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    // Do not fill in extra packets before the handshake is complete or when
-    // the connection is closing.
+    /* Do not fill extra packets before handshake completion or while the
+     * connection is closing.
+     */
     if ((conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && !(conn->ifc_flags & (IFC_CLOSING|IFC_IMMEDIATE_CLOSE_FLAGS)))
         lsquic_send_ctl_maybe_app_limited(&conn->ifc_send_ctl, now,
@@ -8911,7 +8914,7 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -8935,6 +8938,14 @@ ietf_full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
             return -1;
         memcpy(&cc_algo, value, sizeof(cc_algo));
         return lsquic_send_ctl_set_cc_algo(&conn->ifc_send_ctl, cc_algo);
+    case LSQCP_BBR3_LOSS_MODE:
+        if (value_len != sizeof(int))
+            return -1;
+        memcpy(&bbr3_loss_mode, value, sizeof(bbr3_loss_mode));
+        if (bbr3_loss_mode < 0)
+            return -1;
+        return lsquic_send_ctl_set_bbr3_loss_mode(&conn->ifc_send_ctl,
+                                                    bbr3_loss_mode);
     default:
         return -1;
     }
@@ -8948,7 +8959,7 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -8973,6 +8984,16 @@ ietf_full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         cc_algo = lsquic_send_ctl_get_cc_algo(&conn->ifc_send_ctl);
         memcpy(value, &cc_algo, sizeof(cc_algo));
         *value_len = sizeof(cc_algo);
+        return 0;
+    case LSQCP_BBR3_LOSS_MODE:
+        if (*value_len < sizeof(int))
+            return -1;
+        bbr3_loss_mode =
+                lsquic_send_ctl_get_bbr3_loss_mode(&conn->ifc_send_ctl);
+        if (bbr3_loss_mode < 0)
+            return -1;
+        memcpy(value, &bbr3_loss_mode, sizeof(bbr3_loss_mode));
+        *value_len = sizeof(bbr3_loss_mode);
         return 0;
     default:
         return -1;
@@ -9943,6 +9964,80 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 
 #ifndef NDEBUG
+/* Exercise ACK generation through the full connection, including its choice
+ * of ECN counters and immediate ACK policy, without a TLS handshake.  Packets
+ * numbered from 1 arrive in `pns' with the given ECN codepoints.  The other
+ * packet number spaces have counts of their own.
+ */
+void
+lsquic_ietf_full_conn_test_ecn (unsigned flags, enum packnum_space pns,
+        int outgoing_ecn, const enum ecn *incoming, unsigned n_incoming,
+        int *wrong_counts, struct ack_info *acki, int *ack_queued)
+{
+    struct ietf_full_conn conn;
+    struct lsquic_engine_public enpub;
+    struct lsquic_packet_out *packet_out;
+    unsigned i;
+
+    assert(n_incoming > 0);
+    memset(&conn, 0, sizeof(conn));
+    memset(&enpub, 0, sizeof(enpub));
+    conn.ifc_conn.cn_cces = conn.ifc_cces;
+    conn.ifc_conn.cn_n_cces = sizeof(conn.ifc_cces) / sizeof(conn.ifc_cces[0]);
+    conn.ifc_conn.cn_cces_mask = 1;
+    conn.ifc_conn.cn_flags |= LSCONN_HANDSHAKE_DONE;
+    conn.ifc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    conn.ifc_flags = flags;
+    conn.ifc_enpub = &enpub;
+    lsquic_mm_init(&enpub.enp_mm);
+    conn.ifc_pub.mm = &enpub.enp_mm;
+    conn.ifc_send_ctl.sc_ecn = outgoing_ecn ? ECN_ECT0 : ECN_NOT_ECT;
+    conn.ifc_ping_unretx_thresh = 10;
+    conn.ifc_max_retx_since_last_ack = 2;
+    conn.ifc_max_ack_delay = ACK_TIMEOUT;
+    for (i = 0; i < N_PNS; ++i)
+        if (i != pns)
+        {
+            conn.ifc_ecn_counts_in[i][ECN_ECT0] = 10 + i;
+            conn.ifc_ecn_counts_in[i][ECN_ECT1] = 20 + i;
+            conn.ifc_ecn_counts_in[i][ECN_CE] = 30 + i;
+        }
+    lsquic_rechist_init(&conn.ifc_rechist[pns], 0, 0);
+    for (i = 0; i < n_incoming; ++i)
+    {
+        assert(REC_ST_OK == lsquic_rechist_received(&conn.ifc_rechist[pns],
+                                                            i + 1, 1000000));
+        ++conn.ifc_ecn_counts_in[pns][ incoming[i] ];
+    }
+    if (*wrong_counts)
+    {
+        conn.ifc_mflags |= MF_SEND_WRONG_COUNTS;
+        memset(conn.ifc_ecn_counts_in[PNS_APP], 0,
+                                    sizeof(conn.ifc_ecn_counts_in[PNS_APP]));
+    }
+    lsquic_alarmset_init(&conn.ifc_alset, &conn.ifc_conn);
+    lsquic_alarmset_init_alarm(&conn.ifc_alset, AL_ACK_APP,
+                                                    ack_alarm_expired, &conn);
+    if (pns == PNS_APP)
+    {
+        conn.ifc_n_slack_akbl[PNS_APP] = 1;
+        try_queueing_ack_app(&conn, WM_NONE, incoming[n_incoming - 1],
+                                                                    1000000);
+    }
+    *ack_queued = !!(conn.ifc_flags & IFC_ACK_QUED_APP);
+    packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, 128);
+    assert(packet_out);
+    assert(0 == generate_ack_frame_for_pns(&conn, packet_out, pns, 1001000));
+    memset(acki, 0, sizeof(*acki));
+    assert(packet_out->po_data_sz == conn.ifc_conn.cn_pf->pf_parse_ack_frame(
+                    packet_out->po_data, packet_out->po_data_sz, acki, 0));
+    *wrong_counts = !!(conn.ifc_mflags & MF_SEND_WRONG_COUNTS);
+    lsquic_mm_put_packet_out(&enpub.enp_mm, packet_out);
+    lsquic_rechist_cleanup(&conn.ifc_rechist[pns]);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
 void
 lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
 {

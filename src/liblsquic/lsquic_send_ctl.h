@@ -50,6 +50,7 @@ enum send_ctl_flags {
     SC_SANITY_CHECK =  1 << 15,
     SC_CIDLEN       =  1 << 16,     /* sc_cidlen is set */
     SC_POISON       =  1 << 17,     /* poisoned packet exists */
+    SC_IDLE_RESTARTED  = 1 << 18, /* idle restart reported */
     SC_ACK_RECV_INIT=  1 << 19,
     SC_ACK_RECV_HSK =  SC_ACK_RECV_INIT << PNS_HSK,
     SC_ACK_RECV_APP =  SC_ACK_RECV_INIT << PNS_APP,
@@ -75,12 +76,14 @@ typedef struct lsquic_send_ctl {
     lsquic_time_t                   sc_largest_acked_sent_time;
     lsquic_time_t                   sc_last_sent_time;
     lsquic_time_t                   sc_last_rto_time;
+    lsquic_time_t                   sc_tick_time;
     int                           (*sc_can_send)(struct lsquic_send_ctl *);
     unsigned                        sc_bytes_unacked_retx;
     unsigned                        sc_bytes_scheduled;
     union {
         struct lsquic_cubic         cubic;
         struct lsquic_bbr           bbr;
+        struct lsquic_bbr3          bbr3;
     }                               sc_cc;
     const struct cong_ctl_if       *sc_ci;
     void                           *sc_cong_ctl;
@@ -127,6 +130,8 @@ typedef struct lsquic_send_ctl {
     lsquic_time_t                   sc_loss_to;
     uint64_t                        sc_ecn_total_acked[N_PNS];
     uint64_t                        sc_ecn_ce_cnt[N_PNS];
+    /* Per-PNS ECN ACK high-water marks. */
+    lsquic_packno_t                 sc_ecn_largest_acked[N_PNS];
     struct
     {
         lsquic_stream_id_t      stream_id;
@@ -134,6 +139,7 @@ typedef struct lsquic_send_ctl {
     }                               sc_cached_bpt;
     unsigned                        sc_next_limit;
     unsigned                        sc_n_scheduled;
+    unsigned                        sc_n_scheduled_retx;
     enum packno_bits                sc_max_packno_bits;
 #if LSQUIC_SEND_STATS
     struct {
@@ -331,6 +337,7 @@ lsquic_send_ctl_drop_scheduled (lsquic_send_ctl_t *);
 static inline void
 lsquic_send_ctl_tick_in (lsquic_send_ctl_t *ctl, lsquic_time_t now)
 {
+    ctl->sc_tick_time = now;
     if ((ctl)->sc_flags & SC_PACE)
     {
         (ctl)->sc_flags |= SC_SCHED_TICK;
@@ -494,6 +501,15 @@ lsquic_send_ctl_begin_optack_detection (struct lsquic_send_ctl *);
 
 void
 lsquic_send_ctl_path_validated (struct lsquic_send_ctl *);
+
+int
+lsquic_send_ctl_set_bbr3_loss_mode (struct lsquic_send_ctl *, unsigned mode);
+
+int
+lsquic_send_ctl_get_bbr3_loss_mode (const struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_packet_size_changed (struct lsquic_send_ctl *);
 
 /* Has immediately sendable packets */
 static inline unsigned

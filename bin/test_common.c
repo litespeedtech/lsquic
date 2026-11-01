@@ -2154,6 +2154,11 @@ set_engine_option (struct lsquic_engine_settings *settings,
             settings->es_max_batch_size = atoi(val);
             return 0;
         }
+        if (0 == strncmp(name, "bbr3_loss_mode", 14))
+        {
+            settings->es_bbr3_loss_mode = atoi(val);
+            return 0;
+        }
         break;
     case 15:
         if (0 == strncmp(name, "allow_migration", 15))

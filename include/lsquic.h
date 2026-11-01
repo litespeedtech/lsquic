@@ -451,11 +451,20 @@ enum lsquic_cc
     LSQUIC_CC_DEFAULT     = 0,  LSQUIC_CC_FIRST = LSQUIC_CC_DEFAULT,
     LSQUIC_CC_CUBIC       = 1,
     LSQUIC_CC_BBR         = 2,
-    LSQUIC_CC_BBR_COPILOT = 4,  LSQUIC_CC_LAST = LSQUIC_CC_BBR_COPILOT,
+    LSQUIC_CC_BBR_COPILOT = 4,
+    LSQUIC_CC_BBR3        = 5,  LSQUIC_CC_LAST = LSQUIC_CC_BBR3,
 };
 
 /* Use BBRv1 by default */
 #define LSQUIC_DF_CC_ALGO LSQUIC_CC_BBR
+
+/* BBRv3 loss profile values */
+#define LSQUIC_BBR3_LOSS_REGULAR 0
+#define LSQUIC_BBR3_LOSS_MEDIUM  1
+#define LSQUIC_BBR3_LOSS_HIGH    2
+
+/* BBRv3 loss profiles are opt-in */
+#define LSQUIC_DF_BBR3_LOSS_MODE LSQUIC_BBR3_LOSS_REGULAR
 
 /* By default, bandwidth sampler is not kept alive unless requested. */
 #define LSQUIC_DF_ENABLE_BW_SAMPLER 0
@@ -771,8 +780,29 @@ struct lsquic_engine_settings {
      *  1:  Cubic
      *  2:  BBRv1
      *  4:  BBRv1-Copilot
+     *  5:  BBRv3
      */
     enum lsquic_cc  es_cc_algo;
+
+    /**
+     * BBRv3 loss tuning profile for BBRv3 connections.
+     *
+     *  0:  Regular BBRv3 (@ref LSQUIC_BBR3_LOSS_REGULAR)
+     *  1:  Medium-loss BBRv3 (@ref LSQUIC_BBR3_LOSS_MEDIUM)
+     *  2:  High-loss BBRv3 (@ref LSQUIC_BBR3_LOSS_HIGH)
+     *
+     * The medium- and high-loss profiles are meant for paths with random,
+     * non-congestion loss.  They respond to loss less readily, so at a
+     * congested bottleneck they queue and drop more than regular BBRv3.
+     *
+     * This does not select BBRv3 by itself; set es_cc_algo to
+     * @ref LSQUIC_CC_BBR3 for BBRv3.
+     * This can be overridden per connection at runtime using
+     * lsquic_conn_set_param(..., LSQCP_BBR3_LOSS_MODE, ...).
+     *
+     * The default value is @ref LSQUIC_DF_BBR3_LOSS_MODE.
+     */
+    unsigned        es_bbr3_loss_mode;
 
     /**
      * If you plan to call lsquic_conn_get_info(), set this to true.
@@ -2261,6 +2291,17 @@ enum lsquic_conn_param
      * Values are the same as for es_cc_algo.
      */
     LSQCP_CC_ALGO = 3,
+    /**
+     * Set BBRv3 loss tuning profile for this connection.
+     *
+     * Type: int
+     * Default: inherited from es_bbr3_loss_mode.
+     *
+     * Valid values are LSQUIC_BBR3_LOSS_REGULAR, LSQUIC_BBR3_LOSS_MEDIUM,
+     * and LSQUIC_BBR3_LOSS_HIGH.  This parameter only applies to BBRv3
+     * connections.
+     */
+    LSQCP_BBR3_LOSS_MODE = 4,
 };
 
 struct lsquic_conn_info

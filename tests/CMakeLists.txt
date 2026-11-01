@@ -34,6 +34,7 @@ SET(TESTS
     attq
     bbr
     blocked_gquic_be
+    bbr3
     bw_sampler
     cert_chain
     conn_close_gquic_be
@@ -43,6 +44,7 @@ SET(TESTS
     dec
     di_nocopy
     elision
+    ecn_ietf
     engine_ctor
     export_key
     frame_chop
@@ -211,3 +213,15 @@ ADD_TEST(rechist test_rechist)
 
 ADD_EXECUTABLE(test_trechist test_trechist.c ../src/liblsquic/lsquic_trechist.c)
 ADD_TEST(trechist test_trechist)
+
+# The host-side harness regression uses mocks and does not require Docker.
+IF (UNIX)
+    FIND_PROGRAM(BASH_EXECUTABLE bash)
+    FIND_PROGRAM(JQ_EXECUTABLE jq)
+    IF (BASH_EXECUTABLE AND JQ_EXECUTABLE AND EXISTS
+            "${PROJECT_SOURCE_DIR}/perf-harness/scripts/run-comparison-suite.sh")
+        ADD_TEST(bbr3_comparison_suite ${BASH_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/test_bbr3_comparison_suite.sh
+            ${PROJECT_SOURCE_DIR})
+    ENDIF()
+ENDIF()

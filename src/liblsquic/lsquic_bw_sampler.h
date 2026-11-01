@@ -62,7 +62,14 @@ struct bw_sample
     TAILQ_ENTRY(bw_sample)      next;
     struct bandwidth            bandwidth;
     lsquic_time_t               rtt;
+    /* RS.delivered: bytes delivered over this sample's interval. */
+    uint64_t                    delivered;
+    /* Volume of data in flight when this packet was transmitted. */
+    uint64_t                    tx_in_flight;
+    /* P.lost: sampled bytes lost when this packet was sent. */
+    uint64_t                    prior_lost;
     int                         is_app_limited;
+    int                         is_cwnd_limited;
 };
 
 int
@@ -71,7 +78,7 @@ lsquic_bw_sampler_init (struct bw_sampler *, struct lsquic_conn *,
 
 void
 lsquic_bw_sampler_packet_sent (struct bw_sampler *, struct lsquic_packet_out *,
-                                                            uint64_t in_flight);
+                                    uint64_t in_flight, int is_cwnd_limited);
 
 /* Free returned sample via lsquic_malo_put() after you're done */
 struct bw_sample *
@@ -79,7 +86,8 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *, struct lsquic_packet_out *,
                             lsquic_time_t ack_time);
 
 void
-lsquic_bw_sampler_packet_lost (struct bw_sampler *, struct lsquic_packet_out *);
+lsquic_bw_sampler_packet_lost (struct bw_sampler *, struct lsquic_packet_out *,
+                                                            int count_loss);
 
 void
 lsquic_bw_sampler_app_limited (struct bw_sampler *);
@@ -95,6 +103,13 @@ lsquic_bw_sampler_entry_count (const struct bw_sampler *);
 
 #define lsquic_bw_sampler_total_acked(sampler_) (+(sampler_)->bws_total_acked)
 
+/* The delivery-rate app-limited state: draft-ietf-ccwg-bbr calls this
+ * C.app_limited.  True while every packet in flight was sent during a phase
+ * in which the application, not congestion control, capped the send rate.
+ */
+#define lsquic_bw_sampler_is_app_limited(sampler_) \
+                            (!!((sampler_)->bws_flags & BWS_APP_LIMITED))
+
 /* The following types are exposed in the header file because of unit tests.
  * Do not use outside of lsquic_bw_sampler.c.
  */
@@ -103,16 +118,27 @@ struct bwps_send_state
     uint64_t    total_bytes_sent,
                 total_bytes_acked,
                 total_bytes_lost;
-    int         is_app_limited;
+    unsigned short
+                packet_size;
+    signed char is_app_limited,
+                is_cwnd_limited;
 };
 
 struct bwp_state    /* BWP State stands for Bandwidth Packet State */
 {
     struct bwps_send_state      bwps_send_state;
     uint64_t                    bwps_sent_at_last_ack;
+    uint64_t                    bwps_tx_in_flight;
     lsquic_time_t               bwps_last_ack_sent_time;
     lsquic_time_t               bwps_last_ack_ack_time;
-    unsigned short              bwps_packet_size;
 };
+
+/* bw_sample is built in place over bwp_state.  Both must fit the 64-byte
+ * malo slot used for every sampled packet.
+ */
+typedef char bw_sample_does_not_fit_in_bwp_state[
+                sizeof(struct bw_sample) > sizeof(struct bwp_state) ? -1 : 1];
+typedef char bwp_state_does_not_fit_in_malo_slot[
+                sizeof(struct bwp_state) > 64 ? -1 : 1];
 
 #endif

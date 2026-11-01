@@ -316,6 +316,32 @@ optional members.
 Engine Settings
 ---------------
 
+.. enum:: lsquic_cc
+
+    Congestion control algorithm selection.  Numeric values remain accepted
+    by the example programs' ``-A`` and ``-o cc_algo=`` options.
+
+    .. enumerator:: LSQUIC_CC_DEFAULT
+
+        Value 0: use :macro:`LSQUIC_DF_CC_ALGO`.
+
+    .. enumerator:: LSQUIC_CC_CUBIC
+
+        Value 1: Cubic.
+
+    .. enumerator:: LSQUIC_CC_BBR
+
+        Value 2: BBRv1.
+
+    .. enumerator:: LSQUIC_CC_BBR_COPILOT
+
+        Value 4: BBRv1-Copilot.  Value 3 is reserved and invalid.
+
+    .. enumerator:: LSQUIC_CC_BBR3
+
+        Value 5: BBRv3.
+
+
 Engine behavior can be controlled by several settings specified in the
 settings structure:
 
@@ -744,10 +770,51 @@ settings structure:
        - 1:  Cubic
        - 2:  BBRv1
        - 4:  BBRv1-Copilot.
+       - 5:  BBRv3.
 
        The default is BBRv1.  The selected algorithm is used for the
        lifetime of the connection, unless it is changed using
        :member:`LSQCP_CC_ALGO`.  Other values are invalid.
+
+    .. member:: unsigned        es_bbr3_loss_mode
+
+       Loss tuning profile for BBRv3 connections.
+
+       These profiles tune packet-loss handling.  Validated ECN-CE feedback
+       uses a separate congestion response in all three profiles: a 30%
+       window and bandwidth reduction at most once per recovery flight.
+       Fresh delivery with validated feedback showing no new CE releases
+       the ECN bounds while preserving packet-loss bounds.  Missing ECN
+       counters alone do not establish recovery.  If ECN is disabled,
+       fresh delivery can end the outstanding ECN recovery without counters.
+
+       - :macro:`LSQUIC_BBR3_LOSS_REGULAR`: Regular BBRv3.
+       - :macro:`LSQUIC_BBR3_LOSS_MEDIUM`: Medium-loss BBRv3.
+       - :macro:`LSQUIC_BBR3_LOSS_HIGH`: High-loss BBRv3.
+
+       The medium- and high-loss profiles tolerate more random loss: they
+       raise the loss threshold from 2% to 30% and shorten ProbeRTT from 200
+       to 100 milliseconds.  The threshold governs both when a bandwidth
+       probe caps the data BBRv3 keeps in flight and when BBRv3 lowers its
+       short-term bandwidth and inflight bounds outside bandwidth probing.
+       Below that threshold, a
+       lossy round with smoothed RTT more than one eighth above minimum RTT
+       still reduces the inflight bound, preserving the bandwidth estimate.
+       Regular BBRv3 lowers both bounds after any round with a loss.  In
+       Startup and upward bandwidth probing, the high-loss profile requires
+       six rounds without sufficient bandwidth growth, instead of three
+       for the regular and medium-loss profiles.
+
+       Use these profiles on paths with random, non-congestion loss.  They
+       respond to loss less readily, so at a congested bottleneck they keep
+       more data queued and cause more drops than the regular profile.
+
+       This setting does not select BBRv3 by itself; set
+       :member:`lsquic_engine_settings.es_cc_algo` to
+       :enumerator:`LSQUIC_CC_BBR3` for that.  It can be
+       overridden per connection using :enumerator:`LSQCP_BBR3_LOSS_MODE`.
+
+       The default value is :macro:`LSQUIC_DF_BBR3_LOSS_MODE`
 
     .. member:: int             es_enable_bw_sampler
 
@@ -1119,6 +1186,23 @@ out of date.  Please check your :file:`lsquic.h` for actual values.*
 .. macro:: LSQUIC_DF_CC_ALGO
 
     Use BBRv1 by default (value 2).
+
+.. macro:: LSQUIC_BBR3_LOSS_REGULAR
+
+    Regular BBRv3 loss profile.  Value: 0.
+
+.. macro:: LSQUIC_BBR3_LOSS_MEDIUM
+
+    Medium-loss BBRv3 profile.  Value: 1.
+
+.. macro:: LSQUIC_BBR3_LOSS_HIGH
+
+    High-loss BBRv3 profile.  Value: 2.
+
+.. macro:: LSQUIC_DF_BBR3_LOSS_MODE
+
+    BBRv3 loss profiles are opt-in: the default is
+    :macro:`LSQUIC_BBR3_LOSS_REGULAR`.
 
 .. macro:: LSQUIC_DF_DELAYED_ACKS
 
@@ -2257,15 +2341,34 @@ available through engine settings.
         between BBRv1 and BBR-Copilot preserves controller state, including
         the shared application-activity and ProbeRTT bookkeeping.
 
-        Switching between Cubic and either BBR variant initializes fresh
-        controller state.  After switching from Cubic to BBR-Copilot,
-        fill probing waits until new application data is sent.
+        All other controller changes initialize fresh controller state.
+        Selecting the current controller is a no-op.  After switching from
+        Cubic or BBRv3 to BBR-Copilot, fill probing waits until new
+        application data is sent.
 
         Leaving BBR-Copilot cancels scheduled fill probes.  Probes already
         sent remain tracked until they are acknowledged or discarded.
 
         When read with :func:`lsquic_conn_get_param()`, this parameter
         reflects the congestion controller that is currently in use.
+
+    .. enumerator:: LSQCP_BBR3_LOSS_MODE
+
+        BBRv3 loss tuning profile for this connection.
+
+        **Type:** ``int``
+
+        **Default:** inherited from :member:`lsquic_engine_settings.es_bbr3_loss_mode`
+
+        Valid values are :macro:`LSQUIC_BBR3_LOSS_REGULAR`,
+        :macro:`LSQUIC_BBR3_LOSS_MEDIUM`, and :macro:`LSQUIC_BBR3_LOSS_HIGH`.
+        The new profile takes effect immediately and survives a
+        congestion controller reset on path change.  Switching away from
+        BBRv3 and back selects the engine's loss profile again.
+
+        This parameter only applies to BBRv3 connections: both setting and
+        getting it fail with -1 if the connection uses a different congestion
+        controller.  Setting an invalid value also fails.
 
 .. function:: int lsquic_conn_set_param (lsquic_conn_t *conn, enum lsquic_conn_param param, const void *value, size_t value_len)
 
@@ -2314,6 +2417,17 @@ available through engine settings.
         enum lsquic_cc cc_algo = LSQUIC_CC_BBR_COPILOT;
         lsquic_conn_set_param(conn, LSQCP_CC_ALGO,
                               &cc_algo, sizeof(cc_algo));
+
+    **Example - Switching a BBRv3 connection to the high-loss profile:**
+
+    ::
+
+        int mode = LSQUIC_BBR3_LOSS_HIGH;
+        if (lsquic_conn_set_param(conn, LSQCP_BBR3_LOSS_MODE,
+                                  &mode, sizeof(mode)) != 0)
+        {
+            // Connection does not use BBRv3
+        }
 
     **Note:** For :member:`LSQCP_MAX_PACING_RATE`, pacing must be enabled
     via :member:`lsquic_engine_settings.es_pace_packets` for this parameter

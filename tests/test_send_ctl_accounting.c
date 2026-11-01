@@ -31,6 +31,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -778,7 +779,9 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
     assert(lost == t.stats.out.lost_packets);
 #endif
     assert(lost == t.send_ctl.sc_loss_count);
-    assert(lost * data_bytes == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    /* A TLP reschedules data but is not a confirmed congestion loss. */
+    assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
     assert(4 + with_data - lost == t.send_ctl.sc_n_in_flight_all);
     assert(4 == t.send_ctl.sc_n_in_flight_fill);
     assert(lost == t.send_ctl.sc_n_tlp);
@@ -805,7 +808,7 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
     assert(probe_bytes + (with_data - lost) * data_bytes
                                 == t.send_ctl.sc_bw_sampler.bws_total_acked);
     assert(minmax_get(&t.send_ctl.sc_cc.bbr.bbr_max_bandwidth) > 0);
-    assert(lost * data_bytes == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
 #if LSQUIC_CONN_STATS
     assert(lost == t.stats.out.lost_packets);
 #endif
@@ -819,7 +822,7 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
 
 
 static void
-test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
+test_bw_probe_fill_alarm_does_not_trigger_recovery (enum lsquic_cc cc_algo)
 {
     static const enum quic_ft_bit retx_masks[] = {
         IQUIC_FRAME_RETX_MASK,
@@ -852,6 +855,7 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
             assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
         }
 
+        assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, cc_algo));
         assert(N_PROBES == t.send_ctl.sc_n_in_flight_all);
         assert(N_PROBES == t.send_ctl.sc_n_in_flight_retx);
         assert(N_PROBES == t.send_ctl.sc_n_in_flight_fill);
@@ -880,8 +884,16 @@ test_bw_probe_fill_alarm_does_not_trigger_recovery (void)
             assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);
             assert(N_PROBES - n - 1
                 == lsquic_bw_sampler_entry_count(&t.send_ctl.sc_bw_sampler));
-            assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
-            assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
+            if (cc_algo == LSQUIC_CC_BBR3)
+            {
+                assert(!t.send_ctl.sc_cc.bbr3.bbr3_loss_in_round);
+                assert(0 == t.send_ctl.sc_cc.bbr3.bbr3_lost);
+            }
+            else
+            {
+                assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+                assert(0 == t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes);
+            }
         }
 
         assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
@@ -1079,6 +1091,8 @@ main (void)
     test_bw_probe_fill_paced(LSQUIC_CC_BBR, 1);
     test_bw_probe_fill_paced(LSQUIC_CC_CUBIC, 0);
     test_bw_probe_fill_paced(LSQUIC_CC_CUBIC, 1);
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR3, 0);
+    test_bw_probe_fill_paced(LSQUIC_CC_BBR3, 1);
     test_bw_probe_fill_idle(0, 0);
     test_bw_probe_fill_idle(1999999, 0);
     test_bw_probe_fill_idle(2000000, 1);
@@ -1088,6 +1102,8 @@ main (void)
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR, 1);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_CUBIC, 0);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_CUBIC, 1);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR3, 0);
+    test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_BBR3, 1);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_DEFAULT, 0);
     test_switch_away_cancels_bw_probe_fill(LSQUIC_CC_DEFAULT, 1);
     test_lost_bw_probe_fill_is_not_rescheduled();
@@ -1099,7 +1115,8 @@ main (void)
     test_bw_probe_fill_delayed_ack(GQUIC_FRAME_RETRANSMITTABLE_MASK, 0, 1);
     test_bw_probe_fill_delayed_ack(GQUIC_FRAME_RETRANSMITTABLE_MASK, 1, 0);
     test_bw_probe_fill_delayed_ack(GQUIC_FRAME_RETRANSMITTABLE_MASK, 1, 1);
-    test_bw_probe_fill_alarm_does_not_trigger_recovery();
+    test_bw_probe_fill_alarm_does_not_trigger_recovery(LSQUIC_CC_BBR_COPILOT);
+    test_bw_probe_fill_alarm_does_not_trigger_recovery(LSQUIC_CC_BBR3);
     test_bw_probe_fill_alarm_with_other_spaces();
     test_bw_probe_fill_skipped_during_rto_recovery();
     test_rto_drops_scheduled_bw_probe_fill();

@@ -65,6 +65,7 @@ Contents
    tutorial
    congestion-control
    apiref
+   bbrv3-deviations
    devel
    internals
    faq

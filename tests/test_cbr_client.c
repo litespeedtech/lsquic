@@ -1,3 +1,4 @@
+/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Copyright (c) 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <errno.h>
