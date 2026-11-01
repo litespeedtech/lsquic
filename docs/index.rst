@@ -63,6 +63,7 @@ Contents
 
    gettingstarted
    tutorial
+   congestion-control
    apiref
    devel
    internals

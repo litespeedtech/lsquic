@@ -174,6 +174,7 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 supported.\n"
 "                   1: Cubic\n"
 "                   2: BBRv1 (this is the default).\n"
+"                   4: BBRv1-Copilot.\n"
     );
 
 #if HAVE_SENDMMSG
@@ -225,6 +226,9 @@ prog_print_common_options (const struct prog *prog, FILE *out)
         LSQUIC_DF_CLOCK_GRANULARITY
     );
     fprintf(out,
+"   -o name=val Set engine options, such as -o max_batch_size=100\n"
+    );
+    fprintf(out,
 "   -h          Print this help screen and exit\n"
     );
 }
@@ -270,7 +274,7 @@ prog_set_opt (struct prog *prog, int opt, const char *arg)
         prog->prog_use_stock_pmi = 1;
         return 0;
     case 'A':
-        prog->prog_settings.es_cc_algo = atoi(optarg);
+        prog->prog_settings.es_cc_algo = (enum lsquic_cc) atoi(optarg);
         return 0;
     case 'c':
         if (prog->prog_engine_flags & LSENG_SERVER)

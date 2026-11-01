@@ -11,16 +11,17 @@ static void
 test_cc_settings (unsigned flags)
 {
     struct lsquic_engine_settings settings;
-    const unsigned invalid[] = { 3, 4, UINT_MAX, };
+    const unsigned valid[] = { 0, 1, 2, 4, };
+    const unsigned invalid[] = { 3, 5, UINT_MAX, };
     char errbuf[128];
     unsigned i;
 
     lsquic_engine_init_settings(&settings, flags);
     assert(settings.es_cc_algo == 2);
     assert(settings.es_cc_algo == LSQUIC_DF_CC_ALGO);
-    for (i = 0; i <= 2; ++i)
+    for (i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
     {
-        settings.es_cc_algo = i;
+        settings.es_cc_algo = valid[i];
         assert(0 == lsquic_engine_check_settings(&settings, flags, NULL, 0));
     }
     for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)

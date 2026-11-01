@@ -121,6 +121,11 @@ static const size_t kGainCycleLength = sizeof(kPacingGain)
 // The minimum time the connection can spend in PROBE_RTT mode.
 #define kProbeRttTime ms(200)
 
+/* How long a connection may go without sending application data
+ * before it is considered idle for fill probes.
+ */
+#define kBwProbeFillIdleTimeout sec(1)
+
 /* FLAG* are from net/quic/quic_flags_list.h */
 
 // When in STARTUP and recovery, do not add bytes_acked to QUIC BBR's CWND in
@@ -204,7 +209,9 @@ init_bbr (struct lsquic_bbr *bbr)
     bbr->bbr_flags &= ~BBR_FLAG_LAST_SAMPLE_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_HAS_NON_APP_LIMITED;
     bbr->bbr_flags &= ~BBR_FLAG_FLEXIBLE_APP_LIMITED;
+    bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
     bbr->bbr_total_acked = 0;
+    bbr->bbr_last_app_data_sent = 0;
     set_startup_values(bbr);
 }
 
@@ -354,6 +361,34 @@ lsquic_bbr_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
     bbr->bbr_total_acked += packet_sz;
 }
 
+
+static void
+bbr_copilot_ack (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                      unsigned packet_sz, lsquic_time_t now, int app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    assert(bbr->bbr_flags & BBR_FLAG_IN_ACK);
+
+    /* Only the ACK of a packet that carries sampler state moves the
+     * sampler's anchor forward.  ACKs of packets without that state, such
+     * as ACK-only packets and plain IETF PINGs, do not: new samples would
+     * still span ProbeRTT.
+     */
+    if (bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT
+            && bbr->bbr_mode != BBR_MODE_PROBE_RTT
+            && packet_out->po_packno > bbr->bbr_probe_rtt_app_limited_until
+            && packet_out->po_bwp_state)
+    {
+        LSQ_DEBUG("exit probe_rtt app-limited at packno %"PRIu64,
+            packet_out->po_packno);
+        bbr->bbr_flags &= ~BBR_BW_SAMPLE_INVALID_PROBE_RTT;
+    }
+
+    lsquic_bbr_ack(cong_ctl, packet_out, packet_sz, now, app_limited);
+}
+
+
 static void
 lsquic_bbr_process_bw_sample (void *cong_ctl, struct bw_sample *sample)
 {
@@ -374,8 +409,35 @@ lsquic_bbr_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
      */
     bbr->bbr_last_sent_packno = packet_out->po_packno;
 
+    /* Keep the boundary current for a later switch to Copilot, even when
+     * plain BBR is selected.  Only Copilot marks samples app-limited.
+     */
+    if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
+        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
+
+    /* Remember when the application last sent data.  STREAM and DATAGRAM
+     * frames are application data; fill probes and keepalives carry only
+     * PING frames and thus do not refresh this timestamp.
+     */
+    if (packet_out->po_frame_types & (QUIC_FTBIT_STREAM | QUIC_FTBIT_DATAGRAM))
+        bbr->bbr_last_app_data_sent = packet_out->po_sent;
+
     if (app_limited)
         bbr_app_limited(bbr, in_flight);
+}
+
+
+static void
+bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
+                                        uint64_t in_flight, int app_limited)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    lsquic_bbr_sent(cong_ctl, packet_out, in_flight, app_limited);
+
+    if ((bbr->bbr_flags & BBR_BW_SAMPLE_INVALID_PROBE_RTT)
+             && (packet_out->po_bwp_state))
+        packet_out->po_bwp_state->bwps_send_state.is_app_limited = 1;
 }
 
 
@@ -797,6 +859,11 @@ maybe_enter_or_exit_probe_rtt (struct lsquic_bbr *bbr, lsquic_time_t now,
         // Do not decide on the time to exit PROBE_RTT until the
         // |bytes_in_flight| is at the target small value.
         bbr->bbr_exit_probe_rtt_at = 0;
+        /* Both variants prepare this state for Copilot, which may be
+         * enabled later through a state-preserving BBR-family switch.
+         */
+        bbr->bbr_flags |= BBR_BW_SAMPLE_INVALID_PROBE_RTT;
+        bbr->bbr_probe_rtt_app_limited_until = bbr->bbr_last_sent_packno;
     }
 
     if (bbr->bbr_mode == BBR_MODE_PROBE_RTT)
@@ -1053,6 +1120,28 @@ lsquic_bbr_end_ack (void *cong_ctl, uint64_t in_flight)
 }
 
 
+static int
+bbr_copilot_bw_probe_fill_wanted (void *cong_ctl, lsquic_time_t now)
+{
+    struct lsquic_bbr *const bbr = cong_ctl;
+
+    /* The cached tick time may precede the last application send. */
+    if (0 == bbr->bbr_last_app_data_sent
+            || (now > bbr->bbr_last_app_data_sent
+                && now - bbr->bbr_last_app_data_sent > kBwProbeFillIdleTimeout))
+        return 0;
+    else
+        return bbr->bbr_pacing_gain > 1.0;
+}
+
+
+static int
+lsquic_bbr_bw_probe_fill_wanted (void *UNUSED_cong_ctl, lsquic_time_t UNUSED_now)
+{
+    return 0;
+}
+
+
 static void
 lsquic_bbr_cleanup (void *cong_ctl)
 {
@@ -1086,4 +1175,25 @@ const struct cong_ctl_if lsquic_cong_bbr_if =
     .cci_timeout       = lsquic_bbr_timeout,
     .cci_sent          = lsquic_bbr_sent,
     .cci_was_quiet     = lsquic_bbr_was_quiet,
+    .cci_bw_probe_fill_wanted = lsquic_bbr_bw_probe_fill_wanted,
+};
+
+
+const struct cong_ctl_if lsquic_cong_bbr_copilot_if =
+{
+    .cci_ack           = bbr_copilot_ack,
+    .cci_begin_ack     = lsquic_bbr_begin_ack,
+    .cci_end_ack       = lsquic_bbr_end_ack,
+    .cci_cleanup       = lsquic_bbr_cleanup,
+    .cci_get_cwnd      = lsquic_bbr_get_cwnd,
+    .cci_init          = lsquic_bbr_init,
+    .cci_pacing_rate   = lsquic_bbr_pacing_rate,
+    .cci_loss          = lsquic_bbr_loss,
+    .cci_lost          = lsquic_bbr_lost,
+    .cci_process_bw_sample = lsquic_bbr_process_bw_sample,
+    .cci_reinit        = lsquic_bbr_reinit,
+    .cci_timeout       = lsquic_bbr_timeout,
+    .cci_sent          = bbr_copilot_sent,
+    .cci_was_quiet     = lsquic_bbr_was_quiet,
+    .cci_bw_probe_fill_wanted = bbr_copilot_bw_probe_fill_wanted,
 };
