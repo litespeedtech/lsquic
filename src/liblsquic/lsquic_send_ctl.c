@@ -1462,6 +1462,7 @@ send_ctl_record_loss (struct lsquic_send_ctl *ctl,
         loss_record->po_sent = packet_out->po_sent;
         loss_record->po_sent_sz = packet_out_sent_sz(packet_out);
         loss_record->po_frame_types = packet_out->po_frame_types;
+        lsquic_packet_out_set_ecn(loss_record, lsquic_packet_out_ecn(packet_out));
         /* Insert the loss record into the chain: */
         loss_record->po_loss_chain = packet_out->po_loss_chain;
         packet_out->po_loss_chain = loss_record;

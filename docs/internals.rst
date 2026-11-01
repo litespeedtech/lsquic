@@ -3023,6 +3023,10 @@ real packet can move from the Unacked Queue to the Lost Queue to the
 Scheduled Queue and back to the Unacked Queue; its loss records live
 only on the Unacked Queue.
 
+Loss records retain the original transmission's ECN codepoint, including
+provisional TLP records.  Late ACKs therefore validate ECN using the same
+marking as an ACK received before the packet moved to the Lost Queue.
+
 We need loss records to be able to handle late acknowledgements -- those
 that acknowledge a packet *after* it has been deemed lost. When an
 acknowledgment for any of the packet numbers associated with this packet

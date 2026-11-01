@@ -1599,6 +1599,89 @@ test_bbr3_ecn_missing_feedback (unsigned mode, unsigned flags,
 }
 
 
+enum loss_record_ecn_feedback
+{
+    LOSS_REC_ECN_MISSING,
+    LOSS_REC_ECN_VALID,
+    LOSS_REC_ECN_INSUFFICIENT,
+    LOSS_REC_ECN_REORDERED,
+};
+
+
+static void
+test_loss_record_ecn (enum lsquic_cc cc_algo, unsigned flags, int tlp)
+{
+    static const enum ecn codepoints[] = { ECN_ECT0, ECN_ECT1, ECN_NOT_ECT, };
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet, *record;
+    struct ack_info acki;
+    lsquic_time_t expiry;
+    unsigned i, feedback, enabled, total_acked;
+
+    for (i = 0; i < sizeof(codepoints) / sizeof(codepoints[0]); ++i)
+        for (feedback = LOSS_REC_ECN_MISSING;
+                                feedback <= LOSS_REC_ECN_REORDERED; ++feedback)
+        {
+            init_test(&t, cc_algo, 0, LSQVER_I001, flags, 0);
+            t.send_ctl.sc_flags |= SC_ECN;
+            t.send_ctl.sc_ecn = ECN_ECT0;
+            packet = new_packet(&t, 1, 1000000);
+            lsquic_packet_out_set_ecn(packet, codepoints[i]);
+            assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+            expiry = t.alset.as_expiry[AL_RETX_APP];
+            if (tlp)
+                lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+            else
+                lsquic_send_ctl_expire_all(&t.send_ctl);
+            record = TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]);
+            assert(record->po_flags & PO_LOSS_REC);
+            assert(!!(record->po_lflags & POL_TLP_PENDING) == tlp);
+
+            if (feedback == LOSS_REC_ECN_REORDERED)
+            {
+                /* A higher Not-ECT ACK makes the original ACK reordered. */
+                packet = new_packet(&t, 2, expiry + 1);
+                packet->po_frame_types = QUIC_FTBIT_ACK;
+                assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+                ack_one(&t, 2, expiry + 10001, expiry + 10001, 0);
+                assert(lsquic_send_ctl_ecn_turned_on(&t.send_ctl));
+            }
+            memset(&acki, 0, sizeof(acki));
+            acki.pns = PNS_APP;
+            acki.n_ranges = 1;
+            acki.ranges[0].low = acki.ranges[0].high = 1;
+            if (feedback == LOSS_REC_ECN_VALID
+                                    || feedback == LOSS_REC_ECN_INSUFFICIENT)
+                acki.flags |= AI_ECN;
+            if (feedback == LOSS_REC_ECN_VALID && codepoints[i] != ECN_NOT_ECT)
+                acki.ecn_counts[codepoints[i]] = 1;
+            assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki,
+                                            expiry + 10002, expiry + 10002));
+            enabled = codepoints[i] == ECN_NOT_ECT
+                            || feedback == LOSS_REC_ECN_VALID
+                            || feedback == LOSS_REC_ECN_REORDERED;
+            assert(!!lsquic_send_ctl_ecn_turned_on(&t.send_ctl) == enabled);
+            if (cc_algo == LSQUIC_CC_BBR3)
+                assert(!!(t.send_ctl.sc_cc.bbr3.bbr3_flags
+                                        & BBR3_FLAG_ECN_DISABLED) == !enabled);
+            assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+            assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+            total_acked = t.send_ctl.sc_ecn_total_acked[PNS_APP];
+            if (feedback == LOSS_REC_ECN_VALID)
+                assert(total_acked == (codepoints[i] != ECN_NOT_ECT));
+            /* Neither duplicate feedback nor a duplicate without counters
+             * may count this transmission again or change ECN validation.
+             */
+            assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki,
+                                            expiry + 10003, expiry + 10003));
+            ack_one(&t, 1, expiry + 10004, expiry + 10004, 0);
+            assert(t.send_ctl.sc_ecn_total_acked[PNS_APP] == total_acked);
+            assert(!!lsquic_send_ctl_ecn_turned_on(&t.send_ctl) == enabled);
+            cleanup_test(&t);
+        }
+}
+
+
 static void
 test_ecn_missing_counters (enum lsquic_cc cc_algo, unsigned flags,
                           enum packnum_space pns, int other_pns)
@@ -2944,6 +3027,12 @@ main (void)
 
     lsquic_init_timers();
     lsquic_log_to_fstream(stderr, LLTS_NONE);
+    for (cc_algo = 1; cc_algo < sizeof(cc_algos) / sizeof(cc_algos[0]); ++cc_algo)
+        for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+        {
+            test_loss_record_ecn(cc_algos[cc_algo], flags[i], 0);
+            test_loss_record_ecn(cc_algos[cc_algo], flags[i], 1);
+        }
     for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
     {
         test_bbr3_migration_retained_flight(flags[i]);
