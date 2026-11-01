@@ -1616,7 +1616,9 @@ test_loss_record_ecn (enum lsquic_cc cc_algo, unsigned flags, int tlp)
     struct lsquic_packet_out *packet, *record;
     struct ack_info acki;
     lsquic_time_t expiry;
-    unsigned i, feedback, enabled, total_acked;
+    uint64_t total_acked;
+    unsigned i, feedback;
+    int enabled;
 
     for (i = 0; i < sizeof(codepoints) / sizeof(codepoints[0]); ++i)
         for (feedback = LOSS_REC_ECN_MISSING;
@@ -1668,7 +1670,7 @@ test_loss_record_ecn (enum lsquic_cc cc_algo, unsigned flags, int tlp)
             assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
             total_acked = t.send_ctl.sc_ecn_total_acked[PNS_APP];
             if (feedback == LOSS_REC_ECN_VALID)
-                assert(total_acked == (codepoints[i] != ECN_NOT_ECT));
+                assert(total_acked == (codepoints[i] != ECN_NOT_ECT ? 1u : 0u));
             /* Neither duplicate feedback nor a duplicate without counters
              * may count this transmission again or change ECN validation.
              */
