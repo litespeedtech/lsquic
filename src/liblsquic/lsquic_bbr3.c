@@ -1731,11 +1731,10 @@ lsquic_bbr3_lost (void *cong_ctl, struct lsquic_packet_out *packet_out,
     if (reason == PLR_PROBE)
         return;
 
-    bbr3->bbr3_loss_in_round = 1;
-
     state = packet_out ? packet_out->po_bwp_state : NULL;
     if (state)
     {
+        bbr3->bbr3_loss_in_round = 1;
         bbr3->bbr3_lost += state->bwps_send_state.packet_size;
         if ((bbr3->bbr3_flags & BBR3_FLAG_BW_PROBE_SAMPLES)
                 && bbr3_sent_in_probe_up(bbr3, packet_out->po_packno))
@@ -1827,17 +1826,12 @@ lsquic_bbr3_pacing_rate (void *cong_ctl, int UNUSED_in_recovery)
 
 
 static void
-lsquic_bbr3_loss (void *cong_ctl)
+lsquic_bbr3_loss (void *UNUSED_cong_ctl)
 {
-    struct lsquic_bbr3 *const bbr3 = cong_ctl;
-
-    /* A congestion event (loss cutback or ECN-CE) was signalled.  In LSQUIC
-     * this fires on any loss, not just ECN-CE, so it must NOT force an
-     * inflight-too-high response.  Mark the round lossy so the short-term
-     * bounds contract via BBRAdaptLowerBoundsFromCongestion; the per-packet
-     * loss path (cci_lost) drives the LossThresh-gated inflight response.
+    /* This notification can include losses excluded from our accounting.
+     * cci_lost marks rounds lossy only for accounted packet losses; ECN
+     * feedback is delivered separately through cci_ecn.
      */
-    bbr3->bbr3_loss_in_round = 1;
 }
 
 

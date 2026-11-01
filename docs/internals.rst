@@ -3264,8 +3264,10 @@ after a lossy round if smoothed RTT exceeds min_rtt by more than one
 eighth. This is a queueing heuristic: it preserves the bandwidth estimate
 while limiting excess flight, using the same latest-delivery floor and
 beta as the normal inflight reduction. Delay without loss does not lower
-either bound, and bandwidth-probing phases remain exempt. A congestion
-event signalled through ``cci_loss()`` follows this packet-loss policy.
+either bound, and bandwidth-probing phases remain exempt.  Only per-packet
+losses that contribute sampler-accounted bytes mark the round lossy.
+BBRv3 ignores the generic ``cci_loss()`` notification because it can also
+report losses of excluded packets, such as ACK-only packets.
 Validated ECN feedback has a separate ``cci_ecn()`` notification and is
 not subject to the random-loss thresholds.  New CE feedback can cut the
 current window and effective bandwidth by 30% once per recovery flight,

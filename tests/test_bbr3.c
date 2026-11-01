@@ -2084,6 +2084,50 @@ test_bbr3_timer_loss_propagates_to_model (void)
 
 
 static void
+test_bbr3_unaccounted_loss (unsigned mode)
+{
+    struct lsquic_bbr3 bbr3;
+    struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
+    struct network_path path = { 0 };
+    struct lsquic_conn_public conn_pub = { 0 };
+    struct lsquic_packet_out packet = { 0 };
+    struct malo *malo;
+
+    path.np_pack_size = BBR3_TEST_PACKET_SZ;
+    conn_pub.lconn = &lconn;
+    conn_pub.path = &path;
+    malo = lsquic_malo_create(sizeof(struct bw_sample));
+    assert(malo);
+    lsquic_cong_bbr3_if.cci_init(&bbr3, &conn_pub);
+    prime_bbr3_to_probe_bw_down(&bbr3, malo);
+    ack_rate_sample(&bbr3, malo, 6, 1130000, 10000, 1000, 0);
+    assert(bbr3.bbr3_state == BBR3_STATE_PROBE_BW_CRUISE);
+    lsquic_bbr3_set_loss_mode(&bbr3, mode);
+    bbr3.bbr3_cwnd = 100000;
+
+    packet.po_frame_types = QUIC_FTBIT_ACK;
+    lsquic_cong_bbr3_if.cci_lost(&bbr3, &packet, 32, PLR_LOSS);
+    assert(!bbr3.bbr3_loss_in_round);
+    assert(bbr3.bbr3_lost == 0);
+    lsquic_cong_bbr3_if.cci_loss(&bbr3);
+    assert(!bbr3.bbr3_loss_in_round);
+    ack_rate_sample_at(&bbr3, malo, 7, 900000, 10000, 100000, 1070000, 0);
+    assert(bbr3.bbr3_bw_shortterm == UINT64_MAX);
+    assert(bbr3.bbr3_inflight_shortterm == UINT64_MAX);
+
+    /* A real loss still lowers the bounds, even without cci_loss(). */
+    lose_packet(&bbr3, 8, 1000, 100000, 0, 0);
+    assert(bbr3.bbr3_loss_in_round);
+    assert(bbr3.bbr3_lost == 1000);
+    ack_rate_sample_at(&bbr3, malo, 9, 900000, 10000, 100000, 1080000, 0);
+    assert(bbr3.bbr3_bw_shortterm != UINT64_MAX);
+    assert(bbr3.bbr3_inflight_shortterm < 100000);
+    lsquic_cong_bbr3_if.cci_cleanup(&bbr3);
+    lsquic_malo_destroy(malo);
+}
+
+
+static void
 test_bbr3_loss_event_does_not_bypass_guards (void)
 {
     struct lsquic_bbr3 bbr3;
@@ -3495,6 +3539,9 @@ main (void)
     test_bbr3_high_rate_math_keeps_fractional_precision();
     test_bbr3_timer_loss_propagates_to_model();
     test_bbr3_loss_event_does_not_bypass_guards();
+    test_bbr3_unaccounted_loss(LSQUIC_BBR3_LOSS_REGULAR);
+    test_bbr3_unaccounted_loss(LSQUIC_BBR3_LOSS_MEDIUM);
+    test_bbr3_unaccounted_loss(LSQUIC_BBR3_LOSS_HIGH);
     test_bbr3_max_bw_filter_survives_multiple_rounds();
     test_bbr3_max_bw_filter_expires_after_two_cycles();
     test_bbr3_app_limited_probe_rtt_exit_keeps_max_bw_cycle();

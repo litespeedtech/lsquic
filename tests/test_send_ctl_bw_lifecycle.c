@@ -1517,6 +1517,50 @@ test_ecn_missing_counters (enum lsquic_cc cc_algo, unsigned flags,
 
 
 static void
+test_bbr3_ack_only_loss (enum lsquic_version version, int lose_data)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet;
+    struct lsquic_bbr3 *bbr3;
+    unsigned i;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, version, 0, 0);
+    bbr3 = &t.send_ctl.sc_cc.bbr3;
+    bbr3->bbr3_state = BBR3_STATE_PROBE_BW_CRUISE;
+    bbr3->bbr3_full_bw_reached = 1;
+    bbr3->bbr3_bw = 1000000;
+    bbr3->bbr3_max_bw = 1000000;
+    bbr3->bbr3_cwnd = 100000;
+    bbr3->bbr3_bw_probe_wait = 10000000;
+    bbr3->bbr3_cycle_stamp = 1000000;
+    for (i = 1; i <= 7; ++i)
+    {
+        packet = new_packet(&t, i, 1000000);
+        if (i < 7 && !(lose_data && i == 1))
+            packet->po_frame_types = QUIC_FTBIT_ACK;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    }
+    ack_one(&t, 7, 1010000, 1010000, 0);
+    /* FACK declares ACK-only packets lost and also calls cci_loss(). */
+    assert(t.send_ctl.sc_loss_count > 0);
+    assert(t.send_ctl.sc_largest_sent_at_cutback == 7);
+    assert(bbr3->bbr3_lost == (lose_data ? PACKET_SZ : 0u));
+    assert(bbr3->bbr3_lost == t.send_ctl.sc_bw_sampler.bws_total_lost);
+    if (lose_data)
+    {
+        assert(bbr3->bbr3_bw_shortterm != UINT64_MAX);
+        assert(bbr3->bbr3_inflight_shortterm < 100000);
+    }
+    else
+    {
+        assert(bbr3->bbr3_bw_shortterm == UINT64_MAX);
+        assert(bbr3->bbr3_inflight_shortterm == UINT64_MAX);
+    }
+    cleanup_test(&t);
+}
+
+
+static void
 test_bbr3_tlp_is_not_congestion (enum lsquic_version version, unsigned flags,
                                 unsigned mode)
 {
@@ -2428,6 +2472,11 @@ main (void)
 
     lsquic_init_timers();
     lsquic_log_to_fstream(stderr, LLTS_NONE);
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+    {
+        test_bbr3_ack_only_loss(versions[i], 0);
+        test_bbr3_ack_only_loss(versions[i], 1);
+    }
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
         for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
             for (cc_algo = 0;
