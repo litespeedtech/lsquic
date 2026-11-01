@@ -91,6 +91,7 @@ typedef struct lsquic_send_ctl {
     unsigned                        sc_bytes_unacked_all;
     unsigned                        sc_n_in_flight_all;
     unsigned                        sc_n_in_flight_retx;
+    unsigned                        sc_n_in_flight_cc;
     unsigned                        sc_n_in_flight_fill;
     unsigned                        sc_n_consec_rtos;
     unsigned                        sc_n_hsk;
@@ -139,7 +140,7 @@ typedef struct lsquic_send_ctl {
     }                               sc_cached_bpt;
     unsigned                        sc_next_limit;
     unsigned                        sc_n_scheduled;
-    unsigned                        sc_n_scheduled_retx;
+    unsigned                        sc_n_scheduled_cc;
     enum packno_bits                sc_max_packno_bits;
 #if LSQUIC_SEND_STATS
     struct {
@@ -422,6 +423,10 @@ lsquic_send_ctl_turn_on_fin (struct lsquic_send_ctl *,
 
 int
 lsquic_send_ctl_pacer_blocked (struct lsquic_send_ctl *);
+
+void
+lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *,
+                                  struct lsquic_packet_out *);
 
 static inline void
 lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,

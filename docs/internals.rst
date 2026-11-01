@@ -3167,9 +3167,12 @@ empty flight can exit after the timer expires, restoring the congestion
 window before transmission even if no round completed during the idle
 period.  BBRv3 implements the optional ``cci_restart_from_idle`` callback,
 which the Send Controller invokes before pacing or dequeuing a
-retransmittable packet when the flight is empty and the bandwidth sampler
-is application-limited.  The Send Controller latches this notification until
-a retransmittable packet is sent or all scheduled data is cancelled.  CUBIC
+retransmittable or DATAGRAM packet when the congestion-controlled flight
+is empty and the bandwidth sampler is application-limited.  The Send Controller latches this notification until
+a congestion-controlled packet is sent or all scheduled data is cancelled.
+Separate idle counters include DATAGRAM and fill probes without changing
+retransmission policy.  Frame writers update scheduled membership when
+adding STREAM or DATAGRAM data to an already scheduled packet.  CUBIC
 and BBRv1 keep their existing
 ACK-time ``cci_was_quiet`` notifications, independent of optional bandwidth
 sampling; BBRv3 leaves that callback unset.

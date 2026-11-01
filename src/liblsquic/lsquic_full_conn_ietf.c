@@ -8194,6 +8194,7 @@ write_datagram (struct ietf_full_conn *conn)
     }
     packet_out->po_regen_sz += w;
     packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+    lsquic_send_ctl_update_packet_cc(&conn->ifc_send_ctl, packet_out);
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
     /* XXX The DATAGRAM frame should really be a regen.  Do it when we
      * no longer require these frame types to be at the beginning of the

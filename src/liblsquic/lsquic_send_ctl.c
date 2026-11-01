@@ -307,6 +307,15 @@ send_ctl_packet_needs_retx_tracking (const struct lsquic_send_ctl *ctl,
 }
 
 
+static int
+send_ctl_packet_counts_for_cc (const struct lsquic_send_ctl *ctl,
+                               const struct lsquic_packet_out *packet_out)
+{
+    return send_ctl_packet_needs_retx_tracking(ctl, packet_out)
+        || (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM);
+}
+
+
 static lsquic_packet_out_t *
 send_ctl_first_unacked_retx_packet (const struct lsquic_send_ctl *ctl,
                                                         enum packnum_space pns)
@@ -888,7 +897,10 @@ send_ctl_unacked_append (struct lsquic_send_ctl *ctl,
     {
         ctl->sc_bytes_unacked_retx += packet_out_total_sz(packet_out);
         ++ctl->sc_n_in_flight_retx;
-        /* Re-arm idle restart after pipe refills. */
+    }
+    if (send_ctl_packet_counts_for_cc(ctl, packet_out))
+    {
+        ++ctl->sc_n_in_flight_cc;
         ctl->sc_flags &= ~SC_IDLE_RESTARTED;
     }
     ctl->sc_n_in_flight_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
@@ -912,7 +924,33 @@ send_ctl_unacked_remove (struct lsquic_send_ctl *ctl,
         ctl->sc_bytes_unacked_retx -= packet_sz;
         --ctl->sc_n_in_flight_retx;
     }
+    if (send_ctl_packet_counts_for_cc(ctl, packet_out))
+        --ctl->sc_n_in_flight_cc;
     ctl->sc_n_in_flight_fill -= !!(packet_out->po_flags & PO_BW_PROBE_FILL);
+}
+
+
+/* Frame writers can add data after a packet has been scheduled. */
+void
+lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *ctl,
+                                  struct lsquic_packet_out *packet_out)
+{
+    if (!(packet_out->po_flags & PO_SCHED))
+        return;
+
+    if (send_ctl_packet_counts_for_cc(ctl, packet_out))
+    {
+        if (!(packet_out->po_lflags & POL_SCHED_CC))
+        {
+            packet_out->po_lflags |= POL_SCHED_CC;
+            ++ctl->sc_n_scheduled_cc;
+        }
+    }
+    else if (packet_out->po_lflags & POL_SCHED_CC)
+    {
+        packet_out->po_lflags &= ~POL_SCHED_CC;
+        --ctl->sc_n_scheduled_cc;
+    }
 }
 
 
@@ -922,11 +960,7 @@ send_ctl_sched_Xpend_common (struct lsquic_send_ctl *ctl,
 {
     packet_out->po_flags |= PO_SCHED;
     ++ctl->sc_n_scheduled;
-    if (packet_out->po_frame_types & ctl->sc_retx_frames)
-    {
-        packet_out->po_lflags |= POL_SCHED_RETX;
-        ++ctl->sc_n_scheduled_retx;
-    }
+    lsquic_send_ctl_update_packet_cc(ctl, packet_out);
     packet_out->po_acct_sz = packet_out_total_sz(packet_out);   /* cache; subtract same at remove */
     ctl->sc_bytes_scheduled += packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
@@ -959,11 +993,11 @@ send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
     packet_out->po_flags &= ~PO_SCHED;
     assert(ctl->sc_n_scheduled);
     --ctl->sc_n_scheduled;
-    if (packet_out->po_lflags & POL_SCHED_RETX)
+    if (packet_out->po_lflags & POL_SCHED_CC)
     {
-        assert(ctl->sc_n_scheduled_retx);
-        --ctl->sc_n_scheduled_retx;
-        packet_out->po_lflags &= ~POL_SCHED_RETX;
+        assert(ctl->sc_n_scheduled_cc);
+        --ctl->sc_n_scheduled_cc;
+        packet_out->po_lflags &= ~POL_SCHED_CC;
     }
     ctl->sc_bytes_scheduled -= packet_out->po_acct_sz;
     lsquic_send_ctl_sanity_check(ctl);
@@ -976,7 +1010,7 @@ send_ctl_sched_cancel (struct lsquic_send_ctl *ctl,
                        struct lsquic_packet_out *packet_out)
 {
     send_ctl_sched_remove(ctl, packet_out);
-    if (ctl->sc_n_scheduled_retx == 0 && ctl->sc_n_in_flight_retx == 0)
+    if (ctl->sc_n_scheduled_cc == 0 && ctl->sc_n_in_flight_cc == 0)
         ctl->sc_flags &= ~SC_IDLE_RESTARTED;
 }
 
@@ -1077,7 +1111,7 @@ send_ctl_restarting_from_idle (const struct lsquic_send_ctl *ctl)
     else
     {
         assert(ctl->sc_flags & SC_BW_SAMPLER_INIT);
-        return ctl->sc_n_in_flight_retx == 0
+        return ctl->sc_n_in_flight_cc == 0
             && lsquic_bw_sampler_is_app_limited(&ctl->sc_bw_sampler);
     }
 }
@@ -1088,7 +1122,7 @@ send_ctl_maybe_restart_from_idle (struct lsquic_send_ctl *ctl,
                                   const struct lsquic_packet_out *packet_out)
 {
     if (ctl->sc_ci->cci_restart_from_idle
-            && (packet_out->po_frame_types & ctl->sc_retx_frames)
+            && send_ctl_packet_counts_for_cc(ctl, packet_out)
             && send_ctl_restarting_from_idle(ctl))
     {
         ctl->sc_flags &= ~SC_WAS_QUIET;
@@ -2087,7 +2121,7 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
         send_ctl_destroy_packet(ctl, packet_out);
     }
     assert(0 == ctl->sc_n_scheduled);
-    assert(0 == ctl->sc_n_scheduled_retx);
+    assert(0 == ctl->sc_n_scheduled_cc);
     assert(0 == ctl->sc_bytes_scheduled);
     for (pns = PNS_INIT; pns < N_PNS; ++pns)
         while ((packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[pns])))
@@ -2099,11 +2133,14 @@ lsquic_send_ctl_cleanup (lsquic_send_ctl_t *ctl)
             {
                 ctl->sc_bytes_unacked_all -= packet_out_sent_sz(packet_out);
                 --ctl->sc_n_in_flight_all;
+                if (send_ctl_packet_counts_for_cc(ctl, packet_out))
+                    --ctl->sc_n_in_flight_cc;
             }
 #endif
             send_ctl_destroy_packet(ctl, packet_out);
         }
     assert(0 == ctl->sc_n_in_flight_all);
+    assert(0 == ctl->sc_n_in_flight_cc);
     assert(0 == ctl->sc_bytes_unacked_all);
     while ((packet_out = TAILQ_FIRST(&ctl->sc_lost_packets)))
     {
@@ -2434,13 +2471,13 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     const struct lsquic_packet_out *packet_out;
     lsquic_packno_t prev_packno;
     int prev_packno_set;
-    unsigned count, bytes, n_fill, n_scheduled_retx;
+    unsigned count, bytes, n_fill, n_scheduled_cc, n_cc;
     enum packnum_space pns;
 
 #if _MSC_VER
     prev_packno = 0;
 #endif
-    count = 0, bytes = 0, n_fill = 0;
+    count = 0, bytes = 0, n_fill = n_cc = 0;
     for (pns = PNS_INIT; pns <= PNS_APP; ++pns)
     {
         prev_packno_set = 0;
@@ -2457,6 +2494,7 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
             {
                 bytes += packet_out_sent_sz(packet_out);
                 ++count;
+                n_cc += !!send_ctl_packet_counts_for_cc(ctl, packet_out);
                 n_fill += !!(packet_out->po_flags & PO_BW_PROBE_FILL);
             }
         }
@@ -2464,18 +2502,19 @@ lsquic_send_ctl_do_sanity_check (const struct lsquic_send_ctl *ctl)
     assert(count == ctl->sc_n_in_flight_all);
     assert(bytes == ctl->sc_bytes_unacked_all);
     assert(n_fill == ctl->sc_n_in_flight_fill);
+    assert(n_cc == ctl->sc_n_in_flight_cc);
 
-    count = 0, bytes = n_scheduled_retx = 0;
+    count = 0, bytes = n_scheduled_cc = 0;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
     {
         assert(packet_out->po_flags & PO_SCHED);
         bytes += packet_out->po_acct_sz;
         ++count;
-        if (packet_out->po_lflags & POL_SCHED_RETX)
-            ++n_scheduled_retx;
+        if (packet_out->po_lflags & POL_SCHED_CC)
+            ++n_scheduled_cc;
     }
     assert(count == ctl->sc_n_scheduled);
-    assert(n_scheduled_retx == ctl->sc_n_scheduled_retx);
+    assert(n_scheduled_cc == ctl->sc_n_scheduled_cc);
     assert(bytes == ctl->sc_bytes_scheduled);
 }
 

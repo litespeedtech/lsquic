@@ -591,13 +591,14 @@ test_bbr3_idle_restart_notifies_exactly_once (void)
 
 
 static void
-test_bbr3_idle_restart_cancelled_schedule (void)
+test_bbr3_idle_restart_cancelled_schedule (enum lsquic_version version,
+                                          enum quic_ft_bit data_type)
 {
     struct bw_lifecycle_test t;
     static struct cong_ctl_if counting_bbr3_if;
     struct lsquic_packet_out *ack_packet, *packet_out;
 
-    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_043, 0, 0);
+    init_test(&t, LSQUIC_CC_BBR3, 0, version, 0, 0);
     counting_bbr3_if = lsquic_cong_bbr3_if;
     counting_bbr3_if.cci_restart_from_idle = counting_restart_from_idle;
     t.send_ctl.sc_ci = &counting_bbr3_if;
@@ -606,6 +607,7 @@ test_bbr3_idle_restart_cancelled_schedule (void)
     s_restart_count = 0;
 
     packet_out = new_packet(&t, 1, 1000);
+    packet_out->po_frame_types = data_type;
     packet_out->po_flags |= PO_REPACKNO;
     packet_out->po_regen_sz = packet_out->po_data_sz;
     lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
@@ -613,9 +615,9 @@ test_bbr3_idle_restart_cancelled_schedule (void)
     ack_packet = new_packet(&t, 2, 1500);
     ack_packet->po_frame_types = QUIC_FTBIT_ACK;
     lsquic_send_ctl_scheduled_one(&t.send_ctl, ack_packet);
-    assert(t.send_ctl.sc_n_scheduled_retx == 1);
+    assert(t.send_ctl.sc_n_scheduled_cc == 1);
     assert(ack_packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
-    assert(t.send_ctl.sc_n_scheduled_retx == 0);
+    assert(t.send_ctl.sc_n_scheduled_cc == 0);
     assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, ack_packet));
 
@@ -632,6 +634,111 @@ test_bbr3_idle_restart_cancelled_schedule (void)
  * that congestion control will not let out.  That is loss recovery, not an
  * idle restart, and must not be reported as quiescence.
  */
+static void
+test_bbr3_datagram_idle_restart (unsigned flags, int probe_rtt, int mixed)
+{
+    struct bw_lifecycle_test t;
+    struct cong_ctl_if test_if = lsquic_cong_bbr3_if;
+    struct lsquic_packet_out *packet_out, *ack_packet;
+    struct lsquic_bbr3 *bbr3;
+    lsquic_time_t scheduled;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_I001, flags, 0);
+    test_if.cci_restart_from_idle = counting_restart_from_idle;
+    t.send_ctl.sc_ci = &test_if;
+    t.send_ctl.sc_max_pacing_rate = 1000000000;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 2000000);
+    s_restart_count = 0;
+    bbr3 = &t.send_ctl.sc_cc.bbr3;
+    bbr3->bbr3_full_bw_reached = 1;
+    bbr3->bbr3_state = BBR3_STATE_PROBE_BW_UP;
+    bbr3->bbr3_bw = 1000000;
+    bbr3->bbr3_pacing_rate = 1237500;
+    if (probe_rtt)
+    {
+        bbr3->bbr3_state = BBR3_STATE_PROBE_RTT;
+        bbr3->bbr3_probe_rtt_done_stamp = 1999999;
+        bbr3->bbr3_cwnd = bbr3->bbr3_min_cwnd;
+        bbr3->bbr3_prior_cwnd = 50000;
+    }
+    ack_packet = new_packet(&t, 1, 2000000);
+    ack_packet->po_frame_types = QUIC_FTBIT_ACK;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, ack_packet);
+    assert(s_restart_count == 0);
+    scheduled = t.send_ctl.sc_pacer.pa_next_sched;
+    packet_out = new_packet(&t, 2, 2000000);
+    packet_out->po_frame_types = QUIC_FTBIT_DATAGRAM;
+    if (mixed)
+        packet_out->po_frame_types |= QUIC_FTBIT_STREAM;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    assert(s_restart_count == 1);
+    if (probe_rtt)
+    {
+        assert(bbr3->bbr3_state == BBR3_STATE_PROBE_BW_CRUISE);
+        assert(bbr3->bbr3_cwnd == 50000);
+    }
+    else
+    {
+        assert(bbr3->bbr3_pacing_rate == 990000);
+        assert(t.send_ctl.sc_pacer.pa_next_sched - scheduled >= 1383);
+        assert(t.send_ctl.sc_pacer.pa_next_sched - scheduled <= 1384);
+    }
+    assert(ack_packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, ack_packet));
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    assert(!!t.send_ctl.sc_n_in_flight_retx == mixed);
+    assert(t.send_ctl.sc_n_in_flight_cc == 1);
+    assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
+    packet_out = new_packet(&t, 3, 2000000);
+    packet_out->po_frame_types = QUIC_FTBIT_DATAGRAM;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    assert(s_restart_count == 1);
+    ack_one(&t, 2, 2010000, 2010000, 0);
+    lsquic_bw_sampler_app_limited(&t.send_ctl.sc_bw_sampler);
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(s_restart_count == 2);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    ack_one(&t, 3, 2020000, 2020000, 0);
+    t.send_ctl.sc_ci = &lsquic_cong_bbr3_if;
+    cleanup_test(&t);
+}
+
+
+static void
+test_datagram_cc_accounting (void)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out;
+    unsigned i;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_I001, 0, 0);
+    for (i = 1; i <= 8; ++i)
+    {
+        packet_out = new_packet(&t, i, 1000);
+        packet_out->po_frame_types = QUIC_FTBIT_ACK;
+        lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+        assert(t.send_ctl.sc_n_scheduled_cc == 0);
+        packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+        lsquic_send_ctl_update_packet_cc(&t.send_ctl, packet_out);
+        lsquic_send_ctl_update_packet_cc(&t.send_ctl, packet_out);
+        assert(t.send_ctl.sc_n_scheduled_cc == 1);
+        assert(packet_out == lsquic_send_ctl_next_packet_to_send(
+                                                        &t.send_ctl, NULL));
+        assert(t.send_ctl.sc_n_scheduled_cc == 0);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        assert(t.send_ctl.sc_n_in_flight_cc == i);
+        assert(t.send_ctl.sc_n_in_flight_retx == 0);
+    }
+    ack_one(&t, 8, 2000, 2000, 0);
+    assert(t.send_ctl.sc_n_in_flight_cc < 7);
+    assert(t.send_ctl.sc_n_in_flight_cc == t.send_ctl.sc_n_in_flight_all);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost > 0);
+    cleanup_test(&t);
+}
+
+
 static void
 test_bbr3_no_idle_restart_when_not_app_limited (void)
 {
@@ -2261,13 +2368,19 @@ main (void)
     test_cubic_runtime_enable();
     test_merged_ack_ecn();
     test_bbr3_initializes_sampler();
+    test_datagram_cc_accounting();
     test_bbr3_idle_restart_runs_before_pacing();
     test_bbr3_idle_restart_after_timer_drain();
     test_bbr3_no_idle_restart_when_not_app_limited();
     test_bbr3_no_idle_restart_on_busy_ack_drain();
     test_bbr3_lost_count_tracks_sampler();
     test_bbr3_idle_restart_notifies_exactly_once();
-    test_bbr3_idle_restart_cancelled_schedule();
+    test_bbr3_idle_restart_cancelled_schedule(LSQVER_043, QUIC_FTBIT_STREAM);
+    test_bbr3_idle_restart_cancelled_schedule(LSQVER_I001, QUIC_FTBIT_DATAGRAM);
+    for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+        for (j = 0; j < 2; ++j)
+            for (k = 0; k < 2; ++k)
+                test_bbr3_datagram_idle_restart(flags[i], j, k);
     test_bbr3_probe_rtt_marks_app_limited(0);
     test_bbr3_probe_rtt_marks_app_limited(1);
     test_bbr3_idle_restart_handles_already_scheduled_packet();
