@@ -1707,6 +1707,55 @@ test_bbr3_ack_only_loss (enum lsquic_version version, int lose_data)
 }
 
 
+static void
+test_bbr3_migration_retained_flight (unsigned flags)
+{
+    struct bw_lifecycle_test t;
+    struct network_path new_path;
+    struct lsquic_packet_out *packet;
+    struct lsquic_bbr3 *bbr3;
+    unsigned i;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_I001, flags, 0);
+    bbr3 = &t.send_ctl.sc_cc.bbr3;
+    t.send_ctl.sc_bw_sampler.bws_flags &= ~BWS_APP_LIMITED;
+    for (i = 1; i <= 8; ++i)
+    {
+        packet = new_packet(&t, i, 1000);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    }
+    assert(bbr3->bbr3_last_sent_packno == 8);
+    bbr3->bbr3_round_count = 12;
+    bbr3->bbr3_full_bw_reached = 1;
+    bbr3->bbr3_state = BBR3_STATE_PROBE_BW_CRUISE;
+    new_path = t.path;
+    t.conn_pub.path = &new_path;
+    lsquic_send_ctl_repath(&t.send_ctl, &t.path, &new_path, 0);
+    assert(t.send_ctl.sc_n_in_flight_all == 8);
+    assert(bbr3->bbr3_current_round_trip_end == UINT64_MAX);
+    assert(bbr3->bbr3_round_count == 0);
+    /* Separate ACK batches at a constant rate must not invent new rounds
+     * or trigger Startup's bandwidth-plateau exit for the retained flight.
+     */
+    for (i = 1; i <= 8; ++i)
+    {
+        ack_one(&t, i, 1000 + i * 1000, 1000 + i * 1000, 0);
+        assert(bbr3->bbr3_round_count == 1);
+        assert(!bbr3->bbr3_full_bw_reached);
+        assert(bbr3->bbr3_state == BBR3_STATE_STARTUP);
+    }
+    assert(bbr3->bbr3_current_round_trip_end == 8);
+    /* A subsequent flight starts the next round in the ordinary way. */
+    packet = new_packet(&t, 9, 10000);
+    packet->po_path = &new_path;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    ack_one(&t, 9, 11000, 11000, 0);
+    assert(bbr3->bbr3_round_count == 2);
+    assert(bbr3->bbr3_current_round_trip_end == 9);
+    cleanup_test(&t);
+}
+
+
 enum tlp_confirmation
 {
     TLP_FACK,
@@ -2895,6 +2944,11 @@ main (void)
 
     lsquic_init_timers();
     lsquic_log_to_fstream(stderr, LLTS_NONE);
+    for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+    {
+        test_bbr3_migration_retained_flight(flags[i]);
+        test_bbr3_migration_retained_flight(flags[i] | LSENG_HTTP);
+    }
 #ifdef FIU_ENABLE
     test_tlp_record_allocation_failure();
 #endif

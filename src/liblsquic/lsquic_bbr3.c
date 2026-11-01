@@ -1617,14 +1617,18 @@ lsquic_bbr3_reinit (void *cong_ctl)
 {
     struct lsquic_bbr3 *const bbr3 = cong_ctl;
     uint64_t lost;
+    lsquic_packno_t last_sent_packno;
 
     bbr3_free_ack_samples(bbr3);
     /* Retain C.lost because in-flight packets retain P.lost snapshots. */
     lost = bbr3->bbr3_lost;
+    /* Retained flight must bound the first packet round on the new path. */
+    last_sent_packno = bbr3->bbr3_last_sent_packno;
     /* Preserve the per-connection loss-mode override across reinit. */
     bbr3_reset(bbr3, bbr3->bbr3_loss_mode);
     bbr3->bbr3_lost = lost;
     bbr3->bbr3_lost_at_round_start = lost;
+    bbr3->bbr3_last_sent_packno = last_sent_packno;
     LSQ_DEBUG("reinitialized; loss mode: %u", bbr3->bbr3_loss_mode);
 }
 

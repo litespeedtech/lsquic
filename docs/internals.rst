@@ -3149,6 +3149,12 @@ reinitializing congestion control, so MTU-derived windows and pacing use
 the new path's packet size.  Optimistic NAT rebinding retains the old path's
 MTU, RTT, and controller state.
 
+BBRv3 preserves the last sent packet number across migration because the
+Send Controller retains outstanding packets.  The first delivery ACK starts
+a fresh round bounded by that number; further ACKs from the retained flight
+do not create extra rounds or prematurely trigger Startup's plateau exit.
+The path model and round counter still start fresh.
+
 ACK callbacks run before the sampler consumes per-packet state, allowing
 Copilot to inspect its ProbeRTT sampling boundary.  Loss callbacks run
 before the sampler releases that state, allowing BBRv3 to inspect P.lost.
