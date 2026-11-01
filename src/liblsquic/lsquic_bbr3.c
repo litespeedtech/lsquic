@@ -1137,9 +1137,6 @@ bbr3_update_bandwidth_and_rtt (struct lsquic_bbr3 *bbr3,
         next = TAILQ_NEXT(sample, next);
         TAILQ_REMOVE(&bbr3->bbr3_ack_state.samples, sample, next);
 
-        if (!sample->is_app_limited)
-            bbr3->bbr3_last_sample_app_limited = 0;
-
         bw = BW_TO_BYTES_PER_SEC(&sample->bandwidth);
         if (bw && (!sample->is_app_limited || bw >= bbr3->bbr3_max_bw))
         {
@@ -1169,6 +1166,7 @@ bbr3_update_bandwidth_and_rtt (struct lsquic_bbr3 *bbr3,
         bbr3->bbr3_ack_state.rs_tx_in_flight = sample->tx_in_flight;
         bbr3->bbr3_ack_state.rs_prior_lost = sample->prior_lost;
         bbr3->bbr3_ack_state.rs_delivery_rate = bw;
+        bbr3->bbr3_last_sample_app_limited = sample->is_app_limited;
         bbr3->bbr3_ack_state.has_rs = 1;
 
         if (sample->rtt && (!min_rtt || sample->rtt < min_rtt))

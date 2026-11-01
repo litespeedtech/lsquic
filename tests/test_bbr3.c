@@ -2731,6 +2731,70 @@ test_bbr3_full_bw_uses_current_delivery_rate (void)
 
 
 static void
+test_bbr3_mixed_ack_app_limited (void)
+{
+    const enum bbr3_state states[] = { BBR3_STATE_STARTUP,
+        BBR3_STATE_PROBE_BW_UP, BBR3_STATE_PROBE_BW_DOWN };
+    struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
+    struct lsquic_conn_public conn_pub;
+    struct network_path path;
+    struct lsquic_bbr3 bbr3;
+    struct bw_sample *sample;
+    struct malo *malo;
+    unsigned i, last_app_limited;
+
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&path, 0, sizeof(path));
+    path.np_pack_size = BBR3_TEST_PACKET_SZ;
+    conn_pub.lconn = &lconn;
+    conn_pub.path = &path;
+    malo = lsquic_malo_create(sizeof(struct bw_sample));
+    assert(malo);
+
+    for (i = 0; i < sizeof(states) / sizeof(states[0]); ++i)
+        for (last_app_limited = 0; last_app_limited < 2; ++last_app_limited)
+        {
+            lsquic_cong_bbr3_if.cci_init(&bbr3, &conn_pub);
+            ack_rate_sample(&bbr3, malo, 1, 1000000, 10000, 100000, 0);
+            bbr3.bbr3_state = states[i];
+            bbr3.bbr3_full_bw_reached = states[i] != BBR3_STATE_STARTUP;
+            bbr3.bbr3_full_bw_count = bbr3.bbr3_full_bw_count_target - 1;
+            if (states[i] == BBR3_STATE_PROBE_BW_DOWN)
+                bbr3.bbr3_flags |= BBR3_FLAG_PROBE_STOPPING;
+            begin_ack_rate_sample(&bbr3, malo, 2, 1000000, 10000,
+                                100000, 1020000, !last_app_limited, 0, 0);
+            sample = lsquic_malo_get(malo);
+            assert(sample);
+            memset(sample, 0, sizeof(*sample));
+            sample->bandwidth = BW(4000000);
+            sample->rtt = 10000;
+            sample->delivered = 2 * BBR3_TEST_PACKET_SZ;
+            sample->tx_in_flight = 100000;
+            sample->is_app_limited = last_app_limited;
+            lsquic_cong_bbr3_if.cci_process_bw_sample(&bbr3, sample);
+            lsquic_cong_bbr3_if.cci_end_ack(&bbr3, 100000);
+
+            assert(bbr3.bbr3_ack_state.rs_delivery_rate == 500000);
+            assert(bbr3.bbr3_last_sample_app_limited == last_app_limited);
+            assert(bbr3.bbr3_max_bw == 1000000);
+            if (states[i] == BBR3_STATE_PROBE_BW_DOWN)
+                assert(bbr3.bbr3_cycle_count == !last_app_limited);
+            else if (last_app_limited)
+            {
+                assert(bbr3.bbr3_state == states[i]);
+                assert(bbr3.bbr3_full_bw_count
+                                    == bbr3.bbr3_full_bw_count_target - 1);
+                assert(!bbr3.bbr3_full_bw_now);
+            }
+            else
+                assert(bbr3.bbr3_state != states[i]);
+            lsquic_cong_bbr3_if.cci_cleanup(&bbr3);
+        }
+    lsquic_malo_destroy(malo);
+}
+
+
+static void
 test_bbr3_ecn_bounds_across_states (void)
 {
     struct lsquic_bbr3 bbr3;
@@ -3332,6 +3396,7 @@ main (void)
     test_bbr3_probe_bw_up_cwnd_limited_multi_round_growth();
     test_bbr3_probe_bw_up_plateau_exits_without_cap_limit();
     test_bbr3_full_bw_uses_current_delivery_rate();
+    test_bbr3_mixed_ack_app_limited();
     test_bbr3_cwnd_limited_signal_round_latching();
     test_bbr3_restart_from_idle_pacing_boost();
     test_bbr3_restart_from_idle_uses_current_gain();
