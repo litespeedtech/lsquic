@@ -821,6 +821,99 @@ test_bbr3_immediate_data_restart (enum lsquic_version version, int datagram)
 
 
 static void
+test_bbr3_late_ack_cancels_restart (enum lsquic_version version,
+                                   unsigned flags, unsigned other_data)
+{
+    struct bw_lifecycle_test t;
+    struct cong_ctl_if test_if = lsquic_cong_bbr3_if;
+    struct lsquic_packet_out *packet;
+    struct lsquic_bbr3 *bbr3;
+    lsquic_packno_t original;
+    lsquic_time_t expiry;
+    unsigned sent_sz;
+    int len;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, version, flags, 0);
+    lsquic_send_ctl_path_validated(&t.send_ctl);
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    test_if.cci_restart_from_idle = counting_restart_from_idle;
+    t.send_ctl.sc_ci = &test_if;
+    bbr3 = &t.send_ctl.sc_cc.bbr3;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 1000);
+    packet = lsquic_send_ctl_new_packet_out(&t.send_ctl, 16, PNS_APP, &t.path);
+    assert(packet);
+    original = packet->po_packno;
+    len = t.lconn.cn_pf->pf_gen_blocked_frame(packet->po_data,
+                                        lsquic_packet_out_avail(packet), 0);
+    assert(len > 0);
+    assert(0 == lsquic_packet_out_add_frame(packet, t.conn_pub.mm, 0,
+                                            QUIC_FRAME_BLOCKED, 0, len));
+    packet->po_frame_types = QUIC_FTBIT_BLOCKED;
+    packet->po_data_sz = len;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+    assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    packet->po_sent = 1000;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    sent_sz = lsquic_packet_out_sent_sz(&t.lconn, packet);
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    assert(t.send_ctl.sc_n_tlp == 1);
+    assert(t.send_ctl.sc_n_in_flight_cc == 0);
+
+    bbr3->bbr3_state = BBR3_STATE_PROBE_RTT;
+    bbr3->bbr3_full_bw_reached = 1;
+    bbr3->bbr3_bw = 1000000;
+    bbr3->bbr3_prior_cwnd = 50000;
+    bbr3->bbr3_cwnd = bbr3->bbr3_min_cwnd;
+    bbr3->bbr3_probe_rtt_done_stamp = expiry + 50000;
+    bbr3->bbr3_probe_rtt_round_done = 0;
+    lsquic_send_ctl_tick_in(&t.send_ctl, expiry + 1);
+    s_restart_count = 0;
+    assert(1 == lsquic_send_ctl_reschedule_packets(&t.send_ctl));
+    assert(s_restart_count == 1);
+    if (other_data)
+    {
+        packet = lsquic_send_ctl_new_packet_out(&t.send_ctl, 1, PNS_APP,
+                                                                    &t.path);
+        assert(packet);
+        packet->po_frame_types = QUIC_FTBIT_STREAM;
+        packet->po_data_sz = 1;
+        if (other_data == 1)
+            lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+        else
+        {
+            packet->po_sent = expiry + 1;
+            assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+        }
+        assert(s_restart_count == 1);
+    }
+
+    /* The original is acknowledged before retransmission, and before the
+     * ProbeRTT timer expires.  The ACK must cancel its scheduled copy.
+     */
+    ack_one(&t, original, expiry + 2, expiry + 2, 0);
+    assert(bbr3->bbr3_total_acked == sent_sz);
+    assert(t.send_ctl.sc_n_scheduled_cc == (other_data == 1 ? 1u : 0u));
+    assert(t.send_ctl.sc_n_in_flight_cc == (other_data == 2 ? 1u : 0u));
+    assert(!!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED) == (other_data == 1));
+    assert(bbr3->bbr3_state == BBR3_STATE_PROBE_RTT);
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, expiry + 100000);
+    assert(get_test_data_packet(&t, 100, 0));
+    if (other_data)
+        assert(s_restart_count == 1);
+    else
+    {
+        assert(s_restart_count == 2);
+        assert(bbr3->bbr3_state == BBR3_STATE_PROBE_BW_CRUISE);
+        assert(bbr3->bbr3_cwnd == 50000);
+    }
+    t.send_ctl.sc_ci = &lsquic_cong_bbr3_if;
+    cleanup_test(&t);
+}
+
+
+static void
 test_bbr3_restart_after_regen_stripping (void)
 {
     struct bw_lifecycle_test t;
@@ -2589,6 +2682,10 @@ main (void)
     test_bbr3_lost_count_tracks_sampler();
     test_bbr3_idle_restart_notifies_exactly_once();
     test_bbr3_restart_after_regen_stripping();
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+        for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
+            for (k = 0; k < 3; ++k)
+                test_bbr3_late_ack_cancels_restart(versions[i], flags[j], k);
     test_bbr3_idle_restart_cancelled_schedule(LSQVER_043, QUIC_FTBIT_STREAM);
     test_bbr3_idle_restart_cancelled_schedule(LSQVER_I001, QUIC_FTBIT_DATAGRAM);
     for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)

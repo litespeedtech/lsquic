@@ -3169,7 +3169,8 @@ period.  BBRv3 implements the optional ``cci_restart_from_idle`` callback,
 which the Send Controller invokes before pacing or dequeuing a
 retransmittable or DATAGRAM packet when the congestion-controlled flight
 is empty and the bandwidth sampler is application-limited.  The Send Controller latches this notification until
-a congestion-controlled packet is sent or all scheduled data is cancelled.
+a congestion-controlled packet is sent or all scheduled data is cancelled,
+including when a late ACK cancels the last queued retransmission.
 Separate idle counters include DATAGRAM and fill probes without changing
 retransmission policy.  Frame writers set frame types before accounting for
 the added bytes, which refreshes scheduled membership for data and control

@@ -1340,7 +1340,7 @@ send_ctl_process_loss_chain_pkt (struct lsquic_send_ctl *ctl,
     {
     case PO_SCHED:
         send_ctl_maybe_renumber_sched_to_right(ctl, chain_cur);
-        send_ctl_sched_remove(ctl, chain_cur);
+        send_ctl_sched_cancel(ctl, chain_cur);
         state = "scheduled";
         break;
     case PO_UNACKED:
