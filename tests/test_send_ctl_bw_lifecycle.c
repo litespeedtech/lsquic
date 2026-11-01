@@ -2316,10 +2316,11 @@ test_pacing_interval_precision (enum lsquic_cc cc_algo,
     ci.cci_pacing_rate = test_pacing_rate;
     t.send_ctl.sc_ci = &ci;
     t.path.np_pack_size = 1472;
+    /* Keep a real packet in flight so extra checks can validate the queues. */
+    packet_out = new_packet(&t, 1, now);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
     t.send_ctl.sc_pacer.pa_burst_tokens = 0;
     t.send_ctl.sc_pacer.pa_now = now;
-    t.send_ctl.sc_n_in_flight_retx = 1;
-    t.send_ctl.sc_n_in_flight_all = 1;
     expected = count = 0;
 
     /* Exercise scheduling through the real send-controller callback.  At
@@ -2332,7 +2333,7 @@ test_pacing_interval_precision (enum lsquic_cc cc_algo,
         s_test_pacing_rate = rates[i];
         for (n = 0; n < 1000; ++n)
         {
-            packet_out = new_packet(&t, ++count, now);
+            packet_out = new_packet(&t, ++count + 1, now);
             lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
         }
         expected += (uint64_t) t.path.np_pack_size * 1000000 * n / rates[i];
@@ -2342,8 +2343,6 @@ test_pacing_interval_precision (enum lsquic_cc cc_algo,
         assert(scheduled <= expected + i + 1);
     }
 
-    t.send_ctl.sc_n_in_flight_retx = 0;
-    t.send_ctl.sc_n_in_flight_all = 0;
     cleanup_test(&t);
 }
 

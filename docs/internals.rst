@@ -3162,6 +3162,9 @@ The path model and round counter still start fresh.
 ACK callbacks run before the sampler consumes per-packet state, allowing
 Copilot to inspect its ProbeRTT sampling boundary.  Loss callbacks run
 before the sampler releases that state, allowing BBRv3 to inspect P.lost.
+The sampler accounts ACKed bytes using the packet size captured at send time.
+This also handles provisional loss records, which retain a sampler snapshot
+but have no path or payload from which to reconstruct the packet's wire size.
 Fill probes are sampled, as are DATAGRAM packets, but discarding fill
 does not increment either the sampler's or BBRv3's congestion-loss counter.
 

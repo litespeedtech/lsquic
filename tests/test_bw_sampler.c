@@ -729,6 +729,51 @@ test_probe_loss_does_not_count_as_congestion_loss (void)
 
 
 static void
+test_ack_provisional_loss_record (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packet, record;
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+    packet = sampler_test_send_packet(&stest, 1, true);
+
+    /* TLP transfers the send snapshot to metadata with no path or payload.
+     * Unlike a real packet, it cannot be used to reconstruct a wire size.
+     */
+    memset(&record, 0, sizeof(record));
+    record.po_flags = PO_LOSS_REC | PO_SENT_SZ;
+    record.po_lflags = POL_TLP_PENDING;
+    record.po_packno = packet->po_packno;
+    record.po_sent = packet->po_sent;
+    record.po_sent_sz = packet->po_sent_sz;
+    record.po_frame_types = packet->po_frame_types;
+    record.po_bwp_state = packet->po_bwp_state;
+    packet->po_bwp_state = NULL;
+    stest.bytes_in_flight -= packet->po_sent_sz;
+    lsquic_malo_put(packet);
+
+    stest.time += ms(10);
+    sample = lsquic_bw_sampler_packet_acked(&stest.sampler, &record, stest.time);
+    assert(sample);
+    assert(sample->delivered == kRegularPacketSize);
+    assert(sample->tx_in_flight == kRegularPacketSize);
+    assert(sample->rtt == ms(10));
+    assert(sample->prior_lost == 0);
+    assert(stest.sampler.bws_total_acked == kRegularPacketSize);
+    assert(stest.sampler.bws_total_lost == 0);
+    assert(record.po_bwp_state == NULL);
+    lsquic_malo_put(sample);
+    assert(lsquic_bw_sampler_entry_count(&stest.sampler) == 0);
+
+    assert(NULL == lsquic_bw_sampler_packet_acked(&stest.sampler, &record,
+                                                                stest.time));
+    assert(stest.sampler.bws_total_acked == kRegularPacketSize);
+    sampler_test_cleanup(&stest);
+}
+
+
+static void
 test_cwnd_limited_sample_field (void)
 {
     struct sampler_test stest;
@@ -777,6 +822,7 @@ main (void)
     test_bbrv3_sample_fields();
     test_probe_loss_does_not_count_as_congestion_loss();
     test_cwnd_limited_sample_field();
+    test_ack_provisional_loss_record();
 
     return 0;
 }

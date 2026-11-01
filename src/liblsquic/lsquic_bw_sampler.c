@@ -192,7 +192,8 @@ lsquic_bw_sampler_packet_acked (struct bw_sampler *sampler,
         return 0;
 
     state = packet_out->po_bwp_state;
-    sent_sz = lsquic_packet_out_sent_sz(sampler->bws_conn, packet_out);
+    /* A provisional loss record retains this snapshot but has no wire image. */
+    sent_sz = state->bwps_send_state.packet_size;
 
     sampler->bws_total_acked += sent_sz;
     sampler->bws_last_acked_total_sent = state->bwps_send_state.total_bytes_sent;
