@@ -5057,6 +5057,7 @@ static void
 switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
 {
     const unsigned char old_path_id = conn->ifc_cur_path_id;
+    const struct network_path *const old_path = CUR_NPATH(conn);
     const int keep_path_properties = conn->ifc_settings->es_optimistic_nat
                     && only_peer_port_changed(CUR_NPATH(conn),
                                     &conn->ifc_paths[path_id].cop_path);
@@ -5072,13 +5073,12 @@ switch_path_to (struct ietf_full_conn *conn, unsigned char path_id)
         LSQ_DEBUG("keep path properties: set MTU to %hu",
                         conn->ifc_paths[path_id].cop_path.np_pack_size);
     }
-    lsquic_send_ctl_repath(&conn->ifc_send_ctl,
-        CUR_NPATH(conn), &conn->ifc_paths[path_id].cop_path,
-        keep_path_properties);
-    maybe_retire_dcid(conn, &CUR_NPATH(conn)->np_dcid);
     conn->ifc_cur_path_id = path_id;
     conn->ifc_pub.path = CUR_NPATH(conn);
     conn->ifc_conn.cn_cur_cce_idx = CUR_CPATH(conn)->cop_cce_idx;
+    lsquic_send_ctl_repath(&conn->ifc_send_ctl, old_path,
+                                    CUR_NPATH(conn), keep_path_properties);
+    maybe_retire_dcid(conn, &old_path->np_dcid);
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << old_path_id);
     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << old_path_id);
     lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + old_path_id);
@@ -9964,6 +9964,88 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 
 #ifndef NDEBUG
+void
+lsquic_ietf_full_conn_test_repath (unsigned flags, unsigned old_mtu,
+                                  unsigned new_mtu, int keep_properties)
+{
+    struct ietf_full_conn conn;
+    struct lsquic_engine_public enpub;
+    struct ver_neg ver_neg;
+    struct lsquic_bbr3 *bbr3;
+    struct sockaddr_in *peer;
+    unsigned i, mtu;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&enpub, 0, sizeof(enpub));
+    memset(&ver_neg, 0, sizeof(ver_neg));
+    conn.ifc_conn.cn_cces = conn.ifc_cces;
+    conn.ifc_conn.cn_n_cces = sizeof(conn.ifc_cces) / sizeof(conn.ifc_cces[0]);
+    conn.ifc_conn.cn_cces_mask = 1;
+    conn.ifc_conn.cn_flags = LSCONN_IETF | LSCONN_HANDSHAKE_DONE;
+    if (flags & LSENG_SERVER)
+        conn.ifc_conn.cn_flags |= LSCONN_SERVER;
+    conn.ifc_flags = flags;
+    conn.ifc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    conn.ifc_enpub = &enpub;
+    lsquic_engine_init_settings(&enpub.enp_settings, flags);
+    enpub.enp_settings.es_cc_algo = LSQUIC_CC_BBR3;
+    enpub.enp_settings.es_optimistic_nat = keep_properties;
+    conn.ifc_settings = &enpub.enp_settings;
+    lsquic_mm_init(&enpub.enp_mm);
+    conn.ifc_pub.mm = &enpub.enp_mm;
+    conn.ifc_pub.enpub = &enpub;
+    conn.ifc_pub.lconn = &conn.ifc_conn;
+    conn.ifc_pub.path = CUR_NPATH(&conn);
+    conn.ifc_used_paths = 3;
+    for (i = 0; i < 2; ++i)
+    {
+        conn.ifc_paths[i].cop_path.np_path_id = i;
+        NP_LOCAL_SA(&conn.ifc_paths[i].cop_path)->sa_family = AF_INET;
+        peer = (struct sockaddr_in *) NP_PEER_SA(&conn.ifc_paths[i].cop_path);
+        peer->sin_family = AF_INET;
+        peer->sin_port = htons(1234 + i);
+    }
+    conn.ifc_paths[0].cop_path.np_pack_size = old_mtu;
+    conn.ifc_paths[1].cop_path.np_pack_size = new_mtu;
+    lsquic_alarmset_init(&conn.ifc_alset, &conn.ifc_conn);
+    lsquic_send_ctl_init(&conn.ifc_send_ctl, &conn.ifc_alset, &enpub,
+                                    &ver_neg, &conn.ifc_pub, SC_IETF);
+    bbr3 = &conn.ifc_send_ctl.sc_cc.bbr3;
+    lsquic_bbr3_set_loss_mode(bbr3, LSQUIC_BBR3_LOSS_HIGH);
+    bbr3->bbr3_lost = 1234;
+    bbr3->bbr3_cwnd = 23000;
+    bbr3->bbr3_pacing_rate = 1234567;
+    conn.ifc_pub.rtt_stats.srtt = 12000;
+
+    switch_path_to(&conn, 1);
+    mtu = keep_properties ? old_mtu : new_mtu;
+    assert(conn.ifc_cur_path_id == 1);
+    assert(conn.ifc_pub.path == &conn.ifc_paths[1].cop_path);
+    assert(bbr3->bbr3_smss == mtu);
+    assert(bbr3->bbr3_init_cwnd == 32 * mtu);
+    assert(bbr3->bbr3_min_cwnd == 4 * mtu);
+    assert(bbr3->bbr3_send_quantum == 2 * mtu);
+    assert(bbr3->bbr3_offload_budget == 2 * mtu);
+    assert(bbr3->bbr3_loss_mode == LSQUIC_BBR3_LOSS_HIGH);
+    assert(bbr3->bbr3_lost == 1234);
+    if (keep_properties)
+    {
+        assert(bbr3->bbr3_cwnd == 23000);
+        assert(bbr3->bbr3_pacing_rate == 1234567);
+        assert(conn.ifc_pub.rtt_stats.srtt == 12000);
+    }
+    else
+    {
+        assert(bbr3->bbr3_cwnd == 32 * mtu);
+        assert(bbr3->bbr3_pacing_rate
+                        == (uint64_t) (32 * mtu * 1000000.0 / 333000 * 2.77));
+        assert(conn.ifc_pub.rtt_stats.srtt == 0);
+    }
+    lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
 /* Exercise ACK generation through the full connection, including its choice
  * of ECN counters and immediate ACK policy, without a TLS handshake.  Packets
  * numbered from 1 arrive in `pns' with the given ECN codepoints.  The other

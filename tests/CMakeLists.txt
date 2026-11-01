@@ -60,6 +60,7 @@ SET(TESTS
     mini_conn_retry
     packet_out
     packet_resize
+    path_ietf
     packno_len
     parse_packet_in
     purga

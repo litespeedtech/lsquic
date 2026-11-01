@@ -3138,6 +3138,11 @@ keep their P.lost snapshots.  BBRv3 uses the engine's loss profile on entry;
 an override survives path-change reinitialization, but not switching away
 and back.  Selecting the current controller changes nothing.
 
+Migration binds the new active path before repathing queued packets and
+reinitializing congestion control, so MTU-derived windows and pacing use
+the new path's packet size.  Optimistic NAT rebinding retains the old path's
+MTU, RTT, and controller state.
+
 ACK callbacks run before the sampler consumes per-packet state, allowing
 Copilot to inspect its ProbeRTT sampling boundary.  Loss callbacks run
 before the sampler releases that state, allowing BBRv3 to inspect P.lost.
