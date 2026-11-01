@@ -436,6 +436,7 @@ void
 lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *,
                                   struct lsquic_packet_out *);
 
+/* Set frame types before accounting for bytes added by a frame writer. */
 static inline void
 lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
                               struct lsquic_packet_out *packet, int delta)
@@ -445,6 +446,7 @@ lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
     {
         (ctl)->sc_bytes_scheduled += delta;
         packet->po_acct_sz += delta;
+        lsquic_send_ctl_update_packet_cc(ctl, packet);
     }
     lsquic_send_ctl_sanity_check(ctl);
 }

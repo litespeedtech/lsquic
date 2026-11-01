@@ -930,7 +930,7 @@ send_ctl_unacked_remove (struct lsquic_send_ctl *ctl,
 }
 
 
-/* Frame writers can add data after a packet has been scheduled. */
+/* Frame writers and elision can change a scheduled packet's eligibility. */
 void
 lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *ctl,
                                   struct lsquic_packet_out *packet_out)
@@ -948,8 +948,10 @@ lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *ctl,
     }
     else if (packet_out->po_lflags & POL_SCHED_CC)
     {
+        assert(ctl->sc_n_scheduled_cc);
         packet_out->po_lflags &= ~POL_SCHED_CC;
         --ctl->sc_n_scheduled_cc;
+        lsquic_send_ctl_maybe_cancel_idle_restart(ctl);
     }
 }
 
@@ -3097,6 +3099,7 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
         }
         lsquic_packet_out_chop_regen(packet_out);
     }
+    lsquic_send_ctl_update_packet_cc(ctl, packet_out);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "schedule resend, repackage packet "
                       "#%"PRIu64" -> #%"PRIu64, oldno, packno);
 }
@@ -3181,6 +3184,7 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
                                                               stream_id);
             ctl->sc_bytes_scheduled -= adj;
             packet_out->po_acct_sz -= adj;
+            lsquic_send_ctl_update_packet_cc(ctl, packet_out);
             if (0 == packet_out->po_frame_types)
             {
                 LSQ_DEBUG("cancel packet #%"PRIu64" after eliding frames for "
@@ -3705,8 +3709,8 @@ lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
     if (0 != lsquic_packet_out_add_frame(packet_out, &ctl->sc_enpub->enp_mm, 0,
                         QUIC_FRAME_STREAM_BLOCKED, packet_out->po_data_sz, sz))
         return 0;
-    lsquic_send_ctl_incr_pack_sz(ctl, packet_out, sz);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
+    lsquic_send_ctl_incr_pack_sz(ctl, packet_out, sz);
     lsquic_stream_blocked_frame_sent(stream);
     return 1;
 }

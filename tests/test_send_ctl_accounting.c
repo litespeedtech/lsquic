@@ -55,6 +55,10 @@ struct accounting_test
 };
 
 
+void
+lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags);
+
+
 static struct
 {
     struct lsquic_engine_public *ar_enpub;
@@ -212,8 +216,8 @@ generate_bw_probe_fill (void *ctx, const struct network_path *path)
     sz = t->lconn.cn_pf->pf_gen_ping_frame(packet_out->po_data,
                                     lsquic_packet_out_avail(packet_out));
     assert(sz > 0);
-    lsquic_send_ctl_incr_pack_sz(&t->send_ctl, packet_out, sz);
     packet_out->po_frame_types |= QUIC_FTBIT_PING;
+    lsquic_send_ctl_incr_pack_sz(&t->send_ctl, packet_out, sz);
     lsquic_packet_out_zero_pad(packet_out);
     return packet_out;
 }
@@ -1081,6 +1085,10 @@ main (void)
     test_dcid_change_cleanup();
     test_dcid_change_drop_scheduled();
     test_incr_pack_sz();
+    lsquic_ietf_full_conn_test_scheduled_cc(0);
+    lsquic_ietf_full_conn_test_scheduled_cc(LSENG_SERVER);
+    lsquic_ietf_full_conn_test_scheduled_cc(LSENG_HTTP);
+    lsquic_ietf_full_conn_test_scheduled_cc(LSENG_SERVER | LSENG_HTTP);
     test_cidlen_change_adjusts_cached_sizes();
     test_repackno_chops_regen_bytes();
     test_rejects_packet_with_insufficient_payload();

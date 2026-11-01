@@ -3179,9 +3179,8 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
 #endif
     EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
-    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
-    lsquic_send_ctl_update_packet_cc(send_ctl, packet_out);
+    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
     if (0 == lsquic_packet_out_avail(packet_out))
         packet_out->po_flags |= PO_STREAM_END;
     s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
@@ -3337,8 +3336,8 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
 
     EV_LOG_GENERATED_CRYPTO_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
-    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
     packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
+    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
     s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
                                      stream, QUIC_FRAME_CRYPTO, off, len);
     if (s != 0)

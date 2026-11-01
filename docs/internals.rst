@@ -3171,8 +3171,11 @@ retransmittable or DATAGRAM packet when the congestion-controlled flight
 is empty and the bandwidth sampler is application-limited.  The Send Controller latches this notification until
 a congestion-controlled packet is sent or all scheduled data is cancelled.
 Separate idle counters include DATAGRAM and fill probes without changing
-retransmission policy.  Frame writers update scheduled membership when
-adding STREAM or DATAGRAM data to an already scheduled packet.  Immediate
+retransmission policy.  Frame writers set frame types before accounting for
+the added bytes, which refreshes scheduled membership for data and control
+frames alike.  STREAM elision and regeneration stripping also refresh
+membership; removing a packet's last eligible frame rearms idle restart when
+no eligible scheduled or in-flight packets remain.  Immediate
 STREAM and DATAGRAM packet acquisition reports application-data intent
 before checking the window or scheduling an empty packet, so restart can
 restore the window and refresh pacing first.  Failed acquisition or frame
