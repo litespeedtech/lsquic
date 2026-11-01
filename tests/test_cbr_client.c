@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #ifndef WIN32
+#include <sys/socket.h>
 #include <unistd.h>
 #else
 #include "vc_compat.h"
