@@ -1302,7 +1302,10 @@ send_ctl_destroy_packet (struct lsquic_send_ctl *ctl,
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub,
                                             packet_out->po_path->np_peer_ctx);
     else
+    {
+        send_ctl_clear_bw_sampler_state(packet_out);
         lsquic_malo_put(packet_out);
+    }
 }
 
 
@@ -1396,8 +1399,14 @@ send_ctl_acked_loss_chain (struct lsquic_send_ctl *ctl,
         chain_next = chain_cur->po_loss_chain;
         if (chain_cur->po_packno == largest_acked)
             *do_rtt = 1;
-        send_ctl_process_loss_chain_pkt(ctl, chain_cur, next);
-        ++count;
+        if (chain_cur->po_lflags & POL_TLP_PENDING)
+            /* Delivery of another transmission does not resolve this one. */
+            chain_cur->po_loss_chain = chain_cur;
+        else
+        {
+            send_ctl_process_loss_chain_pkt(ctl, chain_cur, next);
+            ++count;
+        }
     }
     packet_out->po_loss_chain = packet_out;
 
@@ -1481,6 +1490,19 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
     assert(ctl->sc_n_in_flight_all);
     packet_sz = packet_out_sent_sz(packet_out);
 
+    loss_record = NULL;
+    if (reason == PLR_PROBE)
+    {
+        assert(packet_out->po_frame_types & ctl->sc_retx_frames);
+        loss_record = send_ctl_record_loss(ctl, packet_out);
+        if (!loss_record)
+            /* Leave the original in flight so its state and number survive. */
+            return NULL;
+        loss_record->po_lflags |= POL_TLP_PENDING;
+        loss_record->po_bwp_state = packet_out->po_bwp_state;
+        packet_out->po_bwp_state = NULL;
+    }
+
     ++ctl->sc_loss_count;
 #if LSQUIC_CONN_STATS
     ++ctl->sc_conn_pub->conn_stats->out.lost_packets;
@@ -1514,7 +1536,8 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
     {
         LSQ_DEBUG("lost retransmittable packet #%"PRIu64,
                                                     packet_out->po_packno);
-        loss_record = send_ctl_record_loss(ctl, packet_out);
+        if (!loss_record)
+            loss_record = send_ctl_record_loss(ctl, packet_out);
         send_ctl_unacked_remove(ctl, packet_out, packet_sz);
         TAILQ_INSERT_TAIL(&ctl->sc_lost_packets, packet_out, po_next);
         packet_out->po_flags |= PO_LOST;
@@ -1529,6 +1552,34 @@ send_ctl_handle_regular_lost_packet (struct lsquic_send_ctl *ctl,
         send_ctl_destroy_packet(ctl, packet_out);
         return NULL;
     }
+}
+
+
+static struct lsquic_packet_out *
+send_ctl_confirm_tlp_loss (struct lsquic_send_ctl *ctl,
+                                        struct lsquic_packet_out *loss_record)
+{
+    assert(loss_record->po_flags & PO_LOSS_REC);
+    assert(loss_record->po_lflags & POL_TLP_PENDING);
+    /* Report the original transmission exactly once, before freeing P.lost.
+     * Its payload was already queued for retransmission at TLP expiration.
+     */
+    if (ctl->sc_ci->cci_lost)
+        ctl->sc_ci->cci_lost(CGP(ctl), loss_record, loss_record->po_sent_sz,
+                                                                    PLR_LOSS);
+    if (ctl->sc_flags & SC_BW_SAMPLER_INIT)
+        lsquic_bw_sampler_packet_lost(&ctl->sc_bw_sampler, loss_record, 1);
+    loss_record->po_lflags &= ~POL_TLP_PENDING;
+    if (loss_record->po_loss_chain == loss_record)
+    {
+        /* The retransmission was ACKed; no chain needs this record now. */
+        TAILQ_REMOVE(&ctl->sc_unacked_packets[lsquic_packet_out_pns(loss_record)],
+                                                        loss_record, po_next);
+        send_ctl_destroy_packet(ctl, loss_record);
+        return NULL;
+    }
+    else
+        return loss_record;
 }
 
 
@@ -1548,15 +1599,20 @@ send_ctl_handle_lost_probe (struct lsquic_send_ctl *ctl,
 }
 
 
-/* Returns true if packet was rescheduled, false otherwise.  In the latter
- * case, you should not dereference packet_out after the function returns.
+/* Returns true if a retransmission with a loss record was queued.  The packet
+ * may have been freed when false is returned; callers must not dereference it.
  */
 static int
 send_ctl_handle_lost_packet (struct lsquic_send_ctl *ctl,
         struct lsquic_packet_out *packet_out, struct lsquic_packet_out **next,
         enum packet_loss_reason reason)
 {
-    if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
+    if (packet_out->po_lflags & POL_TLP_PENDING)
+    {
+        send_ctl_confirm_tlp_loss(ctl, packet_out);
+        return 0;
+    }
+    else if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
         return send_ctl_handle_regular_lost_packet(ctl, packet_out, next, reason) != NULL;
     else
     {
@@ -1574,8 +1630,9 @@ largest_retx_packet_number (const struct lsquic_send_ctl *ctl,
     TAILQ_FOREACH_REVERSE(packet_out, &ctl->sc_unacked_packets[pns],
                                                 lsquic_packets_tailq, po_next)
     {
-        if (0 == (packet_out->po_flags
-                            & (PO_LOSS_REC|PO_POISON|PO_BW_PROBE_FILL))
+        if (0 == (packet_out->po_flags & (PO_POISON|PO_BW_PROBE_FILL))
+                && (!(packet_out->po_flags & PO_LOSS_REC)
+                    || (packet_out->po_lflags & POL_TLP_PENDING))
                 && (packet_out->po_frame_types & ctl->sc_retx_frames))
             return packet_out->po_packno;
     }
@@ -1620,7 +1677,9 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
     {
         next = TAILQ_NEXT(packet_out, po_next);
 
-        if (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
+        if ((packet_out->po_flags & PO_POISON)
+                || ((packet_out->po_flags & PO_LOSS_REC)
+                    && !(packet_out->po_lflags & POL_TLP_PENDING)))
             continue;
 
         if (packet_out->po_packno + ctl->sc_reord_thresh <
@@ -1632,7 +1691,10 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
             {
                 largest_lost_packno = packet_out->po_packno;
-                loss_record = send_ctl_handle_regular_lost_packet(ctl,
+                if (packet_out->po_lflags & POL_TLP_PENDING)
+                    loss_record = send_ctl_confirm_tlp_loss(ctl, packet_out);
+                else
+                    loss_record = send_ctl_handle_regular_lost_packet(ctl,
                                                         packet_out, &next, PLR_LOSS);
                 if (loss_record)
                     loss_record->po_lflags |= POL_FACKED;
@@ -2426,7 +2488,8 @@ send_ctl_expire (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                 packet_out; packet_out = next)
         {
             next = TAILQ_NEXT(packet_out, po_next);
-            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
+            if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
+                    || (packet_out->po_lflags & POL_TLP_PENDING))
                 n_resubmitted += send_ctl_handle_lost_packet(ctl, packet_out,
                                                                         &next, PLR_LOSS);
         }

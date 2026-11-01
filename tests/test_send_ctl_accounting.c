@@ -809,7 +809,7 @@ test_bw_probe_fill_delayed_ack (enum quic_ft_bit retx_frames,
     }
 
     assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki, 31003, 31003));
-    assert(probe_bytes + (with_data - lost) * data_bytes
+    assert(probe_bytes + with_data * data_bytes
                                 == t.send_ctl.sc_bw_sampler.bws_total_acked);
     assert(minmax_get(&t.send_ctl.sc_cc.bbr.bbr_max_bandwidth) > 0);
     assert(0 == t.send_ctl.sc_bw_sampler.bws_total_lost);

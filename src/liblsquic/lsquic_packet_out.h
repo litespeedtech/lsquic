@@ -173,6 +173,7 @@ typedef struct lsquic_packet_out
         POL_LIMITED     = 1 << 10,      /* Used to credit sc_next_limit if needed. */
         POL_FACKED   = 1 << 11,         /* Lost due to FACK check */
         POL_SCHED_CC = 1 << 12,       /* Counted for idle restart when scheduled */
+        POL_TLP_PENDING = 1 << 13,    /* Loss record awaiting ACK or real loss */
     }                  po_lflags:16;
     unsigned char     *po_data;
 

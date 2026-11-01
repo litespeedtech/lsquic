@@ -3027,7 +3027,13 @@ We need loss records to be able to handle late acknowledgements -- those
 that acknowledge a packet *after* it has been deemed lost. When an
 acknowledgment for any of the packet numbers associated with this packet
 comes in, the packet is acknowledged and the whole loss chain is
-destroyed.
+destroyed, except for unresolved tail-loss-probe records.  A TLP record
+retains the original transmission's bandwidth-sampler state, without
+counting it in flight again.  An ACK of that original packet consumes the
+state normally.  An ACK of another transmission detaches the unresolved
+record from the chain and leaves it in the Unacked Queue until its own ACK,
+confirmed loss, or explicit discard.  Confirmed detached records can be
+freed immediately; linked records remain available for late ACK handling.
 
 Poisoned Packets
 ================
@@ -3209,10 +3215,14 @@ the sampler is not reset. This relies on the Send Controller calling
 per-packet state. The verdict is applied on the next ACK, so losses
 declared by RTO are handled the same way.  A TLP expiration carries the
 internal ``PLR_PROBE`` reason: existing retransmission queues are retained,
-but the sampler releases the old state without counting lost bytes, and
-BBRv3 does not treat the probe as congestion.  ACK- or loss-timer-confirmed
-losses and RTO use ``PLR_LOSS``.  Legacy controller callbacks keep their
-existing notification behavior.
+but a provisional loss record retains the old sampler state without counting
+lost bytes, and BBRv3 does not treat the probe as congestion.  Packet-threshold,
+sent-time, early-retransmit, and RTO decisions also examine these records.
+Confirmation uses ``PLR_LOSS`` exactly once, before releasing the retained
+state, without queuing another retransmission or decrementing flight again.
+If a TLP record cannot be allocated, the original remains in flight for a
+later retry.  Explicit cancellation and teardown release retained state
+without counting congestion loss.
 
 On RTO, BBRv3 saves the congestion window and reduces it to the minimum pipe.
 It restores that window when an ACK newly acknowledges data.  LSQUIC does not

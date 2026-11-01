@@ -40,6 +40,11 @@
 #include "lsquic_logger.h"
 #include "lsquic_util.h"
 
+#ifdef FIU_ENABLE
+#include <fiu.h>
+#include <fiu-control.h>
+#endif
+
 
 struct bw_lifecycle_test
 {
@@ -898,6 +903,10 @@ test_bbr3_late_ack_cancels_restart (enum lsquic_version version,
     assert(!!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED) == (other_data == 1));
     assert(bbr3->bbr3_state == BBR3_STATE_PROBE_RTT);
 
+    /* The original ACK now consumes its retained delivery sample.  Enter
+     * another application-limited period before the next idle restart.
+     */
+    lsquic_bw_sampler_app_limited(&t.send_ctl.sc_bw_sampler);
     lsquic_send_ctl_tick_in(&t.send_ctl, expiry + 100000);
     assert(get_test_data_packet(&t, 100, 0));
     if (other_data)
@@ -1694,6 +1703,282 @@ test_bbr3_ack_only_loss (enum lsquic_version version, int lose_data)
         assert(bbr3->bbr3_bw_shortterm == UINT64_MAX);
         assert(bbr3->bbr3_inflight_shortterm == UINT64_MAX);
     }
+    cleanup_test(&t);
+}
+
+
+enum tlp_confirmation
+{
+    TLP_FACK,
+    TLP_SENT_TIME,
+    TLP_EARLY_RETX,
+    TLP_RTO,
+};
+
+
+static struct lsquic_packet_out *
+resend_tlp_packet (struct bw_lifecycle_test *t, lsquic_time_t now)
+{
+    struct lsquic_packet_out *packet;
+
+    lsquic_send_ctl_tick_in(&t->send_ctl, now);
+    assert(1 == lsquic_send_ctl_reschedule_packets(&t->send_ctl));
+    packet = lsquic_send_ctl_next_packet_to_send(&t->send_ctl, NULL);
+    assert(packet);
+    packet->po_sent = now;
+    assert(0 == lsquic_send_ctl_sent_packet(&t->send_ctl, packet));
+    return packet;
+}
+
+
+enum tlp_resolution
+{
+    TLP_ORIGINAL_ACK,
+    TLP_COPY_THEN_ORIGINAL_ACK,
+    TLP_COPY_THEN_LOSS,
+    TLP_REPEATED_PROBE,
+    TLP_DISCARD_SPACE,
+    TLP_CANCEL_COPY,
+    TLP_DISABLE_SAMPLER,
+    TLP_SWITCH_CONTROLLER,
+    TLP_CLEANUP,
+};
+
+
+static void
+test_tlp_state_lifecycle (enum lsquic_version version, unsigned flags,
+                         enum tlp_resolution resolution)
+{
+    static const struct conn_iface conn_if = { 0 };
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet, *record, *second_record;
+    struct bwp_state *state;
+    lsquic_time_t expiry;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, version, flags, 0);
+    t.lconn.cn_if = &conn_if;
+    lsquic_send_ctl_path_validated(&t.send_ctl);
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    packet = new_packet(&t, 1, 1000);
+    packet->po_frame_types = QUIC_FTBIT_BLOCKED;
+    t.send_ctl.sc_cur_packno = 1;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    state = packet->po_bwp_state;
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    record = TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]);
+    assert(record->po_bwp_state == state);
+    assert(record->po_lflags & POL_TLP_PENDING);
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+
+    switch (resolution)
+    {
+    case TLP_ORIGINAL_ACK:
+        ack_one(&t, 1, expiry + 2, expiry + 2, 0);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_acked == PACKET_SZ);
+        assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+        assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+        assert(!lsquic_malo_first(t.send_ctl.sc_bw_sampler.bws_malo));
+        break;
+    case TLP_COPY_THEN_ORIGINAL_ACK:
+    case TLP_COPY_THEN_LOSS:
+        assert(resend_tlp_packet(&t, expiry + 2) == packet);
+        assert(packet->po_packno == 2);
+        assert(packet->po_bwp_state != state);
+        packet = new_packet(&t, 3, expiry + 2);
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+        /* The higher data packet suppresses early retransmit, and the long
+         * RTT keeps the original below the sent-time loss threshold.
+         */
+        ack_one(&t, 2, 2 * expiry + 1000, 2 * expiry + 1000, 0);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_acked == PACKET_SZ);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        assert(record->po_loss_chain == record);
+        assert(record->po_bwp_state == state);
+        if (resolution == TLP_COPY_THEN_ORIGINAL_ACK)
+        {
+            ack_one(&t, 1, 2 * expiry + 1001, 2 * expiry + 1001, 0);
+            assert(t.send_ctl.sc_bw_sampler.bws_total_acked == 2 * PACKET_SZ);
+            assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        }
+        else
+        {
+            /* Packet 6 confirms the detached original by packet threshold. */
+            packet = new_packet(&t, 6, expiry + 2);
+            packet->po_frame_types = QUIC_FTBIT_ACK;
+            assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+            packet = new_packet(&t, 7, expiry + 2);
+            assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+            ack_one(&t, 6, 2 * expiry + 1001, 2 * expiry + 1001, 0);
+            assert(t.send_ctl.sc_bw_sampler.bws_total_acked == PACKET_SZ);
+            assert(t.send_ctl.sc_bw_sampler.bws_total_lost == PACKET_SZ);
+            assert(t.send_ctl.sc_cc.bbr3.bbr3_lost == PACKET_SZ);
+            assert(t.send_ctl.sc_n_in_flight_all == 2);
+            assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+        }
+        assert(TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP])->po_packno
+                                                                        == 3);
+        assert(!lsquic_malo_first(t.conn_pub.packet_out_malo));
+        break;
+    case TLP_REPEATED_PROBE:
+        assert(resend_tlp_packet(&t, expiry + 2) == packet);
+        expiry = t.alset.as_expiry[AL_RETX_APP];
+        lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+        assert(t.send_ctl.sc_n_tlp == 2);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        second_record = TAILQ_NEXT(record, po_next);
+        assert(second_record->po_lflags & POL_TLP_PENDING);
+        assert(second_record->po_bwp_state);
+        assert(second_record->po_bwp_state != state);
+        assert(resend_tlp_packet(&t, expiry + 2) == packet);
+        assert(packet->po_packno == 3);
+        /* After both TLP attempts, the real RTO must count all three sends. */
+        expiry = t.alset.as_expiry[AL_RETX_APP];
+        lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 3 * PACKET_SZ);
+        assert(t.send_ctl.sc_cc.bbr3.bbr3_lost == 3 * PACKET_SZ);
+        assert(t.send_ctl.sc_n_in_flight_all == 0);
+        assert(!lsquic_malo_first(t.send_ctl.sc_bw_sampler.bws_malo));
+        lsquic_send_ctl_expire_all(&t.send_ctl);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 3 * PACKET_SZ);
+        break;
+    case TLP_DISCARD_SPACE:
+        lsquic_send_ctl_empty_pns(&t.send_ctl, PNS_APP);
+        assert(!lsquic_malo_first(t.send_ctl.sc_bw_sampler.bws_malo));
+        assert(!lsquic_malo_first(t.conn_pub.packet_out_malo));
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        break;
+    case TLP_CANCEL_COPY:
+        lsquic_send_ctl_tick_in(&t.send_ctl, expiry + 2);
+        assert(1 == lsquic_send_ctl_reschedule_packets(&t.send_ctl));
+        lsquic_send_ctl_drop_scheduled(&t.send_ctl);
+        assert(!lsquic_malo_first(t.send_ctl.sc_bw_sampler.bws_malo));
+        assert(!lsquic_malo_first(t.conn_pub.packet_out_malo));
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        break;
+    case TLP_DISABLE_SAMPLER:
+    case TLP_SWITCH_CONTROLLER:
+        if (resolution == TLP_DISABLE_SAMPLER)
+            lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 1);
+        assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, LSQUIC_CC_CUBIC));
+        if (resolution == TLP_DISABLE_SAMPLER)
+        {
+            assert(record->po_bwp_state == state);
+            lsquic_send_ctl_set_bw_sampler(&t.send_ctl, 0);
+        }
+        assert(!record->po_bwp_state);
+        assert(!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+        assert(0 == lsquic_send_ctl_set_cc_algo(&t.send_ctl, LSQUIC_CC_BBR3));
+        lsquic_send_ctl_expire_all(&t.send_ctl);
+        assert(t.send_ctl.sc_cc.bbr3.bbr3_lost == 0);
+        assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+        break;
+    case TLP_CLEANUP:
+        break;
+    }
+    lsquic_send_ctl_sanity_check(&t.send_ctl);
+    cleanup_test(&t);
+}
+
+
+#ifdef FIU_ENABLE
+static void
+test_tlp_record_allocation_failure (void)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet, *record;
+    struct bwp_state *state;
+    lsquic_time_t expiry;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_I001, 0, 0);
+    packet = new_packet(&t, 1, 1000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    state = packet->po_bwp_state;
+    assert(0 == fiu_init(0));
+    assert(0 == fiu_enable("malo/get", 1, NULL, FIU_ONETIME));
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    assert(packet == TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    assert(packet->po_packno == 1);
+    assert(packet->po_bwp_state == state);
+    assert(packet->po_loss_chain == packet);
+    assert(t.send_ctl.sc_n_in_flight_all == 1);
+    assert(t.send_ctl.sc_loss_count == 0);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+    assert(lsquic_alarmset_is_set(&t.alset, AL_RETX_APP));
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    record = TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]);
+    assert(record->po_flags & PO_LOSS_REC);
+    assert(record->po_bwp_state == state);
+    assert(packet == TAILQ_FIRST(&t.send_ctl.sc_lost_packets));
+    assert(t.send_ctl.sc_loss_count == 1);
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+    cleanup_test(&t);
+}
+#endif
+
+
+static void
+test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
+                        enum lsquic_cc cc_algo, int sampling,
+                        enum tlp_confirmation confirmation)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out, *loss_record;
+    lsquic_time_t expiry;
+    lsquic_packno_t acked;
+
+    init_test(&t, cc_algo, sampling, version, flags, 0);
+    packet_out = new_packet(&t, 1, 1000);
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    assert(t.send_ctl.sc_n_tlp == 1);
+    assert(t.send_ctl.sc_n_in_flight_all == 0);
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost == 0);
+    assert(packet_out->po_bwp_state == NULL);
+    loss_record = TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]);
+    assert(loss_record->po_flags & PO_LOSS_REC);
+    assert(!!loss_record->po_bwp_state
+                            == !!(t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT));
+
+    if (confirmation == TLP_RTO)
+        lsquic_send_ctl_expire_all(&t.send_ctl);
+    else
+    {
+        acked = confirmation == TLP_FACK ? 6 : 2;
+        packet_out = new_packet(&t, acked, expiry + 10);
+        packet_out->po_frame_types = QUIC_FTBIT_ACK;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        if (confirmation != TLP_EARLY_RETX)
+        {
+            /* Keep early retransmit from masking the other loss checks. */
+            packet_out = new_packet(&t, acked + 1, expiry + 10);
+            assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+        }
+        ack_one(&t, acked, expiry + 10010, expiry + 10010, 0);
+    }
+
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost
+                == ((t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT) ? PACKET_SZ : 0));
+    if (cc_algo == LSQUIC_CC_BBR3)
+        assert(t.send_ctl.sc_cc.bbr3.bbr3_lost == PACKET_SZ);
+    else if (cc_algo == LSQUIC_CC_BBR || cc_algo == LSQUIC_CC_BBR_COPILOT)
+        assert(t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes == PACKET_SZ);
+    assert(loss_record->po_bwp_state == NULL);
+    assert(t.send_ctl.sc_loss_count == 1);
+    assert(TAILQ_FIRST(&t.send_ctl.sc_lost_packets)
+                        == TAILQ_LAST(&t.send_ctl.sc_lost_packets,
+                                                    lsquic_packets_tailq));
+    if (confirmation != TLP_RTO)
+        ack_one(&t, acked, expiry + 10011, expiry + 10011, 0);
+    else
+        lsquic_send_ctl_expire_all(&t.send_ctl);
+    assert(t.send_ctl.sc_bw_sampler.bws_total_lost
+                == ((t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT) ? PACKET_SZ : 0));
+    assert(t.send_ctl.sc_loss_count == 1);
+    lsquic_send_ctl_sanity_check(&t.send_ctl);
     cleanup_test(&t);
 }
 
@@ -2610,6 +2895,25 @@ main (void)
 
     lsquic_init_timers();
     lsquic_log_to_fstream(stderr, LLTS_NONE);
+#ifdef FIU_ENABLE
+    test_tlp_record_allocation_failure();
+#endif
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+        for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
+            for (k = TLP_ORIGINAL_ACK; k <= TLP_CLEANUP; ++k)
+                test_tlp_state_lifecycle(versions[i], flags[j], k);
+    for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
+        for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
+            for (cc_algo = 1;
+                 cc_algo < sizeof(cc_algos) / sizeof(cc_algos[0]); ++cc_algo)
+                for (k = TLP_FACK; k <= TLP_RTO; ++k)
+                {
+                    test_tlp_confirmed_loss(versions[i], flags[j],
+                                            cc_algos[cc_algo], 0, k);
+                    if (cc_algos[cc_algo] == LSQUIC_CC_CUBIC)
+                        test_tlp_confirmed_loss(versions[i], flags[j],
+                                                cc_algos[cc_algo], 1, k);
+                }
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
     {
         test_bbr3_ack_only_loss(versions[i], 0);
