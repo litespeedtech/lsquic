@@ -705,6 +705,122 @@ test_bbr3_datagram_idle_restart (unsigned flags, int probe_rtt, int mixed)
 }
 
 
+static size_t
+read_test_stream_data (void *UNUSED_ctx, void *buf, size_t len, int *fin)
+{
+    if (len > 100)
+        len = 100;
+    memset(buf, 'a', len);
+    *fin = 0;
+    return len;
+}
+
+
+static ssize_t
+write_test_datagram (struct lsquic_conn *UNUSED_conn, void *buf, size_t len)
+{
+    int fin;
+
+    return read_test_stream_data(NULL, buf, len, &fin);
+}
+
+
+static struct lsquic_packet_out *
+get_test_data_packet (struct bw_lifecycle_test *t, unsigned size, int datagram)
+{
+    if (datagram)
+        return lsquic_send_ctl_get_packet_for_datagram(&t->send_ctl,
+                                                        size, &t->path, NULL);
+    else
+        return lsquic_send_ctl_get_packet_for_stream(&t->send_ctl,
+                                                        size, &t->path, NULL);
+}
+
+
+static void
+test_bbr3_immediate_data_restart (enum lsquic_version version, int datagram)
+{
+    struct bw_lifecycle_test t;
+    struct cong_ctl_if test_if = lsquic_cong_bbr3_if;
+    struct lsquic_packet_out *packet_out;
+    int len;
+    unsigned restarts;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, version, 0, 0);
+    test_if.cci_restart_from_idle = counting_restart_from_idle;
+    t.send_ctl.sc_ci = &test_if;
+    t.send_ctl.sc_max_pacing_rate = 1000000000;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 2000000);
+    t.send_ctl.sc_cc.bbr3.bbr3_state = BBR3_STATE_PROBE_BW_UP;
+    t.send_ctl.sc_cc.bbr3.bbr3_full_bw_reached = 1;
+    t.send_ctl.sc_cc.bbr3.bbr3_bw = 1000000;
+    t.send_ctl.sc_cc.bbr3.bbr3_pacing_rate = 1237500;
+    s_restart_count = 0;
+    packet_out = get_test_data_packet(&t, 100, datagram);
+    assert(packet_out);
+    assert(packet_out->po_frame_types == 0);
+    assert(s_restart_count == 1);
+    assert(t.send_ctl.sc_pacer.pa_next_sched == 2001383);
+    if (datagram)
+        len = t.lconn.cn_pf->pf_gen_datagram_frame(packet_out->po_data,
+            lsquic_packet_out_avail(packet_out), 100, 100,
+                                            write_test_datagram, &t.lconn);
+    else
+        len = t.lconn.cn_pf->pf_gen_stream_frame(packet_out->po_data,
+            lsquic_packet_out_avail(packet_out), 0, 0, 0, 100,
+                                                read_test_stream_data, NULL);
+    assert(len > 0);
+    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, len);
+    if (datagram)
+        packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+    else
+        packet_out->po_frame_types |= QUIC_FTBIT_STREAM;
+    lsquic_send_ctl_update_packet_cc(&t.send_ctl, packet_out);
+    assert(t.send_ctl.sc_n_scheduled_cc == 1);
+    assert(packet_out == get_test_data_packet(&t, 100, datagram));
+    assert(s_restart_count == 1);
+    lsquic_send_ctl_drop_scheduled(&t.send_ctl);
+    assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
+    lsquic_send_ctl_tick_in(&t.send_ctl, 3000000);
+    assert(!get_test_data_packet(&t, 65535, datagram));
+    assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
+    packet_out = get_test_data_packet(&t, 100, datagram);
+    assert(packet_out);
+    assert(packet_out->po_frame_types == 0);
+    restarts = s_restart_count;
+    /* A writer that produces no frame must not consume the notification. */
+    lsquic_send_ctl_maybe_cancel_idle_restart(&t.send_ctl);
+    assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
+    assert(packet_out == get_test_data_packet(&t, 100, datagram));
+    assert(s_restart_count == restarts + 1);
+    lsquic_send_ctl_drop_scheduled(&t.send_ctl);
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, 4000000);
+    restarts = s_restart_count;
+    packet_out = lsquic_send_ctl_get_writeable_packet(&t.send_ctl,
+                                        PNS_APP, 100, &t.path, 0, NULL);
+    assert(packet_out);
+    packet_out->po_frame_types = QUIC_FTBIT_ACK;
+    assert(s_restart_count == restarts);
+    assert(packet_out == get_test_data_packet(&t, 100, datagram));
+    assert(s_restart_count == restarts + 1);
+    lsquic_send_ctl_drop_scheduled(&t.send_ctl);
+    assert(!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED));
+
+    lsquic_send_ctl_tick_in(&t.send_ctl, 5000000);
+    t.send_ctl.sc_cc.bbr3.bbr3_state = BBR3_STATE_PROBE_RTT;
+    t.send_ctl.sc_cc.bbr3.bbr3_probe_rtt_done_stamp = 4999999;
+    t.send_ctl.sc_cc.bbr3.bbr3_prior_cwnd = 50000;
+    t.send_ctl.sc_cc.bbr3.bbr3_cwnd = t.send_ctl.sc_cc.bbr3.bbr3_min_cwnd;
+    packet_out = get_test_data_packet(&t, 100, datagram);
+    assert(packet_out);
+    assert(t.send_ctl.sc_cc.bbr3.bbr3_state == BBR3_STATE_PROBE_BW_CRUISE);
+    assert(t.send_ctl.sc_cc.bbr3.bbr3_cwnd == 50000);
+    t.send_ctl.sc_ci = &lsquic_cong_bbr3_if;
+    cleanup_test(&t);
+}
+
+
 static void
 test_datagram_cc_accounting (void)
 {
@@ -2368,6 +2484,9 @@ main (void)
     test_cubic_runtime_enable();
     test_merged_ack_ecn();
     test_bbr3_initializes_sampler();
+    test_bbr3_immediate_data_restart(LSQVER_043, 0);
+    test_bbr3_immediate_data_restart(LSQVER_I001, 0);
+    test_bbr3_immediate_data_restart(LSQVER_I001, 1);
     test_datagram_cc_accounting();
     test_bbr3_idle_restart_runs_before_pacing();
     test_bbr3_idle_restart_after_timer_drain();

@@ -258,6 +258,14 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *, enum packnum_space,
       unsigned need_at_least, const struct network_path *, int, int *is_err);
 
 struct lsquic_packet_out *
+lsquic_send_ctl_get_packet_for_datagram (struct lsquic_send_ctl *,
+                    unsigned need_at_least, const struct network_path *,
+                    int *is_err);
+
+void
+lsquic_send_ctl_maybe_cancel_idle_restart (struct lsquic_send_ctl *);
+
+struct lsquic_packet_out *
 lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *,
                     unsigned need_at_least, const struct network_path *,
                     const struct lsquic_stream *);

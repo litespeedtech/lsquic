@@ -3167,7 +3167,10 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
                 stream->tosend_off,
                 fg_ctx->fgc_fin(fg_ctx), size, fg_ctx->fgc_read, fg_ctx);
     if (len <= 0)
+    {
+        lsquic_send_ctl_maybe_cancel_idle_restart(send_ctl);
         return len;
+    }
 
 #if LSQUIC_CONN_STATS
     stream->conn_pub->conn_stats->out.stream_frames += 1;

@@ -8169,12 +8169,17 @@ write_datagram (struct ietf_full_conn *conn)
 {
     struct lsquic_packet_out *packet_out;
     size_t need;
-    int w;
+    int w, is_err;
 
     need = conn->ifc_conn.cn_pf->pf_datagram_frame_size(conn->ifc_min_dg_sz);
-    packet_out = get_writeable_packet(conn, need);
+    packet_out = lsquic_send_ctl_get_packet_for_datagram(&conn->ifc_send_ctl,
+                                        need, CUR_NPATH(conn), &is_err);
     if (!packet_out)
+    {
+        if (is_err)
+            ABORT_ERROR("cannot allocate packet: %s", strerror(errno));
         return 0;
+    }
 
     w = conn->ifc_conn.cn_pf->pf_gen_datagram_frame(
             packet_out->po_data + packet_out->po_data_sz,
@@ -8184,12 +8189,14 @@ write_datagram (struct ietf_full_conn *conn)
     if (w < 0)
     {
         LSQ_DEBUG("could not generate DATAGRAM frame");
+        lsquic_send_ctl_maybe_cancel_idle_restart(&conn->ifc_send_ctl);
         return 0;
     }
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                         QUIC_FRAME_DATAGRAM, packet_out->po_data_sz, w))
     {
         ABORT_ERROR("adding DATAGRAME frame to packet failed: %d", errno);
+        lsquic_send_ctl_maybe_cancel_idle_restart(&conn->ifc_send_ctl);
         return 0;
     }
     packet_out->po_regen_sz += w;

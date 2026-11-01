@@ -3172,7 +3172,12 @@ is empty and the bandwidth sampler is application-limited.  The Send Controller 
 a congestion-controlled packet is sent or all scheduled data is cancelled.
 Separate idle counters include DATAGRAM and fill probes without changing
 retransmission policy.  Frame writers update scheduled membership when
-adding STREAM or DATAGRAM data to an already scheduled packet.  CUBIC
+adding STREAM or DATAGRAM data to an already scheduled packet.  Immediate
+STREAM and DATAGRAM packet acquisition reports application-data intent
+before checking the window or scheduling an empty packet, so restart can
+restore the window and refresh pacing first.  Failed acquisition or frame
+construction rearms the notification if no queued or in-flight data remains.
+CUBIC
 and BBRv1 keep their existing
 ACK-time ``cci_was_quiet`` notifications, independent of optional bandwidth
 sampling; BBRv3 leaves that callback unset.

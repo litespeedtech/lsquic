@@ -1004,14 +1004,21 @@ send_ctl_sched_remove (struct lsquic_send_ctl *ctl,
 }
 
 
+void
+lsquic_send_ctl_maybe_cancel_idle_restart (struct lsquic_send_ctl *ctl)
+{
+    if (ctl->sc_n_scheduled_cc == 0 && ctl->sc_n_in_flight_cc == 0)
+        ctl->sc_flags &= ~SC_IDLE_RESTARTED;
+}
+
+
 /* A cancelled scheduled packet does not consume idle restart. */
 static void
 send_ctl_sched_cancel (struct lsquic_send_ctl *ctl,
                        struct lsquic_packet_out *packet_out)
 {
     send_ctl_sched_remove(ctl, packet_out);
-    if (ctl->sc_n_scheduled_cc == 0 && ctl->sc_n_in_flight_cc == 0)
-        ctl->sc_flags &= ~SC_IDLE_RESTARTED;
+    lsquic_send_ctl_maybe_cancel_idle_restart(ctl);
 }
 
 
@@ -1118,12 +1125,10 @@ send_ctl_restarting_from_idle (const struct lsquic_send_ctl *ctl)
 
 
 static void
-send_ctl_maybe_restart_from_idle (struct lsquic_send_ctl *ctl,
-                                  const struct lsquic_packet_out *packet_out)
+send_ctl_maybe_restart_from_idle (struct lsquic_send_ctl *ctl, int cc_data)
 {
     if (ctl->sc_ci->cci_restart_from_idle
-            && send_ctl_packet_counts_for_cc(ctl, packet_out)
-            && send_ctl_restarting_from_idle(ctl))
+            && cc_data && send_ctl_restarting_from_idle(ctl))
     {
         ctl->sc_flags &= ~SC_WAS_QUIET;
         ctl->sc_flags |= SC_IDLE_RESTARTED;
@@ -2533,7 +2538,8 @@ lsquic_send_ctl_scheduled_one (lsquic_send_ctl_t *ctl,
         assert((last->po_flags & PO_REPACKNO) ||
                 last->po_packno < packet_out->po_packno);
 #endif
-    send_ctl_maybe_restart_from_idle(ctl, packet_out);
+    send_ctl_maybe_restart_from_idle(ctl,
+                            send_ctl_packet_counts_for_cc(ctl, packet_out));
     if (ctl->sc_flags & SC_PACE)
     {
         unsigned n_out = ctl->sc_n_in_flight_retx + ctl->sc_n_scheduled;
@@ -2741,7 +2747,8 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
     }
     else
         size = 0;
-    send_ctl_maybe_restart_from_idle(ctl, packet_out);
+    send_ctl_maybe_restart_from_idle(ctl,
+                            send_ctl_packet_counts_for_cc(ctl, packet_out));
     send_ctl_sched_remove(ctl, packet_out);
 
     if (dec_limit)
@@ -2958,16 +2965,19 @@ lsquic_send_ctl_last_scheduled (struct lsquic_send_ctl *ctl,
 }
 
 
-/* Do not use for STREAM frames
- */
-lsquic_packet_out_t *
-lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
+static struct lsquic_packet_out *
+send_ctl_get_writeable_packet (struct lsquic_send_ctl *ctl,
                 enum packnum_space pns, unsigned need_at_least,
-                const struct network_path *path, int regen_match, int *is_err)
+                const struct network_path *path, int regen_match, int *is_err,
+                int app_data)
 {
     lsquic_packet_out_t *packet_out;
 
     assert(need_at_least > 0);
+
+    /* Application data is known before its first frame is constructed. */
+    if (app_data)
+        send_ctl_maybe_restart_from_idle(ctl, 1);
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl, pns, path, regen_match);
     if (packet_out
@@ -2981,6 +2991,8 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
     {
         if (is_err)
             *is_err = 0;
+        if (app_data)
+            lsquic_send_ctl_maybe_cancel_idle_restart(ctl);
         return NULL;
     }
 
@@ -2990,9 +3002,33 @@ lsquic_send_ctl_get_writeable_packet (lsquic_send_ctl_t *ctl,
         lsquic_packet_out_set_pns(packet_out, pns);
         lsquic_send_ctl_scheduled_one(ctl, packet_out);
     }
-    else if (is_err)
-        *is_err = 1;
+    else
+    {
+        if (is_err)
+            *is_err = 1;
+        if (app_data)
+            lsquic_send_ctl_maybe_cancel_idle_restart(ctl);
+    }
     return packet_out;
+}
+
+
+struct lsquic_packet_out *
+lsquic_send_ctl_get_writeable_packet (struct lsquic_send_ctl *ctl,
+                enum packnum_space pns, unsigned need_at_least,
+                const struct network_path *path, int regen_match, int *is_err)
+{
+    return send_ctl_get_writeable_packet(ctl, pns, need_at_least, path,
+                                                regen_match, is_err, 0);
+}
+
+
+struct lsquic_packet_out *
+lsquic_send_ctl_get_packet_for_datagram (struct lsquic_send_ctl *ctl,
+            unsigned need_at_least, const struct network_path *path, int *is_err)
+{
+    return send_ctl_get_writeable_packet(ctl, PNS_APP, need_at_least, path,
+                                                        0, is_err, 1);
 }
 
 
@@ -3617,8 +3653,8 @@ lsquic_send_ctl_get_packet_for_stream (lsquic_send_ctl_t *ctl,
     enum buf_packet_type packet_type;
 
     if (lsquic_send_ctl_schedule_stream_packets_immediately(ctl))
-        return lsquic_send_ctl_get_writeable_packet(ctl, PNS_APP,
-                                                need_at_least, path, 0, NULL);
+        return send_ctl_get_writeable_packet(ctl, PNS_APP,
+                                            need_at_least, path, 0, NULL, 1);
     else
     {
         if (!lsquic_send_ctl_has_buffered(ctl))
