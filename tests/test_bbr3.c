@@ -1740,13 +1740,95 @@ test_bbr3_probe_inflight_hi_upward_growth (void)
     bbr3.bbr3_probe_rtt_min_stamp = 1000000;
     bbr3.bbr3_inflight_longterm = 10 * BBR3_TEST_PACKET_SZ;
     bbr3.bbr3_cwnd = bbr3.bbr3_inflight_longterm;
-    bbr3.bbr3_probe_up_cnt = 1;
+    bbr3.bbr3_probe_up_cnt = BBR3_TEST_PACKET_SZ;
     inflight_before = bbr3.bbr3_inflight_longterm;
 
     ack_rate_sample_loss_cwnd_at(&bbr3, malo, 1, 1000000, 10000,
                     inflight_before, 1010000, 0, 0, 1);
     assert(bbr3.bbr3_inflight_longterm
                     >= inflight_before + BBR3_TEST_PACKET_SZ);
+
+    lsquic_cong_bbr3_if.cci_cleanup(&bbr3);
+    lsquic_malo_destroy(malo);
+}
+
+
+static void
+test_bbr3_probe_up_acked_bytes (void)
+{
+    struct lsquic_bbr3 bbr3;
+    struct lsquic_conn lconn = LSCONN_INITIALIZER_CIDLEN(lconn, 8);
+    struct network_path path;
+    struct lsquic_conn_public conn_pub;
+    struct lsquic_packet_out packet;
+    struct bw_sample *sample;
+    struct malo *malo;
+    const unsigned acked_bytes[] = { 2600, 1400, 200 };
+    uint64_t inflight_before;
+    unsigned i, remaining, size;
+
+    memset(&bbr3, 0, sizeof(bbr3));
+    memset(&path, 0, sizeof(path));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    memset(&packet, 0, sizeof(packet));
+    path.np_pack_size = BBR3_TEST_PACKET_SZ;
+    conn_pub.lconn = &lconn;
+    conn_pub.path = &path;
+    malo = lsquic_malo_create(sizeof(struct bw_sample));
+    assert(malo);
+    lsquic_cong_bbr3_if.cci_init(&bbr3, &conn_pub);
+
+    bbr3.bbr3_state = BBR3_STATE_PROBE_BW_UP;
+    bbr3.bbr3_full_bw_reached = 1;
+    bbr3.bbr3_bw = 1000000;
+    bbr3.bbr3_max_bw = 1000000;
+    bbr3.bbr3_min_rtt = 10000;
+    bbr3.bbr3_probe_rtt_min_delay = 10000;
+    bbr3.bbr3_probe_rtt_min_stamp = 1000000;
+    bbr3.bbr3_inflight_longterm = 10 * BBR3_TEST_PACKET_SZ;
+    bbr3.bbr3_cwnd = bbr3.bbr3_inflight_longterm;
+    bbr3.bbr3_probe_up_cnt = 3 * BBR3_TEST_PACKET_SZ;
+    /* Keep the slope fixed while checking credit across several ACKs. */
+    bbr3.bbr3_current_round_trip_end = 100;
+    inflight_before = bbr3.bbr3_inflight_longterm;
+    packet.po_frame_types = QUIC_FTBIT_STREAM;
+
+    for (i = 0; i < sizeof(acked_bytes) / sizeof(acked_bytes[0]); ++i)
+    {
+        lsquic_cong_bbr3_if.cci_begin_ack(&bbr3, 1010000 + i * 10000,
+                                                            inflight_before);
+        sample = lsquic_malo_get(malo);
+        assert(sample);
+        memset(sample, 0, sizeof(*sample));
+        sample->bandwidth = BW(1000000 * 8);
+        sample->rtt = 10000;
+        sample->delivered = acked_bytes[i];
+        sample->tx_in_flight = inflight_before;
+        sample->is_cwnd_limited = 1;
+        lsquic_cong_bbr3_if.cci_process_bw_sample(&bbr3, sample);
+        /* Sub-MTU packets, including a two-packet ACK of 2600 bytes. */
+        for (remaining = acked_bytes[i]; remaining; remaining -= size)
+        {
+            size = remaining > 1300 ? 1300 : remaining;
+            ++packet.po_packno;
+            lsquic_cong_bbr3_if.cci_sent(&bbr3, &packet, inflight_before, 0);
+            lsquic_cong_bbr3_if.cci_ack(&bbr3, &packet, size,
+                                                    1010000 + i * 10000, 0);
+        }
+        lsquic_cong_bbr3_if.cci_end_ack(&bbr3, inflight_before);
+        assert(bbr3.bbr3_state == BBR3_STATE_PROBE_BW_UP);
+        if (i < 2)
+        {
+            assert(bbr3.bbr3_inflight_longterm == inflight_before);
+            assert(bbr3.bbr3_bw_probe_up_acks == (i ? 4000u : 2600u));
+        }
+        else
+        {
+            assert(bbr3.bbr3_inflight_longterm
+                                == inflight_before + BBR3_TEST_PACKET_SZ);
+            assert(bbr3.bbr3_bw_probe_up_acks == 90);
+        }
+    }
 
     lsquic_cong_bbr3_if.cci_cleanup(&bbr3);
     lsquic_malo_destroy(malo);
@@ -1785,7 +1867,7 @@ test_bbr3_probe_bw_up_cwnd_limited_resets_full_bw (void)
     bbr3.bbr3_probe_rtt_min_stamp = 1000000;
     bbr3.bbr3_inflight_longterm = 10 * BBR3_TEST_PACKET_SZ;
     bbr3.bbr3_cwnd = bbr3.bbr3_inflight_longterm;
-    bbr3.bbr3_probe_up_cnt = 1;
+    bbr3.bbr3_probe_up_cnt = BBR3_TEST_PACKET_SZ;
 
     begin_ack_rate_sample(&bbr3, malo, 1, 2000000, 10000,
                     bbr3.bbr3_inflight_longterm, 1010000, 0, 1, 0);
@@ -1842,7 +1924,7 @@ test_bbr3_probe_bw_up_cwnd_limited_multi_round_growth (void)
     bbr3.bbr3_probe_rtt_min_stamp = 1000000;
     bbr3.bbr3_inflight_longterm = 10 * BBR3_TEST_PACKET_SZ;
     bbr3.bbr3_cwnd = bbr3.bbr3_inflight_longterm;
-    bbr3.bbr3_probe_up_cnt = 1;
+    bbr3.bbr3_probe_up_cnt = BBR3_TEST_PACKET_SZ;
     inflight_before = bbr3.bbr3_inflight_longterm;
 
     for (i = 0; i < 3; ++i)
@@ -1891,7 +1973,7 @@ test_bbr3_probe_bw_up_plateau_exits_without_cap_limit (void)
     bbr3.bbr3_probe_rtt_min_stamp = 1000000;
     bbr3.bbr3_inflight_longterm = 10 * BBR3_TEST_PACKET_SZ;
     bbr3.bbr3_cwnd = bbr3.bbr3_inflight_longterm - 1;
-    bbr3.bbr3_probe_up_cnt = 1;
+    bbr3.bbr3_probe_up_cnt = BBR3_TEST_PACKET_SZ;
 
     ack_rate_sample_loss_cwnd_at(&bbr3, malo, 1, 1000000, 10000,
                     bbr3.bbr3_inflight_longterm, 1010000, 0, 0, 1);
@@ -3528,6 +3610,7 @@ main (void)
     test_bbr3_probe_up_allowance_is_temporary();
     test_bbr3_probe_rtt_from_up_trims_allowance();
     test_bbr3_probe_inflight_hi_upward_growth();
+    test_bbr3_probe_up_acked_bytes();
     test_bbr3_probe_bw_up_cwnd_limited_resets_full_bw();
     test_bbr3_probe_bw_up_cwnd_limited_multi_round_growth();
     test_bbr3_probe_bw_up_plateau_exits_without_cap_limit();

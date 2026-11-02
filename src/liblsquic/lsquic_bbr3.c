@@ -636,34 +636,28 @@ bbr3_reset_full_bw (struct lsquic_bbr3 *bbr3)
 static void
 bbr3_raise_inflight_longterm_slope (struct lsquic_bbr3 *bbr3)
 {
-    uint64_t growth_this_round;
     unsigned shift;
 
     shift = bbr3->bbr3_bw_probe_up_rounds < 30
           ? bbr3->bbr3_bw_probe_up_rounds : 30;
-    growth_this_round = (uint64_t) bbr3->bbr3_smss << shift;
-    ++bbr3->bbr3_bw_probe_up_rounds;
-    if (growth_this_round)
-        bbr3->bbr3_probe_up_cnt = bbr3->bbr3_cwnd / growth_this_round;
-    if (!bbr3->bbr3_probe_up_cnt)
-        bbr3->bbr3_probe_up_cnt = 1;
+    if (bbr3->bbr3_bw_probe_up_rounds < 30)
+        ++bbr3->bbr3_bw_probe_up_rounds;
+    bbr3->bbr3_probe_up_cnt = bbr3_max_uint64(bbr3->bbr3_cwnd >> shift,
+                                                        bbr3->bbr3_smss);
 }
 
 
 static void
 bbr3_probe_inflight_longterm_upward (struct lsquic_bbr3 *bbr3)
 {
-    uint64_t acked_packets, delta, growth;
+    uint64_t delta, growth;
 
     if (bbr3->bbr3_inflight_longterm == BBR3_INFINITY
         || !bbr3->bbr3_cwnd_limited_in_round
         || bbr3->bbr3_cwnd < bbr3->bbr3_inflight_longterm)
         return;
 
-    acked_packets = bbr3->bbr3_ack_state.acked_bytes / bbr3->bbr3_smss;
-    if (!acked_packets && bbr3->bbr3_ack_state.acked_bytes)
-        acked_packets = 1;
-    bbr3->bbr3_bw_probe_up_acks += acked_packets;
+    bbr3->bbr3_bw_probe_up_acks += bbr3->bbr3_ack_state.acked_bytes;
     if (bbr3->bbr3_bw_probe_up_acks >= bbr3->bbr3_probe_up_cnt)
     {
         delta = bbr3->bbr3_bw_probe_up_acks / bbr3->bbr3_probe_up_cnt;
@@ -885,10 +879,10 @@ bbr3_is_time_to_go_down (struct lsquic_bbr3 *bbr3, uint64_t in_flight)
         return 1;
     }
 
-    /* LSQUIC extension: if inflight_longterm itself is capping a cwnd-limited
-     * sender, keep ProbeBW_UP alive so BBRProbeInflightHiUpward can lift the
-     * cap.  Re-arm full_bw detection to avoid staying in UP indefinitely when
-     * bandwidth is not actually growing.
+    /* [draft-ietf-ccwg-bbr-06], Section 5.3.3.7: if inflight_longterm caps
+     * a cwnd-limited sender, re-arm full_bw detection so
+     * ProbeInflightLongtermUpward can lift the cap.  Require a rate sample
+     * before seeding full_bw from this ACK's delivery rate.
      */
     if (bbr3->bbr3_cwnd_limited_in_round
         && bbr3->bbr3_inflight_longterm != BBR3_INFINITY
@@ -946,7 +940,7 @@ bbr3_inflight_at_loss (const struct lsquic_bbr3 *bbr3, uint64_t lost,
  * LossThresh a REFILL packet crosses the threshold within the first round of
  * ProbeBW_UP.  UP then ends before any of its own packets are acked, the
  * probe never measures capacity, and max_bw decays until the connection
- * collapses (see AI/bbrv3-rtt-loss-sweep.md).  Only packets sent during
+ * collapses (see docs/bbrv3-deviations.rst).  Only packets sent during
  * ProbeBW_UP carry the probe's overshoot, so only they are judged.
  */
 static int
@@ -1234,7 +1228,7 @@ bbr3_bound_bw_for_model (struct lsquic_bbr3 *bbr3)
  * applying the verdict that
  * bbr3_handle_lost_packet() reached.  Only packets sent while probing reach
  * it: Startup has no loss-driven exit in LSQUIC, so there is deliberately no
- * Startup arm here.  See AI/bbrv3-progress.md for why that policy is in
+ * Startup arm here.  See docs/bbrv3-deviations.rst for why that policy is in
  * force.
  */
 static int
@@ -1844,10 +1838,10 @@ lsquic_bbr3_timeout (void *cong_ctl)
 {
     struct lsquic_bbr3 *const bbr3 = cong_ctl;
 
-    /* [draft-ietf-ccwg-bbr-06], Section 5.6.4.4: on RTO, save cwnd and cut
-     * to the minimum pipe so the sender restarts conservatively (roughly one
-     * packet in flight).  bbr3_set_cwnd restores bbr3_prior_cwnd after an
-     * ACK delivers data.
+    /* Unlike [draft-ietf-ccwg-bbr-06], Section 5.6.4.4 (inflight + SMSS),
+     * cut cwnd to the minimum pipe (four SMSS).  The timeout callback has
+     * no in-flight byte count.  bbr3_set_cwnd restores bbr3_prior_cwnd after
+     * an ACK delivers data outside ProbeRTT; see docs/bbrv3-deviations.rst.
      */
     bbr3_save_cwnd(bbr3);
     bbr3->bbr3_cwnd = bbr3->bbr3_min_cwnd;

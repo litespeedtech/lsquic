@@ -940,7 +940,7 @@ flag is encountered, the settings struct is initialized.  Then the argument
 is parsed to see which setting to alter.
 
 The ``cc_algo`` option accepts the numeric values of
-:enum:`lsquic_cc_algo`.  Application code can select a named value directly,
+:enum:`lsquic_cc`.  Application code can select a named value directly,
 for example, ``settings.es_cc_algo = LSQUIC_CC_BBR3``.
 
 ::

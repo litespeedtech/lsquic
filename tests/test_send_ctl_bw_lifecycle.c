@@ -1,5 +1,4 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
-/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -635,6 +634,41 @@ test_bbr3_idle_restart_cancelled_schedule (enum lsquic_version version,
 }
 
 
+static void
+test_bbr3_empty_pns_rearms_restart (enum packnum_space pns, unsigned flags,
+                                    int keep_app)
+{
+    struct bw_lifecycle_test t;
+    struct cong_ctl_if counting_if = lsquic_cong_bbr3_if;
+    struct lsquic_packet_out *packet;
+
+    init_test(&t, LSQUIC_CC_BBR3, 0, LSQVER_I001, flags, 0);
+    counting_if.cci_restart_from_idle = counting_restart_from_idle;
+    t.send_ctl.sc_ci = &counting_if;
+    s_restart_count = 0;
+    lsquic_send_ctl_tick_in(&t.send_ctl, 2000000);
+    packet = new_packet(&t, 1, 1000);
+    lsquic_packet_out_set_pns(packet, pns);
+    packet->po_frame_types = QUIC_FTBIT_CRYPTO;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+    assert(s_restart_count == 1);
+    assert(t.send_ctl.sc_flags & SC_IDLE_RESTARTED);
+    if (keep_app)
+    {
+        packet = new_packet(&t, 2, 1001);
+        lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+    }
+    lsquic_send_ctl_empty_pns(&t.send_ctl, pns);
+    assert(t.send_ctl.sc_n_scheduled_cc == (unsigned) keep_app);
+    assert(!!(t.send_ctl.sc_flags & SC_IDLE_RESTARTED) == keep_app);
+    packet = new_packet(&t, 3, 1002);
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+    assert(s_restart_count == (keep_app ? 1u : 2u));
+    lsquic_send_ctl_sanity_check(&t.send_ctl);
+    cleanup_test(&t);
+}
+
+
 /* The mirror image: in flight is zero but the application still has data
  * that congestion control will not let out.  That is loss recovery, not an
  * idle restart, and must not be reported as quiescence.
@@ -776,10 +810,11 @@ test_bbr3_immediate_data_restart (enum lsquic_version version, int datagram)
                                                 read_test_stream_data, NULL);
     assert(len > 0);
     if (datagram)
-        packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
+        lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, len,
+                                                        QUIC_FRAME_DATAGRAM);
     else
-        packet_out->po_frame_types |= QUIC_FTBIT_STREAM;
-    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, len);
+        lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, len,
+                                                            QUIC_FRAME_STREAM);
     assert(t.send_ctl.sc_n_scheduled_cc == 1);
     assert(packet_out == get_test_data_packet(&t, 100, datagram));
     assert(s_restart_count == 1);
@@ -943,12 +978,11 @@ test_bbr3_restart_after_regen_stripping (void)
     assert(len > 0);
     assert(0 == lsquic_packet_out_add_frame(packet, t.conn_pub.mm, 0,
                                             QUIC_FRAME_DATAGRAM, 0, len));
-    packet->po_frame_types = QUIC_FTBIT_DATAGRAM;
-    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet, len);
+    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet, len,
+                                                        QUIC_FRAME_DATAGRAM);
     packet->po_regen_sz = len;
     packet->po_data[packet->po_data_sz] = 0;
-    packet->po_frame_types |= QUIC_FTBIT_PADDING;
-    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet, 1);
+    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet, 1, QUIC_FRAME_PADDING);
     packet->po_flags |= PO_REPACKNO;
     assert(t.send_ctl.sc_n_scheduled_cc == 1);
 
@@ -1065,9 +1099,13 @@ test_bbr3_probe_rtt_marks_app_limited (int app_limited)
 }
 
 
+static unsigned s_cwnd_queries;
+
+
 static uint64_t
 get_test_cwnd (void *UNUSED_cong_ctl)
 {
+    ++s_cwnd_queries;
     return 2400;
 }
 
@@ -1086,6 +1124,7 @@ test_sample_cwnd_limited (enum lsquic_cc cc_algo, enum lsquic_version version,
     test_if.cci_get_cwnd = get_test_cwnd;
     t.send_ctl.sc_ci = &test_if;
     t.send_ctl.sc_bw_sampler.bws_flags &= ~BWS_APP_LIMITED;
+    s_cwnd_queries = 0;
     for (i = 1; i <= 3; ++i)
     {
         /* Three 1200-byte packets put flight below, at, then above cwnd. */
@@ -1093,9 +1132,10 @@ test_sample_cwnd_limited (enum lsquic_cc cc_algo, enum lsquic_version version,
         assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
         assert(packet_out->po_bwp_state);
         assert(packet_out->po_bwp_state->bwps_send_state.is_cwnd_limited
-                                                                == (i >= 2));
+                    == (cc_algo == LSQUIC_CC_BBR3 && i >= 2));
         assert(!packet_out->po_bwp_state->bwps_send_state.is_app_limited);
     }
+    assert(s_cwnd_queries == (cc_algo == LSQUIC_CC_BBR3 ? 3u : 0u));
     cleanup_test(&t);
 }
 
@@ -2053,17 +2093,78 @@ test_tlp_record_allocation_failure (void)
 #endif
 
 
+static unsigned s_tlp_loss_events;
+static void (*s_tlp_loss_cb) (void *);
+
+
+static void
+count_tlp_loss (void *cong_ctl)
+{
+    ++s_tlp_loss_events;
+    s_tlp_loss_cb(cong_ctl);
+}
+
+
+static void
+test_legacy_repaired_tlp (enum lsquic_version version, unsigned flags,
+                          enum lsquic_cc cc_algo, int sampling)
+{
+    static const struct conn_iface conn_if = { 0 };
+    struct bw_lifecycle_test t;
+    struct cong_ctl_if counting_if;
+    struct lsquic_packet_out *packet;
+    lsquic_time_t expiry;
+    uint64_t cwnd;
+
+    init_test(&t, cc_algo, sampling, version, flags, 0);
+    t.lconn.cn_if = &conn_if;
+    lsquic_send_ctl_path_validated(&t.send_ctl);
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    counting_if = *t.send_ctl.sc_ci;
+    s_tlp_loss_cb = counting_if.cci_loss;
+    counting_if.cci_loss = count_tlp_loss;
+    t.send_ctl.sc_ci = &counting_if;
+    s_tlp_loss_events = 0;
+    cwnd = counting_if.cci_get_cwnd(t.send_ctl.sc_cong_ctl);
+    packet = new_packet(&t, 1, 1000);
+    /* Rescheduling strips regenerated bytes; keep this payload intact. */
+    packet->po_frame_types = QUIC_FTBIT_BLOCKED;
+    t.send_ctl.sc_cur_packno = 1;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+    expiry = t.alset.as_expiry[AL_RETX_APP];
+    lsquic_alarmset_ring_expired(&t.alset, expiry + 1);
+    assert(t.send_ctl.sc_n_tlp == 1);
+    packet = resend_tlp_packet(&t, expiry + 2);
+    assert(packet->po_packno == 2);
+    ack_one(&t, 2, expiry + 10002, expiry + 10002, 0);
+    assert(s_tlp_loss_events == 0);
+    assert(counting_if.cci_get_cwnd(t.send_ctl.sc_cong_ctl) >= cwnd);
+    if (cc_algo == LSQUIC_CC_BBR || cc_algo == LSQUIC_CC_BBR_COPILOT)
+    {
+        assert(t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes == 0);
+        assert(!t.send_ctl.sc_cc.bbr.bbr_ack_state.has_losses);
+    }
+    cleanup_test(&t);
+}
+
+
 static void
 test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
                         enum lsquic_cc cc_algo, int sampling,
                         enum tlp_confirmation confirmation)
 {
     struct bw_lifecycle_test t;
+    struct cong_ctl_if counting_if;
     struct lsquic_packet_out *packet_out, *loss_record;
     lsquic_time_t expiry;
     const lsquic_packno_t acked = confirmation == TLP_FACK ? 6 : 2;
 
     init_test(&t, cc_algo, sampling, version, flags, 0);
+    counting_if = *t.send_ctl.sc_ci;
+    s_tlp_loss_cb = counting_if.cci_loss;
+    counting_if.cci_loss = count_tlp_loss;
+    t.send_ctl.sc_ci = &counting_if;
+    s_tlp_loss_events = 0;
     packet_out = new_packet(&t, 1, 1000);
     assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
     expiry = t.alset.as_expiry[AL_RETX_APP];
@@ -2098,9 +2199,10 @@ test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
     if (cc_algo == LSQUIC_CC_BBR3)
         assert(t.send_ctl.sc_cc.bbr3.bbr3_lost == PACKET_SZ);
     else if (cc_algo == LSQUIC_CC_BBR || cc_algo == LSQUIC_CC_BBR_COPILOT)
-        assert(t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes == PACKET_SZ);
+        assert(t.send_ctl.sc_cc.bbr.bbr_ack_state.lost_bytes == 0);
     assert(loss_record->po_bwp_state == NULL);
     assert(t.send_ctl.sc_loss_count == 1);
+    assert(s_tlp_loss_events == 0);
     assert(TAILQ_FIRST(&t.send_ctl.sc_lost_packets)
                         == TAILQ_LAST(&t.send_ctl.sc_lost_packets,
                                                     lsquic_packets_tailq));
@@ -2111,6 +2213,7 @@ test_tlp_confirmed_loss (enum lsquic_version version, unsigned flags,
     assert(t.send_ctl.sc_bw_sampler.bws_total_lost
                 == ((t.send_ctl.sc_flags & SC_BW_SAMPLER_INIT) ? PACKET_SZ : 0));
     assert(t.send_ctl.sc_loss_count == 1);
+    assert(s_tlp_loss_events == 0);
     lsquic_send_ctl_sanity_check(&t.send_ctl);
     cleanup_test(&t);
 }
@@ -3034,6 +3137,12 @@ main (void)
             test_loss_record_ecn(cc_algos[cc_algo], flags[i], 1);
         }
     for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+        for (j = PNS_INIT; j <= PNS_HSK; ++j)
+        {
+            test_bbr3_empty_pns_rearms_restart(j, flags[i], 0);
+            test_bbr3_empty_pns_rearms_restart(j, flags[i], 1);
+        }
+    for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
     {
         test_bbr3_migration_retained_flight(flags[i]);
         test_bbr3_migration_retained_flight(flags[i] | LSENG_HTTP);
@@ -3056,6 +3165,15 @@ main (void)
                     if (cc_algos[cc_algo] == LSQUIC_CC_CUBIC)
                         test_tlp_confirmed_loss(versions[i], flags[j],
                                                 cc_algos[cc_algo], 1, k);
+                    if (k == TLP_EARLY_RETX
+                                    && cc_algos[cc_algo] != LSQUIC_CC_BBR3)
+                    {
+                        test_legacy_repaired_tlp(versions[i], flags[j],
+                                                cc_algos[cc_algo], 0);
+                        if (cc_algos[cc_algo] == LSQUIC_CC_CUBIC)
+                            test_legacy_repaired_tlp(versions[i], flags[j],
+                                                    cc_algos[cc_algo], 1);
+                    }
                 }
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
     {

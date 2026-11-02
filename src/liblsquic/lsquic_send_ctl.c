@@ -956,6 +956,24 @@ lsquic_send_ctl_update_packet_cc (struct lsquic_send_ctl *ctl,
 }
 
 
+void
+lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
+                                    struct lsquic_packet_out *packet, int delta,
+                                    enum quic_frame_type frame_type)
+{
+    assert(frame_type > QUIC_FRAME_INVALID && frame_type < N_QUIC_FRAMES);
+    packet->po_frame_types |= 1 << frame_type;
+    packet->po_data_sz += delta;
+    if (packet->po_flags & PO_SCHED)
+    {
+        ctl->sc_bytes_scheduled += delta;
+        packet->po_acct_sz += delta;
+        lsquic_send_ctl_update_packet_cc(ctl, packet);
+    }
+    lsquic_send_ctl_sanity_check(ctl);
+}
+
+
 static void
 send_ctl_sched_Xpend_common (struct lsquic_send_ctl *ctl,
                       struct lsquic_packet_out *packet_out)
@@ -1167,8 +1185,12 @@ lsquic_send_ctl_sent_packet (lsquic_send_ctl_t *ctl,
             lsquic_bw_sampler_app_limited(&ctl->sc_bw_sampler);
         if (!(packet_out->po_flags & PO_MINI))
         {
-            const unsigned packet_sz = packet_out_sent_sz(packet_out);
-            const int is_cwnd_limited = ctl->sc_bytes_unacked_all + packet_sz
+            /* Only BBRv3 uses this signal and supplies the sampling-policy
+             * callback.  Gate on it to spare other CCs a per-packet cwnd query.
+             */
+            const int is_cwnd_limited =
+                ctl->sc_ci->cci_should_mark_app_limited
+                && ctl->sc_bytes_unacked_all + packet_out_sent_sz(packet_out)
                                     >= ctl->sc_ci->cci_get_cwnd(CGP(ctl));
 
             lsquic_bw_sampler_packet_sent(&ctl->sc_bw_sampler, packet_out,
@@ -1564,6 +1586,8 @@ send_ctl_confirm_tlp_loss (struct lsquic_send_ctl *ctl,
     assert(loss_record->po_lflags & POL_TLP_PENDING);
     /* Report the original transmission exactly once, before freeing P.lost.
      * Its payload was already queued for retransmission at TLP expiration.
+     * Confirmation alone must not generate a generic loss event or cutback;
+     * legacy BBR also ignores this record in its per-packet loss callback.
      */
     if (ctl->sc_ci->cci_lost)
         ctl->sc_ci->cci_lost(CGP(ctl), loss_record, loss_record->po_sent_sz,
@@ -1691,12 +1715,14 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
                                                     packet_out->po_packno);
             if (0 == (packet_out->po_flags & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
             {
-                largest_lost_packno = packet_out->po_packno;
                 if (packet_out->po_lflags & POL_TLP_PENDING)
                     loss_record = send_ctl_confirm_tlp_loss(ctl, packet_out);
                 else
+                {
+                    largest_lost_packno = packet_out->po_packno;
                     loss_record = send_ctl_handle_regular_lost_packet(ctl,
                                                         packet_out, &next, PLR_LOSS);
+                }
                 if (loss_record)
                     loss_record->po_lflags |= POL_FACKED;
             }
@@ -1716,11 +1742,14 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
         {
             LSQ_DEBUG("loss by early retransmit detected, packet #%"PRIu64,
                                                     packet_out->po_packno);
-            largest_lost_packno = packet_out->po_packno;
-            ctl->sc_loss_to =
-                lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats) / 4;
-            LSQ_DEBUG("set sc_loss_to to %"PRIu64", packet #%"PRIu64,
+            if (!(packet_out->po_lflags & POL_TLP_PENDING))
+            {
+                largest_lost_packno = packet_out->po_packno;
+                ctl->sc_loss_to =
+                    lsquic_rtt_stats_get_srtt(&ctl->sc_conn_pub->rtt_stats) / 4;
+                LSQ_DEBUG("set sc_loss_to to %"PRIu64", packet #%"PRIu64,
                                     ctl->sc_loss_to, packet_out->po_packno);
+            }
             (void) send_ctl_handle_lost_packet(ctl, packet_out, &next, PLR_LOSS);
             continue;
         }
@@ -1731,6 +1760,7 @@ send_ctl_detect_losses (struct lsquic_send_ctl *ctl, enum packnum_space pns,
             LSQ_DEBUG("loss by sent time detected: packet #%"PRIu64,
                                                     packet_out->po_packno);
             if ((packet_out->po_frame_types & ctl->sc_retx_frames)
+                    && !(packet_out->po_lflags & POL_TLP_PENDING)
                     && 0 == (packet_out->po_flags
                                         & (PO_MTU_PROBE|PO_BW_PROBE_FILL)))
                 largest_lost_packno = packet_out->po_packno;
@@ -3079,6 +3109,7 @@ send_ctl_get_writeable_packet (struct lsquic_send_ctl *ctl,
 }
 
 
+/* Do not use for STREAM or DATAGRAM frames: use their dedicated getters. */
 struct lsquic_packet_out *
 lsquic_send_ctl_get_writeable_packet (struct lsquic_send_ctl *ctl,
                 enum packnum_space pns, unsigned need_at_least,
@@ -3773,8 +3804,8 @@ lsquic_sendctl_gen_stream_blocked_frame (struct lsquic_send_ctl *ctl,
     if (0 != lsquic_packet_out_add_frame(packet_out, &ctl->sc_enpub->enp_mm, 0,
                         QUIC_FRAME_STREAM_BLOCKED, packet_out->po_data_sz, sz))
         return 0;
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM_BLOCKED;
-    lsquic_send_ctl_incr_pack_sz(ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(ctl, packet_out, sz,
+                                                    QUIC_FRAME_STREAM_BLOCKED);
     lsquic_stream_blocked_frame_sent(stream);
     return 1;
 }
@@ -4313,6 +4344,7 @@ lsquic_send_ctl_empty_pns (struct lsquic_send_ctl *ctl, enum packnum_space pns)
     lsquic_alarmset_unset(ctl->sc_alset, AL_RETX_INIT + pns);
 
     ctl->sc_flags &= ~(SC_LOST_ACK_INIT << pns);
+    lsquic_send_ctl_maybe_cancel_idle_restart(ctl);
 
     LSQ_DEBUG("emptied %s, destroyed %u packet%.*s", lsquic_pns2str[pns],
         count, count != 1, "s");

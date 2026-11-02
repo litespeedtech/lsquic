@@ -75,8 +75,8 @@ struct lsquic_bbr3
     lsquic_time_t                      bbr3_bw_probe_wait;
     uint64_t                           bbr3_rounds_since_bw_probe;
     uint64_t                           bbr3_bw_probe_up_rounds;
-    uint64_t                           bbr3_bw_probe_up_acks;
-    uint64_t                           bbr3_probe_up_cnt;
+    uint64_t                           bbr3_bw_probe_up_acks; /* bytes */
+    uint64_t                           bbr3_probe_up_cnt; /* bytes per SMSS */
     uint64_t                           bbr3_inflight_longterm;
     uint64_t                           bbr3_probe_rtt_min_delay;
     lsquic_time_t                      bbr3_probe_rtt_min_stamp;

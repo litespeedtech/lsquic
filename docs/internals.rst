@@ -3191,8 +3191,9 @@ is empty and the bandwidth sampler is application-limited.  The Send Controller 
 a congestion-controlled packet is sent or all scheduled data is cancelled,
 including when a late ACK cancels the last queued retransmission.
 Separate idle counters include DATAGRAM and fill probes without changing
-retransmission policy.  Frame writers set frame types before accounting for
-the added bytes, which refreshes scheduled membership for data and control
+retransmission policy.  Frame writers pass the frame type together with
+the added byte count to ``lsquic_send_ctl_incr_pack_sz()``.  This operation
+sets the frame bit and refreshes scheduled membership for data and control
 frames alike.  STREAM elision and regeneration stripping also refresh
 membership; removing a packet's last eligible frame rearms idle restart when
 no eligible scheduled or in-flight packets remain.  Immediate
@@ -3208,10 +3209,11 @@ sampling; BBRv3 leaves that callback unset.
 The optional ``cci_should_mark_app_limited`` query supplies controller
 sampling policy.  BBRv3 uses it to mark ProbeRTT packets before the sampler
 records their state, including the first packet of that phase.  The Send
-Controller separately records whether each sampled packet fills or exceeds
-the selected controller's congestion window.  These sampling and idle
-notifications dispatch through the congestion-control interface without
-testing the controller's identity.
+Controller also records whether each sampled packet fills or exceeds
+the congestion window for controllers with this sampling-policy callback;
+other sampler users receive zero without an extra cwnd query.  These sampling
+and idle notifications dispatch through the congestion-control interface
+without testing the controller's identity.
 
 BBRv3 bounds the data in flight by the loss rate each probe caused. A lost
 packet sent during ProbeBW_UP is judged by the data lost since it was sent,
@@ -3233,14 +3235,21 @@ lost bytes, and BBRv3 does not treat the probe as congestion.  Packet-threshold,
 sent-time, early-retransmit, and RTO decisions also examine these records.
 Confirmation uses ``PLR_LOSS`` exactly once, before releasing the retained
 state, without queuing another retransmission or decrementing flight again.
+Confirmation does not trigger a generic ``cci_loss()`` event or a pacing
+cutback.  BBRv1 and BBR-Copilot ignore per-packet loss notifications for these
+records, preserving their recovery behavior for a tail repaired by a probe;
+BBRv3 and the sampler still account the confirmed lost bytes.
 If a TLP record cannot be allocated, the original remains in flight for a
 later retry.  Explicit cancellation and teardown release retained state
 without counting congestion loss.
 
-On RTO, BBRv3 saves the congestion window and reduces it to the minimum pipe.
-It restores that window when an ACK newly acknowledges data.  LSQUIC does not
-provide a reliable timeout-recovery exit notification, so duplicate ACKs keep
-the reduced window.  Delivery accounting uses the sampler's packet eligibility:
+On RTO, BBRv3 saves the congestion window and reduces it to the minimum pipe
+(four SMSS), rather than the draft's current inflight plus one SMSS.
+Outside ProbeRTT it restores that window when an ACK newly acknowledges data.
+ProbeRTT only caps cwnd, so an RTO there keeps the minimum window until exit.
+LSQUIC does not provide a reliable timeout-recovery exit notification, so
+duplicate ACKs keep the reduced window.  Delivery accounting uses the
+sampler's packet eligibility:
 retransmittable frames, DATAGRAM, or bandwidth-fill probes.  ACK-only packets
 do not advance delivery totals, packet rounds, or ACK-aggregation credit and
 cannot restore the RTO window.  Late acknowledgments of data still count even
@@ -3270,6 +3279,9 @@ may include the allowance; if ProbeRTT ends while the connection is idle,
 that window is restored and then trimmed to the CRUISE cap by the next ACK.
 The loss threshold and short-term bandwidth and inflight bounds are
 unchanged.
+
+The remaining model differences and the known limitation of comparing packet
+numbers across IETF QUIC spaces are recorded in :doc:`bbrv3-deviations`.
 
 Outside bandwidth probing, the draft lowers the short-term bandwidth and
 inflight bounds after every round with a loss, to the larger of the

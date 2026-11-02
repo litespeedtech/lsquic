@@ -337,12 +337,12 @@ write_ack (struct lsquic_conn *lconn, struct lsquic_packet_out *packet_out)
     const size_t ack_size = 9;  /* Arbitrary */
     int s;
 
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     s = lsquic_packet_out_add_frame(packet_out, &tobjs->eng_pub.enp_mm, 0,
                             QUIC_FRAME_ACK, packet_out->po_data_sz, ack_size);
     assert(s == 0);
     memcpy(packet_out->po_data + packet_out->po_data_sz, "ACKACKACK", 9);
-    lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet_out, ack_size);
+    lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet_out, ack_size,
+                                                                QUIC_FRAME_ACK);
     packet_out->po_regen_sz += ack_size;
 }
 
@@ -1491,8 +1491,8 @@ test_elision_cc_membership (struct test_objs *tobjs)
             assert(len > 0);
             assert(0 == lsquic_packet_out_add_frame(packet, tobjs->conn_pub.mm,
                                         0, type, packet->po_data_sz, len));
-            packet->po_frame_types |= 1 << type;
-            lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet, len);
+            lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet, len,
+                                                                        type);
         }
         if (stream->sm_bflags & SMBF_IETF)
             lsquic_stream_stop_sending_in(stream, 12345);

@@ -1756,8 +1756,8 @@ generate_timestamp_frame (struct ietf_full_conn *conn,
         LSQ_DEBUG("%s: adding frame to packet failed: %d", __func__, errno);
         return;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_TIMESTAMP;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                        QUIC_FRAME_TIMESTAMP);
     packet_out->po_regen_sz += w;
 }
 
@@ -1872,14 +1872,14 @@ generate_ack_frame_for_pns (struct ietf_full_conn *conn,
         ++w;
     }
 
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->ifc_pub.mm, 0,
                             QUIC_FRAME_ACK, packet_out->po_data_sz, w))
     {
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return -1;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                                QUIC_FRAME_ACK);
     packet_out->po_regen_sz += w;
     if (has_missing && !(conn->ifc_mflags & MF_IGNORE_MISSING))
         conn->ifc_flags |= IFC_ACK_HAD_MISS;
@@ -2000,8 +2000,8 @@ generate_max_data_frame (struct ietf_full_conn *conn)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_MAX_DATA;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                        QUIC_FRAME_MAX_DATA);
     conn->ifc_send_flags &= ~SF_SEND_MAX_DATA;
     conn->ifc_last_max_data_off_sent = offset;
 }
@@ -2051,8 +2051,8 @@ generate_new_token_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_NEW_TOKEN;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                        QUIC_FRAME_NEW_TOKEN);
 
     conn->ifc_send_flags &= ~SF_SEND_NEW_TOKEN;
     (void) token_sz;
@@ -2128,8 +2128,8 @@ generate_new_cid_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return -1;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_NEW_CONNECTION_ID;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                QUIC_FRAME_NEW_CONNECTION_ID);
 
     if (!can_issue_cids(conn))
     {
@@ -2241,8 +2241,8 @@ generate_retire_cid_frame (struct ietf_full_conn *conn)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return -1;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_RETIRE_CONNECTION_ID;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                            QUIC_FRAME_RETIRE_CONNECTION_ID);
 
     TAILQ_REMOVE(&conn->ifc_to_retire, dce, de_next_to_ret);
     --conn->ifc_n_to_retire;
@@ -2305,8 +2305,8 @@ generate_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_STREAM_BLOCKED;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                    QUIC_FRAME_STREAM_BLOCKED);
     conn->ifc_send_flags &= ~(SF_SEND_STREAMS_BLOCKED << sd);
 }
 
@@ -2360,8 +2360,8 @@ generate_max_streams_frame (struct ietf_full_conn *conn, enum stream_dir sd)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_MAX_STREAMS;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                        QUIC_FRAME_MAX_STREAMS);
     conn->ifc_send_flags &= ~(SF_SEND_MAX_STREAMS << sd);
 
     sit = gen_sit(!(conn->ifc_flags & IFC_SERVER), sd);
@@ -2416,8 +2416,8 @@ generate_blocked_frame (struct ietf_full_conn *conn)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return 0;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_BLOCKED;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                            QUIC_FRAME_BLOCKED);
 
     return 1;
 }
@@ -2454,8 +2454,8 @@ generate_max_stream_data_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return 0;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_MAX_STREAM_DATA;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_MAX_STREAM_DATA);
     lsquic_stream_max_stream_data_sent(stream);
     return 1;
 }
@@ -2494,8 +2494,8 @@ generate_stop_sending_frame_by_id (struct ietf_full_conn *conn,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return -1;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_STOP_SENDING;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                    QUIC_FRAME_STOP_SENDING);
 
     return 0;
 }
@@ -2573,8 +2573,8 @@ generate_rst_stream_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return 0;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                        QUIC_FRAME_RST_STREAM);
     lsquic_stream_rst_frame_sent(stream);
     LSQ_DEBUG("wrote RST: stream %"PRIu64"; offset %"PRIu64"; error code "
               "%"PRIu64, stream->id, stream->tosend_off, stream->error_code);
@@ -4142,8 +4142,8 @@ immediate_close (struct ietf_full_conn *conn)
         LSQ_WARN("%s: adding frame to packet failed: %d", __func__, errno);
         return TICK_CLOSE;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                QUIC_FRAME_CONNECTION_CLOSE);
     conn->ifc_mflags |= MF_CONN_CLOSE_PACK;
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
     return TICK_SEND|TICK_CLOSE;
@@ -4307,8 +4307,8 @@ generate_connection_close_packet (struct ietf_full_conn *conn)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                QUIC_FRAME_CONNECTION_CLOSE);
     conn->ifc_mflags |= MF_CONN_CLOSE_PACK;
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
             "generated CONNECTION_CLOSE frame in its own packet");
@@ -4371,8 +4371,8 @@ generate_ping_frame (struct ietf_full_conn *conn, lsquic_time_t now)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_PING);
     packet_out->po_regen_sz += sz;
     LSQ_DEBUG("wrote PING frame");
     conn->ifc_send_flags &= ~SF_SEND_PING;
@@ -4408,8 +4408,8 @@ generate_handshake_done_frame (struct ietf_full_conn *conn,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_HANDSHAKE_DONE;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_HANDSHAKE_DONE);
     LSQ_DEBUG("generated HANDSHAKE_DONE frame");
     conn->ifc_send_flags &= ~SF_SEND_HANDSHAKE_DONE;
 }
@@ -4453,8 +4453,8 @@ generate_ack_frequency_frame (struct ietf_full_conn *conn, lsquic_time_t unused)
         return;
     }
     conn->ifc_last_pack_tol = conn->ifc_last_calc_pack_tol;
-    packet_out->po_frame_types |= QUIC_FTBIT_ACK_FREQUENCY;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_ACK_FREQUENCY);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
         "Generated ACK_FREQUENCY(seqno: %u; pack_tol: %u; "
         "upd: %u; ignore: %d)", conn->ifc_ack_freq_seqno,
@@ -4484,8 +4484,8 @@ maybe_pad_packet (struct ietf_full_conn *conn,
     if (avail)
     {
         memset(packet_out->po_data + packet_out->po_data_sz, 0, avail);
-        packet_out->po_frame_types |= QUIC_FTBIT_PADDING;
-        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail);
+        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail,
+                                                            QUIC_FRAME_PADDING);
         LSQ_DEBUG("added %hu-byte PADDING frame to packet %"PRIu64, avail,
                                                         packet_out->po_packno);
     }
@@ -4550,8 +4550,8 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_PATH_CHALLENGE;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                    QUIC_FRAME_PATH_CHALLENGE);
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
     /* Anti-amplification, only pad packet if allowed
@@ -4627,8 +4627,8 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    packet_out->po_frame_types |= QUIC_FTBIT_PATH_RESPONSE;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                    QUIC_FRAME_PATH_RESPONSE);
     maybe_pad_packet(conn, packet_out);
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << path_id);
@@ -7983,15 +7983,15 @@ check_or_schedule_mtu_probe (struct ietf_full_conn *conn, lsquic_time_t now)
     /* We don't record frame records for MTU probes as they are never
      * resized, only discarded.
      */
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_PING);
     packet_out->po_regen_sz += sz;
     avail = lsquic_packet_out_avail(packet_out);
     if (avail)
     {
         memset(packet_out->po_data + packet_out->po_data_sz, 0, avail);
-        packet_out->po_frame_types |= 1 << QUIC_FRAME_PADDING;
-        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail);
+        lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, avail,
+                                                            QUIC_FRAME_PADDING);
     }
     packet_out->po_flags |= PO_MTU_PROBE;
     lsquic_send_ctl_scheduled_one(&conn->ifc_send_ctl, packet_out);
@@ -8200,8 +8200,8 @@ write_datagram (struct ietf_full_conn *conn)
         return 0;
     }
     packet_out->po_regen_sz += w;
-    packet_out->po_frame_types |= QUIC_FTBIT_DATAGRAM;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
+                                                        QUIC_FRAME_DATAGRAM);
     /* XXX The DATAGRAM frame should really be a regen.  Do it when we
      * no longer require these frame types to be at the beginning of the
      * packet.
@@ -8290,8 +8290,8 @@ ietf_full_conn_bw_probe_fill (void *conn_ctx, const struct network_path *path)
         ABORT_ERROR("gen_ping_frame failed");
         return NULL;
     }
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
-    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_PING);
     LSQ_DEBUG("wrote PING frame");
     lsquic_packet_out_zero_pad(packet_out);
 
@@ -10015,11 +10015,13 @@ lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
         if (i == 0)
         {
             generate_max_data_frame(&conn);
+            assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 1);
             generate_max_data_frame(&conn);
         }
         else
         {
             generate_streams_blocked_frame(&conn, SD_BIDI);
+            assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 1);
             generate_streams_blocked_frame(&conn, SD_BIDI);
         }
         assert(conn.ifc_send_ctl.sc_n_scheduled == 1);

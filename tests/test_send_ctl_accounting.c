@@ -216,8 +216,7 @@ generate_bw_probe_fill (void *ctx, const struct network_path *path)
     sz = t->lconn.cn_pf->pf_gen_ping_frame(packet_out->po_data,
                                     lsquic_packet_out_avail(packet_out));
     assert(sz > 0);
-    packet_out->po_frame_types |= QUIC_FTBIT_PING;
-    lsquic_send_ctl_incr_pack_sz(&t->send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&t->send_ctl, packet_out, sz, QUIC_FRAME_PING);
     lsquic_packet_out_zero_pad(packet_out);
     return packet_out;
 }
@@ -288,7 +287,8 @@ test_incr_pack_sz (void)
     packet_out = schedule_ping_packet(&t, 0);
     bytes_before = t.send_ctl.sc_bytes_scheduled;
     acct_before = packet_out->po_acct_sz;
-    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, 9);
+    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, packet_out, 9,
+                                                            QUIC_FRAME_PADDING);
     assert(t.send_ctl.sc_bytes_scheduled == bytes_before + 9);
     assert(packet_out->po_acct_sz == acct_before + 9);
     assert_scheduled_accounting(&t);

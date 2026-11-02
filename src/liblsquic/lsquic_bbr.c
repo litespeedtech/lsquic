@@ -443,12 +443,15 @@ bbr_copilot_sent (void *cong_ctl, struct lsquic_packet_out *packet_out,
 
 static void
 lsquic_bbr_lost (void *cong_ctl,
-             struct lsquic_packet_out *UNUSED_packet_out, unsigned packet_sz,
+             struct lsquic_packet_out *packet_out, unsigned packet_sz,
              enum packet_loss_reason reason)
 {
     struct lsquic_bbr *const bbr = cong_ctl;
 
-    if (reason != PLR_PROBE)
+    /* Preserve legacy BBR recovery for TLP originals, already queued for
+     * retransmission at probe expiration.  The sampler still counts loss.
+     */
+    if (reason != PLR_PROBE && !(packet_out->po_flags & PO_LOSS_REC))
     {
         bbr->bbr_ack_state.has_losses = 1;
         bbr->bbr_ack_state.lost_bytes += packet_sz;
