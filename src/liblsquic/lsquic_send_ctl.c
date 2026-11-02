@@ -1213,7 +1213,11 @@ send_ctl_acked_loss_chain (struct lsquic_send_ctl *ctl,
     {
         chain_next = chain_cur->po_loss_chain;
         if (chain_cur->po_packno == largest_acked)
+        {
+            ctl->sc_largest_acked_packno = chain_cur->po_packno;
+            ctl->sc_largest_acked_sent_time = chain_cur->po_sent;
             *do_rtt = 1;
+        }
         send_ctl_process_loss_chain_pkt(ctl, chain_cur, next);
         ++count;
     }

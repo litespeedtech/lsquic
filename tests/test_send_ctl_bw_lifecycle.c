@@ -411,6 +411,50 @@ test_merged_ack_ecn (void)
 
 
 static void
+test_loss_chain_rtt (enum lsquic_version version, unsigned flags)
+{
+    struct bw_lifecycle_test t;
+    struct lsquic_packet_out *packet_out, *loss_record;
+    struct ack_info acki;
+
+    init_test(&t, LSQUIC_CC_CUBIC, 0, version, flags);
+    t.conn_pub.bytes_in = 10000;
+    packet_out = new_packet(&t, 1, 1000);
+    packet_out->po_frame_types = QUIC_FTBIT_RST_STREAM;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+    t.send_ctl.sc_cur_packno = 1;
+    lsquic_send_ctl_expire_all(&t.send_ctl);
+    loss_record = TAILQ_FIRST(&t.send_ctl.sc_unacked_packets[PNS_APP]);
+    assert(loss_record && (loss_record->po_flags & PO_LOSS_REC));
+    assert(loss_record->po_packno == 1);
+    assert(1 == lsquic_send_ctl_reschedule_packets(&t.send_ctl));
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl,
+                                                                    NULL));
+    assert(packet_out->po_packno == 2);
+    packet_out->po_sent = 3000;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+
+    /* ACK the original and retransmission together.  Processing the loss
+     * record removes #2 through the chain before the ACK loop reaches it.
+     */
+    memset(&acki, 0, sizeof(acki));
+    acki.pns = PNS_APP;
+    acki.n_ranges = 1;
+    acki.ranges[0].low = 1;
+    acki.ranges[0].high = 2;
+    acki.lack_delta = 100;
+    assert(0 == lsquic_send_ctl_got_ack(&t.send_ctl, &acki, 5000, 5000));
+    assert(t.send_ctl.sc_largest_acked_packno == 2);
+    assert(t.send_ctl.sc_largest_acked_sent_time == 3000);
+    assert(t.send_ctl.sc_max_rtt_packno == 2);
+    assert(t.conn_pub.rtt_stats.srtt == 1900);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_unacked_packets[PNS_APP]));
+    assert(t.send_ctl.sc_n_in_flight_all == 0);
+    cleanup_test(&t);
+}
+
+
+static void
 test_cc_algo_selection (void)
 {
     struct bw_lifecycle_test t;
@@ -967,6 +1011,7 @@ main (void)
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
         for (j = 0; j < sizeof(flags) / sizeof(flags[0]); ++j)
         {
+            test_loss_chain_rtt(versions[i], flags[j]);
             for (k = PRS_NONE; k <= PRS_AFTER; ++k)
                 test_bbr_copilot_probe_rtt_switch(versions[i], flags[j], k);
             test_bbr_copilot_fack_lost_probe_fill(versions[i], flags[j], 0);
