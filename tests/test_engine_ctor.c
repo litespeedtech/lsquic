@@ -11,13 +11,23 @@ static void
 test_cc_settings (unsigned flags)
 {
     struct lsquic_engine_settings settings;
-    const unsigned valid[] = { 0, 1, 2, 4, };
-    const unsigned invalid[] = { 3, 5, UINT_MAX, };
+    const enum lsquic_cc valid[] = {
+        LSQUIC_CC_DEFAULT, LSQUIC_CC_CUBIC, LSQUIC_CC_BBR,
+        LSQUIC_CC_BBR_COPILOT, LSQUIC_CC_BBR3,
+    };
+    const unsigned invalid[] = { 3, LSQUIC_CC_BBR3 + 1, UINT_MAX, };
     char errbuf[128];
     unsigned i;
 
     lsquic_engine_init_settings(&settings, flags);
-    assert(settings.es_cc_algo == 2);
+    assert(LSQUIC_CC_DEFAULT == 0);
+    assert(LSQUIC_CC_CUBIC == 1);
+    assert(LSQUIC_CC_BBR == 2);
+    assert(LSQUIC_CC_BBR_COPILOT == 4);
+    assert(LSQUIC_CC_BBR3 == 5);
+    assert(LSQCP_CC_ALGO == 3);
+    assert(LSQCP_BBR3_LOSS_MODE == 4);
+    assert(settings.es_cc_algo == LSQUIC_CC_BBR);
     assert(settings.es_cc_algo == LSQUIC_DF_CC_ALGO);
     for (i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
     {

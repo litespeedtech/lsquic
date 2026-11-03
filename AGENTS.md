@@ -92,6 +92,28 @@ Follow the surrounding file and these project conventions:
   ```
 
 - Put a space between a function name and `(` in declarations and definitions.
+- At call sites, put no space between a function name and `(`.
+- For multiline function calls, choose one continuation indentation for the
+  entire argument list and keep it fixed on all subsequent lines.  Base it
+  on the longest continuation line: use the largest multiple of four spaces
+  that keeps every line at or before column 80.  This puts the longest line
+  near the right margin as a visual cue.  Apply the same fixed-margin layout
+  to continuation parameters in declarations and definitions.
+
+  ```c
+      lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, sz,
+                                                              QUIC_FRAME_PING);
+
+  void
+  lsquic_send_ctl_incr_pack_sz (struct lsquic_send_ctl *ctl,
+                                      struct lsquic_packet_out *packet, int delta,
+                                      enum quic_frame_type frame_type);
+  ```
+
+- Keep code and code comments ASCII-only.  Treat a non-ASCII exception as
+  unusual and document why it is necessary.
+- Cite Internet-Drafts as `[draft-name], Section N` and RFCs as `[RFC N],
+  Section N`; do not use a generic draft reference or a section symbol.
 - Use snake_case.  Non-static functions begin with `lsquic_`.  Function names
   normally consist of a module name followed by a verb; otherwise begin with
   a verb.  Do not begin static function names with an underscore.

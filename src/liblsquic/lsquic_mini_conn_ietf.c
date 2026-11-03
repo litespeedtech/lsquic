@@ -837,7 +837,10 @@ imico_build_ack_frame (struct ietf_mini_conn *conn, enum packnum_space pns,
     uint64_t ecn_counts_buf[4];
     const uint64_t *ecn_counts;
     int not_used_has_missing, len;
-    if (conn->imc_incoming_ecn)
+    /* [RFC 9000], Section 13.4.1: retain received ECN counts in later ACKs. */
+    if (conn->imc_ecn_counts_in[pns][ECN_ECT0]
+            || conn->imc_ecn_counts_in[pns][ECN_ECT1]
+            || conn->imc_ecn_counts_in[pns][ECN_CE])
     {
         ecn_counts_buf[0]   = conn->imc_ecn_counts_in[pns][0];
         ecn_counts_buf[1]   = conn->imc_ecn_counts_in[pns][1];
@@ -1816,8 +1819,6 @@ ietf_mini_conn_ci_packet_in (struct lsquic_conn *lconn,
         conn->imc_flags |= IMC_QUEUED_ACK_INIT << pns;
     }
     ++conn->imc_ecn_counts_in[pns][ lsquic_packet_in_ecn(packet_in) ];
-    conn->imc_incoming_ecn <<= 1;
-    conn->imc_incoming_ecn |= lsquic_packet_in_ecn(packet_in) != ECN_NOT_ECT;
 
     if (0 != imico_parse_regular_packet(conn, packet_in))
     {
@@ -2517,3 +2518,46 @@ static const struct conn_iface mini_conn_ietf_iface = {
     .ci_tick                 =  ietf_mini_conn_ci_tick,
     .ci_tls_alert            =  ietf_mini_conn_ci_tls_alert,
 };
+
+
+#ifndef NDEBUG
+/* Exercise ACK generation, including the choice of ECN counters, without
+ * a handshake.  Packets numbered from 0 arrive in `pns' with the given ECN
+ * codepoints.  The other packet number space has counts of its own.
+ */
+void
+lsquic_mini_conn_ietf_test_ecn (enum packnum_space pns,
+        const enum ecn *incoming, unsigned n_incoming, struct ack_info *acki)
+{
+    struct ietf_mini_conn conn;
+    unsigned char buf[0x80];
+    lsquic_packno_t ack2ed;
+    unsigned i;
+    enum packnum_space other_pns;
+    int len;
+
+    assert(pns < IMICO_N_PNS);
+    assert(n_incoming > 0 && n_incoming <= 64);
+    memset(&conn, 0, sizeof(conn));
+    conn.imc_conn.cn_cces = conn.imc_cces;
+    conn.imc_conn.cn_n_cces = sizeof(conn.imc_cces) / sizeof(conn.imc_cces[0]);
+    conn.imc_conn.cn_cces_mask = 1;
+    conn.imc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    for (other_pns = PNS_INIT; other_pns < IMICO_N_PNS; ++other_pns)
+        if (other_pns != pns)
+            conn.imc_ecn_counts_in[other_pns][ECN_ECT0] = 10 + other_pns;
+    for (i = 0; i < n_incoming; ++i)
+    {
+        imico_record_recvd_packno(&conn, pns, i);
+        ++conn.imc_ecn_counts_in[pns][ incoming[i] ];
+    }
+    conn.imc_largest_recvd[pns] = 1000000;
+    len = imico_build_ack_frame(&conn, pns, 1001000, buf, sizeof(buf),
+                                                                    &ack2ed);
+    assert(len > 0);
+    memset(acki, 0, sizeof(*acki));
+    assert(len == conn.imc_conn.cn_pf->pf_parse_ack_frame(buf, len, acki, 0));
+}
+
+
+#endif

@@ -65,6 +65,7 @@
 #include "lsquic_attq.h"
 
 #include "lsquic_conn.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_conn_public.h"
 #include "lsquic_ver_neg.h"
@@ -1292,9 +1293,9 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     w = conn->fc_conn.cn_pf->pf_gen_ack_frame(
             packet_out->po_data + packet_out->po_data_sz,
             lsquic_packet_out_avail(packet_out),
-            (gaf_rechist_first_f)        lsquic_rechist_first,
-            (gaf_rechist_next_f)         lsquic_rechist_next,
-            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+            lsquic_rechist_first_cb,
+            lsquic_rechist_next_cb,
+            lsquic_rechist_largest_recv_cb,
             &conn->fc_rechist, now, &has_missing, &packet_out->po_ack2ed,
             NULL);
     if (w < 0) {
@@ -1309,14 +1310,14 @@ full_conn_ci_write_ack (struct lsquic_conn *lconn,
     verify_ack_frame(conn, packet_out->po_data + packet_out->po_data_sz, w);
     lsquic_send_ctl_scheduled_ack(&conn->fc_send_ctl, PNS_APP,
                                                     packet_out->po_ack2ed);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     if (0 != lsquic_packet_out_add_frame(packet_out, conn->fc_pub.mm, 0,
                                 QUIC_FRAME_ACK, packet_out->po_data_sz, w))
     {
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w);
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, w,
+                                                                QUIC_FRAME_ACK);
     packet_out->po_regen_sz += w;
     if (has_missing)
         conn->fc_flags |= FC_ACK_HAD_MISS;
@@ -2607,8 +2608,8 @@ generate_wuf_stream (struct full_conn *conn, lsquic_stream_t *stream)
         ABORT_ERROR("gen_window_update_frame failed");
         return 0;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_WINDOW_UPDATE;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_WINDOW_UPDATE);
     LSQ_DEBUG("wrote WUF: stream %"PRIu64"; offset 0x%"PRIX64, stream->id,
                                                                     recv_off);
     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID,
@@ -2632,8 +2633,8 @@ generate_wuf_conn (struct full_conn *conn)
         ABORT_ERROR("gen_window_update_frame failed");
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_WINDOW_UPDATE;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_WINDOW_UPDATE);
     conn->fc_flags &= ~FC_SEND_WUF;
     LSQ_DEBUG("wrote connection WUF: offset 0x%"PRIX64, recv_off);
 }
@@ -2684,8 +2685,8 @@ generate_goaway_frame (struct full_conn *conn)
         ABORT_ERROR("gen_goaway_frame failed");
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_GOAWAY;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_GOAWAY);
     conn->fc_flags &= ~FC_SEND_GOAWAY;
     conn->fc_flags |=  FC_GOAWAY_SENT;
     LSQ_DEBUG("wrote GOAWAY frame: stream id: %"PRIu64,
@@ -2715,8 +2716,8 @@ generate_connection_close_packet (struct full_conn *conn)
         ABORT_ERROR("generate_connection_close_packet failed");
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                QUIC_FRAME_CONNECTION_CLOSE);
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
 }
 
@@ -2735,8 +2736,8 @@ generate_blocked_frame (struct full_conn *conn, lsquic_stream_id_t stream_id)
         ABORT_ERROR("gen_blocked_frame failed");
         return 0;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_BLOCKED;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_BLOCKED);
     LSQ_DEBUG("wrote blocked frame: stream %"PRIu64, stream_id);
     return 1;
 }
@@ -2778,8 +2779,8 @@ generate_rst_stream_frame (struct full_conn *conn, lsquic_stream_t *stream)
         ABORT_ERROR("gen_rst_frame failed");
         return 0;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                        QUIC_FRAME_RST_STREAM);
     s = lsquic_packet_out_add_stream(packet_out, conn->fc_pub.mm, stream,
                              QUIC_FRAME_RST_STREAM, packet_out->po_data_sz, sz);
     if (s != 0)
@@ -2810,8 +2811,8 @@ generate_ping_frame (struct full_conn *conn)
         ABORT_ERROR("gen_ping_frame failed");
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_PING);
     LSQ_DEBUG("wrote PING frame");
     if (!(conn->fc_flags & FC_SERVER))
         log_conn_flow_control(conn);
@@ -2867,9 +2868,9 @@ generate_stop_waiting_frame (struct full_conn *conn)
         ABORT_ERROR("adding frame to packet failed: %d", errno);
         return;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                    QUIC_FRAME_STOP_WAITING);
     packet_out->po_regen_sz += sz;
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_STOP_WAITING;
     conn->fc_flags &= ~FC_SEND_STOP_WAITING;
     LSQ_DEBUG("wrote STOP_WAITING frame: least unacked: %"PRIu64,
                                                             least_unacked);
@@ -2930,8 +2931,8 @@ packetize_standalone_stream_reset (struct full_conn *conn, lsquic_stream_id_t st
         ABORT_ERROR("gen_rst_frame failed");
         return 0;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_RST_STREAM;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                        QUIC_FRAME_RST_STREAM);
     LSQ_DEBUG("generated standalone RST_STREAM frame for stream %"PRIu64,
                                                                     stream_id);
     return 1;
@@ -3288,8 +3289,8 @@ immediate_close (struct full_conn *conn)
         LSQ_WARN("%s failed", __func__);
         return TICK_CLOSE;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_CONNECTION_CLOSE;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                QUIC_FRAME_CONNECTION_CLOSE);
     LSQ_DEBUG("generated CONNECTION_CLOSE frame in its own packet");
     return TICK_SEND|TICK_CLOSE;
 }
@@ -3415,8 +3416,8 @@ full_conn_bw_probe_fill (void *conn_ctx, const struct network_path *path)
         ABORT_ERROR("gen_ping_frame failed");
         return NULL;
     }
-    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_PING;
+    lsquic_send_ctl_incr_pack_sz(&conn->fc_send_ctl, packet_out, sz,
+                                                            QUIC_FRAME_PING);
     LSQ_DEBUG("wrote PING frame");
     lsquic_packet_out_zero_pad(packet_out);
 
@@ -3639,8 +3640,9 @@ full_conn_ci_tick (lsquic_conn_t *lconn, lsquic_time_t now)
     if (!TAILQ_EMPTY(&conn->fc_pub.write_streams))
         process_streams_write_events(conn, 0);
 
-    // Do not fill in extra packets before the handshake is complete or when
-    // the connection is closing.
+    /* Do not fill extra packets before handshake completion or while the
+     * connection is closing.
+     */
     if ((conn->fc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
         && !(conn->fc_flags & (FC_CLOSING|FC_IMMEDIATE_CLOSE_FLAGS)))
         lsquic_send_ctl_maybe_app_limited(&conn->fc_send_ctl, now,
@@ -4406,7 +4408,7 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -4430,6 +4432,14 @@ full_conn_ci_set_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
             return -1;
         memcpy(&cc_algo, value, sizeof(cc_algo));
         return lsquic_send_ctl_set_cc_algo(&conn->fc_send_ctl, cc_algo);
+    case LSQCP_BBR3_LOSS_MODE:
+        if (value_len != sizeof(int))
+            return -1;
+        memcpy(&bbr3_loss_mode, value, sizeof(bbr3_loss_mode));
+        if (bbr3_loss_mode < 0)
+            return -1;
+        return lsquic_send_ctl_set_bbr3_loss_mode(&conn->fc_send_ctl,
+                                                    bbr3_loss_mode);
     default:
         return -1;
     }
@@ -4443,7 +4453,7 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
     struct full_conn *conn = (struct full_conn *) lconn;
     uint64_t rate;
     enum lsquic_cc cc_algo;
-    int enable_bw_sampler;
+    int enable_bw_sampler, bbr3_loss_mode;
 
     switch (param)
     {
@@ -4468,6 +4478,16 @@ full_conn_ci_get_param (lsquic_conn_t *lconn, enum lsquic_conn_param param,
         cc_algo = lsquic_send_ctl_get_cc_algo(&conn->fc_send_ctl);
         memcpy(value, &cc_algo, sizeof(cc_algo));
         *value_len = sizeof(cc_algo);
+        return 0;
+    case LSQCP_BBR3_LOSS_MODE:
+        if (*value_len < sizeof(int))
+            return -1;
+        bbr3_loss_mode =
+                lsquic_send_ctl_get_bbr3_loss_mode(&conn->fc_send_ctl);
+        if (bbr3_loss_mode < 0)
+            return -1;
+        memcpy(value, &bbr3_loss_mode, sizeof(bbr3_loss_mode));
+        *value_len = sizeof(bbr3_loss_mode);
         return 0;
     default:
         return -1;

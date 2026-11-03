@@ -1,5 +1,4 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
-/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /*
  * lsquic_engine.c - QUIC engine
  */
@@ -393,6 +392,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
     settings->es_dplpmtud        = LSQUIC_DF_DPLPMTUD;
     settings->es_cc_algo         = LSQUIC_DF_CC_ALGO;
+    settings->es_bbr3_loss_mode  = LSQUIC_DF_BBR3_LOSS_MODE;
     settings->es_enable_bw_sampler = LSQUIC_DF_ENABLE_BW_SAMPLER;
     settings->es_optimistic_nat  = LSQUIC_DF_OPTIMISTIC_NAT;
     settings->es_ext_http_prio   = LSQUIC_DF_EXT_HTTP_PRIO;
@@ -482,6 +482,15 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "Invalid congestion control "
                 "algorithm value %d", (int) settings->es_cc_algo);
+        return -1;
+    }
+
+    if (settings->es_bbr3_loss_mode > LSQUIC_BBR3_LOSS_HIGH)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz,
+                        "Invalid BBRv3 loss mode value %u",
+                        settings->es_bbr3_loss_mode);
         return -1;
     }
 

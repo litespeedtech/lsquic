@@ -291,6 +291,16 @@ When the timer expires (not shown here), it simply calls this ``process_conns()`
 
 Note that one could ignore the advisory tick time and simply process connections every few milliseconds and it will still work.  This, however, will result in worse performance.
 
+Timer precision also affects packet pacing. Coarse event-loop timers can
+bunch outgoing packets, causing ECN marks on shallow queues even when the
+average sending rate is below link capacity. The ``es_clock_granularity``
+setting informs LSQUIC's pacer; it does not configure the application's
+event-loop timer implementation. Applications using libevent can request
+``EVENT_BASE_FLAG_PRECISE_TIMER`` when creating their event base. The example
+programs in ``bin/`` request this flag when pacing is enabled and the installed
+libevent headers support it. The available timer backend still depends on
+the platform.
+
 Processing Connections
 ----------------------
 
@@ -928,6 +938,10 @@ The example is adapted from a tutorial program.  Here, command-line options
 are processed and appropriate options is set.  The first time the ``-o``
 flag is encountered, the settings struct is initialized.  Then the argument
 is parsed to see which setting to alter.
+
+The ``cc_algo`` option accepts the numeric values of
+:enum:`lsquic_cc`.  Application code can select a named value directly,
+for example, ``settings.es_cc_algo = LSQUIC_CC_BBR3``.
 
 ::
 

@@ -478,6 +478,13 @@ lsquic_rechist_largest_recv (const lsquic_rechist_t *rechist)
 }
 
 
+lsquic_time_t
+lsquic_rechist_largest_recv_cb (void *rechist)
+{
+    return lsquic_rechist_largest_recv(rechist);
+}
+
+
 const struct lsquic_packno_range *
 lsquic_rechist_first (lsquic_rechist_t *rechist)
 {
@@ -497,6 +504,13 @@ lsquic_rechist_first (lsquic_rechist_t *rechist)
 
 
 const struct lsquic_packno_range *
+lsquic_rechist_first_cb (void *rechist)
+{
+    return lsquic_rechist_first(rechist);
+}
+
+
+const struct lsquic_packno_range *
 lsquic_rechist_next (lsquic_rechist_t *rechist)
 {
     unsigned idx;
@@ -511,6 +525,13 @@ lsquic_rechist_next (lsquic_rechist_t *rechist)
     }
     else
         return NULL;
+}
+
+
+const struct lsquic_packno_range *
+lsquic_rechist_next_cb (void *rechist)
+{
+    return lsquic_rechist_next(rechist);
 }
 
 

@@ -63,6 +63,7 @@ enum lsquic_logger_module {
     LSQLM_HANDSHAKE,
     LSQLM_HSK_ADAPTER,
     LSQLM_BBR,
+    LSQLM_BBR3,
     LSQLM_CUBIC,
     LSQLM_HEADERS,
     LSQLM_FRAME_WRITER,

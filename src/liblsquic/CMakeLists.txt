@@ -5,6 +5,7 @@ SET(lsquic_STAT_SRCS
     lsquic_arr.c
     lsquic_attq.c
     lsquic_bbr.c
+    lsquic_bbr3.c
     lsquic_bw_sampler.c
     lsquic_cfcw.c
     lsquic_chsk_stream.c

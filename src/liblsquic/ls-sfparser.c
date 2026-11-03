@@ -1,4 +1,3 @@
-/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #line 2 "ls-sfparser.c"
 #line 2 "ls-sfparser.l"
 /*
