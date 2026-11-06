@@ -143,7 +143,7 @@ run_gen_tests (void)
     {
         unsigned char buf[0x100];
         int sz = pf->pf_gen_connect_close_frame(buf, sizeof(buf),
-                    0, test->error_code, test->reason,
+                    0, test->error_code, 0, test->reason,
                     test->reason ? strlen(test->reason) : 0);
         assert(sz == test->retval);
         if (0 == sz)
