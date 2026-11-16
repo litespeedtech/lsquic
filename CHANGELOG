@@ -1,3 +1,11 @@
+2026-11-15
+    - 4.11.2
+    - [FIX] Stop reading HTTP/3 streams while headers are blocked on QPACK,
+      and reject truncated header blocks safely (GHSA-5vg5-79mr-8863).
+    - [FIX] Preserve validated paths when the path table is full, preventing
+      undecryptable packets from redirecting queued traffic
+      (GHSA-fg6p-g89q-65wr).
+
 2026-10-27
     - 4.11.1
     - [FIX] Correct ACK-range merging and IETF ACK truncation, preventing

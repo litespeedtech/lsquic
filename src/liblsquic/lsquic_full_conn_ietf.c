@@ -8759,8 +8759,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     struct network_path *path;
-    struct conn_path *copath, *first_unused, *first_unvalidated, *first_other,
-                                                                        *victim;
+    struct conn_path *copath, *first_unused, *first_unvalidated;
 
     path = &conn->ifc_paths[conn->ifc_cur_path_id].cop_path;
     if (path_matches(path, local_sa, peer_sa))
@@ -8771,7 +8770,6 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 
     first_unvalidated = NULL;
     first_unused = NULL;
-    first_other = NULL;
     for (copath = conn->ifc_paths; copath < conn->ifc_paths
             + sizeof(conn->ifc_paths) / sizeof(conn->ifc_paths[0]); ++copath)
     {
@@ -8785,8 +8783,6 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             if (!first_unvalidated
                             && (0 == (copath->cop_flags & COP_VALIDATED)))
                 first_unvalidated = copath;
-            else if (!first_other)
-                first_other = copath;
         }
         else if (!first_unused)
             first_unused = copath;
@@ -8807,13 +8803,13 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
         return first_unused - conn->ifc_paths;
     }
 
-    if (first_unvalidated || first_other)
+    if (first_unvalidated)
     {
-        victim = first_unvalidated ? first_unvalidated : first_other;
-        record_to_path(conn, victim, peer_ctx, local_sa, peer_sa);
-        return victim - conn->ifc_paths;
+        record_to_path(conn, first_unvalidated, peer_ctx, local_sa, peer_sa);
+        return first_unvalidated - conn->ifc_paths;
     }
 
+    /* Do not overwrite a validated path with an unverified address. */
     return conn->ifc_cur_path_id;
 }
 

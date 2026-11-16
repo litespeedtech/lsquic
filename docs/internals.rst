@@ -769,6 +769,11 @@ is pretty generic: varints of any size are supported.
 ``hqfi_flags`` and ``hqfi_state`` contain information needed to resume
 parsing the frame header, as only partial data may have arrived.
 
+QPACK blocking pauses stream consumption until decoding can resume.  Each
+stream retains at most one decoder context until completion or cancellation,
+including cancellation during destruction.  Errors remain readable, but
+neither buffered data nor QPACK updates may restart decoding after an error.
+
 ``hqfi_hist_buf`` and ``hqfi_hist_idx`` are used to record the last few
 incoming headers. This information is used to check for validity, as
 some sequences of HTTP/3 frames are invalid.

@@ -54,6 +54,8 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Waqas Ahmed -- Spec compliance fix
     - Nikolas Gauder -- Bug fixes
     - Gaurav Jadhav -- Bug fixes
+    - Lucas Schnack -- Vulnerability reports
+    - Etan Kissling -- Vulnerability reports
 
 Thank you!
 
