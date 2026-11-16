@@ -286,6 +286,7 @@ struct test_dec_hset
 };
 
 static int s_test_hset_header_error;
+static int s_test_hset_finalize_error;
 
 static int s_ack_written;
 
@@ -436,6 +437,7 @@ static void
 deinit_test_objs (struct test_objs *tobjs)
 {
     assert(!lsquic_malo_first(tobjs->eng_pub.enp_mm.malo.stream_frame));
+    lsquic_qdh_cleanup(&tobjs->qdh);
     lsquic_send_ctl_cleanup(&tobjs->send_ctl);
     lsquic_malo_destroy(tobjs->conn_pub.packet_out_malo);
     lsquic_mm_cleanup(&tobjs->eng_pub.enp_mm);
@@ -505,7 +507,11 @@ test_process_hset_header (void *hset_p, struct lsxpack_header *xhdr)
         ++hset->count;
     }
     else
+    {
+        if (s_test_hset_finalize_error)
+            return 1;
         hset->finalized = 1;
+    }
 
     return 0;
 }
@@ -531,13 +537,23 @@ static const struct lsquic_hset_if test_hset_if =
 
 
 static void
-use_test_hset_if (struct test_objs *tobjs)
+use_test_hset_if_with_qpack (struct test_objs *tobjs,
+                            unsigned dyn_table_size,
+                            unsigned max_risked_streams)
 {
     lsquic_qdh_cleanup(&tobjs->qdh);
     tobjs->eng_pub.enp_hsi_if = &test_hset_if;
     tobjs->eng_pub.enp_hsi_ctx = NULL;
-    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub, 0, 0);
+    lsquic_qdh_init(&tobjs->qdh, &tobjs->lconn, 0, &tobjs->eng_pub,
+                                dyn_table_size, max_risked_streams);
     tobjs->conn_pub.u.ietf.qdh = &tobjs->qdh;
+}
+
+
+static void
+use_test_hset_if (struct test_objs *tobjs)
+{
+    use_test_hset_if_with_qpack(tobjs, 0, 0);
 }
 
 
@@ -1783,13 +1799,746 @@ count_hsets (const struct lsquic_stream *stream)
 }
 
 
+static const unsigned char insert_status_103[] = {
+    0xD8, 3, '1', '0', '3',  /* Insert with static name reference :status */
+};
+
+
+static const unsigned char insert_trailer[] = {
+    0x49, 'x', '-', 't', 'r', 'a', 'i', 'l', 'e', 'r', 1, 'v',
+};
+
+
+static struct lsquic_stream *
+init_qpack_test_objs (struct test_objs *tobjs)
+{
+    struct lsquic_stream *decoder;
+
+    init_test_ctl_settings(&g_ctl_settings);
+    init_test_objs(tobjs, 0x1000, 0x2000, 1252);
+    tobjs->ctor_flags |= SCF_IETF;
+    use_test_hset_if_with_qpack(tobjs, 4096, 1);
+    decoder = new_stream(tobjs, 2, 0x1000);
+    tobjs->qdh.qdh_dec_sm_out = decoder;
+    tobjs->ctor_flags |= SCF_HTTP;
+    return decoder;
+}
+
+
+static void
+destroy_qpack_test_objs (struct test_objs *tobjs, struct lsquic_stream *stream,
+                                                struct lsquic_stream *decoder)
+{
+    lsquic_stream_destroy(stream);
+    assert(TAILQ_EMPTY(&tobjs->qdh.qdh_decoder.qpd_hbrcs));
+    assert(tobjs->qdh.qdh_decoder.qpd_n_blocked == 0);
+    tobjs->qdh.qdh_dec_sm_out = NULL;
+    lsquic_stream_destroy(decoder);
+    deinit_test_objs(tobjs);
+}
+
+
 static void
 assert_hset_status (const struct test_dec_hset *hset, const char *status)
 {
     assert(hset->count == 1);
     assert(hset->finalized);
+    assert(hset->xhdr.name_len == 7);
+    assert(0 == memcmp(lsxpack_header_get_name(&hset->xhdr), ":status", 7));
     assert(hset->xhdr.val_len == 3);
     assert(0 == memcmp(lsxpack_header_get_value(&hset->xhdr), status, 3));
+}
+
+
+static void
+assert_initial_header_error (struct lsquic_stream *stream)
+{
+    char buf;
+
+    assert(lsquic_stream_readable(stream));
+    errno = 0;
+    assert(-1 == lsquic_stream_read(stream, &buf, sizeof(buf)));
+    assert(errno == EBADMSG);
+}
+
+
+enum hset_input
+{
+    HI_COALESCED,
+    HI_SPLIT,
+    HI_SUFFIX_FIRST,
+};
+
+
+static void
+test_blocked_hset (enum hset_input input_mode, int cancel)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 2, 0, 0x80,  /* Pending dynamic :status: 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xD9,  /* Static :status: 200 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    union hblock_ctx *hblock_ctx;
+    unsigned char buf;
+    ssize_t nr;
+    unsigned i;
+    int s;
+
+    decoder = init_qpack_test_objs(&tobjs);
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    if (input_mode == HI_SUFFIX_FIRST)
+    {
+        /* Keep both STREAM frames buffered when the prefix blocks. */
+        frame = new_frame_in_ext(&tobjs, 3, sizeof(input) - 3, 0, input + 3);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+        assert(!lsquic_stream_readable(stream));
+        assert(stream->read_offset == 0);
+        assert(!stream->sm_hblock_ctx);
+    }
+    frame = new_frame_in_ext(&tobjs, 0,
+                            input_mode == HI_COALESCED ? sizeof(input) : 3,
+                            0, input);
+    s = lsquic_stream_frame_in(stream, frame);
+    assert(s == 0);
+    if (input_mode == HI_SPLIT)
+    {
+        frame = new_frame_in_ext(&tobjs, 3, sizeof(input) - 3, 0, input + 3);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+    }
+
+    assert(!lsquic_stream_readable(stream));
+    assert(stream->read_offset == 3);
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED);
+    assert(stream->sm_hq_filter.hqfi_state == HQFI_STATE_READING_PAYLOAD);
+    assert(stream->sm_hq_filter.hqfi_left == 2);
+    assert(stream->sm_qflags & SMQF_QPACK_DEC);
+    assert(tobjs.qdh.qdh_decoder.qpd_n_blocked == 1);
+    hblock_ctx = stream->sm_hblock_ctx;
+    assert(hblock_ctx);
+
+    for (i = 0; i < 3; ++i)
+    {
+        assert(!lsquic_stream_readable(stream));
+        errno = 0;
+        nr = lsquic_stream_read(stream, &buf, sizeof(buf));
+        assert(nr == -1);
+        assert(errno == EWOULDBLOCK);
+        assert(stream->read_offset == 3);
+        assert(stream->sm_hblock_ctx == hblock_ctx);
+        assert(count_hsets(stream) == 0);
+    }
+
+    if (cancel)
+    {
+        destroy_qpack_test_objs(&tobjs, stream, decoder);
+        return;
+    }
+
+    assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                insert_status_103, sizeof(insert_status_103)));
+    assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED));
+    assert(lsquic_stream_readable(stream));
+    assert(stream->read_offset == 5);
+    assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR));
+    assert(s_abort_error.count == 0);
+    assert(count_hsets(stream) == 1);
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "103");
+    test_discard_hset(hset);
+
+    assert(lsquic_stream_readable(stream));
+    assert(stream->read_offset == sizeof(input));
+    assert(count_hsets(stream) == 1);
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+    assert(!(stream->sm_qflags & (SMQF_QPACK_DEC|SMQF_ABORT_CONN)));
+    assert(!stream->sm_hblock_ctx);
+
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_blocked_headers_leave_next_headers_unread (void)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 2, 0, 0x80,  /* Pending dynamic :status: 103 */
+        HQFT_HEADERS, 3, 0, 0, 0xD9,  /* Static :status: 200 */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    char buf;
+
+    decoder = init_qpack_test_objs(&tobjs);
+    stream = new_stream(&tobjs, 0, 0x1000);
+    /* Buffer the suffix first, with Delta Base in its own STREAM frame,
+     * then supply the prefix that blocks on Required Insert Count.
+     */
+    assert(0 == lsquic_stream_frame_in(stream,
+        new_frame_in_ext(&tobjs, 4, sizeof(input) - 4, 0, input + 4)));
+    assert(0 == lsquic_stream_frame_in(stream,
+        new_frame_in_ext(&tobjs, 3, 1, 0, input + 3)));
+    assert(0 == lsquic_stream_frame_in(stream,
+        new_frame_in_ext(&tobjs, 0, 3, 0, input)));
+
+    assert(NULL == lsquic_stream_get_hset(stream));
+    errno = 0;
+    assert(-1 == lsquic_stream_read(stream, &buf, sizeof(buf)));
+    assert(errno == EWOULDBLOCK);
+    assert(0 == lsquic_stream_readable(stream));
+    assert(stream->read_offset == 3);
+
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_blocked_hset_stops_before_next_frame (void)
+{
+    test_blocked_hset(HI_COALESCED, 0);
+    test_blocked_hset(HI_SPLIT, 0);
+    test_blocked_hset(HI_SUFFIX_FIRST, 0);
+    test_blocked_hset(HI_COALESCED, 1);
+    test_blocked_hset(HI_SPLIT, 1);
+    test_blocked_hset(HI_SUFFIX_FIRST, 1);
+}
+
+
+enum trailer_input
+{
+    TI_COALESCED,
+    TI_BUFFERED_SUFFIX,
+    TI_DELAYED_SUFFIX,
+};
+
+
+static void
+test_blocked_trailer (enum trailer_input input_mode)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xD9,
+        HQFT_DATA, 2, 'h', 'i',
+        HQFT_HEADERS, 3, 2, 0, 0x80,  /* Pending x-trailer: v */
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    union hblock_ctx *hblock_ctx;
+    unsigned i;
+    ssize_t nr;
+    char buf[8];
+
+    decoder = init_qpack_test_objs(&tobjs);
+    tobjs.eng_pub.enp_settings.es_max_header_sets = 1;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    if (input_mode == TI_COALESCED)
+        frame = new_frame_in_ext(&tobjs, 0, sizeof(input), 1, input);
+    else
+        frame = new_frame_in_ext(&tobjs, 0, 12, 0, input);
+    assert(0 == lsquic_stream_frame_in(stream, frame));
+    if (input_mode == TI_BUFFERED_SUFFIX)
+    {
+        frame = new_frame_in_ext(&tobjs, 12, 2, 1, input + 12);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+    }
+
+    assert(lsquic_stream_readable(stream));
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+
+    /* Read DATA and encounter the blocked trailer through hq_filter_df(). */
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 2);
+    assert(0 == memcmp(buf, "hi", 2));
+    assert(stream->read_offset == 12);
+    assert(stream->sm_hq_filter.hqfi_left == 2);
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED);
+    assert(stream->sm_qflags & SMQF_QPACK_DEC);
+    hblock_ctx = stream->sm_hblock_ctx;
+    assert(hblock_ctx);
+
+    for (i = 0; i < 3; ++i)
+    {
+        errno = 0;
+        nr = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(nr == -1);
+        assert(errno == EWOULDBLOCK);
+        assert(stream->read_offset == 12);
+        assert(stream->sm_hblock_ctx == hblock_ctx);
+        assert(count_hsets(stream) == 0);
+        assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR));
+        assert(s_abort_error.count == 0);
+        if (input_mode == TI_DELAYED_SUFFIX && i == 0)
+        {
+            frame = new_frame_in_ext(&tobjs, 12, 2, 1, input + 12);
+            assert(0 == lsquic_stream_frame_in(stream, frame));
+        }
+    }
+
+    assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                    insert_trailer, sizeof(insert_trailer)));
+    assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED));
+    nr = lsquic_stream_read(stream, buf, sizeof(buf));
+    assert(nr == 0);
+    assert(stream->read_offset == sizeof(input));
+    assert(count_hsets(stream) == 1);
+    hset = lsquic_stream_get_hset(stream);
+    assert(hset->count == 1);
+    assert(hset->finalized);
+    assert(hset->xhdr.name_len == 9);
+    assert(0 == memcmp(lsxpack_header_get_name(&hset->xhdr), "x-trailer", 9));
+    assert(hset->xhdr.val_len == 1);
+    assert(0 == memcmp(lsxpack_header_get_value(&hset->xhdr), "v", 1));
+    test_discard_hset(hset);
+    assert(0 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(stream->stream_flags & STREAM_FIN_REACHED);
+    assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR));
+    assert(!(stream->sm_qflags & (SMQF_QPACK_DEC|SMQF_ABORT_CONN)));
+    assert(!stream->sm_hblock_ctx);
+    assert(s_abort_error.count == 0);
+
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_blocked_trailers (void)
+{
+    test_blocked_trailer(TI_COALESCED);
+    test_blocked_trailer(TI_BUFFERED_SUFFIX);
+    test_blocked_trailer(TI_DELAYED_SUFFIX);
+}
+
+
+static void
+test_blocked_trailer_late_fin (unsigned suffix_size, int insert,
+                                            int separate_fin, int use_hash)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xD9,
+        HQFT_DATA, 2, 'h', 'i',
+        HQFT_HEADERS, 3, 2,  /* Blocks with two payload bytes remaining */
+    };
+    static const unsigned char suffix[] = { 0, 0x80, };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    struct test_dec_hset *hset;
+    union hblock_ctx *hblock_ctx;
+    struct header_block_read_ctx *read_ctx;
+    const struct data_in_iface *data_in_if;
+    unsigned i;
+    ssize_t nr;
+    char buf[8];
+
+    decoder = init_qpack_test_objs(&tobjs);
+    /* Keep the chosen input implementation throughout the test. */
+    tobjs.ctor_flags &= ~SCF_DI_AUTOSWITCH;
+    if (use_hash)
+        tobjs.ctor_flags |= SCF_USE_DI_HASH;
+    stream = new_stream(&tobjs, 0, 0x1000);
+    data_in_if = stream->data_in->di_if;
+    assert(!!data_in_if->di_own_on_ok == !use_hash);
+    assert(0 == lsquic_stream_frame_in(stream,
+                new_frame_in_ext(&tobjs, 0, sizeof(input), 0, input)));
+    assert(lsquic_stream_readable(stream));
+    hset = lsquic_stream_get_hset(stream);
+    assert_hset_status(hset, "200");
+    test_discard_hset(hset);
+    assert(2 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(0 == memcmp(buf, "hi", 2));
+    assert(stream->read_offset == sizeof(input));
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED);
+    assert(stream->sm_hq_filter.hqfi_left == sizeof(suffix));
+    hblock_ctx = stream->sm_hblock_ctx;
+    read_ctx = TAILQ_FIRST(&tobjs.qdh.qdh_decoder.qpd_hbrcs);
+    assert(hblock_ctx);
+    assert(read_ctx);
+
+    assert(0 == lsquic_stream_frame_in(stream,
+        new_frame_in_ext(&tobjs, sizeof(input), suffix_size, !separate_fin,
+                                                                    suffix)));
+    if (separate_fin)
+        assert(0 == lsquic_stream_frame_in(stream,
+            new_frame_in_ext(&tobjs, sizeof(input) + suffix_size, 0, 1, suffix)));
+    assert(stream->stream_flags & STREAM_FIN_RECVD);
+    assert(stream->sm_fin_off == sizeof(input) + suffix_size);
+    for (i = 0; i < 3; ++i)
+    {
+        errno = 0;
+        nr = lsquic_stream_read(stream, buf, sizeof(buf));
+        if (suffix_size < sizeof(suffix))
+        {
+            /* Existing read results depend on whether FIN was consumed. */
+            assert(nr == 0 || (nr == -1 && errno == EWOULDBLOCK));
+            assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR);
+            assert(s_abort_error.count == 1);
+            assert(s_abort_error.is_app == 1);
+            assert(s_abort_error.error_code == HEC_FRAME_ERROR);
+        }
+        else
+        {
+            assert(nr == -1);
+            assert(errno == EWOULDBLOCK);
+            assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR));
+            assert(!(stream->stream_flags & STREAM_FIN_REACHED));
+            assert(s_abort_error.count == 0);
+        }
+        assert(stream->data_in->di_if == data_in_if);
+        assert(stream->read_offset == sizeof(input));
+        assert(stream->sm_qflags & SMQF_QPACK_DEC);
+        assert(stream->sm_hblock_ctx == hblock_ctx);
+        assert(TAILQ_FIRST(&tobjs.qdh.qdh_decoder.qpd_hbrcs) == read_ctx);
+        assert(count_hsets(stream) == 0);
+    }
+
+    if (insert)
+    {
+        assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                    insert_trailer, sizeof(insert_trailer)));
+        assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED));
+        errno = 0;
+        nr = lsquic_stream_read(stream, buf, sizeof(buf));
+        assert(stream->data_in->di_if == data_in_if);
+        if (suffix_size < sizeof(suffix))
+        {
+            assert(nr == 0 || (nr == -1 && errno == EWOULDBLOCK));
+            assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR);
+            assert(s_abort_error.count == 1);
+            assert(s_abort_error.error_code == HEC_FRAME_ERROR);
+            assert(count_hsets(stream) == 0);
+            assert(stream->read_offset == sizeof(input));
+            assert(stream->sm_qflags & SMQF_QPACK_DEC);
+            assert(stream->sm_hblock_ctx == hblock_ctx);
+            assert(TAILQ_FIRST(&tobjs.qdh.qdh_decoder.qpd_hbrcs) == read_ctx);
+        }
+        else
+        {
+            assert(nr == 0);
+            assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR));
+            assert(s_abort_error.count == 0);
+            assert(stream->read_offset == sizeof(input) + sizeof(suffix));
+            assert(count_hsets(stream) == 1);
+            hset = lsquic_stream_get_hset(stream);
+            assert(hset->count == 1);
+            assert(hset->finalized);
+            assert(hset->xhdr.name_len == 9);
+            assert(0 == memcmp(lsxpack_header_get_name(&hset->xhdr),
+                                                        "x-trailer", 9));
+            assert(hset->xhdr.val_len == 1);
+            assert(0 == memcmp(lsxpack_header_get_value(&hset->xhdr), "v", 1));
+            test_discard_hset(hset);
+            assert(stream->stream_flags & STREAM_FIN_REACHED);
+            assert(!(stream->sm_qflags & SMQF_QPACK_DEC));
+            assert(!stream->sm_hblock_ctx);
+        }
+    }
+
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_blocked_trailers_with_late_fin (void)
+{
+    unsigned suffix_size;
+    int insert, separate_fin, use_hash;
+
+    for (use_hash = 0; use_hash <= 1; ++use_hash)
+        for (separate_fin = 0; separate_fin <= 1; ++separate_fin)
+            for (suffix_size = 0; suffix_size <= 2; ++suffix_size)
+                for (insert = 0; insert <= 1; ++insert)
+                    test_blocked_trailer_late_fin(suffix_size, insert,
+                                                    separate_fin, use_hash);
+}
+
+
+enum header_completion_error
+{
+    HCE_FINALIZE,
+    HCE_DELIVERY,
+    HCE_DECODER_WRITE,
+};
+
+
+static void
+test_header_completion_error (enum header_completion_error error, int fin)
+{
+    static const unsigned char input[] = {
+        HQFT_HEADERS, 3, 2, 0, 0x80,
+    };
+    static const unsigned char next[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xD9,
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    struct stream_frame *frame;
+    struct test_dec_hset *hset;
+    char buf;
+
+    decoder = init_qpack_test_objs(&tobjs);
+    assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                insert_status_103, sizeof(insert_status_103)));
+    stream = new_stream(&tobjs, 0, 0x1000);
+    frame = new_frame_in_ext(&tobjs, 0, 3, 0, input);
+    assert(0 == lsquic_stream_frame_in(stream, frame));
+    assert(!lsquic_stream_readable(stream));
+    assert(stream->sm_qflags & SMQF_QPACK_DEC);
+
+    switch (error)
+    {
+    case HCE_FINALIZE:
+        s_test_hset_finalize_error = 1;
+        break;
+    case HCE_DELIVERY:
+        /* Force lsquic_stream_uh_in() to reject the completed set. */
+        stream->sm_bflags &= ~SMBF_USE_HEADERS;
+        break;
+    case HCE_DECODER_WRITE:
+        decoder->stream_flags |= STREAM_U_WRITE_DONE;
+        break;
+    }
+    if (!fin)
+    {
+        /* Buffer the next frame before filling the gap, so the read loop
+         * must stop on ERROR even at a STREAM frame boundary.
+         */
+        frame = new_frame_in_ext(&tobjs, sizeof(input), sizeof(next), 0, next);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+    }
+    frame = new_frame_in_ext(&tobjs, 3, 2, fin, input + 3);
+    assert(0 == lsquic_stream_frame_in(stream, frame));
+    assert(lsquic_stream_readable(stream));
+    if (error == HCE_FINALIZE)
+    {
+        assert(s_abort_error.count == 1);
+        assert(s_abort_error.is_app == 1);
+        assert(s_abort_error.error_code == HEC_MESSAGE_ERROR);
+    }
+    else
+        assert(s_abort_error.count == 0);
+    assert(stream->read_offset == sizeof(input));
+    assert(stream->sm_hq_filter.hqfi_left == 0);
+    assert(stream->sm_hq_filter.hqfi_state == HQFI_STATE_FRAME_HEADER_BEGIN);
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR);
+    assert(stream->sm_qflags & SMQF_ABORT_CONN);
+    assert(TAILQ_FIRST(&tobjs.conn_pub.service_streams) == stream);
+    assert(!(stream->sm_qflags & SMQF_QPACK_DEC));
+    assert(!stream->sm_hblock_ctx);
+    assert(TAILQ_EMPTY(&tobjs.qdh.qdh_decoder.qpd_hbrcs));
+    assert(count_hsets(stream) == (error == HCE_DECODER_WRITE));
+
+    s_test_hset_finalize_error = 0;
+    stream->sm_bflags |= SMBF_USE_HEADERS;
+    decoder->stream_flags &= ~STREAM_U_WRITE_DONE;
+    if (error != HCE_DECODER_WRITE)
+        assert_initial_header_error(stream);
+    else
+    {
+        /* Claim the delivered set, then exercise the filtered-read path.
+         * The buffered next HEADERS must not start decoding after ERROR.
+         */
+        hset = lsquic_stream_get_hset(stream);
+        assert_hset_status(hset, "103");
+        test_discard_hset(hset);
+        assert(lsquic_stream_readable(stream));
+        assert(lsquic_stream_read(stream, &buf, sizeof(buf)) == (fin ? 0 : -1));
+        assert(count_hsets(stream) == 0);
+        assert(stream->read_offset == sizeof(input));
+        assert(s_abort_error.count == 0);
+    }
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_header_completion_errors (void)
+{
+    int fin;
+
+    for (fin = 0; fin <= 1; ++fin)
+    {
+        test_header_completion_error(HCE_FINALIZE, fin);
+        test_header_completion_error(HCE_DELIVERY, fin);
+        test_header_completion_error(HCE_DECODER_WRITE, fin);
+    }
+}
+
+
+enum prefix_fin
+{
+    PF_NONE,
+    PF_SAME_FRAME,
+    PF_LATER_FRAME,
+};
+
+
+static void
+test_exhausted_qpack_prefix (unsigned ric_tail, int split,
+                                    enum prefix_fin fin_mode, int insert)
+{
+    /* The declared field section ends before the mandatory Delta Base. */
+    const unsigned char input[] = { HQFT_HEADERS, 2, 0xFF, ric_tail, };
+    static const unsigned char next[] = {
+        HQFT_HEADERS, 3, 0, 0, 0xD9,
+    };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    struct stream_frame *frame;
+    union hblock_ctx *hblock_ctx;
+    struct header_block_read_ctx *read_ctx;
+    unsigned char inserts[2 * 128];
+    uint64_t offset;
+    unsigned i, state;
+    int pending;
+
+    decoder = init_qpack_test_objs(&tobjs);
+    for (i = 0; i < 128; ++i)
+    {
+        inserts[2 * i] = 0xC0;   /* Insert :authority with an empty value */
+        inserts[2 * i + 1] = 0;
+    }
+    assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                            inserts, 2 * (126 + ric_tail)));
+    stream = new_stream(&tobjs, 0, 0x1000);
+    if (split)
+    {
+        frame = new_frame_in_ext(&tobjs, 0, 3, 0, input);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+        if (!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR))
+            assert(!lsquic_stream_readable(stream));
+        frame = new_frame_in_ext(&tobjs, 3, 1,
+                                            fin_mode == PF_SAME_FRAME, input + 3);
+    }
+    else
+        frame = new_frame_in_ext(&tobjs, 0, sizeof(input),
+                                            fin_mode == PF_SAME_FRAME, input);
+    assert(0 == lsquic_stream_frame_in(stream, frame));
+    assert(lsquic_stream_readable(stream));
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR);
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.is_app == 1);
+    assert(s_abort_error.error_code == HEC_QPACK_DECOMPRESSION_FAILED);
+    assert_initial_header_error(stream);
+    hblock_ctx = stream->sm_hblock_ctx;
+    read_ctx = TAILQ_FIRST(&tobjs.qdh.qdh_decoder.qpd_hbrcs);
+    offset = stream->read_offset;
+    state = stream->sm_hq_filter.hqfi_state;
+    pending = !!(stream->sm_qflags & SMQF_QPACK_DEC);
+    /* The decoder may itself reject the incomplete prefix.  If it blocks,
+     * the stream must retain that context and reject at the frame boundary.
+     */
+    if (pending)
+    {
+        assert(hblock_ctx);
+        assert(read_ctx);
+        assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED);
+        assert(stream->sm_hq_filter.hqfi_left == 0);
+        assert(state == HQFI_STATE_FRAME_HEADER_BEGIN);
+        assert(offset == sizeof(input));
+    }
+    else
+    {
+        assert(!hblock_ctx);
+        assert(!read_ctx);
+        assert(offset <= sizeof(input));
+    }
+
+    if (fin_mode == PF_LATER_FRAME)
+    {
+        frame = new_frame_in_ext(&tobjs, sizeof(input), 0, 1, input);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+    }
+    else if (fin_mode == PF_NONE)
+    {
+        frame = new_frame_in_ext(&tobjs, sizeof(input), sizeof(next), 0, next);
+        assert(0 == lsquic_stream_frame_in(stream, frame));
+    }
+    if (insert)
+    {
+        assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                                    inserts, sizeof(inserts)));
+        assert(!(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED));
+        if (fin_mode == PF_NONE)
+        {
+            frame = new_frame_in_ext(&tobjs, sizeof(input) + sizeof(next),
+                                                        sizeof(next), 1, next);
+            assert(0 == lsquic_stream_frame_in(stream, frame));
+        }
+    }
+    /* Each helper call attempts a read.  Repeating it must preserve the
+     * terminal error and decoder ownership without issuing another abort.
+     */
+    for (i = 0; i < 2; ++i)
+    {
+        assert_initial_header_error(stream);
+        assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR);
+        assert(stream->sm_hq_filter.hqfi_state == state);
+        assert(stream->read_offset == offset);
+        assert(stream->sm_hblock_ctx == hblock_ctx);
+        assert(TAILQ_FIRST(&tobjs.qdh.qdh_decoder.qpd_hbrcs) == read_ctx);
+        assert(!!(stream->sm_qflags & SMQF_QPACK_DEC) == pending);
+        assert(count_hsets(stream) == 0);
+        assert(s_abort_error.count == 1);
+        assert(s_abort_error.error_code == HEC_QPACK_DECOMPRESSION_FAILED);
+    }
+
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_truncated_blocked_frame (void)
+{
+    /* FIN arrives before the declared HEADERS payload has been received. */
+    static const unsigned char input[] = { HQFT_HEADERS, 3, 2, };
+    struct test_objs tobjs;
+    struct lsquic_stream *decoder, *stream;
+    union hblock_ctx *hblock_ctx;
+
+    decoder = init_qpack_test_objs(&tobjs);
+    stream = new_stream(&tobjs, 0, 0x1000);
+    assert(0 == lsquic_stream_frame_in(stream,
+                    new_frame_in_ext(&tobjs, 0, sizeof(input), 1, input)));
+    assert_initial_header_error(stream);
+    assert(stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_BLOCKED);
+    assert(stream->sm_hq_filter.hqfi_left == 2);
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.error_code == HEC_FRAME_ERROR);
+    hblock_ctx = stream->sm_hblock_ctx;
+    assert(hblock_ctx);
+
+    assert(0 == lsqpack_dec_enc_in(&tobjs.qdh.qdh_decoder,
+                                insert_status_103, sizeof(insert_status_103)));
+    assert_initial_header_error(stream);
+    assert(stream->sm_hblock_ctx == hblock_ctx);
+    assert(stream->read_offset == sizeof(input));
+    assert(count_hsets(stream) == 0);
+    assert(s_abort_error.count == 1);
+    assert(s_abort_error.error_code == HEC_FRAME_ERROR);
+    destroy_qpack_test_objs(&tobjs, stream, decoder);
+}
+
+
+static void
+test_qpack_error_prevents_resume (void)
+{
+    unsigned ric_tail;
+    int split, insert;
+    enum prefix_fin fin_mode;
+
+    for (ric_tail = 0; ric_tail <= 1; ++ric_tail)
+        for (split = 0; split <= 1; ++split)
+            for (fin_mode = PF_NONE; fin_mode <= PF_LATER_FRAME; ++fin_mode)
+                for (insert = 0; insert <= 1; ++insert)
+                    test_exhausted_qpack_prefix(ric_tail, split, fin_mode, insert);
+    test_truncated_blocked_frame();
 }
 
 
@@ -2637,6 +3386,12 @@ main (int argc, char **argv)
             test_invalid_content_length_syntax_is_rejected();
             test_content_length_overrun_blocks_payload_delivery();
             test_request_content_length_without_data();
+            test_blocked_headers_leave_next_headers_unread();
+            test_blocked_hset_stops_before_next_frame();
+            test_blocked_trailers();
+            test_blocked_trailers_with_late_fin();
+            test_header_completion_errors();
+            test_qpack_error_prevents_resume();
             test_coalesced_hsets_are_throttled();
             test_data_waits_for_hset_claim();
             test_content_length_max_value_ignores_stale_errno();
@@ -2670,6 +3425,12 @@ main (int argc, char **argv)
         test_invalid_content_length_syntax_is_rejected();
         test_content_length_overrun_blocks_payload_delivery();
         test_request_content_length_without_data();
+        test_blocked_headers_leave_next_headers_unread();
+        test_blocked_hset_stops_before_next_frame();
+        test_blocked_trailers();
+        test_blocked_trailers_with_late_fin();
+        test_header_completion_errors();
+        test_qpack_error_prevents_resume();
         test_content_length_max_value_ignores_stale_errno();
         test_content_length_overflow_is_rejected();
         test_header_processing_error_stays_message_error();
