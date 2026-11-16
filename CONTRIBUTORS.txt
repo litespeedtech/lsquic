@@ -55,6 +55,8 @@ to the LiteSpeed QUIC and HTTP/3 Library:
     - Nikolas Gauder -- Bug fixes
     - Gaurav Jadhav -- Bug fixes
     - litonglab -- BBR-Copilot congestion controller
+    - Lucas Schnack -- Vulnerability reports
+    - Etan Kissling -- Vulnerability reports
 
 Thank you!
 
