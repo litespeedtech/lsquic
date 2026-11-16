@@ -8808,8 +8808,7 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 {
     struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
     struct network_path *path;
-    struct conn_path *copath, *first_unused, *first_unvalidated, *first_other,
-                                                                        *victim;
+    struct conn_path *copath, *first_unused, *first_unvalidated;
 
     path = &conn->ifc_paths[conn->ifc_cur_path_id].cop_path;
     if (path_matches(path, local_sa, peer_sa))
@@ -8820,7 +8819,6 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 
     first_unvalidated = NULL;
     first_unused = NULL;
-    first_other = NULL;
     for (copath = conn->ifc_paths; copath < conn->ifc_paths
             + sizeof(conn->ifc_paths) / sizeof(conn->ifc_paths[0]); ++copath)
     {
@@ -8834,8 +8832,6 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
             if (!first_unvalidated
                             && (0 == (copath->cop_flags & COP_VALIDATED)))
                 first_unvalidated = copath;
-            else if (!first_other)
-                first_other = copath;
         }
         else if (!first_unused)
             first_unused = copath;
@@ -8856,13 +8852,13 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
         return first_unused - conn->ifc_paths;
     }
 
-    if (first_unvalidated || first_other)
+    if (first_unvalidated)
     {
-        victim = first_unvalidated ? first_unvalidated : first_other;
-        record_to_path(conn, victim, peer_ctx, local_sa, peer_sa);
-        return victim - conn->ifc_paths;
+        record_to_path(conn, first_unvalidated, peer_ctx, local_sa, peer_sa);
+        return first_unvalidated - conn->ifc_paths;
     }
 
+    /* Do not overwrite a validated path with an unverified address. */
     return conn->ifc_cur_path_id;
 }
 
@@ -10032,6 +10028,86 @@ lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
     lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
     lsquic_malo_destroy(conn.ifc_pub.packet_out_malo);
     lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+/* A full table must not let a new tuple overwrite a validated path. */
+void
+lsquic_ietf_full_conn_test_path_exhaustion (unsigned flags, int ipv6)
+{
+    struct ietf_full_conn conn;
+    struct conn_path saved_paths[N_PATHS];
+    struct sockaddr_storage local, peer;
+    struct sockaddr_in *sin;
+    struct sockaddr_in6 *sin6;
+    unsigned i, current, used_paths;
+    unsigned char path_id;
+
+    memset(&conn, 0, sizeof(conn));
+    conn.ifc_flags = flags;
+    memset(&local, 0, sizeof(local));
+    memset(&peer, 0, sizeof(peer));
+    if (ipv6)
+    {
+        sin6 = (struct sockaddr_in6 *) &local;
+        sin6->sin6_family = AF_INET6;
+        sin6->sin6_port = htons(443);
+        sin6->sin6_addr.s6_addr[15] = 1;
+    }
+    else
+    {
+        sin = (struct sockaddr_in *) &local;
+        sin->sin_family = AF_INET;
+        sin->sin_port = htons(443);
+        sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+    peer = local;
+    for (i = 0; i < N_PATHS; ++i)
+    {
+        if (ipv6)
+            ((struct sockaddr_in6 *) &peer)->sin6_port = htons(1234 + i);
+        else
+            ((struct sockaddr_in *) &peer)->sin_port = htons(1234 + i);
+        conn.ifc_paths[i].cop_path.np_path_id = i;
+        conn.ifc_paths[i].cop_flags = COP_VALIDATED | COP_INITIALIZED;
+        conn.ifc_paths[i].cop_n_chals = 1;
+        conn.ifc_paths[i].cop_path_chals[0] = 100 + i;
+        conn.ifc_paths[i].cop_path.np_pack_size = 1200 + i;
+        record_to_path(&conn, &conn.ifc_paths[i], &conn.ifc_paths[i],
+                                            (const struct sockaddr *) &local,
+                                            (const struct sockaddr *) &peer);
+        conn.ifc_used_paths |= 1 << i;
+    }
+    used_paths = conn.ifc_used_paths;
+    memcpy(saved_paths, conn.ifc_paths, sizeof(saved_paths));
+    if (ipv6)
+        ((struct sockaddr_in6 *) &peer)->sin6_port = htons(9999);
+    else
+        ((struct sockaddr_in *) &peer)->sin_port = htons(9999);
+
+    for (current = 0; current < N_PATHS; ++current)
+    {
+        conn.ifc_cur_path_id = current;
+        path_id = ietf_full_conn_ci_record_addrs(&conn.ifc_conn, &peer,
+                                            (const struct sockaddr *) &local,
+                                            (const struct sockaddr *) &peer);
+        assert(path_id == current);
+        assert(conn.ifc_cur_path_id == current);
+        assert(conn.ifc_used_paths == used_paths);
+        assert(0 == memcmp(saved_paths, conn.ifc_paths, sizeof(saved_paths)));
+    }
+
+    /* Existing tuples still match and refresh only their peer context. */
+    for (i = 0; i < N_PATHS; ++i)
+    {
+        path_id = ietf_full_conn_ci_record_addrs(&conn.ifc_conn, &peer,
+                                        NP_LOCAL_SA(&saved_paths[i].cop_path),
+                                        NP_PEER_SA(&saved_paths[i].cop_path));
+        assert(path_id == i);
+        saved_paths[i].cop_path.np_peer_ctx = &peer;
+        assert(conn.ifc_used_paths == used_paths);
+        assert(0 == memcmp(saved_paths, conn.ifc_paths, sizeof(saved_paths)));
+    }
 }
 
 
