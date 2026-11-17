@@ -1420,7 +1420,11 @@ send_ctl_acked_loss_chain (struct lsquic_send_ctl *ctl,
     {
         chain_next = chain_cur->po_loss_chain;
         if (chain_cur->po_packno == largest_acked)
+        {
+            ctl->sc_largest_acked_packno = chain_cur->po_packno;
+            ctl->sc_largest_acked_sent_time = chain_cur->po_sent;
             *do_rtt = 1;
+        }
         if (chain_cur->po_lflags & POL_TLP_PENDING)
             /* Delivery of another transmission does not resolve this one. */
             chain_cur->po_loss_chain = chain_cur;
@@ -1923,8 +1927,14 @@ lsquic_send_ctl_got_ack (lsquic_send_ctl_t *ctl,
                     is the "maximum burst" parameter */
                     < ctl->sc_ci->cci_get_cwnd(CGP(ctl));
   after_checks:
-            ctl->sc_largest_acked_packno    = packet_out->po_packno;
-            ctl->sc_largest_acked_sent_time = packet_out->po_sent;
+            /* The loss chain may already have supplied the largest ACKed
+             * packet's metadata before this loop reaches it.
+             */
+            if (!do_rtt)
+            {
+                ctl->sc_largest_acked_packno    = packet_out->po_packno;
+                ctl->sc_largest_acked_sent_time = packet_out->po_sent;
+            }
             ecn_total_acked += lsquic_packet_out_ecn(packet_out) != ECN_NOT_ECT;
             ecn_ce_cnt += lsquic_packet_out_ecn(packet_out) == ECN_CE;
             one_rtt_cnt += lsquic_packet_out_enc_level(packet_out) == ENC_LEV_APP;
