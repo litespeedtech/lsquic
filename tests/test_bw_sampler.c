@@ -85,7 +85,7 @@ sampler_test_send_packet (struct sampler_test *stest, lsquic_packno_t packno,
     if (retx)
         packet_out->po_frame_types |= QUIC_FTBIT_STREAM;
     lsquic_bw_sampler_packet_sent(&stest->sampler, packet_out,
-                                                    stest->bytes_in_flight);
+                                                    stest->bytes_in_flight, 0);
     if (retx)
         stest->bytes_in_flight += packet_out->po_sent_sz;
     return packet_out;
@@ -109,7 +109,7 @@ sampler_test_lose_packet (struct sampler_test *stest,
 {
     if (packet_out->po_frame_types & QUIC_FTBIT_STREAM)
         stest->bytes_in_flight -= packet_out->po_sent_sz;
-    lsquic_bw_sampler_packet_lost(&stest->sampler, packet_out);
+    lsquic_bw_sampler_packet_lost(&stest->sampler, packet_out, 1);
 }
 
 
@@ -627,6 +627,186 @@ test_first_round_trip (void)
 }
 
 
+static void
+test_bbrv3_sample_fields (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packets[5];
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+
+    packets[1] = sampler_test_send_packet(&stest, 1, true);
+    assert(packets[1]->po_bwp_state->bwps_tx_in_flight
+                                                == kRegularPacketSize);
+    assert(packets[1]->po_bwp_state->bwps_send_state.packet_size
+                                                == kRegularPacketSize);
+
+    stest.time += ms(1);
+    packets[2] = sampler_test_send_packet(&stest, 2, true);
+    assert(packets[2]->po_bwp_state->bwps_tx_in_flight
+                                                == 2 * kRegularPacketSize);
+
+    stest.time += ms(9);
+    sample = sampler_test_ack_packet(&stest, packets[1]);
+    assert(sample);
+    assert(sample->delivered == kRegularPacketSize);
+    assert(sample->tx_in_flight == kRegularPacketSize);
+    assert(sample->prior_lost == 0);
+    lsquic_malo_put(sample);
+
+    stest.time += ms(1);
+    packets[3] = sampler_test_send_packet(&stest, 3, true);
+    assert(packets[3]->po_bwp_state->bwps_tx_in_flight
+                                                == 2 * kRegularPacketSize);
+
+    sampler_test_lose_packet(&stest, packets[2]);
+
+    /* P.lost is the loss count when the packet was sent, not when acked */
+    stest.time += ms(1);
+    packets[4] = sampler_test_send_packet(&stest, 4, true);
+
+    stest.time += ms(8);
+    sample = sampler_test_ack_packet(&stest, packets[3]);
+    assert(sample);
+    assert(sample->delivered == kRegularPacketSize);
+    assert(sample->tx_in_flight == 2 * kRegularPacketSize);
+    assert(sample->prior_lost == 0);
+    lsquic_malo_put(sample);
+
+    stest.time += ms(1);
+    sample = sampler_test_ack_packet(&stest, packets[4]);
+    assert(sample);
+    assert(sample->prior_lost == kRegularPacketSize);
+    lsquic_malo_put(sample);
+
+    assert(lsquic_bw_sampler_entry_count(&stest.sampler) == 0);
+    assert(stest.bytes_in_flight == 0);
+
+    sampler_test_cleanup(&stest);
+}
+
+
+static void
+test_probe_loss_does_not_count_as_congestion_loss (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packets[5];
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+    packets[1] = sampler_test_send_packet(&stest, 1, true);
+    stest.time += ms(1);
+    packets[2] = sampler_test_send_packet(&stest, 2, true);
+    lsquic_bw_sampler_packet_lost(&stest.sampler, packets[1], 0);
+    stest.bytes_in_flight -= kRegularPacketSize;
+    assert(stest.sampler.bws_total_lost == 0);
+
+    stest.time += ms(1);
+    packets[3] = sampler_test_send_packet(&stest, 3, true);
+    assert(packets[3]->po_bwp_state->bwps_send_state.total_bytes_lost == 0);
+    lsquic_bw_sampler_packet_lost(&stest.sampler, packets[2], 1);
+    stest.bytes_in_flight -= kRegularPacketSize;
+    assert(stest.sampler.bws_total_lost == kRegularPacketSize);
+
+    stest.time += ms(1);
+    packets[4] = sampler_test_send_packet(&stest, 4, true);
+    assert(packets[4]->po_bwp_state->bwps_send_state.total_bytes_lost
+                                                        == kRegularPacketSize);
+
+    stest.time += ms(9);
+    sample = sampler_test_ack_packet(&stest, packets[3]);
+    assert(sample);
+    assert(sample->prior_lost == 0);
+    lsquic_malo_put(sample);
+    stest.time += ms(1);
+    sample = sampler_test_ack_packet(&stest, packets[4]);
+    assert(sample);
+    assert(sample->prior_lost == kRegularPacketSize);
+    lsquic_malo_put(sample);
+    sampler_test_cleanup(&stest);
+}
+
+
+static void
+test_ack_provisional_loss_record (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packet, record;
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+    packet = sampler_test_send_packet(&stest, 1, true);
+
+    /* TLP transfers the send snapshot to metadata with no path or payload.
+     * Unlike a real packet, it cannot be used to reconstruct a wire size.
+     */
+    memset(&record, 0, sizeof(record));
+    record.po_flags = PO_LOSS_REC | PO_SENT_SZ;
+    record.po_lflags = POL_TLP_PENDING;
+    record.po_packno = packet->po_packno;
+    record.po_sent = packet->po_sent;
+    record.po_sent_sz = packet->po_sent_sz;
+    record.po_frame_types = packet->po_frame_types;
+    record.po_bwp_state = packet->po_bwp_state;
+    packet->po_bwp_state = NULL;
+    stest.bytes_in_flight -= packet->po_sent_sz;
+    lsquic_malo_put(packet);
+
+    stest.time += ms(10);
+    sample = lsquic_bw_sampler_packet_acked(&stest.sampler, &record, stest.time);
+    assert(sample);
+    assert(sample->delivered == kRegularPacketSize);
+    assert(sample->tx_in_flight == kRegularPacketSize);
+    assert(sample->rtt == ms(10));
+    assert(sample->prior_lost == 0);
+    assert(stest.sampler.bws_total_acked == kRegularPacketSize);
+    assert(stest.sampler.bws_total_lost == 0);
+    assert(record.po_bwp_state == NULL);
+    lsquic_malo_put(sample);
+    assert(lsquic_bw_sampler_entry_count(&stest.sampler) == 0);
+
+    assert(NULL == lsquic_bw_sampler_packet_acked(&stest.sampler, &record,
+                                                                stest.time));
+    assert(stest.sampler.bws_total_acked == kRegularPacketSize);
+    sampler_test_cleanup(&stest);
+}
+
+
+static void
+test_cwnd_limited_sample_field (void)
+{
+    struct sampler_test stest;
+    struct lsquic_packet_out *packet;
+    struct bw_sample *sample;
+
+    sampler_test_init(&stest);
+
+    packet = lsquic_malo_get(stest.malo_po);
+    assert(packet);
+    memset(packet, 0, sizeof(*packet));
+    packet->po_packno = 1;
+    packet->po_flags |= PO_SENT_SZ;
+    packet->po_flags |= PO_HELLO;
+    packet->po_sent_sz = kRegularPacketSize;
+    packet->po_sent = stest.time;
+    packet->po_frame_types |= QUIC_FTBIT_STREAM;
+    lsquic_bw_sampler_packet_sent(&stest.sampler, packet, 0, 1);
+    stest.bytes_in_flight += packet->po_sent_sz;
+
+    stest.time += ms(10);
+    sample = sampler_test_ack_packet(&stest, packet);
+    assert(sample);
+    assert(sample->is_cwnd_limited);
+    lsquic_malo_put(sample);
+
+    assert(lsquic_bw_sampler_entry_count(&stest.sampler) == 0);
+    assert(stest.bytes_in_flight == 0);
+
+    sampler_test_cleanup(&stest);
+}
+
+
 int
 main (void)
 {
@@ -639,6 +819,10 @@ main (void)
     test_reordered_ack();
     test_app_limited();
     test_first_round_trip();
+    test_bbrv3_sample_fields();
+    test_probe_loss_does_not_count_as_congestion_loss();
+    test_cwnd_limited_sample_field();
+    test_ack_provisional_loss_record();
 
     return 0;
 }

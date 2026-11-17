@@ -47,6 +47,11 @@ static STAILQ_HEAD(, scenario) s_scenarios
                                     = STAILQ_HEAD_INITIALIZER(s_scenarios);
 static unsigned s_n_scenarios;
 static unsigned s_n_conns;
+/* Set when any stream closes without transferring the full requested/queued
+ * byte count.  main() exits non-zero so callers do not compute throughput
+ * from an incomplete transfer.
+ */
+static int s_incomplete_transfer;
 
 #define MAX_SEND_CHUNK (1024 * 1024)
 
@@ -59,7 +64,9 @@ struct lsquic_conn_ctx
      */
     const struct scenario  *next_scenario;
     unsigned                n_scenarios_left;
-    unsigned                n_streams;
+    unsigned                n_completed;
+    uint64_t                bytes_read;
+    uint64_t                bytes_written;
 };
 
 
@@ -106,6 +113,15 @@ perf_client_on_conn_closed (struct lsquic_conn *conn)
 
     LSQ_NOTICE("Connection closed");
     conn_ctx = lsquic_conn_get_ctx(conn);
+    if (!conn_ctx || conn_ctx->n_completed != s_n_scenarios)
+    {
+        LSQ_WARN("connection closed before all scenarios completed");
+        s_incomplete_transfer = 1;
+    }
+    if (conn_ctx)
+        printf("PERF_RESULT scenarios=%u completed=%u read=%"PRIu64
+            " written=%"PRIu64"\n", s_n_scenarios, conn_ctx->n_completed,
+            conn_ctx->bytes_read, conn_ctx->bytes_written);
     lsquic_conn_set_ctx(conn, NULL);
     free(conn_ctx);
     --s_n_conns;
@@ -135,16 +151,16 @@ perf_client_on_new_stream (void *stream_if_ctx, lsquic_stream_t *stream)
     struct lsquic_conn_ctx *conn_ctx;
     struct lsquic_conn *conn;
 
-    conn = lsquic_stream_conn(stream);
-    conn_ctx = lsquic_conn_get_ctx(conn);
-
     if (!stream)
     {
         LSQ_NOTICE("%s: got null stream: no more streams possible", __func__);
-        lsquic_conn_close(conn);
+        s_incomplete_transfer = 1;
+        prog_stop(&s_prog);
         return NULL;
     }
 
+    conn = lsquic_stream_conn(stream);
+    conn_ctx = lsquic_conn_get_ctx(conn);
     assert(conn_ctx->next_scenario);
 
     struct lsquic_stream_ctx *stream_ctx = calloc(1, sizeof(*stream_ctx));
@@ -311,8 +327,38 @@ perf_client_on_close (struct lsquic_stream *stream,
     struct lsquic_conn_ctx *conn_ctx;
     struct lsquic_conn *conn;
 
+    /* Verify the stream transferred everything the scenario requested; a
+     * short read or short write means the transfer did not complete and the
+     * process should exit non-zero so the harness does not report success.
+     */
+    if (stream_ctx->read_state.n_read
+                            != stream_ctx->scenario->bytes_to_request)
+    {
+        LSQ_WARN("incomplete transfer: read %"PRIu64" of %"PRIu64
+            " requested bytes", stream_ctx->read_state.n_read,
+            stream_ctx->scenario->bytes_to_request);
+        s_incomplete_transfer = 1;
+    }
+    if (stream_ctx->write_state.n_h != sizeof(uint64_t)
+        || stream_ctx->write_state.n_written
+                            != stream_ctx->scenario->bytes_to_send)
+    {
+        LSQ_WARN("incomplete transfer: wrote %"PRIu64" of %"PRIu64
+            " queued bytes", stream_ctx->write_state.n_written,
+            stream_ctx->scenario->bytes_to_send);
+        s_incomplete_transfer = 1;
+    }
+
     conn = lsquic_stream_conn(stream);
     conn_ctx = lsquic_conn_get_ctx(conn);
+    conn_ctx->bytes_read += stream_ctx->read_state.n_read;
+    conn_ctx->bytes_written += stream_ctx->write_state.n_written;
+    if (stream_ctx->read_state.n_read
+                            == stream_ctx->scenario->bytes_to_request
+        && stream_ctx->write_state.n_written
+                            == stream_ctx->scenario->bytes_to_send
+        && stream_ctx->write_state.n_h == sizeof(uint64_t))
+        ++conn_ctx->n_completed;
     if (!perf_create_streams(conn, conn_ctx))
     {
         LSQ_DEBUG("out of scenarios, will close connection");
@@ -429,5 +475,5 @@ main (int argc, char **argv)
     s = prog_run(&s_prog);
     prog_cleanup(&s_prog);
 
-    exit(0 == s ? EXIT_SUCCESS : EXIT_FAILURE);
+    exit(0 == s && !s_incomplete_transfer ? EXIT_SUCCESS : EXIT_FAILURE);
 }

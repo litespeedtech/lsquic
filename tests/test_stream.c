@@ -41,6 +41,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_ver_neg.h"
 #include "lsquic_packet_out.h"
@@ -336,12 +337,12 @@ write_ack (struct lsquic_conn *lconn, struct lsquic_packet_out *packet_out)
     const size_t ack_size = 9;  /* Arbitrary */
     int s;
 
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_ACK;
     s = lsquic_packet_out_add_frame(packet_out, &tobjs->eng_pub.enp_mm, 0,
                             QUIC_FRAME_ACK, packet_out->po_data_sz, ack_size);
     assert(s == 0);
     memcpy(packet_out->po_data + packet_out->po_data_sz, "ACKACKACK", 9);
-    lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet_out, ack_size);
+    lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet_out, ack_size,
+                                                                QUIC_FRAME_ACK);
     packet_out->po_regen_sz += ack_size;
 }
 
@@ -446,7 +447,16 @@ scheduled_acct_sum (const struct lsquic_send_ctl *send_ctl)
 static void
 assert_scheduled_accounting (const struct lsquic_send_ctl *send_ctl)
 {
+    const struct lsquic_packet_out *packet;
+    unsigned n_cc = 0;
+
     assert(scheduled_acct_sum(send_ctl) == send_ctl->sc_bytes_scheduled);
+    TAILQ_FOREACH(packet, &send_ctl->sc_scheduled_packets, po_next)
+        if ((packet->po_frame_types
+                            & (send_ctl->sc_retx_frames | QUIC_FTBIT_DATAGRAM))
+                || (packet->po_flags & PO_BW_PROBE_FILL))
+            ++n_cc;
+    assert(n_cc == send_ctl->sc_n_scheduled_cc);
 }
 
 
@@ -1419,6 +1429,110 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
 }
 
 
+#ifndef NDEBUG
+static ssize_t
+write_elision_datagram (struct lsquic_conn *UNUSED_conn, void *buf, size_t len)
+{
+    assert(len >= 1);
+    memcpy(buf, "d", 1);
+    return 1;
+}
+
+
+static void
+test_elision_cc_membership (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+    struct lsquic_packet_out *packet;
+    enum quic_frame_type type;
+    unsigned keep_data;
+    int len;
+
+    if (tobjs->lconn.cn_version == LSQVER_I001)
+    {
+        tobjs->lconn.cn_flags |= LSCONN_IETF;
+        tobjs->send_ctl.sc_flags |= SC_IETF;
+        tobjs->send_ctl.sc_retx_frames = IQUIC_FRAME_RETX_MASK;
+    }
+    assert(0 == lsquic_send_ctl_set_cc_algo(&tobjs->send_ctl, LSQUIC_CC_BBR3));
+    for (keep_data = 0; keep_data < 3; ++keep_data)
+    {
+        if (keep_data == 2 && tobjs->lconn.cn_version != LSQVER_I001)
+            continue;
+        stream = new_stream(tobjs, 345 + 4 * keep_data);
+        packet = lsquic_send_ctl_get_writeable_packet(&tobjs->send_ctl,
+                                PNS_APP, 100, &network_path, 0, NULL);
+        assert(packet);
+        write_ack(&tobjs->lconn, packet);
+        assert(3 == lsquic_stream_write(stream, "abc", 3));
+        assert(0 == lsquic_stream_flush(stream));
+        assert(tobjs->send_ctl.sc_n_scheduled_cc == 1);
+        assert(tobjs->send_ctl.sc_flags & SC_IDLE_RESTARTED);
+        if (keep_data)
+        {
+            /* A control frame or DATAGRAM must keep the packet counted
+             * after its STREAM frame is elided.
+             */
+            if (keep_data == 1)
+            {
+                type = QUIC_FRAME_BLOCKED;
+                len = tobjs->lconn.cn_pf->pf_gen_blocked_frame(
+                    packet->po_data + packet->po_data_sz,
+                    lsquic_packet_out_avail(packet), 0);
+            }
+            else
+            {
+                type = QUIC_FRAME_DATAGRAM;
+                len = tobjs->lconn.cn_pf->pf_gen_datagram_frame(
+                    packet->po_data + packet->po_data_sz,
+                    lsquic_packet_out_avail(packet), 1, 1,
+                                        write_elision_datagram, &tobjs->lconn);
+            }
+            assert(len > 0);
+            assert(0 == lsquic_packet_out_add_frame(packet, tobjs->conn_pub.mm,
+                                        0, type, packet->po_data_sz, len));
+            lsquic_send_ctl_incr_pack_sz(&tobjs->send_ctl, packet, len,
+                                                                        type);
+        }
+        if (stream->sm_bflags & SMBF_IETF)
+            lsquic_stream_stop_sending_in(stream, 12345);
+        else
+            assert(0 == lsquic_stream_rst_in(stream, 0, 0));
+        assert(!(packet->po_frame_types & QUIC_FTBIT_STREAM));
+        assert(tobjs->send_ctl.sc_n_scheduled == 1);
+        assert(tobjs->send_ctl.sc_n_scheduled_cc == (keep_data ? 1u : 0u));
+        assert(!!(tobjs->send_ctl.sc_flags & SC_IDLE_RESTARTED)
+                                                            == !!keep_data);
+        assert_scheduled_accounting(&tobjs->send_ctl);
+        lsquic_send_ctl_drop_scheduled(&tobjs->send_ctl);
+        lsquic_stream_destroy(stream);
+    }
+}
+
+
+static void
+test_scheduled_stream_blocked (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    tobjs->send_ctl.sc_flags |= SC_IETF;
+    tobjs->send_ctl.sc_retx_frames = IQUIC_FRAME_RETX_MASK;
+    stream = new_stream(tobjs, 345);
+    stream->sm_qflags |= SMQF_SEND_BLOCKED;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+    assert(1 == lsquic_sendctl_gen_stream_blocked_frame(&tobjs->send_ctl,
+                                                                    stream));
+    assert(tobjs->send_ctl.sc_n_scheduled_cc == 1);
+    stream->sm_qflags |= SMQF_SEND_BLOCKED;
+    TAILQ_INSERT_TAIL(&tobjs->conn_pub.sending_streams, stream, next_send_stream);
+    assert(1 == lsquic_sendctl_gen_stream_blocked_frame(&tobjs->send_ctl,
+                                                                    stream));
+    assert(tobjs->send_ctl.sc_n_scheduled_cc == 1);
+    lsquic_send_ctl_drop_scheduled(&tobjs->send_ctl);
+    lsquic_stream_destroy(stream);
+}
+
+
 /* Test that when stream frame is elided and the packet is dropped,
  * the send controller produces a gapless sequence.
  *
@@ -1426,7 +1540,6 @@ test_loc_RST_rem_FIN (struct test_objs *tobjs)
  *          Stream B is reset.  We should get a gapless sequence
  *          of packets 1, 2.
  */
-#ifndef NDEBUG
 static void
 test_gapless_elision_middle (struct test_objs *tobjs)
 {
@@ -1735,6 +1848,8 @@ test_termination (void)
         { 1, 1, test_wantwrite_after_shutdown, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG
+        { 1, 1, test_elision_cc_membership, },
+        { 0, 1, test_scheduled_stream_blocked, },
         { 1, 1, test_gapless_elision_beginning, },
         { 1, 1, test_gapless_elision_middle, },
 #endif

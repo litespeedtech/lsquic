@@ -15,6 +15,8 @@ struct pacer
     /* All tick times are in microseconds */
 
     unsigned        pa_clock_granularity;
+    /* Q16 fractional microseconds, preserved by send-control rollback. */
+    unsigned        pa_fraction;
 
     unsigned        pa_burst_tokens;
     unsigned        pa_n_scheduled;     /* Within single tick */

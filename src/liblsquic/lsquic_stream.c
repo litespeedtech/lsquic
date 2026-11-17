@@ -47,6 +47,7 @@
 #include "lsquic_bw_sampler.h"
 #include "lsquic_minmax.h"
 #include "lsquic_bbr.h"
+#include "lsquic_bbr3.h"
 #include "lsquic_send_ctl.h"
 #include "lsquic_headers.h"
 #include "lsquic_ev_log.h"
@@ -1522,7 +1523,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 {
     struct data_frame *data_frame;
     size_t nread, toread, total_nread;
-    int short_read, processed_frames, read_fin;
+    int short_read, processed_frames, read_fin, hqfi_error;
 
     processed_frames = 0;
     total_nread = 0;
@@ -1555,6 +1556,10 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
             {
                 nread = readf(ctx, data_frame->df_data + data_frame->df_read_off,
                                                             toread, read_fin);
+                /* hq_read() can block or fail when do_filtering is false. */
+                hqfi_error = stream->sm_sfi
+                    && (stream->sm_hq_filter.hqfi_flags
+                                    & (HQFI_FLAG_BLOCKED|HQFI_FLAG_ERROR));
                 if (do_filtering && stream->sm_sfi)
                     stream->sm_sfi->sfi_decr_left(stream, nread);
                 data_frame->df_read_off += nread;
@@ -1563,7 +1568,10 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 short_read = nread < toread;
             }
             else
+            {
                 short_read = 0;
+                hqfi_error = 0;
+            }
 
             if (data_frame->df_read_off == data_frame->df_size)
             {
@@ -1581,6 +1589,9 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                 }
             }
             else if (short_read)
+                goto end_while;
+
+            if (hqfi_error)
                 goto end_while;
         }
         while (data_frame);
@@ -3166,7 +3177,10 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
                 stream->tosend_off,
                 fg_ctx->fgc_fin(fg_ctx), size, fg_ctx->fgc_read, fg_ctx);
     if (len <= 0)
+    {
+        lsquic_send_ctl_maybe_cancel_idle_restart(send_ctl);
         return len;
+    }
 
 #if LSQUIC_CONN_STATS
     stream->conn_pub->conn_stats->out.stream_frames += 1;
@@ -3175,8 +3189,7 @@ write_stream_frame (struct frame_gen_ctx *fg_ctx, const size_t size,
 #endif
     EV_LOG_GENERATED_STREAM_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
-    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_STREAM;
+    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len, QUIC_FRAME_STREAM);
     if (0 == lsquic_packet_out_avail(packet_out))
         packet_out->po_flags |= PO_STREAM_END;
     s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
@@ -3332,8 +3345,7 @@ stream_write_to_packet_crypto (struct frame_gen_ctx *fg_ctx, const size_t size)
 
     EV_LOG_GENERATED_CRYPTO_FRAME(LSQUIC_LOG_CONN_ID, pf,
                             packet_out->po_data + packet_out->po_data_sz, len);
-    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len);
-    packet_out->po_frame_types |= 1 << QUIC_FRAME_CRYPTO;
+    lsquic_send_ctl_incr_pack_sz(send_ctl, packet_out, len, QUIC_FRAME_CRYPTO);
     s = lsquic_packet_out_add_stream(packet_out, stream->conn_pub->mm,
                                      stream, QUIC_FRAME_CRYPTO, off, len);
     if (s != 0)
@@ -5091,6 +5103,18 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                 case LQRHS_BLOCKED:
                     stream->sm_qflags |= SMQF_QPACK_DEC;
                     filter->hqfi_flags |= HQFI_FLAG_BLOCKED;
+                    if (filter->hqfi_left == 0)
+                    {
+                        /* Delta Base must follow Required Insert Count.
+                         * Keep the blocked context for cancellation.
+                         */
+                        filter->hqfi_flags |= HQFI_FLAG_ERROR;
+                        lconn = stream->conn_pub->lconn;
+                        lconn->cn_if->ci_abort_error(lconn, 1,
+                            HEC_QPACK_DECOMPRESSION_FAILED,
+                            "incomplete QPACK prefix on stream %"PRIu64,
+                            stream->id);
+                    }
                     goto end;
                 default:
                     assert(LQRHS_ERROR == rhs);
@@ -5158,7 +5182,9 @@ hq_filter_readable (struct lsquic_stream *stream)
     struct hq_filter *const filter = &stream->sm_hq_filter;
     ssize_t nread;
 
-    if (filter->hqfi_flags & HQFI_FLAG_BLOCKED)
+    if (filter->hqfi_flags & HQFI_FLAG_ERROR)
+        return 1;
+    else if (filter->hqfi_flags & HQFI_FLAG_BLOCKED)
         return 0;
 
     if (!hq_filter_readable_now(stream))
@@ -5186,6 +5212,21 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
     struct hq_filter *const filter = &stream->sm_hq_filter;
     size_t nr;
 
+    if (filter->hqfi_flags & HQFI_FLAG_ERROR)
+        goto err;
+    if (filter->hqfi_flags & HQFI_FLAG_BLOCKED)
+    {
+        if ((stream->stream_flags & STREAM_FIN_RECVD)
+                && stream->sm_fin_off - stream->read_offset < filter->hqfi_left)
+        {
+            static const unsigned char empty[] = "";
+
+            /* Report truncation without resuming the blocked decoder. */
+            hq_read(stream, empty, 0, 1);
+            goto err;
+        }
+        return 0;
+    }
     if (stream->sm_hset_queue_is_full(stream))
         return 0;
 
@@ -5223,6 +5264,7 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
     }
     else
     {
+  err:
         data_frame->df_read_off = data_frame->df_size;
         return 0;
     }

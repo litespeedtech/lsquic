@@ -77,6 +77,16 @@ lsquic_rechist_cutoff (const lsquic_rechist_t *);
 lsquic_time_t
 lsquic_rechist_largest_recv (const lsquic_rechist_t *);
 
+/* ACK-frame generator callback adapters. */
+const struct lsquic_packno_range *
+lsquic_rechist_first_cb (void *);
+
+const struct lsquic_packno_range *
+lsquic_rechist_next_cb (void *);
+
+lsquic_time_t
+lsquic_rechist_largest_recv_cb (void *);
+
 size_t
 lsquic_rechist_mem_used (const struct lsquic_rechist *);
 

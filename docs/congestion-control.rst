@@ -38,6 +38,17 @@ should account for the additional network traffic.
 
 Select BBR-Copilot using ``LSQUIC_CC_BBR_COPILOT``.
 
+BBRv3
+-----
+
+BBRv3 is selected explicitly using ``LSQUIC_CC_BBR3`` (controller number 5).
+It supports regular, medium-loss, and high-loss tuning through
+``es_bbr3_loss_mode`` and the per-connection ``LSQCP_BBR3_LOSS_MODE``
+parameter.  See :doc:`apiref` for profile behavior and
+:doc:`bbrv3-deviations` for differences from the reference draft.
+
+Controller number 3 remains invalid; it formerly selected Adaptive.
+
 Selecting a Controller
 ======================
 
@@ -82,9 +93,14 @@ Passing ``LSQUIC_CC_DEFAULT`` selects the library default.  The current
 controller can be read using :func:`lsquic_conn_get_param()` with
 ``LSQCP_CC_ALGO``.
 
-Switching between Cubic and either BBR variant initializes fresh controller
-state.  After switching from Cubic to BBR-Copilot, fill probing waits until
-new application data is sent.
+Switching between BBRv1 and BBR-Copilot preserves controller state.  All
+other controller changes initialize fresh state.  Selecting the current
+controller is a no-op.  After switching from Cubic or BBRv3 to BBR-Copilot,
+fill probing waits until new application data is sent.
+
+Switching to BBRv3 uses the engine's loss profile.  An override made while
+BBRv3 is selected survives path-change reinitialization, but switching
+away and back uses the engine default again.
 
 Trying the CBR Examples
 =======================

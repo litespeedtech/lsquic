@@ -1,5 +1,4 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
-/* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 /* Test for mini connection delayed packet data corruption bug */
 
 #undef LSQUIC_TEST

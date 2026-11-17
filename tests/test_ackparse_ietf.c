@@ -48,9 +48,9 @@ test_max_ack (void)
 
     lsquic_packno_t largest = 0;
     sz[0] = pf->pf_gen_ack_frame(buf, sizeof(buf),
-        (gaf_rechist_first_f)        lsquic_rechist_first,
-        (gaf_rechist_next_f)         lsquic_rechist_next,
-        (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+        lsquic_rechist_first_cb,
+        lsquic_rechist_next_cb,
+        lsquic_rechist_largest_recv_cb,
         &rechist, now, &has_missing, &largest, NULL);
     assert(sz[0] > 0);
     assert(sz[0] <= (int) sizeof(buf));
@@ -99,9 +99,9 @@ test_exact_max_ack (void)
     }
 
     sz[0] = pf->pf_gen_ack_frame(buf, sizeof(buf),
-        (gaf_rechist_first_f)        lsquic_rechist_first,
-        (gaf_rechist_next_f)         lsquic_rechist_next,
-        (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+        lsquic_rechist_first_cb,
+        lsquic_rechist_next_cb,
+        lsquic_rechist_largest_recv_cb,
         &rechist, now, &has_missing, &largest, NULL);
     assert(sz[0] > 0);
 
@@ -149,9 +149,9 @@ test_ack_truncation (void)
         memset(buf, 0xAA, sizeof(buf));
         lsquic_packno_t largest = 0;
         sz[0] = pf->pf_gen_ack_frame(buf, bufsz,
-            (gaf_rechist_first_f)        lsquic_rechist_first,
-            (gaf_rechist_next_f)         lsquic_rechist_next,
-            (gaf_rechist_largest_recv_f) lsquic_rechist_largest_recv,
+            lsquic_rechist_first_cb,
+            lsquic_rechist_next_cb,
+            lsquic_rechist_largest_recv_cb,
             &rechist, now, &has_missing, &largest, NULL);
         assert(sz[0] > 0);
         assert(sz[0] <= (int) bufsz);

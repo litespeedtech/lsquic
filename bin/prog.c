@@ -174,7 +174,8 @@ prog_print_common_options (const struct prog *prog, FILE *out)
 "                 supported.\n"
 "                   1: Cubic\n"
 "                   2: BBRv1 (this is the default).\n"
-"                   4: BBRv1-Copilot.\n"
+"                   4: BBRv1-Copilot\n"
+"                   5: BBRv3\n"
     );
 
 #if HAVE_SENDMMSG
@@ -731,6 +732,9 @@ prog_prep (struct prog *prog)
 {
     int s;
     char err_buf[100];
+#if HAVE_EVENT_PRECISE_TIMER
+    struct event_config *event_config;
+#endif
 
     if (s_keylog_dir && prog->prog_certs)
     {
@@ -791,7 +795,24 @@ prog_prep (struct prog *prog)
             prog->prog_flags |= PROG_SEARCH_ADDRS;
     }
 
-    prog->prog_eb = event_base_new();
+#if HAVE_EVENT_PRECISE_TIMER
+    if (prog->prog_settings.es_pace_packets)
+    {
+        /* Coarse timers bunch paced sends and can trigger shallow-queue CE
+         * marking even when the average rate is below link capacity.
+         */
+        event_config = event_config_new();
+        if (!event_config)
+            return -1;
+        event_config_set_flag(event_config, EVENT_BASE_FLAG_PRECISE_TIMER);
+        prog->prog_eb = event_base_new_with_config(event_config);
+        event_config_free(event_config);
+    }
+    else
+#endif
+        prog->prog_eb = event_base_new();
+    if (!prog->prog_eb)
+        return -1;
     prog->prog_engine = lsquic_engine_new(prog->prog_engine_flags,
                                                             &prog->prog_api);
     if (!prog->prog_engine)
