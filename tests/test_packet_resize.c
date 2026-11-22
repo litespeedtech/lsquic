@@ -213,8 +213,9 @@ new_packet (struct test_ctx *ctx)
                                      * to make them easier to track.
                                      */
 
-    packet_out = lsquic_packet_out_new(&ctx->enpub.enp_mm, ctx->enpub.enp_mm.malo.packet_out, 1,
-                         &ctx->lconn, PACKNO_BITS_0, 0, NULL, &ctx->path, HETY_SHORT);
+    packet_out = lsquic_packet_out_new(&ctx->enpub.enp_mm,
+                    ctx->enpub.enp_mm.malo.packet_out, 1, &ctx->lconn,
+                    PACKNO_BITS_0, 0, NULL, &ctx->path, HETY_SHORT, 0);
     if (packet_out)
         packet_out->po_packno = packno++;
 

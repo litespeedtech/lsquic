@@ -219,13 +219,11 @@ struct parse_funcs
     (*pf_packout_size) (const struct lsquic_conn *,
                                             const struct lsquic_packet_out *);
 
-    /* This returns the high estimate of the header size.  Note that it
-     * cannot account for the size of the token in the IETF QUIC Initial
-     * packets as it does not know it.
-     */
+    /* This returns the high estimate of the header size. */
     size_t
     (*pf_packout_max_header_size) (const struct lsquic_conn *,
-                    enum packet_out_flags, size_t dcid_len, enum header_type);
+                    enum packet_out_flags, size_t dcid_len, enum header_type,
+                    size_t token_sz);
 
     enum packno_bits
     (*pf_calc_packno_bits) (lsquic_packno_t packno,
@@ -383,7 +381,8 @@ lsquic_gquic_packout_size (const struct lsquic_conn *,
 
 size_t
 lsquic_gquic_packout_header_size (const struct lsquic_conn *conn,
-                enum packet_out_flags flags, size_t unused, enum header_type);
+                enum packet_out_flags flags, size_t unused, enum header_type,
+                size_t token_sz);
 
 size_t
 lsquic_gquic_po_header_sz (enum packet_out_flags flags);

@@ -2979,7 +2979,8 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
     packet_out = lsquic_packet_out_new(&ctl->sc_enpub->enp_mm,
                     ctl->sc_conn_pub->packet_out_malo,
                     !(ctl->sc_flags & SC_TCID0), ctl->sc_conn_pub->lconn, bits,
-                    ctl->sc_ver_neg->vn_tag, NULL, path, pns2hety[pns]);
+                    ctl->sc_ver_neg->vn_tag, NULL, path, pns2hety[pns],
+                    pns == PNS_INIT ? ctl->sc_token_sz : 0);
     if (!packet_out)
         return NULL;
 
@@ -3001,17 +3002,9 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
             packet_out->po_header_type = HETY_INITIAL;
             if (ctl->sc_token)
             {
-                size_t packet_overhead;
-
-                (void) send_ctl_set_packet_out_token(ctl, packet_out);
-                packet_overhead = packet_out_total_sz(packet_out);
-                if (packet_out->po_path->np_pack_size > packet_overhead)
-                    packet_out->po_n_alloc =
-                        packet_out->po_path->np_pack_size - packet_overhead;
-                else
+                if (0 != send_ctl_set_packet_out_token(ctl, packet_out))
                 {
-                    /* XXX fail earlier: when retry token is parsed out */
-                    LSQ_INFO("token is too long: cannot allocate packet");
+                    send_ctl_destroy_packet(ctl, packet_out);
                     return NULL;
                 }
             }
