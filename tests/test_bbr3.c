@@ -291,9 +291,8 @@ test_bbr3_startup_drain (void)
 
 /* Policy: [draft-ietf-ccwg-bbr-06], Section 5.3.1.3 permits a loss-driven
  * Startup exit, which LSQUIC deliberately does not implement.  Startup ends
- * only when bandwidth
- * plateaus.  Earlier experiments showed an early loss exit capping inflight
- * on random-loss paths -- see AI/bbrv3-progress.md.  Loss on a Startup round,
+ * only when bandwidth plateaus.  Earlier experiments showed an early loss
+ * exit capping inflight on random-loss paths.  Loss on a Startup round,
  * at any rate and under any loss profile, must therefore leave the state
  * machine in Startup.
  */

@@ -1,3 +1,27 @@
+2026-11-21
+    - 4.12.0
+    - [FEATURE] Add opt-in BBR-Copilot for bandwidth estimation on
+      application-limited connections (#714).
+    - [FEATURE] Add opt-in BBRv3 with regular, medium-loss, and high-loss
+      profiles.  BBRv1 remains the default congestion controller.
+    - [API] Add enum lsquic_cc and per-connection parameters for switching
+      congestion controllers and selecting the BBRv3 loss profile.
+      The layout of lsquic_engine_settings changed.  Rebuild applications
+      against the new headers.
+    - [EXAMPLES] Add constant-rate transfer tools, including CBR client
+      test support on Windows and macOS (#715).
+    - [FIX] Use the correct send timestamp for RTT sampling when an ACK
+      covers both an original packet and its retransmission (#720).
+    - [FIX] Include the HTTP/3 QPACK and path validation fixes from 4.11.2.
+
+2026-11-15
+    - 4.11.2
+    - [FIX] Stop reading HTTP/3 streams while headers are blocked on QPACK,
+      and reject truncated header blocks safely (GHSA-5vg5-79mr-8863).
+    - [FIX] Preserve validated paths when the path table is full, preventing
+      undecryptable packets from redirecting queued traffic
+      (GHSA-fg6p-g89q-65wr).
+
 2026-10-27
     - 4.11.1
     - [FIX] Correct ACK-range merging and IETF ACK truncation, preventing
