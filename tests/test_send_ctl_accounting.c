@@ -9,6 +9,7 @@
 #include "lsquic_int_types.h"
 #include "lsquic_types.h"
 #include "lsquic_packet_common.h"
+#include "lsquic_packet_in.h"
 #include "lsquic_packet_gquic.h"
 #include "lsquic_alarmset.h"
 #include "lsquic_conn_flow.h"
@@ -96,6 +97,21 @@ set_dcid_len (struct network_path *path, unsigned len)
 
 
 static const struct conn_iface s_conn_if;
+static unsigned s_internal_error_count;
+
+
+static void
+record_internal_error (struct lsquic_conn *conn, const char *UNUSED_fmt, ...)
+{
+    assert(conn);
+    ++s_internal_error_count;
+}
+
+
+static const struct conn_iface s_conn_if =
+{
+    .ci_internal_error = record_internal_error,
+};
 
 
 static void
@@ -103,6 +119,7 @@ init_test (struct accounting_test *t)
 {
     memset(t, 0, sizeof(*t));
     memset(&s_attq_request, 0, sizeof(s_attq_request));
+    s_internal_error_count = 0;
     LSCONN_INITIALIZE(&t->lconn);
     t->lconn.cn_flags |= LSCONN_IETF|LSCONN_HANDSHAKE_DONE;
     t->lconn.cn_version = LSQVER_I001;
@@ -171,6 +188,80 @@ static void
 assert_scheduled_accounting (const struct accounting_test *t)
 {
     assert(scheduled_acct_sum(t) == t->send_ctl.sc_bytes_scheduled);
+}
+
+
+static void
+test_retry_resize (unsigned token_sz, unsigned count)
+{
+    struct accounting_test t;
+    struct lsquic_stream crypto = { .id = UINT64_MAX };
+    struct lsquic_packet_out *packet_out;
+    struct stream_frame frame;
+    unsigned char token[69] = { 0 };
+    unsigned data_sz, header_sz, off, n;
+
+    init_test(&t);
+    t.lconn.cn_flags &= ~LSCONN_HANDSHAKE_DONE;
+    t.send_ctl.sc_flags &= ~SC_PACE;
+    CN_SCID(&t.lconn)->len = 8;
+    t.path.np_pack_size = 1232;
+    assert(token_sz <= sizeof(token));
+
+    packet_out = lsquic_send_ctl_new_packet_out(&t.send_ctl, 0, PNS_INIT,
+                                                                    &t.path);
+    assert(packet_out);
+    if (count == 1)
+    {
+        /* The offset fits in one byte when the frame is re-encoded. */
+        header_sz = 5;
+        data_sz = lsquic_packet_out_avail(packet_out) - token_sz
+                                                - vint_size(token_sz) - 3;
+        vint_write(packet_out->po_data + 1, 0, 1, 2);
+    }
+    else
+    {
+        header_sz = 4;
+        data_sz = lsquic_packet_out_avail(packet_out) - header_sz;
+        packet_out->po_data[1] = 0;
+    }
+    packet_out->po_data[0] = 0x06;
+    vint_write(packet_out->po_data + header_sz - 2, data_sz, 1, 2);
+    memset(packet_out->po_data + header_sz, 0xA5, data_sz);
+    packet_out->po_data_sz = header_sz + data_sz;
+    packet_out->po_frame_types = QUIC_FTBIT_CRYPTO;
+    assert(0 == lsquic_packet_out_add_stream(packet_out, &t.enpub.enp_mm,
+                            &crypto, QUIC_FRAME_CRYPTO, 0,
+                            packet_out->po_data_sz));
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl,
+                                                                        NULL));
+    packet_out->po_sent = 1000;
+    assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet_out));
+
+    assert(0 == lsquic_send_ctl_retry(&t.send_ctl, token, token_sz));
+    assert(count == lsquic_send_ctl_reschedule_packets(&t.send_ctl));
+    assert(0 == s_internal_error_count);
+    assert(TAILQ_EMPTY(&t.send_ctl.sc_lost_packets));
+    assert_scheduled_accounting(&t);
+
+    off = 0;
+    TAILQ_FOREACH(packet_out, &t.send_ctl.sc_scheduled_packets, po_next)
+    {
+        assert(packet_out->po_header_type == HETY_INITIAL);
+        assert(packet_out->po_token_len == token_sz);
+        assert(0 == memcmp(packet_out->po_token, token, token_sz));
+        assert(lsquic_packet_out_total_sz(&t.lconn, packet_out)
+                                                    <= t.path.np_pack_size);
+        assert(packet_out->po_data_sz == t.lconn.cn_pf->pf_parse_crypto_frame(
+                    packet_out->po_data, packet_out->po_data_sz, &frame));
+        assert(frame.data_frame.df_offset == off);
+        for (n = 0; n < frame.data_frame.df_size; ++n)
+            assert(frame.data_frame.df_data[n] == 0xA5);
+        off += frame.data_frame.df_size;
+    }
+    assert(off == data_sz);
+    cleanup_test(&t);
 }
 
 
@@ -1081,6 +1172,10 @@ int
 main (void)
 {
     lsquic_init_timers();
+    test_retry_resize(69, 2);
+    test_retry_resize(64, 2);
+    test_retry_resize(63, 2);
+    test_retry_resize(69, 1);
     test_dcid_change_next_packet_to_send();
     test_dcid_change_cleanup();
     test_dcid_change_drop_scheduled();
