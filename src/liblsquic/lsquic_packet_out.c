@@ -204,7 +204,8 @@ lsquic_packet_out_t *
 lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
                 const struct lsquic_conn *lconn, enum packno_bits bits,
                 const lsquic_ver_tag_t *ver_tag, const unsigned char *nonce,
-                const struct network_path *path, enum header_type header_type)
+                const struct network_path *path, enum header_type header_type,
+                size_t token_sz)
 {
     lsquic_packet_out_t *packet_out;
     enum packet_out_flags flags;
@@ -222,7 +223,7 @@ lsquic_packet_out_new (struct lsquic_mm *mm, struct malo *malo, int use_cid,
         flags |= PO_LONGHEAD;
 
     header_size = lconn->cn_pf->pf_packout_max_header_size(lconn, flags,
-                                            path->np_dcid.len, header_type);
+                            path->np_dcid.len, header_type, token_sz);
     tag_len = lconn->cn_esf_c->esf_tag_len;
     max_size = path->np_pack_size;
     if (header_size + tag_len >= max_size)

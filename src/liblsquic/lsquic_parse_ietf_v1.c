@@ -68,11 +68,10 @@ ietf_v1_parse_packet_in_finish (lsquic_packet_in_t *packet_in,
 }
 
 
-/* Note: token size is not accounted for */
 static size_t
 ietf_v1_packout_header_size_long_by_flags (const struct lsquic_conn *lconn,
                 enum header_type header_type, enum packet_out_flags flags,
-                size_t dcid_len)
+                size_t dcid_len, size_t token_sz)
 {
     size_t sz;
     enum packno_bits packno_bits;
@@ -85,7 +84,8 @@ ietf_v1_packout_header_size_long_by_flags (const struct lsquic_conn *lconn,
        + dcid_len
        + 1 /* SCIL */
        + CN_SCID(lconn)->len
-       + (header_type == HETY_INITIAL)  /* Token length */
+       + (header_type == HETY_INITIAL
+                                    ? vint_size(token_sz) + token_sz : 0)
        + 2 /* Always use two bytes to encode payload length */
        + iquic_packno_bits2len(packno_bits)
        ;
@@ -139,14 +139,15 @@ ietf_v1_packout_header_size_short (enum packet_out_flags flags, size_t dcid_len)
 
 static size_t
 ietf_v1_packout_max_header_size (const struct lsquic_conn *lconn,
-    enum packet_out_flags flags, size_t dcid_len, enum header_type header_type)
+    enum packet_out_flags flags, size_t dcid_len, enum header_type header_type,
+    size_t token_sz)
 {
     if ((lconn->cn_flags & LSCONN_HANDSHAKE_DONE)
                                                 && header_type == HETY_SHORT)
         return ietf_v1_packout_header_size_short(flags, dcid_len);
     else
         return ietf_v1_packout_header_size_long_by_flags(lconn, header_type,
-                                                            flags, dcid_len);
+                                                flags, dcid_len, token_sz);
 }
 
 

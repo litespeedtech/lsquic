@@ -216,7 +216,7 @@ gquic_Q046_packout_header_size_short (const struct lsquic_conn *lconn,
 static size_t
 gquic_Q046_packout_header_size (const struct lsquic_conn *lconn,
                             enum packet_out_flags flags, size_t dcid_len_unused,
-                            enum header_type unused)
+                            enum header_type unused, size_t UNUSED_token_sz)
 {
     if (0 == (flags & PO_LONGHEAD))
         return gquic_Q046_packout_header_size_short(lconn, flags);

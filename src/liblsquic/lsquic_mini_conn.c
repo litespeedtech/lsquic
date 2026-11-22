@@ -885,7 +885,7 @@ allocate_packet_out (struct mini_conn *mc, const unsigned char *nonce)
     }
     packet_out = lsquic_packet_out_new(&mc->mc_enpub->enp_mm, NULL, 1,
                 &mc->mc_conn, GQUIC_PACKNO_LEN_1, NULL, nonce, &mc->mc_path,
-                HETY_NOT_SET);
+                HETY_NOT_SET, 0);
     if (!packet_out)
     {
         LSQ_WARN("could not allocate packet: %s", strerror(errno));

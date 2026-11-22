@@ -116,7 +116,7 @@ imico_get_packet_out (struct ietf_mini_conn *conn,
 
     packet_out = lsquic_packet_out_new(&conn->imc_enpub->enp_mm, NULL, 1,
             &conn->imc_conn, IQUIC_PACKNO_LEN_1, NULL, NULL, &conn->imc_path,
-            header_type);
+            header_type, 0);
     if (!packet_out)
     {
         LSQ_WARN("could not allocate packet: %s", strerror(errno));
