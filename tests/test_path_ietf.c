@@ -11,6 +11,10 @@ void
 lsquic_ietf_full_conn_test_path_exhaustion (unsigned flags, int ipv6);
 
 
+void
+lsquic_ietf_full_conn_test_preferred_address_probe (unsigned flags, int ipv6);
+
+
 int
 main (void)
 {
@@ -29,5 +33,7 @@ main (void)
             lsquic_ietf_full_conn_test_repath(flags[i], 1460, 1200, keep);
         }
     }
+    lsquic_ietf_full_conn_test_preferred_address_probe(0, 0);
+    lsquic_ietf_full_conn_test_preferred_address_probe(LSENG_HTTP, 1);
     return 0;
 }

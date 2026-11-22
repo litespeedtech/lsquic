@@ -2616,6 +2616,11 @@ a new challenge is generated, the PATH_CHALLENGE is written to the
 packet, and the packet is scheduled.  All this happens in the
 ``generate_path_chal_frame()`` function.
 
+When probing the preferred address, the client pads its first datagram to
+the initial UDP payload size selected for the new path.  See
+`RFC 9000, Section 8.2.1
+<https://www.rfc-editor.org/rfc/rfc9000#section-8.2.1>`__.
+
 ::
 
     need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();

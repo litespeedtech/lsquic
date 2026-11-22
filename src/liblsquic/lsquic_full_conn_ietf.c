@@ -828,7 +828,10 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
     assert(!(migra_is_on(conn, copath - conn->ifc_paths)));
 
     dce->de_flags |= DE_ASSIGNED;
-    copath->cop_flags |= COP_INITIALIZED;
+    /* The client must pad its first preferred-address probe.
+     * See [RFC 9000], Section 8.2.1.
+     */
+    copath->cop_flags |= COP_INITIALIZED | COP_ALLOW_MTU_PADDING;
     copath->cop_path.np_dcid = dce->de_cid;
     copath->cop_path.np_peer_ctx = CUR_NPATH(conn)->np_peer_ctx;
     copath->cop_path.np_pack_size
@@ -4554,8 +4557,7 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                     QUIC_FRAME_PATH_CHALLENGE);
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
-    /* Anti-amplification, only pad packet if allowed
-     *  (confirmed path or incoming packet >= 400 bytes). */
+    /* Pad when the path permits it under the anti-amplification limit. */
     if (copath->cop_flags & COP_ALLOW_MTU_PADDING)
         maybe_pad_packet(conn, packet_out);
     /* Only retry for confirmed path */
@@ -10189,6 +10191,67 @@ lsquic_ietf_full_conn_test_repath (unsigned flags, unsigned old_mtu,
         assert(conn.ifc_pub.rtt_stats.srtt == 0);
     }
     lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+void
+lsquic_ietf_full_conn_test_preferred_address_probe (unsigned flags, int ipv6)
+{
+    struct ietf_full_conn conn;
+    struct lsquic_engine_public enpub;
+    struct ver_neg ver_neg = { 0 };
+    struct dcid_elem dce = { .de_cid = { .len = 8 } };
+    struct sockaddr_storage preferred = { 0 };
+    struct conn_path *const copath = &conn.ifc_paths[1];
+    const struct lsquic_packet_out *packet_out;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&enpub, 0, sizeof(enpub));
+    conn.ifc_conn.cn_cces = conn.ifc_cces;
+    conn.ifc_conn.cn_n_cces = sizeof(conn.ifc_cces) / sizeof(conn.ifc_cces[0]);
+    conn.ifc_conn.cn_cces_mask = 1;
+    conn.ifc_conn.cn_flags = LSCONN_IETF | LSCONN_HANDSHAKE_DONE;
+    conn.ifc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    conn.ifc_conn.cn_esf_c = &lsquic_enc_session_common_ietf_v1;
+    conn.ifc_flags = flags;
+    conn.ifc_enpub = &enpub;
+    lsquic_engine_init_settings(&enpub.enp_settings, flags);
+    conn.ifc_settings = &enpub.enp_settings;
+    conn.ifc_max_udp_payload = IQUIC_MIN_INIT_PACKET_SZ;
+    conn.ifc_used_paths = 1 << 0;
+    preferred.ss_family = ipv6 ? AF_INET6 : AF_INET;
+    NP_LOCAL_SA(CUR_NPATH(&conn))->sa_family = preferred.ss_family;
+    CUR_NPATH(&conn)->np_pack_size = calc_base_packet_size(&conn, ipv6);
+    copath->cop_path.np_path_id = 1;
+    lsquic_mm_init(&enpub.enp_mm);
+    conn.ifc_pub.mm = &enpub.enp_mm;
+    conn.ifc_pub.enpub = &enpub;
+    conn.ifc_pub.lconn = &conn.ifc_conn;
+    conn.ifc_pub.path = CUR_NPATH(&conn);
+    conn.ifc_pub.packet_out_malo =
+                        lsquic_malo_create(sizeof(struct lsquic_packet_out));
+    assert(conn.ifc_pub.packet_out_malo);
+    lsquic_alarmset_init(&conn.ifc_alset, &conn.ifc_conn);
+    lsquic_send_ctl_init(&conn.ifc_send_ctl, &conn.ifc_alset, &enpub,
+                                    &ver_neg, &conn.ifc_pub, SC_IETF);
+    conn.ifc_send_ctl.sc_flags &= ~SC_PACE;
+    lsquic_send_ctl_path_validated(&conn.ifc_send_ctl);
+
+    migra_begin(&conn, copath, &dce, (struct sockaddr *) &preferred, NULL);
+    assert(conn.ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1);
+    generate_path_chal_1(&conn, 1000000);
+    packet_out = TAILQ_FIRST(&conn.ifc_send_ctl.sc_scheduled_packets);
+    assert(packet_out);
+    assert(packet_out->po_path == &copath->cop_path);
+    assert(packet_out->po_frame_types == (QUIC_FTBIT_PATH_CHALLENGE
+                                                        | QUIC_FTBIT_PADDING));
+    assert(lsquic_packet_out_total_sz(&conn.ifc_conn, packet_out)
+                                                    == IQUIC_MIN_INIT_PACKET_SZ);
+    assert(!(copath->cop_flags & COP_VALIDATED));
+
+    lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
+    lsquic_malo_destroy(conn.ifc_pub.packet_out_malo);
     lsquic_mm_cleanup(&enpub.enp_mm);
 }
 
