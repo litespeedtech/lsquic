@@ -3001,13 +3001,13 @@ send_ctl_allocate_packet (struct lsquic_send_ctl *ctl, enum packno_bits bits,
             packet_out->po_header_type = HETY_INITIAL;
             if (ctl->sc_token)
             {
-                size_t token_overhead;
+                size_t packet_overhead;
 
                 (void) send_ctl_set_packet_out_token(ctl, packet_out);
-                token_overhead = packet_out->po_token_len
-                               + vint_size(packet_out->po_token_len) - 1;
-                if (packet_out->po_n_alloc > token_overhead)
-                    packet_out->po_n_alloc -= token_overhead;
+                packet_overhead = packet_out_total_sz(packet_out);
+                if (packet_out->po_path->np_pack_size > packet_overhead)
+                    packet_out->po_n_alloc =
+                        packet_out->po_path->np_pack_size - packet_overhead;
                 else
                 {
                     /* XXX fail earlier: when retry token is parsed out */
