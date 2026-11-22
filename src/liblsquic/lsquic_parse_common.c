@@ -350,8 +350,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_STREAMS_BLOCKED
                     | QUIC_FTBIT_NEW_CONNECTION_ID | QUIC_FTBIT_STOP_SENDING
                     | QUIC_FTBIT_PATH_CHALLENGE
-                    | QUIC_FTBIT_DATAGRAM
-                    | QUIC_FTBIT_RETIRE_CONNECTION_ID,
+                    | QUIC_FTBIT_DATAGRAM,
     [ENC_LEV_HSK]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK| QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
@@ -380,8 +379,7 @@ const enum quic_ft_bit lsquic_legal_frames_by_level[N_LSQVER][N_ENC_LEVS] =
                     | QUIC_FTBIT_STREAMS_BLOCKED
                     | QUIC_FTBIT_NEW_CONNECTION_ID | QUIC_FTBIT_STOP_SENDING
                     | QUIC_FTBIT_PATH_CHALLENGE
-                    | QUIC_FTBIT_DATAGRAM
-                    | QUIC_FTBIT_RETIRE_CONNECTION_ID,
+                    | QUIC_FTBIT_DATAGRAM,
     [ENC_LEV_HSK]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
                     | QUIC_FTBIT_ACK| QUIC_FTBIT_CONNECTION_CLOSE,
     [ENC_LEV_APP]  = QUIC_FTBIT_CRYPTO | QUIC_FTBIT_PADDING | QUIC_FTBIT_PING
