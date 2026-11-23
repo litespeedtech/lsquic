@@ -287,7 +287,7 @@ struct http_ctl_stream_in
 struct conn_err
 {
     int                         app_error;
-    unsigned                    frame_type;
+    uint64_t                    frame_type;
     union
     {
         enum trans_error_code   tec;
@@ -428,8 +428,9 @@ struct ietf_full_conn
     struct conn_err             ifc_error;
     /* Wire type of the frame currently being processed; used to populate
      * the Frame Type field of the CONNECTION_CLOSE frame (see [RFC 9000]
-     * Section 19.19): */
-    unsigned                    ifc_cur_frame_type;
+     * Section 19.19).  It is zero outside of frame processing, so that
+     * errors not caused by a frame report frame type 0: */
+    uint64_t                    ifc_cur_frame_type;
     unsigned                    ifc_n_delayed_streams;
     unsigned                    ifc_n_cons_unretx;
     const struct prio_iter_if  *ifc_pii;
@@ -6713,6 +6714,7 @@ process_packet_frame (struct ietf_full_conn *conn,
     enum enc_level enc_level;
     enum quic_frame_type type;
     uint64_t frame_type;
+    unsigned retval;
     char str[8 * 2 + 1];
 
     if (vint_read(p, p + len, &frame_type) < 0)
@@ -6725,15 +6727,17 @@ process_packet_frame (struct ietf_full_conn *conn,
     {
         LSQ_DEBUG("about to process %s frame", frame_type_2_str[type]);
         packet_in->pi_frame_types |= 1 << type;
-        return process_frames[type](conn, packet_in, p, len);
+        retval = process_frames[type](conn, packet_in, p, len);
     }
     else
     {
         LSQ_DEBUG("invalid frame %u (bytes: %s) at encryption level %s",
             type, HEXSTR(p, MIN(len, 8), str), lsquic_enclev2str[enc_level]);
         ABORT_QUIETLY(0, TEC_FRAME_ENCODING_ERROR, "invalid frame");
-        return 0;
+        retval = 0;
     }
+    conn->ifc_cur_frame_type = 0;
+    return retval;
 }
 
 

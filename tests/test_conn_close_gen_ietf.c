@@ -18,7 +18,7 @@ struct conn_close_gen_test {
     int             lineno;
     int             app_error;
     unsigned        error_code;
-    unsigned        frame_type;
+    uint64_t        frame_type;
     const char     *reason;
     int             retval;
     unsigned char   buf[0x100];
@@ -56,6 +56,22 @@ static const struct conn_close_gen_test gen_tests[] = {
             0x1C,
             0x00,
             0x40, 0xAF,
+            0x00,       /* Zero-sized reason */
+        },
+    },
+
+    {
+        .lineno         = __LINE__,
+        .app_error      = 0,
+        .error_code     = 0x00,
+        .frame_type     = 0x100000000ull,   /* Wider than 32 bits */
+        .reason         = NULL,
+        .retval         = 11,
+        .buf_len        = 0x100,
+        .buf            = {
+            0x1C,
+            0x00,
+            0xC0, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
             0x00,       /* Zero-sized reason */
         },
     },
@@ -120,7 +136,12 @@ run_gen_tests (void)
                     test->reason ? strlen(test->reason) : 0);
         assert(sz == test->retval);
         if (sz > 0)
+        {
             assert(0 == memcmp(test->buf, buf, sz));
+            assert((size_t) sz == pf->pf_connect_close_frame_size(
+                    test->app_error, test->error_code, test->frame_type,
+                    test->reason ? strlen(test->reason) : 0));
+        }
     }
 }
 

@@ -173,10 +173,10 @@ struct parse_funcs
                                     lsquic_stream_id_t, uint64_t error_code);
     size_t
     (*pf_connect_close_frame_size) (int app_error, unsigned error_code,
-                                unsigned frame_type, size_t reason_len);
+                                uint64_t frame_type, size_t reason_len);
     int
     (*pf_gen_connect_close_frame) (unsigned char *buf, size_t buf_len,
-                int app_error, unsigned error_code, unsigned frame_type,
+                int app_error, unsigned error_code, uint64_t frame_type,
                 const char *reason, int reason_len);
     int
     (*pf_parse_connect_close_frame) (const unsigned char *buf, size_t buf_len,

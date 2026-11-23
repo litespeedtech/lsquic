@@ -881,7 +881,7 @@ ietf_v1_gen_ping_frame (unsigned char *buf, int buf_len)
 
 static size_t
 ietf_v1_connect_close_frame_size (int app_error, unsigned error_code,
-                                unsigned frame_type, size_t reason_len)
+                                uint64_t frame_type, size_t reason_len)
 {
     return 1                                                         /* Type */
          + (1 << vint_val2bits(error_code))                    /* Error code */
@@ -894,7 +894,7 @@ ietf_v1_connect_close_frame_size (int app_error, unsigned error_code,
 
 static int
 ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
-    int app_error, unsigned error_code, unsigned frame_type,
+    int app_error, unsigned error_code, uint64_t frame_type,
     const char *reason, int reason_len)
 {
     size_t needed;

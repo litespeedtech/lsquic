@@ -709,7 +709,7 @@ lsquic_gquic_be_gen_ping_frame (unsigned char *buf, int buf_len)
 
 size_t
 lsquic_gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
-                                unsigned frame_type, size_t reason_len)
+                                uint64_t frame_type, size_t reason_len)
 {
     return 1 + 4 + 2 + reason_len;
 }
@@ -717,7 +717,7 @@ lsquic_gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
 
 int
 lsquic_gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
-    int app_error_UNUSED, unsigned ecode, unsigned UNUSED_frame_type,
+    int app_error_UNUSED, unsigned ecode, uint64_t UNUSED_frame_type,
     const char *reason, int reason_len)
 {
     uint32_t error_code;

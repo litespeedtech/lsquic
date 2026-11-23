@@ -85,11 +85,11 @@ lsquic_gquic_be_gen_ping_frame (unsigned char *buf, int buf_len);
 
 size_t
 lsquic_gquic_be_connect_close_frame_size (int app_error, unsigned error_code,
-                                unsigned frame_type, size_t reason_len);
+                                uint64_t frame_type, size_t reason_len);
 
 int
 lsquic_gquic_be_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
-    int app_error, unsigned error_code, unsigned frame_type,
+    int app_error, unsigned error_code, uint64_t frame_type,
     const char *reason, int reason_len);
 
 int
