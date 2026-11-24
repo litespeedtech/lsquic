@@ -4447,6 +4447,16 @@ lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
 }
 
 
+uint64_t
+lsquic_stream_webtransport_session_id (const lsquic_stream_t *s)
+{
+    if (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
+        return s->webtransport_session_stream_id;
+    else
+        return UINT64_MAX;
+}
+
+
 #endif
 
 int

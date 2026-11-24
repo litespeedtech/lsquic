@@ -2839,3 +2839,17 @@ and
     Set minimum datagram size.  This is the minumum value of the buffer
     passed to the :member:`lsquic_stream_if.on_dg_write` callback.
     Returns 0 on success and -1 on error.
+
+WebTransport session IDs
+-----------------------
+
+.. function:: uint64_t lsquic_stream_webtransport_session_id (const lsquic_stream_t *stream)
+
+   Return the session ID associated with an incoming WebTransport bidirectional
+   data stream. Return UINT64_MAX if the stream has not been identified as a
+   WebTransport data stream, including when called on the CONNECT session stream.
+
+   Available when built with WebTransport support. Unlike
+   ``lsquic_stream_get_webtransport_session_stream_id``, this accessor preserves
+   the full QUIC stream ID range. The existing int accessor remains available
+   for source and binary compatibility, but cannot represent IDs above INT_MAX.

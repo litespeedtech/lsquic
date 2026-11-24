@@ -2031,6 +2031,13 @@ lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s);
 
 int
 lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s);
+
+/** Return the full-width session ID of an incoming WebTransport data stream,
+ * or UINT64_MAX if the stream has not been identified as such a stream.
+ * Use this instead of the int accessor when session IDs may exceed INT_MAX.
+ */
+uint64_t
+lsquic_stream_webtransport_session_id (const lsquic_stream_t *s);
 #endif
 
 /** Get connection ID */

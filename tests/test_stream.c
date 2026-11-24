@@ -3972,6 +3972,37 @@ main_test_packetization (void)
 }
 
 
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+static void
+test_webtransport_session_id (void)
+{
+    struct lsquic_stream stream;
+    const uint64_t ids[] = {
+        0, 4, (UINT64_C(1) << 31), (UINT64_C(1) << 32) + 4,
+        (UINT64_C(1) << 62) - 4,
+    };
+    unsigned i;
+
+    memset(&stream, 0, sizeof(stream));
+    stream.webtransport_session_stream_id = 4;
+    assert(lsquic_stream_webtransport_session_id(&stream) == UINT64_MAX);
+    assert(lsquic_stream_get_webtransport_session_stream_id(&stream) == -1);
+    stream.sm_bflags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+    assert(lsquic_stream_webtransport_session_id(&stream) == UINT64_MAX);
+
+    stream.sm_bflags = SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+    for (i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
+    {
+        stream.webtransport_session_stream_id = ids[i];
+        assert(lsquic_stream_webtransport_session_id(&stream) == ids[i]);
+        if (ids[i] <= INT_MAX)
+            assert(lsquic_stream_get_webtransport_session_stream_id(&stream)
+                                                                == ids[i]);
+    }
+}
+#endif
+
+
 int
 main (int argc, char **argv)
 {
@@ -4004,6 +4035,9 @@ main (int argc, char **argv)
 
     test_wantwrite_after_reset();
     test_conn_stats_over_4g();
+#if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
+    test_webtransport_session_id();
+#endif
     test_writing_to_stream_schedule_stream_packets_immediately();
     test_writing_to_stream_outside_callback();
     test_stealing_ack();
