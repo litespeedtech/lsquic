@@ -892,7 +892,7 @@ stream_readable_http_gquic (struct lsquic_stream *stream)
 static int
 stream_readable_http_ietf (struct lsquic_stream *stream)
 {
-    return
+    const int readable =
         /* If we have read the header set and the header set has not yet
          * been read, the stream is readable.
          */
@@ -907,6 +907,10 @@ stream_readable_http_ietf (struct lsquic_stream *stream)
                 /* Or in decoding the last buffered frame into a header set: */
                 || !STAILQ_EMPTY(&stream->uh)
                 || stream_has_frame_at_read_offset(stream)));
+
+    /* Internal HTTP framing reads can consume the reliable prefix. */
+    maybe_finish_reset_at(stream);
+    return readable || (stream->stream_flags & STREAM_RST_RECVD);
 }
 
 
@@ -1803,7 +1807,16 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
             else
                 toread = data_frame->df_size - data_frame->df_read_off;
 
-            read_fin = data_frame->df_fin
+            if (stream->stream_flags & STREAM_RESET_AT_RECVD)
+            {
+                if (stream->read_offset >= stream->sm_reset_at)
+                    goto end_while;
+                if (toread > stream->sm_reset_at - stream->read_offset)
+                    toread = stream->sm_reset_at - stream->read_offset;
+            }
+
+            read_fin = !(stream->stream_flags & STREAM_RESET_AT_RECVD)
+                && data_frame->df_fin
                 && data_frame->df_read_off + toread == data_frame->df_size;
 
             if (toread || read_fin)

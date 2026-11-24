@@ -2325,6 +2325,90 @@ test_data_flush_on_close (struct test_objs *tobjs)
 }
 
 
+static size_t
+read_without_fin (void *UNUSED_ctx, const unsigned char *UNUSED_buf,
+                  size_t len, int fin)
+{
+    assert(!fin);
+    return len;
+}
+
+
+static void
+test_reliable_reset (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream = new_stream(tobjs, 4);
+    unsigned char buf[32];
+
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    assert(0 == lsquic_stream_reset_stream_at_in(stream, 20, 10, 42));
+    assert(!(stream->stream_flags & STREAM_RST_RECVD));
+    assert(s_onreset_called.stream == NULL);
+    assert(20 == tobjs->conn_pub.cfcw.cf_max_recv_off);
+    /* A reordered tail must not make the prefix readable. */
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 5, 15, 0)));
+    assert(-1 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(errno == EWOULDBLOCK);
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 5, 0)));
+    assert(4 == lsquic_stream_read(stream, buf, 4));
+    assert(!(stream->stream_flags & STREAM_RST_RECVD));
+    assert(6 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(lsquic_stream_readable(stream));
+    assert(-1 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(errno == ECONNRESET);
+    assert(s_onreset_called.stream == stream);
+    assert(20 == tobjs->conn_pub.cfcw.cf_read_off);
+    lsquic_stream_destroy(stream);
+
+    stream = new_stream(tobjs, 8);
+    assert(0 == lsquic_stream_reset_stream_at_in(stream, 4, 4, 7));
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 4, 1)));
+    assert(4 == lsquic_stream_readf(stream, read_without_fin, NULL));
+    assert(-1 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(errno == ECONNRESET);
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+test_reliable_reset_http (struct test_objs *tobjs)
+{
+    static const unsigned char data[] = { 0, 3, 'a', 'b', 'c' };
+    const enum stream_ctor_flags saved_flags = tobjs->ctor_flags;
+    struct lsquic_stream *stream;
+    struct qpack_dec_hdl qdh;
+    unsigned char buf[8];
+
+    memset(&qdh, 0, sizeof(qdh));
+    tobjs->conn_pub.u.ietf.qdh = &qdh;
+    tobjs->ctor_flags |= SCF_HTTP;
+    stream = new_stream(tobjs, 4);
+    tobjs->ctor_flags = saved_flags;
+    assert(stream->sm_bflags & SMBF_USE_HEADERS);
+    stream->stream_flags |= STREAM_HAVE_UH;
+    stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    /* The reliable prefix ends inside the DATA frame header. */
+    assert(0 == lsquic_stream_reset_stream_at_in(stream, sizeof(data), 1, 42));
+    assert(s_onreset_called.stream == NULL);
+    assert(0 == lsquic_stream_frame_in(stream,
+                new_frame_in_ext(tobjs, 0, sizeof(data), 0, data)));
+    assert(lsquic_stream_readable(stream));
+    assert(stream->read_offset == 1);
+    assert(stream->stream_flags & STREAM_RST_RECVD);
+    assert(s_onreset_called.stream == stream);
+    assert(s_onreset_called.how == 0);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == sizeof(data));
+    s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
+    assert(lsquic_stream_readable(stream));
+    assert(-1 == lsquic_stream_read(stream, buf, sizeof(buf)));
+    assert(errno == ECONNRESET);
+    assert(s_onreset_called.stream == NULL);
+    lsquic_stream_destroy(stream);
+    tobjs->conn_pub.u.ietf.qdh = NULL;
+}
+
+
 /* In this function, we test stream termination conditions.  In particular,
  * we are interested in when the stream becomes finished (this is when
  * connection closes it and starts ignoring frames that come after this):
@@ -2353,6 +2437,8 @@ test_termination (void)
         { 1, 1, test_rst_stream_smaller_than_seen, },
         { 1, 1, test_rst_stream_flow_control_violation, },
         { 0, 1, test_rst_stream_final_size_mismatch, },
+        { 0, 1, test_reliable_reset, },
+        { 0, 1, test_reliable_reset_http, },
         { 0, 1, test_reset_stream_at_updates_and_errors, },
         { 0, 1, test_reset_stream_at_error_code_mismatch, },
         { 0, 1, test_reset_stream_at_send_gate, },

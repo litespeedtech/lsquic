@@ -900,6 +900,11 @@ checks (we will cover HTTP mode separately) and calls
 ``read_data_frames``. This is the only function in the stream module where
 data is actually read from the "data in" module.
 
+After RESET_STREAM_AT, reads are capped at the reliable offset. Once that
+prefix is consumed, the stream reports the reset instead of exposing buffered
+data beyond the offset or reporting FIN to the read callback. Internal HTTP/3
+framing reads also complete the reset when they consume the reliable prefix.
+
 Writing Data
 ============
 
