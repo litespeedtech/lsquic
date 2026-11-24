@@ -2842,7 +2842,7 @@ generate_reset_stream_at_frame (struct ietf_full_conn *conn,
     int sz;
 
     need = conn->ifc_conn.cn_pf->pf_reset_stream_at_frame_size(stream->id,
-                    stream->tosend_off, reliable_size, stream->error_code);
+                    stream->error_code, stream->tosend_off, reliable_size);
     packet_out = get_writeable_packet(conn, need);
     if (!packet_out)
     {
@@ -2852,7 +2852,7 @@ generate_reset_stream_at_frame (struct ietf_full_conn *conn,
     sz = conn->ifc_conn.cn_pf->pf_gen_reset_stream_at_frame(
                     packet_out->po_data + packet_out->po_data_sz,
                     lsquic_packet_out_avail(packet_out), stream->id,
-                    stream->tosend_off, reliable_size, stream->error_code);
+                    stream->error_code, stream->tosend_off, reliable_size);
     if (sz < 0)
     {
         ABORT_ERROR("gen_reset_stream_at_frame failed");

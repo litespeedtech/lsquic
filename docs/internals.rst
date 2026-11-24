@@ -2753,6 +2753,11 @@ are iterated over and ``lsquic_stream_acked()`` is called.  The second purpose
 is to speed up packet resizing, as frame records record the type, position,
 and size of a frame.
 
+RESET_STREAM_AT frame records hold stream references just like RESET_STREAM
+records; ACK processing must release those references. When removing reset
+streams' data from outgoing or lost packets, retain STREAM frames overlapping
+the reliable prefix.
+
 Most of the time, a packet will contain a single frame: STREAM on the sender
 of data and ACK on the receiver.  This use case is optimized: ``po_frecs`` is
 a union and when there is only one frame per packets, the frame record is
