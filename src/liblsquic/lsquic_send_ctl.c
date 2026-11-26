@@ -2396,6 +2396,11 @@ lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *ctl)
                     (QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
                      | QUIC_FTBIT_RESET_STREAM_AT))
             return 1;
+    TAILQ_FOREACH(packet_out, &ctl->sc_lost_packets, po_next)
+        if (packet_out->po_frame_types &
+                    (QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                     | QUIC_FTBIT_RESET_STREAM_AT))
+            return 1;
     return 0;
 }
 

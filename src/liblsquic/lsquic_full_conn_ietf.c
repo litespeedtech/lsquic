@@ -11524,7 +11524,7 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 #ifndef NDEBUG
 void
-lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
+lsquic_ietf_full_conn_test_conn_close (unsigned results[15])
 {
     enum {
         IDLE_SERVER_USER_CLOSE,
@@ -11540,9 +11540,13 @@ lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
         IDLE_SERVER,
         IDLE_SERVER_SILENT,
         CLIENT_HSK_FAILED,
+        LOST_PARTIAL_RESET,
+        NO_PENDING_STREAM_FRAMES,
     };
     struct lsquic_engine_settings settings;
     struct ietf_full_conn conn;
+    struct lsquic_stream stream;
+    struct lsquic_packet_out packet, loss_rec;
 
     memset(&settings, 0, sizeof(settings));
 
@@ -11604,6 +11608,31 @@ lsquic_ietf_full_conn_test_conn_close (unsigned results[13])
     conn.ifc_flags = IFC_HSK_FAILED;
     conn.ifc_settings = &settings;
     results[CLIENT_HSK_FAILED] = should_generate_connection_close(&conn);
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&stream, 0, sizeof(stream));
+    memset(&packet, 0, sizeof(packet));
+    memset(&loss_rec, 0, sizeof(loss_rec));
+    conn.ifc_flags = IFC_SERVER|IFC_CLOSING;
+    conn.ifc_pub.all_streams = lsquic_hash_create();
+    assert(conn.ifc_pub.all_streams);
+    stream.id = 3;  /* Server-initiated unidirectional stream. */
+    assert(lsquic_hash_insert(conn.ifc_pub.all_streams, &stream.id,
+                            sizeof(stream.id), &stream, &stream.sm_hash_el));
+    TAILQ_INIT(&conn.ifc_send_ctl.sc_scheduled_packets);
+    TAILQ_INIT(&conn.ifc_send_ctl.sc_lost_packets);
+    TAILQ_INIT(&conn.ifc_send_ctl.sc_unacked_packets[PNS_APP]);
+    packet.po_frame_types = QUIC_FTBIT_RESET_STREAM_AT;
+    loss_rec.po_frame_types = QUIC_FTBIT_RESET_STREAM_AT;
+    loss_rec.po_flags = PO_LOSS_REC;
+    TAILQ_INSERT_TAIL(&conn.ifc_send_ctl.sc_unacked_packets[PNS_APP],
+                                                        &loss_rec, po_next);
+    TAILQ_INSERT_TAIL(&conn.ifc_send_ctl.sc_lost_packets, &packet, po_next);
+    results[LOST_PARTIAL_RESET] = conn_ok_to_close(&conn);
+
+    TAILQ_REMOVE(&conn.ifc_send_ctl.sc_lost_packets, &packet, po_next);
+    results[NO_PENDING_STREAM_FRAMES] = conn_ok_to_close(&conn);
+    lsquic_hash_destroy(conn.ifc_pub.all_streams);
 }
 
 

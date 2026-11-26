@@ -5125,6 +5125,8 @@ lsquic_stream_set_reliable_size (struct lsquic_stream *s, size_t sz)
 {
     const struct transport_params *params;
 
+    if (s->stream_flags & STREAM_RST_SENT)
+        return -1;
     if (sz > ((1ULL << (sizeof(s->sm_reset_stream_at_sz) * 8)) - 1))
         return -1;
     if (!(s->sm_bflags & SMBF_IETF))

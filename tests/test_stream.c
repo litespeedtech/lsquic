@@ -1674,6 +1674,54 @@ test_reset_stream_at_reliable_size_not_ietf (struct test_objs *tobjs)
 
 
 static void
+test_reset_stream_at_reliable_size_after_reset (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+    struct lsquic_packet_out *packet_out;
+    struct stream_frame frame;
+    unsigned data_sz;
+
+    stream = new_stream(tobjs, 345);
+    tobjs->eng_pub.enp_settings.es_reset_stream_at = 1;
+    tobjs->lconn.cn_esf.i = &test_reset_stream_at_esfi;
+    s_peer_tp = &s_reset_stream_at_params;
+
+    assert(10 == lsquic_stream_write(stream, "0123456789", 10));
+    assert(0 == lsquic_stream_flush(stream));
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, NULL);
+    assert(packet_out);
+    lsquic_packet_out_ack_streams(packet_out);
+    lsquic_packet_out_destroy(packet_out, &tobjs->eng_pub, NULL);
+
+    assert(10 == lsquic_stream_write(stream, "abcdefghij", 10));
+    assert(0 == lsquic_stream_flush(stream));
+    packet_out = lsquic_send_ctl_next_packet_to_send(&tobjs->send_ctl, NULL);
+    assert(packet_out);
+    assert(tobjs->lconn.cn_pf->pf_parse_stream_frame(packet_out->po_data,
+                                packet_out->po_data_sz, &frame) > 0);
+    assert(frame.data_frame.df_offset == 10);
+    assert(frame.data_frame.df_size == 10);
+    data_sz = packet_out->po_data_sz;
+
+    assert(0 == lsquic_stream_set_reliable_size(stream, 20));
+    lsquic_stream_maybe_reset(stream, 7, 0);
+    lsquic_stream_rst_frame_sent(stream);
+
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 10));
+    assert(-1 == lsquic_stream_set_reliable_size(stream, 0));
+    assert(20 == stream->sm_reset_stream_at_sz);
+    assert(0 == lsquic_packet_out_elide_reset_stream_frames(packet_out,
+                                                                UINT64_MAX));
+    assert(data_sz == packet_out->po_data_sz);
+    assert(1 == stream->n_unacked);
+
+    lsquic_packet_out_ack_streams(packet_out);
+    lsquic_packet_out_destroy(packet_out, &tobjs->eng_pub, NULL);
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
 test_reset_stream_at_ack (struct test_objs *tobjs)
 {
     lsquic_stream_t *stream;
@@ -2357,6 +2405,7 @@ test_termination (void)
         { 0, 1, test_reset_stream_at_error_code_mismatch, },
         { 0, 1, test_reset_stream_at_send_gate, },
         { 0, 1, test_reset_stream_at_ack, },
+        { 0, 1, test_reset_stream_at_reliable_size_after_reset, },
         { 0, 1, test_reset_stream_at_reliable_size_errors, },
         { 1, 0, test_reset_stream_at_reliable_size_not_ietf, },
         { 1, 0, test_rst_stream_gquic_no_stream_reset, },

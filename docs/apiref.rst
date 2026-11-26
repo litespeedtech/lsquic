@@ -1899,6 +1899,12 @@ for both reading and writing,
     :param stream: Stream to close.
     :return: 0 on success or -1 on failure.
 
+.. function:: int lsquic_stream_set_reliable_size (lsquic_stream_t *stream, size_t sz)
+
+    Record the reliable prefix size for RESET_STREAM_AT.  Returns 0 on
+    success.  Updates after a reset has been encoded return -1, preserving
+    the reliable prefix promised to the peer.
+
 Sending HTTP Headers
 --------------------
 

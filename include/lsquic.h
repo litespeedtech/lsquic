@@ -2104,7 +2104,9 @@ lsquic_stream_set_http_prio (lsquic_stream_t *,
  */
 lsquic_conn_t * lsquic_stream_conn(const lsquic_stream_t *s);
 
-/* Record reliable size for RESET_STREAM_AT.  Returns 0 on success. */
+/* Record reliable size for RESET_STREAM_AT.  Returns 0 on success.
+ * Returns -1 if a reset has already been encoded.
+ */
 int
 lsquic_stream_set_reliable_size (lsquic_stream_t *s, size_t sz);
 
