@@ -582,16 +582,15 @@ static void
 test_close_reason_utf8 (void)
 {
     char reason[WT_CLOSE_REASON_MAX + 2];
-    static const char invalid[] = { (char) 0xC0, (char) 0xAF };
+    static const char invalid[] = "\xC0\xAF";
     size_t wire_len;
 
     memset(reason, 'x', WT_CLOSE_REASON_MAX - 1);
-    reason[WT_CLOSE_REASON_MAX - 1] = (char) 0xC2;
-    reason[WT_CLOSE_REASON_MAX] = (char) 0xA2;
+    memcpy(reason + WT_CLOSE_REASON_MAX - 1, "\xC2\xA2", 2);
     assert(0 == lsquic_wt_test_close_reason_utf8(reason,
                             WT_CLOSE_REASON_MAX + 1, &wire_len));
     assert(wire_len == WT_CLOSE_REASON_MAX - 1);
-    assert(0 != lsquic_wt_test_close_reason_utf8(invalid, sizeof(invalid),
+    assert(0 != lsquic_wt_test_close_reason_utf8(invalid, sizeof(invalid) - 1,
                                                  &wire_len));
 }
 

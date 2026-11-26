@@ -4751,7 +4751,7 @@ lsquic_wt_accept (struct lsquic_stream *connect_stream,
             lsquic_stream_maybe_reset(connect_stream, HEC_REQUEST_REJECTED, 1);
             return 0;
         }
-        errno = EUSERS;
+        errno = EBUSY;
         return -1;
     }
 
