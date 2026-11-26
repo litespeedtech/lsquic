@@ -2409,6 +2409,79 @@ test_reliable_reset_http (struct test_objs *tobjs)
 }
 
 
+static void
+test_reliable_reset_http_read (struct test_objs *tobjs)
+{
+    static const unsigned char data[] = { 0, 3, 'a', 'b', 'c', 0, 3, 'd', 'e', 'f' };
+    static const unsigned char header[] = { 1, 3, 0, 0, 0 };
+    static const unsigned char unknown[] = { 0x21, 3, 'a', 'b', 'c' };
+    const struct {
+        const unsigned char *data;
+        unsigned size, reliable;
+        int fin, have_headers, verify_cl, read_payload;
+    } cases[] = {
+        /* Cross into a partially reliable second DATA frame header. */
+        { data, sizeof(data), 6, 0, 1, 0, 1 },
+        /* FIN on a partial header must not become a framing error. */
+        { data, 6, 6, 1, 1, 0, 1 },
+        /* A reset does not require the complete Content-Length. */
+        { data, 5, 5, 1, 1, 1, 1 },
+        /* Read directly, before any initial headers are available. */
+        { header, sizeof(header), 1, 0, 0, 0, 0 },
+        /* Framing alone consumes the reliable prefix. */
+        { data, sizeof(data), 2, 0, 1, 0, 0 },
+        { unknown, sizeof(unknown), 3, 0, 1, 0, 0 },
+    };
+    const enum stream_ctor_flags saved_flags = tobjs->ctor_flags;
+    struct lsquic_stream *stream;
+    struct qpack_dec_hdl qdh;
+    unsigned char buf[16];
+    unsigned i;
+
+    memset(&qdh, 0, sizeof(qdh));
+    tobjs->conn_pub.u.ietf.qdh = &qdh;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        tobjs->ctor_flags |= SCF_HTTP;
+        stream = new_stream(tobjs, 4 + 4 * i);
+        tobjs->ctor_flags = saved_flags;
+        if (cases[i].have_headers)
+        {
+            stream->stream_flags |= STREAM_HAVE_UH;
+            stream->sm_hq_filter.hqfi_flags |= HQFI_FLAG_HEADER;
+        }
+        if (cases[i].verify_cl)
+        {
+            stream->sm_bflags |= SMBF_VERIFY_CL;
+            stream->sm_cont_len = 10;
+        }
+        memset(&s_abort_error, 0, sizeof(s_abort_error));
+        assert(0 == lsquic_stream_reset_stream_at_in(stream,
+                                cases[i].size, cases[i].reliable, 42));
+        /* Defer readability processing until the direct read. */
+        tobjs->eng_pub.enp_flags |= ENPUB_PROC;
+        assert(0 == lsquic_stream_frame_in(stream, new_frame_in_ext(tobjs,
+                    0, cases[i].size, cases[i].fin, cases[i].data)));
+        tobjs->eng_pub.enp_flags &= ~ENPUB_PROC;
+        assert(!(stream->stream_flags & STREAM_RST_RECVD));
+        assert(stream->read_offset == 0);
+        if (cases[i].read_payload)
+        {
+            assert(3 == lsquic_stream_read(stream, buf, sizeof(buf)));
+            assert(0 == memcmp(buf, "abc", 3));
+        }
+        assert(-1 == lsquic_stream_read(stream, buf, sizeof(buf)));
+        assert(errno == ECONNRESET);
+        assert(stream->stream_flags & STREAM_RST_READ);
+        assert(stream->read_offset == cases[i].reliable);
+        assert(!(stream->stream_flags & STREAM_FIN_REACHED));
+        assert(!s_abort_error.called);
+        lsquic_stream_destroy(stream);
+    }
+    tobjs->conn_pub.u.ietf.qdh = NULL;
+}
+
+
 /* In this function, we test stream termination conditions.  In particular,
  * we are interested in when the stream becomes finished (this is when
  * connection closes it and starts ignoring frames that come after this):
@@ -2439,6 +2512,7 @@ test_termination (void)
         { 0, 1, test_rst_stream_final_size_mismatch, },
         { 0, 1, test_reliable_reset, },
         { 0, 1, test_reliable_reset_http, },
+        { 0, 1, test_reliable_reset_http_read, },
         { 0, 1, test_reset_stream_at_updates_and_errors, },
         { 0, 1, test_reset_stream_at_error_code_mismatch, },
         { 0, 1, test_reset_stream_at_send_gate, },

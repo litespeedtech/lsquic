@@ -1835,7 +1835,6 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
 
             if (data_frame->df_read_off == data_frame->df_size)
             {
-                const int fin = data_frame->df_fin;
                 stream->data_in->di_if->di_frame_done(stream->data_in, data_frame);
                 data_frame = NULL;
                 if (0 != maybe_switch_data_in(stream))
@@ -1843,7 +1842,7 @@ read_data_frames (struct lsquic_stream *stream, int do_filtering,
                     rv = -1;
                     goto end;
                 }
-                if (fin)
+                if (read_fin)
                 {
                     stream->stream_flags |= STREAM_FIN_REACHED;
                     if (stream->sm_bflags & SMBF_VERIFY_CL)
@@ -1887,6 +1886,12 @@ stream_readf (struct lsquic_stream *stream,
     {
         if (stream->sm_readable(stream))
         {
+            if (stream->stream_flags & STREAM_RST_RECVD)
+            {
+                stream->stream_flags |= STREAM_RST_READ;
+                errno = ECONNRESET;
+                return -1;
+            }
             if (stream->sm_hq_filter.hqfi_flags & HQFI_FLAG_ERROR)
             {
                 LSQ_INFO("HQ filter hit an error: cannot read from stream");
@@ -1945,6 +1950,13 @@ stream_readf (struct lsquic_stream *stream,
         return 0;
     else
     {
+        maybe_finish_reset_at(stream);
+        if (stream->stream_flags & STREAM_RST_RECVD)
+        {
+            stream->stream_flags |= STREAM_RST_READ;
+            errno = ECONNRESET;
+            return -1;
+        }
         errno = EWOULDBLOCK;
         return -1;
     }
@@ -5923,7 +5935,8 @@ static size_t
 hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
 {
     struct hq_filter *const filter = &stream->sm_hq_filter;
-    size_t nr;
+    size_t nr, toread;
+    int fin;
 
     if (stream->sm_hset_queue_is_full(stream))
         return 0;
@@ -5931,9 +5944,18 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
     if (!(filter->hqfi_state == HQFI_STATE_READING_PAYLOAD
                                             && filter->hqfi_type == HQFT_DATA))
     {
+        toread = data_frame->df_size - data_frame->df_read_off;
+        fin = data_frame->df_fin;
+        if (stream->stream_flags & STREAM_RESET_AT_RECVD)
+        {
+            if (stream->read_offset >= stream->sm_reset_at)
+                return 0;
+            if (toread > stream->sm_reset_at - stream->read_offset)
+                toread = stream->sm_reset_at - stream->read_offset;
+            fin = 0;
+        }
         nr = hq_read(stream, data_frame->df_data + data_frame->df_read_off,
-                            data_frame->df_size - data_frame->df_read_off,
-                            data_frame->df_fin);
+                            toread, fin);
         if (nr)
         {
             stream->read_offset += nr;
@@ -5956,7 +5978,9 @@ hq_filter_df (struct lsquic_stream *stream, struct data_frame *data_frame)
                         || filter->hqfi_type == HQFT_PUSH_PROMISE)
                     && ((filter->hqfi_flags & HQFI_FLAG_BLOCKED)
                         || stream->sm_hset_queue_is_full(stream))))
-                assert(data_frame->df_read_off == data_frame->df_size);
+                assert(data_frame->df_read_off == data_frame->df_size
+                    || ((stream->stream_flags & STREAM_RESET_AT_RECVD)
+                        && stream->read_offset == stream->sm_reset_at));
             return 0;
         }
     }

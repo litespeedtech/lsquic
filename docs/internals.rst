@@ -904,6 +904,8 @@ After RESET_STREAM_AT, reads are capped at the reliable offset. Once that
 prefix is consumed, the stream reports the reset instead of exposing buffered
 data beyond the offset or reporting FIN to the read callback. Internal HTTP/3
 framing reads also complete the reset when they consume the reliable prefix.
+The HTTP/3 parser receives only reliable bytes and no FIN for a pending reset,
+so a prefix ending inside a frame is not treated as a malformed clean ending.
 
 Writing Data
 ============
