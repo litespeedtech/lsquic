@@ -329,7 +329,7 @@ struct lsxpack_header;
 
 /** Select a server certificate context. Return NULL to reject the connection.
  * If the client omits SNI, `sni' may be NULL for non-HTTP engines, or for
- * HTTP/3 engines with es_allow_no_sni enabled. In that case, select a
+ * HTTP/3 engines with es_require_sni set to 0. In that case, select a
  * suitable default certificate context or return NULL to reject.
  */
 typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
@@ -574,6 +574,9 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
 
 /** Transport parameter sanity checks are performed by default. */
 #define LSQUIC_DF_CHECK_TP_SANITY 1
+
+/** Require SNI for HTTP/3 server certificate lookup by default. */
+#define LSQUIC_DF_REQUIRE_SNI 1
 
 /** Turn off WebTransport extension by default. */
 #define LSQUIC_DF_WEBTRANSPORT_SERVER 0
@@ -1366,12 +1369,15 @@ struct lsquic_engine_settings {
      */
     unsigned        es_max_header_sets;
 
-    /** Allow HTTP/3 server certificate lookup without an SNI hostname.
-     * Values are 0 and 1. Default: 0 (require SNI).
+    /** Require an SNI hostname for HTTP/3 server certificate lookup.
+     * Values are 0 and 1. Default: LSQUIC_DF_REQUIRE_SNI (1).
+     * Set to 0 to allow NULL-hostname certificate lookups.
+     * Engine defaults and lsquic_engine_init_settings() require SNI;
+     * manually populated settings leaving this field zero allow NULL hostnames.
      * See @ref lsquic_lookup_cert_f for the NULL-hostname callback contract.
      * Does not change client certificate verification or non-HTTP behavior.
      */
-    int             es_allow_no_sni;
+    int             es_require_sni;
 };
 
 /* Initialize `settings' to default values */

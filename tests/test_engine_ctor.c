@@ -8,7 +8,7 @@
 
 
 static void
-test_no_sni_setting (unsigned flags)
+test_require_sni_setting (unsigned flags)
 {
     struct lsquic_engine_settings settings;
     const int invalid[] = { -1, 2, INT_MAX };
@@ -16,17 +16,18 @@ test_no_sni_setting (unsigned flags)
     unsigned i;
 
     lsquic_engine_init_settings(&settings, flags);
-    assert(settings.es_allow_no_sni == 0);
+    assert(LSQUIC_DF_REQUIRE_SNI == 1);
+    assert(settings.es_require_sni == LSQUIC_DF_REQUIRE_SNI);
     assert(0 == lsquic_engine_check_settings(&settings, flags, NULL, 0));
-    settings.es_allow_no_sni = 1;
+    settings.es_require_sni = 0;
     assert(0 == lsquic_engine_check_settings(&settings, flags, NULL, 0));
     for (i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
     {
-        settings.es_allow_no_sni = invalid[i];
+        settings.es_require_sni = invalid[i];
         assert(0 != lsquic_engine_check_settings(&settings, flags, NULL, 0));
         assert(0 != lsquic_engine_check_settings(&settings, flags,
                                                 errbuf, sizeof(errbuf)));
-        assert(strstr(errbuf, "es_allow_no_sni"));
+        assert(strstr(errbuf, "es_require_sni"));
     }
 }
 
@@ -42,10 +43,10 @@ main (void)
     const unsigned flags = LSENG_SERVER;
 
     assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
-    test_no_sni_setting(0);
-    test_no_sni_setting(LSENG_SERVER);
-    test_no_sni_setting(LSENG_HTTP);
-    test_no_sni_setting(LSENG_HTTP | LSENG_SERVER);
+    test_require_sni_setting(0);
+    test_require_sni_setting(LSENG_SERVER);
+    test_require_sni_setting(LSENG_HTTP);
+    test_require_sni_setting(LSENG_HTTP | LSENG_SERVER);
     lsquic_engine_init_settings(&settings, flags);
     assert(settings.es_max_header_sets == LSQUIC_DF_MAX_HEADER_SETS_SERVER);
     assert(0 == lsquic_engine_check_settings(&settings, flags, NULL, 0));

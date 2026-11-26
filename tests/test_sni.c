@@ -190,7 +190,7 @@ lookup_cert (void *ctx, const struct sockaddr *UNUSED_local, const char *hostnam
 
 
 static void
-test_handshake (enum lsquic_version version, unsigned http, int allow_no_sni,
+test_handshake (enum lsquic_version version, unsigned http, int require_sni,
                 const char *hostname, int reject, EVP_PKEY *key, X509 *cert)
 {
     struct lsquic_engine_settings settings;
@@ -199,7 +199,7 @@ test_handshake (enum lsquic_version version, unsigned http, int allow_no_sni,
     struct lookup_ctx lookup = { hostname, 0, NULL };
     struct handshake_ctx client_hsk = { 0 }, server_hsk = { 0 };
     struct packet *to_server = NULL, *to_client = NULL;
-    const unsigned expected_lookup = !!(hostname || !http || allow_no_sni);
+    const unsigned expected_lookup = !!(hostname || !http || !require_sni);
     const int expected_success = expected_lookup && !reject;
     unsigned rounds;
     lsquic_engine_t *client, *server;
@@ -238,7 +238,7 @@ test_handshake (enum lsquic_version version, unsigned http, int allow_no_sni,
     assert(client);
 
     lsquic_engine_init_settings(&settings, LSENG_SERVER | http);
-    settings.es_allow_no_sni = allow_no_sni;
+    settings.es_require_sni = require_sni;
     api.ea_settings = &settings;
     api.ea_packets_out_ctx = &to_client;
     api.ea_stream_if_ctx = &server_hsk;
@@ -291,7 +291,7 @@ main (void)
 {
     const enum lsquic_version versions[] = { LSQVER_I001, LSQVER_I002 };
     unsigned i, http;
-    int allow, reject;
+    int require, reject;
     EVP_PKEY *key = NULL;
     X509 *cert;
 
@@ -299,12 +299,12 @@ main (void)
     make_certificate(&key, &cert);
     for (i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i)
         for (http = 0; http <= LSENG_HTTP; http += LSENG_HTTP)
-            for (allow = 0; allow <= 1; ++allow)
+            for (require = 0; require <= 1; ++require)
                 for (reject = 0; reject <= 1; ++reject)
                 {
-                    test_handshake(versions[i], http, allow, NULL,
+                    test_handshake(versions[i], http, require, NULL,
                                    reject, key, cert);
-                    test_handshake(versions[i], http, allow, "example.com",
+                    test_handshake(versions[i], http, require, "example.com",
                                    reject, key, cert);
                 }
     X509_free(cert);
