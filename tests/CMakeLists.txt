@@ -46,6 +46,7 @@ SET(TESTS
     elision
     ecn_ietf
     engine_ctor
+    engine_attq_use_after_free
     export_key
     frame_chop
     frame_reader

@@ -100,7 +100,8 @@ void
 lsquic_engine_add_conn_to_tickable (struct lsquic_engine_public *,
                                                         lsquic_conn_t *);
 
-/* Put connection onto Advisory Tick Time  Queue if it is not already on it.
+/* Put connection onto Advisory Tick Time Queue if it is not already on it.
+ * If the connection is being destroyed, this is a no-op.
  */
 void
 lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
