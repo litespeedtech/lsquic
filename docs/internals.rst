@@ -1290,6 +1290,29 @@ the number of bytes to skip for type, for example:
     }
 
 
+Triggering Frame Type in CONNECTION_CLOSE
+------------------------------------------
+
+LSQUIC writes zero in the Frame Type field of IETF QUIC transport
+``CONNECTION_CLOSE`` frames.  `RFC 9000, Section 19.19`_ defines zero for
+an unknown triggering frame type.  The transport error code and any reason
+phrase provide a starting point for diagnosing the error.
+
+`PR #688`_ was closed because its additional diagnostic required decoding
+the wire type again before dispatch and setting and clearing connection
+state for every received frame.  The full connection dispatches on
+``enum quic_frame_type``.  The IETF parser handles the varint encoding
+and already classifies one-byte types with a table lookup.
+
+If a concrete debugging or interoperability need warrants revisiting this
+decision, have the IETF parser recover the exact wire type on the relevant
+error path while the frame bytes are available.  Use zero when the type
+cannot be decoded, such as when the varint is truncated.
+
+.. _RFC 9000, Section 19.19: https://www.rfc-editor.org/rfc/rfc9000.html#section-19.19
+.. _PR #688: https://github.com/litespeedtech/lsquic/pull/688
+
+
 Mini vs Full Connections
 ************************
 
