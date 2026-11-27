@@ -188,7 +188,8 @@ lsquic_packet_out_add_stream (struct lsquic_packet_out *packet_out,
 {
     assert(!(new_stream->stream_flags & STREAM_FINISHED));
     assert((1 << frame_type)
-                & (QUIC_FTBIT_STREAM|QUIC_FTBIT_CRYPTO|QUIC_FTBIT_RST_STREAM));
+                & (QUIC_FTBIT_STREAM|QUIC_FTBIT_CRYPTO|QUIC_FTBIT_RST_STREAM
+                   |QUIC_FTBIT_RESET_STREAM_AT));
     if (0 == lsquic_packet_out_add_frame(packet_out, mm,
                             (uintptr_t) new_stream, frame_type, off, len))
     {
@@ -331,6 +332,18 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
             else
                 victim = lsquic_stream_is_write_reset(frec->fe_stream);
 
+            if (victim && frec->fe_stream->sm_reset_stream_at_sz)
+            {
+                struct stream_frame frame;
+                const struct parse_funcs *pf =
+                    lsquic_stream_conn(frec->fe_stream)->cn_pf;
+                if (pf->pf_parse_stream_frame(
+                        packet_out->po_data + frec->fe_off, frec->fe_len,
+                        &frame) >= 0 && frame.data_frame.df_offset
+                            < frec->fe_stream->sm_reset_stream_at_sz)
+                    victim = 0;
+            }
+
             if (victim)
             {
                 ++n_elided;
@@ -396,7 +409,8 @@ lsquic_packet_out_ack_streams (lsquic_packet_out_t *packet_out)
     for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
                                                 frec = lsquic_pofi_next(&pofi))
         if ((1 << frec->fe_frame_type)
-                & (QUIC_FTBIT_STREAM|QUIC_FTBIT_CRYPTO|QUIC_FTBIT_RST_STREAM))
+                & (QUIC_FTBIT_STREAM|QUIC_FTBIT_CRYPTO|QUIC_FTBIT_RST_STREAM
+                   |QUIC_FTBIT_RESET_STREAM_AT))
             lsquic_stream_acked(frec->fe_stream, frec->fe_frame_type);
 }
 

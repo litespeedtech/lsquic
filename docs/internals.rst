@@ -2753,6 +2753,15 @@ are iterated over and ``lsquic_stream_acked()`` is called.  The second purpose
 is to speed up packet resizing, as frame records record the type, position,
 and size of a frame.
 
+RESET_STREAM_AT frame records hold stream references just like RESET_STREAM
+records; ACK processing must release those references. When removing reset
+streams' data from outgoing or lost packets, retain STREAM frames overlapping
+the reliable prefix. Once a reset is encoded (``STREAM_RST_SENT``), the
+public reliable-size setter rejects further updates, preserving the promise
+used by retransmission and frame elision. The graceful-close check includes
+stream frames in the lost queue while they await rescheduling, as well as
+scheduled and unacknowledged packets.
+
 Most of the time, a packet will contain a single frame: STREAM on the sender
 of data and ACK on the receiver.  This use case is optimized: ``po_frecs`` is
 a union and when there is only one frame per packets, the frame record is

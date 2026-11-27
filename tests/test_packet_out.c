@@ -92,6 +92,18 @@ main (void)
 
     assert((void *) 0 == lsquic_pofi_next(&pofi));
 
+    assert(0 == lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm,
+                &streams[0], QUIC_FRAME_RESET_STREAM_AT, 14, 1));
+    assert(streams[0].n_unacked == 2);
+    /* Keep a separate outstanding reference so ACK processing cannot free
+     * these stack-allocated streams. */
+    for (unsigned i = 0; i < 6; ++i)
+        ++streams[i].n_unacked;
+    lsquic_packet_out_ack_streams(packet_out);
+    for (unsigned i = 0; i < 6; ++i)
+        assert(streams[i].n_unacked == 1);
+    assert(streams[0].stream_flags & STREAM_RST_ACKED);
+
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     assert(!lsquic_malo_first(enpub.enp_mm.malo.frame_rec_arr));
 

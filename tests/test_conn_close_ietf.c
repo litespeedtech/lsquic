@@ -1,6 +1,8 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
 
+#include "lsquic.h"
+
 
 enum {
     IDLE_SERVER_USER_CLOSE,
@@ -16,6 +18,8 @@ enum {
     IDLE_SERVER,
     IDLE_SERVER_SILENT,
     CLIENT_HSK_FAILED,
+    LOST_PARTIAL_RESET,
+    NO_PENDING_STREAM_FRAMES,
     N_RESULTS,
 };
 
@@ -29,6 +33,7 @@ main (void)
 {
     unsigned results[N_RESULTS];
 
+    assert(0 == lsquic_global_init(LSQUIC_GLOBAL_SERVER));
     lsquic_ietf_full_conn_test_conn_close(results);
 
     assert(results[IDLE_SERVER_USER_CLOSE] == 1);
@@ -45,5 +50,9 @@ main (void)
     assert(results[IDLE_SERVER_SILENT] == 0);
     assert(results[CLIENT_HSK_FAILED] == 0);
 
+    assert(results[LOST_PARTIAL_RESET] == 0);
+    assert(results[NO_PENDING_STREAM_FRAMES] == 1);
+
+    lsquic_global_cleanup();
     return 0;
 }

@@ -24,6 +24,9 @@
 #include "lsquic_mm.h"
 #include "lsquic_engine_public.h"
 #include "lsquic_logger.h"
+#include "lsquic_conn.h"
+#include "lsquic_rtt.h"
+#include "lsquic_conn_public.h"
 
 
 //static const struct parse_funcs *const pf = select_pf_by_ver(LSQVER_043); // will not work on MSVC
@@ -129,6 +132,58 @@ elide_single_stream_frame (void)
     assert(0 == streams[0].n_unacked);
     assert(0 == packet_out->po_frame_types);
     assert(!lsquic_pofi_first(&pofi, packet_out));
+
+    lsquic_packet_out_destroy(packet_out, &enpub, NULL);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+static void
+retain_reliable_prefix (uint64_t offset, int retain)
+{
+    struct packet_out_frec_iter pofi;
+    struct lsquic_engine_public enpub;
+    lsquic_stream_t stream;
+    lsquic_packet_out_t *packet_out;
+    struct lsquic_conn conn;
+    struct lsquic_conn_public conn_pub;
+    const struct parse_funcs *const ietf = select_pf_by_ver(LSQVER_I001);
+    int len;
+
+    memset(&conn, 0, sizeof(conn));
+    memset(&conn_pub, 0, sizeof(conn_pub));
+    conn.cn_pf = ietf;
+    conn_pub.lconn = &conn;
+    memset(&stream, 0, sizeof(stream));
+    stream.conn_pub = &conn_pub;
+    stream.sm_reset_stream_at_sz = 3;
+    memset(&enpub, 0, sizeof(enpub));
+    lsquic_mm_init(&enpub.enp_mm);
+    packet_out = lsquic_mm_get_packet_out(&enpub.enp_mm, NULL, GQUIC_MAX_PAYLOAD_SZ);
+
+    setup_stream_contents(offset, "ab");
+    len = ietf->pf_gen_stream_frame(packet_out->po_data + packet_out->po_data_sz,
+            lsquic_packet_out_avail(packet_out),
+            stream.id, lsquic_stream_tosend_offset(&stream),
+            lsquic_stream_tosend_fin(&stream),
+            lsquic_stream_tosend_sz(&stream),
+            (gsf_read_f) lsquic_stream_tosend_read,
+            &stream);
+    assert(len > 0);
+    packet_out->po_data_sz = len;
+    packet_out->po_frame_types |= (1 << QUIC_FRAME_STREAM);
+    lsquic_packet_out_add_stream(packet_out, &enpub.enp_mm, &stream,
+                                                QUIC_FRAME_STREAM, 0, len);
+    assert(1 == stream.n_unacked);
+    assert(lsquic_pofi_first(&pofi, packet_out));
+
+    stream.stream_flags |= STREAM_RST_SENT;
+
+    assert(lsquic_packet_out_elide_reset_stream_frames(packet_out, UINT64_MAX)
+                                        == (retain ? 0 : (unsigned) len));
+    assert(stream.n_unacked == (unsigned) retain);
+    assert(!!(packet_out->po_frame_types & QUIC_FTBIT_STREAM) == retain);
+    assert(!!lsquic_pofi_first(&pofi, packet_out) == retain);
 
     lsquic_packet_out_destroy(packet_out, &enpub, NULL);
     lsquic_mm_cleanup(&enpub.enp_mm);
@@ -412,6 +467,9 @@ main (void)
 {
     /* TODO-ENDIAN: test with every PF */
     elide_single_stream_frame();
+    retain_reliable_prefix(0, 1);
+    retain_reliable_prefix(2, 1);
+    retain_reliable_prefix(3, 0);
     shrink_packet_post_elision();
     elide_three_stream_frames(0);
     elide_three_stream_frames(1);

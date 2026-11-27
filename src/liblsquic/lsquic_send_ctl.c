@@ -270,7 +270,8 @@ lsquic_send_ctl_have_unacked_stream_frames (const lsquic_send_ctl_t *ctl)
     TAILQ_FOREACH(packet_out, &ctl->sc_unacked_packets[PNS_APP], po_next)
         if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON))
                 && (packet_out->po_frame_types &
-                    ((1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM))))
+                    (QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                     | QUIC_FTBIT_RESET_STREAM_AT)))
             return 1;
 
     return 0;
@@ -2392,7 +2393,13 @@ lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *ctl)
     const lsquic_packet_out_t *packet_out;
     TAILQ_FOREACH(packet_out, &ctl->sc_scheduled_packets, po_next)
         if (packet_out->po_frame_types &
-                    ((1 << QUIC_FRAME_STREAM) | (1 << QUIC_FRAME_RST_STREAM)))
+                    (QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                     | QUIC_FTBIT_RESET_STREAM_AT))
+            return 1;
+    TAILQ_FOREACH(packet_out, &ctl->sc_lost_packets, po_next)
+        if (packet_out->po_frame_types &
+                    (QUIC_FTBIT_STREAM | QUIC_FTBIT_RST_STREAM
+                     | QUIC_FTBIT_RESET_STREAM_AT))
             return 1;
     return 0;
 }
