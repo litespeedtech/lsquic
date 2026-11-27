@@ -1,6 +1,10 @@
 /* Copyright (c) 2017 - 2026 LiteSpeed Technologies Inc.  See LICENSE. */
 #include <assert.h>
+#ifdef WIN32
+#include <ws2tcpip.h>
+#else
 #include <netinet/in.h>
+#endif
 #include <string.h>
 
 #include "lsquic.h"
