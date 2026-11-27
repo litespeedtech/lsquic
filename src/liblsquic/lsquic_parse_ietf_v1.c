@@ -906,9 +906,11 @@ ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
 
     bits_reason = vint_val2bits(reason_len);
     bits_error = vint_val2bits(error_code);
+    /* Transport closes use zero for the triggering frame type.  See
+     * "Triggering Frame Type in CONNECTION_CLOSE" in docs/internals.rst.
+     */
     needed = 1 /* Type */ + (1 << bits_error)
            + (app_error ? 0 : 1) /* Frame type */
-        /* TODO: frame type instead of just zero */
            + (1 << bits_reason) + reason_len;
 
     if (buf_len < needed)
@@ -920,7 +922,7 @@ ietf_v1_gen_connect_close_frame (unsigned char *buf, size_t buf_len,
     vint_write(p, error_code, bits_error, 1 << bits_error);
     p += 1 << bits_error;
     if (!app_error)
-        *p++ = 0;   /* Frame type */ /* TODO */
+        *p++ = 0;   /* Frame type */
     vint_write(p, reason_len, bits_reason, 1 << bits_reason);
     p += 1 << bits_reason;
     if (reason_len)
