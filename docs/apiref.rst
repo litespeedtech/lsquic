@@ -1474,6 +1474,11 @@ the engine to communicate with the user code:
         always 2; in IETF QUIC, `how` is either 0 or 1 because one can reset
         just one direction in IETF QUIC.
 
+        On receipt of IETF QUIC ``STOP_SENDING``, LSQUIC schedules any
+        required ``RESET_STREAM`` before calling ``on_reset`` with
+        ``how == 1``.  The application may close the stream from this
+        callback.  Closing it preserves the pending reset.
+
         This callback is optional.  The reset error can still be collected
         during next "on read" or "on write" event.
 

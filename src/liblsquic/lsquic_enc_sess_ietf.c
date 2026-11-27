@@ -681,7 +681,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
                                 != (1u << enc_sess->esi_ver_neg->vn_ver))
         set_tp_version_info(&params, enc_sess->esi_ver_neg->vn_supp,
                             enc_sess->esi_ver_neg->vn_ver);
-    else if (enc_sess->esi_conn->cn_flags & LSCONN_VER_UPDATED)
+    else if ((enc_sess->esi_conn->cn_flags & LSCONN_VER_UPDATED)
+             || ((enc_sess->esi_flags & ESI_SERVER) && version == LSQVER_I002))
         set_tp_version_info(&params, settings->es_versions,
                             enc_sess->esi_conn->cn_version);
 

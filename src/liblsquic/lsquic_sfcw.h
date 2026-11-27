@@ -47,6 +47,13 @@ lsquic_sfcw_get_max_recv_off (const lsquic_sfcw_t *fc)
     return fc->sf_max_recv_off;
 }
 
+
+static inline uint64_t
+lsquic_sfcw_get_read_off (const lsquic_sfcw_t *fc)
+{
+    return fc->sf_read_off;
+}
+
 /* Returns false if flow control violation is encountered */
 int
 lsquic_sfcw_set_max_recv_off (lsquic_sfcw_t *, uint64_t);

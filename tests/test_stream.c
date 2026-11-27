@@ -839,6 +839,9 @@ test_rem_data_loc_close_and_rst_in (struct test_objs *tobjs)
         assert(stream->sm_qflags & SMQF_SEND_STOP_SENDING);
     else
         assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_DRAIN_READ);
+    lsquic_stream_drain_read(stream);
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
     assert(!((stream->sm_qflags & (SMQF_SERVICE_FLAGS)) == SMQF_CALL_ONCLOSE));
 
@@ -922,8 +925,8 @@ test_rem_data_loc_close (struct test_objs *tobjs)
 
     s = lsquic_stream_shutdown(stream, 0);
     assert(0 == s);
-    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert(!(stream->sm_qflags & SMQF_CALL_ONCLOSE));
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_DRAIN_READ);
 
     n = lsquic_stream_read(stream, buf, 60);
     assert(n == -1);    /* Cannot read from closed stream */
@@ -935,8 +938,13 @@ test_rem_data_loc_close (struct test_objs *tobjs)
     if (stream->sm_bflags & SMBF_IETF)
         assert(1 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl)); /* Shutdown performs a flush */
 
-    assert(!TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
-    assert(stream->sm_qflags & SMQF_CALL_ONCLOSE);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS)
+                                    == (SMQF_DRAIN_READ | SMQF_CALL_ONCLOSE));
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    assert(TAILQ_NEXT(stream, next_service_stream) == NULL);
+    lsquic_stream_drain_read(stream);
+    assert((stream->sm_qflags & SMQF_SERVICE_FLAGS) == SMQF_CALL_ONCLOSE);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
 
     assert(!(stream->sm_qflags & SMQF_FREE_STREAM));
     if (stream->sm_bflags & SMBF_IETF)
@@ -1191,10 +1199,15 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 
     s = lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 100, 0));
     assert(0 == s);
+    lsquic_stream_peer_blocked(stream, tobjs->initial_stream_window);
+    assert(stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA);
     s_onreset_called = (struct reset_call_ctx) { NULL, -1, };
     lsquic_stream_stop_sending_in(stream, 12345);
     assert(s_onreset_called.stream == stream);
     assert(s_onreset_called.how == 1);
+    assert(0 == tobjs->conn_pub.cfcw.cf_read_off);
+    assert(stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA);
+    lsquic_stream_max_stream_data_sent(stream);
 
     /* Incoming STOP_SENDING should not affect the ability to read from
      * stream.
@@ -1205,11 +1218,8 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 
     ack_packet(&tobjs->send_ctl, 1);
 
-    if (!(stream->sm_bflags & SMBF_IETF))
-    {
-        assert(!TAILQ_EMPTY(&tobjs->conn_pub.sending_streams));
-        assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
-    }
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+    assert((stream->sm_qflags & SMQF_SENDING_FLAGS) == SMQF_SEND_RST);
 
     /* Not yet closed: error needs to be collected */
     assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
@@ -1243,6 +1253,174 @@ test_loc_data_rem_SS (struct test_objs *tobjs)
 
     assert(expected_nread == tobjs->conn_pub.cfcw.cf_max_recv_off);
     assert(expected_nread == tobjs->conn_pub.cfcw.cf_read_off);
+}
+
+
+static void
+test_discarded_receive_credit (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    stream = new_stream(tobjs, 4);
+    assert(0 == lsquic_stream_shutdown(stream, 0));
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 8, 8, 0)));
+    assert(tobjs->conn_pub.cfcw.cf_max_recv_off == 16);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 0);
+
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 8, 0)));
+    assert(!lsquic_stream_readable(stream));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+    assert(!(stream->sm_qflags & SMQF_SEND_MAX_STREAM_DATA));
+    lsquic_stream_destroy(stream);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+}
+
+
+static void
+test_buffered_receive_credit (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    stream = new_stream(tobjs, 4);
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 16, 1)));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 0);
+    assert(0 == lsquic_stream_shutdown(stream, 0));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 0);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    lsquic_stream_drain_read(stream);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+    lsquic_stream_destroy(stream);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+
+    stream = new_stream(tobjs, 8);
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 8, 0)));
+    assert(0 == lsquic_stream_shutdown(stream, 0));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 8, 8, 0)));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    lsquic_stream_drain_read(stream);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 32);
+    lsquic_stream_destroy(stream);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 32);
+}
+
+
+static size_t
+shutdown_during_read (void *ctx, const unsigned char *UNUSED_buf, size_t len,
+                                                                int UNUSED_fin)
+{
+    assert(len == 16);
+    assert(0 == lsquic_stream_shutdown(ctx, 0));
+    assert(!lsquic_stream_readable(ctx));
+    return 4;
+}
+
+
+static void
+test_shutdown_during_read (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    stream = new_stream(tobjs, 4);
+    assert(0 == lsquic_stream_frame_in(stream, new_frame_in(tobjs, 0, 16, 1)));
+    assert(4 == lsquic_stream_readf(stream, shutdown_during_read, stream));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 4);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.service_streams) == stream);
+    lsquic_stream_drain_read(stream);
+    assert(TAILQ_EMPTY(&tobjs->conn_pub.service_streams));
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+    lsquic_stream_destroy(stream);
+    assert(tobjs->conn_pub.cfcw.cf_read_off == 16);
+}
+
+
+static void
+test_stop_sending_with_pending_reset (struct test_objs *tobjs)
+{
+    struct lsquic_stream *stream;
+
+    stream = new_stream(tobjs, 4);
+    lsquic_stream_maybe_reset(stream, 6789, 0);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(stream->error_code == 6789);
+    assert(stream->sm_qflags & SMQF_SEND_RST);
+    assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+    assert(TAILQ_NEXT(stream, next_send_stream) == NULL);
+    lsquic_stream_destroy(stream);
+}
+
+
+static void
+close_on_stop_sending (struct lsquic_stream *stream,
+                                    lsquic_stream_ctx_t *UNUSED_ctx, int how)
+{
+    assert(how == 1);
+    assert(0 == lsquic_stream_close(stream));
+}
+
+
+static void
+test_stop_sending_response (struct test_objs *tobjs)
+{
+    enum { FIN_QUEUED, FIN_IN_FLIGHT, FIN_ACKED, CLOSE_IN_CALLBACK } state;
+    struct lsquic_stream_if callbacks = stream_if;
+    struct lsquic_packet_out *packet = NULL;
+    struct lsquic_stream *stream;
+
+    tobjs->lconn.cn_flags |= LSCONN_SERVER;
+    callbacks.on_reset = close_on_stop_sending;
+    for (state = FIN_QUEUED; state <= CLOSE_IN_CALLBACK; ++state)
+    {
+        stream = new_stream(tobjs, 4 + 4 * state);
+        if (state != CLOSE_IN_CALLBACK)
+            assert(0 == lsquic_stream_frame_in(stream,
+                                                new_frame_in(tobjs, 0, 0, 1)));
+        assert(8 == lsquic_stream_write(stream, "response", 8));
+        assert(0 == lsquic_stream_flush(stream));
+        if (state == CLOSE_IN_CALLBACK)
+        {
+            stream->stream_if = &callbacks;
+            assert(4 == lsquic_stream_write(stream, "tail", 4));
+            assert(stream->sm_n_buffered == 4);
+        }
+        else
+        {
+            assert(0 == lsquic_stream_close(stream));
+            assert(stream->stream_flags & STREAM_FIN_SENT);
+            if (state != FIN_QUEUED)
+            {
+                packet = lsquic_send_ctl_next_packet_to_send(
+                                                        &tobjs->send_ctl, 0);
+                assert(packet);
+                lsquic_send_ctl_sent_packet(&tobjs->send_ctl, packet);
+                if (state == FIN_ACKED)
+                    ack_packet(&tobjs->send_ctl, packet->po_packno);
+            }
+        }
+
+        lsquic_stream_stop_sending_in(stream, 12345);
+        if (state == FIN_ACKED)
+            assert(!(stream->sm_qflags & SMQF_SEND_RST));
+        else
+        {
+            assert(stream->sm_qflags & SMQF_SEND_RST);
+            assert(!(stream->sm_qflags & SMQF_FREE_STREAM));
+            assert(TAILQ_FIRST(&tobjs->conn_pub.sending_streams) == stream);
+            assert(0 == lsquic_send_ctl_n_scheduled(&tobjs->send_ctl));
+            assert(stream->tosend_off == 8);
+            lsquic_stream_stop_sending_in(stream, 6789);
+            assert(stream->error_code == 12345);
+            if (state == FIN_IN_FLIGHT)
+                ack_packet(&tobjs->send_ctl, packet->po_packno);
+            if (state == CLOSE_IN_CALLBACK)
+                assert(stream->sm_qflags & SMQF_SEND_STOP_SENDING);
+            lsquic_stream_rst_frame_sent(stream);
+        }
+        lsquic_stream_destroy(stream);
+    }
 }
 
 
@@ -1287,6 +1465,8 @@ test_wantwrite_after_reset (void)
             assert(!(stream->sm_qflags & SMQF_WANT_WRITE));
             assert(TAILQ_EMPTY(&tobjs.conn_pub.write_streams));
             assert(stream->sm_qflags & SMQF_SEND_RST);
+            assert(stream->tosend_off == 0);
+            assert(stream->error_code == 12345);
 
             /* Re-arm write interest while RESET_STREAM is pending. */
             assert(0 == lsquic_stream_wantwrite(stream, 1));
@@ -1845,6 +2025,11 @@ test_termination (void)
         { 1, 1, test_loc_FIN_rem_RST, },
         { 1, 1, test_loc_data_rem_RST, },
         { 0, 1, test_loc_data_rem_SS, },
+        { 0, 1, test_discarded_receive_credit, },
+        { 0, 1, test_buffered_receive_credit, },
+        { 1, 1, test_shutdown_during_read, },
+        { 0, 1, test_stop_sending_with_pending_reset, },
+        { 0, 1, test_stop_sending_response, },
         { 1, 1, test_wantwrite_after_shutdown, },
         { 1, 0, test_loc_RST_rem_FIN, },
 #ifndef NDEBUG

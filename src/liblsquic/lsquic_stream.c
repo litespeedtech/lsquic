@@ -861,6 +861,9 @@ stream_readable_discard (struct lsquic_stream *stream)
     uint64_t toread;
     int fin;
 
+    if (stream->sm_qflags & SMQF_DRAIN_READ)
+        return 0;   /* A read callback may still hold the buffered frame. */
+
     while ((data_frame = stream->data_in->di_if->di_get_frame(
                                     stream->data_in, stream->read_offset)))
     {
@@ -873,9 +876,23 @@ stream_readable_discard (struct lsquic_stream *stream)
             break;
     }
 
+    if (stream->read_offset > lsquic_sfcw_get_read_off(&stream->fc))
+        lsquic_sfcw_set_read_off(&stream->fc, stream->read_offset);
     (void) maybe_switch_data_in(stream);
 
     return 0;   /* Never readable */
+}
+
+
+void
+lsquic_stream_drain_read (struct lsquic_stream *stream)
+{
+    assert(stream->sm_qflags & SMQF_DRAIN_READ);
+    stream->sm_qflags &= ~SMQF_DRAIN_READ;
+    if (!(stream->sm_qflags & SMQF_SERVICE_FLAGS))
+        TAILQ_REMOVE(&stream->conn_pub->service_streams, stream,
+                                                        next_service_stream);
+    stream_readable_discard(stream);
 }
 
 
@@ -1292,6 +1309,20 @@ lsquic_stream_rst_in (lsquic_stream_t *stream, uint64_t offset,
 }
 
 
+static void
+schedule_stream_reset (struct lsquic_stream *stream, uint64_t error_code)
+{
+    SM_HISTORY_APPEND(stream, SHE_RESET);
+    LSQ_INFO("reset, error code %"PRIu64, error_code);
+    stream->error_code = error_code;
+    if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
+        TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
+                                                        next_send_stream);
+    stream->sm_qflags &= ~SMQF_SEND_BLOCKED;
+    stream->sm_qflags |= SMQF_SEND_RST;
+}
+
+
 void
 lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
                                                         uint64_t error_code)
@@ -1305,6 +1336,22 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
     stream->stream_flags |= STREAM_SS_RECVD;
 
+    /* [RFC 9000], Section 3.5.  Reset Data Sent streams immediately:
+     * elision can remove the last outstanding STREAM frame, including FIN.
+     * Queue the reset before either elision or an application close.
+     */
+    switch (lsquic_stream_sending_state(stream))
+    {
+    case SSS_READY:
+    case SSS_SEND:
+    case SSS_DATA_SENT:
+        if (!(stream->sm_qflags & SMQF_SEND_RST))
+            schedule_stream_reset(stream, error_code);
+        break;
+    default:
+        break;
+    }
+
     if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
                             && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
     {
@@ -1312,26 +1359,11 @@ lsquic_stream_stop_sending_in (struct lsquic_stream *stream,
         stream->sm_dflags |= SMDF_ONRESET1;
     }
 
-    /* Let user collect error: */
-    maybe_conn_to_tickable_if_writeable(stream, 0);
-
-    lsquic_sfcw_consume_rem(&stream->fc);
     drop_buffered_data(stream);
     maybe_elide_stream_frames(stream);
 
-    if (!(stream->stream_flags & (STREAM_RST_SENT|STREAM_FIN_SENT))
-                                    && !(stream->sm_qflags & SMQF_SEND_RST))
-        stream_reset(stream, 0, 0);
-
-    if (stream->sm_qflags & (SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
-                             | SMQF_SEND_STOP_SENDING))
-    {
-        stream->sm_qflags &= ~(SMQF_SEND_WUF | SMQF_SEND_BLOCKED \
-                               | SMQF_SEND_STOP_SENDING);
-        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
-            TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
-    }
-
+    /* Elision may have removed the last delayed packet. */
+    maybe_conn_to_tickable_if_writeable(stream, 0);
     maybe_finish_stream(stream);
     maybe_schedule_call_on_close(stream);
 }
@@ -1853,6 +1885,14 @@ stream_shutdown_read (lsquic_stream_t *stream)
         SM_HISTORY_APPEND(stream, SHE_SHUTDOWN_READ);
         stream->stream_flags |= STREAM_U_READ_DONE;
         stream->sm_readable = stream_readable_discard;
+        if (!stream->data_in->di_if->di_empty(stream->data_in))
+        {
+            if (!(stream->sm_qflags & SMQF_SERVICE_FLAGS))
+                TAILQ_INSERT_TAIL(&stream->conn_pub->service_streams, stream,
+                                                        next_service_stream);
+            stream->sm_qflags |= SMQF_DRAIN_READ;
+            maybe_conn_to_tickable(stream);
+        }
         stream_wantread(stream, 0);
         maybe_finish_stream(stream);
     }
@@ -4374,16 +4414,8 @@ stream_reset (struct lsquic_stream *stream, uint64_t error_code, int do_close)
         return;
     }
 
-    SM_HISTORY_APPEND(stream, SHE_RESET);
-
-    LSQ_INFO("reset, error code %"PRIu64, error_code);
-    stream->error_code = error_code;
-
-    if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
-        TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
-                                                        next_send_stream);
-    stream->sm_qflags &= ~SMQF_SENDING_FLAGS;
-    stream->sm_qflags |= SMQF_SEND_RST;
+    schedule_stream_reset(stream, error_code);
+    stream->sm_qflags &= ~(SMQF_SEND_WUF|SMQF_SEND_STOP_SENDING);
 
     if (stream->sm_qflags & SMQF_QPACK_DEC)
     {

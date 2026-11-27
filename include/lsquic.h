@@ -26,7 +26,7 @@ extern "C" {
 
 #define LSQUIC_MAJOR_VERSION 4
 #define LSQUIC_MINOR_VERSION 12
-#define LSQUIC_PATCH_VERSION 0
+#define LSQUIC_PATCH_VERSION 1
 
 #define LSQUIC_QUOTE(x)     #x
 #define LSQUIC_SVAL(v)      LSQUIC_QUOTE(v)
@@ -230,6 +230,9 @@ struct lsquic_stream_if {
      * Note that resets differ in gQUIC and IETF QUIC.  In gQUIC, `how' is
      * always 2; in IETF QUIC, `how' is either 0 or 1 because one can reset
      * just one direction in IETF QUIC.
+     * On STOP_SENDING, any required RESET_STREAM is scheduled before
+     * on_reset() is called with how == 1.  The application may close the
+     * stream from the callback.  Closing it preserves the pending reset.
      */
     void (*on_reset)    (lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how);
     /**

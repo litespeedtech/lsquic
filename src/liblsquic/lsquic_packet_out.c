@@ -448,6 +448,9 @@ lsquic_packet_out_turn_on_fin (struct lsquic_packet_out *packet_out,
     uint64_t last_offset;
     int len;
 
+    if (packet_out->po_flags & PO_ENCRYPTED)
+        return -1;
+
     for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
                                                 frec = lsquic_pofi_next(&pofi))
         if (frec->fe_frame_type == QUIC_FRAME_STREAM

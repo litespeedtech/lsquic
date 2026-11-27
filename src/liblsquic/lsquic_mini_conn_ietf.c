@@ -103,7 +103,7 @@ imico_get_packet_out (struct ietf_mini_conn *conn,
 
     if (need)
         TAILQ_FOREACH(packet_out, &conn->imc_packets_out, po_next)
-            if (!(packet_out->po_flags & PO_SENT)
+            if (!(packet_out->po_flags & (PO_SENT|PO_ENCRYPTED))
                     && packet_out->po_header_type == header_type
                     && lsquic_packet_out_avail(packet_out) >= need)
                 return packet_out;

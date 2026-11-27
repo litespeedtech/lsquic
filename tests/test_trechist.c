@@ -343,6 +343,7 @@ test_limits (void)
 {
     trechist_mask_t       hist_mask;
     struct trechist_elem *hist_elems;
+    char buf[100];
     unsigned i;
     int s;
 
@@ -379,6 +380,36 @@ test_limits (void)
         next_str_range, next_str_range);
     s = lsquic_trechist_insert(&hist_mask, hist_elems, 201);
     assert(s == -1);
+
+    /* Test merge at max: */
+    hist_mask = 0;
+    lsquic_trechist_copy_ranges(&hist_mask, hist_elems,
+        & (struct str_range_iter) { .str = "[254-101][99-0]", },
+        next_str_range, next_str_range);
+    s = lsquic_trechist_insert(&hist_mask, hist_elems, 100);
+    assert(s == 0);
+    rechist2str(hist_mask, hist_elems, buf, sizeof(buf));
+    assert(0 == strcmp(buf, "[254-0]"));
+
+    /* Test merge where count exceeds max by one: */
+    hist_mask = 0;
+    lsquic_trechist_copy_ranges(&hist_mask, hist_elems,
+        & (struct str_range_iter) { .str = "[255-101][99-0]", },
+        next_str_range, next_str_range);
+    s = lsquic_trechist_insert(&hist_mask, hist_elems, 100);
+    assert(s == -1);
+    rechist2str(hist_mask, hist_elems, buf, sizeof(buf));
+    assert(0 == strcmp(buf, "[255-101][99-0]"));
+
+    /* Test merge where count exceeds max by two: */
+    hist_mask = 0;
+    lsquic_trechist_copy_ranges(&hist_mask, hist_elems,
+        & (struct str_range_iter) { .str = "[256-102][100-0]", },
+        next_str_range, next_str_range);
+    s = lsquic_trechist_insert(&hist_mask, hist_elems, 101);
+    assert(s == -1);
+    rechist2str(hist_mask, hist_elems, buf, sizeof(buf));
+    assert(0 == strcmp(buf, "[256-102][100-0]"));
 
     free(hist_elems);
 }
