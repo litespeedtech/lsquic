@@ -71,11 +71,6 @@ enum lsquic_version
     LSQVER_050,
 
     /**
-     * IETF QUIC Draft-27
-     */
-    LSQVER_ID27,
-
-    /**
      * IETF QUIC Draft-29
      */
     LSQVER_ID29,
@@ -107,7 +102,7 @@ enum lsquic_version
 
 /**
  * We currently support Google QUIC versions Q043, Q046, and Q050,
- * IETF QUIC Draft-27 and Draft-29, and IETF QUIC v1 and v2.
+ * IETF QUIC Draft-29, and IETF QUIC v1 and v2.
  * Deprecated and experimental versions are not enabled by default.
  * @see lsquic_version
  */
@@ -122,16 +117,14 @@ enum lsquic_version
                             (1 << LSQVER_RESVED))
 
 #define LSQUIC_DEPRECATED_VERSIONS ((1 << LSQVER_043) | (1 << LSQVER_046) | \
-                                    (1 << LSQVER_050) | (1 << LSQVER_ID27))
+                                    (1 << LSQVER_050))
 
 #define LSQUIC_GQUIC_HEADER_VERSIONS (1 << LSQVER_043)
 
-#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID27) \
-                          | (1 << LSQVER_ID29) | (1 << LSQVER_I001) \
+#define LSQUIC_IETF_VERSIONS ((1 << LSQVER_ID29) | (1 << LSQVER_I001) \
                           | (1 << LSQVER_I002) | (1 << LSQVER_RESVED))
 
-#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID27) \
-                                  | (1 << LSQVER_ID29) \
+#define LSQUIC_IETF_DRAFT_VERSIONS ((1 << LSQVER_ID29) \
                                   | (1 << LSQVER_RESVED))
 
 enum lsquic_hsk_status

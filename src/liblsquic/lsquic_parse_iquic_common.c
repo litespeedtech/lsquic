@@ -418,10 +418,8 @@ lsquic_iquic_gen_retry_pkt (unsigned char *buf, size_t bufsz,
     *p++ = dcid->len;
     memcpy(p, dcid->idbuf, dcid->len);
     p += dcid->len;
-    *p++ = 0xC0
-         | (3 << 4)
-         | random_nybble
-         ;
+    /* [RFC 9369], Section 3.2 changes the Retry packet type to zero. */
+    *p++ = (version == LSQVER_I002 ? 0xC0 : 0xF0) | random_nybble;
     ver_tag = lsquic_ver2tag(version);
     memcpy(p, &ver_tag, sizeof(ver_tag));
     p += sizeof(ver_tag);

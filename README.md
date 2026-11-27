@@ -16,7 +16,7 @@ distribution is used in our own products: LiteSpeed Web Server, LiteSpeed ADC,
 and OpenLiteSpeed.
 
 QUIC versions v1, v2, and Internet-Draft version 29 are enabled by default.
-Deprecated versions ID-27 and the older "Google" QUIC versions Q043, Q046,
+The deprecated "Google" QUIC versions Q043, Q046,
 and Q050 are still supported, but are not enabled by default.
 
 Standard Compliance

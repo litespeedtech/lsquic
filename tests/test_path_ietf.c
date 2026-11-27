@@ -28,6 +28,10 @@ void
 lsquic_ietf_full_conn_test_preferred_address_probe (unsigned flags, int ipv6);
 
 
+void
+lsquic_ietf_full_conn_test_declined_preferred_address (void);
+
+
 int
 main (void)
 {
@@ -38,6 +42,8 @@ main (void)
     unsigned i, j, k;
     int keep;
 
+    if (0 != lsquic_global_init(LSQUIC_GLOBAL_CLIENT | LSQUIC_GLOBAL_SERVER))
+        return 1;
     for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
     {
         for (j = 0; j < sizeof(inputs) / sizeof(inputs[0]); ++j)
@@ -56,7 +62,9 @@ main (void)
             lsquic_ietf_full_conn_test_repath(flags[i], 1460, 1200, keep);
         }
     }
+    lsquic_ietf_full_conn_test_declined_preferred_address();
     lsquic_ietf_full_conn_test_preferred_address_probe(0, 0);
     lsquic_ietf_full_conn_test_preferred_address_probe(LSENG_HTTP, 1);
+    lsquic_global_cleanup();
     return 0;
 }

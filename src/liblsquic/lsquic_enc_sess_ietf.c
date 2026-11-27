@@ -61,7 +61,6 @@ static const struct alpn_map {
     enum lsquic_version  version;
     const unsigned char *alpn;
 } s_h3_alpns[] = {
-    {   LSQVER_ID27, (unsigned char *) "\x05h3-27",     },
     {   LSQVER_ID29, (unsigned char *) "\x05h3-29",     },
     {   LSQVER_I001, (unsigned char *) "\x02h3",        },
     {   LSQVER_I002, (unsigned char *) "\x02h3",        },
@@ -539,11 +538,8 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
     int len;
 
     memset(&params, 0, sizeof(params));
-    if (version > LSQVER_ID27)
-    {
-        params.tp_initial_source_cid = *CN_SCID(enc_sess->esi_conn);
-        params.tp_set |= 1 << TPI_INITIAL_SOURCE_CID;
-    }
+    params.tp_initial_source_cid = *CN_SCID(enc_sess->esi_conn);
+    params.tp_set |= 1 << TPI_INITIAL_SOURCE_CID;
     if (enc_sess->esi_flags & ESI_SERVER)
     {
         const struct lsquic_conn *const lconn = enc_sess->esi_conn;
@@ -686,14 +682,13 @@ gen_trans_params (struct enc_sess_iquic *enc_sess, unsigned char *buf,
         set_tp_version_info(&params, settings->es_versions,
                             enc_sess->esi_conn->cn_version);
 
-    len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
+    len = lsquic_tp_encode(
                         &params, enc_sess->esi_flags & ESI_SERVER, buf, bufsz);
     if (len >= 0)
     {
         char str[MAX_TP_STR_SZ];
         LSQ_DEBUG("generated transport parameters buffer of %d bytes", len);
-        LSQ_DEBUG("%s", ((version == LSQVER_ID27 ? lsquic_tp_to_str_27
-                        : lsquic_tp_to_str)(&params, str, sizeof(str)), str));
+        LSQ_DEBUG("%s", (lsquic_tp_to_str(&params, str, sizeof(str)), str));
     }
     else
         LSQ_WARN("cannot generate transport parameters: %d", errno);
@@ -800,8 +795,7 @@ maybe_create_SSL_SESSION (struct enc_sess_iquic *enc_sess,
 
     if (SSL_SESSION_early_data_capable(ssl_session))
     {
-        if (0 > (quic_ver == LSQVER_ID27 ? lsquic_tp_decode_27
-                    : lsquic_tp_decode)(trapa_buf, trapa_sz, 1,
+        if (0 > lsquic_tp_decode(trapa_buf, trapa_sz, 1,
                                                     &enc_sess->esi_peer_tp))
         {
             SSL_SESSION_free(ssl_session);
@@ -1134,7 +1128,6 @@ static const unsigned char *const lsquic_ver2salt[N_LSQVER] = {
     [LSQVER_043] = HSK_SALT_PRE29,
     [LSQVER_046] = HSK_SALT_PRE29,
     [LSQVER_050] = HSK_SALT_PRE29,
-    [LSQVER_ID27] = HSK_SALT_PRE29,
     [LSQVER_ID29] = HSK_SALT_PRE33,
     [LSQVER_I001] = HSK_SALT,
     [LSQVER_I002] = HSK_SALT_V2,
@@ -1424,7 +1417,6 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
     struct enc_sess_iquic *const enc_sess = enc_session_p;
     struct network_path *path;
     const struct alpn_map *am;
-    unsigned quic_ctx_idx;
     SSL_CTX *ssl_ctx = NULL;
 
     if (enc_sess->esi_enpub->enp_alpn)
@@ -1469,10 +1461,9 @@ iquic_esfi_init_server (enc_session_t *enc_session_p)
         LSQ_INFO("could not set stream method");
         return -1;
     }
-    quic_ctx_idx = enc_sess->esi_conn->cn_version == LSQVER_ID27 ? 0 : 1;
     if (!SSL_set_quic_early_data_context(enc_sess->esi_ssl,
-                        enc_sess->esi_enpub->enp_quic_ctx_buf[quic_ctx_idx],
-                        enc_sess->esi_enpub->enp_quic_ctx_sz[quic_ctx_idx]))
+                        enc_sess->esi_enpub->enp_quic_ctx_buf,
+                        enc_sess->esi_enpub->enp_quic_ctx_sz))
     {
         LSQ_INFO("could not set early data context");
         return -1;
@@ -1735,7 +1726,6 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     const uint8_t *params_buf;
     size_t bufsz;
     char *params_str;
-    const enum lsquic_version version = enc_sess->esi_conn->cn_version;
     int have_0rtt_tp;
 
     SSL_get_peer_quic_transport_params(enc_sess->esi_ssl, &params_buf, &bufsz);
@@ -1764,8 +1754,7 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
             lsquic_mm_put_4k(&enc_sess->esi_enpub->enp_mm, params_str);
         }
     }
-    if (0 > (version == LSQVER_ID27 ? lsquic_tp_decode_27
-                : lsquic_tp_decode)(params_buf, bufsz,
+    if (0 > lsquic_tp_decode(params_buf, bufsz,
                             !(enc_sess->esi_flags & ESI_SERVER),
                                                 trans_params))
     {
@@ -1797,22 +1786,15 @@ get_peer_transport_params (struct enc_sess_iquic *enc_sess)
     };
 
     unsigned must_have, must_not_have = 0;
-    if (version > LSQVER_ID27)
-    {
-        must_have = 1 << TPI_INITIAL_SOURCE_CID;
-        if (enc_sess->esi_flags & ESI_SERVER)
-            must_not_have |= 1 << TPI_ORIGINAL_DEST_CID;
-        else
-            must_have |= 1 << TPI_ORIGINAL_DEST_CID;
-        if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
-            must_have |= 1 << TPI_RETRY_SOURCE_CID;
-        else
-            must_not_have |= 1 << TPI_RETRY_SOURCE_CID;
-    }
-    else if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
-        must_have = 1 << TPI_ORIGINAL_DEST_CID;
+    must_have = 1 << TPI_INITIAL_SOURCE_CID;
+    if (enc_sess->esi_flags & ESI_SERVER)
+        must_not_have |= 1 << TPI_ORIGINAL_DEST_CID;
     else
-        must_have = 0;
+        must_have |= 1 << TPI_ORIGINAL_DEST_CID;
+    if ((enc_sess->esi_flags & (ESI_RETRY|ESI_SERVER)) == ESI_RETRY)
+        must_have |= 1 << TPI_RETRY_SOURCE_CID;
+    else
+        must_not_have |= 1 << TPI_RETRY_SOURCE_CID;
 
     enum transport_param_id tpi;
     for (tpi = FIRST_TP_CID; tpi <= LAST_TP_CID; ++tpi)
@@ -3481,9 +3463,6 @@ const struct lsquic_stream_if lsquic_mini_cry_sm_if =
 
 const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
 {
-    /* [RFC 9001] Section 5.8 (draft-25 for backward compatibility) */
-    (unsigned char *)
-        "\x4d\x32\xec\xdb\x2a\x21\x33\xc8\x41\xe4\x04\x3d\xf2\x7d\x44\x30",
     /* [RFC 9001] Section 5.8 (draft-29 for backward compatibility) */
     (unsigned char *)
         "\xcc\xce\x18\x7e\xd0\x9a\x09\xd0\x57\x28\x15\x5a\x6c\xb9\x6b\xe1",
@@ -3498,8 +3477,6 @@ const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS] =
 
 const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
 {
-    /* [RFC 9001] Section 5.8 (draft-25 for backward compatibility) */
-    (unsigned char *) "\x4d\x16\x11\xd0\x55\x13\xa5\x52\xc5\x87\xd5\x75",
     /* [RFC 9001] Section 5.8 (draft-29 for backward compatibility) */
     (unsigned char *) "\xe5\x49\x30\xf9\x7f\x21\x36\xf0\x53\x0a\x8c\x1c",
     /* [RFC 9001] Section 5.8 (Retry Packet Integrity) */
@@ -3512,7 +3489,7 @@ const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS] =
 int
 lsquic_enc_sess_ietf_gen_quic_ctx (
                 const struct lsquic_engine_settings *settings,
-                enum lsquic_version version, unsigned char *buf, size_t bufsz)
+                unsigned char *buf, size_t bufsz)
 {
     struct transport_params params;
     int len;
@@ -3586,15 +3563,12 @@ lsquic_enc_sess_ietf_gen_quic_ctx (
 
     params.tp_set &= SERVER_0RTT_TPS;
 
-    len = (version == LSQVER_ID27 ? lsquic_tp_encode_27 : lsquic_tp_encode)(
-                        &params, 1, buf, bufsz);
+    len = lsquic_tp_encode(&params, 1, buf, bufsz);
     if (len >= 0)
     {
         char str[MAX_TP_STR_SZ];
-        LSQ_LOG1(LSQ_LOG_DEBUG, "generated QUIC server context of %d bytes "
-            "for version %s", len, lsquic_ver2str[version]);
-        LSQ_LOG1(LSQ_LOG_DEBUG, "%s", ((version == LSQVER_ID27
-                ? lsquic_tp_to_str_27 : lsquic_tp_to_str)(&params, str,
+        LSQ_LOG1(LSQ_LOG_DEBUG, "generated QUIC server context of %d bytes", len);
+        LSQ_LOG1(LSQ_LOG_DEBUG, "%s", (lsquic_tp_to_str(&params, str,
                                                             sizeof(str)), str));
     }
     else

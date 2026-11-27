@@ -639,16 +639,11 @@ lsquic_mini_conn_ietf_new (struct lsquic_engine_public *enpub,
     }
 
     esfi = &lsquic_enc_session_iquic_ietf_v1;
-    if (version > LSQVER_ID27)
-        enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
+    enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
                     &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
                     odcid ? odcid : &conn->imc_cces[0].cce_cid,
                     &conn->imc_path.np_dcid,
                     odcid ? &conn->imc_cces[0].cce_cid : NULL);
-    else
-        enc_sess = esfi->esfi_create_server(enpub, &conn->imc_conn,
-                    &packet_in->pi_dcid, conn->imc_stream_ps, &crypto_stream_if,
-                    odcid, &conn->imc_path.np_dcid, NULL);
     if (!enc_sess)
     {
         lsquic_malo_put(conn);
@@ -2239,7 +2234,7 @@ imico_generate_conn_close (struct ietf_mini_conn *conn)
  */
     LSQ_DEBUG("sending CONNECTION_CLOSE, is_app: %d, error code: %u, "
         "reason: %.*s", is_app, error_code, rlen, reason);
-    if (is_app && conn->imc_conn.cn_version > LSQVER_ID27)
+    if (is_app)
     {
         LSQ_DEBUG("convert to 0x1C, replace code and reason");
         is_app = 0;

@@ -291,7 +291,6 @@ test_oversized_param_len (void)
     struct transport_params params;
 
     assert(lsquic_tp_decode(buf, sizeof(buf), 0, &params) < 0);
-    assert(lsquic_tp_decode_27(buf, sizeof(buf), 0, &params) < 0);
 }
 
 

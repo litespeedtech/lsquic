@@ -150,10 +150,32 @@ run_gvnt (int i)
 }
 
 
+static void
+test_removed_draft (void)
+{
+    static const unsigned char tag[] = { 0xFF, 0, 0, 27 };
+    const char *const *alpn;
+    uint32_t ver_tag;
+
+    memcpy(&ver_tag, tag, sizeof(ver_tag));
+    assert(lsquic_tag2ver(ver_tag) >= N_LSQVER);
+    assert(lsquic_tag2ver_fast(tag) == N_LSQVER);
+    assert(lsquic_tag2ver_ietf(tag) == N_LSQVER);
+    assert(lsquic_str2ver("FF00001B", 8) >= N_LSQVER);
+    assert(lsquic_str2ver("h3-27", 5) >= N_LSQVER);
+    assert(lsquic_alpn2ver("h3-27", 5) >= N_LSQVER);
+    for (alpn = lsquic_get_h3_alpns(LSQUIC_SUPPORTED_VERSIONS); *alpn; ++alpn)
+        assert(strcmp(*alpn, "h3-27") != 0);
+    assert(lsquic_alpn2ver("h3-29", 5) == LSQVER_ID29);
+}
+
+
 int
 main (void)
 {
     unsigned i;
+
+    test_removed_draft();
     for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
         run_gvnt(i);
     return 0;
