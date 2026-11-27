@@ -219,6 +219,19 @@ lsquic_packet_out_avail (const lsquic_packet_out_t *p)
     return (unsigned short)(p->po_n_alloc - p->po_data_sz);
 }
 
+
+/* The engine reuses the cached ciphertext on retry, so new frames
+ * must go in another packet.
+ */
+static inline int
+lsquic_packet_out_has_writeable_space (const struct lsquic_packet_out *packet,
+                                                        unsigned need_at_least)
+{
+    return !(packet->po_flags & PO_ENCRYPTED)
+        && lsquic_packet_out_avail(packet) >= need_at_least;
+}
+
+
 static inline enum packno_bits
 lsquic_packet_out_packno_bits (const lsquic_packet_out_t *p)
 {

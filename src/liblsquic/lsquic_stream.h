@@ -167,7 +167,9 @@ enum stream_q_flags
      */
 #define SMQF_SEND_MAX_STREAM_DATA SMQF_SEND_WUF
 
-#define SMQF_SERVICE_FLAGS (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM|SMQF_ABORT_CONN)
+#define SMQF_SERVICE_FLAGS (SMQF_CALL_ONCLOSE|SMQF_FREE_STREAM|SMQF_ABORT_CONN \
+                                                        |SMQF_DRAIN_READ)
+    SMQF_DRAIN_READ   = 1 << 12,    /* Discard input after read shutdown */
     SMQF_CALL_ONCLOSE = 1 << 6,
     SMQF_FREE_STREAM  = 1 << 7,
     SMQF_ABORT_CONN   = 1 << 8,     /* Unrecoverable error occurred */
@@ -509,6 +511,9 @@ lsquic_stream_stream_frame_sent (lsquic_stream_t *);
 
 void
 lsquic_stream_maybe_reset (struct lsquic_stream *, uint64_t error_code, int);
+
+void
+lsquic_stream_drain_read (struct lsquic_stream *);
 
 void
 lsquic_stream_call_on_close (lsquic_stream_t *);

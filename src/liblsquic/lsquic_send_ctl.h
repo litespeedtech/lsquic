@@ -245,6 +245,16 @@ lsquic_send_ctl_have_outgoing_stream_frames (const lsquic_send_ctl_t *);
 int
 lsquic_send_ctl_have_outgoing_retx_frames (const lsquic_send_ctl_t *);
 
+/* Free bytes in the last scheduled packet that justify trying a stream
+ * write.  App-limited detection uses the same estimate.
+ *
+ * TODO: parameterize with an engine default and a per-connection override.
+ * When the next stream is known, check whether its frame fits.  Consider
+ * BBR's app-limited check separately from the write dispatch policy.
+ */
+#define WRITE_DISPATCH_MIN_SPACE 11
+
+
 struct lsquic_packet_out *
 lsquic_send_ctl_last_scheduled (struct lsquic_send_ctl *, enum packnum_space,
                                             const struct network_path *, int);

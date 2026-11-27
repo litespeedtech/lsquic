@@ -264,6 +264,9 @@ build target or `ctest -j1`.
   or API usage changes.
 - Update `docs/internals.rst` when an internal invariant, data flow, or
   major structure changes.
+- Keep the internals document focused on important, subtle, and non-obvious
+  architectural behavior.  Do not document routine implementation details
+  that are clear from the code.
 - When documentation changes and Sphinx plus its theme are installed, build it
   with `cmake --build <build-dir> --target docs` and fix warnings introduced by
   the change.

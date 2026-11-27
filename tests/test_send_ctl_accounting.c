@@ -50,6 +50,9 @@ struct accounting_test
     struct lsquic_alarmset       alset;
     struct ver_neg               ver_neg;
     struct network_path          path;
+    unsigned char                ciphertext[1500];
+    unsigned                     n_returns;
+    unsigned                     n_releases;
 #if LSQUIC_CONN_STATS
     struct conn_stats            stats;
 #endif
@@ -58,6 +61,10 @@ struct accounting_test
 
 void
 lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags);
+
+
+void
+lsquic_ietf_full_conn_test_queued_fin_reset (void);
 
 
 static struct
@@ -323,6 +330,300 @@ destroy_unscheduled_packet (struct accounting_test *t,
 
 
 static void
+record_buffer_return (void *ctx, void *peer_ctx, void *buf, char ipv6)
+{
+    struct accounting_test *t = ctx;
+
+    assert(buf == t->ciphertext);
+    assert(peer_ctx == t->path.np_peer_ctx);
+    assert(!ipv6);
+    ++t->n_returns;
+}
+
+
+static void
+record_buffer_release (void *ctx, void *peer_ctx, void *buf, char ipv6)
+{
+    struct accounting_test *t = ctx;
+
+    assert(buf == t->ciphertext);
+    assert(peer_ctx == t->path.np_peer_ctx);
+    assert(!ipv6);
+    ++t->n_releases;
+}
+
+
+static const struct lsquic_packout_mem_if retry_pmi = {
+    .pmi_return = record_buffer_return,
+    .pmi_release = record_buffer_release,
+};
+
+
+/* Stand in for the engine between dequeue and the failed-send callback. */
+static void
+cache_and_delay (struct accounting_test *t, struct lsquic_packet_out *packet)
+{
+    unsigned size;
+
+    size = lsquic_packet_out_total_sz(&t->lconn, packet);
+    assert(size <= sizeof(t->ciphertext));
+    memset(t->ciphertext, 0xA5, size);
+    t->enpub.enp_pmi = &retry_pmi;
+    t->enpub.enp_pmi_ctx = t;
+    packet->po_enc_data = t->ciphertext;
+    packet->po_sent_sz = packet->po_enc_data_sz = size;
+    packet->po_dcid_len = t->path.np_dcid.len;
+    packet->po_flags |= PO_ENCRYPTED|PO_SENT_SZ;
+    lsquic_send_ctl_delayed_one(&t->send_ctl, packet);
+    assert_scheduled_accounting(t);
+}
+
+
+enum retry_writer { CONTROL, REGEN, CRYPTO, STREAM, DATAGRAM };
+
+
+static struct lsquic_packet_out *
+get_retry_writer_packet (struct accounting_test *t, enum retry_writer writer,
+                                                                    int *err)
+{
+    switch (writer)
+    {
+    case STREAM:
+        return lsquic_send_ctl_get_packet_for_stream(&t->send_ctl, 1,
+                                                                &t->path, NULL);
+    case DATAGRAM:
+        return lsquic_send_ctl_get_packet_for_datagram(&t->send_ctl, 1,
+                                                                &t->path, err);
+    case CRYPTO:
+        return lsquic_send_ctl_get_packet_for_crypto(&t->send_ctl, 1,
+                                                            PNS_APP, &t->path);
+    default:
+        return lsquic_send_ctl_get_writeable_packet(&t->send_ctl, PNS_APP, 1,
+                                                &t->path, writer == REGEN, err);
+    }
+}
+
+
+static void
+test_delayed_packet_writer (enum retry_writer writer)
+{
+    static const unsigned char ack[] = { 2, 0, 0, 0, 0 };
+    struct accounting_test t;
+    struct lsquic_packet_out *earlier, *delayed, *fresh;
+    struct lsquic_cubic *cubic;
+    unsigned acct, i;
+    int err, len;
+
+    init_test(&t);
+    t.send_ctl.sc_flags &= ~(SC_PACE|SC_BUFFER_STREAM);
+    cubic = t.send_ctl.sc_cong_ctl;
+    earlier = schedule_ping_packet(&t, 1);
+    assert(earlier == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    delayed = lsquic_send_ctl_new_packet_out(&t.send_ctl, 1, PNS_APP, &t.path);
+    assert(delayed);
+    memcpy(delayed->po_data, ack, sizeof(ack));
+    delayed->po_data_sz = delayed->po_regen_sz = sizeof(ack);
+    delayed->po_frame_types = QUIC_FTBIT_ACK;
+    assert(0 == lsquic_packet_out_add_frame(delayed, t.conn_pub.mm, 0,
+                                            QUIC_FRAME_ACK, 0, sizeof(ack)));
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, delayed);
+    assert(delayed == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    cache_and_delay(&t, delayed);
+    acct = delayed->po_acct_sz;
+
+    /* Return the earlier, writable packet to the head of the queue. */
+    lsquic_send_ctl_delayed_one(&t.send_ctl, earlier);
+    assert(delayed == lsquic_send_ctl_last_scheduled(&t.send_ctl, PNS_APP,
+                                                    &t.path, writer == REGEN));
+    cubic->cu_cwnd = t.send_ctl.sc_bytes_scheduled;
+    err = -1;
+    assert(NULL == get_retry_writer_packet(&t, writer, &err));
+    if (writer == CONTROL || writer == REGEN || writer == DATAGRAM)
+        assert(err == 0);
+    lsquic_send_ctl_maybe_app_limited(&t.send_ctl, 0, &t.path, NULL, NULL);
+    assert(!(t.send_ctl.sc_flags & SC_APP_LIMITED));
+    assert(t.send_ctl.sc_n_scheduled == 2);
+
+    cubic->cu_cwnd += 2 * t.path.np_pack_size;
+    fresh = get_retry_writer_packet(&t, writer, &err);
+    assert(fresh && fresh != delayed && fresh != earlier);
+    assert(fresh == get_retry_writer_packet(&t, writer, &err));
+    len = t.lconn.cn_pf->pf_gen_ping_frame(fresh->po_data,
+                                                lsquic_packet_out_avail(fresh));
+    assert(len == 1);
+    assert(0 == lsquic_packet_out_add_frame(fresh, t.conn_pub.mm, 0,
+                                                    QUIC_FRAME_PING, 0, len));
+    lsquic_send_ctl_incr_pack_sz(&t.send_ctl, fresh, len, QUIC_FRAME_PING);
+    assert_scheduled_accounting(&t);
+    assert(earlier == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    destroy_unscheduled_packet(&t, earlier);
+    assert(delayed == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(delayed->po_flags & PO_ENCRYPTED);
+    assert(delayed->po_enc_data == t.ciphertext);
+    assert(delayed->po_enc_data_sz == acct);
+    for (i = 0; i < acct; ++i)
+        assert(delayed->po_enc_data[i] == 0xA5);
+    assert(delayed->po_data_sz == sizeof(ack));
+    assert(delayed->po_regen_sz == sizeof(ack));
+    assert(0 == memcmp(delayed->po_data, ack, sizeof(ack)));
+    assert(delayed->po_frame_types == QUIC_FTBIT_ACK);
+    assert(delayed->po_frecs.one.fe_frame_type == QUIC_FRAME_ACK);
+    assert(delayed->po_frecs.one.fe_len == sizeof(ack));
+    assert(!t.n_returns);
+    destroy_unscheduled_packet(&t, delayed);
+    assert(fresh == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(t.send_ctl.sc_bytes_scheduled == 0);
+    destroy_unscheduled_packet(&t, fresh);
+    cleanup_test(&t);
+}
+
+
+static void
+test_delayed_stream_edits (void)
+{
+    static const unsigned char data[] = { 0x0A, 0, 1, 'x', 1 };
+    struct accounting_test t;
+    struct lsquic_stream stream = { .id = 0, .tosend_off = 1 };
+    struct lsquic_packet_out *packet;
+    unsigned acct;
+
+    init_test(&t);
+    stream.conn_pub = &t.conn_pub;
+    t.send_ctl.sc_cached_bpt.stream_id = stream.id;
+    packet = new_ping_packet(&t, sizeof(data));
+    memcpy(packet->po_data, data, sizeof(data));
+    packet->po_frame_types |= QUIC_FTBIT_STREAM;
+    assert(0 == lsquic_packet_out_add_stream(packet, t.conn_pub.mm, &stream,
+                                                    QUIC_FRAME_STREAM, 0, 4));
+    assert(0 == lsquic_packet_out_add_frame(packet, t.conn_pub.mm, 0,
+                                                        QUIC_FRAME_PING, 4, 1));
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, packet);
+    assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    cache_and_delay(&t, packet);
+    acct = packet->po_acct_sz;
+
+    assert(-1 == lsquic_send_ctl_turn_on_fin(&t.send_ctl, &stream));
+    lsquic_send_ctl_elide_stream_frames(&t.send_ctl, 4);
+    assert(packet->po_flags & PO_ENCRYPTED);
+    assert(0 == memcmp(packet->po_data, data, sizeof(data)));
+    assert(packet->po_acct_sz == acct);
+    assert(t.n_returns == 0);
+    stream.sm_qflags |= SMQF_SEND_RST;
+    lsquic_send_ctl_elide_stream_frames(&t.send_ctl, stream.id);
+    assert(t.n_returns == 1);
+    assert(!(packet->po_flags & (PO_SENT_SZ|PO_ENCRYPTED)));
+    assert(!packet->po_enc_data);
+    assert(packet->po_frame_types == QUIC_FTBIT_PING);
+    assert(t.send_ctl.sc_bytes_scheduled == acct - 4);
+    assert_scheduled_accounting(&t);
+    assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(packet->po_data_sz == 1 && packet->po_data[0] == 1);
+    destroy_unscheduled_packet(&t, packet);
+    cleanup_test(&t);
+}
+
+
+static void
+test_delayed_initial_padding (void)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *initial, *following;
+    unsigned padded, i;
+
+    init_test(&t);
+    initial = lsquic_send_ctl_new_packet_out(&t.send_ctl, 1, PNS_INIT, &t.path);
+    assert(initial);
+    initial->po_data[0] = 1;
+    initial->po_data_sz = 1;
+    initial->po_frame_types = QUIC_FTBIT_PING;
+    lsquic_send_ctl_scheduled_one(&t.send_ctl, initial);
+    following = schedule_ping_packet(&t, 100);
+    assert(initial == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    padded = initial->po_data_sz;
+    cache_and_delay(&t, initial);
+    assert(initial == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(initial->po_flags & PO_ENCRYPTED);
+    assert(initial->po_data_sz == padded && !t.n_returns);
+
+    assert(following == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    destroy_unscheduled_packet(&t, following);
+    lsquic_send_ctl_delayed_one(&t.send_ctl, initial);
+    assert(initial == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(t.n_returns == 1);
+    assert(!(initial->po_flags & (PO_ENCRYPTED|PO_SENT_SZ)));
+    assert(!initial->po_enc_data && initial->po_data_sz > padded);
+    assert(lsquic_packet_out_total_sz(&t.lconn, initial) == 1200);
+    assert(initial->po_data[0] == 1);
+    for (i = 1; i < initial->po_data_sz; ++i)
+        assert(initial->po_data[i] == 0);
+    lsquic_send_ctl_delayed_one(&t.send_ctl, initial);
+    assert(t.send_ctl.sc_bytes_scheduled == 1200);
+    assert_scheduled_accounting(&t);
+    cleanup_test(&t);
+}
+
+
+static void
+test_delayed_loss_bits (unsigned loss)
+{
+    struct accounting_test t;
+    struct lsquic_packet_out *packet;
+    unsigned i;
+
+    init_test(&t);
+    t.send_ctl.sc_flags |= SC_QL_BITS;
+    t.send_ctl.sc_square_count = 63;
+    t.send_ctl.sc_loss_count = loss;
+    packet = schedule_ping_packet(&t, 1);
+    t.send_ctl.sc_gap = packet->po_packno - 1;
+    assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL));
+    assert(lsquic_packet_out_square_bit(packet));
+    assert(lsquic_packet_out_loss_bit(packet) == loss);
+    cache_and_delay(&t, packet);
+    assert(t.send_ctl.sc_square_count == 63);
+    /* A new opt-ACK gap changes the square bit a fresh header would get. */
+    t.send_ctl.sc_gap = packet->po_packno + 10;
+    ++t.send_ctl.sc_loss_count;  /* A new loss arrives between attempts. */
+    for (i = 0; i < 3; ++i)
+    {
+        assert(t.send_ctl.sc_square_count == 63);
+        assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl,
+                                                                        NULL));
+        assert(t.send_ctl.sc_square_count == 64);
+        assert(t.send_ctl.sc_loss_count == 1);
+        assert(lsquic_packet_out_square_bit(packet));
+        assert(lsquic_packet_out_loss_bit(packet) == loss);
+        assert(packet->po_flags & PO_ENCRYPTED);
+        lsquic_send_ctl_delayed_one(&t.send_ctl, packet);
+    }
+    if (loss)
+    {
+        lsquic_send_ctl_drop_scheduled(&t.send_ctl);
+        assert(t.send_ctl.sc_loss_count == 2);
+        assert(t.n_releases == 1);
+    }
+    else
+    {
+        /* A renumber request can still yield the original packet number. */
+        packet->po_flags |= PO_REPACKNO;
+        t.send_ctl.sc_cur_packno = packet->po_packno - 1;
+        assert(packet == lsquic_send_ctl_next_packet_to_send(&t.send_ctl,
+                                                                        NULL));
+        assert(packet->po_flags & PO_ENCRYPTED);
+        assert(packet->po_enc_data == t.ciphertext && !t.n_returns);
+        retry_pmi.pmi_release(&t, t.path.np_peer_ctx, packet->po_enc_data, 0);
+        packet->po_enc_data = NULL;
+        packet->po_flags &= ~PO_ENCRYPTED;
+        packet->po_sent = 1000;
+        assert(0 == lsquic_send_ctl_sent_packet(&t.send_ctl, packet));
+        assert(t.send_ctl.sc_loss_count == 1);
+        assert(t.send_ctl.sc_square_count == 64);
+    }
+    cleanup_test(&t);
+}
+
+
+static void
 test_dcid_change_next_packet_to_send (void)
 {
     struct accounting_test t;
@@ -427,6 +728,7 @@ test_repackno_chops_regen_bytes (void)
     struct accounting_test t;
     struct lsquic_packet_out *packet_out;
     unsigned acct_before;
+    lsquic_packno_t old_packno;
     int s;
 
     init_test(&t);
@@ -440,7 +742,7 @@ test_repackno_chops_regen_bytes (void)
     packet_out->po_data_sz = 3;
     packet_out->po_regen_sz = 2;
     packet_out->po_frame_types = QUIC_FTBIT_ACK|QUIC_FTBIT_PING;
-    packet_out->po_flags |= PO_REPACKNO;
+    old_packno = packet_out->po_packno;
     s = lsquic_packet_out_add_frame(packet_out, &t.enpub.enp_mm, 0,
                                     QUIC_FRAME_ACK, 0, 2);
     assert(0 == s);
@@ -448,11 +750,20 @@ test_repackno_chops_regen_bytes (void)
                                     QUIC_FRAME_PING, 2, 1);
     assert(0 == s);
     lsquic_send_ctl_scheduled_one(&t.send_ctl, packet_out);
+    assert(packet_out == lsquic_send_ctl_next_packet_to_send(&t.send_ctl,
+                                                                        NULL));
+    cache_and_delay(&t, packet_out);
+    packet_out->po_flags |= PO_REPACKNO;
     acct_before = packet_out->po_acct_sz;
     assert_scheduled_accounting(&t);
 
     packet_out = lsquic_send_ctl_next_packet_to_send(&t.send_ctl, NULL);
     assert(packet_out);
+    assert(t.n_returns == 1);
+    assert(packet_out->po_packno != old_packno);
+    assert(!(packet_out->po_flags & (PO_ENCRYPTED|PO_SENT_SZ)));
+    assert(!packet_out->po_enc_data);
+    assert(packet_out->po_data_sz == 1 && packet_out->po_data[0] == 0x01);
     assert(packet_out->po_acct_sz == acct_before - 2);
     assert(0 == packet_out->po_regen_sz);
     assert(0 == (packet_out->po_frame_types & QUIC_FTBIT_ACK));
@@ -1171,7 +1482,15 @@ test_rto_drops_scheduled_bw_probe_fill (void)
 int
 main (void)
 {
+    enum retry_writer writer;
+
     lsquic_init_timers();
+    for (writer = CONTROL; writer <= DATAGRAM; ++writer)
+        test_delayed_packet_writer(writer);
+    test_delayed_stream_edits();
+    test_delayed_initial_padding();
+    test_delayed_loss_bits(0);
+    test_delayed_loss_bits(1);
     test_retry_resize(69, 2);
     test_retry_resize(64, 2);
     test_retry_resize(63, 2);
@@ -1180,6 +1499,7 @@ main (void)
     test_dcid_change_cleanup();
     test_dcid_change_drop_scheduled();
     test_incr_pack_sz();
+    lsquic_ietf_full_conn_test_queued_fin_reset();
     lsquic_ietf_full_conn_test_scheduled_cc(0);
     lsquic_ietf_full_conn_test_scheduled_cc(LSENG_SERVER);
     lsquic_ietf_full_conn_test_scheduled_cc(LSENG_HTTP);

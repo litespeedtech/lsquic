@@ -3020,6 +3020,8 @@ service_streams (struct full_conn *conn)
              * is about to be aborted.
              */
             ABORT_ERROR("aborted due to error in stream %"PRIu64, stream->id);
+        if (stream->sm_qflags & SMQF_DRAIN_READ)
+            lsquic_stream_drain_read(stream);
         if (stream->sm_qflags & SMQF_CALL_ONCLOSE)
         {
             lsquic_stream_call_on_close(stream);
@@ -3303,7 +3305,8 @@ write_is_possible (struct full_conn *conn)
 
     packet_out = lsquic_send_ctl_last_scheduled(&conn->fc_send_ctl, PNS_APP,
                                                         &conn->fc_path, 0);
-    return (packet_out && lsquic_packet_out_avail(packet_out) > 10)
+    return (packet_out && lsquic_packet_out_has_writeable_space(packet_out,
+                                                    WRITE_DISPATCH_MIN_SPACE))
         || lsquic_send_ctl_can_send(&conn->fc_send_ctl);
 }
 

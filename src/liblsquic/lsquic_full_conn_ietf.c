@@ -317,6 +317,7 @@ struct conn_path
     uint64_t                    cop_path_chals[8];  /* Arbitrary number */
     uint64_t                    cop_inc_chal;       /* Incoming challenge */
     lsquic_packno_t             cop_max_packno;
+    unsigned                    cop_probe_credit;
     enum {
         /* Initialized covers cop_path.np_pack_size and cop_path.np_dcid */
         COP_INITIALIZED = 1 << 0,
@@ -330,12 +331,15 @@ struct conn_path
         COP_GOT_NONPROB = 1 << 2,
         /* Spin bit is enabled on this path. */
         COP_SPIN_BIT    = 1 << 3,
-        /* Allow padding packet to 1200 bytes */
-        COP_ALLOW_MTU_PADDING = 1 << 4,
+        /* PATH_CHALLENGE is or should be the full path packet size */
+        COP_CHAL_FULL_SIZE = 1 << 4,
         /* Verified that the path MTU is at least 1200 bytes */
         COP_VALIDATED_MTU = 1 << 5,
         /* This path is retired */
         COP_RETIRED = 1 << 6,
+        /* Probe requests parked until more credit or path validation. */
+        COP_CHAL_PENDING = 1 << 7,
+        COP_RESP_PENDING = 1 << 8,
     }                           cop_flags;
     unsigned char               cop_n_chals;
     unsigned char               cop_cce_idx;
@@ -708,6 +712,24 @@ wipe_path (struct ietf_full_conn *conn, unsigned path_id)
 
 
 static void
+maybe_retire_dcid (struct ietf_full_conn *, const lsquic_cid_t *);
+
+
+/* [RFC 9000], Section 8.2.4: allow the new path its initial RTT. */
+static lsquic_time_t
+path_validation_timeout (const struct ietf_full_conn *conn)
+{
+    const lsquic_time_t initial_rtt = 333333 /* [RFC 9002], Section 6.2.2 */;
+    lsquic_time_t pto, initial_pto;
+
+    pto = conn->ifc_pub.rtt_stats.srtt
+                + MAX(4 * conn->ifc_pub.rtt_stats.rttvar, 1000);
+    initial_pto = initial_rtt + 4 * (initial_rtt / 2);
+    return 3 * (MAX(pto, initial_pto) + conn->ifc_pub.max_peer_ack_usec);
+}
+
+
+static void
 path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
                                 lsquic_time_t expiry, lsquic_time_t now)
 {
@@ -715,7 +737,19 @@ path_chal_alarm_expired (enum alarm_id al_id, void *ctx,
     const unsigned path_id = al_id - AL_PATH_CHAL;
     struct conn_path *const copath = &conn->ifc_paths[path_id];
 
-    if (copath->cop_n_chals < sizeof(copath->cop_path_chals)
+    if ((conn->ifc_flags & IFC_SERVER)
+        && !(copath->cop_flags & COP_VALIDATED)
+        && path_id != conn->ifc_cur_path_id)
+    {
+        LSQ_DEBUG("abandon unvalidated path #%u", path_id);
+        lsquic_send_ctl_cancel_path_verification(&conn->ifc_send_ctl,
+                                                        &copath->cop_path);
+        conn->ifc_send_flags &= ~((SF_SEND_PATH_CHAL | SF_SEND_PATH_RESP)
+                                                                << path_id);
+        maybe_retire_dcid(conn, &copath->cop_path.np_dcid);
+        wipe_path(conn, path_id);
+    }
+    else if (copath->cop_n_chals < sizeof(copath->cop_path_chals)
                                         / sizeof(copath->cop_path_chals[0]))
     {
         LSQ_DEBUG("path #%u challenge expired, schedule another one", path_id);
@@ -831,7 +865,7 @@ migra_begin (struct ietf_full_conn *conn, struct conn_path *copath,
     /* The client must pad its first preferred-address probe.
      * See [RFC 9000], Section 8.2.1.
      */
-    copath->cop_flags |= COP_INITIALIZED | COP_ALLOW_MTU_PADDING;
+    copath->cop_flags |= COP_INITIALIZED | COP_CHAL_FULL_SIZE;
     copath->cop_path.np_dcid = dce->de_cid;
     copath->cop_path.np_peer_ctx = CUR_NPATH(conn)->np_peer_ctx;
     copath->cop_path.np_pack_size
@@ -1524,7 +1558,7 @@ lsquic_ietf_full_conn_server_new (struct lsquic_engine_public *enpub,
         conn->ifc_send_flags |= SF_SEND_NEW_TOKEN;
 
     conn->ifc_paths[0].cop_path = imc->imc_path;
-    conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED|COP_ALLOW_MTU_PADDING;
+    conn->ifc_paths[0].cop_flags = COP_VALIDATED|COP_INITIALIZED|COP_CHAL_FULL_SIZE;
     conn->ifc_used_paths = 1 << 0;
     maybe_enable_spin(conn, &conn->ifc_paths[0]);
     if (imc->imc_flags & IMC_ADDR_VALIDATED)
@@ -2806,6 +2840,8 @@ service_streams (struct ietf_full_conn *conn)
              * is about to be aborted.
              */
             ABORT_ERROR("aborted due to error in stream %"PRIu64, stream->id);
+        if (stream->sm_qflags & SMQF_DRAIN_READ)
+            lsquic_stream_drain_read(stream);
         if (stream->sm_qflags & SMQF_CALL_ONCLOSE)
             lsquic_stream_call_on_close(stream);
         if (stream->sm_qflags & SMQF_FREE_STREAM)
@@ -4246,7 +4282,8 @@ write_is_possible (struct ietf_full_conn *conn)
 
     packet_out = lsquic_send_ctl_last_scheduled(&conn->ifc_send_ctl, PNS_APP,
                                                         CUR_NPATH(conn), 0);
-    return (packet_out && lsquic_packet_out_avail(packet_out) > 10)
+    return (packet_out && lsquic_packet_out_has_writeable_space(packet_out,
+                                                    WRITE_DISPATCH_MIN_SPACE))
         || lsquic_send_ctl_can_send(&conn->ifc_send_ctl);
 }
 
@@ -4495,11 +4532,120 @@ maybe_pad_packet (struct ietf_full_conn *conn,
 }
 
 
+/* Only probes are constructed on unvalidated server paths.  Charge them
+ * here, including queued bytes, and never refund discarded packets.
+ */
+static int
+path_probe_is_limited (const struct ietf_full_conn *conn,
+                                                const struct conn_path *path)
+{
+    return (conn->ifc_flags & IFC_SERVER)
+        && !(path->cop_flags & COP_VALIDATED);
+}
+
+
+/* Accounting failures indicate an internal error, not ordinary starvation. */
+static void
+abort_probe_accounting (struct ietf_full_conn *conn, struct conn_path *path)
+{
+    path->cop_probe_credit = 0;
+    lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+    ABORT_ERROR("path probe exceeds reserved credit");
+}
+
+
+struct path_probe_packet
+{
+    enum {
+        PPS_OK,
+        PPS_NO_CREDIT,
+        PPS_NO_PACKET,
+    }                           status;
+    struct lsquic_packet_out   *packet_out;
+};
+
+
+static struct path_probe_packet
+get_path_probe_packet (struct ietf_full_conn *conn, unsigned path_id,
+                                                            unsigned need)
+{
+    struct conn_path *const path = &conn->ifc_paths[path_id];
+    struct lsquic_packet_out *packet_out;
+    size_t overhead;
+
+    if (path_probe_is_limited(conn, path))
+    {
+        /* Reserve the longest packet number before allocating.  Requiring
+         * this allowance even for an existing packet is conservative.
+         */
+        overhead = conn->ifc_conn.cn_pf->pf_packout_max_header_size(
+                &conn->ifc_conn, PO_CONN_ID | (PACKNO_BITS_3 << POBIT_SHIFT),
+                path->cop_path.np_dcid.len, HETY_SHORT, 0)
+                        + conn->ifc_conn.cn_esf_c->esf_tag_len;
+        if (overhead > path->cop_probe_credit
+                            || need > path->cop_probe_credit - overhead)
+            return (struct path_probe_packet) { .status = PPS_NO_CREDIT };
+    }
+
+    packet_out = get_writeable_packet_on_path(conn, need, &path->cop_path, 1);
+    if (packet_out)
+    {
+        if (path_probe_is_limited(conn, path) && packet_out->po_data_sz == 0)
+        {
+            overhead = lsquic_packet_out_total_sz(&conn->ifc_conn, packet_out);
+            if (overhead > path->cop_probe_credit
+                            || need > path->cop_probe_credit - overhead)
+            {
+                abort_probe_accounting(conn, path);
+                return (struct path_probe_packet) { .status = PPS_NO_PACKET };
+            }
+            path->cop_probe_credit -= overhead;
+        }
+        return (struct path_probe_packet) { PPS_OK, packet_out };
+    }
+    else
+        return (struct path_probe_packet) { .status = PPS_NO_PACKET };
+}
+
+
+static void
+maybe_pad_path_probe (struct ietf_full_conn *conn, struct conn_path *path,
+                                        struct lsquic_packet_out *packet_out)
+{
+    unsigned size, padding, target;
+
+    if (path_probe_is_limited(conn, path))
+    {
+        size = lsquic_packet_out_total_sz(&conn->ifc_conn, packet_out);
+        target = MIN(path->cop_path.np_pack_size, IQUIC_MIN_INIT_PACKET_SZ);
+        if (size < path->cop_path.np_pack_size
+            && path->cop_path.np_pack_size - size <= path->cop_probe_credit)
+        {
+            target = path->cop_path.np_pack_size;
+        }
+        if (size >= target)
+            return;
+        padding = target - size;
+        if (padding <= path->cop_probe_credit
+                            && padding <= lsquic_packet_out_avail(packet_out))
+        {
+            memset(packet_out->po_data + packet_out->po_data_sz, 0, padding);
+            lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out,
+                                                padding, QUIC_FRAME_PADDING);
+            path->cop_probe_credit -= padding;
+        }
+    }
+    else
+        maybe_pad_packet(conn, packet_out);
+}
+
+
 static void
 generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
     struct lsquic_packet_out *packet_out;
+    struct path_probe_packet ret;
     struct conn_path *copath;
     unsigned need;
     int w;
@@ -4513,6 +4659,22 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
         assert(path_id == conn->ifc_mig_path_id);
 
     copath = &conn->ifc_paths[path_id];
+    need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();
+    ret = get_path_probe_packet(conn, path_id, need);
+    switch (ret.status)
+    {
+    case PPS_OK:
+        assert(ret.packet_out);
+        packet_out = ret.packet_out;
+        break;
+    case PPS_NO_CREDIT:
+        copath->cop_flags |= COP_CHAL_PENDING;
+        conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
+        return;
+    default:
+        return;
+    }
+
     if (copath->cop_n_chals >= sizeof(copath->cop_path_chals)
                                         / sizeof(copath->cop_path_chals[0]))
     {
@@ -4523,11 +4685,6 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                         / sizeof(copath->cop_path_chals[0]) - 1;
     }
 
-    need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();
-    packet_out = get_writeable_packet_on_path(conn, need, &copath->cop_path, 1);
-    if (!packet_out)
-        return;
-
     RAND_bytes((void *) &copath->cop_path_chals[copath->cop_n_chals],
                                             sizeof(copath->cop_path_chals[0]));
     w = conn->ifc_conn.cn_pf->pf_gen_path_chal_frame(
@@ -4537,6 +4694,12 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     if (w < 0)
     {
         ABORT_ERROR("generating PATH_CHALLENGE frame failed: %d", errno);
+        return;
+    }
+    if (path_probe_is_limited(conn, copath)
+                                    && (unsigned) w > copath->cop_probe_credit)
+    {
+        abort_probe_accounting(conn, copath);
         return;
     }
     LSQ_DEBUG("generated %d-byte PATH_CHALLENGE frame for path %d; challenge: %s"
@@ -4557,9 +4720,27 @@ generate_path_chal_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                     QUIC_FRAME_PATH_CHALLENGE);
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
-    /* Pad when the path permits it under the anti-amplification limit. */
-    if (copath->cop_flags & COP_ALLOW_MTU_PADDING)
-        maybe_pad_packet(conn, packet_out);
+    copath->cop_flags &= ~COP_CHAL_PENDING;
+    if (path_probe_is_limited(conn, copath))
+    {
+        enum {
+            PATH_CHAL_PRECEDES_PATH_RESP = 1 /
+                        (SEND_PATH_RESP == SEND_PATH_CHAL + N_PATHS),
+        };
+
+        copath->cop_probe_credit -= w;
+        /* Let the pending response append its frame before spending credit
+         * on padding.
+         */
+        if (!(conn->ifc_send_flags & (SF_SEND_PATH_RESP << path_id)))
+            maybe_pad_path_probe(conn, copath, packet_out);
+
+        if (lsquic_packet_out_total_sz(&conn->ifc_conn, packet_out)
+                                            >= copath->cop_path.np_pack_size)
+            copath->cop_flags |= COP_CHAL_FULL_SIZE;
+    }
+    else if (copath->cop_flags & COP_CHAL_FULL_SIZE)
+        maybe_pad_path_probe(conn, copath, packet_out);
     /* Only retry for confirmed path */
     if (copath->cop_flags & COP_VALIDATED)
         lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + path_id,
@@ -4600,15 +4781,27 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
                                                             unsigned path_id)
 {
     struct lsquic_packet_out *packet_out;
+    struct path_probe_packet ret;
     struct conn_path *copath;
     unsigned need;
     int w;
 
     copath = &conn->ifc_paths[path_id];
     need = conn->ifc_conn.cn_pf->pf_path_resp_frame_size();
-    packet_out = get_writeable_packet_on_path(conn, need, &copath->cop_path, 1);
-    if (!packet_out)
+    ret = get_path_probe_packet(conn, path_id, need);
+    switch (ret.status)
+    {
+    case PPS_OK:
+        assert(ret.packet_out);
+        packet_out = ret.packet_out;
+        break;
+    case PPS_NO_CREDIT:
+        copath->cop_flags |= COP_RESP_PENDING;
+        conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << path_id);
         return;
+    default:
+        return;
+    }
 
     w = conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(
             packet_out->po_data + packet_out->po_data_sz,
@@ -4617,6 +4810,12 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     if (w < 0)
     {
         ABORT_ERROR("generating PATH_RESPONSE frame failed: %d", errno);
+        return;
+    }
+    if (path_probe_is_limited(conn, copath)
+                                    && (unsigned) w > copath->cop_probe_credit)
+    {
+        abort_probe_accounting(conn, copath);
         return;
     }
     LSQ_DEBUG("generated %d-byte PATH_RESPONSE frame; response: %016"PRIX64,
@@ -4631,7 +4830,18 @@ generate_path_resp_frame (struct ietf_full_conn *conn, lsquic_time_t now,
     }
     lsquic_send_ctl_incr_pack_sz(&conn->ifc_send_ctl, packet_out, w,
                                                     QUIC_FRAME_PATH_RESPONSE);
-    maybe_pad_packet(conn, packet_out);
+    if (path_probe_is_limited(conn, copath))
+        copath->cop_probe_credit -= w;
+    maybe_pad_path_probe(conn, copath, packet_out);
+    /* An unvalidated server path has only one outgoing challenge. */
+    if (path_probe_is_limited(conn, copath)
+        && (packet_out->po_frame_types & QUIC_FTBIT_PATH_CHALLENGE)
+        && lsquic_packet_out_total_sz(&conn->ifc_conn, packet_out)
+                                            >= copath->cop_path.np_pack_size)
+    {
+        copath->cop_flags |= COP_CHAL_FULL_SIZE;
+    }
+    copath->cop_flags &= ~COP_RESP_PENDING;
     packet_out->po_regen_sz += w;
     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP << path_id);
 }
@@ -4675,7 +4885,7 @@ ietf_full_conn_ci_next_packet_to_send (struct lsquic_conn *lconn,
 
     packet_out = lsquic_send_ctl_next_packet_to_send(&conn->ifc_send_ctl,
                                                                     to_coal);
-    if (packet_out)
+    if (packet_out && !(packet_out->po_flags & PO_ENCRYPTED))
     {
         cpath = NPATH2CPATH(packet_out->po_path);
         lsquic_packet_out_set_spin_bit(packet_out, cpath->cop_spin_bit);
@@ -5021,7 +5231,6 @@ maybe_retire_dcid (struct ietf_full_conn *conn, const lsquic_cid_t *dcid)
                             && LSQUIC_CIDS_EQ(&(*dce)->de_cid, dcid))
             break;
 
-    assert(dce < DCES_END(conn));
     if (dce < DCES_END(conn))
         retire_dcid(conn, dce);
 }
@@ -5118,23 +5327,32 @@ process_path_response_frame (struct ietf_full_conn *conn,
                     goto found;
     }
 
-    ABORT_QUIETLY(0, TEC_PROTOCOL_VIOLATION,
-            "received path response %s that does not correspond to any "
-            "challenge sent on this path",
-            HEXSTR((unsigned char *) &path_resp, sizeof(path_resp), hexbuf));
-    return 0;
+    /* A delayed response may refer to an expired or evicted challenge.
+     * Ignoring it is permitted by [RFC 9000], Section 19.18.
+     */
+    LSQ_DEBUG("ignore unmatched path response");
+    return parsed_len;
 
   found:
-    if (path->cop_flags & COP_ALLOW_MTU_PADDING)
+    if (path->cop_flags & COP_RESP_PENDING)
+        conn->ifc_send_flags |= SF_SEND_PATH_RESP << path_id;
+    path->cop_flags &= ~(COP_CHAL_PENDING | COP_RESP_PENDING);
+    lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + path_id);
+    if (path->cop_flags & COP_CHAL_FULL_SIZE)
     {
-        path->cop_flags |= (COP_VALIDATED | COP_VALIDATED_MTU);
+        path->cop_flags |= COP_VALIDATED;
+        if (path->cop_path.np_pack_size >= IQUIC_MIN_INIT_PACKET_SZ)
+            path->cop_flags |= COP_VALIDATED_MTU;
         conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
-        lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + path_id);
     }
     else
     {
-        path->cop_flags |= (COP_VALIDATED | COP_ALLOW_MTU_PADDING);
-        conn->ifc_send_flags |= (SF_SEND_PATH_CHAL << path_id);
+        path->cop_flags |= COP_VALIDATED | COP_CHAL_FULL_SIZE;
+        path->cop_n_chals = 0;
+        if (path->cop_path.np_pack_size >= IQUIC_MIN_INIT_PACKET_SZ)
+            conn->ifc_send_flags |= SF_SEND_PATH_CHAL << path_id;
+        else
+            conn->ifc_send_flags &= ~(SF_SEND_PATH_CHAL << path_id);
     }
     switch ((path_id != conn->ifc_cur_path_id) |
                         (!!(path->cop_flags & COP_GOT_NONPROB) << 1))
@@ -6820,9 +7038,30 @@ init_new_path (struct ietf_full_conn *conn, struct conn_path *path,
 }
 
 
+static void
+credit_path_probes (struct ietf_full_conn *conn, unsigned path_id,
+                                                    unsigned packet_size)
+{
+    struct conn_path *const path = &conn->ifc_paths[path_id];
+
+    if (path_probe_is_limited(conn, path))
+    {
+        if (packet_size > (UINT_MAX - path->cop_probe_credit) / 3)
+            path->cop_probe_credit = UINT_MAX;
+        else
+            path->cop_probe_credit += 3 * packet_size;
+        if (path->cop_flags & COP_CHAL_PENDING)
+            conn->ifc_send_flags |= SF_SEND_PATH_CHAL << path_id;
+        if (path->cop_flags & COP_RESP_PENDING)
+            conn->ifc_send_flags |= SF_SEND_PATH_RESP << path_id;
+        path->cop_flags &= ~(COP_CHAL_PENDING | COP_RESP_PENDING);
+    }
+}
+
+
 static int
 on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
-                                    const struct lsquic_packet_in *packet_in)
+            const struct lsquic_packet_in *packet_in, unsigned packet_size)
 {
     struct lsquic_conn *const lconn = &conn->ifc_conn;
     struct conn_path *const path = &conn->ifc_paths[packet_in->pi_path_id];
@@ -6859,8 +7098,14 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
         if (0 == init_new_path(conn, path, dcid_changed))
         {
             path->cop_flags |= COP_INITIALIZED;
-            if (packet_in->pi_data_sz >= IQUIC_MIN_INIT_PACKET_SZ / 3)
-                path->cop_flags |= COP_ALLOW_MTU_PADDING;
+            if (conn->ifc_flags & IFC_SERVER)
+                lsquic_alarmset_set(&conn->ifc_alset,
+                    AL_PATH_CHAL + packet_in->pi_path_id,
+                    packet_in->pi_received + path_validation_timeout(conn));
+            if (!(conn->ifc_flags & IFC_SERVER)
+                    && packet_size >= IQUIC_MIN_INIT_PACKET_SZ / 3
+                    && path->cop_path.np_pack_size >= IQUIC_MIN_INIT_PACKET_SZ)
+                path->cop_flags |= COP_CHAL_FULL_SIZE;
         }
         else
             return -1;
@@ -6878,6 +7123,7 @@ on_new_or_unconfirmed_path (struct ietf_full_conn *conn,
         switch_path_to(conn, packet_in->pi_path_id);
     }
 
+    credit_path_probes(conn, packet_in->pi_path_id, packet_size);
     path->cop_cce_idx = cce - lconn->cn_cces;
     cce->cce_flags |= CCE_USED;
     LOG_SCIDS(conn);
@@ -7296,6 +7542,8 @@ process_regular_packet (struct ietf_full_conn *conn,
     int is_rechist_empty;
     unsigned char saved_path_id;
     int is_dcid_changed;
+    /* Decryption removes the authentication tag from pi_data_sz. */
+    const unsigned packet_size = packet_in->pi_data_sz;
 
     if (HETY_RETRY == packet_in->pi_header_type)
         return process_retry_packet(conn, packet_in);
@@ -7447,8 +7695,12 @@ process_regular_packet (struct ietf_full_conn *conn,
         {
             if (conn->ifc_cur_path_id != packet_in->pi_path_id)
             {
-                if (0 != on_new_or_unconfirmed_path(conn, packet_in))
+                if ((conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS)
+                    || 0 != on_new_or_unconfirmed_path(conn, packet_in,
+                                                            packet_size))
                 {
+                    conn->ifc_paths[packet_in->pi_path_id].cop_flags
+                                                        &= ~COP_RESP_PENDING;
                     LSQ_DEBUG("path %hhu invalid, cancel any path response "
                         "on it", packet_in->pi_path_id);
                     conn->ifc_send_flags &= ~(SF_SEND_PATH_RESP
@@ -8832,8 +9084,11 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
                 return copath - conn->ifc_paths;
             }
             if (!first_unvalidated
-                            && (0 == (copath->cop_flags & COP_VALIDATED)))
+                && copath != &conn->ifc_paths[conn->ifc_cur_path_id]
+                && !(copath->cop_flags & (COP_INITIALIZED | COP_VALIDATED)))
+            {
                 first_unvalidated = copath;
+            }
         }
         else if (!first_unused)
             first_unused = copath;
@@ -8856,11 +9111,18 @@ ietf_full_conn_ci_record_addrs (struct lsquic_conn *lconn, void *peer_ctx,
 
     if (first_unvalidated)
     {
+        unsigned path_id = first_unvalidated - conn->ifc_paths;
+
+        conn->ifc_send_flags &= ~((SF_SEND_PATH_CHAL | SF_SEND_PATH_RESP)
+                                                                << path_id);
+        lsquic_alarmset_unset(&conn->ifc_alset, AL_PATH_CHAL + path_id);
+        wipe_path(conn, path_id);
+        conn->ifc_used_paths |= 1 << path_id;
         record_to_path(conn, first_unvalidated, peer_ctx, local_sa, peer_sa);
         return first_unvalidated - conn->ifc_paths;
     }
 
-    /* Do not overwrite a validated path with an unverified address. */
+    /* Do not overwrite an initialized candidate or a validated path. */
     return conn->ifc_cur_path_id;
 }
 
@@ -9969,13 +10231,12 @@ lsquic_ietf_full_conn_test_stop_sending_critical (unsigned results[4])
 
 
 #ifndef NDEBUG
-void
-lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
+static void
+run_send_ctl_test (unsigned flags, void (*test)(struct ietf_full_conn *))
 {
     struct ietf_full_conn conn;
     struct lsquic_engine_public enpub;
     struct ver_neg ver_neg = { 0 };
-    unsigned i;
 
     memset(&conn, 0, sizeof(conn));
     memset(&enpub, 0, sizeof(enpub));
@@ -10005,6 +10266,18 @@ lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
                                     &ver_neg, &conn.ifc_pub, SC_IETF);
     conn.ifc_send_ctl.sc_flags &= ~SC_PACE;
     lsquic_send_ctl_path_validated(&conn.ifc_send_ctl);
+    test(&conn);
+    lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
+    lsquic_malo_destroy(conn.ifc_pub.packet_out_malo);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+static void
+test_scheduled_cc (struct ietf_full_conn *conn)
+{
+    unsigned i;
+
     for (i = 0; i < 2; ++i)
     {
         /* Both writers acquire an empty scheduled packet before adding
@@ -10012,24 +10285,667 @@ lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
          */
         if (i == 0)
         {
-            generate_max_data_frame(&conn);
-            assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 1);
-            generate_max_data_frame(&conn);
+            generate_max_data_frame(conn);
+            assert(conn->ifc_send_ctl.sc_n_scheduled_cc == 1);
+            generate_max_data_frame(conn);
         }
         else
         {
-            generate_streams_blocked_frame(&conn, SD_BIDI);
-            assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 1);
-            generate_streams_blocked_frame(&conn, SD_BIDI);
+            generate_streams_blocked_frame(conn, SD_BIDI);
+            assert(conn->ifc_send_ctl.sc_n_scheduled_cc == 1);
+            generate_streams_blocked_frame(conn, SD_BIDI);
         }
-        assert(conn.ifc_send_ctl.sc_n_scheduled == 1);
-        assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 1);
-        lsquic_send_ctl_drop_scheduled(&conn.ifc_send_ctl);
-        assert(conn.ifc_send_ctl.sc_n_scheduled_cc == 0);
+        assert(conn->ifc_send_ctl.sc_n_scheduled == 1);
+        assert(conn->ifc_send_ctl.sc_n_scheduled_cc == 1);
+        lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+        assert(conn->ifc_send_ctl.sc_n_scheduled_cc == 0);
     }
-    lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
-    lsquic_malo_destroy(conn.ifc_pub.packet_out_malo);
-    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+void
+lsquic_ietf_full_conn_test_scheduled_cc (unsigned flags)
+{
+    run_send_ctl_test(flags, test_scheduled_cc);
+}
+
+
+static void
+test_queued_fin_reset (struct ietf_full_conn *conn)
+{
+    static const struct lsquic_stream_if stream_if;
+    struct lsquic_conn_public *const pub = &conn->ifc_pub;
+    struct lsquic_send_ctl *const ctl = &conn->ifc_send_ctl;
+    struct ack_info ack = { .pns = PNS_APP, .n_ranges = 1 };
+    struct lsquic_packet_out *packet;
+    struct lsquic_stream *stream;
+    lsquic_stream_id_t stream_id;
+    uint64_t final_size, error_code;
+    int len;
+
+    conn->ifc_conn.cn_if = &ietf_full_conn_iface;
+    conn->ifc_enpub->enp_flags |= ENPUB_PROC;
+    conn->ifc_pii = &orig_prio_iter_if;
+    pub->send_ctl = ctl;
+#if LSQUIC_CONN_STATS
+    pub->conn_stats = &conn->ifc_stats;
+#endif
+    TAILQ_INIT(&pub->sending_streams);
+    TAILQ_INIT(&pub->write_streams);
+    TAILQ_INIT(&pub->read_streams);
+    TAILQ_INIT(&pub->service_streams);
+    lsquic_conn_cap_init(&pub->conn_cap, 0x4000);
+    stream = lsquic_stream_new(4, pub, &stream_if, NULL, 0x4000, 0x4000,
+                                                                    SCF_IETF);
+    assert(stream);
+    assert(8 == lsquic_stream_write(stream, "response", 8));
+    assert(0 == lsquic_stream_shutdown(stream, 1));
+    assert(stream->stream_flags & STREAM_FIN_SENT);
+    assert(ctl->sc_n_scheduled == 1);
+
+    lsquic_stream_stop_sending_in(stream, 12345);
+    assert(ctl->sc_n_scheduled == 0);
+    assert(stream->n_unacked == 0);
+    process_streams_ready_to_send(conn);
+    assert(ctl->sc_n_scheduled == 1);
+    packet = lsquic_send_ctl_next_packet_to_send(ctl, 0);
+    assert(packet && packet->po_frame_types == QUIC_FTBIT_RST_STREAM);
+    assert(packet->po_data[0] == 0x04);  /* RESET_STREAM */
+    len = conn->ifc_conn.cn_pf->pf_parse_rst_frame(packet->po_data,
+                    packet->po_data_sz, &stream_id, &final_size, &error_code);
+    assert(len == packet->po_data_sz);
+    assert(stream_id == 4 && final_size == 8 && error_code == 12345);
+
+    ack.ranges[0].low = ack.ranges[0].high = packet->po_packno;
+    packet->po_sent = 1000;
+    assert(0 == lsquic_send_ctl_sent_packet(ctl, packet));
+    assert(stream->n_unacked == 1);
+    assert(0 == lsquic_send_ctl_got_ack(ctl, &ack, 2000, 2000));
+    assert(stream->n_unacked == 0);
+    assert(stream->stream_flags & STREAM_RST_ACKED);
+    lsquic_stream_destroy(stream);
+}
+
+
+void
+lsquic_ietf_full_conn_test_queued_fin_reset (void)
+{
+    run_send_ctl_test(LSENG_SERVER, test_queued_fin_reset);
+}
+
+
+/* The decrypter stub removes the tag just as the real decrypter does. */
+static enum dec_packin
+path_test_decrypt (enc_session_t *UNUSED_session,
+        struct lsquic_engine_public *UNUSED_enpub,
+        const struct lsquic_conn *UNUSED_lconn, struct lsquic_packet_in *packet)
+{
+    if (packet->pi_data[0] == 0xFF)
+        return DECPI_BADCRYPT;
+    assert(packet->pi_data_sz >= 16);
+    packet->pi_data_sz -= 16;
+    packet->pi_flags |= PI_DECRYPTED | (ENC_LEV_APP << PIBIT_ENC_LEV_SHIFT);
+    return DECPI_OK;
+}
+
+
+struct path_probe_test
+{
+    struct ietf_full_conn            ppt_conn;
+    struct lsquic_engine_public      ppt_enpub;
+    struct ver_neg                  ppt_ver_neg;
+    struct enc_session_funcs_common ppt_esf;
+};
+
+
+static void
+path_test_init (struct path_probe_test *test, unsigned flags, unsigned mtu)
+{
+    struct ietf_full_conn *const conn = &test->ppt_conn;
+    struct lsquic_engine_public *const enpub = &test->ppt_enpub;
+    unsigned i;
+
+    memset(test, 0, sizeof(*test));
+    conn->ifc_conn.cn_cces = conn->ifc_cces;
+    conn->ifc_conn.cn_n_cces = sizeof(conn->ifc_cces)
+                                                / sizeof(conn->ifc_cces[0]);
+    conn->ifc_conn.cn_cces_mask = 1;
+    conn->ifc_cces[0].cce_flags = CCE_USED | CCE_SEQNO;
+    conn->ifc_cces[0].cce_cid.len = 8;
+    conn->ifc_conn.cn_flags = LSCONN_IETF | LSCONN_HANDSHAKE_DONE;
+    if (flags & LSENG_SERVER)
+        conn->ifc_conn.cn_flags |= LSCONN_SERVER;
+    conn->ifc_flags = flags | IFC_DCID_SET;
+    conn->ifc_conn.cn_version = LSQVER_I001;
+    conn->ifc_conn.cn_pf = select_pf_by_ver(LSQVER_I001);
+    test->ppt_esf = lsquic_enc_session_common_ietf_v1;
+    test->ppt_esf.esf_decrypt_packet = path_test_decrypt;
+    conn->ifc_conn.cn_esf_c = &test->ppt_esf;
+    conn->ifc_enpub = enpub;
+    lsquic_engine_init_settings(&enpub->enp_settings, flags);
+    enpub->enp_flags |= ENPUB_CAN_SEND;
+    enpub->enp_settings.es_base_plpmtu = mtu;
+    conn->ifc_max_udp_payload = mtu;
+    conn->ifc_settings = &enpub->enp_settings;
+    lsquic_mm_init(&enpub->enp_mm);
+    conn->ifc_pub.mm = &enpub->enp_mm;
+    conn->ifc_pub.enpub = enpub;
+    conn->ifc_pub.lconn = &conn->ifc_conn;
+    conn->ifc_pub.path = CUR_NPATH(conn);
+    conn->ifc_used_paths = 3;
+    conn->ifc_mig_path_id = 1;
+    for (i = 0; i < 2; ++i)
+    {
+        conn->ifc_paths[i].cop_path.np_path_id = i;
+        conn->ifc_paths[i].cop_path.np_pack_size = mtu;
+        conn->ifc_paths[i].cop_path.np_dcid.len = 8;
+        NP_LOCAL_SA(&conn->ifc_paths[i].cop_path)->sa_family = AF_INET;
+        NP_PEER_SA(&conn->ifc_paths[i].cop_path)->sa_family = AF_INET;
+    }
+    conn->ifc_paths[0].cop_flags = COP_VALIDATED | COP_INITIALIZED;
+    conn->ifc_pub.packet_out_malo =
+                        lsquic_malo_create(sizeof(struct lsquic_packet_out));
+    assert(conn->ifc_pub.packet_out_malo);
+    lsquic_alarmset_init(&conn->ifc_alset, &conn->ifc_conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_ACK_APP,
+                                                    ack_alarm_expired, conn);
+    lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL_1,
+                                            path_chal_alarm_expired, conn);
+    lsquic_send_ctl_init(&conn->ifc_send_ctl, &conn->ifc_alset, enpub,
+                                &test->ppt_ver_neg, &conn->ifc_pub, SC_IETF);
+    conn->ifc_send_ctl.sc_flags &= ~SC_PACE;
+    lsquic_send_ctl_path_validated(&conn->ifc_send_ctl);
+    lsquic_rechist_init(&conn->ifc_rechist[PNS_APP], 0, 0);
+    conn->ifc_max_retx_since_last_ack = 2;
+    conn->ifc_max_ack_delay = ACK_TIMEOUT;
+}
+
+
+static void
+path_test_cleanup (struct path_probe_test *test)
+{
+    lsquic_send_ctl_cleanup(&test->ppt_conn.ifc_send_ctl);
+    lsquic_rechist_cleanup(&test->ppt_conn.ifc_rechist[PNS_APP]);
+    lsquic_malo_destroy(test->ppt_conn.ifc_pub.packet_out_malo);
+    lsquic_mm_cleanup(&test->ppt_enpub.enp_mm);
+    free(test->ppt_conn.ifc_errmsg);
+}
+
+
+static void
+path_test_receive (struct ietf_full_conn *conn, unsigned size,
+                                            unsigned packno, int bad_packet)
+{
+    struct lsquic_packet_in packet;
+    unsigned char data[1500];
+
+    assert(size >= 36 && size <= sizeof(data));
+    memset(&packet, 0, sizeof(packet));
+    memset(data, 0, sizeof(data));
+    packet.pi_data = data;
+    packet.pi_data_sz = size;
+    packet.pi_header_sz = 11;
+    packet.pi_header_type = HETY_SHORT;
+    packet.pi_path_id = 1;
+    packet.pi_packno = packno;
+    packet.pi_received = 1000000 + packno;
+    packet.pi_dcid = conn->ifc_cces[0].cce_cid;
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_chal_frame(data + 11,
+                                                        size - 27, packno));
+    if (bad_packet == 1)
+        data[0] = 0xFF;  /* Authentication failure */
+    else if (bad_packet == 2)
+        data[11] = 0x1F; /* Invalid frame */
+    else if (bad_packet == 3)
+        memset(data + 11, 0, size - 27);  /* Only PADDING */
+    else if (bad_packet == 5)
+        data[20] = 0x1F; /* Invalid frame after a valid challenge */
+    else if (bad_packet == 4)
+    {
+        memset(data + 11, 0, size - 27);
+        data[size - 17] = 0x1A;  /* Truncated PATH_CHALLENGE */
+    }
+    assert(0 == process_regular_packet(conn, &packet));
+}
+
+
+static void
+path_test_generate (struct ietf_full_conn *conn)
+{
+    unsigned send;
+
+    /* Exercise the same ordering as the tick function. */
+    for (send = 0; send < N_SEND; ++send)
+        if (conn->ifc_send_flags & (1 << send) & SEND_WITH_FUNCS)
+            send_funcs[send](conn, 2000000);
+}
+
+
+void
+lsquic_ietf_full_conn_test_probe_credit (unsigned flags, unsigned input,
+                                                                unsigned mtu)
+{
+    struct path_probe_test test;
+    struct ietf_full_conn *const conn = &test.ppt_conn;
+    struct conn_path *const path = &conn->ifc_paths[1];
+    struct lsquic_packet_out *packet, *retry;
+    unsigned credit, size, total, count;
+
+    path_test_init(&test, flags, mtu);
+    if (input >= 36)
+    {
+        path_test_receive(conn, input, 1, 0);
+        assert(!(conn->ifc_flags & IFC_ERROR));
+        assert(path->cop_flags & COP_INITIALIZED);
+        credit = path->cop_probe_credit;
+        path_test_receive(conn, input, 1, 0);  /* Duplicate */
+        assert(path->cop_probe_credit == credit);
+        path_test_receive(conn, input, 2, 1);  /* Cannot decrypt */
+        assert(path->cop_probe_credit == credit);
+    }
+    else
+    {
+        /* Artificially tiny credits exercise the allocation threshold. */
+        path->cop_flags = COP_INITIALIZED;
+        credit_path_probes(conn, 1, input);
+        conn->ifc_send_flags |= SF_SEND_PATH_RESP_PATH_1
+                                            | SF_SEND_PATH_CHAL_PATH_1;
+    }
+    if (flags & LSENG_SERVER)
+        assert(path->cop_probe_credit == 3 * input);
+    else
+        assert(path->cop_probe_credit == 0);
+
+    path_test_generate(conn);
+    if ((flags & LSENG_SERVER) && input == 400)
+    {
+        /* Both probes must fit before padding spends the final credit. */
+        assert(conn->ifc_send_ctl.sc_n_scheduled == 1);
+        packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+        assert(packet->po_frame_types & QUIC_FTBIT_PATH_CHALLENGE);
+        assert(packet->po_frame_types & QUIC_FTBIT_PATH_RESPONSE);
+        assert(conn->ifc_conn.cn_pf->pf_parse_frame_type(packet->po_data,
+                    packet->po_data_sz) == QUIC_FRAME_PATH_CHALLENGE);
+        assert(conn->ifc_conn.cn_pf->pf_parse_frame_type(packet->po_data + 9,
+                    packet->po_data_sz - 9) == QUIC_FRAME_PATH_RESPONSE);
+        assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 1200);
+        assert(path->cop_probe_credit == 0);
+        assert(path->cop_n_chals == 1);
+        assert(!(path->cop_flags & (COP_CHAL_PENDING | COP_RESP_PENDING)));
+        assert(!(conn->ifc_send_flags
+                    & (SF_SEND_PATH_CHAL_PATH_1 | SF_SEND_PATH_RESP_PATH_1)));
+        assert(!!(path->cop_flags & COP_CHAL_FULL_SIZE) == (mtu == 1200));
+    }
+    if ((flags & LSENG_SERVER) && input >= 800)
+    {
+        /* A subsequent response shares credit with the queued probes. */
+        assert(conn->ifc_send_ctl.sc_n_scheduled == 1);
+        conn->ifc_send_flags |= SF_SEND_PATH_RESP_PATH_1;
+        path_test_generate(conn);
+    }
+    total = count = 0;
+    TAILQ_FOREACH(packet, &conn->ifc_send_ctl.sc_scheduled_packets, po_next)
+    {
+        size = lsquic_packet_out_total_sz(&conn->ifc_conn, packet);
+        total += size;
+        ++count;
+        if (flags & LSENG_SERVER)
+        {
+            assert(size <= mtu);
+            if (input == 400)
+                assert(size == 1200);
+        }
+    }
+    if (flags & LSENG_SERVER)
+    {
+        assert(total + path->cop_probe_credit == 3 * input);
+        if (input == 36 || input == 399)
+        {
+            assert(count == 1);
+            packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+            assert(packet->po_frame_types & QUIC_FTBIT_PATH_RESPONSE);
+            assert(packet->po_frame_types & QUIC_FTBIT_PATH_CHALLENGE);
+        }
+        if (input >= 800)
+            assert(count >= 2);
+        if (input < 10)
+        {
+            assert(count == 0);
+            assert(conn->ifc_send_flags == 0);
+            assert(!ietf_full_conn_ci_is_tickable(&conn->ifc_conn));
+        }
+    }
+    else
+    {
+        assert(count >= 1);
+        packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+        assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == mtu);
+    }
+
+    /* Repeated failed sends reuse the charged packet without any refund. */
+    credit = path->cop_probe_credit;
+    packet = ietf_full_conn_ci_next_packet_to_send(&conn->ifc_conn, NULL);
+    if (packet)
+    {
+        ietf_full_conn_ci_packet_not_sent(&conn->ifc_conn, packet);
+        retry = ietf_full_conn_ci_next_packet_to_send(&conn->ifc_conn, NULL);
+        assert(retry == packet);
+        ietf_full_conn_ci_packet_not_sent(&conn->ifc_conn, retry);
+        assert(path->cop_probe_credit == credit);
+    }
+    lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+    assert(path->cop_probe_credit == credit);
+    path_test_cleanup(&test);
+}
+
+
+void
+lsquic_ietf_full_conn_test_probe_lifecycle (unsigned flags)
+{
+    struct path_probe_test test;
+    struct ietf_full_conn *const conn = &test.ppt_conn;
+    struct conn_path *const path = &conn->ifc_paths[1];
+    unsigned char response[9];
+    struct lsquic_packet_out *packet;
+    unsigned credit, i;
+
+    /* Congestion must leave requests scheduled, not parked for new credit. */
+    path_test_init(&test, flags, 1200);
+    path_test_receive(conn, 400, 1, 0);
+    conn->ifc_send_ctl.sc_bytes_unacked_all = UINT_MAX;
+    assert(!lsquic_send_ctl_can_send(&conn->ifc_send_ctl));
+    path_test_generate(conn);
+    assert(conn->ifc_send_ctl.sc_n_scheduled == 0);
+    assert(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1);
+    assert(conn->ifc_send_flags & SF_SEND_PATH_RESP_PATH_1);
+    assert(!(path->cop_flags & (COP_CHAL_PENDING | COP_RESP_PENDING)));
+    assert(path->cop_probe_credit == 1200);
+    conn->ifc_send_ctl.sc_bytes_unacked_all = 0;
+    path_test_generate(conn);
+    assert(conn->ifc_send_ctl.sc_n_scheduled == 1);
+    assert(!(conn->ifc_send_flags
+                    & (SF_SEND_PATH_CHAL_PATH_1 | SF_SEND_PATH_RESP_PATH_1)));
+    assert(path->cop_probe_credit == 0);
+    path_test_cleanup(&test);
+
+    path_test_init(&test, flags, 5000);
+    path_test_receive(conn, 36, 1, 0);
+    generate_path_chal_frame(conn, 2000000, 1);
+    assert(path->cop_n_chals == 1);
+    packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+    assert(packet);
+
+    /* Later padding does not reclassify the initial small challenge. */
+    path_test_receive(conn, 400, 2, 0);
+    generate_path_resp_frame(conn, 2000001, 1);
+    assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 1200);
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(response,
+                                sizeof(response), path->cop_path_chals[0]));
+    path->cop_flags |= COP_RESP_PENDING;
+    conn->ifc_send_flags &= ~SF_SEND_PATH_RESP_PATH_1;
+    assert(9 == process_path_response_frame(conn, NULL, response, 9));
+    assert(conn->ifc_send_flags & SF_SEND_PATH_RESP_PATH_1);
+    assert(!(path->cop_flags & COP_RESP_PENDING));
+    assert(path->cop_flags & COP_VALIDATED);
+    assert(!(path->cop_flags & COP_VALIDATED_MTU));
+    assert(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1);
+    assert(path->cop_n_chals == 0);
+
+    /* Validate the MTU with a fresh padded challenge. */
+    lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+    generate_path_chal_frame(conn, 2000002, 1);
+    assert(path->cop_n_chals == 1);
+    packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+    assert(packet);
+    assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 5000);
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(response,
+                                sizeof(response), path->cop_path_chals[0]));
+    assert(9 == process_path_response_frame(conn, NULL, response, 9));
+    assert(path->cop_flags & COP_VALIDATED_MTU);
+    assert(!(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1));
+    path_test_cleanup(&test);
+
+    path_test_init(&test, flags, 1200);
+    path_test_receive(conn, 400, 1, 0);
+    path_test_generate(conn);
+    assert(path->cop_probe_credit == 0);
+    lsquic_send_ctl_drop_scheduled(&conn->ifc_send_ctl);
+    conn->ifc_send_flags |= SF_SEND_PATH_CHAL_PATH_1 | SF_SEND_PATH_RESP_PATH_1;
+    path_test_generate(conn);
+    assert(path->cop_flags & COP_CHAL_PENDING);
+    assert(path->cop_flags & COP_RESP_PENDING);
+    assert(!ietf_full_conn_ci_is_tickable(&conn->ifc_conn));
+    path_test_receive(conn, 36, 2, 3);
+    assert(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1);
+    assert(conn->ifc_send_flags & SF_SEND_PATH_RESP_PATH_1);
+    assert(!(path->cop_flags & (COP_CHAL_PENDING | COP_RESP_PENDING)));
+    assert(ietf_full_conn_ci_is_tickable(&conn->ifc_conn));
+    path_test_generate(conn);
+    credit = path->cop_probe_credit;
+    assert(credit < 108);
+    lsquic_send_ctl_cancel_path_verification(&conn->ifc_send_ctl,
+                                                            &path->cop_path);
+    assert(path->cop_probe_credit == credit);
+    generate_path_resp_frame(conn, 3000000, 1);
+    assert(path->cop_probe_credit < credit);  /* Replacement is charged */
+
+    path->cop_probe_credit = UINT_MAX - 2;
+    credit_path_probes(conn, 1, 1);
+    assert(path->cop_probe_credit == UINT_MAX);
+    credit_path_probes(conn, 1, UINT_MAX);
+    assert(path->cop_probe_credit == UINT_MAX);
+    path_test_cleanup(&test);
+
+    for (i = 2; i <= 4; i += 2)
+    {
+        path_test_init(&test, flags, 1200);
+        path_test_receive(conn, 36, 1, i);
+        assert(conn->ifc_flags & IFC_ERROR);
+        assert(path->cop_probe_credit == 0);
+        path_test_cleanup(&test);
+    }
+
+    /* A new SCID requires an unassigned destination CID to initialize. */
+    path_test_init(&test, flags, 1200);
+    conn->ifc_cces[0].cce_flags &= ~CCE_USED;
+    path_test_receive(conn, 400, 1, 0);
+    assert(!(path->cop_flags & COP_INITIALIZED));
+    assert(path->cop_probe_credit == 0);
+    assert(!(conn->ifc_send_flags & SF_SEND_PATH_RESP_PATH_1));
+    path_test_cleanup(&test);
+
+    /* A capacity below 1200 is padded fully but does not validate the MTU. */
+    path_test_init(&test, flags, 1100);
+    path_test_receive(conn, 400, 1, 3);
+    generate_path_chal_frame(conn, 2000000, 1);
+    packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+    assert(packet && (packet->po_frame_types & QUIC_FTBIT_PADDING));
+    assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 1100);
+    assert(path->cop_probe_credit
+            + lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 1200);
+    path_test_cleanup(&test);
+}
+
+
+static size_t
+path_test_large_header (const struct lsquic_conn *conn,
+                                        const struct lsquic_packet_out *packet)
+{
+    return select_pf_by_ver(conn->cn_version)->pf_packout_size(conn, packet)
+                                                                        + 200;
+}
+
+
+static int
+path_test_large_frame (unsigned char *UNUSED_buf, size_t UNUSED_len,
+                                                    uint64_t UNUSED_challenge)
+{
+    return 200;
+}
+
+
+void
+lsquic_ietf_full_conn_test_probe_review (unsigned flags, unsigned version)
+{
+    struct path_probe_test test;
+    struct ietf_full_conn *const conn = &test.ppt_conn;
+    struct conn_path *const path = &conn->ifc_paths[1];
+    struct parse_funcs pf;
+    struct dcid_elem dcids[2];
+    struct conn_cid_elem saved_cce;
+    struct sockaddr_in peer;
+    struct lsquic_packet_out *packet;
+    lsquic_time_t deadline;
+    unsigned char response[9];
+    unsigned i, mode;
+
+    /* Small configured capacities must terminate MTU validation. */
+    path_test_init(&test, flags, 1100);
+    conn->ifc_conn.cn_version = version;
+    conn->ifc_conn.cn_pf = select_pf_by_ver(version);
+    path->cop_flags = COP_INITIALIZED | COP_VALIDATED | COP_CHAL_FULL_SIZE;
+    generate_path_chal_frame(conn, 2000000, 1);
+    assert(path->cop_n_chals == 1);
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(response, 9,
+                                                    path->cop_path_chals[0]));
+    /* Avoid switching a synthetic client fixture to the candidate. */
+    conn->ifc_cur_path_id = 1;
+    for (i = 0; i < 20; ++i)
+    {
+        assert(9 == process_path_response_frame(conn, NULL, response, 9));
+        assert(!(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1));
+        assert(!lsquic_alarmset_is_set(&conn->ifc_alset, AL_PATH_CHAL_1));
+        assert(!(path->cop_flags & COP_VALIDATED_MTU));
+    }
+    path_test_cleanup(&test);
+    if (!(flags & LSENG_SERVER))
+        return;
+
+    for (mode = 0; mode < 3; ++mode)
+    {
+        path_test_init(&test, flags, 1200);
+        pf = *select_pf_by_ver(version);
+        conn->ifc_conn.cn_pf = &pf;
+        conn->ifc_conn.cn_version = version;
+        path_test_receive(conn, 36, 1, 0);
+        if (mode == 0)
+            pf.pf_packout_size = path_test_large_header;
+        else if (mode == 1)
+            pf.pf_gen_path_chal_frame = path_test_large_frame;
+        else
+            pf.pf_gen_path_resp_frame = path_test_large_frame;
+        if (mode < 2)
+            generate_path_chal_frame(conn, 2000000, 1);
+        else
+            generate_path_resp_frame(conn, 2000000, 1);
+        assert(conn->ifc_flags & IFC_ERROR);
+        assert(path->cop_probe_credit == 0);
+        assert(conn->ifc_send_ctl.sc_n_scheduled == 0);
+        path_test_cleanup(&test);
+    }
+
+    /* A fully funded first probe validates the path packet size. */
+    path_test_init(&test, flags, 1370);
+    conn->ifc_conn.cn_version = version;
+    conn->ifc_conn.cn_pf = select_pf_by_ver(version);
+    path_test_receive(conn, 1200, 1, 0);
+    path_test_generate(conn);
+    packet = TAILQ_FIRST(&conn->ifc_send_ctl.sc_scheduled_packets);
+    assert(packet);
+    assert(lsquic_packet_out_total_sz(&conn->ifc_conn, packet) == 1370);
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(response, 9,
+                                                    path->cop_path_chals[0]));
+    assert(9 == process_path_response_frame(conn, NULL, response, 9));
+    assert(path->cop_flags & COP_VALIDATED_MTU);
+    assert(!lsquic_alarmset_is_set(&conn->ifc_alset, AL_PATH_CHAL_1));
+    assert(!(conn->ifc_send_flags & SF_SEND_PATH_CHAL_PATH_1));
+    path_test_cleanup(&test);
+
+    path_test_init(&test, flags, 1200);
+    path_test_receive(conn, 37, 1, 5);
+    assert(conn->ifc_flags & IFC_ERROR);
+    assert(path->cop_probe_credit == 0);
+    assert(!(path->cop_flags & (COP_INITIALIZED | COP_RESP_PENDING)));
+    assert(!(conn->ifc_send_flags & SF_SEND_PATH_RESP_PATH_1));
+    path_test_cleanup(&test);
+
+    /* Expire a queued failed send, a credit-parked path, and an unsent path.
+     * Their CIDs are respectively exclusive, shared, and already retired.
+     */
+    path_test_init(&test, flags, 1200);
+    conn->ifc_conn.cn_version = version;
+    conn->ifc_conn.cn_pf = select_pf_by_ver(version);
+    path_test_receive(conn, 400, 1, 0);
+    saved_cce = conn->ifc_cces[0];
+    deadline = conn->ifc_alset.as_expiry[AL_PATH_CHAL_1];
+    assert(deadline == 1000001 + path_validation_timeout(conn));
+    path_test_receive(conn, 36, 2, 3);
+    assert(deadline == conn->ifc_alset.as_expiry[AL_PATH_CHAL_1]);
+    path_test_generate(conn);
+    assert(9 == conn->ifc_conn.cn_pf->pf_gen_path_resp_frame(response, 9,
+                                                    path->cop_path_chals[0]));
+    packet = ietf_full_conn_ci_next_packet_to_send(&conn->ifc_conn, NULL);
+    assert(packet);
+    ietf_full_conn_ci_packet_not_sent(&conn->ifc_conn, packet);
+    memset(dcids, 0, sizeof(dcids));
+    TAILQ_INIT(&conn->ifc_to_retire);
+    dcids[0].de_cid = path->cop_path.np_dcid;
+    dcids[0].de_cid.idbuf[0] = 1;
+    dcids[0].de_flags = DE_ASSIGNED;
+    dcids[1].de_cid = conn->ifc_paths[0].cop_path.np_dcid;
+    dcids[1].de_flags = DE_ASSIGNED;
+    conn->ifc_dces[0] = &dcids[0];
+    conn->ifc_dces[1] = &dcids[1];
+    path->cop_path.np_dcid = dcids[0].de_cid;
+    conn->ifc_used_paths = (1 << N_PATHS) - 1;
+    for (i = 1; i < N_PATHS; ++i)
+    {
+        conn->ifc_paths[i].cop_flags |= COP_INITIALIZED;
+        conn->ifc_paths[i].cop_path.np_path_id = i;
+        NP_LOCAL_SA(&conn->ifc_paths[i].cop_path)->sa_family = AF_INET;
+        NP_PEER_SA(&conn->ifc_paths[i].cop_path)->sa_family = AF_INET;
+        ((struct sockaddr_in *) NP_PEER_SA(&conn->ifc_paths[i].cop_path))
+                                                    ->sin_port = htons(i);
+        lsquic_alarmset_init_alarm(&conn->ifc_alset, AL_PATH_CHAL + i,
+                                            path_chal_alarm_expired, conn);
+        lsquic_alarmset_set(&conn->ifc_alset, AL_PATH_CHAL + i, deadline);
+    }
+    conn->ifc_paths[2].cop_path.np_dcid = dcids[1].de_cid;
+    conn->ifc_paths[2].cop_flags |= COP_CHAL_PENDING | COP_RESP_PENDING;
+    conn->ifc_paths[3].cop_path.np_dcid.len = 8;
+    conn->ifc_paths[3].cop_path.np_dcid.idbuf[0] = 3;
+    memset(&peer, 0, sizeof(peer));
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(9999);
+    assert(0 == ietf_full_conn_ci_record_addrs(&conn->ifc_conn, NULL,
+                NP_LOCAL_SA(&conn->ifc_paths[0].cop_path),
+                (struct sockaddr *) &peer
+                ));
+    lsquic_alarmset_ring_expired(&conn->ifc_alset, deadline + 1);
+    assert(conn->ifc_used_paths == 1);
+    assert(conn->ifc_send_ctl.sc_n_scheduled == 0);
+    assert(conn->ifc_dces[0] == NULL && conn->ifc_dces[1] == &dcids[1]);
+    assert(conn->ifc_n_to_retire == 1);
+    assert(0 == memcmp(&saved_cce, &conn->ifc_cces[0], sizeof(saved_cce)));
+    for (i = 1; i < N_PATHS; ++i)
+    {
+        assert(conn->ifc_paths[i].cop_probe_credit == 0);
+        assert(conn->ifc_paths[i].cop_flags == 0);
+        assert(!(conn->ifc_send_flags
+                        & ((SF_SEND_PATH_CHAL | SF_SEND_PATH_RESP) << i)));
+    }
+    assert(1 == ietf_full_conn_ci_record_addrs(&conn->ifc_conn, NULL,
+                NP_LOCAL_SA(&conn->ifc_paths[0].cop_path),
+                (struct sockaddr *) &peer
+                ));
+    path_test_receive(conn, 36, 6000000, 0);
+    assert(path->cop_flags & COP_INITIALIZED);
+    assert(path->cop_probe_credit == 108);
+    assert(conn->ifc_alset.as_expiry[AL_PATH_CHAL_1] > deadline);
+    assert(9 == process_path_response_frame(conn, NULL, response, 9));
+    assert(!(conn->ifc_flags & IFC_ERROR));
+    assert(!(path->cop_flags & COP_VALIDATED));
+    path_test_cleanup(&test);
 }
 
 
@@ -10110,6 +11026,55 @@ lsquic_ietf_full_conn_test_path_exhaustion (unsigned flags, int ipv6)
         assert(conn.ifc_used_paths == used_paths);
         assert(0 == memcmp(saved_paths, conn.ifc_paths, sizeof(saved_paths)));
     }
+
+    /* Initialized candidates are protected even before validation.  The
+     * current slot is also protected if it is still provisional.
+     */
+    conn.ifc_cur_path_id = 0;
+    for (i = 0; i < N_PATHS; ++i)
+        conn.ifc_paths[i].cop_flags = COP_INITIALIZED;
+    conn.ifc_paths[0].cop_flags = 0;
+    memcpy(saved_paths, conn.ifc_paths, sizeof(saved_paths));
+    path_id = ietf_full_conn_ci_record_addrs(&conn.ifc_conn, &peer,
+                                            (const struct sockaddr *) &local,
+                                            (const struct sockaddr *) &peer);
+    assert(path_id == 0);
+    assert(0 == memcmp(saved_paths, conn.ifc_paths, sizeof(saved_paths)));
+
+    /* A provisional candidate may be reused, but none of its credit,
+     * pending work, challenges, or validation state may follow its address.
+     */
+    conn.ifc_paths[1].cop_flags = COP_CHAL_PENDING | COP_RESP_PENDING
+                                                | COP_GOT_NONPROB;
+    conn.ifc_paths[1].cop_probe_credit = 1234;
+    conn.ifc_paths[1].cop_inc_chal = 9876;
+    conn.ifc_send_flags = SF_SEND_PATH_CHAL_PATH_1 | SF_SEND_PATH_RESP_PATH_1;
+    lsquic_alarmset_init(&conn.ifc_alset, &conn.ifc_conn);
+    lsquic_alarmset_init_alarm(&conn.ifc_alset, AL_PATH_CHAL_1,
+                                            path_chal_alarm_expired, &conn);
+    lsquic_alarmset_set(&conn.ifc_alset, AL_PATH_CHAL_1, 1000);
+    path_id = ietf_full_conn_ci_record_addrs(&conn.ifc_conn, &peer,
+                                            (const struct sockaddr *) &local,
+                                            (const struct sockaddr *) &peer);
+    assert(path_id == 1);
+    assert(conn.ifc_used_paths == used_paths);
+    assert(conn.ifc_send_flags == 0);
+    assert(!lsquic_alarmset_is_set(&conn.ifc_alset, AL_PATH_CHAL_1));
+    assert(conn.ifc_paths[1].cop_flags == 0);
+    assert(conn.ifc_paths[1].cop_probe_credit == 0);
+    assert(conn.ifc_paths[1].cop_n_chals == 0);
+    assert(conn.ifc_paths[1].cop_path_chals[0] == 0);
+    assert(conn.ifc_paths[1].cop_inc_chal == 0);
+    assert(conn.ifc_paths[1].cop_path.np_pack_size == 0);
+    assert(conn.ifc_paths[1].cop_path.np_path_id == 1);
+    assert(conn.ifc_paths[1].cop_path.np_peer_ctx == &peer);
+    assert(path_matches(&conn.ifc_paths[1].cop_path,
+                                            (const struct sockaddr *) &local,
+                                            (const struct sockaddr *) &peer));
+    for (i = 0; i < N_PATHS; ++i)
+        if (i != 1)
+            assert(0 == memcmp(&saved_paths[i], &conn.ifc_paths[i],
+                                                    sizeof(saved_paths[i])));
 }
 
 

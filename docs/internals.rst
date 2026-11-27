@@ -816,6 +816,13 @@ A stream can be on one or more lists: see ``next_send_stream``,
 Incoming data is stored in ``data_in``. Outgoing data is packetized
 immediately or buffered in ``sm_buf``.
 
+When a stream shuts down reads with buffered data, the connection queues
+it on ``service_streams`` with ``SMQF_DRAIN_READ``.  After callbacks
+return, stream servicing discards contiguous input and credits those
+bytes to connection flow control.  Data beyond a gap continues to count
+against the connection window until the gap is filled or receive-side
+accounting is finalized.
+
 HTTP/3 frames that are being actively written are on the ``sm_hq_frames``
 list.
 
@@ -1004,6 +1011,13 @@ The fact that this frame type has been written is added to
 ``po_frame_types`` and the STREAM frame location, type, and size are
 recorded. This information is necessary to be able to elide the frame
 from the packet in case the stream is reset.
+
+On receipt of STOP_SENDING, an IETF QUIC stream in Ready, Send, or Data
+Sent queues RESET_STREAM before calling the application's reset callback
+or eliding STREAM frames.  A queued FIN can still be elided.  Keeping the
+reset pending holds the stream alive until the connection can write its
+final size from ``tosend_off``.  Bytes still in the stream's write buffer
+have not advanced this offset.
 
 ``PO_STREAM_END`` is set if the STREAM frame extends to the end of the
 packet. This is done to prevent this packet from being used again to
@@ -2578,7 +2592,8 @@ The first part of the path-switching logic is in ``process_regular_packet()``:
         {
             if (conn->ifc_cur_path_id != packet_in->pi_path_id)
             {
-                if (0 != on_new_or_unconfirmed_path(conn, packet_in))
+                if (0 != on_new_or_unconfirmed_path(conn, packet_in,
+                                                            packet_size))
                 {
                     LSQ_DEBUG("path %hhu invalid, cancel any path response "
                         "on it", packet_in->pi_path_id);
@@ -2598,6 +2613,33 @@ scheduled.
 If more than one packet received on the new path contain non-probing frames,
 the current path is switched: it is assumed that the path change is due to
 NAT rebinding.
+
+Only uninitialized, unvalidated, non-current slots may be reused for an
+unrecognized address.  A server candidate's expiration deadline begins when
+the path is initialized and is not extended by additional traffic.  Expiration
+cancels its probe work, releases an exclusively owned destination CID, and
+wipes the slot without disturbing shared CIDs.  Delayed, unmatched
+PATH_RESPONSE frames are ignored.
+
+**Probe credit on server candidate paths**
+
+An unvalidated server path enforces the three-to-one amplification limit with
+per-path construction credit.  Each accepted, nonduplicate packet contributes
+three times its encrypted packet size.  For a coalesced datagram, credit is
+based on the constituent packet sizes, not the full datagram size repeated for
+each packet.
+
+Constructing PATH_RESPONSE and PATH_CHALLENGE packets consumes their complete
+wire cost, including headers, authentication tags, frames, and padding.
+Queued packets remain charged if sending fails or they are discarded, while a
+replacement consumes credit again.  This conservative accounting keeps
+scheduled output within the limit without send-time bookkeeping.
+
+When credit permits, a challenge is padded to the path's packet size;
+otherwise, it is padded to 1,200 bytes if possible.  A response to the smaller
+challenge validates only the address and schedules a fresh full-size challenge
+to validate the configured packet size.  This bookkeeping relies on an
+unvalidated server path having only one outgoing challenge.
 
 Client
 ------
@@ -2647,8 +2689,9 @@ the initial UDP payload size selected for the new path.  See
 ::
 
     need = conn->ifc_conn.cn_pf->pf_path_chal_frame_size();
-    packet_out = get_writeable_packet_on_path(conn, need, &copath->cop_path, 1);
+    ret = get_path_probe_packet(conn, path_id, need);
     /* --- 8< --- some code elided... */
+    packet_out = ret.packet_out;
     w = conn->ifc_conn.cn_pf->pf_gen_path_chal_frame(
             packet_out->po_data + packet_out->po_data_sz,
             lsquic_packet_out_avail(packet_out),
@@ -2938,8 +2981,13 @@ returns the packet* after it tries to send it.
 If the packet was sent successfully, it is returned via the
 ``ci_packet_sent`` call, after which it is appended to the Unacked Queue.
 If the packet could not be sent, ``ci_packet_not_sent()`` is called, at
-which point it is prepended back to the Schedule Queue to be tried
-later.
+which point it is prepended to the Scheduled Queue. An ordinary retry
+reuses the cached ciphertext, including its header bits. While the packet
+holds that buffer (``PO_ENCRYPTED``), frame writers must use another
+packet. If retry preparation must change the wire contents, for example to
+remove a reset stream's frames, assign a new packet number, or add Initial
+padding, it returns the encrypted buffer before the edit. The engine then
+encrypts the updated packet on the next send attempt.
 
 There are two ways to get off the Unacked Queue: being acknowledged or
 being lost. When a packet is acknowledged, it is destroyed. On the other

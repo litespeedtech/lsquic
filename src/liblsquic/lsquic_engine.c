@@ -1663,12 +1663,15 @@ lsquic_engine_add_conn_to_attq (struct lsquic_engine_public *enpub,
                     lsquic_conn_t *conn, lsquic_time_t tick_time, unsigned why)
 {
     lsquic_engine_t *const engine = (lsquic_engine_t *) enpub;
-    /* Closing a sibling stream from an on_close callback may flush buffered
-     * data and ask the pacer for another tick while ci_destroy() is running.
-     * As with the tickable queue, never resurrect a connection being freed. */
+
     if (conn->cn_flags & LSCONN_NEVER_TICKABLE)
-        return;
-    if (conn->cn_flags & LSCONN_TICKABLE)
+    {
+        /* An on_close callback invoked by ci_destroy() may close another
+         * stream.  Flushing that stream can ask the pacer for another tick.
+         * Do not reacquire an engine reference after destruction has begun.
+         */;
+    }
+    else if (conn->cn_flags & LSCONN_TICKABLE)
     {
         /* Optimization: no need to add the connection to the Advisory Tick
          * Time Queue: it is about to be ticked, after which it its next tick

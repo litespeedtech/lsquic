@@ -1,3 +1,28 @@
+2026-11-27
+    - 4.12.1
+    - [FIX] Prevent oversized ACK-range merges in the compact receive
+      history (GHSA-q722-vjxp-8wwg).
+    - [FIX] Include version information in server transport parameters
+      when a client connects directly with QUIC v2.
+    - [FIX] Account for the Retry token when resizing Initial packets so
+      retransmissions fit the path MTU (#732).
+    - [FIX] Pad the first probe to the server's preferred address so a
+      single successful probe can validate the path MTU (#733).
+    - [FIX] Enforce the server's anti-amplification limit when queuing
+      path probes, including padding on PATH_RESPONSE packets
+      (GHSA-hgqg-pxfp-29g6).
+    - [FIX] Reclaim expired candidate paths and prevent reused path slots
+      from retaining stale validation state (GHSA-453c-qxm5-97cv).
+    - [FIX] Reject RETIRE_CONNECTION_ID frames in 0-RTT packets (#734).
+    - [FIX] Preserve queued frames across send retries when an encrypted
+      packet remains unsent.
+    - [FIX] Send RESET_STREAM when STOP_SENDING discards a queued FIN,
+      even if the application closes the stream from its reset callback.
+    - [FIX] Return connection flow-control credit as stream data is
+      discarded after read shutdown so other streams can keep receiving.
+    - [FIX] Prevent callbacks from rescheduling a connection during
+      destruction (#740).
+
 2026-11-21
     - 4.12.0
     - [FEATURE] Add opt-in BBR-Copilot for bandwidth estimation on

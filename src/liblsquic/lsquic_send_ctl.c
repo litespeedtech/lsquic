@@ -1118,10 +1118,26 @@ send_ctl_update_poison_hist (struct lsquic_send_ctl *ctl,
 }
 
 
+/* A loss stays reserved while the unsent header that reports it is cached.
+ * Make it available to a future packet when that header is discarded.
+ */
+static void
+send_ctl_maybe_restore_loss (struct lsquic_send_ctl *ctl,
+                                        struct lsquic_packet_out *packet_out)
+{
+    if (packet_out->po_lflags & POL_LOSS_BIT)
+    {
+        ++ctl->sc_loss_count;
+        packet_out->po_lflags &= ~POL_LOSS_BIT;
+    }
+}
+
+
 void
 lsquic_send_ctl_mtu_not_sent (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
+    send_ctl_maybe_restore_loss(ctl, packet_out);
     (void)  /* See comment in send_ctl_add_poison(): the plan is to make
     this code path always succeed. */
     send_ctl_update_poison_hist(ctl, packet_out->po_packno);
@@ -1308,10 +1324,11 @@ static void
 send_ctl_return_enc_data (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
+    send_ctl_maybe_restore_loss(ctl, packet_out);
     ctl->sc_enpub->enp_pmi->pmi_return(ctl->sc_enpub->enp_pmi_ctx,
         packet_out->po_path->np_peer_ctx,
         packet_out->po_enc_data, lsquic_packet_out_ipv6(packet_out));
-    packet_out->po_flags &= ~PO_ENCRYPTED;
+    packet_out->po_flags &= ~(PO_ENCRYPTED|PO_SENT_SZ);
     packet_out->po_enc_data = NULL;
 }
 
@@ -1320,6 +1337,8 @@ static void
 send_ctl_destroy_packet (struct lsquic_send_ctl *ctl,
                                         struct lsquic_packet_out *packet_out)
 {
+    if (packet_out->po_flags & PO_ENCRYPTED)
+        send_ctl_maybe_restore_loss(ctl, packet_out);
     if (0 == (packet_out->po_flags & (PO_LOSS_REC|PO_POISON)))
         lsquic_packet_out_destroy(packet_out, ctl->sc_enpub,
                                             packet_out->po_path->np_peer_ctx);
@@ -2462,7 +2481,8 @@ lsquic_send_ctl_maybe_app_limited (struct lsquic_send_ctl *ctl,
     }
 
     packet_out = lsquic_send_ctl_last_scheduled(ctl, PNS_APP, path, 0);
-    if ((packet_out && lsquic_packet_out_avail(packet_out) > 10)
+    if ((packet_out && lsquic_packet_out_has_writeable_space(packet_out,
+                                                    WRITE_DISPATCH_MIN_SPACE))
                                                 || send_ctl_could_send(ctl))
     {
         LSQ_DEBUG("app-limited");
@@ -2731,6 +2751,8 @@ send_ctl_maybe_zero_pad (struct lsquic_send_ctl *ctl,
         size = lsquic_packet_out_avail(initial_packet);
     if (size)
     {
+        if (initial_packet->po_flags & PO_ENCRYPTED)
+            send_ctl_return_enc_data(ctl, initial_packet);
         memset(initial_packet->po_data + initial_packet->po_data_sz, 0, size);
         initial_packet->po_data_sz += size;
         initial_packet->po_frame_types |= QUIC_FTBIT_PADDING;
@@ -2874,25 +2896,28 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
         send_ctl_maybe_zero_pad(ctl, packet_out, 1200 - size);
     }
 
-    if (ctl->sc_flags & SC_QL_BITS)
+    if ((ctl->sc_flags & SC_QL_BITS)
+                            && packet_out->po_header_type == HETY_SHORT)
     {
-        packet_out->po_lflags |= POL_LOG_QL_BITS;
-        if (ctl->sc_loss_count)
+        if (ctl->sc_gap + 1 == packet_out->po_packno)
+            ++ctl->sc_square_count;
+        if (!(packet_out->po_flags & PO_ENCRYPTED))
         {
-            --ctl->sc_loss_count;
-            packet_out->po_lflags |= POL_LOSS_BIT;
-        }
-        else
-            packet_out->po_lflags &= ~POL_LOSS_BIT;
-        if (packet_out->po_header_type == HETY_SHORT)
-        {
-            if (ctl->sc_gap + 1 == packet_out->po_packno)
-                ++ctl->sc_square_count;
+            packet_out->po_lflags |= POL_LOG_QL_BITS;
+            if (ctl->sc_loss_count)
+            {
+                --ctl->sc_loss_count;
+                packet_out->po_lflags |= POL_LOSS_BIT;
+            }
+            else
+                packet_out->po_lflags &= ~POL_LOSS_BIT;
             if (ctl->sc_square_count++ & 64)
                 packet_out->po_lflags |= POL_SQUARE_BIT;
             else
                 packet_out->po_lflags &= ~POL_SQUARE_BIT;
         }
+        else
+            ++ctl->sc_square_count;
     }
 
     return packet_out;
@@ -2910,8 +2935,8 @@ lsquic_send_ctl_delayed_one (lsquic_send_ctl_t *ctl,
 #if LSQUIC_SEND_STATS
     ++ctl->sc_stats.n_delayed;
 #endif
-    if (packet_out->po_lflags & POL_LOSS_BIT)
-        ++ctl->sc_loss_count;
+    if (!(packet_out->po_flags & PO_ENCRYPTED))
+        send_ctl_maybe_restore_loss(ctl, packet_out);
     if ((ctl->sc_flags & SC_QL_BITS)
                             && packet_out->po_header_type == HETY_SHORT)
         ctl->sc_square_count -= 1 + (ctl->sc_gap + 1 == packet_out->po_packno);
@@ -3085,7 +3110,7 @@ send_ctl_get_writeable_packet (struct lsquic_send_ctl *ctl,
     packet_out = lsquic_send_ctl_last_scheduled(ctl, pns, path, regen_match);
     if (packet_out
         && !(packet_out->po_flags & (PO_MINI|PO_STREAM_END|PO_RETX))
-        && lsquic_packet_out_avail(packet_out) >= need_at_least)
+        && lsquic_packet_out_has_writeable_space(packet_out, need_at_least))
     {
         return packet_out;
     }
@@ -3149,7 +3174,7 @@ lsquic_send_ctl_get_packet_for_crypto (struct lsquic_send_ctl *ctl,
     packet_out = lsquic_send_ctl_last_scheduled(ctl, pns, path, 0);
     if (packet_out
         && !(packet_out->po_flags & (PO_STREAM_END|PO_RETX))
-        && lsquic_packet_out_avail(packet_out) >= need_at_least)
+        && lsquic_packet_out_has_writeable_space(packet_out, need_at_least))
     {
         return packet_out;
     }
@@ -3179,7 +3204,15 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
     oldno = packet_out->po_packno;
     packno = send_ctl_next_packno(ctl);
 
-    packet_out->po_flags &= ~PO_SENT_SZ;
+    if (packet_out->po_flags & PO_ENCRYPTED)
+    {
+        if (packno != oldno || packet_out->po_regen_sz
+                || (ctl->sc_ver_neg->vn_tag
+                        && packet_out->po_ver_tag != *ctl->sc_ver_neg->vn_tag))
+            send_ctl_return_enc_data(ctl, packet_out);
+    }
+    else
+        packet_out->po_flags &= ~PO_SENT_SZ;
     assert(packet_out->po_frame_types & ~BQUIC_FRAME_REGEN_MASK);
     packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
     packet_out->po_packno = packno;
@@ -3254,6 +3287,28 @@ lsquic_send_ctl_set_tcid0 (lsquic_send_ctl_t *ctl, int tcid0)
 }
 
 
+/* Only return the buffer if elision will change the packet. */
+static void
+maybe_return_enc_data_for_stream (struct lsquic_send_ctl *ctl,
+                    struct lsquic_packet_out *packet_out,
+                    lsquic_stream_id_t stream_id)
+{
+    struct packet_out_frec_iter pofi;
+    const struct frame_rec *frec;
+
+    for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                frec = lsquic_pofi_next(&pofi))
+        if (frec->fe_frame_type == QUIC_FRAME_STREAM
+                && (frec->fe_stream->id == stream_id
+                    || (stream_id == UINT64_MAX
+                            && lsquic_stream_is_write_reset(frec->fe_stream))))
+        {
+            send_ctl_return_enc_data(ctl, packet_out);
+            break;
+        }
+}
+
+
 /* The controller elides this STREAM frames of stream `stream_id' from
  * scheduled and buffered packets.  If a packet becomes empty as a result,
  * it is dropped.
@@ -3282,6 +3337,8 @@ lsquic_send_ctl_elide_stream_frames (lsquic_send_ctl_t *ctl,
         if ((packet_out->po_frame_types & (1 << QUIC_FRAME_STREAM))
                                     && 0 == (packet_out->po_flags & PO_MINI))
         {
+            if (packet_out->po_flags & PO_ENCRYPTED)
+                maybe_return_enc_data_for_stream(ctl, packet_out, stream_id);
             adj = lsquic_packet_out_elide_reset_stream_frames(packet_out,
                                                               stream_id);
             ctl->sc_bytes_scheduled -= adj;

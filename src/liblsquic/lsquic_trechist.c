@@ -59,7 +59,7 @@ lsquic_trechist_insert (trechist_mask_t *mask, struct trechist_elem *elems,
         {
             if (el->te_next && el->te_low == TE_HIGH(&elems[el->te_next]) + 2)
             {
-                if (el->te_count + elems[el->te_next].te_count - 1 > UCHAR_MAX)
+                if (el->te_count + elems[el->te_next].te_count + 1 > UCHAR_MAX)
                     return -1;
                 *mask &= ~(1u << el->te_next);
                 el->te_count += elems[el->te_next].te_count + 1;

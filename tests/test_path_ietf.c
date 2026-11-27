@@ -12,6 +12,19 @@ lsquic_ietf_full_conn_test_path_exhaustion (unsigned flags, int ipv6);
 
 
 void
+lsquic_ietf_full_conn_test_probe_credit (unsigned flags, unsigned input,
+                                                                unsigned mtu);
+
+
+void
+lsquic_ietf_full_conn_test_probe_lifecycle (unsigned flags);
+
+
+void
+lsquic_ietf_full_conn_test_probe_review (unsigned flags, unsigned version);
+
+
+void
 lsquic_ietf_full_conn_test_preferred_address_probe (unsigned flags, int ipv6);
 
 
@@ -20,11 +33,21 @@ main (void)
 {
     const unsigned flags[] = { 0, LSENG_SERVER, LSENG_HTTP,
                                LSENG_SERVER | LSENG_HTTP };
-    unsigned i;
+    const unsigned inputs[] = { 1, 9, 10, 36, 399, 400, 401, 800, 1200 };
+    const unsigned mtus[] = { 1200, 1370, 5000 };
+    unsigned i, j, k;
     int keep;
 
     for (i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
     {
+        for (j = 0; j < sizeof(inputs) / sizeof(inputs[0]); ++j)
+            for (k = 0; k < sizeof(mtus) / sizeof(mtus[0]); ++k)
+                lsquic_ietf_full_conn_test_probe_credit(flags[i], inputs[j],
+                                                                    mtus[k]);
+        if (flags[i] & LSENG_SERVER)
+            lsquic_ietf_full_conn_test_probe_lifecycle(flags[i]);
+        lsquic_ietf_full_conn_test_probe_review(flags[i], LSQVER_I001);
+        lsquic_ietf_full_conn_test_probe_review(flags[i], LSQVER_I002);
         lsquic_ietf_full_conn_test_path_exhaustion(flags[i], 0);
         lsquic_ietf_full_conn_test_path_exhaustion(flags[i], 1);
         for (keep = 0; keep < 2; ++keep)

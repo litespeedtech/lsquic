@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 LiteSpeed Technologies Inc.  See LICENSE. */
-/* Test that a mini connection does not Retry a ClientHello in progress */
+/* Mini connection Retry and failed-send handling */
 
 #undef LSQUIC_TEST
 
@@ -24,6 +24,7 @@
 #include "lsquic_crand.h"
 #include "lsquic_ev_log.h"
 #include "lsquic_packet_in.h"
+#include "lsquic_packet_out.h"
 #include "lsquic_version.h"
 
 
@@ -201,6 +202,70 @@ test_srej_off (void)
 }
 
 
+static void *
+allocate_ciphertext (void *UNUSED_ctx, void *UNUSED_peer,
+                lsquic_conn_ctx_t *UNUSED_conn_ctx, unsigned short size,
+                char UNUSED_ipv6)
+{
+    return malloc(size);
+}
+
+
+static void
+free_ciphertext (void *UNUSED_ctx, void *UNUSED_peer, void *buf,
+                                                            char UNUSED_ipv6)
+{
+    free(buf);
+}
+
+
+static void
+test_unsent_initial (void)
+{
+    static const struct lsquic_packout_mem_if pmi = {
+        .pmi_allocate = allocate_ciphertext,
+        .pmi_release = free_ciphertext,
+        .pmi_return = free_ciphertext,
+    };
+    struct test_ctx ctx;
+    struct ietf_mini_conn *mini;
+    struct lsquic_conn *conn;
+    struct lsquic_packet_out *ack, *close;
+    unsigned char saved[128];
+    unsigned size;
+
+    mini = new_mini_conn(&ctx);
+    conn = &mini->imc_conn;
+    ctx.tc_enpub.enp_settings.es_support_srej = 0;
+    ctx.tc_enpub.enp_pmi = &pmi;
+    assert(tick(mini) & TICK_SEND);
+    ack = conn->cn_if->ci_next_packet_to_send(conn, NULL);
+    assert(ack && ack->po_frame_types == QUIC_FTBIT_ACK);
+    assert(ENCPA_OK == conn->cn_esf_c->esf_encrypt_packet(conn->cn_enc_session,
+                                                    &ctx.tc_enpub, conn, ack));
+    size = ack->po_enc_data_sz;
+    assert(size <= sizeof(saved));
+    memcpy(saved, ack->po_enc_data, size);
+    conn->cn_if->ci_packet_not_sent(conn, ack);
+    assert(!(ack->po_flags & PO_SENT));
+    assert(mini->imc_bytes_out == 0);
+
+    conn->cn_if->ci_abort_error(conn, 0, 1, "closing");
+    assert(tick(mini) & TICK_CLOSE);
+    assert(ack == conn->cn_if->ci_next_packet_to_send(conn, NULL));
+    assert(ack->po_flags & PO_ENCRYPTED);
+    assert(ack->po_frame_types == QUIC_FTBIT_ACK);
+    assert(ack->po_data_sz == ack->po_regen_sz);
+    assert(ack->po_enc_data_sz == size);
+    assert(0 == memcmp(ack->po_enc_data, saved, size));
+    close = conn->cn_if->ci_next_packet_to_send(conn, NULL);
+    assert(close && close != ack);
+    assert(close->po_frame_types == QUIC_FTBIT_CONNECTION_CLOSE);
+    assert(close->po_header_type == ack->po_header_type);
+    destroy(&ctx, mini);
+}
+
+
 int
 main (void)
 {
@@ -213,5 +278,6 @@ main (void)
         test_chlo_stashed(srej);
     }
     test_srej_off();
+    test_unsent_initial();
     return 0;
 }
