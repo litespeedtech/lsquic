@@ -259,7 +259,11 @@ optional members.
     .. member:: lsquic_lookup_cert_f                 ea_lookup_cert
     .. member:: void                                *ea_cert_lu_ctx
 
-        Look up certificate.  Mandatory in server mode.
+        Look up certificate.  Mandatory in server mode. Return a certificate
+        context to use, or NULL to reject the connection. If the client omits
+        SNI, the hostname may be NULL for non-HTTP engines, or for HTTP/3
+        engines with :member:`es_require_sni` set to 0. The callback must then
+        select a suitable default certificate context or reject the connection.
 
     .. member:: struct ssl_ctx_st *                (*ea_get_ssl_ctx)(void *peer_ctx, const struct sockaddr *local)
 
@@ -638,6 +642,23 @@ settings structure:
        The client's default value is :macro:`LSQUIC_DF_PING_PERIOD`.
 
        IETF QUIC only.
+
+    .. member:: int             es_require_sni
+
+       Require SNI for HTTP/3 server certificate lookup. Allowed values are
+       0 and 1. The default is ``LSQUIC_DF_REQUIRE_SNI`` (1), preserving
+       rejection of HTTP/3 handshakes without SNI. Setting this to 0 lets
+       :member:`ea_lookup_cert` receive a NULL hostname and select a default
+       certificate or reject the connection.
+
+       Callers using engine defaults or :func:`lsquic_engine_init_settings`
+       retain the current policy. Callers that manually populate settings
+       and leave this field zero opt into NULL-hostname lookups.
+
+       See :member:`ea_lookup_cert` for the NULL-hostname callback contract.
+       This supports clients connecting to IP-address URLs without changing
+       client certificate verification. Non-HTTP connections and connections
+       carrying SNI retain their existing behavior.
 
     .. member:: unsigned        es_scid_len
 

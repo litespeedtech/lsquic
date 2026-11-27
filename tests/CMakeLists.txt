@@ -25,6 +25,7 @@ include_directories(../src/liblsquic/ls-qpack)
 INCLUDE_DIRECTORIES(../src/lshpack)
 
 SET(TESTS
+    sni
     ack
     ackgen_gquic_be
     ackparse_gquic_be

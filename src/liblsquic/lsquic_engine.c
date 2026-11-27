@@ -416,6 +416,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
     settings->es_max_delayed_0rtt_packets
                               = LSQUIC_DF_MAX_DELAYED_0RTT_PACKETS;
     settings->es_check_tp_sanity = LSQUIC_DF_CHECK_TP_SANITY;
+    settings->es_require_sni     = LSQUIC_DF_REQUIRE_SNI;
     settings->es_amp_factor      = LSQUIC_DF_AMP_FACTOR;
     settings->es_send_verneg     = LSQUIC_DF_SEND_VERNEG;
     settings->es_write_sched_strategy = LSQUIC_DF_WRITE_SCHED_STRATEGY;
@@ -532,6 +533,12 @@ lsquic_engine_check_settings (const struct lsquic_engine_settings *settings,
         if (err_buf)
             snprintf(err_buf, err_buf_sz, "%s",
                                 "maximum number of header sets cannot be zero");
+        return -1;
+    }
+    if (settings->es_require_sni != 0 && settings->es_require_sni != 1)
+    {
+        if (err_buf)
+            snprintf(err_buf, err_buf_sz, "es_require_sni must be 0 or 1");
         return -1;
     }
     if(settings->es_webtransport)

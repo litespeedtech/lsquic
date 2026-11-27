@@ -1333,9 +1333,10 @@ iquic_lookup_cert (SSL *ssl, void *arg)
 #endif
     if (!server_name)
     {
-        if (enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+        if ((enc_sess->esi_enpub->enp_flags & ENPUB_HTTP)
+            && enc_sess->esi_enpub->enp_settings.es_require_sni)
         {
-            LSQ_DEBUG("SNI is not set, but is required in HTTP/3: "
+            LSQ_DEBUG("SNI is absent and es_require_sni is enabled: "
                                                 "fail certificate lookup");
             return 0;
         }
