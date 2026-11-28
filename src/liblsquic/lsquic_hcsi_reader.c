@@ -151,6 +151,20 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                         return -1;
                     }
                     break;
+                case HQFT_PRIORITY_UPDATE_PUSH:
+                case HQFT_PRIORITY_UPDATE_STREAM:
+                    /* The element ID must fit within the frame; otherwise
+                     * the remaining length computed below would underflow.
+                     */
+                    if (reader->hr_nread > reader->hr_frame_length)
+                    {
+                        reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
+                            HEC_FRAME_ERROR,
+                            "PRIORITY_UPDATE frame is too short");
+                        reader->hr_state = HR_ERROR;
+                        return -1;
+                    }
+                    break;
                 }
                 switch (reader->hr_frame_type)
                 {
