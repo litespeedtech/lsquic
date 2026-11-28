@@ -197,16 +197,34 @@ static const struct test tests[] =
         "",
     },
 
-    /* Zero-length PRIORITY_UPDATE frame */
+    /* Zero-length PRIORITY_UPDATE frame at the end of input */
     {
         __LINE__,
         TEST_NO_FLAGS,
         {
             0x80, 0x0F, 0x07, 0x01, /* HQFT_PRIORITY_UPDATE_PUSH */
             0x00,
-            0x08,
         },
-        7,
+        5,
+        -1,
+        "",
+    },
+
+    /* 8-byte element ID in a 1-byte PRIORITY_UPDATE: GOAWAY must not be
+     * read as part of the element ID
+     */
+    {
+        __LINE__,
+        TEST_NO_FLAGS,
+        {
+            0x80, 0x0F, 0x07, 0x00, /* HQFT_PRIORITY_UPDATE_STREAM */
+            0x01,
+            0xC0,
+            HQFT_GOAWAY,
+            0x01,
+            0x00,
+        },
+        9,
         -1,
         "",
     },
