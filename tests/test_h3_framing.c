@@ -1332,7 +1332,7 @@ fuzz_guided_pwritev_testing (const char *input)
     case 0: version = LSQVER_043; break;
     case 1: version = LSQVER_046; break;
     case 2: version = LSQVER_050; break;
-    case 3: version = LSQVER_ID27; break;
+    case 3: version = LSQVER_I002; break;
     case 4: version = LSQVER_ID29; break;
     default:
     case 5: version = LSQVER_I001; break;

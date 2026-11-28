@@ -46,10 +46,6 @@ types are included in a single enum:
 
         Google QUIC version Q050; this version is deprecated.
 
-    .. member:: LSQVER_ID27
-
-        IETF QUIC version ID (Internet-Draft) 27; this version is deprecated.
-
     .. member:: LSQVER_ID29
 
         IETF QUIC version ID 29

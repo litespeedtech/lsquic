@@ -17,7 +17,7 @@ Most of the code in this distribution has been  used in our own products
 since 2017.
 
 QUIC versions v1, v2, and Internet-Draft version 29 are enabled by default.
-Deprecated versions ID-27 and the older "Google" QUIC versions Q043, Q046,
+The deprecated "Google" QUIC versions Q043, Q046,
 and Q050 are still supported, but are not enabled by default.
 
 LSQUIC is licensed under the `MIT License`_; see LICENSE in the source

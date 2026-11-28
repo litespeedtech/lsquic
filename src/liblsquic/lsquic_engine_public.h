@@ -80,10 +80,10 @@ struct lsquic_engine_public {
     /* gQUIC server configuration: */
     struct lsquic_server_config    *enp_server_config;
     /* Serialized subset of server engine transport parameters that is used
-     * as SSL QUIC context.  0 is for version <= LSQVER_ID27, 1 is for others.
+     * as SSL QUIC context.
      */
-    unsigned char                   enp_quic_ctx_buf[2][200];
-    unsigned                        enp_quic_ctx_sz[2];
+    unsigned char                   enp_quic_ctx_buf[200];
+    unsigned                        enp_quic_ctx_sz;
 #if LSQUIC_CONN_STATS
     struct batch_size_stats {
         unsigned    min, max,   /* Minimum and maximum batch sizes */

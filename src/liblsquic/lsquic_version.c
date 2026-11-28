@@ -15,7 +15,6 @@ static const unsigned char version_tags[N_LSQVER][4] =
     [LSQVER_043] = { 'Q', '0', '4', '3', },
     [LSQVER_046] = { 'Q', '0', '4', '6', },
     [LSQVER_050] = { 'Q', '0', '5', '0', },
-    [LSQVER_ID27] = { 0xFF, 0, 0, 27, },
     [LSQVER_ID29] = { 0xFF, 0, 0, 29, },
     [LSQVER_I001] = {    0, 0, 0, 1, },
     [LSQVER_I002] = { 0x6B, 0x33, 0x43, 0xCF },
@@ -64,8 +63,6 @@ lsquic_tag2ver_fast (const unsigned char *tag)
     {
         if (*(tag + 3) == 0x1D)
             return LSQVER_ID29;
-        else if (*(tag + 3) == 0x1B)
-            return LSQVER_ID27;
     }
     else if (ch == 0x6b && *(tag + 1) == 0x33
              && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
@@ -102,8 +99,6 @@ lsquic_tag2ver_ietf (const unsigned char *tag)
     {
         if (*(tag + 3) == 0x1D)
             return LSQVER_ID29;
-        else if (*(tag + 3) == 0x1B)
-            return LSQVER_ID27;
     }
     else if (ch == 0x6b && *(tag + 1) == 0x33
              && *(tag + 2) == 0x43 && *(tag + 3) == 0xcf)
@@ -121,7 +116,6 @@ const char *const lsquic_ver2str[N_LSQVER] = {
     [LSQVER_043] = "Q043",
     [LSQVER_046] = "Q046",
     [LSQVER_050] = "Q050",
-    [LSQVER_ID27] = "FF00001B",
     [LSQVER_ID29] = "FF00001D",
     [LSQVER_I001] = "00000001",
     [LSQVER_I002] = "6B3343CF",
@@ -133,7 +127,6 @@ const char *const lsquic_ver2altstr[N_LSQVER] = {
     [LSQVER_043] = NULL,
     [LSQVER_046] = NULL,
     [LSQVER_050] = NULL,
-    [LSQVER_ID27] = "h3-27",
     [LSQVER_ID29] = "h3-29",
     [LSQVER_I001] = "h3",
     [LSQVER_I002] = "h3-v2",

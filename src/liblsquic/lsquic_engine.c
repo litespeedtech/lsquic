@@ -741,21 +741,18 @@ lsquic_engine_new (unsigned flags,
     if (!engine->pub.enp_tokgen)
         return NULL;
     if (engine->flags & ENG_SERVER)
-        for (i = 0; i < sizeof(engine->pub.enp_quic_ctx_sz)
-                                / sizeof(engine->pub.enp_quic_ctx_sz[0]); ++i)
+    {
+        int sz = lsquic_enc_sess_ietf_gen_quic_ctx(
+                    &engine->pub.enp_settings,
+                    engine->pub.enp_quic_ctx_buf,
+                    sizeof(engine->pub.enp_quic_ctx_buf));
+        if (sz < 0)
         {
-            int sz = lsquic_enc_sess_ietf_gen_quic_ctx(
-                        &engine->pub.enp_settings,
-                        i == 0 ? LSQVER_ID27 : LSQVER_ID29,
-                        engine->pub.enp_quic_ctx_buf[i],
-                        sizeof(engine->pub.enp_quic_ctx_buf));
-            if (sz < 0)
-            {
-                free(engine);
-                return NULL;
-            }
-            engine->pub.enp_quic_ctx_sz[i] = (unsigned) sz;
+            free(engine);
+            return NULL;
         }
+        engine->pub.enp_quic_ctx_sz = (unsigned) sz;
+    }
     engine->pub.enp_crand = &engine->crand;
     if (engine->pub.enp_settings.es_noprogress_timeout)
         engine->pub.enp_noprog_timeout

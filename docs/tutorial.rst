@@ -842,7 +842,7 @@ QUIC versions in LSQUIC are gathered in an enum, :type:`lsquic_version`, and hav
 
   enum lsquic_version {
       LSQVER_043, LSQVER_046, LSQVER_050,     /* Google QUIC */
-      LSQVER_ID27, LSQVER_ID29,               /* IETF QUIC drafts */
+      LSQVER_ID29,                            /* IETF QUIC draft */
       LSQVER_I001, LSQVER_I002,               /* IETF QUIC RFC versions */
       /* ...some special entries skipped */
       N_LSQVER    /* <====================== Special value */

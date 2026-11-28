@@ -370,7 +370,7 @@ lsquic_sess_resume_version (const unsigned char *, size_t);
 int
 lsquic_enc_sess_ietf_gen_quic_ctx (
                 const struct lsquic_engine_settings *settings,
-                enum lsquic_version version, unsigned char *buf, size_t bufsz);
+                unsigned char *buf, size_t bufsz);
 
 struct enc_sess_iquic;
 int

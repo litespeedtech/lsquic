@@ -34,12 +34,11 @@ enum trans_error_code
 #define IETF_RETRY_KEY_SZ 16
 #define IETF_RETRY_NONCE_SZ 12
 
-#define N_IETF_RETRY_VERSIONS 4
+#define N_IETF_RETRY_VERSIONS 3
 extern const unsigned char *const lsquic_retry_key_buf[N_IETF_RETRY_VERSIONS];
 extern const unsigned char *const lsquic_retry_nonce_buf[N_IETF_RETRY_VERSIONS];
 #define lsquic_version_2_retryver(ver_) (                       \
-    (ver_) <= LSQVER_ID27 ? 0 :                                 \
-    (ver_) <  LSQVER_I001 ? 1 :                                 \
-    (ver_) == LSQVER_I002 ? 3 : 2)
+    (ver_) <  LSQVER_I001 ? 0 :                                 \
+    (ver_) == LSQVER_I002 ? 2 : 1)
 
 #endif

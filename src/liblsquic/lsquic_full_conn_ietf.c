@@ -3370,32 +3370,6 @@ queue_streams_blocked_frame (struct ietf_full_conn *conn, enum stream_dir sd)
 }
 
 
-static void
-retire_cid_from_tp (struct ietf_full_conn *conn,
-                                        const struct transport_params *params)
-{
-    struct dcid_elem *dce;
-
-    dce = get_new_dce(conn);
-    if (!dce)
-    {
-        ABORT_ERROR("cannot allocate DCE");
-        return;
-    }
-
-    memset(dce, 0, sizeof(*dce));
-    dce->de_cid = params->tp_preferred_address.cid;
-    dce->de_seqno = 1;
-    memcpy(dce->de_srst, params->tp_preferred_address.srst,
-                                                    sizeof(dce->de_srst));
-    dce->de_flags = DE_SRST;
-    TAILQ_INSERT_TAIL(&conn->ifc_to_retire, dce, de_next_to_ret);
-    ++conn->ifc_n_to_retire;
-    LSQ_DEBUG("prepare to retire DCID seqno %"PRIu32, dce->de_seqno);
-    conn->ifc_send_flags |= SF_SEND_RETIRE_CID;
-}
-
-
 static enum { BM_MIGRATING, BM_NOT_MIGRATING, BM_ERROR, }
 try_to_begin_migration (struct ietf_full_conn *conn,
                                         const struct transport_params *params)
@@ -3410,17 +3384,7 @@ try_to_begin_migration (struct ietf_full_conn *conn,
 
     if (!conn->ifc_settings->es_allow_migration)
     {
-        LSQ_DEBUG("Migration not allowed: retire PreferredAddress CID");
-        return BM_NOT_MIGRATING;
-    }
-
-    if (conn->ifc_conn.cn_version <= LSQVER_ID27 /* Starting with ID-29,
-        disable_active_migration TP applies only to the time period during
-        the handshake.  Our client does not migrate during the handshake:
-        this code runs only after handshake has succeeded. */
-                && (params->tp_set & (1 << TPI_DISABLE_ACTIVE_MIGRATION)))
-    {
-        LSQ_DEBUG("TP disables migration: retire PreferredAddress CID");
+        LSQ_DEBUG("Migration disabled by local settings");
         return BM_NOT_MIGRATING;
     }
 
@@ -3495,23 +3459,15 @@ try_to_begin_migration (struct ietf_full_conn *conn,
 
 
 static void
-maybe_start_migration (struct ietf_full_conn *conn)
+maybe_start_migration (struct ietf_full_conn *conn,
+                                        const struct transport_params *params)
 {
-    struct lsquic_conn *const lconn = &conn->ifc_conn;
-    const struct transport_params *params;
-
-    params = lconn->cn_esf.i->esfi_get_peer_transport_params(
-                                                        lconn->cn_enc_session);
     if (params->tp_set & (1 << TPI_PREFERRED_ADDRESS))
         switch (try_to_begin_migration(conn, params))
         {
         case BM_MIGRATING:
             break;
         case BM_NOT_MIGRATING:
-            if (lconn->cn_version == LSQVER_ID27)
-                retire_cid_from_tp(conn, params);
-            else
-            {
 /*
  * [draft-ietf-quic-transport-28] Section 5.1.1:
  "                         Connection IDs that are issued and not
@@ -3520,11 +3476,10 @@ maybe_start_migration (struct ietf_full_conn *conn)
  " This includes the connection ID issued by the server via the
  " preferred_address transport parameter.
  */
-                LSQ_DEBUG("not migrating: save DCID from transport params");
-                (void) insert_new_dcid(conn, 1,
-                            &params->tp_preferred_address.cid,
-                            params->tp_preferred_address.srst, 0);
-            }
+            LSQ_DEBUG("not migrating: save DCID from transport params");
+            (void) insert_new_dcid(conn, 1,
+                        &params->tp_preferred_address.cid,
+                        params->tp_preferred_address.srst, 0);
             break;
         case BM_ERROR:
             ABORT_QUIETLY(0, TEC_INTERNAL_ERROR, "error initiating migration");
@@ -3838,8 +3793,7 @@ handshake_ok (struct lsquic_conn *lconn)
     }
 
     LSQ_DEBUG("peer transport parameters: %s",
-                    ((lconn->cn_version == LSQVER_ID27 ? lsquic_tp_to_str_27
-                    : lsquic_tp_to_str)(params, buf, sizeof(buf)), buf));
+                    (lsquic_tp_to_str(params, buf, sizeof(buf)), buf));
     if (0 != apply_trans_params(conn, params))
         return -1;
 
@@ -4985,7 +4939,9 @@ handshake_confirmed (struct ietf_full_conn *conn)
     if (!(conn->ifc_flags & (IFC_SERVER|IFC_MIGRA)))
     {
         conn->ifc_flags |= IFC_MIGRA;   /* Perform migration just once */
-        maybe_start_migration(conn);
+        maybe_start_migration(conn,
+                        conn->ifc_conn.cn_esf.i->esfi_get_peer_transport_params(
+                                            conn->ifc_conn.cn_enc_session));
     }
 }
 
@@ -9530,55 +9486,6 @@ on_setting (void *ctx, uint64_t setting_id, uint64_t value)
 
 
 static void
-on_goaway_server_27 (void *ctx, uint64_t stream_id)
-{
-    struct ietf_full_conn *const conn = ctx;
-    ABORT_QUIETLY(1, HEC_FRAME_UNEXPECTED,
-                                    "client should not send GOAWAY frames");
-}
-
-
-static void
-on_goaway_client_27 (void *ctx, uint64_t stream_id)
-{
-    struct ietf_full_conn *const conn = ctx;
-    struct lsquic_stream *stream;
-    struct lsquic_hash_elem *el;
-    enum stream_id_type sit;
-
-    sit = stream_id & SIT_MASK;
-    if (sit != SIT_BIDI_CLIENT)
-    {
-        ABORT_QUIETLY(1, HEC_ID_ERROR,
-                            "stream ID %"PRIu64" in GOAWAY frame", stream_id);
-        return;
-    }
-
-    if (conn->ifc_conn.cn_flags & LSCONN_PEER_GOING_AWAY)
-    {
-        LSQ_DEBUG("ignore duplicate GOAWAY frame");
-        return;
-    }
-
-    conn->ifc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
-    LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64, stream_id);
-    if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
-        conn->ifc_enpub->enp_stream_if->on_goaway_received(&conn->ifc_conn);
-
-    for (el = lsquic_hash_first(conn->ifc_pub.all_streams); el;
-                             el = lsquic_hash_next(conn->ifc_pub.all_streams))
-    {
-        stream = lsquic_hashelem_getdata(el);
-        if (stream->id > stream_id
-                            && (stream->id & SIT_MASK) == SIT_BIDI_CLIENT)
-        {
-            lsquic_stream_received_goaway(stream);
-        }
-    }
-}
-
-
-static void
 on_goaway_client (void *ctx, uint64_t stream_id)
 {
     struct ietf_full_conn *const conn = ctx;
@@ -9809,29 +9716,6 @@ on_frame_error (void *ctx, unsigned code, uint64_t frame_type)
 }
 
 
-static const struct hcsi_callbacks hcsi_callbacks_server_27 =
-{
-    .on_cancel_push         = on_cancel_push_server,
-    .on_max_push_id         = on_max_push_id,
-    .on_settings_frame      = on_settings_frame,
-    .on_setting             = on_setting,
-    .on_goaway              = on_goaway_server_27,
-    .on_frame_error         = on_frame_error,
-    .on_priority_update     = on_priority_update_server,
-};
-
-static const struct hcsi_callbacks hcsi_callbacks_client_27 =
-{
-    .on_cancel_push         = on_cancel_push_client,
-    .on_max_push_id         = on_max_push_id_client,
-    .on_settings_frame      = on_settings_frame,
-    .on_setting             = on_setting,
-    .on_goaway              = on_goaway_client_27,
-    .on_frame_error         = on_frame_error,
-    .on_priority_update     = on_priority_update_client,
-};
-
-
 static const struct hcsi_callbacks hcsi_callbacks_server_29 =
 {
     .on_cancel_push         = on_cancel_push_server,
@@ -9863,28 +9747,10 @@ hcsi_on_new (void *stream_if_ctx, struct lsquic_stream *stream)
 
     conn->ifc_mflags |= MF_HAVE_HCSI;
 
-    switch ((!!(conn->ifc_flags & IFC_SERVER) << 8) | conn->ifc_conn.cn_version)
-    {
-        case (0 << 8) | LSQVER_ID27:
-            callbacks = &hcsi_callbacks_client_27;
-            break;
-        case (1 << 8) | LSQVER_ID27:
-            callbacks = &hcsi_callbacks_server_27;
-            break;
-        case (0 << 8) | LSQVER_ID29:
-        case (0 << 8) | LSQVER_I001:
-        case (0 << 8) | LSQVER_I002:
-            callbacks = &hcsi_callbacks_client_29;
-            break;
-        default:
-            assert(0);
-            /* fallthru */
-        case (1 << 8) | LSQVER_ID29:
-        case (1 << 8) | LSQVER_I001:
-        case (1 << 8) | LSQVER_I002:
-            callbacks = &hcsi_callbacks_server_29;
-            break;
-    }
+    if (conn->ifc_flags & IFC_SERVER)
+        callbacks = &hcsi_callbacks_server_29;
+    else
+        callbacks = &hcsi_callbacks_client_29;
     lsquic_hcsi_reader_init(&conn->ifc_hcsi.reader, &conn->ifc_conn,
                                                             callbacks, conn);
     lsquic_stream_wantread(stream, 1);
@@ -11156,6 +11022,36 @@ lsquic_ietf_full_conn_test_repath (unsigned flags, unsigned old_mtu,
         assert(conn.ifc_pub.rtt_stats.srtt == 0);
     }
     lsquic_send_ctl_cleanup(&conn.ifc_send_ctl);
+    lsquic_mm_cleanup(&enpub.enp_mm);
+}
+
+
+void
+lsquic_ietf_full_conn_test_declined_preferred_address (void)
+{
+    struct ietf_full_conn conn = { 0 };
+    struct lsquic_engine_public enpub = { 0 };
+    struct transport_params params = { .tp_set = 1 << TPI_PREFERRED_ADDRESS };
+    struct dcid_elem *dce;
+
+    lsquic_engine_init_settings(&enpub.enp_settings, 0);
+    enpub.enp_settings.es_allow_migration = 0;
+    conn.ifc_settings = &enpub.enp_settings;
+    conn.ifc_enpub = &enpub;
+    conn.ifc_pub.mm = &enpub.enp_mm;
+    assert(0 == lsquic_mm_init(&enpub.enp_mm));
+    enpub.enp_srst_hash = lsquic_hash_create();
+    assert(enpub.enp_srst_hash);
+    TAILQ_INIT(&conn.ifc_to_retire);
+    params.tp_preferred_address.cid.len = 8;
+    maybe_start_migration(&conn, &params);
+    dce = find_unassigned_dcid(&conn);
+    assert(dce && dce->de_seqno == 1);
+    assert(LSQUIC_CIDS_EQ(&dce->de_cid, &params.tp_preferred_address.cid));
+    assert(!(dce->de_hash_el.qhe_flags & QHE_HASHED));
+    assert(TAILQ_EMPTY(&conn.ifc_to_retire));
+    lsquic_malo_put(dce);
+    lsquic_hash_destroy(enpub.enp_srst_hash);
     lsquic_mm_cleanup(&enpub.enp_mm);
 }
 

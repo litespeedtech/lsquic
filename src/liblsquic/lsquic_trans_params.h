@@ -172,18 +172,6 @@ void
 lsquic_tp_to_str (const struct transport_params *params, char *buf, size_t sz);
 
 int
-lsquic_tp_encode_27 (const struct transport_params *, int is_server,
-                  unsigned char *const buf, size_t bufsz);
-
-int
-lsquic_tp_decode_27 (const unsigned char *const buf, size_t bufsz,
-                  int is_server,
-                  struct transport_params *);
-
-void
-lsquic_tp_to_str_27 (const struct transport_params *params, char *buf, size_t sz);
-
-int
 lsquic_tp_has_pref_ipv4 (const struct transport_params *);
 
 int
