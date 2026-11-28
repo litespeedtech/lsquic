@@ -158,12 +158,12 @@ test_removed_draft (void)
     uint32_t ver_tag;
 
     memcpy(&ver_tag, tag, sizeof(ver_tag));
-    assert(lsquic_tag2ver(ver_tag) >= N_LSQVER);
+    assert(lsquic_tag2ver(ver_tag) == (enum lsquic_version) -1);
     assert(lsquic_tag2ver_fast(tag) == N_LSQVER);
     assert(lsquic_tag2ver_ietf(tag) == N_LSQVER);
-    assert(lsquic_str2ver("FF00001B", 8) >= N_LSQVER);
-    assert(lsquic_str2ver("h3-27", 5) >= N_LSQVER);
-    assert(lsquic_alpn2ver("h3-27", 5) >= N_LSQVER);
+    assert(lsquic_str2ver("FF00001B", 8) == (enum lsquic_version) -1);
+    assert(lsquic_str2ver("h3-27", 5) == (enum lsquic_version) -1);
+    assert(lsquic_alpn2ver("h3-27", 5) == (enum lsquic_version) -1);
     for (alpn = lsquic_get_h3_alpns(LSQUIC_SUPPORTED_VERSIONS); *alpn; ++alpn)
         assert(strcmp(*alpn, "h3-27") != 0);
     assert(lsquic_alpn2ver("h3-29", 5) == LSQVER_ID29);
