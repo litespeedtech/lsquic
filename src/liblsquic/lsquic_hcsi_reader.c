@@ -96,6 +96,13 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
                 break;
             case HQFT_PRIORITY_UPDATE_PUSH:
             case HQFT_PRIORITY_UPDATE_STREAM:
+                if (reader->hr_frame_length == 0)
+                {
+                    reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
+                        HEC_FRAME_ERROR, "PRIORITY_UPDATE frame is empty");
+                    reader->hr_state = HR_ERROR;
+                    return -1;
+                }
                 reader->hr_state = HR_READ_VARINT;
                 break;
             case HQFT_DATA:
@@ -127,6 +134,16 @@ lsquic_hcsi_reader_feed (struct hcsi_reader *reader, const void *buf,
             }
             break;
         case HR_READ_VARINT:
+            /* The first byte gives the encoded size of the element ID */
+            if ((reader->hr_frame_type == HQFT_PRIORITY_UPDATE_PUSH
+                    || reader->hr_frame_type == HQFT_PRIORITY_UPDATE_STREAM)
+                && (1u << (*p >> 6)) > reader->hr_frame_length)
+            {
+                reader->hr_conn->cn_if->ci_abort_error(reader->hr_conn, 1,
+                    HEC_FRAME_ERROR, "PRIORITY_UPDATE frame is too short");
+                reader->hr_state = HR_ERROR;
+                return -1;
+            }
             reader->hr_u.vint_state.pos = 0;
             reader->hr_state = HR_READ_VARINT_CONTINUE;
             reader->hr_nread = 0;
